@@ -33,7 +33,14 @@ export const workOriginSchema = z.strictObject({
    *  `github:<login>` for a task derived from a GitHub webhook or console
    *  retrigger (sub-project 5). */
   principal: z.string().min(1).max(128),
-  channel: z.enum(['api', 'cron', 'console', 'github']),
+  channel: z.enum(['api', 'cron', 'console', 'github', 'slack']),
+  /** Opaque channel address the originating adapter uses to deliver this
+   *  item's outcomes back to where it came from -- for Slack, the root
+   *  message's `team/channel/ts`. Only that adapter interprets it; the
+   *  control plane treats it as a string and never parses it. Written once
+   *  with the rest of `work`, so `requestRun`'s write-once rule is
+   *  unaffected. */
+  thread: z.string().max(512).optional(),
 });
 export type WorkOrigin = z.infer<typeof workOriginSchema>;
 

@@ -342,7 +342,11 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console", "github"]
+                          "enum": ["api", "cron", "console", "github", "slack"]
+                        },
+                        "thread": {
+                          "type": "string",
+                          "maxLength": 512
                         }
                       },
                       "required": ["principal", "channel"],
@@ -631,7 +635,11 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console", "github"]
+                          "enum": ["api", "cron", "console", "github", "slack"]
+                        },
+                        "thread": {
+                          "type": "string",
+                          "maxLength": 512
                         }
                       },
                       "required": ["principal", "channel"],
@@ -937,7 +945,17 @@
                               },
                               "channel": {
                                 "type": "string",
-                                "enum": ["api", "cron", "console", "github"]
+                                "enum": [
+                                  "api",
+                                  "cron",
+                                  "console",
+                                  "github",
+                                  "slack"
+                                ]
+                              },
+                              "thread": {
+                                "type": "string",
+                                "maxLength": 512
                               }
                             },
                             "required": ["principal", "channel"],
@@ -1196,7 +1214,11 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console", "github"]
+                          "enum": ["api", "cron", "console", "github", "slack"]
+                        },
+                        "thread": {
+                          "type": "string",
+                          "maxLength": 512
                         }
                       },
                       "required": ["principal", "channel"],
@@ -1486,7 +1508,11 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console", "github"]
+                          "enum": ["api", "cron", "console", "github", "slack"]
+                        },
+                        "thread": {
+                          "type": "string",
+                          "maxLength": 512
                         }
                       },
                       "required": ["principal", "channel"],
@@ -1836,7 +1862,11 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console", "github"]
+                          "enum": ["api", "cron", "console", "github", "slack"]
+                        },
+                        "thread": {
+                          "type": "string",
+                          "maxLength": 512
                         }
                       },
                       "required": ["principal", "channel"],

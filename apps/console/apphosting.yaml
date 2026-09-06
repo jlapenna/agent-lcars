@@ -132,6 +132,30 @@ env:
     availability:
       - RUNTIME
 
+  # AGENT_LCARS_OUTCOME_WEBHOOKS is deliberately NOT declared here.
+  #
+  # Resumable-conversations plan 5 (docs/superpowers/plans/2026-09-06-
+  # resumable-conversations-5-slack.md): a JSON map from a native item's
+  # `origin.channel` to its outbound delivery target
+  # (`{"slack":{"url":"...","audience":"..."}}`), read by
+  # lib/outcome-webhook.ts's outcomeWebhookFor. It lets a settled native
+  # item whose origin names a thread (Slack, for now) have its outcome
+  # delivered there through the outbox drain -- the same lease/retry/
+  # backoff path the GitHub outcome comment above already uses.
+  #
+  # There is no webhook receiver to point this at yet: the sprinkles bot
+  # side (plan 5 task 3) is a separate repository and a separate PR, not
+  # landed. Until it has, this stays undeclared -- outcomeWebhookFor treats
+  # absence exactly like misconfiguration, so no channel gets a target and
+  # the outbox drain settles every native item's report-outcome entry
+  # `done` with nothing delivered, exactly as it did before this feature
+  # existed.
+  #
+  # Disabled is expressed by omitting the variable, not by `value: ''`:
+  # App Hosting's preparer rejects an empty string with "either 'value' or
+  # 'secret' field is required" and fails the whole build (#1776, which cost
+  # five hours of blocked deploys).
+
   # Explicit deployment identity. Repository configuration has no source
   # fallback, so these values remain visible and mutually validated here.
   - variable: AGENT_LCARS_FLEET_GITHUB_LOGIN
