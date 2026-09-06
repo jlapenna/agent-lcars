@@ -647,18 +647,14 @@ describe('handleWebhookDelivery push routing', () => {
   });
 });
 
-describe('handleWebhookDelivery implicit reply routing', () => {
-  afterEach(() => {
-    delete process.env['AGENT_LCARS_IMPLICIT_REPLY_REPOS'];
-  });
-
-  function issueCommentPayload(overrides: Record<string, unknown> = {}) {
+describe('handleWebhookDelivery tagged reply resume routing', () => {
+  function taggedCommentPayload(overrides: Record<string, unknown> = {}) {
     return {
       action: 'created',
       repository: { full_name: REPO },
       issue: { number: ISSUE.issue, title: 'Issue title', body: 'Issue body' },
       comment: {
-        body: 'Use Firestore.',
+        body: '@claude Use Firestore.',
         author_association: 'MEMBER',
         html_url: `https://github.com/${REPO}/issues/${ISSUE.issue}#issuecomment-1`,
       },
@@ -667,42 +663,110 @@ describe('handleWebhookDelivery implicit reply routing', () => {
     };
   }
 
+  function untaggedCommentPayload(overrides: Record<string, unknown> = {}) {
+    return taggedCommentPayload({
+      comment: { body: 'Use Firestore.', author_association: 'MEMBER' },
+      ...overrides,
+    });
+  }
+
   /** Admits and parks `ISSUE` (a trigger-label delivery, then a `park`
-   *  report) -- the precondition both cases below share. Not a re-test of
-   *  `implicit-reply.ts`'s own gating (`implicit-reply.test.ts` covers that
-   *  directly) -- these only prove `handleWebhookDelivery` routes a
-   *  `no-reply-command` ignore to it and back correctly. */
+   *  report) -- the precondition several cases below share. Not a re-test
+   *  of `tagged-reply-resume.ts`'s own gating
+   *  (`tagged-reply-resume.test.ts` covers that directly) -- these only
+   *  prove `handleWebhookDelivery` routes a `mode: 'reply'` request to it
+   *  and back correctly. */
   async function parkedRun(deps: OrchestratorRouteDeps): Promise<string> {
     const runId = await dispatchedRun(deps, 'label-delivery');
     await deps.orchestrator.report(runId, { ok: true, summary: 'park' });
     return runId;
   }
 
-  it('routes an ordinary comment on a parked anchor to the implicit-reply path when the repo is allow-listed', async () => {
-    process.env['AGENT_LCARS_IMPLICIT_REPLY_REPOS'] = REPO;
-    const { deps } = fixture();
-    await parkedRun(deps);
+  it('resumes the session when a tagged comment lands on a parked anchor', async () => {
+    const { deps, store } = fixture();
+    const parkedRunId = await parkedRun(deps);
 
     const result = await handleWebhookDelivery(deps, {
       event: 'issue_comment',
-      deliveryId: 'implicit-reply-delivery',
-      payload: issueCommentPayload(),
+      deliveryId: 'tagged-reply-delivery',
+      payload: taggedCommentPayload(),
     });
 
     expect(result.status).toBe(200);
-    expect(result.body['replied']).toBeDefined();
+    expect(result.body['runId']).toBeDefined();
+    expect(result.body['runId']).not.toBe(parkedRunId);
+    const runs = await store.listRuns(ISSUE);
+    expect(runs).toHaveLength(2);
+    expect(runs.at(-1)?.params).toMatchObject({
+      mode: 'reply',
+      reply: '@claude Use Firestore.',
+      replyChannel: 'github',
+      replyPrincipal: 'github:jlapenna',
+    });
   });
 
-  it('falls through to the existing ignore-and-refresh path when the allowlist is empty', async () => {
-    const { deps } = fixture();
+  it('refuses busy for a tagged comment while the anchor is still running -- no second run', async () => {
+    const { deps, store } = fixture();
+    await dispatchedRun(deps, 'label-delivery'); // left running, never reported
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'tagged-reply-while-busy',
+      payload: taggedCommentPayload(),
+    });
+
+    expect(result).toEqual({ status: 200, body: { refused: 'task-busy' } });
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
+  });
+
+  it('still starts work normally for a tagged comment on an issue with no task yet', async () => {
+    const { deps, store } = fixture();
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'tagged-reply-fresh-issue',
+      payload: taggedCommentPayload(),
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body['runId']).toBeDefined();
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
+  });
+
+  it('falls through to the ordinary admission for a tagged comment on a canceled anchor', async () => {
+    const { deps, store } = fixture();
+    const runId = await dispatchedRun(deps, 'label-delivery');
+    await deps.orchestrator.cancel(runId);
+
+    // `requestReply` derives `canceled` from the latest run's own state
+    // (`deriveItemState`) and declines (`CONFLICT`/`task-closed`), so
+    // `attemptTaggedReplyResume` falls through here. `admitGithubWork`'s
+    // own admission -- unchanged by this feature, since a tagged comment
+    // never reached `requestReply` at all before it -- does not itself
+    // gate on a canceled run the way `requestReply` does, so it starts a
+    // fresh run exactly as it did before this change existed.
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'tagged-reply-canceled',
+      payload: taggedCommentPayload(),
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body['runId']).toBeDefined();
+    expect(result.body['runId']).not.toBe(runId);
+    expect(await store.listRuns(ISSUE)).toHaveLength(2);
+  });
+
+  it('dispatches nothing for an untagged comment on a parked anchor', async () => {
+    const { deps, store } = fixture();
     const refresh = vi.fn().mockResolvedValue(undefined);
     deps.refreshGithubAnchorProjection = refresh;
     await parkedRun(deps);
 
     const result = await handleWebhookDelivery(deps, {
       event: 'issue_comment',
-      deliveryId: 'ignored-delivery',
-      payload: issueCommentPayload(),
+      deliveryId: 'untagged-on-parked',
+      payload: untaggedCommentPayload(),
     });
 
     expect(result).toEqual({
@@ -710,6 +774,23 @@ describe('handleWebhookDelivery implicit reply routing', () => {
       body: { ignored: 'no-reply-command' },
     });
     expect(refresh).toHaveBeenCalledWith(ISSUE);
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
+  });
+
+  it('dispatches nothing for an untagged comment on an issue with no task at all', async () => {
+    const { deps, store } = fixture();
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'untagged-no-task',
+      payload: untaggedCommentPayload(),
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'no-reply-command' },
+    });
+    expect(await store.listRuns(ISSUE)).toHaveLength(0);
   });
 });
 

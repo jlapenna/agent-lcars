@@ -833,14 +833,13 @@ export function outcomeCommentBody(run: Run): string {
         lines.push(run.result.ref);
       }
       if (run.result?.summary === PARK_OUTCOME_SUMMARY) {
-        // Prefer the agent's own final message: on an implicitly-replied
-        // thread (an ordinary OWNER/MEMBER comment on a parked,
-        // allow-listed anchor -- see `implicit-reply.ts`) it is the
-        // question the maintainer is about to answer, and a plain reply
-        // on this thread now resumes the session. Fall back to pointing
-        // at the agent's own comment when no message was reported -- the
-        // legacy protocol's park comment already carries the question
-        // there either way.
+        // Prefer the agent's own final message: on a parked anchor it is
+        // the question the maintainer is about to answer, and a *tagged*
+        // reply on this thread now resumes the session (see
+        // `tagged-reply-resume.ts`). Fall back to pointing at the agent's
+        // own comment when no message was reported -- the legacy
+        // protocol's park comment already carries the question there
+        // either way.
         lines.push(
           run.result.message === undefined
             ? "Parked -- see this run's own comment above for the blocker " +

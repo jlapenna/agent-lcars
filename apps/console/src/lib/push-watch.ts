@@ -42,8 +42,8 @@ const PUSH_WATCH_PIPELINE = 'claude';
  * throws if ever actually called, so a future change that starts reading
  * schedules from a context built this way fails loudly instead of silently
  * hitting production Firestore from a webhook handler. Exported so
- * `implicit-reply.ts`'s own `WorkContext` builder shares it rather than
- * keeping a second copy of the same four throwing methods. */
+ * `tagged-reply-resume.ts`'s own `WorkContext` builder shares it rather
+ * than keeping a second copy of the same four throwing methods. */
 export const unreachableScheduleStore: ScheduleStore = {
   readSchedule: () => {
     throw new Error('push-watch: scheduleStore is not available here');

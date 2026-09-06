@@ -12,10 +12,10 @@ import {
 } from '@/lib/github-anchor-projection';
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
 import { admitGithubWork } from '@/lib/github-work-admission';
-import { handleImplicitReplyDelivery } from '@/lib/implicit-reply';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
 import { handlePushWebhookDelivery } from '@/lib/push-watch';
+import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 
 /**
  * Pure-ish HTTP handlers for the two control-plane routes, kept out of
@@ -161,14 +161,9 @@ export async function handleWebhookDelivery(
   try {
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {
-      // An ordinary comment the pure interpreter declined may still be a
-      // maintainer answering a parked agent -- only the store can tell
-      // whether the anchor is parked, so that check happens here rather
-      // than in the interpreter (resumable-conversations plan 2).
-      if (interpreted.reason === 'no-reply-command') {
-        const replied = await handleImplicitReplyDelivery(deps, input);
-        if (replied !== undefined) return replied;
-      }
+      // An untagged comment lands here (`no-reply-command`) and dispatches
+      // nothing -- the trigger tag is the gate (#1788, #1789); it never
+      // gets a second, implicit chance to resume a parked anchor.
       try {
         await refreshGithubAnchorProjection(deps, input);
       } catch (error) {
@@ -178,6 +173,31 @@ export async function handleWebhookDelivery(
         );
       }
       return { status: 200, body: { ignored: interpreted.reason } };
+    }
+
+    // A *tagged* reply (`@claude`/`@agent`/`/codex`/`/oc`, matched by
+    // `interpretIssueCommentEvent`) is the only path that can carry
+    // `mode: 'reply'` here -- label-triggered `issues`/`pull_request`
+    // decisions are always `implement`/`review`. Give a PARKED or DONE
+    // anchor a chance to resume its existing session with this comment as
+    // its next turn before falling into the ordinary admission below:
+    // resumable-conversations plan 2 (#1773), re-gated behind the trigger
+    // tag instead of an allowlist (#1789).
+    if (
+      input.event === 'issue_comment' &&
+      interpreted.params['mode'] === 'reply'
+    ) {
+      const resumed = await attemptTaggedReplyResume(deps, input);
+      if (resumed !== undefined) {
+        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+        return resumed;
+      }
+      // `requestReply` declined -- no task yet (`NOT_FOUND`, the
+      // start-work-by-comment case that must keep working), a closed
+      // task, or the fleet's live-run cap. Fall through to the same
+      // admission every other trigger uses; a still-running anchor
+      // refuses `task-busy` there too (`decide.ts`'s own concurrency
+      // guard), so no second run is ever created.
     }
 
     // The first label-triggered run stays byte-for-byte on its existing

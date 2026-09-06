@@ -337,30 +337,6 @@ describe('console deployment workflow', () => {
     }
   });
 
-  it('requires a trigger tag: the implicit-reply allowlist is not deployed', async () => {
-    // Maintainer direction (2026-09-06): on GitHub an explicit
-    // `@claude`/`@agent`/`/codex`/`/oc` trigger is required for a comment to
-    // dispatch anything. The no-trigger-word path (plan 2, #1773) was enabled
-    // (#1781), proven live (#1787), and then turned back off.
-    //
-    // Session resume is NOT gated by this variable -- a *tagged* reply on a
-    // parked anchor resumes the session. This flag only ever controlled
-    // whether an UNtagged comment could dispatch.
-    //
-    // Off is expressed by omitting the variable, never by `value: ''`, which
-    // App Hosting rejects and which blocked deploys for five hours (#1776).
-    const config = parseYaml(
-      await readFile('apps/console/apphosting.yaml', 'utf8'),
-    ) as {
-      env?: Array<{ variable?: string; value?: string }>;
-    };
-    const entry = config.env?.find(
-      ({ variable }) => variable === 'AGENT_LCARS_IMPLICIT_REPLY_REPOS',
-    );
-
-    expect(entry).toBeUndefined();
-  });
-
   it('declares a non-empty value or a secret for every deployed env entry', async () => {
     // App Hosting's preparer rejects an entry carrying neither with
     // `either 'value' or 'secret' field is required`, and an empty string
