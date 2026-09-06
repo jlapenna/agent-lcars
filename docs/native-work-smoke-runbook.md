@@ -721,3 +721,61 @@ What the run _did_ prove, on the way to failing:
 
 **Codex resume remains unproven.** Re-run this proof after the quota resets; the
 restore-and-`codex exec resume` half is the part still untested live.
+
+## Slack threads (sub-project 5), 2026-09-06 — inbound and outbound PASS, one hop unproven
+
+Driven without a human, using the bot token to read and the app's user token to
+post. Channel `tech-test` (`C0440BQ7U82`), item
+`01M1W3T2X7KR5Z482XVK5C3837`.
+
+| Hop                               | Result                                                                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Mention files an item             | **PASS** — `@sprinklesbot lcars girosf …` produced `Filed Agent LCARS task 01M1W3T2X7KR5Z482XVK5C3837 …` **6 seconds** later                                                         |
+| `origin.thread` recorded          | **PASS** — implied by the outbound delivery below, which routes on it                                                                                                                |
+| Agent question reaches the thread | **PASS** — the run parked and the outbox webhook delivered `Run.result.message` into the thread: `CODEWORD: XT47QM`, the database question, the `PARK` line, and a console deep link |
+| Thread reply resumes the session  | **UNPROVEN** — see below                                                                                                                                                             |
+
+### Why the first attempts silently did nothing
+
+`tech-test` is a **private** channel. `message.channels` is delivered only for
+public channels; private channels emit `message.groups`, which was **not**
+subscribed. Three earlier attempts — including one 10 minutes after the bot
+deployed current code — produced no logs and no reaction, because Slack never
+delivered the event.
+
+The bot already held `groups:history`, so only the subscription was missing.
+Adding `message.groups` to the live manifest fixed it with no reinstall, and the
+very next mention worked.
+
+This was a known, documented consequence of choosing `message.channels` over
+`app_mention` (see plan 2's note and sprinkles#5099), not a new discovery —
+which is the lesson: check the channel's privacy first when a message listener
+appears dead.
+
+### The hop that cannot be proven this way
+
+`isEligibleThreadReply` rejects any message carrying a `bot_id`
+(`lcars.ts`) — the gate that stops the bot answering its own park comment.
+Every message posted with the app's user token is attributed to the app
+(`bot_id: B0644CV4JDB`, `app_id: A04GM1LJQMA`), so it is correctly rejected.
+A reply posted this way appeared in the thread and produced no run, as designed.
+
+So the final hop — a genuine human thread reply minting a resume run — needs a
+real human message. Do not weaken that gate to make it testable.
+
+What that leaves unproven is narrow: only the Slack listener's call into
+`POST /items/{id}/reply`. The route itself, and resume-by-session-identity, are
+proven four times over on the GitHub and console surfaces (see the entries
+above), and the listener's gates are unit-tested in `lcars.test.ts`.
+
+### Tooling
+
+`slackctl.sh` (session scratch, not committed) wraps `chat.postMessage`,
+`conversations.replies`, `conversations.history` and `reactions.get`, pulling
+tokens from Secret Manager at call time. Two gotchas worth repeating:
+
+- `reactions.get` needs `reactions:read`, which the bot does not have — it has
+  only `reactions:write`. Reaction state is not readable with this token.
+- Prefer `.user` over `.bot_id` when deciding who authored a message; an
+  app-posted message carries **both**, so a `.bot_id // .user` fallback
+  misattributes human-authored app posts.
