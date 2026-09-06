@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import {
   isWorkAnchor,
   type LeasedOutboxEntry,
@@ -273,7 +274,7 @@ async function claimGithubAnchor(
   try {
     token = await deps.tokens.tokenFor(repo);
   } catch (error) {
-    console.error(
+    logger.error(
       'agent-lcars: claim projection failed for %s#%s:',
       repo,
       issue,
@@ -292,7 +293,7 @@ async function claimGithubAnchor(
       },
     );
     if (!response.ok) {
-      console.error(
+      logger.error(
         'agent-lcars: claim projection (reaction) failed for %s#%s: %s %s',
         repo,
         issue,
@@ -301,7 +302,7 @@ async function claimGithubAnchor(
       );
     }
   } catch (error) {
-    console.error(
+    logger.error(
       'agent-lcars: claim projection (reaction) failed for %s#%s:',
       repo,
       issue,
@@ -320,7 +321,7 @@ async function claimGithubAnchor(
       },
     );
     if (!response.ok) {
-      console.error(
+      logger.error(
         'agent-lcars: claim projection (assignee) failed for %s#%s: %s %s',
         repo,
         issue,
@@ -333,7 +334,7 @@ async function claimGithubAnchor(
       // silently omits it from the response's `assignees` array instead of
       // erroring. `response.ok` alone cannot tell a real claim from a
       // silent no-op; see `assigneeWasAttached`'s doc comment.
-      console.error(
+      logger.error(
         'agent-lcars: claim projection (assignee) silently dropped for ' +
           '%s#%s: %s was not added to the assignees list -- likely not ' +
           'assignable on this repository (missing push access)',
@@ -343,7 +344,7 @@ async function claimGithubAnchor(
       );
     }
   } catch (error) {
-    console.error(
+    logger.error(
       'agent-lcars: claim projection (assignee) failed for %s#%s:',
       repo,
       issue,
@@ -564,7 +565,7 @@ async function isAnchorOpen(
       { method: 'GET', headers: githubHeaders(token) },
     );
     if (!response.ok) {
-      console.error(
+      logger.error(
         'agent-lcars: anchor lookup failed for %s#%s: %s',
         target.repo,
         target.issue,
@@ -575,7 +576,7 @@ async function isAnchorOpen(
     const body = (await response.json()) as { state?: unknown };
     return body.state !== 'closed';
   } catch (error) {
-    console.error(
+    logger.error(
       'agent-lcars: anchor lookup failed for %s#%s:',
       target.repo,
       target.issue,
@@ -796,7 +797,7 @@ async function hasLaterRunMatching(
       (candidate) => isLaterRun(candidate, run) && matches(candidate),
     );
   } catch (error) {
-    console.error(
+    logger.error(
       'agent-lcars: could not check later runs %s for %s:',
       operation,
       run.runId,
@@ -908,7 +909,7 @@ function logOutboxFailure(
   error: string,
   outcome: 'retrying' | 'retired' | 'permanent' | 'anchor-closed',
 ): void {
-  console.error(
+  logger.error(
     'agent-lcars: outbox drain failed for %s (kind %s, attempt %d, %s): %s',
     entry.entryId,
     entry.kind,

@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import {
   CLI_SESSION_RETENTION_DAYS,
   type CliSessionDoc,
@@ -348,7 +349,7 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('agent-lcars: error in E2E seed API:', error);
+    logger.error('agent-lcars: error in E2E seed API:', error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },
       { status: 500 },

@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import {
   forClient,
   getAgentTelemetryReaderFirestore,
@@ -190,7 +191,7 @@ export async function getAutoscalerStatuses(): Promise<AutoscalerStatusResult> {
       warnings: [],
     };
   } catch (error) {
-    console.error('agent-lcars: failed to list autoscaler status:', error);
+    logger.error('agent-lcars: failed to list autoscaler status:', error);
     return {
       statuses: [],
       warnings: [

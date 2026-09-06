@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import type {
   GithubAnchorProjection,
   Run as OrchestratorRun,
@@ -74,7 +75,7 @@ export async function getTaskDetail(
     const { store } = createOrchestratorRuntime();
     projection = await store.readGithubAnchorProjection(anchor);
   } catch (error) {
-    console.error(
+    logger.error(
       'agent-lcars: failed to load stored task projection (%s#%s):',
       anchor.repo,
       anchor.issue,

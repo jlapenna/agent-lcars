@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type {
   SessionAgent,
   TranscriptElisionDivider,
@@ -38,7 +39,7 @@ export async function getSessionTranscript(
   try {
     raw = await fetchSessionTranscript(transcriptGcsUri);
   } catch (error) {
-    console.error(
+    logger.error(
       'agent-lcars: failed to fetch session transcript from storage:',
       error,
     );

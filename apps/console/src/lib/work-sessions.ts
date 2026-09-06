@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
@@ -58,7 +59,7 @@ export async function sessionsForRuns(
       ];
     });
   } catch (error) {
-    console.error('agent-lcars: failed to list work item sessions:', error);
+    logger.error('agent-lcars: failed to list work item sessions:', error);
     return [];
   }
 }
@@ -76,7 +77,7 @@ export async function sessionForResume(
     const firestore = await getAgentTelemetryReaderFirestore();
     return await getSessionDoc(firestore, sessionId);
   } catch (error) {
-    console.error('agent-lcars: failed to read session for resume:', error);
+    logger.error('agent-lcars: failed to read session for resume:', error);
     return undefined;
   }
 }
@@ -103,7 +104,7 @@ export async function sessionDocsForRuns(
     );
     return perRun.flat();
   } catch (error) {
-    console.error('agent-lcars: failed to list session docs for reply:', error);
+    logger.error('agent-lcars: failed to list session docs for reply:', error);
     return [];
   }
 }

@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import { Anchor, Box } from '@mantine/core';
 import { Suspense } from 'react';
 
@@ -79,7 +80,7 @@ async function ParkedWork() {
     // failed - matches runner-sessions.ts's defensive contract (degrade to
     // nothing rendered, not a crashed page) rather than 500ing the whole
     // Bridge over an optional slot.
-    console.error('agent-lcars: parked work panel unavailable:', error);
+    logger.error('agent-lcars: parked work panel unavailable:', error);
     return null;
   }
 }

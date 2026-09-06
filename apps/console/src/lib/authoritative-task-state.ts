@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
 
@@ -103,7 +104,7 @@ export async function readAuthoritativeTaskStates(
         });
         if (state) states.set(key, state);
       } catch (error) {
-        console.error(
+        logger.error(
           'agent-lcars: failed to read authoritative task state (%s):',
           key,
           error,

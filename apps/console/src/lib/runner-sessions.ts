@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
@@ -52,7 +53,7 @@ export async function getRunnerSessionsByRunId(): Promise<RunnerSessionsResult> 
     }
     return { sessionsByRunId, warnings: [] };
   } catch (error) {
-    console.error('agent-lcars: failed to list runner sessions:', error);
+    logger.error('agent-lcars: failed to list runner sessions:', error);
     return {
       sessionsByRunId: new Map(),
       warnings: [

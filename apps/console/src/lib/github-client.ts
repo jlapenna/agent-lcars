@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import { optional, required } from '@agent-lcars/util-server';
 import { retry } from '@octokit/plugin-retry';
 import { throttling } from '@octokit/plugin-throttling';
@@ -198,7 +199,7 @@ export function getGithubClient(): Octokit {
             retryAfter,
             retryCount,
           );
-          console.warn(
+          logger.warn(
             'agent-lcars: GitHub rate limit hit for %s %s, retryAfter %ss (attempt %s/%s)%s',
             options.method,
             options.url,
@@ -214,7 +215,7 @@ export function getGithubClient(): Octokit {
             retryAfter,
             retryCount,
           );
-          console.warn(
+          logger.warn(
             'agent-lcars: GitHub secondary rate limit hit for %s %s, retryAfter %ss (attempt %s/%s)%s',
             options.method,
             options.url,

@@ -1,24 +1,61 @@
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { logger } from '@agent-lcars/logging';
 import { initNodeLogging } from '@agent-lcars/logging/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** The control-plane ingestion path: every module whose logs are read to
- *  answer "did this delivery arrive, and why did it fail".
+/** `apps/console/src`, resolved from the working directory rather than
+ *  `import.meta.url`: this project runs under jsdom, where `node:url` is
+ *  aliased to a browser shim whose `fileURLToPath` rejects the file URL.
+ *  CI runs vitest with its cwd at `apps/console` and local runs use the
+ *  repo root, so both are tried -- and if neither exists this throws rather
+ *  than returning nothing, since a guard that silently scans an empty tree
+ *  passes for the wrong reason. */
+async function consoleSourceRoot(): Promise<string> {
+  for (const candidate of ['apps/console/src', 'src']) {
+    try {
+      await readdir(candidate);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  throw new Error(
+    `cannot locate apps/console/src from ${process.cwd()}; the sweep guard would scan nothing`,
+  );
+}
+
+/** Every server-side source file under `apps/console/src`.
  *
- *  Resolved against this file rather than the working directory: CI runs
- *  this project's vitest with its cwd at `apps/console`, so repo-relative
- *  paths silently resolve to nothing there while passing from the repo root.
- */
-const INGESTION_MODULES = [
-  '../app/api/control-plane/webhook/route.ts',
-  '../app/api/control-plane/webhook/process/route.ts',
-  '../app/api/control-plane/reconcile/route.ts',
-  './orchestrator-routes.ts',
-  './push-watch.ts',
-];
+ *  Enumerated by walking the tree rather than listing modules, so a new
+ *  server file is covered the moment it exists. #1779 shipped a hardcoded
+ *  five-module list; anything added beside it was silently unguarded. */
+async function serverSourceFiles(): Promise<string[]> {
+  const root = await consoleSourceRoot();
+  const found: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(full);
+        continue;
+      }
+      if (!/\.tsx?$/.test(entry.name)) continue;
+      if (/\.(test|spec)\.tsx?$/.test(entry.name)) continue;
+      const source = await readFile(full, 'utf8');
+      // A 'use client' module logs to the browser console, where Cloud
+      // Logging's per-line splitting does not apply -- and routing one
+      // through the server logger is the RSC boundary trap that neither
+      // unit tests nor typecheck catch (#1049 has E2E paused). It stays on
+      // console.* deliberately.
+      if (/^\s*['"]use client['"]/m.test(source.slice(0, 400))) continue;
+      found.push(full);
+    }
+  };
+  await walk(root);
+  return found;
+}
 
 describe('control-plane structured logging', () => {
   beforeEach(() => {
@@ -68,19 +105,30 @@ describe('control-plane structured logging', () => {
     expect(entry.message).toContain('could not apply after 6 fenced attempts');
   });
 
-  it('routes every control-plane ingestion log through the shared logger', async () => {
+  it('routes every server-side log through the shared logger', async () => {
     const offenders: string[] = [];
-    for (const path of INGESTION_MODULES) {
-      const source = await readFile(
-        fileURLToPath(new URL(path, import.meta.url)),
-        'utf8',
-      );
+    for (const path of await serverSourceFiles()) {
+      const source = await readFile(path, 'utf8');
       const bare = source.match(/\bconsole\.(error|warn|info|log|debug)\(/g);
-      if (bare) offenders.push(`${path}: ${bare.join(', ')}`);
+      if (bare) {
+        offenders.push(`${path.split('/console/')[1]}: ${bare.join(', ')}`);
+      }
     }
 
     // A bare console call here is invisible to the structured-entry contract
     // above, so it silently reintroduces the split-entry problem.
     expect(offenders).toEqual([]);
+  });
+
+  it('leaves client components on console.*, where splitting does not apply', async () => {
+    // Guards the exclusion itself: if error.tsx ever loses its 'use client'
+    // directive the sweep above would start demanding the server logger in
+    // a browser component, which is the RSC trap, not a fix.
+    const source = await readFile(
+      join(await consoleSourceRoot(), 'app/error.tsx'),
+      'utf8',
+    );
+    expect(source.slice(0, 400)).toMatch(/^\s*['"]use client['"]/m);
+    expect(source).toMatch(/\bconsole\.(error|warn|info|log)\(/);
   });
 });

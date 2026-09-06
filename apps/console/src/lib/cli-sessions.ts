@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type {
   CliSessionDoc,
   SessionAgent,
@@ -138,7 +139,7 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
       (doc): doc is CliSessionDoc => doc.source === 'cli',
     );
   } catch (error) {
-    console.error('agent-lcars: failed to list CLI sessions:', error);
+    logger.error('agent-lcars: failed to list CLI sessions:', error);
     return {
       sessions: [],
       warnings: ['CLI sessions unavailable (agent-telemetry store failed).'],
