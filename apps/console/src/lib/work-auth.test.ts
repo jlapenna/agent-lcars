@@ -239,6 +239,39 @@ describe('authenticateWorkRequest', () => {
     expect(principal?.scopes.has('work.executor')).toBe(true);
     expect(principal?.scopes.has('work.operator')).toBe(false);
   });
+  it("threads a grant's declared channel onto the principal", async () => {
+    const slackGrants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'svc:sprinkles-lcars-bot',
+          subjects: ['sprinkles-lcars-bot@example.iam.gserviceaccount.com'],
+          pipelines: ['claude'],
+          scopes: ['work.operator'],
+          channel: 'slack',
+        },
+      ]),
+    );
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps({
+        verifyGoogleIdToken: async () => ({
+          email: 'sprinkles-lcars-bot@example.iam.gserviceaccount.com',
+          emailVerified: true,
+        }),
+        grants: () => slackGrants,
+      }),
+    );
+    expect(p?.channel).toBe('slack');
+  });
+
+  it('carries no channel field at all when the grant declares none (regression)', async () => {
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps(),
+    );
+    expect(p).not.toHaveProperty('channel');
+  });
+
   it('does not synthesize work.operator if an invalid injected grant loses scopes at runtime', async () => {
     const missingScopes = [
       {

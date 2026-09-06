@@ -119,7 +119,19 @@ export const itemsContract = {
       },
       CONFLICT: { message: 'Item exists with a different spec' },
     })
-    .input(z.strictObject({ id: workIdSchema, spec: workSpecSchema }))
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        spec: workSpecSchema,
+        /** Caller-supplied delivery address, e.g. Slack's root message
+         *  `team/channel/ts` -- it is the caller's own address, so naming
+         *  it is fine. The *channel* it is delivered through is never
+         *  accepted here (see `workOriginSchema.channel`'s doc comment):
+         *  it is derived from the authenticated principal's grant, never
+         *  from the request body. */
+        thread: z.string().max(512).optional(),
+      }),
+    )
     .output(itemViewSchema),
   get: base
     .meta(

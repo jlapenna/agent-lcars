@@ -145,3 +145,43 @@ describe('grant pipelines', () => {
     ).toThrow();
   });
 });
+
+describe('grant channel', () => {
+  it("accepts a grant declaring channel: slack, drawn from workOriginSchema's set", () => {
+    const grants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'svc:sprinkles-lcars-bot',
+          subjects: ['sprinkles-lcars-bot@example.iam.gserviceaccount.com'],
+          pipelines: ['claude'],
+          scopes: ['work.operator'],
+          channel: 'slack',
+        },
+      ]),
+    );
+    expect(grants[0]?.channel).toBe('slack');
+  });
+
+  it('leaves channel undefined when a grant does not declare one', () => {
+    const grants = parseWorkGrants(raw);
+    expect(grants[0]?.channel).toBeUndefined();
+  });
+
+  it("rejects a channel outside workOriginSchema's set as a startup config error", () => {
+    expect(() =>
+      parseWorkGrants(
+        JSON.stringify([
+          {
+            principal: 'svc:sprinkles-lcars-bot',
+            subjects: ['sprinkles-lcars-bot@example.iam.gserviceaccount.com'],
+            pipelines: ['claude'],
+            scopes: ['work.operator'],
+            // A typo -- never matches a real workOriginSchema channel, so a
+            // grant naming it would otherwise sit silently inert.
+            channel: 'slak',
+          },
+        ]),
+      ),
+    ).toThrow();
+  });
+});
