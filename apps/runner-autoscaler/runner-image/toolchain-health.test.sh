@@ -47,6 +47,13 @@ if ! grep -Fqx 'if ! trusted_opencode_runs /usr/local/bin/opencode; then' "$entr
   echo "runner entrypoint must preflight the exact trusted OpenCode executable" >&2
   exit 1
 fi
+# The repo-tools install is pinned to its exact `(cd ... && pnpm install)`
+# form, not just to "some pnpm install". `pnpm --dir` runs from THIS repo's
+# directory, so corepack resolves the pnpm version from Agent LCARS's
+# package.json and then refuses repo-tools' own `packageManager` declaration
+# the moment the two pins drift - which is what broke every runner-image
+# publish when #1838 bumped ours (fixed in #1844). Reverting to `--dir` must
+# fail here rather than at image-build time.
 if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
   ! grep -Fqx 'ARG REPO_TOOLS_REF=main' "$dockerfile" ||
   ! grep -Fqx 'RUN echo "repo-tools ref: ${REPO_TOOLS_REF}" && \' "$dockerfile" ||
@@ -54,7 +61,7 @@ if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
   ! grep -Fqx '    git -C /opt/repo-tools remote add origin https://github.com/jlapenna/repo-tools.git && \' "$dockerfile" ||
   ! grep -Fqx '    git -C /opt/repo-tools fetch --depth 1 origin "${REPO_TOOLS_REF}" && \' "$dockerfile" ||
   ! grep -Fqx '    git -C /opt/repo-tools checkout --detach FETCH_HEAD && \' "$dockerfile" ||
-  ! grep -Fqx '    pnpm --dir /opt/repo-tools install --prod --frozen-lockfile --ignore-scripts && \' "$dockerfile" ||
+  ! grep -Fqx '    (cd /opt/repo-tools && pnpm install --prod --frozen-lockfile --ignore-scripts) && \' "$dockerfile" ||
   ! grep -Fqx '    ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/' "$dockerfile"; then
   echo "runner image must install agent-tools and repo-tools from one source checkout, with a cache-bust guard against a stale registry-cached layer" >&2
   exit 1
