@@ -2,7 +2,6 @@ import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Card, Group, Stack, Text, Title } from '@mantine/core';
 
 import { formatRelativeTime } from './format';
-import { lcarsPanelStyle } from './lcars';
 import { type WorkAction, WorkActions } from './work/work-actions';
 
 function summaryHref(item: WorkSummary): string {
@@ -45,7 +44,6 @@ export function ParkedWorkPanel({
       component="section"
       aria-label="Parked work"
       className="lcars-panel"
-      style={lcarsPanelStyle('amber')}
       data-testid="parked-work-panel"
     >
       <Title order={3} size="h5">

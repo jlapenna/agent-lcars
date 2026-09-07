@@ -107,7 +107,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: color-mix(
     in srgb,
     var(--mantine-color-yellow-6) 8%,
-    var(--mantine-color-dark-9)
+    var(--lcars-surface)
   );
 }
 
@@ -126,7 +126,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .lcars-transcript-disclosure {
   border-left: 3px solid var(--mantine-color-dark-4);
-  background: color-mix(in srgb, var(--mantine-color-dark-8) 72%, transparent);
+  background: var(--lcars-surface-raised);
 }
 
 .lcars-transcript-disclosure > .lcars-disclosure__summary {
@@ -142,7 +142,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    own accent colors, previewing the rail before it appears. */
 
 .lcars-header {
-  --lcars-header-accent: var(--mantine-color-orange-6);
   position: relative;
   padding-left: 3.5rem;
 }
@@ -156,8 +155,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   box-sizing: border-box;
   border-style: solid;
   border-width: 1rem 0 0 1rem;
-  border-color: var(--lcars-header-accent) transparent transparent
-    var(--lcars-header-accent);
+  border-color: var(--lcars-accent) transparent transparent var(--lcars-accent);
   border-top-left-radius: 2rem;
 }
 
@@ -228,10 +226,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   flex-wrap: wrap;
 }
 
+/* Flat color-blocked modules. An LCARS control is a solid area of color, not
+   a lit object: no border, no bevel, no gradient, no drop shadow. An
+   inactive destination is the same block at reduced signal strength; the
+   active one reaches full color. */
 .lcars-nav-pill {
   display: inline-flex;
   align-items: center;
   padding: 8px 22px;
+  border: 0;
   border-radius: 999px;
   font-family: var(--font-display), sans-serif;
   font-weight: 600;
@@ -239,28 +242,20 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   letter-spacing: 0.05em;
   text-transform: uppercase;
   text-decoration: none;
-  border: 2px solid var(--pill-outline);
-  color: var(--pill-outline);
-  background: transparent;
+  color: var(--lcars-ink-on-muted);
+  background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
   transition:
     background-color 140ms ease,
-    color 140ms ease,
-    border-color 140ms ease,
-    transform 100ms ease;
+    color 140ms ease;
 }
 
 .lcars-nav-pill:hover {
-  background: color-mix(in srgb, var(--pill-outline) 16%, transparent);
-}
-
-.lcars-nav-pill:active {
-  transform: scale(0.96);
+  background: color-mix(in srgb, var(--lcars-accent) 76%, var(--lcars-surface));
 }
 
 .lcars-nav-pill[data-active] {
-  background: var(--pill-fill);
-  border-color: var(--pill-fill);
-  color: var(--pill-ink);
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
 }
 
 /* Per-accent pill colors. `--pill-outline` is the light-scheme value, with
@@ -288,139 +283,183 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    (`mantineHtmlProps` + `ColorSchemeScript`), so keying off that attribute
    is both the app's own source of truth and immune to the downlevelling. */
 
-.lcars-nav-pill[data-accent='amber'] {
-  /* orange-8, not the lighter orange-6 the fill uses elsewhere: white ink
-     needs the darker tone for AA contrast (#1815). */
-  --pill-fill: var(--mantine-color-orange-8);
-  --pill-ink: var(--mantine-color-white);
-  --pill-outline: var(--mantine-color-orange-8);
+/* One accent, resolved once, inherited everywhere.
+   `[data-accent]` appears on three kinds of element and means the same thing
+   on all of them:
+
+     - the page shell   (console-page-shell.tsx) -> the ROUTE's accent, which
+                        every descendant inherits as `--lcars-accent`
+     - a nav pill       -> that destination's own accent, shadowing the
+                        route's for the pill itself
+     - a panel/control  -> an explicit accent where a component needs one
+
+   Because it resolves through a single inherited custom property, the header
+   elbow, the active rail pill, a panel spine and a route's buttons cannot
+   disagree about what color this page is: there is one declaration site, not
+   one per component per route per breakpoint. Before #1825 the desktop and
+   mobile header blocks each restated all seven routes with `!important`, and
+   they had already drifted apart from this table (`sessions` rendered
+   off-palette Mantine `cyan`, not the LCARS icy-teal its rail pill used).
+
+   Keep the values here in sync with CONSOLE_DESTINATIONS' `accent` in
+   console-navigation.ts, which assigns them to routes.
+
+   The values are theme.ts's own named palette anchors - "the hex a person
+   would point to as the palette" - not the neighbouring ramp steps the CSS
+   had drifted onto. That is not cosmetic. Those anchors are the LIGHT end of
+   each ramp, so near-black type on a full-strength block clears AA on every
+   one of them (5.1:1 to 10.7:1). The steps in use before were darker
+   (blue-5, violet-5), where near-black type measured 2.4:1 - which is the
+   contrast problem #1822 hit from the other side, fixing it by darkening the
+   fills further and switching to white type, one accent at a time. Anchoring
+   the table on the documented palette fixes it once, for both states, in
+   both schemes. */
+
+[data-accent='amber'] {
+  --lcars-accent: var(--mantine-color-orange-4);
 }
 
-[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='amber'] {
-  --pill-outline: var(--mantine-color-orange-5);
+[data-accent='blue'] {
+  --lcars-accent: var(--mantine-color-blue-4);
 }
 
-.lcars-nav-pill[data-accent='blue'] {
-  --pill-fill: var(--mantine-color-blue-5);
-  --pill-ink: var(--mantine-color-white);
-  --pill-outline: var(--mantine-color-blue-7);
+[data-accent='periwinkle'] {
+  --lcars-accent: var(--mantine-color-violet-3);
 }
 
-[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='blue'] {
-  --pill-outline: var(--mantine-color-blue-4);
+[data-accent='violet'] {
+  --lcars-accent: var(--mantine-color-grape-4);
 }
 
-.lcars-nav-pill[data-accent='periwinkle'] {
-  --pill-fill: var(--mantine-color-violet-5);
-  --pill-ink: var(--mantine-color-white);
-  --pill-outline: var(--mantine-color-violet-5);
+[data-accent='teal'] {
+  --lcars-accent: var(--mantine-color-teal-5);
 }
 
-[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='periwinkle'] {
-  --pill-outline: var(--mantine-color-violet-3);
-}
-
-.lcars-nav-pill[data-accent='violet'] {
-  --pill-fill: var(--mantine-color-grape-5);
-  --pill-ink: var(--mantine-color-white);
-  --pill-outline: var(--mantine-color-grape-5);
-}
-
-[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='violet'] {
-  --pill-outline: var(--mantine-color-grape-3);
-}
-
-.lcars-nav-pill[data-accent='teal'] {
-  /* teal-8, not the lighter teal-6 the fill uses elsewhere: white ink
-     needs the darker tone for AA contrast (#1815). */
-  --pill-fill: var(--mantine-color-teal-8);
-  --pill-ink: var(--mantine-color-white);
-  --pill-outline: var(--mantine-color-teal-8);
-}
-
-[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='teal'] {
-  --pill-outline: var(--mantine-color-teal-6);
-}
-
-.lcars-nav-pill[data-accent='gold'] {
-  /* yellow-8, not the lighter yellow-5 the fill uses elsewhere: white ink
-     needs the darker tone for AA contrast (#1815). */
-  --pill-fill: var(--mantine-color-yellow-8);
-  --pill-ink: var(--mantine-color-white);
-  --pill-outline: var(--mantine-color-yellow-7);
-}
-
-[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='gold'] {
-  --pill-outline: var(--mantine-color-yellow-5);
+[data-accent='gold'] {
+  --lcars-accent: var(--mantine-color-yellow-4);
 }
 
 /* ---- Operational controls ----
-   Header actions are deliberately shaped like the nav rail rather than
-   generic rounded rectangles: these are high-value console controls, not
-   ordinary form submits. */
+   ONE button language for the whole console, in exactly two strengths.
 
-.lcars-action-button {
+   LCARS controls on screen are flat areas of color. They are not lit
+   objects, so nothing here may carry a bevel, an inner highlight, a
+   gradient or a drop shadow — that reads as a 2000s web button wearing
+   LCARS paint (#1826). Depth is expressed by color strength alone:
+
+     primary    full-strength accent block, near-black type   "do the thing"
+     secondary  the same block at 52% signal, scheme-aware type
+
+   52% is not arbitrary. It is the strength the destination rail's inactive
+   modules use, so a header control and a rail pill beside it read as one row
+   of LCARS modules rather than two unrelated control families - and it is
+   the strongest mix at which the type on it still clears WCAG AA against
+   both grounds for every accent in the table (worst case 5.3:1 dark, 9.6:1
+   light; at 62% amber and gold fell to 4.1-4.3:1).
+
+   Both take `--lcars-accent`, which the page shell resolves from the route
+   (see the accent table above), so a control's color states which
+   destination it belongs to rather than being chosen per call site. */
+
+.lcars-action-button,
+.console-header[data-current] .lcars-refresh-button,
+.console-header[data-current] .queue-utility-trigger {
+  border: 0;
   border-radius: 999px;
-  border: 2px solid var(--lcars-action-accent);
-  background: color-mix(in srgb, var(--lcars-action-accent) 22%, transparent);
-  color: var(--lcars-action-accent);
+  color: var(--lcars-ink-on-muted);
+  background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
+  box-shadow: none;
   font-family: var(--font-display), sans-serif;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  box-shadow: inset 0 -2px 0
-    color-mix(in srgb, var(--lcars-action-accent) 28%, transparent);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
-.lcars-action-button:hover:not(:disabled) {
-  background: var(--lcars-action-accent);
-  border-color: var(--lcars-action-accent);
-  color: var(--mantine-color-black);
-}
-
-/* Header utility icons are small LCARS modules, not unframed glyphs. Their
-   route color is inherited from the surrounding elbow, with enough tint to
-   remain quiet beside the destination rail. */
-.console-header[data-current] .lcars-refresh-button,
-.console-header[data-current] .queue-utility-trigger {
-  border: 1px solid
-    color-mix(in srgb, var(--lcars-header-accent) 58%, transparent);
-  border-radius: 999px;
-  color: var(--lcars-header-accent);
-  background: color-mix(in srgb, var(--lcars-header-accent) 10%, transparent);
-  box-shadow: inset 0 -2px 0
-    color-mix(in srgb, var(--lcars-header-accent) 18%, transparent);
-}
-
+.lcars-action-button:hover:not(:disabled),
 .console-header[data-current] .lcars-refresh-button:hover,
 .console-header[data-current] .queue-utility-trigger:hover {
-  color: var(--lcars-header-accent);
-  background: color-mix(in srgb, var(--lcars-header-accent) 18%, transparent);
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
 }
 
-.lcars-action-button[data-accent='amber'] {
-  --lcars-action-accent: var(--mantine-color-orange-6);
+/* Mantine's own buttons are the console's ordinary controls (Open task,
+   Investigate, Open session, the queue actions). Left at their defaults they
+   were stock filled rectangles in `primaryColor`, so every route answered in
+   the same amber-or-blue no matter which destination the action belonged to
+   (#1815). Restate them in the same two strengths as the LCARS controls
+   above, taking the same inherited route accent.
+
+   Deliberately NOT scoped to `.console-page-shell`. Mantine renders modals,
+   menus and notifications into a body-level portal, outside the shell, so a
+   scoped rule would leave the Quick task dialog's own buttons as stock
+   Mantine while every button behind it spoke LCARS. `--lcars-accent` has a
+   `:root` default for exactly those out-of-shell cases; inside the shell the
+   route's own accent shadows it.
+
+   `subtle` is deliberately absent: it is the console's quiet-glyph variant
+   (row overflow menus, inline dismissals) and must stay unfilled, or every
+   list row grows a row of colored blocks down its right edge. */
+:is(.mantine-Button-root, .mantine-ActionIcon-root) {
+  box-shadow: none;
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-.lcars-action-button[data-accent='violet'] {
-  --lcars-action-accent: var(--mantine-color-violet-5);
+:is(.mantine-Button-root, .mantine-ActionIcon-root)[data-variant='filled'] {
+  color: var(--lcars-ink-on-accent);
+  background-color: var(--lcars-accent);
 }
 
-.lcars-action-button[data-accent='blue'] {
-  --lcars-action-accent: var(--mantine-color-blue-5);
+:is(
+    .mantine-Button-root,
+    .mantine-ActionIcon-root
+  )[data-variant='filled']:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--lcars-accent) 82%, white);
 }
 
-/* ---- Elbow panel accent ----
-   A quieter, half-scale echo of the header's concentric LCARS elbow,
-   applied to top-level panel shells only (never per-row/per-item, so it
-   doesn't compete with the status badges those rows already carry).
-   `--lcars-accent` is set per panel via inline style; `overflow: hidden`
-   clips the single elbow to the panel bounds. */
+:is(.mantine-Button-root, .mantine-ActionIcon-root):is(
+  [data-variant='light'],
+  [data-variant='default'],
+  [data-variant='outline']
+) {
+  border: 0;
+  color: var(--lcars-ink-on-muted);
+  background-color: color-mix(
+    in srgb,
+    var(--lcars-accent) 52%,
+    var(--lcars-surface)
+  );
+}
+
+:is(.mantine-Button-root, .mantine-ActionIcon-root):is(
+    [data-variant='light'],
+    [data-variant='default'],
+    [data-variant='outline']
+  ):hover:not(:disabled) {
+  color: var(--lcars-ink-on-accent);
+  background-color: var(--lcars-accent);
+}
+
+/* ---- Panel accent spine ----
+   The elbow is the page frame's device and appears exactly ONCE per page,
+   at the top-left of the header (see the elbow section below). Repeating a
+   miniature elbow on every panel — which is what `.lcars-panel::before` drew
+   until #1827 — reads as nested chrome: a screen full of little frames, each
+   claiming to be the frame. On the show, blocks *inside* the frame are
+   plain color bars; the curve belongs to the structure that encloses them.
+
+   So a panel gets a spine: a flat, square-ended bar of the route accent down
+   its leading edge. It says "this block belongs to this destination" using
+   the same accent as the header elbow, without competing with it. */
 
 .lcars-panel {
-  --lcars-accent: var(--mantine-color-orange-6);
   position: relative;
   overflow: hidden;
+  padding-left: 1.25rem;
 }
 
 .lcars-panel::before {
@@ -428,71 +467,165 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: absolute;
   inset-block: 0;
   left: 0;
-  width: 3rem;
-  box-sizing: border-box;
-  border-style: solid;
-  border-width: 0.5rem 0 0 0.5rem;
-  border-color: var(--lcars-accent) transparent transparent var(--lcars-accent);
-  border-top-left-radius: 1rem;
+  width: var(--lcars-spine-width);
+  background: var(--lcars-accent);
 }
 
-/* ---- Shared console frame ----
-   Every primary destination uses this same outer edge and dark data plane.
-   Route-specific workspace rules only decide how the information is arranged
-   inside it; they no longer get to drift in spacing, border, or contrast.
+/* ---- Console surface system ----
+   THE rule this file is organized around: the console has exactly ONE
+   ground. Header, page, workspace, panel and card all paint
+   `--lcars-surface` and nothing else. Separation between regions comes from
+   a hairline, a gutter, or an accent bar - never from a second, slightly
+   different black. Two nearly-equal grounds is what makes a console look
+   assembled from parts instead of milled from one piece (#1825).
 
-   Mantine's own scheme-dependent defaults disagree with those surfaces:
-   in dark mode it resolves `--mantine-color-body` to dark-7 (#0c0e13) while
-   the LCARS shells sit on dark-9 (#060709), so Card/Table/Menu/TextInput/
-   Progress render a lighter seam against the surrounding shell; in light
-   mode it flips to a light surface while the shells stay dark. Re-anchor
-   those variables to the LCARS ramps per scheme so every Mantine component
-   matches the surface it sits on. Keyed off `data-mantine-color-scheme`
-   (Mantine's own source of truth) rather than `light-dark()`, which this
-   repo's CSS build downlevels into invalid two-value fallbacks (#42). */
+   Consume these tokens, not the raw ramps. A rule that reaches for
+   `var(--mantine-color-dark-9)` directly is a rule that will not follow the
+   color scheme and will drift the next time the ramp moves:
 
-[data-mantine-color-scheme='dark'] {
-  --mantine-color-body: var(--mantine-color-dark-9);
-  --mantine-color-default-hover: var(--mantine-color-dark-8);
-  --mantine-color-default-border: var(--mantine-color-dark-4);
+     --lcars-surface         the data plane; the one ground
+     --lcars-surface-raised  genuinely floating chrome only (menus, popovers,
+                             sticky action bars, zebra striping)
+     --lcars-hairline        structural rules between regions
+     --lcars-ink / --lcars-ink-dim   text on the surface
+
+   Mantine's own scheme defaults disagree with that plane: in dark mode it
+   resolves `--mantine-color-body` to dark-7 (#0c0e13) while the LCARS
+   shells sit on dark-9 (#060709). Re-anchoring those variables per scheme
+   makes every Mantine component match the surface it sits on.
+
+   The selector must be `:root[data-mantine-color-scheme=...]`, matching
+   Mantine's own: its stylesheet defines these variables at that exact
+   specificity (0,2,0). The bare `[data-mantine-color-scheme=...]` this
+   block used until #1825 scores (0,1,0), so Mantine won every one of these
+   declarations and the whole re-anchor silently did nothing - the page
+   stayed on dark-7 while the shells stayed on dark-9, which is precisely
+   the two-blacks seam #1812 and #1820 were each trying to chase down one
+   component at a time. Keyed off `data-mantine-color-scheme` (Mantine's own
+   source of truth) rather than `light-dark()`, which this repo's CSS build
+   downlevels into invalid two-value fallbacks (#42). */
+
+/* An LCARS accent block is a saturated, bright colour in either scheme, so
+   the type sitting on one is always near-black - it does not follow the
+   scheme the way `--lcars-ink` does. */
+:root {
+  --lcars-ink-on-accent: #06070a;
+  /* The default for anything rendered outside a route's page shell: Mantine's
+     body-level portals (modals, menus, notifications) and the login page. A
+     route shadows it via `[data-accent]` on the shell. */
+  --lcars-accent: var(--mantine-color-orange-4);
+  /* One width for every accent spine in the app, so the Bridge's panels, the
+     Agents columns and the Costs section headings all read as the same
+     device rather than three bars that happen to be near each other. */
+  --lcars-spine-width: 6px;
+}
+
+:root[data-mantine-color-scheme='dark'] {
+  --lcars-surface: var(--mantine-color-dark-9);
+  --lcars-surface-raised: var(--mantine-color-dark-8);
+  --lcars-hairline: var(--mantine-color-dark-6);
+  --lcars-ink: var(--mantine-color-gray-0);
+  --lcars-ink-dim: var(--mantine-color-dark-2);
+  --lcars-ink-on-muted: var(--mantine-color-white);
+
+  --mantine-color-body: var(--lcars-surface);
+  --mantine-color-default: var(--lcars-surface);
+  --mantine-color-default-hover: var(--lcars-surface-raised);
+  --mantine-color-default-border: var(--lcars-hairline);
   --mantine-color-default-filled: var(--mantine-color-dark-4);
-  --mantine-color-text: var(--mantine-color-gray-0);
-  --mantine-color-dimmed: var(--mantine-color-dark-2);
+  --mantine-color-text: var(--lcars-ink);
+  --mantine-color-dimmed: var(--lcars-ink-dim);
 }
 
-[data-mantine-color-scheme='light'] {
-  --mantine-color-body: var(--mantine-color-gray-1);
-  --mantine-color-default-hover: var(--mantine-color-gray-0);
-  --mantine-color-default-border: var(--mantine-color-gray-3);
+:root[data-mantine-color-scheme='light'] {
+  --lcars-surface: var(--mantine-color-gray-0);
+  --lcars-surface-raised: #ffffff;
+  --lcars-hairline: var(--mantine-color-gray-3);
+  --lcars-ink: var(--mantine-color-dark-9);
+  --lcars-ink-dim: var(--mantine-color-gray-6);
+  --lcars-ink-on-muted: var(--lcars-ink-on-accent);
+
+  --mantine-color-body: var(--lcars-surface);
+  --mantine-color-default: var(--lcars-surface);
+  --mantine-color-default-hover: var(--lcars-surface-raised);
+  --mantine-color-default-border: var(--lcars-hairline);
   --mantine-color-default-filled: var(--mantine-color-gray-3);
-  --mantine-color-text: var(--mantine-color-dark-9);
-  --mantine-color-dimmed: var(--mantine-color-gray-5);
+  --mantine-color-text: var(--lcars-ink);
+  --mantine-color-dimmed: var(--lcars-ink-dim);
 }
 
-/* Card is the one surface the `--mantine-color-body` re-anchor above doesn't
-   reach: its own stylesheet hardcodes `--mantine-color-dark-6`/`white`
-   per scheme via `:where()` selectors instead of reading the body variable,
-   so every `<Card>` (the LCARS panels making up most of a route's content)
-   rendered a visibly lighter surface than the dark-9 header/workspace shell
-   it sits inside (#1812). `:where()` carries zero specificity, so this plain
-   class selector overrides it regardless of stylesheet order. */
-.mantine-Card-root {
-  background-color: var(--mantine-color-body);
+/* Card and Paper hardcode their own per-scheme background via `:where()`
+   selectors instead of reading `--mantine-color-body`, so they need naming
+   explicitly to join the plane (#1812, #1820). `:where()` carries zero
+   specificity, so these plain class selectors win regardless of stylesheet
+   order. */
+.mantine-Card-root,
+.mantine-Paper-root {
+  background-color: var(--lcars-surface);
 }
 
+/* A page is header, content, then optional route chrome, filling the
+   viewport. Content takes the slack, so a short route's footer sits at the
+   bottom edge instead of floating under the header with dead space beneath
+   it, and a long route's footer simply follows the content (#1811, #1821). */
 .console-page-shell {
+  display: flex;
+  min-height: 100vh;
   width: 100%;
   max-width: none;
+  flex-direction: column;
 }
 
+.console-page-content {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.console-page-footer {
+  flex: 0 0 auto;
+}
+
+/* The one frame every primary destination's content sits in. Route-specific
+   workspace rules decide only how information is arranged inside it; they do
+   not get to restate its ground, contrast, or edge. */
 .console-workspace {
-  --mantine-color-text: var(--mantine-color-gray-0);
-  --mantine-color-dimmed: var(--mantine-color-dark-2);
-  --mantine-color-default-border: var(--mantine-color-dark-4);
   overflow: hidden;
-  color: var(--mantine-color-text);
-  background: var(--mantine-color-dark-9);
-  border: 1px solid var(--mantine-color-default-border);
+  color: var(--lcars-ink);
+  background: var(--lcars-surface);
+  border: 1px solid var(--lcars-hairline);
+}
+
+/* The frame's two standard bands, owned here rather than restated by each
+   route. The toolbar takes the route accent, so Sessions' filter bar and
+   Costs' controls are the same band in two different colors instead of two
+   different bands (#1828). */
+.console-workspace__warnings {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--lcars-hairline);
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-6) 8%,
+    var(--lcars-surface)
+  );
+}
+
+.console-workspace__toolbar {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--mantine-spacing-sm);
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--lcars-hairline);
+  background: color-mix(in srgb, var(--lcars-accent) 10%, var(--lcars-surface));
+}
+
+/* A workspace's content divides into stacked sections separated by the same
+   hairline the frame uses. Routes that are a list of blocks (Shuttlebay's
+   scale sets, Costs' ledgers) get this instead of inventing their own card
+   spacing on the page ground. */
+.console-workspace__section + .console-workspace__section {
+  border-top: 1px solid var(--lcars-hairline);
 }
 
 /* ---- Agents operations workspace (#251) ---- */
@@ -513,27 +646,31 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: none;
 }
 
-/* Shuttlebay carries utilities through its compact/tablet command rail. Hide
-   the empty shared wrapper only once the full desktop navigation is present,
-   so tablet users retain the overflow menu for the destinations hidden there. */
-@media (min-width: 64em) {
-  .console-header[data-current='shuttlebay']
-    .lcars-command-utilities:has(.shuttlebay-utilities--mobile) {
-    display: none;
-  }
+/* Removed in #1810: this rule meant to hide Shuttlebay's *mobile* utility
+   wrapper once the desktop rail is present, but `:has()` matched the shared
+   `.lcars-command-utilities` cluster — the mobile wrapper is always in the
+   DOM, merely `display: none` — so from 64em up it hid Shuttlebay's entire
+   utility cluster: Quick task, refresh and the overflow menu all vanished on
+   desktop while every other route kept them. The mobile wrapper is already
+   hidden by `.shuttlebay-utilities--mobile` above; nothing needs to hide the
+   cluster that contains it.
+
+   ---- Shuttlebay runner fleet ---- */
+
+.shuttlebay-scale-set {
+  padding: 12px 16px;
 }
 
-.agents-workspace {
+/* ---- Work items (#1814) ---- */
+
+.work-utilities--mobile {
+  display: none;
 }
 
-.agents-workspace__warnings {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-yellow-6) 8%,
-    var(--mantine-color-dark-9)
-  );
+.work-workspace__create,
+.work-workspace__list,
+.work-workspace__empty {
+  padding: 14px 16px;
 }
 
 .agents-fleet-strip,
@@ -541,18 +678,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin: 0 !important;
   border: 0 !important;
   border-radius: 0 !important;
-  background: var(--mantine-color-dark-9);
-}
-
-/* One route gets one memorable structural accent. The Fleet strip retains
-   the LCARS elbow as the route's status instrument; repeating it on every
-   operational panel made the page read as nested chrome instead of a
-   hierarchy of live data. */
-.agents-panel::before {
-  width: 4px;
-  border: 0;
-  border-radius: 0;
-  background: var(--lcars-accent);
+  background: var(--lcars-surface);
 }
 
 .agents-fleet-strip {
@@ -598,7 +724,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: color-mix(
     in srgb,
     var(--mantine-color-violet-9) 8%,
-    var(--mantine-color-dark-9)
+    var(--lcars-surface)
   );
 }
 
@@ -606,7 +732,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: color-mix(
     in srgb,
     var(--mantine-color-yellow-9) 7%,
-    var(--mantine-color-dark-9)
+    var(--lcars-surface)
   );
 }
 
@@ -614,7 +740,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: color-mix(
     in srgb,
     var(--mantine-color-blue-9) 7%,
-    var(--mantine-color-dark-9)
+    var(--lcars-surface)
   );
 }
 
@@ -630,37 +756,12 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: none;
 }
 
-.sessions-workspace {
-}
-
-.sessions-workspace__warnings {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-yellow-6) 8%,
-    var(--mantine-color-dark-9)
-  );
-}
-
-.sessions-workspace__toolbar {
-  display: flex;
-  min-height: 48px;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 6px 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-cyan-9) 10%,
-    var(--mantine-color-dark-9)
-  );
-}
-
+/* A two-module LCARS segment group: flat blocks that meet, with a hairline
+   gap rather than an outline around the pair. */
 .sessions-view-toggle {
   display: inline-flex;
   overflow: hidden;
-  border: 1px solid var(--mantine-color-cyan-7);
+  gap: 2px;
   border-radius: 999px;
 }
 
@@ -669,20 +770,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   min-height: 34px;
   align-items: center;
   padding: 0 16px;
-  color: var(--mantine-color-cyan-3);
+  color: var(--lcars-ink-on-muted);
+  background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
   font-family: var(--font-display), sans-serif;
   font-size: 0.75rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
-.sessions-view-toggle__option + .sessions-view-toggle__option {
-  border-left: 1px solid var(--mantine-color-cyan-7);
-}
-
 .sessions-view-toggle__option[data-active] {
-  color: var(--mantine-color-dark-9);
-  background: var(--mantine-color-cyan-5);
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
 }
 
 .sessions-workspace__content {
@@ -698,8 +796,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .sessions-table {
-  color: var(--mantine-color-gray-0);
-  background: var(--mantine-color-dark-9);
+  color: var(--lcars-ink);
+  background: var(--lcars-surface);
 }
 
 .sessions-table thead {
@@ -707,7 +805,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--mantine-color-dark-8);
+  background: var(--lcars-surface-raised);
 }
 
 .sessions-table th,
@@ -718,26 +816,26 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .sessions-table tbody tr:nth-of-type(odd) {
   background: color-mix(
     in srgb,
-    var(--mantine-color-cyan-9) 5%,
-    var(--mantine-color-dark-9)
+    var(--mantine-color-teal-9) 5%,
+    var(--lcars-surface)
   );
 }
 
 .sessions-table tbody tr:hover {
   background: color-mix(
     in srgb,
-    var(--mantine-color-cyan-8) 15%,
-    var(--mantine-color-dark-9)
+    var(--mantine-color-teal-8) 15%,
+    var(--lcars-surface)
   ) !important;
 }
 
 .sessions-workspace .session-title-link {
-  color: var(--mantine-color-gray-0);
+  color: var(--lcars-ink);
   font-weight: 600;
 }
 
 .sessions-workspace .session-title-link:hover {
-  color: var(--mantine-color-cyan-3);
+  color: var(--mantine-color-teal-3);
 }
 
 .sessions-issue-groups {
@@ -748,7 +846,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: relative;
   padding: 14px 16px;
   border-bottom: 1px solid var(--mantine-color-default-border);
-  background: var(--mantine-color-dark-9);
+  background: var(--lcars-surface);
 }
 
 .session-mobile-row::before {
@@ -756,8 +854,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: absolute;
   inset-block: 0;
   left: 0;
-  width: 4px;
-  background: var(--mantine-color-cyan-5);
+  width: var(--lcars-spine-width);
+  background: var(--lcars-accent);
 }
 
 .session-card__title > span {
@@ -778,8 +876,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .work-table {
-  color: var(--mantine-color-gray-0);
-  background: var(--mantine-color-dark-9);
+  color: var(--lcars-ink);
+  background: var(--lcars-surface);
 }
 
 .work-table thead {
@@ -787,19 +885,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--mantine-color-dark-8);
+  background: var(--lcars-surface-raised);
 }
 
 .work-table th,
 .work-table td {
-  border-color: var(--mantine-color-default-border);
+  border-color: var(--lcars-hairline);
 }
 
 .work-mobile-row {
   position: relative;
   padding: 14px 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  background: var(--mantine-color-dark-9);
+  border-bottom: 1px solid var(--lcars-hairline);
+  background: var(--lcars-surface);
 }
 
 .work-mobile-row::before {
@@ -807,27 +905,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: absolute;
   inset-block: 0;
   left: 0;
-  width: 4px;
-  background: var(--mantine-color-cyan-5);
+  width: var(--lcars-spine-width);
+  background: var(--lcars-accent);
 }
 
 /* ---- Costs ledger workspace (#255) ---- */
 
 .costs-utilities--mobile {
   display: none;
-}
-
-.costs-workspace {
-}
-
-.costs-workspace__warnings {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-yellow-6) 8%,
-    var(--mantine-color-dark-9)
-  );
 }
 
 .costs-workspace__content {
@@ -857,11 +942,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   gap: 12px;
   padding: 0 16px;
   border-bottom: 1px solid var(--mantine-color-default-border);
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-yellow-8) 5%,
-    var(--mantine-color-dark-9)
-  );
+  background: color-mix(in srgb, var(--lcars-accent) 8%, var(--lcars-surface));
 }
 
 .costs-ledger-section__heading::before {
@@ -869,8 +950,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   position: absolute;
   inset-block: 0;
   left: 0;
-  width: 4px;
-  background: var(--mantine-color-yellow-5);
+  width: var(--lcars-spine-width);
+  background: var(--lcars-accent);
 }
 
 .costs-ledger-section__heading::after {
@@ -883,8 +964,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .costs-ledger-table {
   width: 100%;
-  color: var(--mantine-color-gray-0);
-  background: var(--mantine-color-dark-9);
+  color: var(--lcars-ink);
+  background: var(--lcars-surface);
 }
 
 .costs-ledger-table thead {
@@ -892,7 +973,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--mantine-color-dark-8);
+  background: var(--lcars-surface-raised);
 }
 
 .costs-ledger-table th,
@@ -904,7 +985,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: color-mix(
     in srgb,
     var(--mantine-color-yellow-9) 7%,
-    var(--mantine-color-dark-9)
+    var(--lcars-surface)
   );
 }
 
@@ -912,7 +993,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: color-mix(
     in srgb,
     var(--mantine-color-yellow-8) 16%,
-    var(--mantine-color-dark-9)
+    var(--lcars-surface)
   ) !important;
 }
 
@@ -992,9 +1073,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .queue-workspace {
-  --mantine-color-text: var(--mantine-color-gray-0);
-  --mantine-color-dimmed: var(--mantine-color-dark-2);
-  --mantine-color-default-border: var(--mantine-color-dark-4);
   display: grid;
   grid-template-columns: minmax(21rem, 38%) minmax(0, 1fr);
   gap: 12px;
@@ -1003,7 +1081,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   border: 0;
   overflow: hidden;
   color: var(--mantine-color-text);
-  background: var(--mantine-color-dark-9);
+  background: var(--lcars-surface);
 }
 
 .queue-mobile-bar {
@@ -1020,11 +1098,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-dark-8) 84%,
-    var(--mantine-color-body)
-  );
+  background: var(--lcars-surface);
   padding-right: 12px;
 }
 
@@ -1237,29 +1311,25 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   align-items: center;
   justify-content: center;
   border: 1px solid
-    color-mix(in srgb, var(--mantine-color-indigo-4) 58%, transparent);
+    color-mix(in srgb, var(--mantine-color-blue-4) 58%, transparent);
   border-radius: 50%;
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-indigo-5) 16%,
-    transparent
-  );
+  background: color-mix(in srgb, var(--mantine-color-blue-5) 16%, transparent);
 }
 
 .queue-row-signal > span {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--mantine-color-indigo-4);
+  background: var(--mantine-color-blue-4);
   box-shadow: 0 0 0 3px
-    color-mix(in srgb, var(--mantine-color-indigo-5) 18%, transparent);
+    color-mix(in srgb, var(--mantine-color-blue-5) 18%, transparent);
 }
 
 .queue-muted-items {
   margin-top: 4px;
   padding: 8px 14px;
   color: var(--mantine-color-dimmed);
-  background: color-mix(in srgb, var(--mantine-color-dark-7) 42%, transparent);
+  background: var(--lcars-surface-raised);
   font-size: var(--mantine-font-size-xs);
 }
 
@@ -1272,11 +1342,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-dark-9) 90%,
-    var(--mantine-color-body)
-  );
+  background: var(--lcars-surface);
 }
 
 .queue-detail-card {
@@ -1324,11 +1390,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin: auto calc(-1 * var(--mantine-spacing-lg))
     calc(-1 * var(--mantine-spacing-lg));
   padding: 12px var(--mantine-spacing-lg);
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-dark-8) 94%,
-    var(--mantine-color-body)
-  );
+  background: var(--lcars-surface-raised);
 }
 
 .queue-detail-actions::before {
@@ -1367,13 +1429,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 
   .console-header[data-current] {
-    --lcars-header-accent: var(--mantine-color-orange-6);
     --lcars-elbow-arm: 16px;
     --lcars-elbow-rail: 48px;
     --lcars-elbow-inner-radius: 16px;
     --lcars-elbow-outer-radius: 32px;
-    --mantine-color-text: var(--mantine-color-gray-0);
-    --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
     position: relative;
     grid-template-columns: minmax(13rem, 1fr) max-content;
@@ -1384,7 +1443,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     margin-bottom: 0 !important;
     gap: 0;
     color: var(--mantine-color-text);
-    background: var(--mantine-color-dark-9);
+    background: var(--lcars-surface);
   }
 
   /* The desktop frame owns one uninterrupted elbow across the complete top
@@ -1402,15 +1461,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
       radial-gradient(
           circle at 100% 100%,
           transparent 0 calc(var(--lcars-elbow-inner-radius) - 1px),
-          var(--lcars-header-accent) var(--lcars-elbow-inner-radius)
+          var(--lcars-accent) var(--lcars-elbow-inner-radius)
         )
         var(--lcars-elbow-rail) var(--lcars-elbow-arm) /
         var(--lcars-elbow-inner-radius) var(--lcars-elbow-inner-radius)
         no-repeat,
-      linear-gradient(var(--lcars-header-accent) 0 0) top / 100%
-        var(--lcars-elbow-arm) no-repeat,
-      linear-gradient(var(--lcars-header-accent) 0 0) left /
-        var(--lcars-elbow-rail) 100% no-repeat;
+      linear-gradient(var(--lcars-accent) 0 0) top / 100% var(--lcars-elbow-arm)
+        no-repeat,
+      linear-gradient(var(--lcars-accent) 0 0) left / var(--lcars-elbow-rail)
+        100% no-repeat;
     border-top-left-radius: var(--lcars-elbow-outer-radius);
     pointer-events: none;
   }
@@ -1442,7 +1501,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     white-space: nowrap;
     font-size: clamp(1.35rem, 2.2vw, 1.75rem);
     line-height: 1;
-    color: var(--mantine-color-gray-0) !important;
+    color: var(--lcars-ink) !important;
   }
 
   .console-header[data-current] .lcars-header .mantine-Text-root,
@@ -1458,8 +1517,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     position: relative;
     background: linear-gradient(
       to bottom,
-      var(--lcars-header-accent) 0 var(--lcars-elbow-arm),
-      var(--mantine-color-dark-9) var(--lcars-elbow-arm) 100%
+      var(--lcars-accent) 0 var(--lcars-elbow-arm),
+      var(--lcars-surface) var(--lcars-elbow-arm) 100%
     );
   }
 
@@ -1470,36 +1529,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding-top: 1.25rem;
   }
 
+  /* Desktop docks the labels to each module's trailing edge; the color
+     treatment is the shared flat one from the base rule, not a second,
+     beveled variant of it (#1826). */
   .console-header[data-current] .lcars-nav-pill {
     justify-content: flex-end;
     min-height: 40px;
     padding: 0 12px;
-    border: 0;
-    border-radius: 999px;
     font-size: 0.875rem;
-    color: var(--pill-ink);
-    background: color-mix(
-      in srgb,
-      var(--pill-fill) 62%,
-      var(--mantine-color-dark-9)
-    );
-    box-shadow: inset 0 -3px 0
-      color-mix(in srgb, var(--mantine-color-dark-9) 38%, transparent);
-  }
-
-  .console-header[data-current] .lcars-nav-pill:not([data-active]):hover {
-    color: var(--pill-ink);
-    background: color-mix(
-      in srgb,
-      var(--pill-fill) 82%,
-      var(--mantine-color-dark-9)
-    );
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-active] {
-    box-shadow:
-      inset 0 -3px 0 color-mix(in srgb, var(--pill-ink) 28%, transparent),
-      0 0 0 1px color-mix(in srgb, var(--pill-fill) 70%, white);
   }
 
   /* LCARS controls are modular rather than evenly distributed. The varied
@@ -1538,107 +1575,21 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     border-left: 0;
   }
 
-  .console-header[data-current='deck']
-    .lcars-nav-pill[data-accent='amber'][data-active] {
-    display: inline-flex !important;
-    border-color: var(--mantine-color-orange-8) !important;
-    color: var(--mantine-color-white) !important;
-    background: var(--mantine-color-orange-8) !important;
-  }
+  /* The workspace butts against the header's bottom edge, so it never draws
+     its own line there.
 
-  .console-header[data-current='deck'] .lcars-action-button {
-    display: inline-flex !important;
-    border-color: var(--mantine-color-orange-6) !important;
-    color: var(--mantine-color-orange-5) !important;
-    background: color-mix(
-      in srgb,
-      var(--mantine-color-orange-6) 18%,
-      transparent
-    ) !important;
-  }
-
-  .console-header[data-current='inbox'] {
-    --lcars-header-accent: var(--mantine-color-blue-5);
-  }
-
-  .console-header[data-current='inbox']
-    .lcars-nav-pill[data-accent='blue'][data-active] {
-    border-color: var(--mantine-color-blue-5) !important;
-    color: var(--mantine-color-white) !important;
-    background: var(--mantine-color-blue-5) !important;
-  }
-
-  .console-header[data-current='agents'] {
-    --lcars-header-accent: var(--mantine-color-violet-5);
-  }
-
-  .console-header[data-current='agents']
-    .lcars-nav-pill[data-accent='periwinkle'][data-active] {
-    border-color: var(--mantine-color-violet-5) !important;
-    color: var(--mantine-color-white) !important;
-    background: var(--mantine-color-violet-5) !important;
-  }
-
-  .console-header[data-current='shuttlebay'] {
-    --lcars-header-accent: var(--mantine-color-blue-5);
-  }
-
-  .console-header[data-current='shuttlebay']
-    .lcars-nav-pill[data-accent='blue'][data-active] {
-    border-color: var(--mantine-color-blue-5) !important;
-    color: var(--mantine-color-white) !important;
-    background: var(--mantine-color-blue-5) !important;
-  }
-
-  .console-header[data-current='work'] {
-    --lcars-header-accent: var(--mantine-color-grape-5);
-  }
-
-  .console-header[data-current='work']
-    .lcars-nav-pill[data-accent='violet'][data-active] {
-    border-color: var(--mantine-color-grape-5) !important;
-    color: var(--mantine-color-white) !important;
-    background: var(--mantine-color-grape-5) !important;
-  }
-
-  .console-header[data-current='sessions'] {
-    --lcars-header-accent: var(--mantine-color-cyan-5);
-  }
-
-  .console-header[data-current='sessions']
-    .lcars-nav-pill[data-accent='teal'][data-active] {
-    /* cyan-9, not the lighter cyan-5 the header accent uses: white ink
-       needs the darker tone for AA contrast (#1815). */
-    border-color: var(--mantine-color-cyan-9) !important;
-    color: var(--mantine-color-white) !important;
-    background: var(--mantine-color-cyan-9) !important;
-  }
-
-  .console-header[data-current='costs'] {
-    --lcars-header-accent: var(--mantine-color-yellow-5);
-  }
-
-  .console-header[data-current='costs']
-    .lcars-nav-pill[data-accent='gold'][data-active] {
-    /* yellow-8, not the lighter yellow-5 the header accent uses: white ink
-       needs the darker tone for AA contrast (#1815). */
-    border-color: var(--mantine-color-yellow-8) !important;
-    color: var(--mantine-color-white) !important;
-    background: var(--mantine-color-yellow-8) !important;
-  }
-
-  .agents-workspace {
-    min-height: calc(100vh - 80px);
-    border-top: 0;
-  }
-
-  .sessions-workspace {
-    min-height: calc(100vh - 80px);
-    border-top: 0;
-  }
-
-  .costs-workspace {
-    min-height: calc(100vh - 80px);
+     It deliberately does NOT force `min-height: calc(100vh - 80px)` any
+     more. That made a short route - Sessions with one collapsed group, Costs
+     with three rows - draw a bordered box down the whole viewport with
+     nothing in it, which is most of what read as "disjoint and awkward"
+     on Sessions (#1811). Now the frame ends where its content ends and the
+     console shell below stretches the page instead, on the same ground, so
+     there is nothing to see where there is nothing to show. */
+  .agents-workspace,
+  .sessions-workspace,
+  .costs-workspace,
+  .shuttlebay-workspace,
+  .work-workspace {
     border-top: 0;
   }
 }
@@ -1693,6 +1644,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .inbox-utilities--desktop,
   .agents-utilities--desktop,
   .shuttlebay-utilities--desktop,
+  .work-utilities--desktop,
   .sessions-utilities--desktop,
   .costs-utilities--desktop,
   .task-utilities--desktop,
@@ -1704,6 +1656,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .inbox-utilities--mobile,
   .agents-utilities--mobile,
   .shuttlebay-utilities--mobile,
+  .work-utilities--mobile,
   .sessions-utilities--mobile,
   .costs-utilities--mobile,
   .task-utilities--mobile,
@@ -1740,13 +1693,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
      destination rail moves into the existing overflow menu, preserving a
      useful title bay and 44px controls even at 320px without a second row. */
   .console-header[data-current] {
-    --lcars-header-accent: var(--mantine-color-orange-6);
     --lcars-elbow-arm: 10px;
     --lcars-elbow-rail: 44px;
     --lcars-elbow-inner-radius: 14px;
     --lcars-elbow-outer-radius: 24px;
-    --mantine-color-text: var(--mantine-color-gray-0);
-    --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
     position: relative;
     grid-template-columns: minmax(0, 1fr) max-content;
@@ -1755,7 +1705,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     margin: 0 !important;
     gap: 0;
     color: var(--mantine-color-text);
-    background: var(--mantine-color-dark-9);
+    background: var(--lcars-surface);
   }
 
   .console-header[data-current]::before {
@@ -1768,15 +1718,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
       radial-gradient(
           circle at 100% 100%,
           transparent 0 calc(var(--lcars-elbow-inner-radius) - 1px),
-          var(--lcars-header-accent) var(--lcars-elbow-inner-radius)
+          var(--lcars-accent) var(--lcars-elbow-inner-radius)
         )
         var(--lcars-elbow-rail) var(--lcars-elbow-arm) /
         var(--lcars-elbow-inner-radius) var(--lcars-elbow-inner-radius)
         no-repeat,
-      linear-gradient(var(--lcars-header-accent) 0 0) top / 100%
-        var(--lcars-elbow-arm) no-repeat,
-      linear-gradient(var(--lcars-header-accent) 0 0) left /
-        var(--lcars-elbow-rail) 100% no-repeat;
+      linear-gradient(var(--lcars-accent) 0 0) top / 100% var(--lcars-elbow-arm)
+        no-repeat,
+      linear-gradient(var(--lcars-accent) 0 0) left / var(--lcars-elbow-rail)
+        100% no-repeat;
     border-top-left-radius: var(--lcars-elbow-outer-radius);
     pointer-events: none;
   }
@@ -1802,7 +1752,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     width: 100%;
     max-width: 100%;
     overflow: hidden;
-    color: var(--mantine-color-gray-0) !important;
+    color: var(--lcars-ink) !important;
     font-size: clamp(1rem, 5vw, 1.25rem);
     line-height: 1;
     text-overflow: ellipsis;
@@ -1824,8 +1774,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding: 10px 8px 0 4px;
     background: linear-gradient(
       to bottom,
-      var(--lcars-header-accent) 0 var(--lcars-elbow-arm),
-      var(--mantine-color-dark-9) var(--lcars-elbow-arm) 100%
+      var(--lcars-accent) 0 var(--lcars-elbow-arm),
+      var(--lcars-surface) var(--lcars-elbow-arm) 100%
     );
   }
 
@@ -1864,27 +1814,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     border: 0;
   }
 
-  .console-header[data-current='inbox'],
-  .console-header[data-current='shuttlebay'] {
-    --lcars-header-accent: var(--mantine-color-blue-5);
-  }
-
-  .console-header[data-current='agents'] {
-    --lcars-header-accent: var(--mantine-color-violet-5);
-  }
-
-  .console-header[data-current='work'] {
-    --lcars-header-accent: var(--mantine-color-grape-5);
-  }
-
-  .console-header[data-current='sessions'] {
-    --lcars-header-accent: var(--mantine-color-cyan-5);
-  }
-
-  .console-header[data-current='costs'] {
-    --lcars-header-accent: var(--mantine-color-yellow-5);
-  }
-
   .console-header[data-current] .lcars-command-utilities .mantine-Button-root,
   .console-header[data-current]
     .lcars-command-utilities
@@ -1901,6 +1830,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .inbox-utilities--desktop,
   .agents-utilities--desktop,
   .shuttlebay-utilities--desktop,
+  .work-utilities--desktop,
   .sessions-utilities--desktop,
   .costs-utilities--desktop,
   .task-utilities--desktop,
@@ -1912,6 +1842,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .inbox-utilities--mobile,
   .agents-utilities--mobile,
   .shuttlebay-utilities--mobile,
+  .work-utilities--mobile,
   .sessions-utilities--mobile,
   .costs-utilities--mobile,
   .task-utilities--mobile,
@@ -1934,10 +1865,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .agents-workspace {
     border: 0;
-  }
-
-  .agents-workspace__warnings {
-    padding: 10px 16px;
   }
 
   /* Match the desktop selector's specificity. Without `:has(...)` here,
@@ -1985,17 +1912,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     justify-content: center;
     gap: 6px;
     padding-inline: 12px;
-    color: var(--mantine-color-cyan-3);
+    color: var(--mantine-color-teal-3);
     font-weight: 600;
     border: 1px solid var(--mantine-color-default-border);
     border-radius: var(--mantine-radius-sm);
-    background: color-mix(in srgb, var(--mantine-color-cyan-9) 8%, transparent);
+    background: color-mix(in srgb, var(--mantine-color-teal-9) 8%, transparent);
   }
 
   .mobile-history-disclosure__toggle:hover {
     background: color-mix(
       in srgb,
-      var(--mantine-color-cyan-9) 18%,
+      var(--mantine-color-teal-9) 18%,
       transparent
     );
   }
@@ -2004,13 +1931,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     border: 0;
   }
 
-  .sessions-workspace__warnings {
-    padding: 10px 16px;
-  }
-
-  .sessions-workspace__toolbar {
+  .console-workspace__toolbar {
     min-height: 56px;
-    padding: 6px 16px;
   }
 
   .sessions-view-toggle {
@@ -2091,7 +2013,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .costs-ledger-section + .costs-ledger-section {
     border-left: 0;
-    border-top: 12px solid var(--mantine-color-dark-8);
+    border-top: 12px solid var(--lcars-hairline);
   }
 
   .costs-ledger-section__heading {
@@ -2114,12 +2036,12 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     background: color-mix(
       in srgb,
       var(--mantine-color-yellow-9) 6%,
-      var(--mantine-color-dark-9)
+      var(--lcars-surface)
     );
   }
 
   .costs-ledger-mobile-row:nth-child(even) {
-    background: var(--mantine-color-dark-9);
+    background: var(--lcars-surface);
   }
 
   .costs-ledger-mobile-row::before {
@@ -2127,9 +2049,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     position: absolute;
     inset-block: 8px;
     left: 0;
-    width: 4px;
-    border-radius: 0 8px 8px 0;
-    background: var(--mantine-color-yellow-5);
+    width: var(--lcars-spine-width);
+    background: var(--lcars-accent);
   }
 
   .costs-ledger-mobile-row__identity a {
@@ -2211,7 +2132,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     justify-content: space-between;
     gap: 8px;
     padding-right: 8px;
-    background: var(--mantine-color-dark-9);
+    background: var(--lcars-surface);
     border-bottom: 1px solid var(--mantine-color-default-border);
   }
 
@@ -2239,7 +2160,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding: 2px 12px 0;
     box-sizing: border-box;
     border-bottom: 1px solid var(--mantine-color-dark-5);
-    background: var(--mantine-color-dark-9);
+    background: var(--lcars-surface);
   }
 
   .queue-mobile-scope {
@@ -2437,17 +2358,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    things in the workspace, ahead of operational context. */
 .deck-inbox-summary {
   min-height: 5rem;
-  padding: 0.8rem 0.9rem 0.8rem 1rem;
+  padding: 0.8rem 0.9rem 0.8rem 1.75rem;
   margin-bottom: var(--mantine-spacing-xl);
-  border: 1px solid var(--mantine-color-default-border);
-  border-left: 8px solid var(--mantine-color-blue-6);
-  border-radius: var(--mantine-radius-md);
-  background: color-mix(in srgb, var(--mantine-color-blue-9) 22%, transparent);
+  border: 1px solid var(--lcars-hairline);
+  background: color-mix(in srgb, var(--lcars-accent) 10%, var(--lcars-surface));
 }
 
 .deck-inbox-summary__count {
   min-width: 2.4rem;
-  color: var(--mantine-color-blue-4);
+  color: var(--lcars-accent);
   font-family: var(--font-display), sans-serif;
   font-size: 2.3rem;
   line-height: 1;
@@ -2463,6 +2382,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   text-transform: uppercase;
 }
 
+/* Anchors that act as buttons take the same flat, accent-driven treatment as
+   every other control (see "Operational controls"). They used a hardcoded
+   blue, so a Bridge full of amber chrome answered every action in a color
+   belonging to a different destination (#1815). */
 .deck-inbox-summary__action,
 .operations-primary-action {
   display: inline-flex;
@@ -2471,31 +2394,55 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   justify-content: center;
   min-height: 2.35rem;
   padding-inline: 0.9rem;
-  color: var(--mantine-color-white);
-  background: var(--mantine-color-blue-7);
+  border: 0;
   border-radius: 999px;
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   text-decoration: none;
 }
 
-.deck-inbox-summary__action:hover,
+/* The signpost's action is the Bridge's one primary control, so it alone
+   gets full signal strength. */
+.deck-inbox-summary__action {
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
+}
+
+.deck-inbox-summary__action:hover {
+  color: var(--lcars-ink-on-accent);
+  background: color-mix(in srgb, var(--lcars-accent) 82%, white);
+  text-decoration: none;
+}
+
+/* Row actions repeat once per list item. At full strength a Bridge with a
+   dozen sessions became a column of identical solid blocks — on a phone,
+   where each one is a full-width bar, a wall of them. Secondary strength
+   keeps them clearly actionable without letting the list's repeated control
+   outshout the page's single primary one. */
+.operations-primary-action {
+  color: var(--lcars-ink-on-muted);
+  background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
+}
+
 .operations-primary-action:hover {
-  color: var(--mantine-color-white);
-  background: var(--mantine-color-blue-6);
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
   text-decoration: none;
 }
 
 .deck-inbox-summary[data-empty] {
-  border-left-color: var(--mantine-color-default-border);
+  border-left-color: var(--lcars-hairline);
 }
 
 .deck-inbox-summary[data-empty] .mantine-Text-root {
-  color: var(--mantine-color-dimmed);
+  color: var(--lcars-ink-dim);
 }
 
 .deck-inbox-summary[data-empty] .deck-inbox-summary__action {
-  color: var(--mantine-color-blue-4);
-  background: transparent;
-  border: 1px solid var(--mantine-color-blue-7);
+  color: var(--lcars-accent);
+  background: color-mix(in srgb, var(--lcars-accent) 20%, var(--lcars-surface));
 }
 
 /* Action-first Bridge rows: the result or task action has a stable right
@@ -2619,7 +2566,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    state block, distinct from the live issue content below it. */
 .work-spec-snapshot {
   border-left: 3px solid var(--mantine-color-dark-4);
-  background: color-mix(in srgb, var(--mantine-color-dark-8) 72%, transparent);
+  background: var(--lcars-surface-raised);
   padding: 8px 12px;
   border-radius: 4px;
 }

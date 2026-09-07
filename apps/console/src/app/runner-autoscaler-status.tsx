@@ -1,6 +1,6 @@
 'use client';
 
-import { Anchor, Badge, Group, Paper, Stack, Text } from '@mantine/core';
+import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 
 import type {
@@ -8,7 +8,6 @@ import type {
   AutoscalerStatusResult,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
-import { Eyebrow } from './eyebrow';
 
 const POLL_INTERVAL_MS = 10_000;
 const STALENESS_MS = 30_000;
@@ -57,10 +56,8 @@ function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
   const busy = status.runners.filter((runner) => runner.state === 'busy');
   const idle = status.runners.length - busy.length;
   return (
-    <Paper
-      withBorder
-      radius="md"
-      p="sm"
+    <div
+      className="console-workspace__section shuttlebay-scale-set"
       data-testid={`autoscaler-scale-set-${status.scaleSet}`}
     >
       <Stack gap={4}>
@@ -112,13 +109,16 @@ function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
           </Group>
         )}
       </Stack>
-    </Paper>
+    </div>
   );
 }
 
 function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
   return (
-    <Paper withBorder radius="md" p="sm" data-testid="queue-executor-status">
+    <div
+      className="console-workspace__section shuttlebay-scale-set"
+      data-testid="queue-executor-status"
+    >
       <Group gap="xs" wrap="wrap">
         <Text size="sm" fw={700}>
           Queue executor
@@ -138,7 +138,7 @@ function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
           · {status.maxConcurrent} max
         </Text>
       </Group>
-    </Paper>
+    </div>
   );
 }
 
@@ -188,14 +188,13 @@ export function RunnerAutoscalerStatus({
     ) : null;
   }
   return (
-    <Stack gap="sm" data-testid="runner-autoscaler-status">
-      <Eyebrow>Runner autoscaler</Eyebrow>
+    <div data-testid="runner-autoscaler-status">
       {result.statuses.map((status) => (
         <ScaleSetRow key={status.scaleSet} status={status} />
       ))}
       {result.queueExecutor && (
         <QueueExecutorRow status={result.queueExecutor} />
       )}
-    </Stack>
+    </div>
   );
 }

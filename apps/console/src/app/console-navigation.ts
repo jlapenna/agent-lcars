@@ -31,3 +31,12 @@ export const CONSOLE_DESTINATIONS: ReadonlyArray<{
   { key: 'sessions', href: '/sessions', label: 'Sessions', accent: 'teal' },
   { key: 'costs', href: '/costs', label: 'Costs', accent: 'gold' },
 ];
+
+/** The one place a route key becomes a color. `ConsolePageShell` stamps the
+ * result as `data-accent`, which global.css's accent table turns into the
+ * inherited `--lcars-accent` every LCARS surface and control reads. */
+export function accentForNavKey(key: NavKey): NavAccent {
+  return (
+    CONSOLE_DESTINATIONS.find((item) => item.key === key)?.accent ?? 'amber'
+  );
+}

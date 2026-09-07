@@ -23,13 +23,18 @@ export function DeckInboxSummary({
   count: number;
   inboxHref: string;
 }) {
+  // The signpost is about the Inbox, so it wears the Inbox's accent rather
+  // than the Bridge's - the one block on the page that deliberately speaks
+  // for another destination. `lcars-panel` gives it that accent as a spine,
+  // the same device every other panel uses.
   return (
     <Group
       gap="md"
       align="center"
       wrap="wrap"
-      className="deck-inbox-summary"
+      className="deck-inbox-summary lcars-panel"
       data-testid="deck-inbox-summary"
+      data-accent="blue"
       data-empty={count === 0 ? '' : undefined}
     >
       <Text component="span" fw={700} className="deck-inbox-summary__count">

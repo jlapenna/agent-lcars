@@ -1,0 +1,235 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { describe, expect, it } from 'vitest';
+
+import { theme } from './theme';
+
+// See page-shell-contract.test.ts for why this resolves its own directory
+// with fileURLToPath rather than `new URL('.', import.meta.url)`.
+const APP_DIRECTORY = dirname(fileURLToPath(import.meta.url));
+
+function source(name: string): string {
+  return readFileSync(join(APP_DIRECTORY, name), 'utf8');
+}
+
+const GLOBAL_CSS = source('global.css');
+
+/** Declarations only, with comments stripped: the prose in this stylesheet
+ * legitimately quotes the very patterns these rules forbid. */
+const RULES = GLOBAL_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+
+/**
+ * The console's look is a system, not a set of per-route decisions, and it
+ * has drifted back apart several times (#1812, #1815, #1820, #1825) because
+ * nothing failed when a route restated a color, a surface, or a control in
+ * its own terms. These assertions are that failure: each one names a rule of
+ * the system and the drift it is there to stop.
+ */
+describe('LCARS design system contract', () => {
+  describe('one ground', () => {
+    it('resolves the scheme surfaces at Mantine’s own specificity', () => {
+      // Mantine defines these variables on `:root[data-mantine-color-scheme]`
+      // (0,2,0). The bare attribute selector this file used until #1825
+      // scores (0,1,0) and lost every declaration silently, leaving the page
+      // on dark-7 while the shells sat on dark-9.
+      for (const scheme of ['dark', 'light']) {
+        expect(RULES).toContain(`:root[data-mantine-color-scheme='${scheme}']`);
+      }
+      expect(RULES).not.toMatch(
+        /^\[data-mantine-color-scheme='(dark|light)'\] \{/m,
+      );
+    });
+
+    it('paints surfaces and ink from the tokens, never a raw ramp step', () => {
+      // Every surface and every body ink in the file must come from a token.
+      // A raw ramp step is how a second, near-identical black gets into the
+      // app - the exact complaint that started this: "different header vs
+      // body background colors". `color` counts too: a route that restates
+      // its own ink is a route that will not follow the colour scheme.
+      const rawRampSurfaces = [
+        ...RULES.matchAll(/(?:background(?:-color)?|color):[^;]*;/g),
+      ]
+        .map((match) => match[0])
+        .filter((declaration) =>
+          /var\(--mantine-color-(dark-[6789]|gray-[01])\)/.test(declaration),
+        );
+
+      expect(rawRampSurfaces).toEqual([]);
+    });
+
+    it('defines the surface tokens exactly once per scheme', () => {
+      for (const token of [
+        '--lcars-surface:',
+        '--lcars-surface-raised:',
+        '--lcars-hairline:',
+        '--lcars-ink:',
+      ]) {
+        expect(RULES.split(token)).toHaveLength(3);
+      }
+    });
+  });
+
+  describe('flat controls', () => {
+    it('gives no control a lit-from-above bevel or drop shadow', () => {
+      // LCARS controls are areas of color, not raised objects. A shadow with
+      // a vertical offset - `inset 0 -3px` on the nav pills, `inset 0 -2px`
+      // on the header actions - is what read as the "3D aspect" the show
+      // never had (#1826). A purely horizontal inset (an accent spine) and a
+      // zero-offset ring (a signal halo) are not shadows and stay allowed.
+      const verticalShadows = [...RULES.matchAll(/box-shadow:[^;]*;/g)]
+        .map((match) => match[0].replace(/\s+/g, ' '))
+        .filter((declaration) =>
+          /(?:inset\s+)?-?[\d.]+px\s+-?(?!0(?:px)?\b)[\d.]+px/.test(
+            declaration,
+          ),
+        );
+
+      expect(verticalShadows).toEqual([]);
+    });
+
+    it('has no gradient standing in for a lit surface', () => {
+      // The header elbow and the inbox signal bars are built from gradients
+      // as flat color stops; a *radial* highlight or a soft vertical fade on
+      // a control is the thing being excluded here.
+      expect(RULES).not.toMatch(/linear-gradient\([^)]*rgba?\(/);
+    });
+  });
+
+  describe('one accent per page', () => {
+    it('declares each destination accent exactly once', () => {
+      // Before #1825 the desktop and mobile header blocks each restated all
+      // seven routes with `!important`, and had already drifted apart from
+      // the rail's own table.
+      // The table is the set of *bare* `[data-accent='x']` rules. Compound
+      // selectors like `.lcars-header-bar-segment[data-accent='amber']` are
+      // consumers of an accent, not declarations of one.
+      const table = [
+        ...RULES.matchAll(/(^|\n)\[data-accent='(\w+)'\] \{([^}]*)\}/g),
+      ];
+      const declarations = [...RULES.matchAll(/--lcars-accent:/g)];
+
+      // The table, plus the single documented `:root` default that covers
+      // anything rendered outside a route's page shell.
+      expect(declarations).toHaveLength(table.length + 1);
+      expect(RULES).toMatch(
+        /:root \{[^}]*--lcars-accent: var\(--mantine-color-orange-4\);/,
+      );
+      for (const rule of table) {
+        expect(rule[3]).toContain('--lcars-accent:');
+      }
+      expect(table.map((match) => match[2])).toEqual([
+        'amber',
+        'blue',
+        'periwinkle',
+        'violet',
+        'teal',
+        'gold',
+      ]);
+    });
+
+    it('never hardcodes a route accent in a per-route selector', () => {
+      expect(RULES).not.toMatch(/--lcars-header-accent/);
+      expect(RULES).not.toMatch(/\.console-header\[data-current='\w+'\] \{/);
+    });
+  });
+
+  describe('one elbow per page', () => {
+    it('draws the concentric elbow only in the page header', () => {
+      // The elbow is the frame's device. `.lcars-panel::before` used to draw
+      // a half-scale copy of it on every panel, so a route read as nested
+      // chrome rather than one frame around a hierarchy of data (#1827).
+      // Panels get a flat spine instead.
+      const elbowRules = [...RULES.matchAll(/[^{}]*\{[^{}]*\}/g)]
+        .map((match) => match[0])
+        .filter((rule) => rule.includes('border-top-left-radius'));
+
+      expect(elbowRules).not.toEqual([]);
+      for (const rule of elbowRules) {
+        // `.lcars-header::before` is the same elbow at the base breakpoint;
+        // the desktop and mobile blocks replace it with the tapered build.
+        expect(rule).toMatch(
+          /\.lcars-header::before|\.console-header\[data-current\]::before/,
+        );
+      }
+    });
+
+    it('draws every leading-edge accent bar as the one shared spine', () => {
+      // Matched by SHAPE, not by colour: a route that adds its own bar in its
+      // own hardcoded hue would otherwise not look like a spine to this test
+      // at all. That is exactly how the work route arrived with a 4px
+      // off-palette `cyan` bar beside Sessions' 4px teal one and the shared
+      // 6px accent one (#1823).
+      const bars = [...RULES.matchAll(/[^{}]*::before \{[^}]*\}/g)]
+        .map((match) => match[0])
+        .filter(
+          (rule) =>
+            /left:\s*0/.test(rule) &&
+            /\bwidth:/.test(rule) &&
+            // The elbow is built from borders, not a width; it is the one
+            // accent shape that is deliberately not a spine.
+            !rule.includes('border-top-left-radius'),
+        );
+
+      expect(bars).not.toEqual([]);
+      for (const bar of bars) {
+        expect(bar).toContain('var(--lcars-spine-width)');
+        expect(bar).toContain('var(--lcars-accent)');
+      }
+    });
+  });
+
+  describe('palette discipline', () => {
+    it('uses only color families the theme actually defines', () => {
+      // theme.ts overrides Mantine's slots in place and defines no cyan or
+      // indigo, so `var(--mantine-color-cyan-5)` silently resolved to stock
+      // Mantine hues sitting outside the LCARS palette - which is how the
+      // Sessions header ended up a different teal from the Sessions rail
+      // pill (#1815).
+      const defined = new Set([...Object.keys(theme.colors ?? {}), 'white']);
+      const used = new Set(
+        [...GLOBAL_CSS.matchAll(/--mantine-color-([a-z]+)-\d/g)].map(
+          (match) => match[1],
+        ),
+      );
+
+      expect([...used].filter((family) => !defined.has(family))).toEqual([]);
+    });
+  });
+
+  describe('one frame', () => {
+    it('puts every primary destination in the shared workspace', () => {
+      // Shuttlebay and Work rendered straight onto the page ground with no
+      // frame, no warning band and no toolbar while their neighbours had all
+      // three (#1814, #1828).
+      for (const workspace of [
+        'agents/agents-workspace.tsx',
+        'sessions/sessions-workspace.tsx',
+        'costs/costs-workspace.tsx',
+        'shuttlebay/shuttlebay-workspace.tsx',
+        'work/work-workspace.tsx',
+      ]) {
+        expect(source(workspace)).toContain('<ConsoleWorkspace');
+      }
+    });
+
+    it('owns the warning and toolbar bands in one place', () => {
+      expect(RULES).toContain('.console-workspace__warnings {');
+      expect(RULES).toContain('.console-workspace__toolbar {');
+      // Route-specific copies are what drifted; the shared class carries the
+      // appearance and a route class may only arrange what is inside it.
+      for (const band of ['warnings', 'toolbar']) {
+        const routeCopies = [
+          ...RULES.matchAll(
+            new RegExp(`\\.([\\w-]+)-workspace__${band} \\{([^}]*)\\}`, 'g'),
+          ),
+        ].filter(
+          (match) => match[1] !== 'console' && /background/.test(match[2]),
+        );
+
+        expect(routeCopies.map((match) => match[1])).toEqual([]);
+      }
+    });
+  });
+});

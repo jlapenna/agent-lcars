@@ -412,7 +412,7 @@ export function ActionItemCard({
                 )}
                 {item.ciRunning && (
                   <Badge
-                    color="indigo"
+                    color="blue"
                     variant="light"
                     size="sm"
                     className="ci-running-badge"
@@ -461,7 +461,7 @@ export function ActionItemCard({
                 )}
                 {item.ciRunning && (
                   <Badge
-                    color="indigo"
+                    color="blue"
                     variant="light"
                     size="sm"
                     className="ci-running-badge"

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { ConsoleHeader, type ConsoleHeaderProps } from './console-header';
+import { accentForNavKey } from './console-navigation';
 import { ConsolePageShell } from './console-page-shell';
 
 export type ConsoleAppShellProps = ConsoleHeaderProps & {
@@ -25,10 +26,14 @@ export function ConsoleAppShell({
   ...header
 }: ConsoleAppShellProps) {
   return (
-    <ConsolePageShell className={className}>
+    <ConsolePageShell
+      className={className}
+      route={header.current}
+      accent={accentForNavKey(header.current)}
+    >
       <ConsoleHeader {...header} />
       <main className="console-page-content">{children}</main>
-      {footer}
+      {footer ? <div className="console-page-footer">{footer}</div> : null}
     </ConsolePageShell>
   );
 }

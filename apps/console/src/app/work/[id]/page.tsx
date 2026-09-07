@@ -153,7 +153,7 @@ export function SessionsList({
             {session.status ? ` · ${session.status}` : ''}
           </Anchor>
           {pinned && (
-            <Badge size="xs" variant="outline" color="cyan">
+            <Badge size="xs" variant="outline" color="teal">
               pinned
             </Badge>
           )}
