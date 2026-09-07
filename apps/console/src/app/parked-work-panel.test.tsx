@@ -136,6 +136,35 @@ describe('ParkedWorkPanel', () => {
     expect(cancel).not.toHaveBeenCalled();
   });
 
+  it('names the item each row’s controls act on (#1816)', async () => {
+    // The visible label is just "Redispatch" on every row, so with several
+    // parked items a reader could not tell whether it dispatched that row or
+    // the whole section. The accessible name carries the scope.
+    const { redispatch } = renderPanel([
+      item({
+        id: '01M107KR3X6VDH7NZ4JDXZNSS2',
+        title: 'older',
+        updatedAt: '2026-08-27T04:00:00.000Z',
+      }),
+      item({
+        id: '01M107KR3X6VDH7NZ4JDXZNSS3',
+        title: 'newer',
+        updatedAt: '2026-08-27T05:00:00.000Z',
+      }),
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Redispatch newer' }));
+    await waitFor(() =>
+      expect(redispatch).toHaveBeenCalledWith({
+        id: '01M107KR3X6VDH7NZ4JDXZNSS3',
+      }),
+    );
+    expect(redispatch).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole('button', { name: 'Cancel older' }),
+    ).toBeInTheDocument();
+  });
+
   it('shows "lost" when the latest run is lost with no result (#12)', () => {
     renderPanel([item({ latestRunState: 'lost', hasResult: false })]);
     expect(screen.getByText('lost')).toBeInTheDocument();
@@ -148,6 +177,8 @@ describe('ParkedWorkPanel', () => {
       '/task/octo/example/1502',
     );
     expect(screen.queryByRole('button', { name: /redispatch/i })).toBeNull();
+    // Rendering nothing here is what made the rows look inconsistent - some
+    // carried a control and some did not, with no stated reason (#1816).
     expect(
       screen.getByRole('link', { name: /redispatch on github/i }),
     ).toHaveAttribute('href', 'https://github.com/octo/example/issues/1502');

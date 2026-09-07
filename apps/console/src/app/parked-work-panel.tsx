@@ -19,7 +19,14 @@ function githubIssueHref(anchor: { repo: string; issue: number }): string {
   return `https://github.com/${anchor.repo}/issues/${anchor.issue}`;
 }
 
-/** Pure renderer: hidden only when no parked work is present or truncated. */
+/** Pure renderer: hidden only when no parked work is present or truncated.
+ *
+ * Every control here acts on exactly one row, and that was not visible: the
+ * rows were an undivided stack and every button read just "Redispatch", so a
+ * section headed "Parked work (4)" showing one button read as one control
+ * over all of it (#1816). Each row is delimited and its controls name their
+ * own item; the sibling half of that report - rows whose anchor has no native
+ * work id rendering nothing at all - is answered by `githubIssueHref` above. */
 export function ParkedWorkPanel({
   items,
   hasMoreTasks,
@@ -54,11 +61,17 @@ export function ParkedWorkPanel({
           No parked work in the 200 most recently updated tasks.
         </Text>
       ) : (
-        <Stack gap="xs" mt="xs">
+        <Stack gap={0} mt="xs">
           {parked.map((item) => {
             const latest = item.runs[item.runs.length - 1];
             return (
-              <Group key={item.id} justify="space-between" wrap="wrap" gap="sm">
+              <Group
+                key={item.id}
+                className="parked-work-row"
+                justify="space-between"
+                wrap="wrap"
+                gap="sm"
+              >
                 <Stack gap={2}>
                   <Anchor href={summaryHref(item)} size="sm" fw={600}>
                     {item.spec.title}
@@ -73,6 +86,7 @@ export function ParkedWorkPanel({
                   <WorkActions
                     id={item.anchor.workId}
                     state={item.state}
+                    label={item.spec.title}
                     cancel={cancel}
                     redispatch={redispatch}
                   />

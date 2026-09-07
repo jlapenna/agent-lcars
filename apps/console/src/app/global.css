@@ -2406,6 +2406,21 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: color-mix(in srgb, var(--lcars-accent) 20%, var(--lcars-surface));
 }
 
+/* Each parked item is one row with its own controls. Delimiting them is what
+   makes the per-row scope visible; an undivided stack of names above a column
+   of "Redispatch" buttons does not say which button belongs to which item
+   (#1816). Uses the same hairline the workspace frame and the operations rows
+   use. */
+.parked-work-row {
+  padding-block: 0.6rem;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--lcars-hairline) 65%, transparent);
+}
+
+.parked-work-row:last-child {
+  border-bottom: 0;
+}
+
 /* Action-first Bridge rows: the result or task action has a stable right
    edge on desktop, then becomes a full-width tap target on phones. */
 .operations-panel__intro {
