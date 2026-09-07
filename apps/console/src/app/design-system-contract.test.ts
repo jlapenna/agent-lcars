@@ -114,7 +114,7 @@ describe('LCARS design system contract', () => {
       // anything rendered outside a route's page shell.
       expect(declarations).toHaveLength(table.length + 1);
       expect(RULES).toMatch(
-        /:root \{[^}]*--lcars-accent: var\(--mantine-color-orange-4\);/,
+        /:root \{[^}]*--lcars-accent: var\(--lcars-amber\);/,
       );
       for (const rule of table) {
         expect(rule[3]).toContain('--lcars-accent:');
@@ -132,6 +132,66 @@ describe('LCARS design system contract', () => {
     it('never hardcodes a route accent in a per-route selector', () => {
       expect(RULES).not.toMatch(/--lcars-header-accent/);
       expect(RULES).not.toMatch(/\.console-header\[data-current='\w+'\] \{/);
+    });
+
+    it('lets no [data-accent] rule restate a colour', () => {
+      // The header's segment strip did exactly this - five accents spelled as
+      // ramp steps - and had already fallen out of sync with the table by the
+      // time anyone looked (#1829 moved the table onto the palette anchors;
+      // the strip stayed behind). Anything keyed on `data-accent` gets its
+      // colour from the token or not at all.
+      const restated = [
+        ...RULES.matchAll(/[^{}]*\[data-accent=[^{}]*\{[^}]*\}/g),
+      ]
+        .map((match) => match[0])
+        .filter((rule) => /var\(--mantine-color-/.test(rule));
+
+      expect(restated).toEqual([]);
+    });
+
+    it('defines the signal bar once and names its colours', () => {
+      // Four hand-rolled copies with their own hues, stop percentages and
+      // radii, none of which agreed.
+      const definitions = [...RULES.matchAll(/--lcars-signal-stops:/g)];
+      expect(definitions).toHaveLength(1);
+
+      const gradients = [...RULES.matchAll(/linear-gradient\([^;]*;/g)]
+        .map((match) => match[0])
+        .filter((gradient) => /var\(--mantine-color-/.test(gradient));
+
+      expect(gradients).toEqual([]);
+    });
+
+    it('keeps the signal bar a stop list, not a finished gradient', () => {
+      // A `var()` inside a custom property is substituted on the element the
+      // property is DECLARED on. A gradient baked into a `:root` token
+      // therefore resolves any direction placeholder against `:root` and
+      // permanently takes its fallback, so a use site cannot reorient it -
+      // which silently rendered the Inbox's vertical rail horizontally
+      // (Codex review on #1834). Keeping the token a bare stop list makes
+      // that mistake unexpressible.
+      const [declaration] = [
+        ...RULES.matchAll(/--lcars-signal-stops:[^;]*;/g),
+      ].map((match) => match[0]);
+
+      expect(declaration).toBeDefined();
+      expect(declaration).not.toContain('gradient');
+      expect(declaration).not.toContain('to right');
+      expect(declaration).not.toContain('to bottom');
+
+      // ...and every consumer states its own orientation.
+      const consumers = [
+        ...RULES.matchAll(
+          /linear-gradient\([^;]*var\(--lcars-signal-stops\)[^;]*;/g,
+        ),
+      ].map((match) => match[0]);
+
+      expect(consumers.length).toBeGreaterThan(1);
+      for (const consumer of consumers) {
+        expect(consumer).toMatch(
+          /linear-gradient\(\s*to (right|bottom|left|top)/,
+        );
+      }
     });
   });
 
@@ -211,6 +271,29 @@ describe('LCARS design system contract', () => {
         'work/work-workspace.tsx',
       ]) {
         expect(source(workspace)).toContain('<ConsoleWorkspace');
+      }
+    });
+
+    it('puts the message states in the frame too', () => {
+      // Loading, not found and the error boundary rendered bare text on the
+      // page ground under an otherwise complete LCARS header (#1833). They
+      // are not workspaces, but they obey the same rule: content lives inside
+      // the frame.
+      for (const view of ['loading.tsx', 'not-found.tsx', 'error.tsx']) {
+        expect(source(view)).toContain('<ConsoleMessage');
+      }
+      expect(source('console-message.tsx')).toContain('<ConsoleWorkspace');
+    });
+
+    it('leaves no route rendering its content outside a frame', () => {
+      // Every `withConsolePageShell` view either composes a workspace itself
+      // or delegates to one. `/work/schedules` was the last that did neither.
+      for (const view of [
+        'work/page.tsx',
+        'work/schedules/page.tsx',
+        'shuttlebay/page.tsx',
+      ]) {
+        expect(source(view)).toMatch(/<(Work|Shuttlebay)Workspace/);
       }
     });
 
