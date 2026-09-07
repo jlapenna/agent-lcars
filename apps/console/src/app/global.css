@@ -765,6 +765,46 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: none;
 }
 
+/* ---- Work workspace (#1814) ---- */
+
+.work-table-scroll {
+  margin: 0;
+}
+
+.work-table {
+  color: var(--mantine-color-gray-0);
+  background: var(--mantine-color-dark-9);
+}
+
+.work-table thead {
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--mantine-color-dark-8);
+}
+
+.work-table th,
+.work-table td {
+  border-color: var(--mantine-color-default-border);
+}
+
+.work-mobile-row {
+  position: relative;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-dark-9);
+}
+
+.work-mobile-row::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 4px;
+  background: var(--mantine-color-cyan-5);
+}
+
 /* ---- Costs ledger workspace (#255) ---- */
 
 .costs-utilities--mobile {

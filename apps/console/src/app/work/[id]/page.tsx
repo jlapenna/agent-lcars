@@ -5,6 +5,7 @@ import {
   Group,
   Stack,
   Table,
+  TableScrollContainer,
   TableTbody,
   TableTd,
   TableTh,
@@ -73,51 +74,53 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
     );
   }
   return (
-    <Table verticalSpacing="xs" fz="sm">
-      <TableThead>
-        <TableTr>
-          <TableTh>Run</TableTh>
-          <TableTh>State</TableTh>
-          <TableTh>Executor</TableTh>
-          <TableTh>Result</TableTh>
-          <TableTh>Summary</TableTh>
-          <TableTh>Ref</TableTh>
-        </TableTr>
-      </TableThead>
-      <TableTbody>
-        {runs.map((run) => (
-          <TableTr key={run.runId}>
-            <TableTd>{run.runId}</TableTd>
-            <TableTd>{run.state}</TableTd>
-            <TableTd>
-              <Stack gap={0}>
-                <Text size="xs">Queue executor</Text>
-                {run.queue?.state === 'claimed' && run.queue.claimedBy && (
-                  <Text size="xs" c="dimmed">
-                    claimed by {run.queue.claimedBy}
-                  </Text>
-                )}
-              </Stack>
-            </TableTd>
-            <TableTd>
-              {run.result && (
-                <Badge
-                  variant="light"
-                  size="xs"
-                  color={run.result.ok ? 'green' : 'red'}
-                >
-                  {run.result.ok ? 'ok' : 'not ok'}
-                </Badge>
-              )}
-            </TableTd>
-            <TableTd>{run.result?.summary}</TableTd>
-            <TableTd>
-              <RunRef value={run.result?.ref} />
-            </TableTd>
+    <TableScrollContainer minWidth={560} className="work-runs-table-scroll">
+      <Table verticalSpacing="xs" fz="sm">
+        <TableThead>
+          <TableTr>
+            <TableTh>Run</TableTh>
+            <TableTh>State</TableTh>
+            <TableTh>Executor</TableTh>
+            <TableTh>Result</TableTh>
+            <TableTh>Summary</TableTh>
+            <TableTh>Ref</TableTh>
           </TableTr>
-        ))}
-      </TableTbody>
-    </Table>
+        </TableThead>
+        <TableTbody>
+          {runs.map((run) => (
+            <TableTr key={run.runId}>
+              <TableTd>{run.runId}</TableTd>
+              <TableTd>{run.state}</TableTd>
+              <TableTd>
+                <Stack gap={0}>
+                  <Text size="xs">Queue executor</Text>
+                  {run.queue?.state === 'claimed' && run.queue.claimedBy && (
+                    <Text size="xs" c="dimmed">
+                      claimed by {run.queue.claimedBy}
+                    </Text>
+                  )}
+                </Stack>
+              </TableTd>
+              <TableTd>
+                {run.result && (
+                  <Badge
+                    variant="light"
+                    size="xs"
+                    color={run.result.ok ? 'green' : 'red'}
+                  >
+                    {run.result.ok ? 'ok' : 'not ok'}
+                  </Badge>
+                )}
+              </TableTd>
+              <TableTd>{run.result?.summary}</TableTd>
+              <TableTd>
+                <RunRef value={run.result?.ref} />
+              </TableTd>
+            </TableTr>
+          ))}
+        </TableTbody>
+      </Table>
+    </TableScrollContainer>
   );
 }
 
