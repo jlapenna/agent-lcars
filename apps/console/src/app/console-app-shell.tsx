@@ -28,7 +28,7 @@ export function ConsoleAppShell({
     <ConsolePageShell className={className}>
       <ConsoleHeader {...header} />
       <main className="console-page-content">{children}</main>
-      {footer}
+      {footer && <div className="console-page-footer">{footer}</div>}
     </ConsolePageShell>
   );
 }

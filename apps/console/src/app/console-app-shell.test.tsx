@@ -26,6 +26,40 @@ describe('ConsoleAppShell', () => {
     expect(screen.getByRole('main')).toHaveTextContent('Route content');
   });
 
+  it('wraps a route footer so it can pin to the viewport bottom on a short page', () => {
+    const { container } = render(
+      <MantineProvider>
+        <ConsoleAppShell
+          current="sessions"
+          title="Session detail"
+          subtitle="A streamed archive record"
+          footer={<p>Footer actions</p>}
+        >
+          <p>Route content</p>
+        </ConsoleAppShell>
+      </MantineProvider>,
+    );
+
+    const footer = container.querySelector('.console-page-footer');
+    expect(footer).toHaveTextContent('Footer actions');
+  });
+
+  it('omits the footer wrapper when a route has no footer', () => {
+    const { container } = render(
+      <MantineProvider>
+        <ConsoleAppShell
+          current="deck"
+          title="Bridge"
+          subtitle="Console overview"
+        >
+          <p>Route content</p>
+        </ConsoleAppShell>
+      </MantineProvider>,
+    );
+
+    expect(container.querySelector('.console-page-footer')).toBeNull();
+  });
+
   it('marks the shared header as a streamed fallback', () => {
     const { container } = render(
       <MantineProvider>

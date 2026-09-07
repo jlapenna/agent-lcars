@@ -463,9 +463,30 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --mantine-color-dimmed: var(--mantine-color-gray-5);
 }
 
+/* A route's optional footer (Quick Task/theme/sign-out on the task and
+   session detail pages, see console-footer.tsx) is meant to read as
+   bottom-of-page chrome. Without this, a short detail page (e.g. a session
+   with no transcript yet) left it floating just below the header/content
+   with a dead gap filling the rest of the viewport underneath -
+   structurally and visually disconnected from the layout above it (#1811).
+   Stretching the shell to the full viewport and letting the content area
+   grow pins the footer to the viewport bottom on a short page while still
+   flowing directly after the content on a page that already exceeds the
+   viewport, matching an ordinary sticky-footer layout. */
 .console-page-shell {
+  display: flex;
+  min-height: 100vh;
   width: 100%;
   max-width: none;
+  flex-direction: column;
+}
+
+.console-page-content {
+  flex: 1 1 auto;
+}
+
+.console-page-footer {
+  flex: 0 0 auto;
 }
 
 .console-workspace {
