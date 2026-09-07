@@ -1437,3 +1437,22 @@ func TestOrchestratorConfigRejectsNegativeRunnerCPUs(t *testing.T) {
 		t.Fatalf("expected invalid runner_cpus error, got %v", err)
 	}
 }
+
+func TestOrchestratorConfigParsesMemorySafetyMarginMax(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    memory_safety_margin_max: 6g", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Raw.Fleet.Placement.MemorySafetyMarginMax; got != "6g" {
+		t.Fatalf("MemorySafetyMarginMax = %q, want 6g", got)
+	}
+}
+
+func TestOrchestratorConfigRejectsInvalidMemorySafetyMarginMax(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    memory_safety_margin_max: lots", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "memory_safety_margin_max") {
+		t.Fatalf("expected memory_safety_margin_max error, got %v", err)
+	}
+}

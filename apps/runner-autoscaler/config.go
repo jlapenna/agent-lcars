@@ -123,6 +123,9 @@ type Config struct {
 	// memory that placement leaves outside declared runner reservations. A
 	// value of 0.10 keeps ten percent free; zero selects the default.
 	MemorySafetyMargin float64
+	// MemorySafetyMarginMaxBytes caps MemorySafetyMargin's share in absolute
+	// bytes (fleet.placement.memory_safety_margin_max); zero means no cap.
+	MemorySafetyMarginMaxBytes int64
 	// RunnerCgroupParent is a homelab addition (agent-lcars#1700): the
 	// systemd slice every runner container is created under, resolved from
 	// fleet.placement.runner_cgroup_parent by

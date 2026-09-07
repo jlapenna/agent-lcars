@@ -219,6 +219,11 @@ type FleetPlacementFile struct {
 	// MemorySafetyMargin is the fraction of Docker-reported physical host
 	// memory that aggregate runner reservations may not consume.
 	MemorySafetyMargin float64 `yaml:"memory_safety_margin,omitempty"`
+	// MemorySafetyMarginMax caps that fraction's share in absolute terms
+	// (e.g. "6g"); empty means no cap. A fraction alone scales with the
+	// host, and ten percent of a 128 GiB box is a 13 GiB floor that keeps a
+	// 2 GiB runner off a host with 12 GiB free (homelab#1208).
+	MemorySafetyMarginMax string `yaml:"memory_safety_margin_max,omitempty"`
 	// RunnerCgroupParent is the systemd slice every runner container is
 	// created under (Docker's --cgroup-parent), so co-tenant runners on one
 	// host are bounded collectively by a slice memory.max / memory.high in
@@ -702,6 +707,11 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	}
 	if math.IsNaN(p.MemorySafetyMargin) || math.IsInf(p.MemorySafetyMargin, 0) || p.MemorySafetyMargin < 0 || p.MemorySafetyMargin >= 1 {
 		return fmt.Errorf("fleet.placement.memory_safety_margin must be greater than 0 and less than 1")
+	}
+	if p.MemorySafetyMarginMax != "" {
+		if n, err := units.RAMInBytes(p.MemorySafetyMarginMax); err != nil || n <= 0 {
+			return fmt.Errorf("fleet.placement.memory_safety_margin_max %q must be a positive size such as 6g", p.MemorySafetyMarginMax)
+		}
 	}
 	// No fleet-named default (agent-lcars#1728): an omitted key and an
 	// explicit empty string both resolve to "" -- no collective host-level
