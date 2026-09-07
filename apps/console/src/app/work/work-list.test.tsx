@@ -29,6 +29,12 @@ function renderList(items: ItemView[]) {
   );
 }
 
+// Below `sm`, WorkList renders a card list instead of the 6-column table
+// (#1814); both branches render unconditionally in jsdom (which doesn't
+// evaluate the visibleFrom/hiddenFrom CSS media queries that keep only one
+// visible in a real browser - see session-table.test.tsx for the same
+// pattern elsewhere in this repo), so any row content shared by both views
+// appears twice and needs getAllBy* rather than getBy*.
 describe('WorkList', () => {
   it('renders parked items first with their state and pipeline', () => {
     renderList([
@@ -40,8 +46,18 @@ describe('WorkList', () => {
     expect(screen.getAllByText('parked')[0]).toBeInTheDocument();
   });
 
+  it('links a title to its item detail page in both the card and table views', () => {
+    renderList([item]);
+    const links = screen.getAllByRole('link', { name: 'Add healthz' });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', `/work/${item.id}`);
+    }
+  });
+
   it('shows an empty state', () => {
     renderList([]);
     expect(screen.getByText(/No work items yet/)).toBeInTheDocument();
+    expect(screen.queryByTestId('work-cards')).toBeNull();
   });
 });
