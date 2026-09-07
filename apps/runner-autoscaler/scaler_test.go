@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2902,5 +2903,68 @@ func TestRunnerHostConfigAppliesCPUQuota(t *testing.T) {
 	}
 	if hc := runnerHostConfig(nil, 0, 0, 0, 0, ""); hc.Resources.NanoCPUs != 0 {
 		t.Fatalf("zero runner_cpus must leave NanoCPUs unset, got %d", hc.Resources.NanoCPUs)
+	}
+}
+
+// A host withheld by its readiness gate must not have its Docker endpoint
+// probed at all: the concurrent probe finishes when its slowest member does,
+// so an away opportunistic host (readiness 0, endpoint black-holed) would
+// otherwise tax EVERY placement in the fleet with the full ping timeout --
+// homelab measured attempts paced at ~6 s by an undocked laptop's 5 s timeout
+// while idle hosts waited (homelab#1208). The gate is a local metric read;
+// it decides first, and only then does the fleet spend a network round trip.
+func TestProbeFleetHostsSkipsDockerPingForReadinessBlockedHost(t *testing.T) {
+	var pings atomic.Int32
+	// A Docker endpoint that accepts the connection and then sits on /_ping
+	// for longer than the probe's 5 s ping budget -- what an undocked
+	// laptop's Tailscale address looks like from the controller.
+	blackhole := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/_ping") {
+			pings.Add(1)
+		}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(8 * time.Second):
+		}
+	}))
+	t.Cleanup(blackhole.Close)
+	roamerClient, err := dockerclient.NewClientWithOpts(
+		dockerclient.WithHost("tcp://"+blackhole.Listener.Addr().String()),
+		dockerclient.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		t.Fatalf("docker client: %v", err)
+	}
+
+	fresh := fmt.Sprintf("host_ci_ready_timestamp_seconds %d\n", time.Now().Unix())
+	scaler := readinessScaler(t, "host_ci_ready", time.Hour,
+		servePlain("host_ci_ready{host=\"roamer\"} 0\n"+fresh))
+	scaler.dockerHosts[0] = DockerHost{Name: "roamer", Client: roamerClient}
+
+	started := time.Now()
+	probe := scaler.probeFleetHosts(context.Background(), scaler.fleet)
+	elapsed := time.Since(started)
+
+	if got := pings.Load(); got != 0 {
+		t.Errorf("readiness-blocked host received %d Docker ping(s); the gate must decide before any probe", got)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("probe took %s; a gate-blocked host must not tax the fleet with its ping timeout", elapsed)
+	}
+	var roamer *hostPingResult
+	for i := range probe.results {
+		if probe.results[i].host.Name == "roamer" {
+			roamer = &probe.results[i]
+		}
+	}
+	if roamer == nil {
+		t.Fatal("roamer missing from probe results")
+	}
+	if roamer.ok || roamer.eligible || !roamer.readinessBlocked || !roamer.gateBlocked {
+		t.Errorf("roamer = ok:%v eligible:%v readinessBlocked:%v gateBlocked:%v; want withheld by the gate, unprobed",
+			roamer.ok, roamer.eligible, roamer.readinessBlocked, roamer.gateBlocked)
+	}
+	if len(probe.reachableHosts) != 1 || probe.reachableHosts[0].Name != "anchor" {
+		t.Errorf("reachable hosts = %v; want only the ungated anchor", probe.reachableHosts)
 	}
 }
