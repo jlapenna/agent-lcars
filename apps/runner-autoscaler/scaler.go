@@ -1901,6 +1901,11 @@ type hostPingResult struct {
 	// readiness gate" from "this host is unreachable", so exhausting the
 	// fleet reports the real cause instead of blaming the network.
 	readinessBlocked bool
+	// gateBlocked marks a host that an operator gate (mains or readiness)
+	// withheld BEFORE any Docker probe ran, so ok=false here means "not
+	// asked", not "did not answer": the reachability gauge and the
+	// unreachable warning must leave it alone.
+	gateBlocked bool
 }
 
 // fleetHostProbe is the concurrent per-host inventory pass pickHostLocked
@@ -1940,6 +1945,36 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 		wg.Add(1)
 		go func(dh DockerHost) {
 			defer wg.Done()
+			// Operator gates first, Docker second. mains/readiness are cheap
+			// local metric reads that already decide the answer for a host
+			// that is away: probing its Docker endpoint afterwards only
+			// spends the full ping timeout below on every placement in the
+			// fleet, because the concurrent probe finishes when its slowest
+			// member does. homelab measured exactly that with its
+			// opportunistic laptop undocked: readiness 0, and every
+			// placement attempt fleet-wide paced at ~6 s by the laptop's
+			// 5 s timeout while idle hosts waited (homelab#1208). A host
+			// withheld here is reported as readiness-blocked, never as
+			// unreachable -- nothing was probed.
+			if placementHosts[dh.Name] {
+				if fleet.mainsRequired[dh.Name] {
+					if mainsErr := a.hostOnMains(ctx, dh.Name); mainsErr != nil {
+						ch <- hostPingResult{host: dh, ok: false, eligible: false,
+							err: fmt.Errorf("mains power required: %w", mainsErr), gateBlocked: true}
+						return
+					}
+				}
+				if fleet.readinessRequired[dh.Name] {
+					if readyErr := a.hostReady(ctx, dh.Name); readyErr != nil {
+						hostReadyGauge.WithLabelValues(dh.Name).Set(0)
+						ch <- hostPingResult{host: dh, ok: false, eligible: false,
+							err:              fmt.Errorf("host readiness required: %w", readyErr),
+							readinessBlocked: true, gateBlocked: true}
+						return
+					}
+					hostReadyGauge.WithLabelValues(dh.Name).Set(1)
+				}
+			}
 			// 5s, not 2s: a cold SSH handshake (ControlPersist=60s expired
 			// since the last placement on this host) can take longer than
 			// 2s and would otherwise flap a perfectly healthy host to
@@ -2103,6 +2138,8 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 				log("Measured placement host load", slog.String("host", res.host.Name), slog.Float64("normalized_load", res.load.normalizedLoad), slog.Int("penalty", res.load.penalty))
 			}
 			hostReachableGauge.WithLabelValues(res.host.Name).Set(1)
+		} else if res.gateBlocked {
+			a.logger.Debug("Host withheld by its operator gate; Docker endpoint not probed", slog.String("host", res.host.Name), slog.String("error", res.err.Error()))
 		} else {
 			hostReachableGauge.WithLabelValues(res.host.Name).Set(0)
 			a.logger.Warn("Docker host is unreachable, skipping placement", slog.String("host", res.host.Name), slog.String("error", res.err.Error()))
