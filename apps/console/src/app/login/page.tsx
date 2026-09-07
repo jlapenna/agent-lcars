@@ -1,10 +1,10 @@
-import { Button, Center, Stack, Text } from '@mantine/core';
+import { Button, Center, Stack, Text, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { auth, signIn, signOut } from '../../auth';
 import { consoleDescription } from '../../lib/deployment';
-import { NavPageLoading } from '../page-loading';
+import { PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 
 async function LoginContent({
@@ -32,6 +32,7 @@ async function LoginContent({
   return (
     <Center mih="60vh">
       <Stack align="center" gap="xs" style={{ maxWidth: 360 }}>
+        <Title order={1}>Agent LCARS</Title>
         <Text c="dimmed" ta="center" mb="md">
           {consoleDescription()}
         </Text>
@@ -76,10 +77,15 @@ async function LoginContent({
   );
 }
 
+// The unauthenticated login route deliberately opts out of the shared
+// `ConsoleHeader` (#1809): its nav rail links to destinations the visitor
+// can't reach yet, which reads as broken rather than useful here. It still
+// goes through `withConsolePageShell` for the common page frame/contract.
 const LoginPageContent = withConsolePageShell(LoginContent, {
   current: 'deck',
   title: 'Agent LCARS',
   subtitle: 'Sign in to the operations console.',
+  hideHeader: true,
 });
 
 // `cacheComponents` requires uncached data access to sit inside a Suspense
@@ -91,16 +97,7 @@ export default function LoginPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   return (
-    <Suspense
-      fallback={
-        <NavPageLoading
-          current="deck"
-          title="Agent LCARS"
-          className="login-page-shell"
-          rows={2}
-        />
-      }
-    >
+    <Suspense fallback={<PageLoading rows={2} />}>
       <LoginPageContent searchParams={searchParams} />
     </Suspense>
   );

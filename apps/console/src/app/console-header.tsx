@@ -24,6 +24,11 @@ export interface ConsoleHeaderProps {
    * move its reachable utilities into the command rail without forcing the
    * other routes into the first responsive-workspace slice. */
   utilities?: ReactNode;
+  /** Suppresses the shared title/nav chrome entirely. The only user is the
+   * unauthenticated login route (#1809): its nav rail links to destinations
+   * the visitor can't reach yet, so the destination list itself is
+   * misleading rather than useful there. */
+  hideHeader?: boolean;
 }
 
 function navHref(
@@ -88,7 +93,10 @@ export function ConsoleHeader({
   archiveQuery,
   repoFilter,
   utilities,
+  hideHeader = false,
 }: ConsoleHeaderProps) {
+  if (hideHeader) return null;
+
   return (
     <Stack
       gap="md"

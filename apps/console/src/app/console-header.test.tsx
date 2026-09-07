@@ -54,6 +54,26 @@ describe('DataWarnings', () => {
   });
 });
 
+describe('ConsoleHeader hideHeader', () => {
+  // #1809: the unauthenticated login route opts out of the shared chrome
+  // entirely because its nav rail links to destinations the visitor can't
+  // reach yet.
+  it('renders nothing when hideHeader is set', () => {
+    const { container } = render(
+      <MantineProvider>
+        <ConsoleHeader
+          current="deck"
+          title="Agent LCARS"
+          subtitle="Sign in"
+          hideHeader
+        />
+      </MantineProvider>,
+    );
+
+    expect(container.querySelector('.console-header')).toBeNull();
+  });
+});
+
 describe('ConsoleHeader nav rail', () => {
   it('places route utilities beside the global navigation', () => {
     const view = render(
