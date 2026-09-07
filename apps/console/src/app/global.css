@@ -1435,7 +1435,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     --lcars-elbow-outer-radius: 32px;
     display: grid;
     position: relative;
-    grid-template-columns: minmax(13rem, 1fr) max-content;
+    grid-template-columns: minmax(0, 1fr) max-content;
     /* Fixed, border-box Bridge-header geometry keeps the shared shell stable
        across route copy, font metrics, and browser rendering differences. */
     height: 80px;
@@ -1539,36 +1539,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     font-size: 0.875rem;
   }
 
-  /* LCARS controls are modular rather than evenly distributed. The varied
-     lengths create the console's characteristic visual rhythm while keeping
-     every label on one line. */
-  .console-header[data-current] .lcars-nav-pill[data-destination='deck'] {
-    min-width: 5.25rem;
-  }
+  /* LCARS controls are modular rather than evenly distributed, and the
+     destination labels are already different lengths, so the rail gets its
+     rhythm for free. It used to be pinned by a per-destination `min-width`
+     table instead — 39.25rem of fixed pills that, added to the title bay's
+     own 13rem minimum and the utility cluster, needed 1099px of header. At
+     1024px, an extremely ordinary laptop and iPad-landscape width, the
+     document overflowed its viewport horizontally on five of seven routes.
+     The e2e mobile-header suite asserts exactly that invariant but only at
+     320/390/768, so it never saw it (#1830).
 
-  .console-header[data-current] .lcars-nav-pill[data-destination='inbox'] {
-    min-width: 5.75rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='agents'] {
-    min-width: 5rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='shuttlebay'] {
-    min-width: 7.5rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='work'] {
-    min-width: 4.5rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='sessions'] {
-    min-width: 6.5rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='costs'] {
-    min-width: 4.75rem;
-  }
+     Sizing the pills to their labels and letting the title bay give up all
+     its slack makes the rail fit whatever it is given, with no width tier to
+     keep in sync. */
 
   .console-header[data-current] .lcars-command-utilities {
     align-self: center;
@@ -1596,7 +1579,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 @media (min-width: 48em) and (max-width: 63.99em) {
   .console-header[data-current] {
-    grid-template-columns: minmax(11rem, 1fr) max-content;
+    grid-template-columns: minmax(0, 1fr) max-content;
   }
 
   .console-header[data-current] .lcars-nav {
@@ -1605,28 +1588,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-header[data-current] .lcars-nav-pill {
     padding-inline: 10px;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='deck'],
-  .console-header[data-current] .lcars-nav-pill[data-destination='inbox'],
-  .console-header[data-current] .lcars-nav-pill[data-destination='agents'] {
-    min-width: 4.5rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='shuttlebay'] {
-    min-width: 6.25rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='work'] {
-    min-width: 3.75rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='sessions'] {
-    min-width: 5.25rem;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-destination='costs'] {
-    min-width: 4.25rem;
   }
 
   .console-header[data-current]

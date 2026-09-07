@@ -12,6 +12,26 @@ const PHONE_VIEWPORTS = [
   { width: 390, height: 844 },
 ] as const;
 const TABLET_VIEWPORT = { width: 768, height: 1024 } as const;
+/* 1024px is where the full desktop destination rail first appears. It is also
+   an extremely ordinary laptop and iPad-landscape width, and the header
+   overflowed it horizontally on five of seven routes for as long as the rail
+   used a fixed per-destination width table (#1830). The phone and tablet
+   cases above never saw it, and neither did the 1280px default viewport: the
+   bug lived in the gap between them. */
+const NARROW_DESKTOP_VIEWPORT = { width: 1024, height: 800 } as const;
+/* The console's destinations, in rail order (see CONSOLE_DESTINATIONS in
+   console-navigation.ts). Spelled out here the same way
+   lcars-interaction-states.spec.ts does rather than imported, so the e2e
+   project stays independent of the console's own source. */
+const CONSOLE_DESTINATIONS = [
+  'Bridge',
+  'Inbox',
+  'Agents',
+  'Shuttlebay',
+  'Work',
+  'Sessions',
+  'Costs',
+] as const;
 
 const AUTHENTICATED_VIEWS = [
   { name: 'Bridge', path: '/', current: 'deck' },
@@ -175,4 +195,26 @@ test.describe('shared mobile header on every console page and view @mobile-layou
     expect(overflowBox).not.toBeNull();
     expect(Math.abs(refreshBox!.y - overflowBox!.y)).toBeLessThanOrEqual(1);
   });
+
+  for (const view of AUTHENTICATED_VIEWS) {
+    test(`fits ${view.name} in a ${NARROW_DESKTOP_VIEWPORT.width}px viewport`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(NARROW_DESKTOP_VIEWPORT);
+      await setE2eAdminUser(page);
+      await page.goto(view.path);
+      await expectOneSharedMobileHeader(page, view.current);
+
+      // Every destination stays reachable on the rail at this width; nothing
+      // is dropped from it, and nothing is pushed off the side of the
+      // document to make room. `expectOneSharedMobileHeader` above asserts
+      // the document width itself.
+      const rail = page.locator('nav[aria-label="Console sections"]');
+      for (const name of CONSOLE_DESTINATIONS) {
+        await expect(
+          rail.getByRole('link', { name, exact: true }),
+        ).toBeVisible();
+      }
+    });
+  }
 });
