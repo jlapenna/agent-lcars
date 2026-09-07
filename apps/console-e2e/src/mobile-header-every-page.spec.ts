@@ -125,15 +125,24 @@ test.describe('shared mobile header on every console page and view @mobile-layou
       expect(Math.abs(refreshBox!.y - overflowBox!.y)).toBeLessThanOrEqual(1);
     });
 
-    test(`renders the inherited header on login at ${viewport.width}px`, async ({
+    test(`hides the shared nav header on login at ${viewport.width}px`, async ({
       page,
     }) => {
       await page.setViewportSize(viewport);
       await page.goto('/login');
-      await expectOneSharedMobileHeader(page, 'deck');
+      await expect(page.locator('.console-header')).toHaveCount(0);
+      await expect(
+        page.getByRole('heading', { name: 'Agent LCARS' }),
+      ).toBeVisible();
       await expect(
         page.getByRole('button', { name: 'Sign in with GitHub' }),
       ).toBeVisible();
+
+      const widths = await page.evaluate(() => ({
+        document: document.documentElement.scrollWidth,
+        viewport: window.innerWidth,
+      }));
+      expect(widths.document).toBeLessThanOrEqual(widths.viewport);
     });
   }
 

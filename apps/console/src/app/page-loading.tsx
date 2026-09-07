@@ -16,9 +16,11 @@ import { withConsolePageShell } from './with-console-page-shell';
  * rows are uniform, so bars at roughly the right size and count keep the
  * layout from jumping when the real content swaps in.
  *
- * Nested data-only boundaries pass `header={false}`. Every route, including
- * login, uses `NavPageLoading` at its outer boundary so the real shared
- * `ConsoleHeader` structure is always present.
+ * Nested data-only boundaries pass `header={false}`. Every authenticated
+ * route uses `NavPageLoading` at its outer boundary so the real shared
+ * `ConsoleHeader` structure is always present; the unauthenticated login
+ * route opts out of that shared header entirely (#1809) and uses this
+ * generic fallback directly instead.
  */
 export function PageLoading({
   rows = 5,
