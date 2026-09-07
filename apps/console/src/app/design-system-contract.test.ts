@@ -224,25 +224,26 @@ describe('LCARS design system contract', () => {
   });
 
   describe('square panels', () => {
-    it('lets no panel override the theme\u2019s square default', () => {
+    it('lets no Card or Paper override the theme\u2019s square default', () => {
       // `theme.ts` defaults Card and Paper to `radius: 0` - the curve on an
       // LCARS screen belongs to the elbow. A call site passing `radius="md"`
       // silently opts back out, which is how six panels kept rounded corners
       // inside the square frame after #1827 (#1836).
+      //
+      // Scoped to Card/Paper openings on purpose. The square rule is about
+      // PANELS; capsule ends are the correct idiom for a control or a tag,
+      // and `theme.ts` deliberately gives Badge `radius: 'xl'`. An app-wide
+      // scan for `radius=` would fail Verify on a legitimate rounded Badge,
+      // Avatar or Skeleton (Codex review on #1842).
       const offenders: string[] = [];
       for (const file of componentFiles(APP_DIRECTORY)) {
         const contents = readFileSync(file, 'utf8');
-        for (const match of contents.matchAll(/radius=\{?['"]?(\w+)/g)) {
-          // Skeletons are loading placeholders, not panels.
-          if (
-            /Skeleton/.test(
-              contents.slice(Math.max(0, match.index - 200), match.index),
-            )
-          ) {
-            continue;
-          }
-          if (match[1] !== '0') {
-            offenders.push(`${file.split('/app/')[1]}: radius=${match[1]}`);
+        for (const opening of contents.matchAll(/<(Card|Paper)\b([^>]*)>/g)) {
+          const radius = opening[2].match(/radius=\{?['"]?([\w.]+)/);
+          if (radius && radius[1] !== '0') {
+            offenders.push(
+              `${file.split('/app/')[1]}: <${opening[1]} radius=${radius[1]}>`,
+            );
           }
         }
       }
