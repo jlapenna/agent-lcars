@@ -11,6 +11,15 @@ function summaryHref(item: WorkSummary): string {
   return `/task/${owner}/${repo}/${item.anchor.issue}`;
 }
 
+/** A GitHub-anchored parked item has no native `workId` for `redispatch`
+ *  (see `workIdSchema`), so it never gets the native `WorkActions` button
+ *  a native item does -- it can look, at a glance, like redispatch is
+ *  broken for every row but the last (#1816). Point at the one recovery
+ *  step that actually works for this anchor instead of rendering nothing. */
+function githubIssueHref(anchor: { repo: string; issue: number }): string {
+  return `https://github.com/${anchor.repo}/issues/${anchor.issue}`;
+}
+
 /** Pure renderer: hidden only when no parked work is present or truncated. */
 export function ParkedWorkPanel({
   items,
@@ -62,13 +71,24 @@ export function ParkedWorkPanel({
                     {formatRelativeTime(item.updatedAt)}
                   </Text>
                 </Stack>
-                {'workId' in item.anchor && (
+                {'workId' in item.anchor ? (
                   <WorkActions
                     id={item.anchor.workId}
                     state={item.state}
                     cancel={cancel}
                     redispatch={redispatch}
                   />
+                ) : (
+                  <Anchor
+                    href={githubIssueHref(item.anchor)}
+                    target="_blank"
+                    rel="noreferrer"
+                    size="xs"
+                    c="dimmed"
+                  >
+                    Redispatch on GitHub (remove and re-add its{' '}
+                    <code>agent:*</code> label) ↗
+                  </Anchor>
                 )}
               </Group>
             );
