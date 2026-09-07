@@ -222,6 +222,51 @@ describe('RunnerAutoscalerStatus', () => {
     expect(screen.getByTestId('autoscaler-runner-runner-b')).toHaveTextContent(
       'runner-b on spark · job-42',
     );
+    expect(screen.getByTestId('autoscaler-runner-runner-a')).toHaveTextContent(
+      'runner-a on janeway · idle',
+    );
+  });
+
+  it('gives each autoscaler its own section when several are registered', () => {
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{
+            warnings: [],
+            statuses: [
+              {
+                schemaVersion: 1,
+                scaleSet: 'lcars-ci',
+                registration: 'primary',
+                queuedJobs: 0,
+                minRunners: 0,
+                maxRunners: 2,
+                draining: false,
+                updatedAt: new Date().toISOString(),
+                runners: [],
+              },
+              {
+                schemaVersion: 1,
+                scaleSet: 'lcars-arm64',
+                registration: 'primary',
+                queuedJobs: 0,
+                minRunners: 0,
+                maxRunners: 2,
+                draining: false,
+                updatedAt: new Date().toISOString(),
+                runners: [],
+              },
+            ],
+          }}
+        />
+      </MantineProvider>,
+    );
+
+    const ci = screen.getByTestId('autoscaler-scale-set-lcars-ci');
+    const arm64 = screen.getByTestId('autoscaler-scale-set-lcars-arm64');
+    expect(ci).not.toBe(arm64);
+    expect(ci.contains(arm64)).toBe(false);
+    expect(arm64.contains(ci)).toBe(false);
   });
 
   it('makes a telemetry read failure visible without adding empty panel chrome', () => {

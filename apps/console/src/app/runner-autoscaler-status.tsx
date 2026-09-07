@@ -1,6 +1,6 @@
 'use client';
 
-import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
+import { Anchor, Badge, Group, Paper, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 
 import type {
@@ -49,63 +49,78 @@ export function expireAutoscalerStatuses(
   };
 }
 
+/** Each autoscaler (scale set) is its own bordered section so a fleet with
+ * several queues reads as distinct panels rather than one run-on list -
+ * every runner is shown here, not just the busy ones, so the panel doubles
+ * as "what task is this queue's capacity spending right now?". */
 function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
   const busy = status.runners.filter((runner) => runner.state === 'busy');
   const idle = status.runners.length - busy.length;
   return (
-    <Stack gap={2} data-testid={`autoscaler-scale-set-${status.scaleSet}`}>
-      <Group gap="xs" wrap="wrap">
-        {status.registrationUrl ? (
-          <Anchor
-            href={status.registrationUrl}
-            target="_blank"
-            rel="noreferrer"
-            size="sm"
-            fw={600}
-            data-testid={`autoscaler-registration-${status.scaleSet}`}
-          >
-            {status.scaleSet}
-          </Anchor>
-        ) : (
-          <Text size="sm" fw={600}>
-            {status.scaleSet}
-          </Text>
-        )}
-        {status.draining && (
-          <Badge color="yellow" size="xs">
-            draining
-          </Badge>
-        )}
-        <Text size="xs" c="dimmed">
-          {status.queuedJobs} queued · {busy.length} busy · {idle} idle ·{' '}
-          {status.maxRunners} max
-        </Text>
-      </Group>
-      {busy.length > 0 && (
+    <Paper
+      withBorder
+      radius="md"
+      p="sm"
+      data-testid={`autoscaler-scale-set-${status.scaleSet}`}
+    >
+      <Stack gap={4}>
         <Group gap="xs" wrap="wrap">
-          {busy.map((runner) => (
-            <Badge
-              key={runner.name}
-              variant="light"
-              color="blue"
+          {status.registrationUrl ? (
+            <Anchor
+              href={status.registrationUrl}
+              target="_blank"
+              rel="noreferrer"
               size="sm"
-              data-testid={`autoscaler-runner-${runner.name}`}
+              fw={700}
+              data-testid={`autoscaler-registration-${status.scaleSet}`}
             >
-              {runner.name} on {runner.host}
-              {runner.jobId ? ` · ${runner.jobId}` : ''}
+              {status.scaleSet}
+            </Anchor>
+          ) : (
+            <Text size="sm" fw={700}>
+              {status.scaleSet}
+            </Text>
+          )}
+          {status.draining && (
+            <Badge color="yellow" size="xs">
+              draining
             </Badge>
-          ))}
+          )}
+          <Text size="xs" c="dimmed">
+            {status.queuedJobs} queued · {busy.length} busy · {idle} idle ·{' '}
+            {status.maxRunners} max
+          </Text>
         </Group>
-      )}
-    </Stack>
+        {status.runners.length > 0 && (
+          <Group gap="xs" wrap="wrap">
+            {status.runners.map((runner) => (
+              <Badge
+                key={runner.name}
+                variant={runner.state === 'busy' ? 'light' : 'outline'}
+                color={runner.state === 'busy' ? 'blue' : 'gray'}
+                size="sm"
+                data-testid={`autoscaler-runner-${runner.name}`}
+              >
+                {runner.name} on {runner.host}
+                {runner.jobId
+                  ? ` · ${runner.jobId}`
+                  : runner.state === 'idle'
+                    ? ' · idle'
+                    : ''}
+              </Badge>
+            ))}
+          </Group>
+        )}
+      </Stack>
+    </Paper>
   );
 }
 
 function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
   return (
-    <Stack gap={2} data-testid="queue-executor-status">
+    <Paper withBorder radius="md" p="sm" data-testid="queue-executor-status">
       <Group gap="xs" wrap="wrap">
-        <Text size="sm" fw={600}>
+        <Text size="sm" fw={700}>
           Queue executor
         </Text>
         <Badge color={status.ready ? 'green' : 'red'} size="xs">
@@ -123,7 +138,7 @@ function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
           · {status.maxConcurrent} max
         </Text>
       </Group>
-    </Stack>
+    </Paper>
   );
 }
 
@@ -173,7 +188,7 @@ export function RunnerAutoscalerStatus({
     ) : null;
   }
   return (
-    <Stack gap="xs" data-testid="runner-autoscaler-status">
+    <Stack gap="sm" data-testid="runner-autoscaler-status">
       <Eyebrow>Runner autoscaler</Eyebrow>
       {result.statuses.map((status) => (
         <ScaleSetRow key={status.scaleSet} status={status} />
