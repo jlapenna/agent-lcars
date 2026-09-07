@@ -38,7 +38,7 @@ Never use `light-dark()` here. Lightning CSS downlevels it into a form this
 build never completes, and the property computes to two space-separated colors
 — invalid, and invalid without an error.
 
-### 2. One accent
+### 2. One accent, and one signal bar
 
 `ConsolePageShell` stamps the route's `data-accent`; one table in `global.css`
 turns that into an inherited `--lcars-accent` that the header elbow, the active
@@ -55,6 +55,32 @@ step breaks that — near-black on `violet-5` measures 2.4:1.
 
 `theme.ts` overrides Mantine's color slots in place and defines no `cyan` or
 `indigo`. Using one resolves to a stock Mantine hue outside the LCARS palette.
+
+The six accents are also named individually (`--lcars-amber` …
+`--lcars-gold`) for the few places that need a _specific_ colour rather than
+the route's. Nothing outside that block may name a ramp step for an accent —
+including a rule keyed on `[data-accent]`, which is how the header's segment
+strip ended up five ramp steps behind the table it exists to preview.
+
+Keep status colour separate from route accent. `--lcars-warning` means
+"something is wrong here" on every destination and deliberately does **not**
+follow `--lcars-accent`; so does the focus ring, because an indicator that
+changes colour per destination is harder to find. A rule reaching for a raw
+`yellow-6` cannot say which of the two it meant.
+
+The **signal bar** — the run of unequal colour segments used as the console's
+decorative readout — is one token, `--lcars-signal-stops`. It is a bare stop
+list, not a finished gradient, and that is load-bearing:
+
+> A `var()` inside a custom property is substituted on the element the
+> property is **declared** on, not on the element that finally uses it.
+
+So baking `linear-gradient(var(--lcars-signal-direction, to right), …)` into a
+`:root` token resolves the direction against `:root`, where it is never set,
+and permanently takes the fallback — a use site setting `to bottom` has no
+effect, silently. That shipped once (#1834) and rendered the Inbox's tall 6px
+rail as three segments across its width. Orientation belongs at the use site,
+spelled out.
 
 ### 3. Flat controls
 
@@ -102,6 +128,20 @@ decides only how information is arranged inside it.
 
 Route-specific rules may not restate the frame's appearance. When three routes
 each carried their own copy of the warning band, they drifted.
+
+This covers more than the seven destinations. Sub-routes use the same frame as
+their parent (`/work/schedules` reuses `WorkWorkspace`), and the message
+states — loading, not found, the error boundary — use `ConsoleMessage`, which
+is the same frame with a panel spine. Anything rendering its content as bare
+text on the page ground is a bug, not a simpler case: it reads as an unstyled
+fragment under an otherwise complete LCARS header.
+
+A route that admits non-admins must not offer admin-only controls. `/work` and
+`/work/schedules` are the only such routes; both pass the session's admin
+status to `ConsoleCommandUtilities` as `includeQuickTask`, because Quick
+task's submission paths (`createQuickTask` → `requireAdmin()`, and
+`/api/quick-task/v1`) reject a `work.operator` who would otherwise use the
+page fine.
 
 ## Verifying a change
 
