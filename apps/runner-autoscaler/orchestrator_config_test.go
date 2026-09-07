@@ -1408,3 +1408,32 @@ func TestDegradationLadderConfigValidatesObservedQueryTemplate(t *testing.T) {
 		t.Fatalf("error = %v, want observed_query complaint", err)
 	}
 }
+
+func TestOrchestratorConfigParsesRunnerCPUs(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"    labels: [e2e]\n",
+		"    labels: [e2e]\n    runner_cpus: 6.5\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range resolved.ScaleSets {
+		if resolved.ScaleSets[i].ScaleSetName == "e2e" {
+			if got := resolved.ScaleSets[i].RunnerCPUs; got != 6.5 {
+				t.Fatalf("RunnerCPUs = %v, want 6.5", got)
+			}
+			return
+		}
+	}
+	t.Fatal("e2e scale set not found in resolved config")
+}
+
+func TestOrchestratorConfigRejectsNegativeRunnerCPUs(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"    labels: [e2e]\n",
+		"    labels: [e2e]\n    runner_cpus: -1\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "invalid runner_cpus") {
+		t.Fatalf("expected invalid runner_cpus error, got %v", err)
+	}
+}

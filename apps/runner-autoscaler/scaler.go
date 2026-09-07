@@ -57,6 +57,9 @@ type Scaler struct {
 	// runnerShmSize: see Config.RunnerShmSize. Zero means Docker's own
 	// default (64m).
 	runnerShmSize int64
+	// runnerNanoCPUs: Config.RunnerCPUs in Docker's NanoCPUs unit (1e9 per
+	// CPU). Zero means no quota (agent-lcars#1835).
+	runnerNanoCPUs int64
 	// runnerCgroupParent: see Config.RunnerCgroupParent. Empty disables the
 	// host-level runner slice (agent-lcars#1700). The controller only
 	// declares this slice's expected memory bound (published in
@@ -2915,12 +2918,18 @@ func runnerEnvironment(encodedJITConfig, host string) []string {
 // non-empty, places the container under the host-level runner slice
 // (agent-lcars#1700) whose collective memory.max/memory.high
 // ensureRunnerSlice maintains; empty omits HostConfig.CgroupParent entirely,
-// leaving Docker's own default.
-func runnerHostConfig(binds []string, memory, pidsLimit, shmSize int64, cgroupParent string) *container.HostConfig {
+// leaving Docker's own default. nanoCPUs > 0 sets the CFS quota
+// (`--cpus`, agent-lcars#1835) so one runner cannot take the whole host's
+// CPU and trip the hard pressure gate for every other lane; zero leaves it
+// unbounded.
+func runnerHostConfig(binds []string, memory, pidsLimit, shmSize, nanoCPUs int64, cgroupParent string) *container.HostConfig {
 	resources := container.Resources{Memory: memory, CgroupParent: cgroupParent}
 	if pidsLimit > 0 {
 		limit := pidsLimit
 		resources.PidsLimit = &limit
+	}
+	if nanoCPUs > 0 {
+		resources.NanoCPUs = nanoCPUs
 	}
 	return &container.HostConfig{
 		Binds:     binds,
@@ -3009,7 +3018,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	}
 
 	binds := runnerBinds(a.fileMounts)
-	hostConfig := runnerHostConfig(binds, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize, a.runnerCgroupParent)
+	hostConfig := runnerHostConfig(binds, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize, a.runnerNanoCPUs, a.runnerCgroupParent)
 
 	c, err := a.createContainerWithImageRecovery(
 		ctx,

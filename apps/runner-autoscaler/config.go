@@ -81,6 +81,14 @@ type Config struct {
 	// /dev/shm than Docker's 64m default) is satisfied by sizing /dev/shm
 	// directly, without also handing the container the host's IPC namespace.
 	RunnerShmSize string
+	// RunnerCPUs is a homelab addition (agent-lcars#1835): optional CPU
+	// quota for spawned runner containers, in CPUs (e.g. 6, 1.5), applied as
+	// Docker's NanoCPUs (`--cpus`). Zero means no quota. Memory got its
+	// ceiling in RunnerMemory; without this a single job whose tooling sizes
+	// its parallelism from the host's core count drives the placement host
+	// straight into the hard CPU/PSI pressure gate and a cooldown that then
+	// refuses every OTHER lane, while the host sits with gigabytes free.
+	RunnerCPUs float64
 	// InferenceMetricsURLs is a per-host URL to probe for inference load
 	// (agent-lcars#1726, generalized from an earlier Spark-specific single
 	// global probe), keyed by Docker host name. Both exposition shapes are

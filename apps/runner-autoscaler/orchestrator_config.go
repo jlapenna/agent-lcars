@@ -336,11 +336,14 @@ type ScaleSetConfigFile struct {
 	// PidsLimit and ShmSize are homelab additions restoring what e2e.yml's
 	// dropped job-level `container:` block carried (homelab#148); see
 	// Config.RunnerPidsLimit / Config.RunnerShmSize.
-	PidsLimit  int64  `yaml:"pids_limit,omitempty"`
-	ShmSize    string `yaml:"shm_size,omitempty"`
-	MinRunners int    `yaml:"min_runners"`
-	MaxRunners int    `yaml:"max_runners"`
-	Weight     int    `yaml:"weight,omitempty"`
+	PidsLimit int64  `yaml:"pids_limit,omitempty"`
+	ShmSize   string `yaml:"shm_size,omitempty"`
+	// RunnerCPUs is the per-runner CPU quota in CPUs (agent-lcars#1835);
+	// see Config.RunnerCPUs. Zero or omitted means no quota.
+	RunnerCPUs float64 `yaml:"runner_cpus,omitempty"`
+	MinRunners int     `yaml:"min_runners"`
+	MaxRunners int     `yaml:"max_runners"`
+	Weight     int     `yaml:"weight,omitempty"`
 	// Priority protects one minimum-service runner for this scale set while
 	// it has pending demand and no runner of its own -- but only when a
 	// lower-priority placement would actually leave it with zero admissible
@@ -953,6 +956,9 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 				return nil, 0, fmt.Errorf("scale set %q has invalid shm_size %q", s.Name, s.ShmSize)
 			}
 		}
+		if s.RunnerCPUs < 0 || math.IsNaN(s.RunnerCPUs) || math.IsInf(s.RunnerCPUs, 0) {
+			return nil, 0, fmt.Errorf("scale set %q has invalid runner_cpus %v", s.Name, s.RunnerCPUs)
+		}
 		fileMounts, err := parseFileMounts(s.Name, s.FileMounts, r.Raw.Fleet.FileMountAllowlist)
 		if err != nil {
 			return nil, 0, err
@@ -972,6 +978,7 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 			RegistrationURL: registrationURL, RunnerGroup: runnerGroup, RegistrationName: registrationName,
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
 			RunnerMemory: s.RunnerMemory, RunnerMemoryReservation: s.RunnerMemoryReservation, RunnerPidsLimit: s.PidsLimit, RunnerShmSize: s.ShmSize,
+			RunnerCPUs: s.RunnerCPUs,
 			MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
 			FileMounts: fileMounts,
 			LogLevel:   r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
