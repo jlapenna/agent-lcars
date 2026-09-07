@@ -13,15 +13,19 @@ import { ConsoleWorkspace } from '../console-workspace';
  * rules below it supply the responsive column behavior.
  */
 export function WorkWorkspace({
+  ariaLabel = 'Work items',
   toolbar,
   children,
 }: {
+  /** `/work/schedules` reuses this frame for the same route accent and the
+   *  same section rhythm, and names its own region. */
+  ariaLabel?: string;
   toolbar?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <ConsoleWorkspace
-      ariaLabel="Work items"
+      ariaLabel={ariaLabel}
       className="work-workspace"
       toolbar={toolbar}
     >

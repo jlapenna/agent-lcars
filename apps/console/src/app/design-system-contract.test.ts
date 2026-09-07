@@ -242,6 +242,29 @@ describe('LCARS design system contract', () => {
       }
     });
 
+    it('puts the message states in the frame too', () => {
+      // Loading, not found and the error boundary rendered bare text on the
+      // page ground under an otherwise complete LCARS header (#1833). They
+      // are not workspaces, but they obey the same rule: content lives inside
+      // the frame.
+      for (const view of ['loading.tsx', 'not-found.tsx', 'error.tsx']) {
+        expect(source(view)).toContain('<ConsoleMessage');
+      }
+      expect(source('console-message.tsx')).toContain('<ConsoleWorkspace');
+    });
+
+    it('leaves no route rendering its content outside a frame', () => {
+      // Every `withConsolePageShell` view either composes a workspace itself
+      // or delegates to one. `/work/schedules` was the last that did neither.
+      for (const view of [
+        'work/page.tsx',
+        'work/schedules/page.tsx',
+        'shuttlebay/page.tsx',
+      ]) {
+        expect(source(view)).toMatch(/<(Work|Shuttlebay)Workspace/);
+      }
+    });
+
     it('owns the warning and toolbar bands in one place', () => {
       expect(RULES).toContain('.console-workspace__warnings {');
       expect(RULES).toContain('.console-workspace__toolbar {');

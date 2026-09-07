@@ -1,5 +1,6 @@
 import { Stack, Text } from '@mantine/core';
 
+import { ConsoleMessage } from './console-message';
 import { withConsolePageShell } from './with-console-page-shell';
 
 /**
@@ -10,13 +11,15 @@ import { withConsolePageShell } from './with-console-page-shell';
  */
 function NotFoundContent() {
   return (
-    <Stack gap="xs" role="status">
-      <Text c="dimmed" size="sm" style={{ maxWidth: '36rem' }}>
-        This session, task, or page doesn&rsquo;t exist — it may have been
-        archived under a different id, or the link predates the current archive
-        window. Pick a section above to get back to live data.
-      </Text>
-    </Stack>
+    <ConsoleMessage ariaLabel="Not found">
+      <Stack gap="xs" role="status">
+        <Text c="dimmed" size="sm" style={{ maxWidth: '36rem' }}>
+          This session, task, or page doesn&rsquo;t exist — it may have been
+          archived under a different id, or the link predates the current
+          archive window. Pick a section above to get back to live data.
+        </Text>
+      </Stack>
+    </ConsoleMessage>
   );
 }
 

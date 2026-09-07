@@ -5,6 +5,7 @@ import { IconAlertTriangle, IconRefresh } from '@tabler/icons-react';
 import { unstable_isUnrecognizedActionError } from 'next/navigation';
 import { useEffect } from 'react';
 
+import { ConsoleMessage } from './console-message';
 import { withConsolePageShell } from './with-console-page-shell';
 
 function ErrorContent({
@@ -21,36 +22,38 @@ function ErrorContent({
   }, [error]);
 
   return (
-    <Stack align="center" gap="xl">
-      <IconAlertTriangle
-        aria-hidden="true"
-        size={64}
-        color="var(--mantine-color-red-6)"
-      />
-      <Stack align="center" gap="xs">
-        <Text c="dimmed" size="lg" ta="center" maw={500}>
-          {isStaleDeploy
-            ? 'The console was redeployed under this tab. Reload the page to pick up the latest version.'
-            : 'The console hit an error rendering this page - likely a GitHub API hiccup. Try again, or check the server logs if it keeps happening.'}
-        </Text>
+    <ConsoleMessage ariaLabel="Console error">
+      <Stack align="center" gap="xl">
+        <IconAlertTriangle
+          aria-hidden="true"
+          size={64}
+          color="var(--mantine-color-red-6)"
+        />
+        <Stack align="center" gap="xs">
+          <Text c="dimmed" size="lg" ta="center" maw={500}>
+            {isStaleDeploy
+              ? 'The console was redeployed under this tab. Reload the page to pick up the latest version.'
+              : 'The console hit an error rendering this page - likely a GitHub API hiccup. Try again, or check the server logs if it keeps happening.'}
+          </Text>
+        </Stack>
+
+        {error.digest && (
+          <Text size="xs" c="dimmed" ff="monospace">
+            Error ID: {error.digest}
+          </Text>
+        )}
+
+        <Group>
+          <Button
+            variant="filled"
+            leftSection={<IconRefresh aria-hidden="true" size={20} />}
+            onClick={() => (isStaleDeploy ? window.location.reload() : reset())}
+          >
+            {isStaleDeploy ? 'Reload page' : 'Try again'}
+          </Button>
+        </Group>
       </Stack>
-
-      {error.digest && (
-        <Text size="xs" c="dimmed" ff="monospace">
-          Error ID: {error.digest}
-        </Text>
-      )}
-
-      <Group>
-        <Button
-          variant="filled"
-          leftSection={<IconRefresh aria-hidden="true" size={20} />}
-          onClick={() => (isStaleDeploy ? window.location.reload() : reset())}
-        >
-          {isStaleDeploy ? 'Reload page' : 'Try again'}
-        </Button>
-      </Group>
-    </Stack>
+    </ConsoleMessage>
   );
 }
 

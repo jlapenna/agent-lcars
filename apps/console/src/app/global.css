@@ -701,6 +701,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   padding: 12px 16px;
 }
 
+/* The console's message states (loading, not found, the error boundary) sit
+   in the same frame as every route, with the panel spine tying them to the
+   Bridge's accent. Before #1833 they rendered as bare text on the page ground
+   under an otherwise complete LCARS header. */
+.console-message__body {
+  padding: 20px 16px 24px 1.75rem;
+}
+
 /* ---- Work items (#1814) ---- */
 
 .work-utilities--mobile {
