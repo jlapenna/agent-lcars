@@ -21,8 +21,12 @@ test.describe('/shuttlebay workspace', () => {
         .getByRole('navigation', { name: 'Console sections' })
         .getByRole('link', { name: 'Shuttlebay' }),
     ).toHaveAttribute('aria-current', 'page');
+    // Shuttlebay used to be the one destination with no Quick task button,
+    // not by design: a `.lcars-command-utilities:has(...)` rule matched the
+    // shared cluster instead of the mobile wrapper inside it and hid the
+    // whole thing from 64em up (#1810).
     await expect(page.getByRole('button', { name: 'Quick task' })).toHaveCount(
-      0,
+      1,
     );
   });
 

@@ -1,4 +1,4 @@
-import { Stack, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -11,20 +11,26 @@ import { DataWarnings } from '../console-header';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { RunnerAutoscalerStatus } from '../runner-autoscaler-status';
 import { withConsolePageShell } from '../with-console-page-shell';
+import { ShuttlebayWorkspace } from './shuttlebay-workspace';
 
 async function ShuttlebayBody() {
   const autoscaler = await getAutoscalerStatuses();
 
   return (
-    <>
-      <DataWarnings warnings={autoscaler.warnings} />
-      <Stack gap="md">
+    <ShuttlebayWorkspace
+      warnings={
+        autoscaler.warnings.length > 0 ? (
+          <DataWarnings warnings={autoscaler.warnings} />
+        ) : undefined
+      }
+      toolbar={
         <Text c="dimmed" size="sm">
           Refreshes automatically every 10 seconds.
         </Text>
-        <RunnerAutoscalerStatus initial={autoscaler} />
-      </Stack>
-    </>
+      }
+    >
+      <RunnerAutoscalerStatus initial={autoscaler} />
+    </ShuttlebayWorkspace>
   );
 }
 

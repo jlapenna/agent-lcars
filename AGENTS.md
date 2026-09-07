@@ -42,6 +42,13 @@ into them: a doctrine document byte-synced across seven repos was
 duplication plus machinery to police the duplication, and it was removed.
 Repo-local facts stay in each member's own `AGENTS.md`.
 
+Changing the console's appearance — `apps/console/src/app/global.css`, the
+theme, or a route shell — means reading
+[docs/console-design-system.md](docs/console-design-system.md) first. The
+console's look is one system, and it has come apart repeatedly by being fixed
+one route at a time; that document states the five rules and
+`design-system-contract.test.ts` fails the build when a change breaks one.
+
 Keep this repository independent from the supersprinklesracing source tree.
 Shared telemetry integration is delivered by baking
 `apps/telemetry-watcher`'s bundle into the shared runner image at

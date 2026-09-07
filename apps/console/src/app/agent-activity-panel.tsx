@@ -41,7 +41,6 @@ import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { Eyebrow } from './eyebrow';
 import { formatCost, formatDuration } from './format';
-import { lcarsPanelStyle } from './lcars';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { SessionStatusLine } from './session-status-line';
@@ -906,7 +905,6 @@ export function AgentActivityPanel({
       padding="md"
       mb="xl"
       className="lcars-panel operations-panel"
-      style={lcarsPanelStyle('amber')}
     >
       <Stack gap="md">
         <Group justify="space-between" wrap="nowrap">

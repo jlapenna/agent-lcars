@@ -1,8 +1,6 @@
 import { Card, Stack, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-import { lcarsPanelStyle } from '../lcars';
-
 /** Shared second-level panel hierarchy for the agent operations workspace. */
 export function AgentOperationsPanel({
   title,
@@ -26,7 +24,6 @@ export function AgentOperationsPanel({
       mb={separated ? 'xl' : undefined}
       data-testid={testId}
       className={`lcars-panel agents-panel ${className}`}
-      style={lcarsPanelStyle('periwinkle')}
     >
       <Stack gap="sm">
         <Title order={2} size="h4">

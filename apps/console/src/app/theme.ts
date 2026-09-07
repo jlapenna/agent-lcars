@@ -155,11 +155,20 @@ export const theme = createTheme({
   },
 
   components: {
+    // Capsule ends are the LCARS idiom for a *control or tag* - a badge, a
+    // rail module, a button.
     Badge: {
       defaultProps: { radius: 'xl' },
     },
+    // ...and square edges are the idiom for a *panel*. A rounded card inside
+    // the square workspace frame, carrying a square accent spine, was three
+    // different corner treatments stacked on one block (#1827). The curve on
+    // an LCARS screen belongs to the elbow, not to every box.
     Card: {
-      defaultProps: { radius: 'lg' },
+      defaultProps: { radius: 0 },
+    },
+    Paper: {
+      defaultProps: { radius: 0 },
     },
   },
 });

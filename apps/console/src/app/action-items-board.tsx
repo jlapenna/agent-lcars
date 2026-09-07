@@ -5,7 +5,6 @@ import { getWatchedRepos } from '../lib/github-client';
 import { repoKey } from '../lib/watched-repo';
 import { RepoBadge } from './agent-activity-panel';
 import type { BoardCard } from './board-card';
-import { lcarsPanelStyle } from './lcars';
 import { QueueWorkspace } from './queue-workspace';
 import { SectionHeading } from './section-heading';
 
@@ -60,7 +59,6 @@ export function BridgeSections({
       padding="md"
       mb="xl"
       className="lcars-panel waiting-on-deploy"
-      style={lcarsPanelStyle('amber')}
       data-testid="waiting-on-deploy"
     >
       <SectionHeading

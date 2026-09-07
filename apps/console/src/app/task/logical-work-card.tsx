@@ -13,7 +13,6 @@ import {
 
 import type { LogicalWork, LogicalWorkState } from '../../lib/logical-work';
 import { PipelineBadge, RepoBadge } from '../agent-activity-panel';
-import { lcarsPanelStyle } from '../lcars';
 import { RunsSection } from './runs-section';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
@@ -55,7 +54,6 @@ export function LogicalWorkCard({
       radius="md"
       padding="md"
       className="lcars-panel"
-      style={lcarsPanelStyle('amber')}
       data-testid="logical-work-card"
     >
       <Stack gap="sm">

@@ -37,12 +37,22 @@ export type ReplyAction = (input: {
 export function WorkActions({
   id,
   state,
+  label,
   cancel,
   redispatch,
   reply,
 }: {
   id: string;
   state: ItemState;
+  /** The item these controls act on, for their accessible names. Every
+   *  action here dispatches exactly one work item, but in a list the visible
+   *  label cannot say so - a column of buttons reading "Redispatch" beneath
+   *  a "Parked work (4)" heading reads as one control over the whole
+   *  section, which is how it was reported (#1816). Naming the item makes
+   *  the scope unambiguous to a screen reader without lengthening the
+   *  button. Omitted on a detail page, where the page itself is the
+   *  subject. */
+  label?: string;
   cancel: WorkAction;
   redispatch: RedispatchAction;
   /** Optional: the dashboard's `ParkedWorkPanel` renders `WorkActions`
@@ -64,6 +74,8 @@ export function WorkActions({
     (state === 'parked' || state === 'done') && reply !== undefined;
 
   if (!canCancel && !canRedispatch && !canReply) return null;
+
+  const named = (action: string) => (label ? `${action} ${label}` : undefined);
 
   const runCancel = () => {
     startTransition(async () => {
@@ -127,6 +139,7 @@ export function WorkActions({
         {canReply && (
           <Button
             size="compact-sm"
+            aria-label={named('Reply to')}
             disabled={isPending || replyText.trim().length === 0}
             loading={isPending}
             onClick={runReply}
@@ -137,6 +150,7 @@ export function WorkActions({
         {canRedispatch && (
           <Button
             size="compact-sm"
+            aria-label={named('Redispatch')}
             disabled={isPending}
             loading={isPending}
             onClick={runRedispatch}
@@ -149,6 +163,7 @@ export function WorkActions({
             variant="subtle"
             color="red"
             size="compact-sm"
+            aria-label={named('Cancel')}
             disabled={isPending}
             loading={isPending}
             onClick={runCancel}
