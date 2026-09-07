@@ -579,6 +579,11 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-ink: var(--mantine-color-gray-0);
   --lcars-ink-dim: var(--mantine-color-dark-2);
   --lcars-ink-on-muted: var(--mantine-color-white);
+  /* Links inside rendered Markdown. A stable link colour, deliberately not
+     the route accent - a link's colour should mean "this is a link", not
+     "this page is Costs". blue-3 clears AA against both the data plane
+     (8.99:1) and the blockquote a comment body sits in (4.72:1). */
+  --lcars-link: var(--mantine-color-blue-3);
 
   --mantine-color-body: var(--lcars-surface);
   --mantine-color-default: var(--lcars-surface);
@@ -610,6 +615,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-ink: var(--mantine-color-dark-9);
   --lcars-ink-dim: var(--mantine-color-gray-6);
   --lcars-ink-on-muted: var(--lcars-ink-on-accent);
+  /* blue-6: 6.24:1 on the ground, 5.28:1 on a light blockquote. */
+  --lcars-link: var(--mantine-color-blue-6);
 
   --mantine-color-body: var(--lcars-surface);
   --mantine-color-default: var(--lcars-surface);
@@ -729,6 +736,28 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    under an otherwise complete LCARS header. */
 .console-message__body {
   padding: 20px 16px 24px 1.75rem;
+}
+
+/* ---- Rendered Markdown (#1843) ----
+   GitHub issue and comment bodies, agent transcript turns, artifact previews.
+   `ConsoleMarkdown` is the only thing that renders these, and until it
+   existed the output carried no class at all - so its links fell through to
+   the browser's own defaults, #0000EE and #9E9EFF. Neither is a colour this
+   palette contains, and both failed WCAG AA: 1.87:1 on the light ground, and
+   4.43:1 for a visited link on the dark plane's blockquote.
+
+   `:visited` has to be stated explicitly. Browsers restrict what a visited
+   rule may change - colour is allowed, which is all this needs - but they do
+   NOT inherit the unvisited colour, so omitting it leaves the default. */
+
+.lcars-markdown a,
+.lcars-markdown a:visited {
+  color: var(--lcars-link);
+}
+
+.lcars-markdown a:hover {
+  color: var(--lcars-link);
+  text-decoration: underline;
 }
 
 /* ---- Work items (#1814) ---- */

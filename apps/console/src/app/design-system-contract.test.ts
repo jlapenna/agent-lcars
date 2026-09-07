@@ -297,6 +297,33 @@ describe('LCARS design system contract', () => {
     });
   });
 
+  describe('rendered markdown', () => {
+    it('renders untrusted Markdown through one component', () => {
+      // Three call sites each constructed their own ReactMarkdown and each
+      // restated the no-rehype-raw security decision in a comment. None gave
+      // the output a class, so every link in a GitHub comment body fell
+      // through to the browser's defaults (#1843).
+      for (const view of [
+        'action-item-card.tsx',
+        'artifact-viewer.tsx',
+        'sessions/[id]/transcript-timeline-view.tsx',
+      ]) {
+        expect(source(view)).toContain('<ConsoleMarkdown');
+        expect(source(view)).not.toContain('<ReactMarkdown');
+      }
+    });
+
+    it('colours markdown links, including :visited', () => {
+      // Browsers do not inherit the unvisited colour into `:visited`, so
+      // omitting it leaves the default #9E9EFF - which is how the only
+      // dark-mode contrast failure in the console came about.
+      expect(RULES).toMatch(/\.lcars-markdown a:visited/);
+      expect(RULES).toMatch(
+        /\.lcars-markdown a[^{]*\{[^}]*color: var\(--lcars-link\)/,
+      );
+    });
+  });
+
   describe('palette discipline', () => {
     it('uses only color families the theme actually defines', () => {
       // theme.ts overrides Mantine's slots in place and defines no cyan or
