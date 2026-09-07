@@ -536,24 +536,32 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-teal: var(--mantine-color-teal-5);
   --lcars-gold: var(--mantine-color-yellow-4);
 
-  /* The LCARS signal bar: a run of unequal colour segments, the console's
-     decorative "system readout" motif. It appeared four times - the Inbox
-     list's right rail, its header underline, the detail action bar's top
-     edge, and the header's own segment strip - each hand-rolled with its own
-     hues, stop percentages and radii. One definition, one set of stops.
-     Orientation is the only thing a use site gets to change. */
   /* A status colour, not a route accent: it means "something is wrong here"
      regardless of which destination you are on, so it deliberately does NOT
      follow `--lcars-accent`. Named so the distinction is visible at the use
      site - a rule reaching for a raw `yellow-6` cannot say which it meant. */
   --lcars-warning: var(--mantine-color-yellow-6);
 
-  --lcars-signal-bar: linear-gradient(
-    var(--lcars-signal-direction, to right),
-    var(--lcars-blue) 0 56%,
-    var(--lcars-violet) 56% 76%,
-    var(--lcars-gold) 76% 100%
-  );
+  /* The LCARS signal bar: a run of unequal colour segments, the console's
+     decorative "system readout" motif. It appeared four times - the Inbox
+     list's right rail, its header underline, the detail action bar's top
+     edge, and the header's own segment strip - each hand-rolled with its own
+     hues, stop percentages and radii. This is the one thing that was actually
+     drifting: the colours, and where they change.
+
+     Deliberately a bare STOP LIST rather than a finished gradient. A `var()`
+     inside a custom property is substituted on the element the property is
+     DECLARED on, not on the element that finally uses it. Baking
+     `linear-gradient(var(--lcars-signal-direction, to right), ...)` in here
+     therefore resolves the direction against `:root`, where it is never set,
+     and permanently takes the fallback - a use site setting `to bottom` has
+     no effect, and the Inbox's 6px-wide vertical rail renders the three
+     segments across its width instead of down its length. Orientation belongs
+     at the use site, spelled out. (Codex review on #1834.) */
+  --lcars-signal-stops:
+    var(--lcars-blue) 0 56%, var(--lcars-violet) 56% 76%,
+    var(--lcars-gold) 76% 100%;
+
   /* The default for anything rendered outside a route's page shell: Mantine's
      body-level portals (modals, menus, notifications) and the login page. A
      route shadows it via `[data-accent]` on the shell. */
@@ -1144,8 +1152,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   right: -9px;
   bottom: 18px;
   width: 6px;
-  --lcars-signal-direction: to bottom;
-  background: var(--lcars-signal-bar);
+  background: linear-gradient(to bottom, var(--lcars-signal-stops));
   content: '';
 }
 
@@ -1165,7 +1172,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   bottom: 3px;
   left: 14px;
   height: 5px;
-  background: var(--lcars-signal-bar);
+  background: linear-gradient(to right, var(--lcars-signal-stops));
   content: '';
 }
 
@@ -1422,7 +1429,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   right: var(--mantine-spacing-lg);
   left: var(--mantine-spacing-lg);
   height: 4px;
-  background: var(--lcars-signal-bar);
+  background: linear-gradient(to right, var(--lcars-signal-stops));
   content: '';
 }
 
@@ -2258,7 +2265,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     bottom: 3px;
     left: 12px;
     height: 2px;
-    background: var(--lcars-signal-bar);
+    background: linear-gradient(to right, var(--lcars-signal-stops));
   }
 
   .queue-workspace__detail {

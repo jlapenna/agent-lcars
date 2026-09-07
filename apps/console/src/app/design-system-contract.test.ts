@@ -152,7 +152,7 @@ describe('LCARS design system contract', () => {
     it('defines the signal bar once and names its colours', () => {
       // Four hand-rolled copies with their own hues, stop percentages and
       // radii, none of which agreed.
-      const definitions = [...RULES.matchAll(/--lcars-signal-bar:/g)];
+      const definitions = [...RULES.matchAll(/--lcars-signal-stops:/g)];
       expect(definitions).toHaveLength(1);
 
       const gradients = [...RULES.matchAll(/linear-gradient\([^;]*;/g)]
@@ -160,6 +160,38 @@ describe('LCARS design system contract', () => {
         .filter((gradient) => /var\(--mantine-color-/.test(gradient));
 
       expect(gradients).toEqual([]);
+    });
+
+    it('keeps the signal bar a stop list, not a finished gradient', () => {
+      // A `var()` inside a custom property is substituted on the element the
+      // property is DECLARED on. A gradient baked into a `:root` token
+      // therefore resolves any direction placeholder against `:root` and
+      // permanently takes its fallback, so a use site cannot reorient it -
+      // which silently rendered the Inbox's vertical rail horizontally
+      // (Codex review on #1834). Keeping the token a bare stop list makes
+      // that mistake unexpressible.
+      const [declaration] = [
+        ...RULES.matchAll(/--lcars-signal-stops:[^;]*;/g),
+      ].map((match) => match[0]);
+
+      expect(declaration).toBeDefined();
+      expect(declaration).not.toContain('gradient');
+      expect(declaration).not.toContain('to right');
+      expect(declaration).not.toContain('to bottom');
+
+      // ...and every consumer states its own orientation.
+      const consumers = [
+        ...RULES.matchAll(
+          /linear-gradient\([^;]*var\(--lcars-signal-stops\)[^;]*;/g,
+        ),
+      ].map((match) => match[0]);
+
+      expect(consumers.length).toBeGreaterThan(1);
+      for (const consumer of consumers) {
+        expect(consumer).toMatch(
+          /linear-gradient\(\s*to (right|bottom|left|top)/,
+        );
+      }
     });
   });
 
