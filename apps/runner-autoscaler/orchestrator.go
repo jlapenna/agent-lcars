@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"os"
 	"os/signal"
@@ -664,6 +665,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage:  c.RunnerImage,
 		runnerMemory: memory, runnerMemoryReservation: reservation, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
+		runnerNanoCPUs:     int64(math.Round(c.RunnerCPUs * 1e9)),
 		runnerCgroupParent: c.RunnerCgroupParent,
 		minRunners:         c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,

@@ -580,6 +580,29 @@ the remaining capacity. For example, one 12 GiB reservation on a 16 GiB host
 allows a 2 GiB candidate with the default margin but rejects a second 12 GiB
 candidate.
 
+### Per-runner CPU quota
+
+`runner_cpus` (agent-lcars#1835) is the CPU analogue of the `runner_memory`
+ceiling: an optional per-lane CFS quota in CPUs, applied as Docker's
+`NanoCPUs` (`--cpus`). The pressure gates below only ever gate _future_
+placements; nothing bounded how much CPU the first tenant could take, so a
+single job whose tooling sizes its parallelism from the host's core count
+(`nx run-many`, `next build`) drove a 12-core host to load 12, tripped
+`cpu_hard`/`psi_hard`, and put the host into `overload_cooldown` -- refusing
+every other lane while it sat with gigabytes free (homelab#1208).
+
+```yaml
+scale_sets:
+  - name: default
+    runner_memory: 14g
+    runner_memory_reservation: 8g
+    runner_cpus: 6 # half of a 12-core host; a second tenant is still admissible
+```
+
+Zero or omitted means no quota. The quota is a ceiling only -- it is not
+charged against a per-host CPU budget for admission; the existing load, CPU
+and PSI gates still decide whether the host can take another runner.
+
 ### Host-level runner slice
 
 Reserved-memory admission above only ever gates _future_ placements. It does
