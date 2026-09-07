@@ -62,4 +62,29 @@ describe('ConsoleCommandUtilities', () => {
     expect(screen.getByText('Navigate: /sessions?days=90')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
   });
+
+  it('withholds Quick task where the viewer could not submit one', () => {
+    // Both submission paths are admin-only - `createQuickTask` calls
+    // `requireAdmin()` and `/api/quick-task/v1` checks `isAdmin` - and /work
+    // is the one console route that admits a non-admin (a `work.operator`
+    // grant holder). Offering the control there would render an enabled
+    // button whose every submission 403s.
+    render(
+      <MantineProvider>
+        <ConsoleCommandUtilities
+          watchedRepos={watchedRepos}
+          includeQuickTask={false}
+          includeNavigation
+          navigationHrefs={{ sessions: '/sessions?days=90' }}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.queryByText(/^Quick task:/)).toBeNull();
+    // The rest of the cluster still has to be there - this is a narrower
+    // control, not a hidden header.
+    expect(screen.getByText('Refresh: route')).toBeTruthy();
+    expect(screen.getByText('Navigate: /sessions?days=90')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
+  });
 });

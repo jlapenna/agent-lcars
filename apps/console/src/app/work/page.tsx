@@ -69,11 +69,15 @@ function WorkViewContent() {
 
 interface WorkViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
+  /** Quick task is admin-only on both submission paths; this route is not
+   *  admin-gated, so the control is offered only when the viewer could
+   *  actually use it. See `ConsoleCommandUtilities`' `includeQuickTask`. */
+  canQuickTask: boolean;
 }
 
 const WorkView = withConsolePageShell(
   WorkViewContent,
-  ({ watchedRepos }: WorkViewProps) => ({
+  ({ watchedRepos, canQuickTask }: WorkViewProps) => ({
     className: 'work-page-shell',
     current: 'work',
     title: 'Work',
@@ -85,12 +89,16 @@ const WorkView = withConsolePageShell(
     utilities: (
       <>
         <div className="work-utilities work-utilities--desktop">
-          <ConsoleCommandUtilities watchedRepos={watchedRepos} />
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            includeQuickTask={canQuickTask}
+          />
         </div>
         <div className="work-utilities work-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             includeNavigation
+            includeQuickTask={canQuickTask}
           />
         </div>
       </>
@@ -103,7 +111,12 @@ async function WorkPageShell() {
   if (!session) redirect('/login');
   const watchedRepos = getWatchedRepos();
 
-  return <WorkView watchedRepos={watchedRepos} />;
+  return (
+    <WorkView
+      watchedRepos={watchedRepos}
+      canQuickTask={session.user?.isAdmin === true}
+    />
+  );
 }
 
 // Same streaming shape as every other console destination (see
