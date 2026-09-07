@@ -463,6 +463,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --mantine-color-dimmed: var(--mantine-color-gray-5);
 }
 
+/* Card is the one surface the `--mantine-color-body` re-anchor above doesn't
+   reach: its own stylesheet hardcodes `--mantine-color-dark-6`/`white`
+   per scheme via `:where()` selectors instead of reading the body variable,
+   so every `<Card>` (the LCARS panels making up most of a route's content)
+   rendered a visibly lighter surface than the dark-9 header/workspace shell
+   it sits inside (#1812). `:where()` carries zero specificity, so this plain
+   class selector overrides it regardless of stylesheet order. */
+.mantine-Card-root {
+  background-color: var(--mantine-color-body);
+}
+
 .console-page-shell {
   width: 100%;
   max-width: none;
