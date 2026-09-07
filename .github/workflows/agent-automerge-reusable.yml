@@ -76,6 +76,16 @@ on:
           agent run.
         required: true
         type: string
+      restore-runs-on:
+        description: >-
+          Optional runner labels for the persistent restore-main-checks job.
+          Use a pool that does not contain the required-check aggregator jobs:
+          the restore job can wait for those checks for check-wait-minutes, so
+          sharing their only runner can deadlock the gate under capacity
+          pressure. Empty preserves the runs-on pool for existing consumers.
+        required: false
+        type: string
+        default: ''
       required-checks:
         description: >-
           JSON array of the ruleset's required status-check context names
@@ -542,7 +552,7 @@ jobs:
       (github.event_name == 'pull_request' &&
        github.event.pull_request.draft == false &&
        contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login))
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ${{ fromJSON(inputs.restore-runs-on || inputs.runs-on) }}
     timeout-minutes: ${{ inputs.restore-timeout-minutes }}
     permissions:
       actions: write
