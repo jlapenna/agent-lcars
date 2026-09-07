@@ -111,36 +111,49 @@ export async function expectDesktopLcarsElbow(header: Locator) {
   }
 }
 
-/** Every supplied surface uses one equal-weight band and concentric radii. */
-export async function expectConcentricLcarsElbows(
-  surfaces: Locator,
-  expectedBandWidth: number,
-) {
-  const geometries = await surfaces.evaluateAll((elements) =>
+/**
+ * Every supplied panel carries the route accent as a flat spine down its
+ * leading edge - square ends, one shared width, no curve.
+ *
+ * This replaced `expectConcentricLcarsElbows`, which asserted the opposite:
+ * that each panel drew its own half-scale copy of the header's elbow. The
+ * elbow is the page frame's device and belongs to the frame alone; repeating
+ * it per panel made a route read as a frame inside a frame inside a frame
+ * (#1827). What is being pinned here is that panels agree with each other,
+ * which is why the width is read from the shared token rather than passed in.
+ */
+export async function expectLcarsPanelSpines(panels: Locator) {
+  const geometries = await panels.evaluateAll((elements) =>
     elements.map((element) => {
-      const elbow = getComputedStyle(element, '::before');
+      const spine = getComputedStyle(element, '::before');
       const pixels = (value: string) => Number.parseFloat(value);
 
       return {
-        width: pixels(elbow.width),
-        top: pixels(elbow.borderTopWidth),
-        right: pixels(elbow.borderRightWidth),
-        bottom: pixels(elbow.borderBottomWidth),
-        left: pixels(elbow.borderLeftWidth),
-        outerRadius: pixels(elbow.borderTopLeftRadius),
+        width: pixels(spine.width),
+        topLeftRadius: pixels(spine.borderTopLeftRadius),
+        bottomLeftRadius: pixels(spine.borderBottomLeftRadius),
+        background: spine.backgroundColor,
+        expected: Number.parseFloat(
+          getComputedStyle(element).getPropertyValue('--lcars-spine-width'),
+        ),
       };
     }),
   );
 
   expect(geometries.length).toBeGreaterThan(0);
   for (const geometry of geometries) {
-    expect(geometry.top).toBe(expectedBandWidth);
-    expect(geometry.left).toBe(expectedBandWidth);
-    expect(geometry.right).toBe(0);
-    expect(geometry.bottom).toBe(0);
-    expect(geometry.outerRadius).toBe(expectedBandWidth * 2);
-    expect(geometry.width).toBeGreaterThan(geometry.outerRadius);
+    expect(geometry.expected).toBeGreaterThan(0);
+    expect(geometry.width).toBe(geometry.expected);
+    // Square: the curve belongs to the header elbow, not to a panel.
+    expect(geometry.topLeftRadius).toBe(0);
+    expect(geometry.bottomLeftRadius).toBe(0);
+    expect(geometry.background).not.toBe('rgba(0, 0, 0, 0)');
   }
+
+  // One accent per page: every panel's spine is the same colour.
+  expect(new Set(geometries.map((geometry) => geometry.background)).size).toBe(
+    1,
+  );
 }
 
 /** Mobile routes reuse the title-inside-the-elbow desktop composition. */

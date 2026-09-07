@@ -2,8 +2,8 @@ import { expect, test } from '@playwright/test';
 
 import { E2E_CLI_SESSION_IDS, useCliSessionFixtures } from './seed';
 import {
-  expectConcentricLcarsElbows,
   expectDesktopBridgeHeader,
+  expectLcarsPanelSpines,
   expectMobileBridgeHeader,
 } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
@@ -88,10 +88,7 @@ test.describe('/agents page @smoke', () => {
     await expect(header).toHaveCount(1);
     await expectDesktopBridgeHeader(header);
     await expect(workspace).toBeVisible();
-    await expectConcentricLcarsElbows(
-      workspace.locator('.lcars-panel:not(.agents-panel)'),
-      8,
-    );
+    await expectLcarsPanelSpines(workspace.locator('.lcars-panel'));
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
     ).toBeVisible();
@@ -149,10 +146,7 @@ test.describe('/agents page @smoke', () => {
     await expect(header).toHaveCount(1);
     await expectMobileBridgeHeader(header);
     await expect(workspace).toBeVisible();
-    await expectConcentricLcarsElbows(
-      workspace.locator('.lcars-panel:not(.agents-panel)'),
-      8,
-    );
+    await expectLcarsPanelSpines(workspace.locator('.lcars-panel'));
     await expect(header.getByRole('link', { name: 'Agents' })).toBeHidden();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(

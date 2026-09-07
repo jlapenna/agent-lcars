@@ -246,11 +246,20 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
   transition:
     background-color 140ms ease,
-    color 140ms ease;
+    color 140ms ease,
+    transform 100ms ease;
 }
 
 .lcars-nav-pill:hover {
   background: color-mix(in srgb, var(--lcars-accent) 76%, var(--lcars-surface));
+}
+
+/* A momentary press response, not a resting bevel: it exists only while the
+   pointer is down, so it reads as the control answering rather than as a
+   raised object catching light. That distinction is the whole of the "no 3D"
+   rule - it rules out standing shadows and gradients, not feedback. */
+.lcars-nav-pill:active {
+  transform: scale(0.96);
 }
 
 .lcars-nav-pill[data-active] {
@@ -258,30 +267,22 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-accent);
 }
 
-/* Per-accent pill colors. `--pill-outline` is the light-scheme value, with
-   a `[data-mantine-color-scheme='dark']` override below rather than
-   `light-dark()`.
+/* NEVER express a scheme-dependent color with `light-dark()` in this file.
+   This is not a style preference - it was actively broken here (found by
+   #42's interaction pass). Next's CSS transform (Lightning CSS) downlevels
+   `light-dark(a, b)` into `var(--lightningcss-light, a)
+   var(--lightningcss-dark, b)` and expects a `:root` rule per scheme to blank
+   out the losing half. That rule never made it into the bundle, so BOTH
+   halves fell back and the property computed to two space-separated colors -
+   invalid wherever it was used, and invalid *silently*: the pill hover tint
+   simply never rendered, and screenshots did not show it because the states
+   that did not use `light-dark()` still looked right.
 
-   This is not a style preference — `light-dark()` was actively broken here
-   (found by #42's interaction pass). Next's CSS transform (Lightning CSS)
-   downlevels `light-dark(a, b)` into
-   `var(--lightningcss-light, a) var(--lightningcss-dark, b)` and expects a
-   `:root` rule per scheme to blank out the losing half. That rule never
-   made it into the bundle, so BOTH halves fell back and `--pill-outline`
-   computed to two space-separated colors — invalid wherever it was used:
-
-     - `color: var(--pill-outline)`         -> fell back to inherited text
-     - `border: 2px solid var(--pill-outline)` -> fell back to currentColor
-     - `color-mix(in srgb, var(--pill-outline) 16%, transparent)` -> invalid
-       at computed-value time, so the :hover tint never rendered at all
-
-   The redesign's screenshots didn't catch it because the *active* pill is
-   filled from `--pill-fill` (no `light-dark()`), which always rendered
-   correctly; only the inactive pills silently lost their accent.
-
-   Mantine drives the scheme with `data-mantine-color-scheme` on <html>
-   (`mantineHtmlProps` + `ColorSchemeScript`), so keying off that attribute
-   is both the app's own source of truth and immune to the downlevelling. */
+   Key off `data-mantine-color-scheme` on <html> instead (`mantineHtmlProps` +
+   `ColorSchemeScript`) - Mantine's own source of truth, and immune to the
+   downlevelling. The scheme tokens further down do exactly that; anything
+   that needs to vary by scheme should resolve through one of them rather
+   than adding a second mechanism. */
 
 /* One accent, resolved once, inherited everywhere.
    `[data-accent]` appears on three kinds of element and means the same thing
