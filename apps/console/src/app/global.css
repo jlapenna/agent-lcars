@@ -361,9 +361,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    (see the accent table above), so a control's color states which
    destination it belongs to rather than being chosen per call site. */
 
+/* Scoped by POSITION, not by component. The header's utility cluster is fed
+   by several different components depending on the route — `QueueUtilityMenu`
+   supplies the overflow trigger on most routes, `ItemOverflowMenu` on the
+   task page — and they had disagreed: one carried the LCARS module treatment
+   via its own `.queue-utility-trigger` class, the other was a bare
+   `variant="subtle" color="gray"` glyph sitting in the same slot, on the same
+   header, one route away (#1815). A rule keyed on where a control *is*
+   cannot be missed by the next component that lands there. */
 .lcars-action-button,
-.console-header[data-current] .lcars-refresh-button,
-.console-header[data-current] .queue-utility-trigger {
+.console-header[data-current]
+  .lcars-command-utilities
+  :is(.mantine-ActionIcon-root, .lcars-refresh-button) {
   border: 0;
   border-radius: 999px;
   color: var(--lcars-ink-on-muted);
@@ -379,8 +388,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .lcars-action-button:hover:not(:disabled),
-.console-header[data-current] .lcars-refresh-button:hover,
-.console-header[data-current] .queue-utility-trigger:hover {
+.console-header[data-current]
+  .lcars-command-utilities
+  :is(.mantine-ActionIcon-root, .lcars-refresh-button):hover:not(:disabled) {
   color: var(--lcars-ink-on-accent);
   background: var(--lcars-accent);
 }
