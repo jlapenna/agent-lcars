@@ -7,6 +7,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../../../../auth';
 import { consoleRepositoryUrl } from '../../../../../lib/deployment';
 import { getWatchedRepos } from '../../../../../lib/github-client';
+import type { QuickTaskSourceIdentity } from '../../../../../lib/quick-task-evidence';
 import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleFooter } from '../../../../console-footer';
 import { repoScopedConsoleHrefs } from '../../../../console-hrefs';
@@ -31,6 +32,20 @@ interface TaskDetailViewProps {
   repo: string;
   title: string;
   subtitle: string;
+}
+
+/** Quick task evidence identities for a task detail page - factored out
+ * since the header's desktop and mobile utility blocks both need it. */
+function taskSourceIdentities(
+  detail: Awaited<ReturnType<typeof getTaskDetail>>,
+): QuickTaskSourceIdentity[] {
+  if (detail.status !== 'ok') return [];
+  return [
+    {
+      label: detail.item.kind === 'pr' ? 'Pull request' : 'Task',
+      value: `${detail.repo.owner}/${detail.repo.name}#${detail.item.number}`,
+    },
+  ];
 }
 
 function TaskDetailViewContent({ detail }: TaskDetailViewProps) {
@@ -64,6 +79,16 @@ const TaskDetailView = withConsolePageShell(
       <>
         <div className="task-utilities task-utilities--desktop">
           <Group gap="xs" wrap="nowrap">
+            <QuickTaskButton
+              watchedRepos={getWatchedRepos()}
+              initialRepoKey={
+                detail.status === 'ok'
+                  ? `${detail.repo.owner}/${detail.repo.name}`
+                  : undefined
+              }
+              sourceIdentities={taskSourceIdentities(detail)}
+              size="compact-xs"
+            />
             <RefreshButton
               generatedAt={generatedAt}
               initialLabel={formatRelativeTime(generatedAt)}
@@ -76,6 +101,16 @@ const TaskDetailView = withConsolePageShell(
         </div>
         <div className="task-utilities task-utilities--mobile">
           <Group gap="xs" wrap="nowrap">
+            <QuickTaskButton
+              watchedRepos={getWatchedRepos()}
+              initialRepoKey={
+                detail.status === 'ok'
+                  ? `${detail.repo.owner}/${detail.repo.name}`
+                  : undefined
+              }
+              sourceIdentities={taskSourceIdentities(detail)}
+              size="compact-xs"
+            />
             <RefreshButton
               generatedAt={generatedAt}
               initialLabel={formatRelativeTime(generatedAt)}
@@ -96,31 +131,7 @@ const TaskDetailView = withConsolePageShell(
         </div>
       </>
     ),
-    footer: (
-      <ConsoleFooter
-        actions={
-          <QuickTaskButton
-            watchedRepos={getWatchedRepos()}
-            initialRepoKey={
-              detail.status === 'ok'
-                ? `${detail.repo.owner}/${detail.repo.name}`
-                : undefined
-            }
-            sourceIdentities={
-              detail.status === 'ok'
-                ? [
-                    {
-                      label:
-                        detail.item.kind === 'pr' ? 'Pull request' : 'Task',
-                      value: `${detail.repo.owner}/${detail.repo.name}#${detail.item.number}`,
-                    },
-                  ]
-                : []
-            }
-          />
-        }
-      />
-    ),
+    footer: <ConsoleFooter />,
   }),
 );
 

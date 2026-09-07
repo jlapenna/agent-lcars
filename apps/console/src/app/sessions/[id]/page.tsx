@@ -8,6 +8,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../../auth';
 import { consoleRepositoryUrl } from '../../../lib/deployment';
 import { getWatchedRepos } from '../../../lib/github-client';
+import type { QuickTaskSourceIdentity } from '../../../lib/quick-task-evidence';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleFooter } from '../../console-footer';
@@ -94,6 +95,34 @@ interface SessionDetailViewProps {
   subtitle: string;
 }
 
+/** Quick task evidence identities for a session detail page - factored out
+ * since the header's desktop and mobile utility blocks both need it. */
+function sessionSourceIdentities(
+  detail: Awaited<ReturnType<typeof getSessionDetail>>,
+): QuickTaskSourceIdentity[] {
+  if (detail.status !== 'ok') return [];
+  const { doc } = detail;
+  return [
+    { label: 'Session' as const, value: doc.sessionId },
+    ...(doc.source === 'issue-agent' && doc.repo && doc.runId
+      ? [
+          {
+            label: 'Run' as const,
+            value: `${doc.repo.owner}/${doc.repo.name}#${doc.runId}`,
+          },
+        ]
+      : []),
+    ...(doc.source === 'issue-agent' && doc.repo && doc.issueNumber
+      ? [
+          {
+            label: 'Task' as const,
+            value: `${doc.repo.owner}/${doc.repo.name}#${doc.issueNumber}`,
+          },
+        ]
+      : []),
+  ];
+}
+
 function SessionDetailViewContent({
   detail,
   generatedAt,
@@ -131,12 +160,32 @@ const SessionDetailView = withConsolePageShell(
     utilities: (
       <>
         <div className="session-detail-utilities session-detail-utilities--desktop">
+          <QuickTaskButton
+            watchedRepos={getWatchedRepos()}
+            initialRepoKey={
+              detail.status === 'ok' && detail.doc.repo
+                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
+                : undefined
+            }
+            sourceIdentities={sessionSourceIdentities(detail)}
+            size="compact-xs"
+          />
           <RefreshButton
             generatedAt={generatedAt}
             initialLabel={formatRelativeTime(generatedAt)}
           />
         </div>
         <div className="session-detail-utilities session-detail-utilities--mobile">
+          <QuickTaskButton
+            watchedRepos={getWatchedRepos()}
+            initialRepoKey={
+              detail.status === 'ok' && detail.doc.repo
+                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
+                : undefined
+            }
+            sourceIdentities={sessionSourceIdentities(detail)}
+            size="compact-xs"
+          />
           <RefreshButton
             generatedAt={generatedAt}
             initialLabel={formatRelativeTime(generatedAt)}
@@ -155,50 +204,7 @@ const SessionDetailView = withConsolePageShell(
         </div>
       </>
     ),
-    footer: (
-      <ConsoleFooter
-        actions={
-          <QuickTaskButton
-            watchedRepos={getWatchedRepos()}
-            initialRepoKey={
-              detail.status === 'ok' && detail.doc.repo
-                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
-                : undefined
-            }
-            sourceIdentities={
-              detail.status === 'ok'
-                ? [
-                    {
-                      label: 'Session' as const,
-                      value: detail.doc.sessionId,
-                    },
-                    ...(detail.doc.source === 'issue-agent' &&
-                    detail.doc.repo &&
-                    detail.doc.runId
-                      ? [
-                          {
-                            label: 'Run' as const,
-                            value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.runId}`,
-                          },
-                        ]
-                      : []),
-                    ...(detail.doc.source === 'issue-agent' &&
-                    detail.doc.repo &&
-                    detail.doc.issueNumber
-                      ? [
-                          {
-                            label: 'Task' as const,
-                            value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.issueNumber}`,
-                          },
-                        ]
-                      : []),
-                  ]
-                : []
-            }
-          />
-        }
-      />
-    ),
+    footer: <ConsoleFooter />,
   }),
 );
 
