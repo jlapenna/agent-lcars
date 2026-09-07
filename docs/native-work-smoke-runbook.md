@@ -698,29 +698,55 @@ the opposite of what a reply is for — but surprising, and worth knowing before
 someone concludes `@claude` on a Codex item will move it to Claude. It will not;
 it continues Codex.
 
-## Codex session continuity (2026-09-06) — BLOCKED, not failed
+## Codex session continuity (2026-09-06) — BLOCKED, then PASS on 2026-09-07
 
-Anchor: [#1798](https://github.com/jlapenna/agent-lcars/issues/1798). The run
-exited **1** with no park comment. The cause is external, not a defect:
+Anchor: [#1798](https://github.com/jlapenna/agent-lcars/issues/1798) (blocked),
+then [sprinkles#5177](https://github.com/supersprinklesracing/sprinkles/issues/5177)
+(pass).
+
+### 2026-09-06: blocked on quota
+
+The first run exited **1** with no park comment:
 
 ```
 {"type":"error","message":"You've hit your usage limit. … try again at Sep 7th, 2026 2:25 AM."}
-{"type":"turn.failed","error":{"message":"You've hit your usage limit. …"}}
 ```
 
-The Codex account is out of credits until 2026-09-07 02:25. The agent never got
-a turn, so there is no codeword and no round 2 to resume.
+It still proved the capture half — `thread.started` and an archived rollout at
+`runs/jlapenna/agent-lcars#1798/r1/codex/01a07546-….jsonl` — but the agent never
+got a turn, so there was nothing to resume.
 
-What the run _did_ prove, on the way to failing:
+### 2026-09-07: PASS — restore and `codex exec resume`, on real work
 
-- the thread started (`thread.started`, `01a07546-79e9-73d3-9170-5b5984078e02`);
-- its rollout archived to
-  `runs/jlapenna/agent-lcars#1798/r1/codex/01a07546-….jsonl` — so the Codex
-  capture half of the resume path works;
-- the run still reported cleanly: `{"runId":"…/r1","state":"finished"}`.
+Re-run against a real task rather than a codeword drill: fix one small primes UI
+bug in `supersprinklesracing/sprinkles`, dispatched by labelling
+[sprinkles#5177](https://github.com/supersprinklesracing/sprinkles/issues/5177)
+`agent:codex`. Round 1 skipped the requested park and went straight to a
+deliverable — [sprinkles#5180](https://github.com/supersprinklesracing/sprinkles/pull/5180),
+`RacesNearYou` dropped every race but the first in a nameless event group, with
+tests — so round 2 was driven by a tagged reply (`/codex …`) on the **finished**
+item. `requestReply` only refuses `running` and `canceled` items, so a finished
+one resumes; that is the path exercised here.
 
-**Codex resume remains unproven.** Re-run this proof after the quota resets; the
-restore-and-`codex exec resume` half is the part still untested live.
+The evidence is the **session id**, observed at four points:
+
+| Where                                                                           | Observation                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| r1 archive                                                                      | `runs/supersprinklesracing/sprinkles#5177/r1/codex/01a07c4c-1c40-7221-8afb-68e1b4c4b582.jsonl` (2.2 MB)                                                                                                                                  |
+| Console, on the tagged reply                                                    | `{"runId":"supersprinklesracing/sprinkles#5177/r2","resumed":true}` at 15:03:38Z                                                                                                                                                         |
+| r2 container (`direct-runner-codex-f36c1e15`, placed on `homelab` at 15:03:49Z) | Process list: `codex exec resume 01a07c4c-1c40-7221-8afb-68e1b4c4b582 --json …`; its JSONL: `thread.started … "thread_id":"01a07c4c-1c40-7221-8afb-68e1b4c4b582"`                                                                        |
+| r2 archive                                                                      | Same filename, 2.59 MB, 751 lines, exactly **one** `session_meta` — a fresh session would carry its own — containing both round 1's work (`RacesNearYou` ×530) and round 2's prompt (`Round 2. You skipped` ×7). One rollout, two turns. |
+
+Round 2's outcome was itself real work on the same branch: a 20th component
+test (`492e8a09`), mutation-checked by the agent (breaking name-based grouping
+fails only the new test). It reported `NO PRIOR CONTEXT` on the codeword line
+and then explained why: no codeword had been chosen in round 1, "not an absence
+of the earlier conversation" — consistent with the retraction above that the
+codeword is a convenience and session identity is the proof.
+
+Timings: r1 dispatched 14:35:37Z, finished 14:55:12Z; r2 placed 11 s after the
+reply, finished 15:17:07Z. All three resumable pipelines — Claude, OpenCode,
+Codex — are now proven live.
 
 ## Slack threads (sub-project 5), 2026-09-06 — inbound and outbound PASS, one hop unproven
 
