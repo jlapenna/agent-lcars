@@ -32,7 +32,7 @@
 # linux/arm64 resolve from it.
 #
 # Currently: upstream v2.336.0.
-ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
 
 # Keep the Go compiler embedded in the JIT image aligned with the module the
 # Verify job tests. toolchain-health.test.sh compares this value with
