@@ -560,6 +560,20 @@ scale_sets:
     runner_memory_reservation: 8g # what placement charges against the host
 ```
 
+`memory_safety_margin_max` (optional, e.g. `6g`) caps that fraction's share
+in absolute terms. A fraction alone scales with the host: ten percent of a
+128 GiB inference box is 13 GiB, which -- as the MemAvailable floor's share --
+kept a 2 GiB gate runner off two hosts that had 20 idle cores and 12 GiB free
+each while a 100-run queue waited (homelab#1208). The cap applies identically
+to the aggregate reservation budget and to the real-free-memory floor.
+
+```yaml
+fleet:
+  placement:
+    memory_safety_margin: 0.10
+    memory_safety_margin_max: 6g # never hold back more than 6 GiB on any host
+```
+
 `runner_memory_reservation` (agent-lcars#1683) separates the two concerns the
 way Kubernetes separates requests from limits. The ceiling bounds the rare
 pathological job; the reservation is the measured footprint used for

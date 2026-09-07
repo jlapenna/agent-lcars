@@ -451,6 +451,15 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 			c.HostMemoryOvercommit[host] = factor
 		}
 		c.MemorySafetyMargin = resolved.Raw.Fleet.Placement.MemorySafetyMargin
+		if capStr := resolved.Raw.Fleet.Placement.MemorySafetyMarginMax; capStr != "" {
+			// Already validated by loadOrchestratorConfig; a parse failure here
+			// would mean the two disagree, which must not silently drop the cap.
+			n, err := units.RAMInBytes(capStr)
+			if err != nil {
+				return nil, fmt.Errorf("fleet.placement.memory_safety_margin_max %q: %w", capStr, err)
+			}
+			c.MemorySafetyMarginMaxBytes = n
+		}
 		c.ReadinessMetricsURL = resolved.Raw.Fleet.Placement.ReadinessMetricsURL
 		c.ReadinessMetric = resolved.Raw.Fleet.Placement.ReadinessMetric
 		c.ReadinessMaxAge = resolved.ReadinessMaxAge
@@ -670,19 +679,20 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		minRunners:         c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
 		inferenceMetricsURLs: c.InferenceMetricsURLs, inferenceIdleWatts: c.InferenceIdleWatts,
-		hostMetricsURLTemplate:   c.HostMetricsURLTemplate,
-		hostLoadPolicy:           c.HostLoadPolicy,
-		hostMetricsTimeouts:      c.HostMetricsTimeouts,
-		hostMemoryExempt:         stringSet(c.HostMemoryExempt),
-		hostMemoryOvercommit:     c.HostMemoryOvercommit,
-		memorySafetyMargin:       c.MemorySafetyMargin,
-		readinessMetricsURL:      c.ReadinessMetricsURL,
-		readinessMetric:          c.ReadinessMetric,
-		readinessMaxAge:          c.ReadinessMaxAge,
-		hostRunnerLimits:         fleet.hostRunnerLimits,
-		degradationLadderEnabled: c.DegradationLadderEnabled,
-		fleet:                    fleet,
-		checkpoints:              checkpoints, bootCheckpoint: boot,
+		hostMetricsURLTemplate:     c.HostMetricsURLTemplate,
+		hostLoadPolicy:             c.HostLoadPolicy,
+		hostMetricsTimeouts:        c.HostMetricsTimeouts,
+		hostMemoryExempt:           stringSet(c.HostMemoryExempt),
+		hostMemoryOvercommit:       c.HostMemoryOvercommit,
+		memorySafetyMargin:         c.MemorySafetyMargin,
+		memorySafetyMarginMaxBytes: c.MemorySafetyMarginMaxBytes,
+		readinessMetricsURL:        c.ReadinessMetricsURL,
+		readinessMetric:            c.ReadinessMetric,
+		readinessMaxAge:            c.ReadinessMaxAge,
+		hostRunnerLimits:           fleet.hostRunnerLimits,
+		degradationLadderEnabled:   c.DegradationLadderEnabled,
+		fleet:                      fleet,
+		checkpoints:                checkpoints, bootCheckpoint: boot,
 	}
 	drainingGauge.WithLabelValues(c.ScaleSetName).Set(0)
 	listenerUpGauge.WithLabelValues(c.ScaleSetName).Set(0)

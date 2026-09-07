@@ -2968,3 +2968,21 @@ func TestProbeFleetHostsSkipsDockerPingForReadinessBlockedHost(t *testing.T) {
 		t.Errorf("reachable hosts = %v; want only the ungated anchor", probe.reachableHosts)
 	}
 }
+
+// memory_safety_margin_max bounds the fraction in absolute terms so a large
+// inference host is not asked to hold back tens of GiB before admitting a
+// small runner (homelab#1208).
+func TestMarginBytesForHonorsAbsoluteCap(t *testing.T) {
+	big, small := int64(128)<<30, int64(16)<<30
+	s := &Scaler{memorySafetyMargin: 0.10}
+	if got, want := s.marginBytesFor(big), int64(0.10*float64(big)); got != want {
+		t.Fatalf("uncapped margin = %d, want %d (10%% of 128 GiB)", got, want)
+	}
+	s.memorySafetyMarginMaxBytes = 6 << 30
+	if got := s.marginBytesFor(big); got != 6<<30 {
+		t.Fatalf("capped margin = %d, want 6 GiB", got)
+	}
+	if got, want := s.marginBytesFor(small), int64(0.10*float64(small)); got != want {
+		t.Fatalf("small host margin = %d, want %d (cap must not raise it)", got, want)
+	}
+}
