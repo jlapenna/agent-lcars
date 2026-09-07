@@ -463,12 +463,21 @@ RUN npm install -g /opt/agent-tools
 # `docker build` with no --build-arg risks a stale cache hit here too,
 # matching the accepted risk on that manual path already.
 ARG REPO_TOOLS_REF=main
+# Installed from INSIDE /opt/repo-tools, not via `pnpm --dir`: corepack picks
+# the pnpm version from the current directory's package.json, so `--dir` from
+# this checkout ran Agent LCARS's pnpm against repo-tools' own
+# "packageManager" declaration, and pnpm 11 refuses that mismatch outright
+# ("configured to use 11.24.0 ... current pnpm is v11.25.0"). It surfaced the
+# first time the two repos' pins drifted (#1838 bumped ours), and broke every
+# runner-image publish -- and with it merge-to-live's whole cycle -- until
+# fixed. Each repo's pnpm now follows its own declaration, which is the
+# contract the pnpm-store comment above already states.
 RUN echo "repo-tools ref: ${REPO_TOOLS_REF}" && \
     git init /opt/repo-tools && \
     git -C /opt/repo-tools remote add origin https://github.com/jlapenna/repo-tools.git && \
     git -C /opt/repo-tools fetch --depth 1 origin "${REPO_TOOLS_REF}" && \
     git -C /opt/repo-tools checkout --detach FETCH_HEAD && \
-    pnpm --dir /opt/repo-tools install --prod --frozen-lockfile --ignore-scripts && \
+    (cd /opt/repo-tools && pnpm install --prod --frozen-lockfile --ignore-scripts) && \
     ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/
 # The launcher itself lives on PATH at /usr/local/bin (standard on this
 # Debian-derived base for every user, root or `runner` -- no ENV PATH
