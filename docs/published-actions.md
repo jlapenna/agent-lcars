@@ -50,6 +50,14 @@ stale `UNKNOWN` mergeability once, prefers `gh pr update-branch --rebase`
 and falls back to the default merge-commit update if the rebase form is
 refused, and is capped at 5 updates per run.
 
+The workflow's required `runs-on` input selects the short-lived glue-job
+pool. Consumers whose required-check aggregators use that same constrained
+pool should also set `restore-runs-on` to a different pool. The persistent
+`restore-main-checks` job can wait for the required checks for
+`check-wait-minutes`; separating it prevents the waiter from occupying the
+only runner needed by the checks it is waiting for. Existing consumers that
+omit `restore-runs-on` retain the `runs-on` value.
+
 ## Not consumer surfaces
 
 | Tier     | Names                              |
