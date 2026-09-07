@@ -289,8 +289,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    is both the app's own source of truth and immune to the downlevelling. */
 
 .lcars-nav-pill[data-accent='amber'] {
-  --pill-fill: var(--mantine-color-orange-6);
-  --pill-ink: var(--mantine-color-black);
+  /* orange-8, not the lighter orange-6 the fill uses elsewhere: white ink
+     needs the darker tone for AA contrast (#1815). */
+  --pill-fill: var(--mantine-color-orange-8);
+  --pill-ink: var(--mantine-color-white);
   --pill-outline: var(--mantine-color-orange-8);
 }
 
@@ -329,8 +331,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .lcars-nav-pill[data-accent='teal'] {
-  --pill-fill: var(--mantine-color-teal-6);
-  --pill-ink: var(--mantine-color-black);
+  /* teal-8, not the lighter teal-6 the fill uses elsewhere: white ink
+     needs the darker tone for AA contrast (#1815). */
+  --pill-fill: var(--mantine-color-teal-8);
+  --pill-ink: var(--mantine-color-white);
   --pill-outline: var(--mantine-color-teal-8);
 }
 
@@ -339,8 +343,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .lcars-nav-pill[data-accent='gold'] {
-  --pill-fill: var(--mantine-color-yellow-5);
-  --pill-ink: var(--mantine-color-black);
+  /* yellow-8, not the lighter yellow-5 the fill uses elsewhere: white ink
+     needs the darker tone for AA contrast (#1815). */
+  --pill-fill: var(--mantine-color-yellow-8);
+  --pill-ink: var(--mantine-color-white);
   --pill-outline: var(--mantine-color-yellow-7);
 }
 
@@ -1535,9 +1541,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .console-header[data-current='deck']
     .lcars-nav-pill[data-accent='amber'][data-active] {
     display: inline-flex !important;
-    border-color: var(--mantine-color-orange-6) !important;
-    color: var(--mantine-color-black) !important;
-    background: var(--mantine-color-orange-6) !important;
+    border-color: var(--mantine-color-orange-8) !important;
+    color: var(--mantine-color-white) !important;
+    background: var(--mantine-color-orange-8) !important;
   }
 
   .console-header[data-current='deck'] .lcars-action-button {
@@ -1601,9 +1607,11 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-header[data-current='sessions']
     .lcars-nav-pill[data-accent='teal'][data-active] {
-    border-color: var(--mantine-color-cyan-5) !important;
-    color: var(--mantine-color-dark-9) !important;
-    background: var(--mantine-color-cyan-5) !important;
+    /* cyan-9, not the lighter cyan-5 the header accent uses: white ink
+       needs the darker tone for AA contrast (#1815). */
+    border-color: var(--mantine-color-cyan-9) !important;
+    color: var(--mantine-color-white) !important;
+    background: var(--mantine-color-cyan-9) !important;
   }
 
   .console-header[data-current='costs'] {
@@ -1612,9 +1620,11 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-header[data-current='costs']
     .lcars-nav-pill[data-accent='gold'][data-active] {
-    border-color: var(--mantine-color-yellow-5) !important;
-    color: var(--mantine-color-dark-9) !important;
-    background: var(--mantine-color-yellow-5) !important;
+    /* yellow-8, not the lighter yellow-5 the header accent uses: white ink
+       needs the darker tone for AA contrast (#1815). */
+    border-color: var(--mantine-color-yellow-8) !important;
+    color: var(--mantine-color-white) !important;
+    background: var(--mantine-color-yellow-8) !important;
   }
 
   .agents-workspace {
