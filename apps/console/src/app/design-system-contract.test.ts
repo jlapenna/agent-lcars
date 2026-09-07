@@ -114,7 +114,7 @@ describe('LCARS design system contract', () => {
       // anything rendered outside a route's page shell.
       expect(declarations).toHaveLength(table.length + 1);
       expect(RULES).toMatch(
-        /:root \{[^}]*--lcars-accent: var\(--mantine-color-orange-4\);/,
+        /:root \{[^}]*--lcars-accent: var\(--lcars-amber\);/,
       );
       for (const rule of table) {
         expect(rule[3]).toContain('--lcars-accent:');
@@ -132,6 +132,34 @@ describe('LCARS design system contract', () => {
     it('never hardcodes a route accent in a per-route selector', () => {
       expect(RULES).not.toMatch(/--lcars-header-accent/);
       expect(RULES).not.toMatch(/\.console-header\[data-current='\w+'\] \{/);
+    });
+
+    it('lets no [data-accent] rule restate a colour', () => {
+      // The header's segment strip did exactly this - five accents spelled as
+      // ramp steps - and had already fallen out of sync with the table by the
+      // time anyone looked (#1829 moved the table onto the palette anchors;
+      // the strip stayed behind). Anything keyed on `data-accent` gets its
+      // colour from the token or not at all.
+      const restated = [
+        ...RULES.matchAll(/[^{}]*\[data-accent=[^{}]*\{[^}]*\}/g),
+      ]
+        .map((match) => match[0])
+        .filter((rule) => /var\(--mantine-color-/.test(rule));
+
+      expect(restated).toEqual([]);
+    });
+
+    it('defines the signal bar once and names its colours', () => {
+      // Four hand-rolled copies with their own hues, stop percentages and
+      // radii, none of which agreed.
+      const definitions = [...RULES.matchAll(/--lcars-signal-bar:/g)];
+      expect(definitions).toHaveLength(1);
+
+      const gradients = [...RULES.matchAll(/linear-gradient\([^;]*;/g)]
+        .map((match) => match[0])
+        .filter((gradient) => /var\(--mantine-color-/.test(gradient));
+
+      expect(gradients).toEqual([]);
     });
   });
 
