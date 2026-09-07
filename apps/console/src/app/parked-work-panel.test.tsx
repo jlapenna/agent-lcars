@@ -141,13 +141,16 @@ describe('ParkedWorkPanel', () => {
     expect(screen.getByText('lost')).toBeInTheDocument();
   });
 
-  it('links a parked GitHub task to its canonical task page without native controls', () => {
+  it('links a parked GitHub task to its canonical task page without native controls, but still names a redispatch path (#1816)', () => {
     renderPanel([item({ githubIssue: 1502, title: 'GitHub task' })]);
     expect(screen.getByRole('link', { name: 'GitHub task' })).toHaveAttribute(
       'href',
       '/task/octo/example/1502',
     );
     expect(screen.queryByRole('button', { name: /redispatch/i })).toBeNull();
+    expect(
+      screen.getByRole('link', { name: /redispatch on github/i }),
+    ).toHaveAttribute('href', 'https://github.com/octo/example/issues/1502');
   });
 
   it('discloses when an older task page may contain more parked work', () => {
