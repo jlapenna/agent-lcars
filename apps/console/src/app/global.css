@@ -590,7 +590,21 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 :root[data-mantine-color-scheme='light'] {
-  --lcars-surface: var(--mantine-color-gray-0);
+  /* `var(--mantine-color-white)`, not `gray-0`, and that is load-bearing.
+     MantineProvider injects a runtime <style> derived from `theme.white`
+     that sets `--mantine-color-body: <theme.white>` for the LIGHT scheme
+     only, and it lands AFTER every static stylesheet - same specificity,
+     later in the document, so it wins whatever this block says. (There is no
+     dark counterpart in that injected block, which is exactly why dark mode
+     obeyed this file and light mode did not.)
+
+     Fighting it with CSS is a losing game, so the ground is defined as the
+     same source it derives from. The two cannot disagree now: whatever
+     `theme.white` is, the page and every panel are it. Anchoring on `gray-0`
+     instead left the page on #f4f4f6 and every panel on #eeeff2 - the
+     light-mode twin of the two-blacks bug in #1825, and just as invisible,
+     because those two greys are almost the same colour. */
+  --lcars-surface: var(--mantine-color-white);
   --lcars-surface-raised: #ffffff;
   --lcars-hairline: var(--mantine-color-gray-3);
   --lcars-ink: var(--mantine-color-dark-9);

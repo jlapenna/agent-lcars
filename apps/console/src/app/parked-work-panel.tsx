@@ -45,7 +45,6 @@ export function ParkedWorkPanel({
   return (
     <Card
       withBorder
-      radius="md"
       padding="md"
       mb="xl"
       component="section"

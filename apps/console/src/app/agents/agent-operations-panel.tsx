@@ -19,7 +19,6 @@ export function AgentOperationsPanel({
   return (
     <Card
       withBorder
-      radius="md"
       padding="md"
       mb={separated ? 'xl' : undefined}
       data-testid={testId}

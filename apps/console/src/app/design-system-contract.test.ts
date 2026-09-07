@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +12,17 @@ const APP_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
 function source(name: string): string {
   return readFileSync(join(APP_DIRECTORY, name), 'utf8');
+}
+
+/** Every component file under the app directory, tests excluded. */
+function componentFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return componentFiles(path);
+    return entry.name.endsWith('.tsx') && !entry.name.includes('.test.')
+      ? [path]
+      : [];
+  });
 }
 
 const GLOBAL_CSS = source('global.css');
@@ -57,6 +68,23 @@ describe('LCARS design system contract', () => {
         );
 
       expect(rawRampSurfaces).toEqual([]);
+    });
+
+    it('anchors the light ground on the value Mantine will force anyway', () => {
+      // MantineProvider injects a runtime <style> derived from `theme.white`
+      // setting `--mantine-color-body` for the LIGHT scheme only, after every
+      // static stylesheet - so this file cannot win that declaration no
+      // matter what it says (#1836). Defining the light ground as the same
+      // source means the two cannot disagree. Anchoring it on `gray-0`
+      // instead left the page on #f4f4f6 and every panel on #eeeff2.
+      const light = RULES.match(
+        /:root\[data-mantine-color-scheme='light'\] \{([^}]*)\}/,
+      );
+
+      expect(light).not.toBeNull();
+      expect(light?.[1]).toContain(
+        '--lcars-surface: var(--mantine-color-white)',
+      );
     });
 
     it('defines the surface tokens exactly once per scheme', () => {
@@ -192,6 +220,34 @@ describe('LCARS design system contract', () => {
           /linear-gradient\(\s*to (right|bottom|left|top)/,
         );
       }
+    });
+  });
+
+  describe('square panels', () => {
+    it('lets no panel override the theme\u2019s square default', () => {
+      // `theme.ts` defaults Card and Paper to `radius: 0` - the curve on an
+      // LCARS screen belongs to the elbow. A call site passing `radius="md"`
+      // silently opts back out, which is how six panels kept rounded corners
+      // inside the square frame after #1827 (#1836).
+      const offenders: string[] = [];
+      for (const file of componentFiles(APP_DIRECTORY)) {
+        const contents = readFileSync(file, 'utf8');
+        for (const match of contents.matchAll(/radius=\{?['"]?(\w+)/g)) {
+          // Skeletons are loading placeholders, not panels.
+          if (
+            /Skeleton/.test(
+              contents.slice(Math.max(0, match.index - 200), match.index),
+            )
+          ) {
+            continue;
+          }
+          if (match[1] !== '0') {
+            offenders.push(`${file.split('/app/')[1]}: radius=${match[1]}`);
+          }
+        }
+      }
+
+      expect(offenders).toEqual([]);
     });
   });
 

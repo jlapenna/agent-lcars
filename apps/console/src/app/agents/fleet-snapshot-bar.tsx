@@ -85,7 +85,6 @@ export function FleetSnapshotBar({
   return (
     <Card
       withBorder
-      radius="md"
       padding="md"
       mb="xl"
       data-testid="fleet-snapshot-bar"
