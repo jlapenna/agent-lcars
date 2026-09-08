@@ -26,7 +26,17 @@ state remain their respective artifact facts.
   its own dispatch mode when applied.
 - `agent-option:*` modifies an agent run without selecting the executor.
 - `intake:*` and `bot:*` record provenance, not execution state.
-- `automation:*` and `ci:*` are explicit workflow controls.
+- `automation:*` and `ci:*` are explicit workflow controls, and the one
+  namespace an agent does not self-serve. They exist to make a run broader,
+  more expensive, or more privileged than the repository's default -- a
+  full-fleet E2E lane, a job permitted to commit generated files -- so an
+  agent applies one only when a maintainer asks for it by name, never as its
+  own verification choice. Sprinkles measured the cost of the other reading
+  (supersprinklesracing/sprinkles#5244): one `ci:run-e2e` applied at
+  `gh pr create` time bypassed affected-project selection, saturated the
+  shared self-hosted runner fleet, and left that PR and unrelated ones
+  blocked for six hours. A repository that declares a `ci:*` label inherits
+  this rule; it does not need to rediscover it.
 - `app:*` scopes work to a product or deployable application.
 - `planning` marks an issue or pull request containing substantial planning,
   design, or proposal material. It has no workflow behavior, so the same
