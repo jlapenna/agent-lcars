@@ -317,7 +317,7 @@ export function LiveRunRow({
             <Badge
               variant="filled"
               color={run.status === 'running' ? 'blue' : 'gray'}
-              size="sm"
+              size="xs"
               style={{ flexShrink: 0 }}
             >
               {run.status === 'running' ? 'running' : 'queued'}
@@ -384,7 +384,7 @@ export function LiveRunRow({
         <Badge
           variant="filled"
           color={run.status === 'running' ? 'blue' : 'gray'}
-          size="sm"
+          size="xs"
           style={{ flexShrink: 0 }}
         >
           {run.status === 'running' ? 'running' : 'queued'}
@@ -610,7 +610,7 @@ export function FinishedRunRow({
             <Badge
               variant="light"
               color={STATUS_COLORS[classification.status]}
-              size="sm"
+              size="xs"
               style={{ flexShrink: 0 }}
               data-testid="recent-run-conclusion"
             >
@@ -658,7 +658,7 @@ export function FinishedRunRow({
         <Badge
           variant="light"
           color={STATUS_COLORS[classification.status]}
-          size="sm"
+          size="xs"
           style={{ flexShrink: 0 }}
           data-testid="recent-run-conclusion"
         >
@@ -762,7 +762,7 @@ export function CliSessionRow({
             <Badge
               variant="filled"
               color={LIVENESS_COLORS[session.liveness]}
-              size="sm"
+              size="xs"
               style={{ flexShrink: 0 }}
               data-testid="cli-session-liveness"
             >
@@ -807,7 +807,7 @@ export function CliSessionRow({
         <Badge
           variant="filled"
           color={LIVENESS_COLORS[session.liveness]}
-          size="sm"
+          size="xs"
           style={{ flexShrink: 0 }}
           data-testid="cli-session-liveness"
         >
