@@ -110,6 +110,19 @@ These override any default behavior:
     identity is not assignable — GitHub silently drops it.
   - **Blocked on the maintainer?** Add them alongside the label:
     `gh issue edit <N> --add-label status:needs-human --add-assignee jlapenna`.
+  - **Filing an issue yourself** carries the same duty as claiming one. An
+    interactive session runs `gh` under the maintainer's login, so an issue
+    it invents is authored by `jlapenna` with no label, no marker, and no
+    comment distinguishing it from one he wrote by hand -- unlike a headless
+    run (authored by `agent-lcars[bot]`) or a Quick Task (`intake:quick-task`
+    plus the hidden request marker in
+    [docs/quick-task-identity.md](../../../docs/quick-task-identity.md)).
+    Name the session and its resume command in the body, exactly as the
+    takeover comment does above. Skipping it is how a maintainer finds work
+    he never asked for under his own name: reconstructing who filed
+    `supersprinklesracing/sprinkles#5267` took `/proc` ancestry, two agent
+    rollout transcripts, and the timeline API to recover one line the body
+    should have carried.
   - Agents only ever **add** assignees; removing one is a human act.
 
 - **Interactive session tmux title**: on a workstation, the moment a
