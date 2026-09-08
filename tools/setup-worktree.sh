@@ -26,4 +26,28 @@ HUSKY=0 pnpm install --frozen-lockfile
 echo "==> Regenerating git hooks"
 ./tools/setup-git-hooks.sh
 
+# Agent sessions commit as the fleet identity, not the maintainer. An
+# interactive Claude/Codex session runs git under the maintainer's global
+# ~/.gitconfig, so without this every agent commit is authored "Joe LaPenna"
+# and is indistinguishable from a hand-written one in git log, git blame, and
+# the squash commit that lands on main. Worktrees are the seam: agent git work
+# is required to happen in one and the primary checkout is reserved for a clean
+# main, so scoping the identity here separates the two without touching any
+# global config, credential, or anything that needs rotating.
+#
+# --worktree is load-bearing. A bare `git config user.email` in a linked
+# worktree writes to $GIT_COMMON_DIR/config, which would rename the
+# maintainer's own commits in the primary checkout and every sibling worktree.
+#
+# The gate keeps a human who makes a worktree by hand committing as themselves;
+# these are the same variables `lcars session title` reads to identify a
+# session. The address is GitHub's canonical {id}+{login} noreply form, so the
+# commits link to the agent-lcars-bot account.
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}${CODEX_THREAD_ID:-}" ]; then
+  echo "==> Attributing commits to agent-lcars-bot"
+  git config extensions.worktreeConfig true
+  git config --worktree user.name "agent-lcars-bot"
+  git config --worktree user.email "317675255+agent-lcars-bot@users.noreply.github.com"
+fi
+
 echo "==> Worktree ready."
