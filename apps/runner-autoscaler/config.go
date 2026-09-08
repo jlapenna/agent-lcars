@@ -119,6 +119,10 @@ type Config struct {
 	// factor (agent-lcars#1694); see FleetHostConfig.MemoryOvercommit and
 	// Scaler.effectiveMemoryOvercommit.
 	HostMemoryOvercommit map[string]float64
+	// HostMemorySafetyMargins is every fleet host's memory_safety_margin
+	// override (fleet.hosts[].memory_safety_margin); absent means inherit
+	// MemorySafetyMargin.
+	HostMemorySafetyMargins map[string]float64
 	// MemorySafetyMargin is the fraction of Docker-reported physical host
 	// memory that placement leaves outside declared runner reservations. A
 	// value of 0.10 keeps ten percent free; zero selects the default.

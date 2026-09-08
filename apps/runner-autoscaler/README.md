@@ -857,6 +857,22 @@ sample and stay charged at their declared reservation, as before. The sampler
 is an injectable function on `Scaler`, so tests supply canned per-container
 usage without a real Docker daemon.
 
+Per fleet host, an optional `memory_safety_margin` overrides the fleet-wide
+fraction for that host only (admission side; the collective runner slice bound
+stays fleet-wide). Use it where a host also carries load the scheduler cannot
+see -- an operator's own sessions, a builder, a registry: homelab's laforge
+OOM-killed a CI `next-build` while its runner slice held 7 GiB and user
+sessions held 21 GiB, because the fleet's ten percent left no room for them
+(homelab#1208).
+
+```yaml
+fleet:
+  hosts:
+    - name: laforge
+      docker: ssh://homelab@laforge.lan.jlapenna.net
+      memory_safety_margin: 0.35 # keep ~11 GiB of 32 for the operator and host services
+```
+
 Per fleet host, an optional `memory_overcommit` factor (default `1.0`, at
 least `1.0` and at most `2.0`) multiplies the reserved-memory admission
 budget:

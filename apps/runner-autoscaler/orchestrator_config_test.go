@@ -1456,3 +1456,27 @@ func TestOrchestratorConfigRejectsInvalidMemorySafetyMarginMax(t *testing.T) {
 		t.Fatalf("expected memory_safety_margin_max error, got %v", err)
 	}
 }
+
+func TestOrchestratorConfigParsesPerHostMemorySafetyMargin(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      docker: local\n", "      docker: local\n      memory_safety_margin: 0.35\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.MemorySafetyMargins) != 1 {
+		t.Fatalf("MemorySafetyMargins = %v, want exactly one override", resolved.MemorySafetyMargins)
+	}
+	for host, m := range resolved.MemorySafetyMargins {
+		if m != 0.35 {
+			t.Fatalf("host %q margin = %v, want 0.35", host, m)
+		}
+	}
+}
+
+func TestOrchestratorConfigRejectsPerHostMemorySafetyMarginOfOne(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      docker: local\n", "      docker: local\n      memory_safety_margin: 1.0\n", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "memory_safety_margin must be greater than 0 and less than 1") {
+		t.Fatalf("expected per-host memory_safety_margin error, got %v", err)
+	}
+}

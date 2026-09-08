@@ -450,6 +450,10 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 		for host, factor := range resolved.MemoryOvercommit {
 			c.HostMemoryOvercommit[host] = factor
 		}
+		c.HostMemorySafetyMargins = make(map[string]float64, len(resolved.MemorySafetyMargins))
+		for host, margin := range resolved.MemorySafetyMargins {
+			c.HostMemorySafetyMargins[host] = margin
+		}
 		c.MemorySafetyMargin = resolved.Raw.Fleet.Placement.MemorySafetyMargin
 		if capStr := resolved.Raw.Fleet.Placement.MemorySafetyMarginMax; capStr != "" {
 			// Already validated by loadOrchestratorConfig; a parse failure here
@@ -684,6 +688,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		hostMetricsTimeouts:        c.HostMetricsTimeouts,
 		hostMemoryExempt:           stringSet(c.HostMemoryExempt),
 		hostMemoryOvercommit:       c.HostMemoryOvercommit,
+		hostMemorySafetyMargins:    c.HostMemorySafetyMargins,
 		memorySafetyMargin:         c.MemorySafetyMargin,
 		memorySafetyMarginMaxBytes: c.MemorySafetyMarginMaxBytes,
 		readinessMetricsURL:        c.ReadinessMetricsURL,

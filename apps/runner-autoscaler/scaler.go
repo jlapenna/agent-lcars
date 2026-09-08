@@ -133,6 +133,9 @@ type Scaler struct {
 	// (agent-lcars#1694). A missing entry, or a value at or below 1.0, means
 	// no overcommit (effective factor 1.0).
 	hostMemoryOvercommit map[string]float64
+	// hostMemorySafetyMargins: per-host memory_safety_margin overrides; a
+	// host absent here uses memorySafetyMargin. See marginBytesFor.
+	hostMemorySafetyMargins map[string]float64
 	// memoryUsageSampler samples a running runner container's current memory
 	// usage for usage-aware admission charging (agent-lcars#1694); nil
 	// selects containerMemoryUsage against the real Docker daemon. Tests
@@ -1404,8 +1407,12 @@ func requiredFreeMemory(candidateBytes, totalBytes int64, margin float64) int64 
 // fraction of physical memory, capped at memorySafetyMarginMaxBytes when set.
 // Every budget and MemAvailable-floor computation goes through here so the
 // cap cannot apply to one gate and not another.
-func (a *Scaler) marginBytesFor(totalBytes int64) int64 {
-	m := int64(a.resolvedMemorySafetyMargin() * float64(totalBytes))
+func (a *Scaler) marginBytesFor(host string, totalBytes int64) int64 {
+	fraction := a.hostMemorySafetyMargins[host]
+	if fraction <= 0 {
+		fraction = a.resolvedMemorySafetyMargin()
+	}
+	m := int64(fraction * float64(totalBytes))
 	if a.memorySafetyMarginMaxBytes > 0 && m > a.memorySafetyMarginMaxBytes {
 		m = a.memorySafetyMarginMaxBytes
 	}
@@ -1585,7 +1592,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 			inFlight := fleet.reservedMemory[h.Name]
 			reserved := running + inFlight
 			overcommit := a.effectiveMemoryOvercommit(h.Name, probe)
-			budget := int64(float64(total-a.marginBytesFor(total)) * overcommit)
+			budget := int64(float64(total-a.marginBytesFor(h.Name, total)) * overcommit)
 			hostMemoryReservedGauge.WithLabelValues(h.Name).Set(float64(reserved))
 			hostMemoryBudgetGauge.WithLabelValues(h.Name).Set(float64(budget))
 			hostMemoryObservedGauge.WithLabelValues(h.Name).Set(float64(probe.hostObservedMemory[h.Name]))
@@ -1639,7 +1646,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 			// absolute floor sized to THIS candidate rather than a
 			// fleet-wide pressure ratio. A no-op when host metrics are not
 			// configured for this host at all -- see hostMetricsConfigured.
-			marginBytes := a.marginBytesFor(total)
+			marginBytes := a.marginBytesFor(h.Name, total)
 			realHeadroom := int64(math.MaxInt64)
 			if a.hostMetricsConfigured(h.Name) {
 				load := probe.hostLoads[h.Name]
@@ -1848,7 +1855,7 @@ func (a *Scaler) degradationLadderObservedP95(fleet *FleetCoordinator, probe fle
 		total := probe.hostMemoryBytes[h.Name]
 		reserved := probe.hostRunningReservedMemory[h.Name] + fleet.reservedMemory[h.Name]
 		overcommit := a.effectiveMemoryOvercommit(h.Name, probe)
-		budget := int64(float64(total-a.marginBytesFor(total)) * overcommit)
+		budget := int64(float64(total-a.marginBytesFor(h.Name, total)) * overcommit)
 		if reserved+observed > budget {
 			continue
 		}
@@ -2279,7 +2286,7 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 			continue
 		}
 		hostTotal := probe.hostMemoryBytes[name]
-		budget := int64(float64(hostTotal-a.marginBytesFor(hostTotal)) * a.effectiveMemoryOvercommit(name, probe))
+		budget := int64(float64(hostTotal-a.marginBytesFor(name, hostTotal)) * a.effectiveMemoryOvercommit(name, probe))
 		reserved := probe.hostRunningReservedMemory[name] + fleet.reservedMemory[name]
 		memorySlots := int((budget - reserved) / candidate)
 		if memorySlots < 0 {
@@ -2304,7 +2311,7 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 					memorySlots = 0
 				}
 			} else {
-				marginBytes := a.marginBytesFor(hostTotal)
+				marginBytes := a.marginBytesFor(name, hostTotal)
 				realSlots := int((int64(load.memoryAvailableBytes) - marginBytes) / candidate)
 				if realSlots < 0 {
 					realSlots = 0

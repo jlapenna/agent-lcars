@@ -132,6 +132,13 @@ type FleetHostConfig struct {
 	// Must be at least 1.0 and at most 2.0; zero (the default) selects 1.0,
 	// i.e. no overcommit.
 	MemoryOvercommit float64 `yaml:"memory_overcommit,omitempty"`
+	// MemorySafetyMargin overrides fleet.placement.memory_safety_margin for
+	// this one host (0 = inherit). For a host that also carries an operator's
+	// own sessions or other non-runner load, the fleet-wide ten percent is
+	// not enough headroom: homelab's laforge OOM-killed a CI next-build while
+	// the runner slice held 7 GiB and user sessions held 21 GiB (homelab#1208).
+	// Admission-side only; the collective runner slice bound stays fleet-wide.
+	MemorySafetyMargin float64 `yaml:"memory_safety_margin,omitempty"`
 	// Role declares this host's standing in the fleet invariant (the fleet
 	// scheduler redesign's phase 2, agent-lcars#1696,
 	// docs/fleet-scheduler-redesign.md#F): hostRolePermanent (the default,
@@ -486,6 +493,8 @@ type resolvedOrchestratorConfig struct {
 	// MemoryOvercommit is every fleet host's resolved memory_overcommit
 	// factor (default 1.0 for a host that does not set one).
 	MemoryOvercommit map[string]float64
+	// MemorySafetyMargins is every host's memory_safety_margin override (absent = inherit).
+	MemorySafetyMargins map[string]float64
 	// HostRoles is every configured fleet host's resolved role (defaulting
 	// to hostRolePermanent), keyed by host name (agent-lcars#1696).
 	HostRoles map[string]string
@@ -569,6 +578,7 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	r.RunnerLimits = map[string]int{}
 	r.HostMetricsTimeouts = map[string]time.Duration{}
 	r.MemoryOvercommit = map[string]float64{}
+	r.MemorySafetyMargins = map[string]float64{}
 	r.HostRoles = map[string]string{}
 	seenHosts := map[string]bool{}
 	for i, h := range c.Fleet.Hosts {
@@ -635,6 +645,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 			return fmt.Errorf("host %q memory_overcommit must be at least 1.0 and at most 2.0", h.Name)
 		}
 		r.MemoryOvercommit[h.Name] = overcommit
+		if h.MemorySafetyMargin != 0 {
+			if math.IsNaN(h.MemorySafetyMargin) || math.IsInf(h.MemorySafetyMargin, 0) || h.MemorySafetyMargin < 0 || h.MemorySafetyMargin >= 1 {
+				return fmt.Errorf("host %q memory_safety_margin must be greater than 0 and less than 1", h.Name)
+			}
+			r.MemorySafetyMargins[h.Name] = h.MemorySafetyMargin
+		}
 
 		role := strings.TrimSpace(h.Role)
 		if role == "" {
