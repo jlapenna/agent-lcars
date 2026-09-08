@@ -349,6 +349,19 @@ signature recurs after that targeted fix, stop and escalate (park per §4)
 rather than blind-iterating — repeated guessing burns the budget without
 converging and is indistinguishable, from the outside, from a stuck run.
 
+**Never apply a `ci:*` or `automation:*` label to widen your own run.** They
+are maintainer-requested workflow controls, not verification you may select:
+each one exists to make a run broader, more expensive, or more privileged
+than the repository's default. The budget they spend is not your run's — it
+is the fleet's. Sprinkles measured that
+(supersprinklesracing/sprinkles#5244): a single `ci:run-e2e` applied at
+`gh pr create` time bypassed affected-project selection, ran every E2E
+project across every app, saturated the shared self-hosted runner fleet, and
+left that pull request and unrelated ones blocked for six hours. The lane
+your repository already runs by default is your evidence. If you believe a
+broader run is genuinely required, park per §4 and ask for it, rather than
+spending everyone else's capacity on your own judgement.
+
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
 **Situational** — moved to
