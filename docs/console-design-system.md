@@ -236,6 +236,11 @@ numbers here:
 - If a test sets the colour scheme by cookie, **assert the scheme it is
   actually in** before measuring. A mis-scoped cookie silently makes every
   "light" case a second dark-mode run that passes for the wrong reason.
+- **Composite translucent backgrounds** before comparing against them. A
+  blockquote tinted `rgba(96,112,138,0.07)` is 7% grey over whatever is under
+  it; treating any non-zero alpha as opaque compares text against solid grey-6
+  and invents failures. Walk up the ancestors accumulating layers until one is
+  actually opaque, then composite back down.
 
 And when a new assertion is added, check that it **fails without its fix**
 before trusting it. Three of the guards in this system passed against the

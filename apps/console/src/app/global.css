@@ -766,6 +766,51 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   color: var(--lcars-accent-ink);
 }
 
+/* Badges in light mode (#1848).
+   Mantine picks a badge's colours from the family's shade 6, which is chosen
+   to carry white text on a dark ground. On a light ground the same values
+   fail: white on green-6 measures 3.34:1 and on yellow-6 1.97:1, while the
+   `outline`/`light` variants put a mid-tone directly on the page at 2.4-2.9:1.
+   These are 9-10px labels, so they need the full 4.5:1 - the large-text
+   allowance does not apply.
+
+   There is no single ink that fixes it: near-black rescues green and yellow
+   but fails on blue-5 (3.88:1), and white does the reverse. So the fill moves
+   instead of the ink, which is the rule the rest of this system already
+   follows - a bright block with near-black type (see "Operational controls").
+   Mixing whatever `--badge-bg` resolves to toward white keeps each family's
+   hue, and therefore its meaning, while making one ink correct for all of
+   them: worst case 5.58:1 across the status palette, against 4.5 required.
+
+   Dark mode is untouched. Its fills are already dark and its badges measured
+   clean. */
+
+:root[data-mantine-color-scheme='light']
+  .mantine-Badge-root:is([data-variant='filled'], :not([data-variant])) {
+  /* `:not([data-variant])` matters: Mantine omits the attribute entirely when
+     the variant is the default, so a plain `<Badge color="green">` carries no
+     `data-variant` at all and a `[data-variant='filled']` selector misses it. */
+  background: color-mix(in srgb, var(--badge-bg) 60%, white);
+  color: var(--lcars-ink-on-accent);
+}
+
+/* The unfilled variants put their colour straight onto the page, so it is the
+   text that has to move. Same derivation as `--lcars-accent-ink`: worst case
+   5.25:1 on the darkest tinted panel. */
+:root[data-mantine-color-scheme='light']
+  .mantine-Badge-root:is(
+    [data-variant='light'],
+    [data-variant='outline'],
+    [data-variant='default']
+  ) {
+  color: color-mix(in srgb, var(--badge-color) 60%, black);
+}
+
+:root[data-mantine-color-scheme='light']
+  .mantine-Badge-root[data-variant='outline'] {
+  border-color: color-mix(in srgb, var(--badge-color) 60%, black);
+}
+
 /* ---- Rendered Markdown (#1843) ----
    GitHub issue and comment bodies, agent transcript turns, artifact previews.
    `ConsoleMarkdown` is the only thing that renders these, and until it
