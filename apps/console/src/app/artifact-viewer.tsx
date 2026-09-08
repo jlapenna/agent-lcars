@@ -3,8 +3,8 @@
 import { Anchor, Box, Group, Loader, Text } from '@mantine/core';
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+
+import { ConsoleMarkdown } from './console-markdown';
 
 export type ArtifactKind = 'markdown' | 'image' | 'pdf' | 'other';
 
@@ -74,11 +74,7 @@ function MarkdownPreview({ url }: { url: string }) {
         fontSize: 'var(--mantine-font-size-xs)',
       }}
     >
-      {/* No rehype-raw plugin: raw HTML embedded in the markdown is never
-       * rendered, only escaped, and react-markdown's default urlTransform
-       * strips dangerous link/image schemes (e.g. javascript:) - this is
-       * agent-generated content, so it's treated as untrusted input. */}
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{state.content}</ReactMarkdown>
+      <ConsoleMarkdown>{state.content}</ConsoleMarkdown>
     </Box>
   );
 }
