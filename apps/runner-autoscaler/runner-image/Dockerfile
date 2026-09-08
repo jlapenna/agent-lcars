@@ -291,7 +291,10 @@ RUN set -eux; \
     apt-get update; \
     # The Firestore emulator requires Java 21+. Baking the JRE makes trusted
     # E2E runners ready without downloading a Temurin distribution per job. \
-    apt-get install -y --no-install-recommends nodejs git-lfs gh jq python3-pip openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
+    # python3-yaml: GitHub-hosted ubuntu-latest ships PyYAML, and consumer
+    # workflows (sprinkles deploy.py) assume it; with PEP 668 a job cannot
+    # pip-install it at run time without --break-system-packages. \
+    apt-get install -y --no-install-recommends nodejs git-lfs gh jq python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
     node --version; \
     # NodeSource's nodejs package bundles the `corepack` binary but never
     # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
