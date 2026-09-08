@@ -2975,14 +2975,32 @@ func TestProbeFleetHostsSkipsDockerPingForReadinessBlockedHost(t *testing.T) {
 func TestMarginBytesForHonorsAbsoluteCap(t *testing.T) {
 	big, small := int64(128)<<30, int64(16)<<30
 	s := &Scaler{memorySafetyMargin: 0.10}
-	if got, want := s.marginBytesFor(big), int64(0.10*float64(big)); got != want {
+	if got, want := s.marginBytesFor("h", big), int64(0.10*float64(big)); got != want {
 		t.Fatalf("uncapped margin = %d, want %d (10%% of 128 GiB)", got, want)
 	}
 	s.memorySafetyMarginMaxBytes = 6 << 30
-	if got := s.marginBytesFor(big); got != 6<<30 {
+	if got := s.marginBytesFor("h", big); got != 6<<30 {
 		t.Fatalf("capped margin = %d, want 6 GiB", got)
 	}
-	if got, want := s.marginBytesFor(small), int64(0.10*float64(small)); got != want {
+	if got, want := s.marginBytesFor("h", small), int64(0.10*float64(small)); got != want {
 		t.Fatalf("small host margin = %d, want %d (cap must not raise it)", got, want)
+	}
+}
+
+// A per-host memory_safety_margin overrides the fleet fraction for that host
+// only, and the absolute cap still applies on top (homelab#1208: a host that
+// also carries operator sessions needs more headroom than the fleet's 10%).
+func TestMarginBytesForHonorsPerHostOverride(t *testing.T) {
+	total := int64(32) << 30
+	s := &Scaler{memorySafetyMargin: 0.10, hostMemorySafetyMargins: map[string]float64{"laforge": 0.35}}
+	if got, want := s.marginBytesFor("laforge", total), int64(0.35*float64(total)); got != want {
+		t.Fatalf("laforge margin = %d, want %d (35%%)", got, want)
+	}
+	if got, want := s.marginBytesFor("janeway", total), int64(0.10*float64(total)); got != want {
+		t.Fatalf("janeway margin = %d, want %d (fleet 10%%)", got, want)
+	}
+	s.memorySafetyMarginMaxBytes = 6 << 30
+	if got := s.marginBytesFor("laforge", total); got != 6<<30 {
+		t.Fatalf("capped laforge margin = %d, want 6 GiB", got)
 	}
 }
