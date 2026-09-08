@@ -2999,8 +2999,16 @@ func TestMarginBytesForHonorsPerHostOverride(t *testing.T) {
 	if got, want := s.marginBytesFor("janeway", total), int64(0.10*float64(total)); got != want {
 		t.Fatalf("janeway margin = %d, want %d (fleet 10%%)", got, want)
 	}
+	// The absolute cap bounds the fleet FRACTION only; an explicit per-host
+	// override is taken literally (a 35% ask must not silently become 6 GiB).
 	s.memorySafetyMarginMaxBytes = 6 << 30
-	if got := s.marginBytesFor("laforge", total); got != 6<<30 {
-		t.Fatalf("capped laforge margin = %d, want 6 GiB", got)
+	if got, want := s.marginBytesFor("laforge", total), int64(0.35*float64(total)); got != want {
+		t.Fatalf("overridden laforge margin under cap = %d, want %d (override wins)", got, want)
+	}
+	if got := s.marginBytesFor("janeway", total); got != int64(0.10*float64(total)) {
+		t.Fatalf("janeway (fleet fraction, below cap) = %d, want 10%%", got)
+	}
+	if got := s.marginBytesFor("janeway", 128<<30); got != 6<<30 {
+		t.Fatalf("janeway-sized-128GiB (fleet fraction, above cap) = %d, want 6 GiB cap", got)
 	}
 }

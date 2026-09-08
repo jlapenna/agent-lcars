@@ -859,7 +859,8 @@ usage without a real Docker daemon.
 
 Per fleet host, an optional `memory_safety_margin` overrides the fleet-wide
 fraction for that host only (admission side; the collective runner slice bound
-stays fleet-wide). Use it where a host also carries load the scheduler cannot
+stays fleet-wide). It is taken literally -- `memory_safety_margin_max` caps
+the fleet fraction, not an explicit per-host override. Use it where a host also carries load the scheduler cannot
 see -- an operator's own sessions, a builder, a registry: homelab's laforge
 OOM-killed a CI `next-build` while its runner slice held 7 GiB and user
 sessions held 21 GiB, because the fleet's ten percent left no room for them

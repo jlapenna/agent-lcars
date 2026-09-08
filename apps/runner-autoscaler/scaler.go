@@ -1408,11 +1408,16 @@ func requiredFreeMemory(candidateBytes, totalBytes int64, margin float64) int64 
 // Every budget and MemAvailable-floor computation goes through here so the
 // cap cannot apply to one gate and not another.
 func (a *Scaler) marginBytesFor(host string, totalBytes int64) int64 {
-	fraction := a.hostMemorySafetyMargins[host]
-	if fraction <= 0 {
-		fraction = a.resolvedMemorySafetyMargin()
+	// A per-host override is an explicit operator statement about THIS host
+	// ("keep this much for what the scheduler cannot see") and is taken
+	// literally. The absolute cap exists to stop the fleet FRACTION from
+	// scaling absurdly with a very large host; applying it to an override
+	// would silently shrink the one number the operator set on purpose --
+	// homelab's laforge asked for 35% (11 GiB) and got the 6 GiB cap.
+	if fraction := a.hostMemorySafetyMargins[host]; fraction > 0 {
+		return int64(fraction * float64(totalBytes))
 	}
-	m := int64(fraction * float64(totalBytes))
+	m := int64(a.resolvedMemorySafetyMargin() * float64(totalBytes))
 	if a.memorySafetyMarginMaxBytes > 0 && m > a.memorySafetyMarginMaxBytes {
 		m = a.memorySafetyMarginMaxBytes
 	}
