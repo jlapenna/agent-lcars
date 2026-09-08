@@ -3,7 +3,10 @@ import { Anchor, Box } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
-import { listWorkSummaries } from '@/lib/work-summary';
+import {
+  excludeClosedGithubAnchors,
+  listWorkSummaries,
+} from '@/lib/work-summary';
 
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
@@ -67,9 +70,13 @@ async function ParkedWork() {
       limit: 200,
       state: 'parked',
     });
+    const items = await excludeClosedGithubAnchors(
+      work.runtime.store,
+      page.items,
+    );
     return (
       <ParkedWorkPanel
-        items={page.items}
+        items={items}
         hasMoreTasks={page.nextCursor !== undefined}
         cancel={cancelItem}
         redispatch={redispatchItem}

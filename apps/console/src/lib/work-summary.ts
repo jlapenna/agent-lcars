@@ -64,3 +64,30 @@ export async function listWorkSummaries(
       : {}),
   };
 }
+
+/**
+ * Drops GitHub-anchored items whose issue has since been closed on GitHub
+ * (#1860). `deriveItemState`'s `closedAt` field is native-only -- closing a
+ * GitHub anchor's issue never touches the orchestrator Task record (see
+ * `decide.ts`'s `not-native` refusal) -- so a GitHub-anchored item that
+ * parked stays derived as `parked` forever, even once a human closes the
+ * issue as complete. This is the enrichment `listWorkSummaries`'s own
+ * contract above allows: it narrows which already-derived items a caller
+ * shows, it never rewrites `item.state` with the GitHub projection. Native
+ * items pass through untouched -- `closedAt` already covers them. A missing
+ * or unavailable projection fails open (item kept): a webhook gap is not
+ * evidence the issue is actually closed.
+ */
+export async function excludeClosedGithubAnchors(
+  store: OrchestratorStore,
+  items: WorkSummary[],
+): Promise<WorkSummary[]> {
+  const keep = await Promise.all(
+    items.map(async (item) => {
+      if ('workId' in item.anchor) return true;
+      const projection = await store.readGithubAnchorProjection(item.anchor);
+      return projection?.state !== 'closed';
+    }),
+  );
+  return items.filter((_, index) => keep[index]);
+}
