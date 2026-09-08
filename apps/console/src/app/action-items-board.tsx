@@ -55,7 +55,6 @@ export function BridgeSections({
   return (
     <Card
       withBorder
-      radius="md"
       padding="md"
       mb="xl"
       className="lcars-panel waiting-on-deploy"

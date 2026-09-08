@@ -51,7 +51,6 @@ export function LogicalWorkCard({
   return (
     <Card
       withBorder
-      radius="md"
       padding="md"
       className="lcars-panel"
       data-testid="logical-work-card"

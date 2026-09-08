@@ -353,7 +353,6 @@ export function ActionItemCard({
   return (
     <Card
       withBorder={!workspace}
-      radius={workspace ? 0 : 'md'}
       padding={workspace ? 'lg' : 'md'}
       className={workspace ? 'queue-detail-card' : undefined}
     >
