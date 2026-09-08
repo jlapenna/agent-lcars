@@ -1,5 +1,11 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { WorkCreateForm } from './work-create-form';
@@ -51,17 +57,73 @@ describe('WorkCreateForm', () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith(`/work/${input.id}`));
   });
 
-  it.each([
-    ['FORBIDDEN', /does not cover that pipeline or repository/],
-    ['TOO_MANY_REQUESTS', /live-run cap/],
-  ])('renders %s inline', async (code, text) => {
-    renderForm(vi.fn().mockResolvedValue([{ code, message: 'x' }, null]));
+  it('renders FORBIDDEN inline as a terminal error', async () => {
+    renderForm(
+      vi.fn().mockResolvedValue([{ code: 'FORBIDDEN', message: 'x' }, null]),
+    );
     fillTitleAndDescription('T', 'D');
     fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
-    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/does not cover that pipeline or repository/),
+    ).toBeInTheDocument();
   });
 
-  it('reuses the same id on a retry (same fields) after an error', async () => {
+  it('queues instead of blocking on TOO_MANY_REQUESTS, then retries automatically', async () => {
+    // Spies on the real `setTimeout` rather than switching to fake timers:
+    // `useTransition`'s async work relies on the platform's own scheduler,
+    // which fake timers fight with. Capturing the scheduled callback and
+    // invoking it directly proves the same thing -- an automatic retry was
+    // armed, unprompted, at the server's own delay -- without needing the
+    // real 5 seconds to elapse.
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const create = renderForm(
+      vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            code: 'TOO_MANY_REQUESTS',
+            message: 'x',
+            data: { retryAfterSeconds: 5 },
+          },
+          null,
+        ])
+        .mockResolvedValueOnce([null, { id: 'X', state: 'running' }]),
+    );
+    fillTitleAndDescription('Add healthz', 'Expose /healthz');
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('status')).toHaveTextContent(/live-run cap/);
+    // The button is free to use again, not stuck disabled for the whole
+    // queued wait -- an impatient operator can still force an immediate
+    // manual retry (see the id-reuse test below); nothing here does that,
+    // so this exercises the automatic path only. The disabled/loading state
+    // clears one render after the refusal text, same as the manual-retry
+    // test below -- wait for the button itself.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Create work item' }),
+      ).not.toBeDisabled(),
+    );
+
+    const scheduled = setTimeoutSpy.mock.calls.find(
+      ([, delay]) => delay === 5_000,
+    );
+    expect(scheduled).toBeDefined();
+    const [retryCallback] = scheduled ?? [];
+    setTimeoutSpy.mockRestore();
+
+    // Simulate the scheduled wait elapsing, with no further user action.
+    await act(async () => {
+      (retryCallback as () => void)();
+    });
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(create.mock.calls[1][0].id).toBe(create.mock.calls[0][0].id);
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith(`/work/${create.mock.calls[0][0].id}`),
+    );
+  });
+
+  it('reuses the same id on a manual retry (same fields) while queued', async () => {
     const create = renderForm(
       vi
         .fn()

@@ -18,7 +18,7 @@ import { showErrorToast } from '../show-error-toast';
  * satisfy it.
  */
 export type WorkActionResult = readonly [
-  { code: string; message: string } | null,
+  { code: string; message: string; data?: unknown } | null,
   unknown,
 ];
 export type WorkAction = (input: { id: string }) => Promise<WorkActionResult>;
