@@ -639,6 +639,60 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --mantine-color-default-filled: var(--mantine-color-gray-3);
   --mantine-color-text: var(--lcars-ink);
   --mantine-color-dimmed: var(--lcars-ink-dim);
+
+  /* Semantic status text - `<Text c="orange">` for a run diagnosis, `c="red"`
+     for an error. Mantine resolves `c` through `--mantine-color-<f>-text`,
+     which in light mode is the family's *filled* shade: chosen to sit on a
+     dark ground, and 3.03:1 on this one. Same problem as the accent used as
+     ink, and the same 60% derivation as the badges below, so all three read
+     as one rule rather than three special cases. Worst case 5.25:1.
+
+     Dark mode keeps Mantine's own value; it measured clean. */
+  --mantine-color-red-text: color-mix(
+    in srgb,
+    var(--mantine-color-red-filled) 60%,
+    black
+  );
+  --mantine-color-orange-text: color-mix(
+    in srgb,
+    var(--mantine-color-orange-filled) 60%,
+    black
+  );
+  --mantine-color-yellow-text: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-filled) 60%,
+    black
+  );
+  --mantine-color-green-text: color-mix(
+    in srgb,
+    var(--mantine-color-green-filled) 60%,
+    black
+  );
+  --mantine-color-teal-text: color-mix(
+    in srgb,
+    var(--mantine-color-teal-filled) 60%,
+    black
+  );
+  --mantine-color-blue-text: color-mix(
+    in srgb,
+    var(--mantine-color-blue-filled) 60%,
+    black
+  );
+  --mantine-color-violet-text: color-mix(
+    in srgb,
+    var(--mantine-color-violet-filled) 60%,
+    black
+  );
+  --mantine-color-grape-text: color-mix(
+    in srgb,
+    var(--mantine-color-grape-filled) 60%,
+    black
+  );
+  --mantine-color-gray-text: color-mix(
+    in srgb,
+    var(--mantine-color-gray-filled) 60%,
+    black
+  );
 }
 
 /* Card and Paper hardcode their own per-scheme background via `:where()`
