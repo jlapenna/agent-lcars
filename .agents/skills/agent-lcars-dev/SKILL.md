@@ -40,8 +40,8 @@ These override any default behavior:
 
   After merging and safely removing the feature worktree, sync the primary
   checkout to the latest remote base with a fast-forward-only pull. First
-  confirm the primary checkout is clean, on the base branch, and not being
-  used by another session; if it is unsafe to update, fetch and report that
+  confirm the primary checkout is clean and on the base branch. Other sessions
+  using the primary as their cwd do not block this narrow fast-forward; if it is unsafe to update, report that
   it remains behind rather than stashing, resetting, or switching branches.
 
 - **Push early — the heavy gate runs on CI, not your workstation.** The
@@ -50,7 +50,7 @@ These override any default behavior:
   `build` — those are the expensive, whole-tree-scanning steps, and
   `.github/workflows/ci.yml`'s `Verify` job (a required check gating every
   merge) already re-runs the full `test typecheck build test-race --all`
-  gate on its own GitHub-hosted runner the moment you push. Running that
+  gate on the configured CI runner fleet (GitHub-hosted for fork PRs). Running that
   same gate again locally first just serializes your own workstation in
   front of a check that's going to happen anyway — push once the fast
   layer passes and let CI do the rest. See
