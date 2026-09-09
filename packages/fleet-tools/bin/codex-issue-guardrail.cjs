@@ -27,27 +27,42 @@ function extractIssueReferences(command) {
   if (typeof command !== 'string') return [];
   const references = new Map();
   const commandPattern =
-    /\bgh\s+issue\s+(?:view|edit)\b([\s\S]*?)(?=(?:&&|\|\||;|\n|$))/g;
+    /\bgh\s+issue\s+(view|edit)\b([\s\S]*?)(?=(?:&&|\|\||;|\n|$))/g;
   const urlPattern =
     /https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/issues\/(\d+)/g;
   const numberPattern = /(?:^|\s)#?(\d+)(?=\s|$)/g;
   // -R owner/repo, --repo owner/repo, --repo=owner/repo
   const repoFlagPattern = /(?:^|\s)(?:-R|--repo)(?:[=\s]+)(\S+)/;
   for (const commandMatch of command.matchAll(commandPattern)) {
-    const segment = commandMatch[1];
+    const segment = commandMatch[2];
+    // `edit` routes an issue -- labels, assignees. `view` only reads it.
+    // Only the routing verb gets the closed-state check below, because
+    // reading a closed issue is ordinary research and warning about it would
+    // be noise on every lookup.
+    const routing = commandMatch[1] === 'edit';
     const flagMatch = segment.match(repoFlagPattern);
     const segmentRepo = flagMatch ? flagMatch[1] : null;
     for (const urlMatch of segment.matchAll(urlPattern)) {
-      const reference = { number: Number(urlMatch[2]), repo: urlMatch[1] };
-      references.set(`${reference.repo}#${reference.number}`, reference);
+      const key = `${urlMatch[1]}#${urlMatch[2]}`;
+      const reference = {
+        number: Number(urlMatch[2]),
+        repo: urlMatch[1],
+        routing: routing || Boolean(references.get(key)?.routing),
+      };
+      references.set(key, reference);
     }
     // A URL's digits would otherwise be re-counted as a bare number against
     // the segment's repo, so scan the segment with URLs removed.
     for (const numberMatch of segment
       .replace(urlPattern, ' ')
       .matchAll(numberPattern)) {
-      const reference = { number: Number(numberMatch[1]), repo: segmentRepo };
-      references.set(`${segmentRepo ?? ''}#${reference.number}`, reference);
+      const key = `${segmentRepo ?? ''}#${numberMatch[1]}`;
+      const reference = {
+        number: Number(numberMatch[1]),
+        repo: segmentRepo,
+        routing: routing || Boolean(references.get(key)?.routing),
+      };
+      references.set(key, reference);
     }
   }
   return [...references.values()];
@@ -85,23 +100,47 @@ function defaultDependencies(cwd) {
         assignees: Array.isArray(issue.assignees)
           ? issue.assignees.map(({ login }) => login)
           : [],
+        // Already in the response the assignee check pays for, so the
+        // collision check below costs no additional request.
+        state: issue.state,
+        closedAt: issue.closed_at ?? null,
       };
     },
   };
 }
 
 function evaluateIssue(reference, dependencies) {
-  const { number: issueNumber, repo = null } =
-    typeof reference === 'number' ? { number: reference } : reference;
+  const {
+    number: issueNumber,
+    repo = null,
+    routing = false,
+  } = typeof reference === 'number' ? { number: reference } : reference;
   const label = formatIssue({ number: issueNumber, repo });
   const violations = [];
   try {
     const issue = dependencies.getIssue(issueNumber, repo);
     if (!issue.assignees.includes(CLAIM_ASSIGNEE)) {
-      violations.push(`issue ${label} is not assigned to ${CLAIM_ASSIGNEE}`);
+      violations.push({
+        kind: 'unclaimed',
+        text: `issue ${label} is not assigned to ${CLAIM_ASSIGNEE}`,
+      });
+    }
+    // #1686: a session sank a full seven-task implementation into an issue
+    // that had been closed hours earlier by someone else's PR, and only found
+    // out when a rebase hit a content conflict. Routing an already-closed
+    // issue is the same mistake one step earlier and is visible for free.
+    if (routing && issue.state === 'closed') {
+      const since = issue.closedAt ? ` (closed ${issue.closedAt})` : '';
+      violations.push({
+        kind: 'closed',
+        text: `issue ${label} is already CLOSED${since}`,
+      });
     }
   } catch {
-    violations.push(`could not verify the assignees for issue ${label}`);
+    violations.push({
+      kind: 'unclaimed',
+      text: `could not verify the assignees for issue ${label}`,
+    });
   }
   return violations;
 }
@@ -116,13 +155,27 @@ function runHook(input, dependencies) {
   // Defensive fallback adopted from homelab's variant: a dependency object
   // without projectName must not render an "undefined-dev" banner.
   const projectName = dependencies.projectName ?? 'repository';
+  const kinds = new Set(violations.map(({ kind }) => kind));
+  const guidance = [];
+  if (kinds.has('closed')) {
+    // Deliberately first: when an issue closed under you, claiming it is the
+    // wrong next move, and the stale-read advice is what actually applies.
+    guidance.push(
+      'A closed issue usually means the work already shipped -- re-read it and the PR that closed it before going further, and do not route or continue work that may now be a duplicate.',
+    );
+  }
+  if (kinds.has('unclaimed')) {
+    guidance.push(
+      'Before continuing hands-on work, claim the issue and post a session takeover comment.',
+    );
+  }
   return {
     hookSpecificOutput: {
       hookEventName: 'PostToolUse',
       additionalContext: [
         `${projectName}-dev guardrail violation:`,
-        ...violations.map((violation) => `- ${violation}`),
-        'Before continuing hands-on work, claim the issue and post a session takeover comment.',
+        ...violations.map(({ text }) => `- ${text}`),
+        ...guidance,
       ].join('\n'),
     },
   };
