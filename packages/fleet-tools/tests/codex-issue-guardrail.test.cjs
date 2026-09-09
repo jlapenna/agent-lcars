@@ -8,9 +8,16 @@ const {
   runHook,
 } = require('../bin/codex-issue-guardrail.cjs');
 
-function dependencies({ assignees = ['agent-lcars-bot'] } = {}) {
+function dependencies({
+  assignees = ['agent-lcars-bot'],
+  state,
+  closedAt = null,
+} = {}) {
   return {
-    getIssue: () => ({ assignees }),
+    // `state` is deliberately absent unless a test asks for it, so the
+    // backwards-compatibility path (a dependency object predating the
+    // closed-issue check) stays exercised by every other test here.
+    getIssue: () => ({ assignees, ...(state ? { state, closedAt } : {}) }),
   };
 }
 
@@ -125,11 +132,11 @@ test('reports ownership violations without requiring a tmux title', () => {
 test('carries the repository named by -R / --repo', () => {
   assert.deepEqual(
     extractIssueReferences('gh issue view 761 -R jlapenna/homelab'),
-    [{ number: 761, repo: 'jlapenna/homelab' }],
+    [{ number: 761, repo: 'jlapenna/homelab', routing: false }],
   );
   assert.deepEqual(
     extractIssueReferences('gh issue edit 12 --repo=owner/name --add-label x'),
-    [{ number: 12, repo: 'owner/name' }],
+    [{ number: 12, repo: 'owner/name', routing: true }],
   );
 });
 
@@ -138,13 +145,13 @@ test('uses the URL own repository, not a -R elsewhere in the segment', () => {
     extractIssueReferences(
       'gh issue view https://github.com/other/repo/issues/5 -R jlapenna/homelab',
     ),
-    [{ number: 5, repo: 'other/repo' }],
+    [{ number: 5, repo: 'other/repo', routing: false }],
   );
 });
 
 test('leaves the repository unset when the command does not name one', () => {
   assert.deepEqual(extractIssueReferences('gh issue edit 642 --add-label c'), [
-    { number: 642, repo: null },
+    { number: 642, repo: null, routing: true },
   ]);
 });
 
@@ -154,8 +161,8 @@ test('treats the same number in different repositories as distinct issues', () =
       'gh issue view 761 -R jlapenna/homelab && gh issue view 761',
     ),
     [
-      { number: 761, repo: 'jlapenna/homelab' },
-      { number: 761, repo: null },
+      { number: 761, repo: 'jlapenna/homelab', routing: false },
+      { number: 761, repo: null, routing: false },
     ],
   );
 });
@@ -187,4 +194,75 @@ test('names the repository in a cross-repo violation', () => {
     output.hookSpecificOutput.additionalContext,
     /issue jlapenna\/homelab#761 is not assigned to/,
   );
+});
+
+// #1686: a session spent a full seven-task implementation on an issue that
+// had been closed hours earlier by someone else's PR, and only discovered it
+// when a rebase hit a content conflict. The issue's state is already in the
+// response the assignee check pays for, so noticing costs nothing.
+test('warns when routing an already-closed issue', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue edit 642 --add-label agent:codex' } },
+    dependencies({ state: 'closed', closedAt: '2026-09-01T12:29:00Z' }),
+  );
+
+  assert.match(
+    output.hookSpecificOutput.additionalContext,
+    /issue #642 is already CLOSED \(closed 2026-09-01T12:29:00Z\)/,
+  );
+  assert.match(
+    output.hookSpecificOutput.additionalContext,
+    /the work already shipped/,
+  );
+});
+
+// Reading a closed issue is ordinary research -- most of the useful context
+// in this fleet lives on closed issues. Warning there would fire on every
+// lookup and train the reader to skip the banner, which costs the warnings
+// that matter.
+test('stays silent when merely viewing a closed issue', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue view 642' } },
+    dependencies({ state: 'closed' }),
+  );
+
+  assert.equal(output, null);
+});
+
+test('warns about a closed issue even when it is properly claimed', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue edit 642 --add-label chore' } },
+    dependencies({ assignees: ['agent-lcars-bot'], state: 'closed' }),
+  );
+
+  assert.match(output.hookSpecificOutput.additionalContext, /already CLOSED/);
+  assert.doesNotMatch(
+    output.hookSpecificOutput.additionalContext,
+    /not assigned to/,
+  );
+});
+
+// When an issue closed underneath you, "claim it" is the wrong instruction --
+// the stale-read advice is what applies, so it has to come first.
+test('leads with the closed guidance when an issue is both closed and unclaimed', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue edit 642 --add-label chore' } },
+    dependencies({ assignees: [], state: 'closed' }),
+  );
+
+  const context = output.hookSpecificOutput.additionalContext;
+  assert.ok(
+    context.indexOf('already shipped') <
+      context.indexOf('post a session takeover comment'),
+    'closed guidance must precede the claim reminder',
+  );
+});
+
+test('an open issue never triggers the closed warning', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue edit 642 --add-label chore' } },
+    dependencies({ state: 'open' }),
+  );
+
+  assert.equal(output, null);
 });

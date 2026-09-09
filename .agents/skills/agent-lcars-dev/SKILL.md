@@ -123,6 +123,18 @@ These override any default behavior:
     `supersprinklesracing/sprinkles#5267` took `/proc` ancestry, two agent
     rollout transcripts, and the timeline API to recover one line the body
     should have carried.
+  - **Re-check a claimed issue before you finish, not only before you start.**
+    A claim records your intent; it does not stop anyone else. #1686 lost a
+    seven-task implementation that way: the issue was closed by someone else's
+    PR hours before, and the collision only surfaced when a rebase hit a
+    content conflict at the very end. The guardrail hook now flags routing an
+    already-closed issue, but it only sees `gh` commands -- a long
+    implementation that does not touch `gh` for hours is invisible to it. So
+    on any run of that length, re-read the issue before opening the PR:
+    `gh issue view <N> --json state,stateReason` plus
+    `gh pr list --state all --search "<N>"`. If it closed under you, do not
+    rebase through the conflict -- diff against whatever merged and ship only
+    what survives.
   - Agents only ever **add** assignees; removing one is a human act.
 
 - **Interactive session tmux title**: on a workstation, the moment a
