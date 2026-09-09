@@ -5,8 +5,14 @@ const { test } = require('node:test');
 const {
   extractIssueNumbers,
   extractIssueReferences,
+  projectNameFor,
   runHook,
 } = require('../bin/codex-issue-guardrail.cjs');
+
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 function dependencies({
   assignees = ['agent-lcars-bot'],
@@ -265,4 +271,58 @@ test('an open issue never triggers the closed warning', () => {
   );
 
   assert.equal(output, null);
+});
+
+// The banner names which repository's guardrails are in play. Every session
+// that trips this guardrail is standing in a linked worktree, where
+// basename(cwd) is the worktree's directory rather than the repository --
+// which rendered "agent-lcars-1686-collision-dev guardrail violation": a
+// directory nobody recognises, attached to advice about a differently-named
+// skill.
+test('names the repository, not the worktree directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrail-banner-'));
+  const repo = path.join(root, 'my-repo');
+  const worktree = path.join(root, 'my-repo-some-long-task-branch');
+  const git = (args, cwd) =>
+    execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
+
+  try {
+    fs.mkdirSync(repo);
+    git(['init', '-q', '-b', 'main'], repo);
+    git(
+      [
+        '-c',
+        'user.email=t@example.invalid',
+        '-c',
+        'user.name=t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'init',
+      ],
+      repo,
+    );
+    git(['worktree', 'add', '-q', worktree, '-b', 'task'], repo);
+
+    assert.equal(projectNameFor(repo), 'my-repo');
+    assert.equal(
+      projectNameFor(worktree),
+      'my-repo',
+      'a linked worktree must still report the repository name',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The banner is cosmetic; a directory that is not a repository at all must
+// still get its violation reported rather than an exception.
+test('falls back to the directory name outside a repository', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrail-norepo-'));
+  try {
+    assert.equal(projectNameFor(dir), path.basename(dir));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

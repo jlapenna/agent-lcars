@@ -79,9 +79,31 @@ function formatIssue({ number, repo }) {
   return repo ? `${repo}#${number}` : `#${number}`;
 }
 
+// The banner names which repository's guardrails are in play, so it has to be
+// the repository -- but every session that trips this is standing in a linked
+// worktree, where basename(cwd) is the worktree's own directory. That rendered
+// "agent-lcars-1686-collision-dev guardrail violation": a directory name
+// nobody recognises, attached to advice about a skill that is not called that.
+// The common git dir always belongs to the primary checkout, whichever
+// worktree is current.
+function projectNameFor(cwd) {
+  try {
+    const commonDir = execFileSync(
+      'git',
+      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    if (commonDir) return path.basename(path.dirname(commonDir));
+  } catch {
+    // Not a repository, or no git on PATH. The banner is cosmetic; falling
+    // back keeps the violation itself visible.
+  }
+  return path.basename(cwd);
+}
+
 function defaultDependencies(cwd) {
   return {
-    projectName: path.basename(cwd),
+    projectName: projectNameFor(cwd),
     getIssue(issueNumber, repo = null) {
       // `{owner}/{repo}` is gh's placeholder for the cwd's repository; use it
       // only when the command did not name one.
@@ -214,4 +236,5 @@ module.exports = {
   extractIssueNumbers,
   extractIssueReferences,
   runHook,
+  projectNameFor,
 };
