@@ -2,18 +2,21 @@
 
 The full gate — this is what `.github/workflows/ci.yml`'s `Verify` job
 (a required check gating every merge) authoritatively runs on its own
-GitHub-hosted runner:
+configured runner (`lcars-ci` for trusted work, GitHub-hosted for fork PRs):
 
 ```bash
 pnpm check:dependencies    # lockfile / workspace-mandate integrity
 pnpm format:check          # prettier, nx format:check --all
 pnpm lint                  # nx run-many -t lint --all
 pnpm lint:circular          # madge circular-dependency check
-./tools/nx run-many -t test typecheck build --all
+./tools/nx run-many -t test typecheck build test-race --all
 ```
 
-Or run the composite `pnpm verify`, which chains the above (minus
-`check:dependencies`).
+The composite `pnpm verify` runs formatting, lint, circular-dependency checks,
+tests, typecheck, and build. It does not include `check:dependencies`,
+`test-race`, or the workflow's Terraform/tooling checks; do not call it the
+complete CI gate. Consult `.github/workflows/ci.yml` for those additional
+boundaries and use CI delegation below.
 
 ## CI delegation
 
