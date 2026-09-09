@@ -6,9 +6,36 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
+import { sweepArmedTimers } from '../../test-support/timer-hygiene';
 import { WorkCreateForm } from './work-create-form';
+
+// #1871 started here: the queued-retry test below armed a real 5s timer and
+// then made the component forget its id, so nothing cancelled it and it
+// fired into a torn-down jsdom ~5s later, failing an unrelated CI run with
+// `ReferenceError: window is not defined` and 1329 passing assertions.
+//
+// The shared setup sweeps leaked timers as a backstop (#1872), which stops
+// that from reddening a run but would equally hide a fresh leak here. This
+// asserts the file leaks nothing of its own, so the next test that arms a
+// timer it cannot cancel fails here rather than somewhere unrelated a week
+// later. Registered before any other afterAll so it observes the file's
+// real end state (Vitest runs afterAll in reverse registration order).
+afterAll(() => {
+  const leaked = sweepArmedTimers();
+  // Thrown rather than `expect`ed: an assertion out here is not inside a
+  // test block (vitest/no-standalone-expect), and a throw from afterAll
+  // fails the file just as loudly.
+  if (leaked.timeouts > 0 || leaked.intervals > 0) {
+    throw new Error(
+      `Leaked ${String(leaked.timeouts)} timeout(s) and ` +
+        `${String(leaked.intervals)} interval(s) past the end of this file. ` +
+        'A timer armed here outlived its jsdom once already (#1871); ' +
+        'cancel it in the test that armed it.',
+    );
+  }
+});
 
 // 'use client' component needs an app router context - mocked the same way
 // work-actions.test.tsx / refresh-button.test.tsx do, since no
@@ -105,11 +132,21 @@ describe('WorkCreateForm', () => {
       ).not.toBeDisabled(),
     );
 
-    const scheduled = setTimeoutSpy.mock.calls.find(
+    const scheduledIndex = setTimeoutSpy.mock.calls.findIndex(
       ([, delay]) => delay === 5_000,
     );
-    expect(scheduled).toBeDefined();
-    const [retryCallback] = scheduled ?? [];
+    expect(scheduledIndex).toBeGreaterThanOrEqual(0);
+    const [retryCallback] = setTimeoutSpy.mock.calls[scheduledIndex];
+
+    // Cancel the real timer before invoking its callback by hand (#1871).
+    // The spy passes through, so an actual 5s timer is armed, and the
+    // component's callback begins by clearing `retryTimeoutRef.current` --
+    // running it directly therefore makes the component forget the id
+    // while the timer is still pending, so its unmount cleanup can no
+    // longer cancel it. It then fired ~5s later into a jsdom Vitest had
+    // already torn down, taking an unrelated CI run down with it. The spy
+    // records what it returned, which is the only remaining handle on it.
+    clearTimeout(setTimeoutSpy.mock.results[scheduledIndex].value);
     setTimeoutSpy.mockRestore();
 
     // Simulate the scheduled wait elapsing, with no further user action.
