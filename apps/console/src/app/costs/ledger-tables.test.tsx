@@ -24,8 +24,9 @@ function renderLedger(ledger: SessionLedger) {
   );
 }
 
-// Below `sm`, each ledger renders a flat, Turns/Cost-weighted-token-dropped
-// list alongside the full semantic table. Both branches render in jsdom
+// Below `sm`, each ledger renders a flat, Turns-dropped list alongside the
+// full semantic table (the per-issue list drops cost-weighted tokens too;
+// the per-week list keeps them). Both branches render in jsdom
 // (which doesn't evaluate the media queries that keep only one visible in a
 // browser), so shared issue/week labels appear twice.
 describe('LedgerTables', () => {
@@ -175,7 +176,7 @@ describe('LedgerTables', () => {
     expect(compactRow.textContent).toContain('2 sessions');
   });
 
-  it('drops Turns and cost-weighted tokens from the compact per-week table, but keeps Cost (#203)', () => {
+  it('drops Turns from the compact per-week table, but keeps Cost and cost-weighted tokens', () => {
     renderLedger({
       byIssue: [],
       byWeek: [
@@ -191,8 +192,9 @@ describe('LedgerTables', () => {
 
     const compactRow = screen.getByTestId('ledger-week-row-compact');
     expect(compactRow.textContent).toContain('$6.00');
-    expect(compactRow.textContent).not.toContain('4,000');
     expect(compactRow.textContent).toContain('3 sessions');
+    expect(compactRow.textContent).toContain('4,000 cost-weighted tokens');
+    expect(compactRow.textContent).not.toContain('12');
   });
 
   it('marks a long multi-repo identity for safe compact-row truncation', () => {
