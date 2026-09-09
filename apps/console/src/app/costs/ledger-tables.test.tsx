@@ -25,8 +25,7 @@ function renderLedger(ledger: SessionLedger) {
 }
 
 // Below `sm`, each ledger renders a flat, Turns-dropped list alongside the
-// full semantic table (the per-issue list drops cost-weighted tokens too;
-// the per-week list keeps them). Both branches render in jsdom
+// full semantic table. Both branches render in jsdom
 // (which doesn't evaluate the media queries that keep only one visible in a
 // browser), so shared issue/week labels appear twice.
 describe('LedgerTables', () => {
@@ -162,7 +161,7 @@ describe('LedgerTables', () => {
     expect(screen.getByText(/bucket can still be partial/)).toBeTruthy();
   });
 
-  it('drops Turns and cost-weighted tokens from the compact per-issue table, but keeps Cost (#203)', () => {
+  it('drops Turns from the compact per-issue table, but keeps Cost (#203) and cost-weighted tokens', () => {
     renderLedger({
       byIssue: [
         { issueNumber: 42, sessions: 2, turns: 10, tokens: 3000, costUsd: 1.5 },
@@ -172,8 +171,9 @@ describe('LedgerTables', () => {
 
     const compactRow = screen.getByTestId('ledger-issue-row-compact');
     expect(compactRow.textContent).toContain('$1.50');
-    expect(compactRow.textContent).not.toContain('3,000');
     expect(compactRow.textContent).toContain('2 sessions');
+    expect(compactRow.textContent).toContain('3,000 cost-weighted tokens');
+    expect(compactRow.textContent).not.toContain('10 turns');
   });
 
   it('drops Turns from the compact per-week table, but keeps Cost and cost-weighted tokens', () => {
@@ -194,7 +194,35 @@ describe('LedgerTables', () => {
     expect(compactRow.textContent).toContain('$6.00');
     expect(compactRow.textContent).toContain('3 sessions');
     expect(compactRow.textContent).toContain('4,000 cost-weighted tokens');
-    expect(compactRow.textContent).not.toContain('12');
+    expect(compactRow.textContent).not.toContain('12 turns');
+  });
+
+  // The two compact lists trim alike (see IssueLedgerTableCompact's doc
+  // comment). They drifted for one commit when the week list gained tokens
+  // and the issue list didn't; this pins them together so the next trim to
+  // either one has to be a deliberate decision about both.
+  it('trims both compact ledgers the same way', () => {
+    renderLedger({
+      byIssue: [
+        { issueNumber: 42, sessions: 2, turns: 10, tokens: 3000, costUsd: 1.5 },
+      ],
+      byWeek: [
+        {
+          isoWeek: '2026-W29',
+          sessions: 2,
+          turns: 10,
+          tokens: 3000,
+          costUsd: 1.5,
+        },
+      ],
+    });
+
+    const issue = screen.getByTestId('ledger-issue-row-compact');
+    const week = screen.getByTestId('ledger-week-row-compact');
+    for (const row of [issue, week]) {
+      expect(row.textContent).toContain('2 sessions · 3,000 cost-weighted');
+      expect(row.textContent).toContain('$1.50');
+    }
   });
 
   it('marks a long multi-repo identity for safe compact-row truncation', () => {
