@@ -25,6 +25,7 @@ import type {
 } from './quick-task-evidence-contract';
 import {
   agentIntegration,
+  matchingAgentPipelines,
   repoKey,
   selectedReplyPipeline,
   supportedAgentPipelines,
@@ -119,13 +120,24 @@ export async function clearNeedsHumanLabel(
   await notifyReconcile(issueNumber);
 }
 
+/**
+ * What a console reply actually did, so the caller can say so instead of
+ * reporting a uniform success. `dispatched: false` is the ordinary,
+ * non-error outcome for a comment on an item no agent owns - the case that
+ * used to be indistinguishable from a real handoff (#1869).
+ */
+export interface PostCommentResult {
+  url: string;
+  dispatched: boolean;
+}
+
 export async function postComment(
   repo: WatchedRepo,
   issueNumber: number,
   body: string,
   actorLogin: string,
   assignedPipeline?: Pipeline,
-): Promise<{ url: string }> {
+): Promise<PostCommentResult> {
   if (!body.trim()) {
     throw new ActionError('Comment body is required', 400);
   }
@@ -172,12 +184,38 @@ export async function postComment(
       currentLabels,
       issue.pull_request ? 'pr' : 'issue',
     );
-    if (currentAssignment !== assignedPipeline) {
-      return { url: data.html_url };
-    }
     const runtime = createOrchestratorRuntime();
     const taskId = { repo: repoKey(repo), issue: issueNumber };
     const existingTask = await runtime.store.readTask(taskId);
+    // Nothing owns this item yet, and the caller explicitly chose who should.
+    // `derivePrimaryAction` prescribes `reply` for every `status:needs-human`
+    // item, but an item can be needs-human with no `agent:*` label at all -
+    // and before #1869 that reply posted a comment, dispatched nobody, and
+    // still reported success, so the queue kept prescribing the same dead end
+    // (jlapenna/homelab#855). Treat the choice as the handoff it is:
+    // `assignPipeline` labels the issue and admits `mode: 'implement'`. The
+    // comment is already on the thread above, so the agent starts with the
+    // steer that prompted it.
+    //
+    // `existingTask === undefined` is load-bearing, not belt-and-braces: Work
+    // is immutable and written once per anchor, so an already-admitted task
+    // whose label was removed by hand must keep degrading to a plain comment
+    // (the `work.spec.pipeline` check below says the same thing for the
+    // assigned case). Without it `assignPipeline` throws its 409 and a reply
+    // that used to post silently would start failing outright.
+    if (
+      currentAssignment === undefined &&
+      existingTask === undefined &&
+      !issue.pull_request &&
+      matchingAgentPipelines(repo, currentLabels).length === 0
+    ) {
+      await assignPipeline(repo, issueNumber, assignedPipeline, actorLogin);
+      await clearNeedsHumanLabel(repo, issueNumber);
+      return { url: data.html_url, dispatched: true };
+    }
+    if (currentAssignment !== assignedPipeline) {
+      return { url: data.html_url, dispatched: false };
+    }
     // A label can be visible before its webhook admission reaches the
     // control plane. Preserve the comment in that transient state; the
     // webhook remains responsible for first Work admission.
@@ -189,7 +227,7 @@ export async function postComment(
       // older Work on a reply: all three sources must agree before a run can
       // begin or the human handoff can be cleared.
       if (work.spec.pipeline !== assignedPipeline) {
-        return { url: data.html_url };
+        return { url: data.html_url, dispatched: false };
       }
       const outcome = await admitGithubWork(runtime, {
         anchor: taskId,
@@ -212,7 +250,7 @@ export async function postComment(
   if (handedBackToAgent) {
     await clearNeedsHumanLabel(repo, issueNumber);
   }
-  return { url: data.html_url };
+  return { url: data.html_url, dispatched: handedBackToAgent };
 }
 
 export async function approveAndMergePr(

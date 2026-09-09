@@ -394,8 +394,14 @@ describe('postComment (direct Work admission)', () => {
       data: { html_url: 'https://github.com/o/r/issues/1#issuecomment-1' },
     });
     const removeLabel = vi.fn().mockResolvedValue({});
+    const setLabels = vi.fn().mockResolvedValue({});
     const get = vi.fn().mockResolvedValue({
       data: {
+        // `state` matters only to the assign-on-reply path below, which
+        // refuses anything but an open issue; the other cases ignore it.
+        state: 'open',
+        title: 'Fixture issue',
+        body: 'Fixture issue body.',
         labels: currentLabels,
         ...(kind === 'pr'
           ? { pull_request: { url: 'https://github.test/pr' } }
@@ -403,9 +409,9 @@ describe('postComment (direct Work admission)', () => {
       },
     });
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { createComment, get, removeLabel } },
+      rest: { issues: { createComment, get, removeLabel, setLabels } },
     });
-    return { createComment, get, removeLabel };
+    return { createComment, get, removeLabel, setLabels };
   }
 
   it('rejects a blank body without calling GitHub', async () => {
@@ -482,6 +488,72 @@ describe('postComment (direct Work admission)', () => {
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'status:needs-human' }),
     );
+  });
+
+  // jlapenna/homelab#855: `derivePrimaryAction` prescribes `reply` for every
+  // needs-human item, including ones carrying no agent:* label at all. That
+  // reply used to post a comment, dispatch nobody, and still report success,
+  // so the queue kept prescribing the same dead end.
+  it('assigns and dispatches when the maintainer picks an agent for an unassigned issue', async () => {
+    const { createComment, setLabels, removeLabel } = mockOctokit([
+      'type:security',
+      'status:needs-human',
+    ]);
+    const { store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+
+    const result = await postComment(
+      DEFAULT_REPO,
+      2709,
+      "You don't need a human for this",
+      'jlapenna',
+      'claude',
+    );
+
+    expect(result.dispatched).toBe(true);
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: "You don't need a human for this" }),
+    );
+    expect((await store.listRuns(taskId)).at(-1)?.params).toEqual({
+      mode: 'implement',
+    });
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labels: expect.arrayContaining(['type:security', 'agent:claude']),
+      }),
+    );
+    // The handoff is done, so the item must stop asking for a human.
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'status:needs-human' }),
+    );
+  });
+
+  it('reports dispatched: false for a comment on an unassigned issue', async () => {
+    mockOctokit(['status:needs-human']);
+
+    const result = await postComment(
+      DEFAULT_REPO,
+      2709,
+      'just a note',
+      'jlapenna',
+    );
+
+    expect(result.dispatched).toBe(false);
+  });
+
+  it('never assigns a pull request from a reply', async () => {
+    const { setLabels } = mockOctokit([], 'pr');
+
+    const result = await postComment(
+      DEFAULT_REPO,
+      2709,
+      'a note',
+      'jlapenna',
+      'claude',
+    );
+
+    expect(result.dispatched).toBe(false);
+    expect(setLabels).not.toHaveBeenCalled();
   });
 
   it('leaves needs-human on a plain comment with no assignment', async () => {

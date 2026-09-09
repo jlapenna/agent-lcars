@@ -305,18 +305,41 @@ describe('agent-lcars Server Actions', () => {
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
-    it('replyToItem returns { ok: true } and revalidates', async () => {
-      (postComment as Mock).mockResolvedValue({ url: 'https://x' });
+    it('replyToItem reports a comment that dispatched nobody, and revalidates', async () => {
+      (postComment as Mock).mockResolvedValue({
+        url: 'https://x',
+        dispatched: false,
+      });
 
       await expect(replyToItem(DEFAULT_REPO, 42, 'hi')).resolves.toEqual({
         ok: true,
+        dispatched: false,
+        note: 'No agent assigned - posted as a comment only',
       });
       expect(revalidatePath).toHaveBeenCalledWith('/');
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
+    it('replyToItem names the pipeline it dispatched', async () => {
+      (postComment as Mock).mockResolvedValue({
+        url: 'https://x',
+        dispatched: true,
+      });
+
+      await expect(
+        replyToItem(DEFAULT_REPO, 42, 'hi', 'codex'),
+      ).resolves.toEqual({
+        ok: true,
+        dispatched: true,
+        note: 'Dispatched codex',
+      });
+    });
+
     it('replyToItem forwards the authenticated actor and explicit assignment', async () => {
-      (postComment as Mock).mockResolvedValue({ url: 'https://x' });
+      (postComment as Mock).mockResolvedValue({
+        url: 'https://x',
+        dispatched: true,
+      });
 
       await replyToItem(DEFAULT_REPO, 42, 'hi', 'codex');
 
