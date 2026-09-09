@@ -27,6 +27,34 @@
  * A stray timer between two tests is harmless: it fires into a live jsdom.
  * The file boundary is the one that matters, because that is where the DOM
  * it closes over is destroyed.
+ *
+ * ## What this routinely cancels, and why that is not a bug list
+ *
+ * A non-zero sweep is normal. Recording a creation stack for every armed
+ * timer and running the whole suite turns up three kinds of entry, none of
+ * which is a defect in this repo:
+ *
+ * - **jsdom's own 0 ms event timers.** `localStorage.setItem` queues a
+ *   `storage` event, `focus()` a selection change, `<details>` a `toggle`,
+ *   an anchor click a navigation -- each via `setTimeout(..., 0)` inside
+ *   jsdom. The stack names *our* call site (`use-muted-items.ts`,
+ *   `persisted-details.tsx`, ...), which makes them read like application
+ *   leaks; they are not. They fire on the next tick and never touch React.
+ * - **`@octokit/plugin-throttling`'s bottleneck housekeeping**, a 60 s
+ *   interval per client, armed when a test constructs an Octokit.
+ * - **This module's own tests**, which leak on purpose to prove the sweep.
+ *
+ * Every timer this repo's console source arms was audited against that
+ * list: the four `setInterval`s (data-freshness, relative-time,
+ * refresh-button, runner-autoscaler-status) all `clearInterval` in their
+ * effect cleanup, and the two `await new Promise(resolve =>
+ * setTimeout(resolve, ...))` always fire. The one real leak was
+ * work-create-form's queued retry, fixed in #1873.
+ *
+ * So read a non-zero count as "the sweep did its job", not as a bug to
+ * chase -- and when chasing one anyway, capture the stack rather than
+ * trusting the frame beneath it, which is the mistake that produced a
+ * five-item list of leaks that did not exist.
  */
 
 /**
