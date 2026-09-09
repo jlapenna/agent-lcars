@@ -155,15 +155,26 @@ function IssueLedgerTable({ rows }: { rows: IssueLedgerRow[] }) {
 }
 
 /**
- * Below `sm`: Turns/Cost-weighted tokens drop (both are one tap away on the
- * session table/detail page) so Issue/Sessions/Cost - what a maintainer
- * actually scans a budget ledger for on a phone, especially on the Costs
- * tab (#203: the compact table used to drop Cost itself, leaving no dollar
- * figure visible on mobile at all) - fits at 360px without the table
- * needing its own horizontal scroll at all. Still wrapped in a scroll
- * container defensively, since a long issue title... there isn't one here
- * (issue numbers are short), but an unexpectedly narrow viewport should
- * scroll the table, never the page.
+ * Below `sm`, both compact ledgers drop exactly one column - Turns, the
+ * least useful of the three on a phone and one tap away on the session
+ * table anyway - and keep Sessions, cost-weighted tokens and Cost. What a
+ * maintainer scans a budget ledger for is a dollar figure (#203: this list
+ * used to drop Cost itself, leaving none visible on mobile at all) and the
+ * volume behind it: the dollars move with model pricing, the tokens don't.
+ *
+ * The two lists sit side by side on one page, so they trim alike. They
+ * drifted for exactly one commit, when the week list gained tokens (#1867)
+ * and this one didn't - which is the per-view drift
+ * docs/console-design-system.md exists to stop, in miniature.
+ *
+ * "Cost-weighted" is spelled out rather than borrowed from a column header
+ * that isn't on screen at this breakpoint: cache reads count 0.1x and cache
+ * writes 1.25x (see totalTokens), so a bare "tokens" would read as a raw
+ * usage count it isn't.
+ *
+ * The row wrapper carries `min-width: 0; flex: 1 1 auto`, so the secondary
+ * line wraps and grows the row rather than pushing the page sideways at
+ * 360px - the e2e suite asserts `scrollWidth <= innerWidth` at 390px.
  */
 function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
   return (
@@ -184,7 +195,8 @@ function IssueLedgerTableCompact({ rows }: { rows: IssueLedgerRow[] }) {
               <IssueCell row={row} />
             </div>
             <Text size="xs" c="dimmed">
-              {row.sessions} session{row.sessions === 1 ? '' : 's'}
+              {row.sessions} session{row.sessions === 1 ? '' : 's'} ·{' '}
+              {row.tokens.toLocaleString('en-US')} cost-weighted tokens
             </Text>
           </div>
           <Text className="costs-ledger-mobile-row__cost">
@@ -231,18 +243,9 @@ function WeekLedgerTable({ rows }: { rows: WeekLedgerRow[] }) {
   );
 }
 
-/**
- * Below `sm`, the same trim as the per-issue compact list with one
- * exception: the week rows keep their cost-weighted token count. "How much
- * did the fleet burn last week" is a volume question as much as a dollar
- * one - the dollar figure moves with model pricing, the token count doesn't
- * - and unlike a per-issue row there is no per-week detail page to tap
- * through to for it. Turns still drop; they're the least useful of the
- * three on a phone. Spelled "cost-weighted" in full rather than borrowed
- * from a column header that isn't on screen here: cache reads count 0.1x
- * and cache writes 1.25x (see totalTokens), so a bare "tokens" would read
- * as a raw usage count it isn't.
- */
+/** Below `sm`, the same trim as the per-issue compact list above - Turns
+ * drops, Sessions/cost-weighted tokens/Cost stay. See that list's doc
+ * comment for why; the two are one decision, not two. */
 function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
   return (
     <div
