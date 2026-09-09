@@ -231,6 +231,18 @@ function WeekLedgerTable({ rows }: { rows: WeekLedgerRow[] }) {
   );
 }
 
+/**
+ * Below `sm`, the same trim as the per-issue compact list with one
+ * exception: the week rows keep their cost-weighted token count. "How much
+ * did the fleet burn last week" is a volume question as much as a dollar
+ * one - the dollar figure moves with model pricing, the token count doesn't
+ * - and unlike a per-issue row there is no per-week detail page to tap
+ * through to for it. Turns still drop; they're the least useful of the
+ * three on a phone. Spelled "cost-weighted" in full rather than borrowed
+ * from a column header that isn't on screen here: cache reads count 0.1x
+ * and cache writes 1.25x (see totalTokens), so a bare "tokens" would read
+ * as a raw usage count it isn't.
+ */
 function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
   return (
     <div
@@ -245,10 +257,11 @@ function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
           role="listitem"
           data-testid="ledger-week-row-compact"
         >
-          <div>
+          <div className="costs-ledger-mobile-row__primary">
             <Text fw={600}>{row.isoWeek}</Text>
             <Text size="xs" c="dimmed">
-              {row.sessions} session{row.sessions === 1 ? '' : 's'}
+              {row.sessions} session{row.sessions === 1 ? '' : 's'} ·{' '}
+              {row.tokens.toLocaleString('en-US')} cost-weighted tokens
             </Text>
           </div>
           <Text className="costs-ledger-mobile-row__cost">
