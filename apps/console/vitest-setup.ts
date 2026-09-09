@@ -1,6 +1,11 @@
 // Vitest sibling of test-setup.ts (#2933/#2959/#2997/#3002/#3004).
 import { cleanup } from '@testing-library/react';
-import { afterEach, beforeEach, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, vi } from 'vitest';
+
+import {
+  installTimerTracking,
+  sweepArmedTimers,
+} from './src/test-support/timer-hygiene';
 
 const TEST_HOME_REPOSITORY = 'jlapenna/agent-lcars';
 const TEST_WATCHED_REPOS = JSON.stringify([
@@ -38,6 +43,13 @@ function applyIdentityDefaults() {
 applyIdentityDefaults();
 
 beforeEach(applyIdentityDefaults);
+
+// A timer left armed when this file's jsdom is torn down fires into a dead
+// environment and fails the whole run (#1871). Install the tracking at
+// module load -- before the test file is imported, so nothing it arms at
+// module scope is missed -- and sweep once the file is done.
+installTimerTracking();
+afterAll(sweepArmedTimers);
 
 // @testing-library/react only self-registers its per-test `cleanup()` when
 // it finds a global `afterEach` (dist/index.js: `typeof afterEach ===
