@@ -10,7 +10,7 @@ Read this before changing `apps/console/src/app/global.css` or any route
 shell. `apps/console/src/app/design-system-contract.test.ts` enforces most of
 it, and each assertion there names the drift it exists to stop.
 
-## The five rules
+## The six rules
 
 ### 1. One ground
 
@@ -82,7 +82,25 @@ effect, silently. That shipped once (#1834) and rendered the Inbox's tall 6px
 rail as three segments across its width. Orientation belongs at the use site,
 spelled out.
 
-### 3. Flat controls
+### 3. Readable ink
+
+An accent used as **text** is not the same value as an accent used as a
+**block**. The palette anchors are the light end of each ramp — which is what
+lets near-black type sit on a full-strength block, and what makes those same
+values fail as ink on a light ground (orange links measured 3.03:1, gold
+1.58:1). Use `--lcars-accent-ink` for accent-coloured text; it is the accent
+itself in dark and a darkened mix in light.
+
+`--lcars-ink-dim` is `gray-7`, not `gray-6`. gray-6 measured 4.37:1 on the
+light ground and 3.74:1 on a tinted panel — under AA, on 416 nodes, which was
+83% of every contrast failure in the console.
+
+Contrast is not judgeable by eye here and should not be judged that way. Two
+greys a shade apart look identical; a browser-default link looks like a link.
+Measure the computed colour against the background actually behind it — see
+"Verifying a change".
+
+### 4. Flat controls
 
 LCARS controls are flat areas of color. They are not lit objects: **no bevel,
 no inner highlight, no gradient, no drop shadow.** A shadow with a vertical
@@ -106,7 +124,7 @@ Scope control rules by **position**, not by component class. The header's
 utility slot is fed by different components on different routes; a rule keyed
 on where a control is cannot be missed by the next component that lands there.
 
-### 4. One elbow
+### 5. One elbow
 
 The elbow — a broad rail turning through a concentric quarter-circle into a
 thinner arm — is the page frame's device. It appears **once per page**, in the
@@ -120,7 +138,7 @@ For the same reason `Card` and `Paper` default to `radius: 0`. A rounded card
 inside a square workspace frame carrying a square spine is three corner
 treatments on one block.
 
-### 5. One frame
+### 6. One frame
 
 Every primary destination puts its content in `ConsoleWorkspace`. The frame
 owns the ground, the edge, the warning band and the toolbar band; a route
@@ -143,12 +161,87 @@ task's submission paths (`createQuickTask` → `requireAdmin()`, and
 `/api/quick-task/v1`) reject a `work.operator` who would otherwise use the
 page fine.
 
+## The trap: variables you cannot win
+
+`MantineProvider` generates a `<style>` block from the theme **at runtime** and
+appends it to `<head>` — after every static stylesheet, at the same
+specificity. Any `--mantine-*` variable it emits therefore beats whatever
+`global.css` says, silently, with no error and often no visible symptom.
+
+This has caused three separate bugs:
+
+| variable                                    | injected from        | what broke                                               |
+| ------------------------------------------- | -------------------- | -------------------------------------------------------- |
+| `--mantine-color-body`                      | `theme.white`        | light mode rendered on two grounds (#1836)               |
+| `--mantine-color-anchor`                    | `theme.primaryColor` | every `<Anchor>` was orange-6 at 3.03:1 on light (#1843) |
+| _(and before those)_ `--mantine-color-body` | —                    | the dark-mode re-anchor never applied at all (#1825)     |
+
+Note the first and third are the same variable failing for two _different_
+reasons — specificity in dark, runtime injection in light. That is why fixing
+one did not fix the other.
+
+**How to tell.** If a `--mantine-*` variable does not compute to what this file
+says, list the rules that declare it in the browser rather than reasoning about
+the cascade:
+
+```js
+[...document.styleSheets]
+  .flatMap((ss) => [...ss.cssRules])
+  .filter((r) => r.style?.getPropertyValue('--mantine-color-body'))
+  .map((r) => ({
+    sel: r.selectorText,
+    val: r.style.getPropertyValue('--mantine-color-body'),
+  }));
+```
+
+An entry whose sheet has no `href` is the injected block.
+
+**What to do about it.** Two options, in order of preference:
+
+1. **Derive from the same source it does.** If the injection sets the value
+   from `theme.white`, define the token as `var(--mantine-color-white)` — then
+   the two cannot disagree, whatever the theme says. This is how the light
+   ground is defined.
+2. **Style the element, not the variable.** A real declaration on a real
+   selector (`.mantine-Anchor-root { color: … }`) competes only with Mantine's
+   own component rule, which is in the static sheet and therefore earlier. This
+   is how `<Anchor>` is coloured.
+
+Restating the variable more loudly is not an option. It will lose again.
+
 ## Verifying a change
 
 `test`, `lint` and `typecheck` cover the contract test and the component
-behavior. For anything visual, the useful loop is the saved production session
+behaviour. For anything visual, the useful loop is the saved production session
 (see the `verifying-console-session` skill): render the real routes with a
-local `global.css` swapped in for the deployed CSS chunk, at 320/390/768/1024/
-1280px in both color schemes. The 1024px case matters — the header overflowed
-it on production for months (#1830) because the e2e suite checked 320/390/768
-and then jumped to the 1280px default.
+local `global.css` swapped in for the deployed CSS chunk, at
+320/390/768/1024/1280px in both colour schemes. The 1024px case matters — the
+header overflowed it on production for months (#1830) because the e2e suite
+checked 320/390/768 and then jumped to the 1280px default.
+
+**Screenshots are for judging whether it looks right, not whether it is
+right.** Every bug in the #1825/#1834/#1836/#1843 sequence was invisible on
+screen: `#f4f4f6` beside `#eeeff2` reads as one colour, a browser-default link
+looks like a link, and a 6px-wide horizontal gradient looks like a solid line.
+They surfaced only by reading computed values against the rules. Prefer an
+audit that walks the DOM and reports violations over a screenshot you inspect.
+
+Two traps when writing that audit, both of which produced confidently wrong
+numbers here:
+
+- Computed backgrounds come back in **two serialisations**: `rgb(r g b)` on
+  0-255, and `color(srgb r g b)` on **0-1** whenever the value came from
+  `color-mix()`. Parsing the second as 0-255 makes every tinted surface look
+  near-black and manufactures contrast failures.
+- If a test sets the colour scheme by cookie, **assert the scheme it is
+  actually in** before measuring. A mis-scoped cookie silently makes every
+  "light" case a second dark-mode run that passes for the wrong reason.
+- **Composite translucent backgrounds** before comparing against them. A
+  blockquote tinted `rgba(96,112,138,0.07)` is 7% grey over whatever is under
+  it; treating any non-zero alpha as opaque compares text against solid grey-6
+  and invents failures. Walk up the ancestors accumulating layers until one is
+  actually opaque, then composite back down.
+
+And when a new assertion is added, check that it **fails without its fix**
+before trusting it. Three of the guards in this system passed against the
+unfixed code on their first draft.
