@@ -52,7 +52,6 @@ afterEach(() => {
   delete process.env['AGENT_LCARS_WEBHOOK_SECRET'];
   delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
   delete process.env['AGENT_LCARS_WATCHED_REPOS'];
-  delete process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'];
 });
 
 describe('POST /api/control-plane/webhook repository admission', () => {
@@ -119,28 +118,18 @@ describe('POST /api/control-plane/webhook repository admission', () => {
     expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
   });
 
-  it('ignores a push event from a repository that is not push-watched, even though it is control-plane admitted', async () => {
-    const response = await POST(
-      webhookRequest(HOME_REPO, { 'x-github-event': 'push' }),
-    );
-    expect(response.status).toBe(202);
-    await expect(response.json()).resolves.toMatchObject({
-      outcome: 'ignored',
-      reason: 'repository outside control plane',
-    });
-    expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
-  });
-
-  it('admits a push event from a repository on the separate push-watch allow-list, even though it is not control-plane admitted', async () => {
-    process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] = 'jlapenna/repo-tools';
-
-    const response = await POST(
-      webhookRequest('jlapenna/repo-tools', { 'x-github-event': 'push' }),
-    );
-    expect(response.status).toBe(202);
-    await expect(response.json()).resolves.toMatchObject({
-      outcome: 'queued',
-    });
-    expect(enqueueGitHubWebhook).toHaveBeenCalledTimes(1);
-  });
+  it.each([HOME_REPO, 'jlapenna/repo-tools'])(
+    'ignores push events for %s without queueing work',
+    async (repo) => {
+      const response = await POST(
+        webhookRequest(repo, { 'x-github-event': 'push' }),
+      );
+      expect(response.status).toBe(202);
+      await expect(response.json()).resolves.toMatchObject({
+        outcome: 'ignored',
+        reason: 'unsupported event',
+      });
+      expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -2,10 +2,7 @@ import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
-import {
-  isControlPlaneRepository,
-  isPushWatchedRepository,
-} from '@/lib/deployment';
+import { isControlPlaneRepository } from '@/lib/deployment';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 
@@ -16,7 +13,6 @@ const ADMITTED_EVENTS = new Set([
   'pull_request_review',
   'check_run',
   'pull_request_review_thread',
-  'push',
 ]);
 
 // Only the field this route actually reads. Fuller payload parsing and the
@@ -73,17 +69,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
   const repository = payload.repository?.full_name;
-  // `push` is admitted for a separate, narrower repo list
-  // (`AGENT_LCARS_PUSH_WATCHED_REPOS`, see `push-watch.ts`) that does not
-  // make a repository eligible for the full control-plane dispatch
-  // machinery the other admitted events use — a repository can be
-  // push-watched without being a control-plane repository at all.
-  const admitted =
-    repository !== undefined &&
-    (eventName === 'push'
-      ? isPushWatchedRepository(repository)
-      : isControlPlaneRepository(repository));
-  if (!admitted) {
+  if (repository === undefined || !isControlPlaneRepository(repository)) {
     logger.info('agent-lcars: ignored webhook outside control plane', {
       deliveryId,
       eventName,

@@ -13,10 +13,7 @@ import {
   controlPlaneRepository,
   isAdminGithubLogin,
   isControlPlaneRepository,
-  isPushWatchedRepository,
   maintainerLogin,
-  pushWatchedRepos,
-  pushWatchTargetRepo,
   shareArtifactUrl,
   validateDeploymentIdentity,
 } from './deployment';
@@ -31,8 +28,6 @@ const VARS = [
   'AGENT_LCARS_WATCHED_REPOS',
   'AGENT_LCARS_CONSOLE_URL',
   'AGENT_LCARS_CONSOLE_DESCRIPTION',
-  'AGENT_LCARS_PUSH_WATCHED_REPOS',
-  'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
   'AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT',
 ] as const;
 
@@ -253,67 +248,12 @@ describe('deployment config', () => {
     });
   });
 
-  // Unlike controlPlaneRepositories(), this list is additive/opt-in: no
-  // anchor rendering depends on it, so an unset or malformed entry degrades
-  // to "nothing push-watched" rather than throwing.
-  describe('pushWatchedRepos / isPushWatchedRepository', () => {
-    it('is empty when unset', () => {
-      expect(pushWatchedRepos()).toEqual([]);
-      expect(isPushWatchedRepository('jlapenna/repo-tools')).toBe(false);
-    });
-
-    it('parses a comma-separated list from the environment', () => {
-      process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] =
-        'jlapenna/repo-tools, other-org/other-repo ';
-      expect(pushWatchedRepos()).toEqual([
-        'jlapenna/repo-tools',
-        'other-org/other-repo',
-      ]);
-      expect(isPushWatchedRepository('jlapenna/repo-tools')).toBe(true);
-      expect(isPushWatchedRepository('unlisted-org/unlisted-repo')).toBe(false);
-    });
-
-    it('drops malformed entries instead of throwing', () => {
-      process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] =
-        'jlapenna/repo-tools,not-a-repo-name,,owner/name/extra';
-      expect(pushWatchedRepos()).toEqual(['jlapenna/repo-tools']);
-    });
-
-    it('is case-sensitive and does not substring-match', () => {
-      process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] = 'jlapenna/repo-tools';
-      expect(isPushWatchedRepository('Jlapenna/Repo-Tools')).toBe(false);
-      expect(isPushWatchedRepository('jlapenna/repo-tools-fork')).toBe(false);
-    });
-  });
-
-  describe('pushWatchTargetRepo', () => {
-    it('reads the target repository from the environment', () => {
-      process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = 'owner/target';
-      expect(pushWatchTargetRepo()).toBe('owner/target');
-    });
-
-    it('fails closed when unset -- no jlapenna fallback', () => {
-      delete process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'];
-      expect(() => pushWatchTargetRepo()).toThrow(
-        'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
-      );
-    });
-
-    it('rejects a value that is not owner/name shaped', () => {
-      process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = 'not-a-repo-name';
-      expect(() => pushWatchTargetRepo()).toThrow(
-        /not a valid owner\/name repository/,
-      );
-    });
-  });
-
   describe('validateDeploymentIdentity', () => {
     function completeEnv() {
       process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'someone';
       process.env['AGENT_LCARS_CONSOLE_URL'] = 'https://lcars.example.test';
       process.env['AGENT_LCARS_ARTIFACT_SHARE_BASE_URL'] =
         'https://share.example.test';
-      process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = 'owner/target';
       process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'owner/console';
       process.env['AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT'] =
         'owner/console/auth.json';
@@ -329,14 +269,6 @@ describe('deployment config', () => {
       delete process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'];
       expect(() => validateDeploymentIdentity()).toThrow(
         'AGENT_LCARS_ADMIN_GITHUB_LOGIN',
-      );
-    });
-
-    it('fails when the push-watch target repository is unset', () => {
-      completeEnv();
-      delete process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'];
-      expect(() => validateDeploymentIdentity()).toThrow(
-        'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
       );
     });
 

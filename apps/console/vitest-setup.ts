@@ -31,7 +31,6 @@ function applyIdentityDefaults() {
   process.env['AGENT_LCARS_CONSOLE_URL'] ??= 'https://lcars.jlapenna.net';
   process.env['AGENT_LCARS_ARTIFACT_SHARE_BASE_URL'] ??=
     'https://share.lan.jlapenna.net';
-  process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] ??= 'jlapenna/homelab';
   process.env['AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT'] ??=
     'jlapenna/agent-lcars/auth.json';
 }

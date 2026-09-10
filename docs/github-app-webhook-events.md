@@ -53,8 +53,7 @@ under one it has) requires every installation to individually re-approve the
 escalated grant before that installation's deliveries resume — this App is
 installed across the whole fleet (`jlapenna/repo-tools`, `jlapenna/homelab`,
 `supersprinklesracing/sprinkles`, and more), so budget for a rollout, not a
-single click. `Contents: Read` already covers this fleet's current event
-set (`push` included), so this has not come up yet in practice.
+single click.
 
 ## Enabling the subscription is necessary, not sufficient
 
@@ -65,13 +64,13 @@ _does_ anything with it is separate, ordinary code:
   `apps/console/src/app/api/control-plane/webhook/route.ts` must include the
   event name, or the delivery is dropped at the door with a 202
   `"unsupported event"`.
-- Repository admission is a second, independent gate — `push` specifically is
-  scoped by `AGENT_LCARS_PUSH_WATCHED_REPOS`
-  (`apps/console/src/lib/push-watch.ts`), deliberately separate from
-  `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`/`AGENT_LCARS_WATCHED_REPOS` so
-  subscribing a repo to push notifications never makes its issues/PRs
-  eligible for full dispatch. Other event types may use a different gate;
-  check the specific handler.
+- Repository admission is a second, independent gate: the repository must
+  belong to `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`, which matches
+  `AGENT_LCARS_WATCHED_REPOS`.
+
+`push` is not a required or admitted event. Repository updates do not create
+LCARS work. An existing GitHub App subscription may still deliver pushes;
+the console acknowledges them as unsupported without queueing or dispatching.
 
 So landing the consumer code and flipping the settings checkbox are both
 required, in either order — neither alone delivers anything.

@@ -51,26 +51,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v7
-        if: hashFiles('.repo/verify.json') != ''
-        with:
-          node-version: '24'
-
-      - name: Install authoritative verification tooling
-        if: hashFiles('.repo/verify.json') != ''
-        run: |
-          npm install --prefix "$RUNNER_TEMP/repo-tools" --ignore-scripts git+https://github.com/jlapenna/repo-tools.git#main
-          echo "$RUNNER_TEMP/repo-tools/node_modules/.bin" >> "$GITHUB_PATH"
-
-      - name: Verify repository documentation and workflows
-        if: hashFiles('.repo/verify.json') != ''
-        env:
-          VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
-          ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
-        run: repo-verify --base "$VERIFY_BASE" --head "$GITHUB_SHA" --check docs --check workflows --run
 
       # `docker run` rather than a `uses: docker://...` step because `uses:`
       # cannot carry an expression, and the image tag is this workflow's one
@@ -78,7 +58,6 @@ jobs:
       # this replaces; the image bundles shellcheck and pyflakes, so script
       # bodies inside workflows are linted too.
       - name: actionlint
-        if: hashFiles('.repo/verify.json') == ''
         env:
           ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
         run: |

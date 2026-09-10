@@ -5,7 +5,7 @@ import {
   type RequestInput,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { admitGithubWork } from './github-work-admission';
@@ -595,35 +595,7 @@ describe('handleWebhookDelivery', () => {
 });
 
 describe('handleWebhookDelivery push routing', () => {
-  const PUSH_ENV_VARS = [
-    'AGENT_LCARS_PUSH_WATCHED_REPOS',
-    'AGENT_LCARS_WORK_GRANTS',
-    'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
-    'AGENT_LCARS_WATCHED_REPOS',
-  ] as const;
-
-  afterEach(() => {
-    for (const key of PUSH_ENV_VARS) delete process.env[key];
-  });
-
-  // Not a re-test of push-watch.ts's own minting logic (push-watch.test.ts
-  // covers that directly) -- this only proves handleWebhookDelivery routes
-  // a `push` event away from interpretDelivery/admitGithubWork/the anchor
-  // projection (all anchor-shaped) to the separate native-item path.
-  it('routes a push event to push-watch instead of the anchor admission path', async () => {
-    process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] = 'jlapenna/repo-tools';
-    process.env['AGENT_LCARS_WORK_GRANTS'] = JSON.stringify([
-      {
-        principal: 'svc:push-watch',
-        subjects: ['push-watch'],
-        pipelines: ['claude'],
-        scopes: ['work.operator'],
-      },
-    ]);
-    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] = 'jlapenna/homelab';
-    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
-      { owner: 'jlapenna', name: 'homelab' },
-    ]);
+  it('ignores an already-queued push without creating work', async () => {
     const { deps } = fixture();
     const refresh = vi.fn().mockResolvedValue(undefined);
     deps.refreshGithubAnchorProjection = refresh;
@@ -640,9 +612,8 @@ describe('handleWebhookDelivery push routing', () => {
     });
 
     expect(result.status).toBe(200);
-    expect(result.body['workId']).toBeDefined();
-    // The anchor-only projection refresh never runs on this path -- there
-    // is no GitHub issue/PR anchor for a push event.
+    expect(result.body).toEqual({ ignored: 'unhandled-event' });
+    expect(await deps.store.listLiveRuns()).toEqual([]);
     expect(refresh).not.toHaveBeenCalled();
   });
 });

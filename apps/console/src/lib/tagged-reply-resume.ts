@@ -1,10 +1,10 @@
 import 'server-only';
 
+import type { ScheduleStore } from '@agent-lcars/orchestrator';
 import { PIPELINES } from '@agent-lcars/work';
 
 import { issueCommentEventSchema } from './orchestrator-ingest';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
-import { unreachableScheduleStore } from './push-watch';
 import type { WorkPrincipal, WorkScope } from './work-auth';
 import { workMaxLiveRuns } from './work-grants';
 import type { WorkContext } from './work-mint';
@@ -38,10 +38,23 @@ const TAGGED_REPLY_PRINCIPAL: WorkPrincipal = {
   via: 'oidc',
 };
 
-/** Builds the `WorkContext` `requestReply` needs, the same way
- *  `push-watch.ts`'s `pushWatchContext` builds what `mintItem` needs --
- *  except `principal` must be set here, since `requestReply` (unlike
- *  `mintItem`) refuses `FORBIDDEN` for a context with none. */
+/** Replies never read schedules. Fail locally if that contract changes. */
+const unreachableScheduleStore: ScheduleStore = {
+  readSchedule: () => {
+    throw new Error('tagged-reply: scheduleStore is not available here');
+  },
+  writeSchedule: () => {
+    throw new Error('tagged-reply: scheduleStore is not available here');
+  },
+  listSchedules: () => {
+    throw new Error('tagged-reply: scheduleStore is not available here');
+  },
+  listEnabledSchedules: () => {
+    throw new Error('tagged-reply: scheduleStore is not available here');
+  },
+};
+
+/** Builds the authenticated context required by `requestReply`. */
 function taggedReplyContext(runtime: OrchestratorRouteDeps): WorkContext {
   return {
     principal: TAGGED_REPLY_PRINCIPAL,
