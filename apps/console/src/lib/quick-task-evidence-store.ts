@@ -70,6 +70,18 @@ export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
       });
     } catch (error) {
       if (isCreatePreconditionFailure(error)) {
+        try {
+          const [metadata] = await file.getMetadata();
+          if (
+            metadata.generation &&
+            hasExactBinding(metadata.metadata, binding)
+          ) {
+            return { binding, generation: String(metadata.generation) };
+          }
+        } catch {
+          // The precondition remains an immutable binding conflict when its
+          // existing metadata cannot be read.
+        }
         throw new QuickTaskEvidenceError(409, 'Evidence binding conflict');
       }
       // A network failure can arrive after GCS has committed the write. Do

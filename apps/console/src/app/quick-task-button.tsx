@@ -1,7 +1,7 @@
 'use client';
 
+import { ulid } from '@agent-lcars/work';
 import {
-  Anchor,
   Box,
   Button,
   Group,
@@ -15,11 +15,6 @@ import {
 import { notifications } from '@mantine/notifications';
 import { startTransition, useEffect, useRef, useState } from 'react';
 
-import type { AuthoritativeTaskState } from '../lib/authoritative-task-state';
-import type {
-  QuickTaskReceipt,
-  QuickTaskRequest,
-} from '../lib/quick-task-contract';
 import {
   captureQuickTaskSource,
   composeQuickTaskIssueBody,
@@ -33,10 +28,8 @@ import {
   repoDisplayName,
   repoKey,
   supportedAgentPipelines,
-  taskRefKey,
   type WatchedRepo,
 } from '../lib/watched-repo';
-import { createQuickTask, readQuickTaskState } from './actions';
 import {
   readQuickTaskPreferences,
   writeQuickTaskPreferences,
@@ -44,6 +37,7 @@ import {
 import { QuickTaskScreenshotField } from './quick-task-screenshot-field';
 import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
+import { createItem, createItemWithEvidence } from './work/actions';
 
 const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
   { value: 'claude', label: 'claude' },
@@ -67,49 +61,8 @@ const emptySourceContext = (): QuickTaskSourceContext => ({
  * Task's badge actually has: `activeRunId` and `runs`. `canceled` and
  * `lost` both fold into `parked` - this badge has no dedicated "canceled"
  * state, and both already mean "not currently being worked". */
-type QuickTaskItemState = 'running' | 'parked' | 'done' | 'unknown';
-
-function deriveQuickTaskItemState(
-  state: Pick<AuthoritativeTaskState, 'activeRunId' | 'runs'>,
-): QuickTaskItemState {
-  const activeRun = state.activeRunId
-    ? state.runs.find((run) => run.runId === state.activeRunId)
-    : undefined;
-  if (activeRun) return 'running';
-  const latest = [...state.runs].sort(
-    (a, b) =>
-      b.createdAt.localeCompare(a.createdAt) || b.runId.localeCompare(a.runId),
-  )[0];
-  if (!latest) return 'unknown';
-  if (latest.state === 'pending' || latest.state === 'running')
-    return 'running';
-  if (latest.state === 'finished') {
-    // #1608 put `park` in OK_OUTCOMES (apps/console/src/lib/run-result.ts),
-    // so a run that parked with real evidence now settles `ok: true` too --
-    // `summary` is what still distinguishes it from an ordinary success.
-    // Same rule as `@agent-lcars/work`'s `deriveItemState` (#1759).
-    return latest.result?.ok && latest.result.summary !== 'park'
-      ? 'done'
-      : 'parked';
-  }
-  return 'parked'; // 'canceled' | 'lost'
-}
-
-/** Best-effort enrichment, never allowed to turn a successful issue
- * creation into a reported failure: a read that fails (or simply hasn't
- * caught up with the ingest webhook yet) just means no badge shows. */
-async function readQuickTaskItemState(
-  task: QuickTaskReceipt['task'],
-): Promise<QuickTaskItemState | undefined> {
-  try {
-    const state = await readQuickTaskState(task);
-    return state ? deriveQuickTaskItemState(state) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 interface QuickTaskSubmission {
+  workId: string;
   requestId: string;
   evidenceId?: string;
   repository: { owner: string; name: string };
@@ -120,11 +73,8 @@ interface QuickTaskSubmission {
 }
 
 /**
- * Files a new `intake:quick-task`-labeled issue from a free-text description and
- * hands it to the selected agent pipeline. The intake and pipeline labels
- * are part of the issue-creation write so a successful issue is immediately
- * dispatchable. No polling here: the new issue shows up in the board / In
- * Flight panel on the next refresh.
+ * Creates a native Work item from any console route and dispatches it through
+ * the canonical Work API.
  *
  * A centered Modal rather than a Popover: an autosizing Popover grows and
  * shifts position as its content grows, so pasting a long description made
@@ -166,6 +116,16 @@ export function QuickTaskButton({
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
   const submitInFlightRef = useRef(false);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+
+  useEffect(
+    () => () => {
+      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+    },
+    [],
+  );
 
   // The server-rendered trigger is visible before this client component's
   // click handler is attached. Keep it disabled for that brief window so a
@@ -248,7 +208,7 @@ export function QuickTaskButton({
 
   const pendingNotification = (request: QuickTaskSubmission) => ({
     id: submissionNotificationId(request),
-    message: 'Filing and dispatching quick task…',
+    message: 'Creating and dispatching work item…',
     loading: true,
     autoClose: false as const,
     withCloseButton: false,
@@ -284,65 +244,63 @@ export function QuickTaskButton({
 
   async function settleSubmission(request: QuickTaskSubmission): Promise<void> {
     try {
-      const result = request.file
+      const [error] = request.file
         ? await (async () => {
             const evidenceFile = request.file;
-            if (!evidenceFile)
-              throw new Error('Quick Task evidence is unavailable');
+            if (!evidenceFile) throw new Error('Work evidence is unavailable');
             const form = new FormData();
             form.set('intent', JSON.stringify(request));
             form.set('evidence', evidenceFile);
-            const response = await fetch('/api/quick-task/v1', {
-              method: 'POST',
-              body: form,
-            });
-            const payload = (await response.json()) as {
-              task?: {
-                repository: { owner: string; name: string };
-                issueNumber: number;
-              };
-              url?: string;
-              error?: string;
-            };
-            if (!response.ok || !payload.task || !payload.url)
-              throw new Error(payload.error ?? 'Quick Task submission failed');
-            return { ok: true as const, ...payload };
+            return createItemWithEvidence(form);
           })()
-        : await createQuickTask({
-            requestId: request.requestId,
-            repository: request.repository,
-            pipeline: request.pipeline,
-            description: composeQuickTaskIssueBody(
-              {
-                description: request.description,
-                screenshot: '',
-                source: request.source,
+        : await (async () => {
+            return createItem({
+              id: request.workId,
+              spec: {
+                title: deriveQuickTaskTitle(request.description),
+                pipeline: request.pipeline,
+                description: composeQuickTaskIssueBody(
+                  {
+                    description: request.description,
+                    screenshot: '',
+                    source: request.source,
+                  },
+                  request.repository,
+                ),
+                target: {
+                  repo: `${request.repository.owner}/${request.repository.name}`,
+                },
               },
-              request.repository,
-            ),
-          } satisfies QuickTaskRequest);
-      if (!result.ok || !result.task || !result.url)
-        throw new Error(
-          result.ok ? 'Quick Task submission failed' : result.message,
-        );
-      const itemState = await readQuickTaskItemState(result.task);
+            });
+          })();
+      if (error?.code === 'TOO_MANY_REQUESTS') {
+        const errorData = 'data' in error ? error.data : undefined;
+        const retryAfterSeconds =
+          typeof errorData === 'object' &&
+          errorData !== null &&
+          typeof (errorData as { retryAfterSeconds?: unknown })
+            .retryAfterSeconds === 'number'
+            ? (errorData as { retryAfterSeconds: number }).retryAfterSeconds
+            : 60;
+        notifications.update({
+          ...pendingNotification(request),
+          message:
+            'The fleet is at its live-run cap. This work item is queued and will be created automatically.',
+        });
+        retryTimeoutRef.current = setTimeout(() => {
+          retryTimeoutRef.current = undefined;
+          launchSubmission(request);
+        }, retryAfterSeconds * 1000);
+        return;
+      }
+      if (error) throw new Error(error.message);
       notifications.update({
         id: submissionNotificationId(request),
         message: (
           <Stack gap={2}>
-            <Anchor
-              href={result.url}
-              target="_blank"
-              rel="noreferrer"
-              c="inherit"
-            >
-              Quick task filed as {taskRefKey(result.task)}
-            </Anchor>
-            {itemState && (
-              <Text size="xs" c="dimmed">
-                {itemState}
-              </Text>
-            )}
+            <Text component="a" href={`/work/${request.workId}`} c="inherit">
+              Work item created as work:{request.workId}
+            </Text>
           </Stack>
         ),
         color: 'green',
@@ -355,7 +313,7 @@ export function QuickTaskButton({
         request,
         error instanceof Error
           ? error.message
-          : 'Quick Task submission failed unexpectedly',
+          : 'Work item submission failed unexpectedly',
       );
     }
   }
@@ -367,7 +325,7 @@ export function QuickTaskButton({
   }
 
   /** Ctrl+Enter (Cmd+Enter on Mac) submits from the description, mirroring
-   * the "File & dispatch" button click. `handleCreate` already guards
+   * the "Create work item" button click. `handleCreate` already guards
    * against an empty description, a missing repo/pipeline, and a submission
    * already in flight, so this reuses that same guard rather than
    * duplicating the button's `disabled` logic. */
@@ -392,7 +350,7 @@ export function QuickTaskButton({
     try {
       requestId = createRandomId();
     } catch {
-      showErrorToast('This browser cannot generate a Quick Task request ID');
+      showErrorToast('This browser cannot generate a work request ID');
       return;
     }
     submitInFlightRef.current = true;
@@ -402,11 +360,12 @@ export function QuickTaskButton({
         evidenceId = createRandomId();
       } catch {
         submitInFlightRef.current = false;
-        showErrorToast('This browser cannot generate a Quick Task evidence ID');
+        showErrorToast('This browser cannot generate a work evidence ID');
         return;
       }
     }
     const request: QuickTaskSubmission = {
+      workId: ulid(),
       requestId,
       evidenceId,
       repository: {
@@ -435,14 +394,9 @@ export function QuickTaskButton({
         disabled={!hydrated}
         onClick={open}
       >
-        Quick task
+        New work
       </Button>
-      <Modal
-        opened={opened}
-        onClose={close}
-        title="File a quick task"
-        size="lg"
-      >
+      <Modal opened={opened} onClose={close} title="Create work item" size="lg">
         <Stack gap="sm">
           {watchedRepos.length > 1 && (
             <Select
@@ -498,7 +452,7 @@ export function QuickTaskButton({
               setDescription(e.currentTarget.value);
             }}
             onKeyDown={handleSubmitShortcut}
-            placeholder="Describe the task — this becomes the issue body"
+            placeholder="Describe the work to be done"
             autosize
             minRows={5}
           />
@@ -521,7 +475,7 @@ export function QuickTaskButton({
               }
               onClick={handleCreate}
             >
-              File & dispatch
+              Create work item
             </Button>
           </Group>
 
@@ -529,7 +483,7 @@ export function QuickTaskButton({
             <Paper withBorder p="sm" data-testid="quick-task-preview">
               <Stack gap="xs">
                 <Text fw={700} size="sm">
-                  Issue preview
+                  Work item preview
                 </Text>
                 <Group gap="xs" align="flex-start" wrap="nowrap">
                   <Text fw={600} size="xs">
@@ -557,9 +511,8 @@ export function QuickTaskButton({
                   {issueBody}
                 </Box>
                 <Text size="xs" c="dimmed">
-                  The server appends the hidden Quick Task identity marker; the
-                  title and human-readable body above are otherwise sent
-                  unchanged.
+                  Source context and attached evidence are delivered with the
+                  work item so the assigned agent can inspect them.
                 </Text>
               </Stack>
             </Paper>

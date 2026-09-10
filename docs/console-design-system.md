@@ -136,12 +136,11 @@ is the same frame with a panel spine. Anything rendering its content as bare
 text on the page ground is a bug, not a simpler case: it reads as an unstyled
 fragment under an otherwise complete LCARS header.
 
-A route that admits non-admins must not offer admin-only controls. `/work` and
-`/work/schedules` are the only such routes; both pass the session's admin
-status to `ConsoleCommandUtilities` as `includeQuickTask`, because Quick
-task's submission paths (`createQuickTask` → `requireAdmin()`, and
-`/api/quick-task/v1`) reject a `work.operator` who would otherwise use the
-page fine.
+A route that admits ungranted users must not offer Work creation controls.
+`/work` and `/work/schedules` resolve the signed-in principal's
+`work.operator` scope before enabling `New work`; admin-only routes inherit
+the production admin grant. The modal submits through the same native Work
+procedure and grant checks as every other Work client.
 
 ## Verifying a change
 

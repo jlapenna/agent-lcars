@@ -1,17 +1,15 @@
-import { PIPELINES } from '@agent-lcars/work';
 import { Anchor, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { auth } from '@/auth';
-import { controlPlaneRepository } from '@/lib/deployment';
 import { getWatchedRepos } from '@/lib/github-client';
+import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
-import { createItem, listItems } from './actions';
-import { WorkCreateForm } from './work-create-form';
+import { listItems } from './actions';
 import { WorkList } from './work-list';
 import { WorkWorkspace } from './work-workspace';
 
@@ -37,13 +35,6 @@ async function WorkBody() {
   }
   return (
     <>
-      <div className="console-workspace__section work-workspace__create">
-        <WorkCreateForm
-          create={createItem}
-          defaultRepo={controlPlaneRepository()}
-          pipelines={PIPELINES}
-        />
-      </div>
       <div className="console-workspace__section work-workspace__list">
         <WorkList items={data.items} />
       </div>
@@ -69,21 +60,18 @@ function WorkViewContent() {
 
 interface WorkViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
-  /** Quick task is admin-only on both submission paths; this route is not
-   *  admin-gated, so the control is offered only when the viewer could
-   *  actually use it. See `ConsoleCommandUtilities`' `includeQuickTask`. */
-  canQuickTask: boolean;
+  canCreateWork: boolean;
 }
 
 const WorkView = withConsolePageShell(
   WorkViewContent,
-  ({ watchedRepos, canQuickTask }: WorkViewProps) => ({
+  ({ watchedRepos, canCreateWork }: WorkViewProps) => ({
     className: 'work-page-shell',
     current: 'work',
     title: 'Work',
     subtitle: 'Native work items',
-    // Work was the one destination with no utility cluster at all, so Quick
-    // task and refresh were unreachable from it and the mobile overflow menu
+    // Work was the one destination with no utility cluster at all, so create
+    // and refresh were unreachable from it and the mobile overflow menu
     // - the only way to reach the other destinations on a phone - was too
     // (#1810).
     utilities: (
@@ -91,14 +79,14 @@ const WorkView = withConsolePageShell(
         <div className="work-utilities work-utilities--desktop">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
-            includeQuickTask={canQuickTask}
+            includeQuickTask={canCreateWork}
           />
         </div>
         <div className="work-utilities work-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             includeNavigation
-            includeQuickTask={canQuickTask}
+            includeQuickTask={canCreateWork}
           />
         </div>
       </>
@@ -114,7 +102,13 @@ async function WorkPageShell() {
   return (
     <WorkView
       watchedRepos={watchedRepos}
-      canQuickTask={session.user?.isAdmin === true}
+      canCreateWork={
+        session.user?.login !== undefined &&
+        resolvePrincipal(
+          `github:${session.user.login}`,
+          workGrants(),
+        )?.scopes.includes('work.operator') === true
+      }
     />
   );
 }

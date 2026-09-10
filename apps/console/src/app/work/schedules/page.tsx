@@ -6,6 +6,7 @@ import { Suspense } from 'react';
 import { auth } from '@/auth';
 import { controlPlaneRepository } from '@/lib/deployment';
 import { getWatchedRepos } from '@/lib/github-client';
+import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { NavPageLoading, PageLoading } from '../../page-loading';
@@ -65,14 +66,14 @@ function SchedulesViewContent() {
 
 interface SchedulesViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
-  /** Quick task is admin-only on both submission paths; like `/work`, this
-   *  route admits a non-admin `work.operator`. See `ConsoleCommandUtilities`. */
-  canQuickTask: boolean;
+  /** Native creation requires the same work.operator grant as this route's
+   * schedule operations. */
+  canCreateWork: boolean;
 }
 
 const SchedulesView = withConsolePageShell(
   SchedulesViewContent,
-  ({ watchedRepos, canQuickTask }: SchedulesViewProps) => ({
+  ({ watchedRepos, canCreateWork }: SchedulesViewProps) => ({
     className: 'work-schedules-page-shell',
     current: 'work',
     title: 'Schedules',
@@ -82,14 +83,14 @@ const SchedulesView = withConsolePageShell(
         <div className="work-utilities work-utilities--desktop">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
-            includeQuickTask={canQuickTask}
+            includeQuickTask={canCreateWork}
           />
         </div>
         <div className="work-utilities work-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             includeNavigation
-            includeQuickTask={canQuickTask}
+            includeQuickTask={canCreateWork}
           />
         </div>
       </>
@@ -103,7 +104,13 @@ async function SchedulesPageShell() {
   return (
     <SchedulesView
       watchedRepos={getWatchedRepos()}
-      canQuickTask={session.user?.isAdmin === true}
+      canCreateWork={
+        session.user?.login !== undefined &&
+        resolvePrincipal(
+          `github:${session.user.login}`,
+          workGrants(),
+        )?.scopes.includes('work.operator') === true
+      }
     />
   );
 }

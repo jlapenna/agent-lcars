@@ -19,6 +19,7 @@ export async function createQuickTaskEvidenceLifecycle(params: {
   bucket: string;
   evidenceId: QuickTaskEvidenceId;
   bytes: Uint8Array;
+  createdAt?: string;
 }): Promise<QuickTaskEvidencePreIssueCreateHook> {
   const evidence = await normalizeQuickTaskEvidence(params.bytes);
   const store = quickTaskEvidenceStore(params.bucket);
@@ -32,7 +33,7 @@ export async function createQuickTaskEvidenceLifecycle(params: {
         repositoryId,
         normalizedSha256: evidence.sha256,
         visibilityAtUpload: visibility,
-        createdAt: new Date().toISOString(),
+        createdAt: params.createdAt ?? new Date().toISOString(),
       };
       return store.create(evidence, binding);
     },

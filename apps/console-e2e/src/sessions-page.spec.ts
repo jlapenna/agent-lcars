@@ -28,9 +28,7 @@ test.describe('/sessions workspace @smoke', () => {
     await expectDesktopBridgeHeader(header);
     await expectDesktopLcarsElbow(header);
     await expect(workspace).toBeVisible();
-    await expect(
-      page.getByRole('button', { name: 'Quick task' }),
-    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New work' })).toBeVisible();
     await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
     await expect(
       workspace.getByRole('navigation', { name: 'Archive view' }),

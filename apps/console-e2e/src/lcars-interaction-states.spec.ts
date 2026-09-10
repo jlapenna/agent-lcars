@@ -198,22 +198,22 @@ test.describe('pill nav transitions honor prefers-reduced-motion', () => {
 });
 
 test.describe('overlays inherit the LCARS theme', () => {
-  test('the Quick Task modal opens, is dismissible, and uses the app fonts', async ({
+  test('the New work modal opens, is dismissible, and uses the app fonts', async ({
     page,
   }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: 'Quick task' }).click();
+    await page.getByRole('button', { name: 'New work' }).click();
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
     await expect(
-      dialog.getByRole('heading', { name: 'File a quick task' }),
+      dialog.getByRole('heading', { name: 'Create work item' }),
     ).toBeVisible();
     // The dispatch button starts disabled until a description is typed —
     // the modal's own contract, worth pinning now that it's actually opened
     // in a browser rather than only in jsdom.
     await expect(
-      dialog.getByRole('button', { name: 'File & dispatch' }),
+      dialog.getByRole('button', { name: 'Create work item' }),
     ).toBeDisabled();
 
     // Inherited, not defaulted: a modal rendered outside the theme provider
@@ -230,34 +230,28 @@ test.describe('overlays inherit the LCARS theme', () => {
     await expect(dialog).toBeHidden();
   });
 
-  test('Quick Task submits one complete repository-explicit issue write', async ({
+  test('New work submits one repository-explicit native item', async ({
     page,
   }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: 'Quick task' }).click();
+    await page.getByRole('button', { name: 'New work' }).click();
     const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Description').fill('Verify Quick Task contract');
-    await dialog.getByRole('button', { name: 'File & dispatch' }).click();
+    await dialog.getByLabel('Description').fill('Verify native Work contract');
+    await dialog.getByRole('button', { name: 'Create work item' }).click();
 
-    // The fixture assigns a real-looking, incrementing issue number rather
-    // than a fixed one (agent-lcars#307) - shared server process, so a
-    // number depends on how many Quick Tasks earlier specs already filed.
     const receipt = page.getByRole('link', {
-      name: /^Quick task filed as supersprinklesracing\/sprinkles#\d+$/,
+      name: /^Work item created as work:/,
     });
     await expect(receipt).toBeVisible();
-    await expect(receipt).toHaveAttribute(
-      'href',
-      /^https:\/\/github\.com\/supersprinklesracing\/sprinkles\/issues\/\d+$/,
-    );
+    await expect(receipt).toHaveAttribute('href', /^\/work\//);
     await expect(dialog).toBeHidden();
   });
 
-  test('Quick Task remembers the selected agent after a page reload', async ({
+  test('New work remembers the selected agent after a page reload', async ({
     page,
   }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: 'Quick task' }).click();
+    await page.getByRole('button', { name: 'New work' }).click();
     let dialog = page.getByRole('dialog');
     await dialog.getByRole('combobox', { name: 'Agent' }).click();
     await page.getByRole('option', { name: 'opencode' }).click();
@@ -265,7 +259,7 @@ test.describe('overlays inherit the LCARS theme', () => {
     await expect(dialog).toBeHidden();
 
     await page.reload();
-    await page.getByRole('button', { name: 'Quick task' }).click();
+    await page.getByRole('button', { name: 'New work' }).click();
     dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('combobox', { name: 'Agent' })).toHaveValue(
       'opencode',
