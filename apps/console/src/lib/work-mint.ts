@@ -93,14 +93,6 @@ export function isWorkOperatorPrincipal(
   return principal?.scopes.has('work.operator') === true;
 }
 
-export function workOperatorReason(
-  principal: WorkPrincipal | undefined,
-): string | undefined {
-  return isWorkOperatorPrincipal(principal)
-    ? undefined
-    : 'work.operator scope required';
-}
-
 /**
  * The two capability checks every run-minting call must clear: invoking a
  * pipeline is granted per principal, and the target repository must be one
