@@ -319,11 +319,14 @@ const (
 )
 
 type hostLoad struct {
-	normalizedLoad  float64
-	cpuUtilization  float64
-	cpuPressure     float64
-	memoryPressure  float64
-	memoryAvailable float64
+	normalizedLoad float64
+	cpuUtilization float64
+	// cpuUtilizationKnown requires a valid counter delta, not merely the
+	// zero value produced by a first telemetry sample.
+	cpuUtilizationKnown bool
+	cpuPressure         float64
+	memoryPressure      float64
+	memoryAvailable     float64
 	// memoryAvailableBytes is node_memory_MemAvailable_bytes verbatim (not
 	// the memoryAvailable ratio above): the degradation ladder's rung 3
 	// (free_memory_floor, agent-lcars#1697, docs/fleet-scheduler-redesign.md#D)
@@ -387,6 +390,9 @@ func (a *Scaler) scoreHostLoad(host string, load hostLoad) hostLoad {
 func (a *Scaler) scoreHostLoadForQuota(host string, load hostLoad, throttleBounded bool) hostLoad {
 	p := a.policy()
 	load.penalty, load.overloaded = 0, false
+	// Load and CPU PSI may be relaxed only when the independent utilization
+	// gate has a real counter delta. A first sample cannot prove spare CPU.
+	throttleBounded = throttleBounded && load.cpuUtilizationKnown
 	load.throttleBounded = throttleBounded
 	band := func(value, soft, hard float64) {
 		switch {
@@ -525,6 +531,7 @@ func (a *Scaler) probeHostLoad(ctx context.Context, host string, throttleBounded
 		// impossible CPU/swap rates and a false overload cooldown.
 		if elapsed >= hostSampleInterval.Seconds()/2 {
 			load.cpuUtilization = min(1, max(0, 1-((idleSeconds-previous.idleSeconds)/(elapsed*float64(len(cpus))))))
+			load.cpuUtilizationKnown = true
 			load.cpuPressure = max(0, (cpuPressure-previous.cpuPressure)/elapsed)
 			load.memoryPressure = max(0, (memoryPressure-previous.memoryPressure)/elapsed)
 			load.swapPagesPerSec = max(0, ((swapIn+swapOut)-previous.swapPages)/elapsed)
@@ -2186,7 +2193,10 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 					}
 				}
 			}
-			throttleBounded := cpuErr == nil && allRunnersQuotaBounded && runningReservedCPU < hostCPUNano
+			// Relax throttle-manufactured signals only for a bounded candidate.
+			// An unbounded lane cannot inherit a safer bounded lane's decision;
+			// currentHostLoad's scoring-mode cache key forces a strict resample.
+			throttleBounded := a.runnerNanoCPUs > 0 && cpuErr == nil && allRunnersQuotaBounded && runningReservedCPU < hostCPUNano
 			measuredLoad, measuredLoadErr := a.currentHostLoad(ctx, dh.Name, throttleBounded)
 			load = measuredLoad
 			loadErr = errors.Join(loadErr, measuredLoadErr)

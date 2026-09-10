@@ -642,7 +642,7 @@ func TestPickHostChargesInFlightCPUReservations(t *testing.T) {
 func TestScoreHostLoadIgnoresThrottleSignalsOnlyForSafelyBoundedRunners(t *testing.T) {
 	scaler := &Scaler{}
 	manufactured := hostLoad{
-		normalizedLoad: 2.2, cpuPressure: 0.66, cpuUtilization: 0.50,
+		normalizedLoad: 2.2, cpuPressure: 0.66, cpuUtilization: 0.50, cpuUtilizationKnown: true,
 		memoryAvailable: 0.50,
 	}
 	if got := scaler.scoreHostLoadForQuota("laforge", manufactured, true); got.overloaded {
@@ -681,8 +681,24 @@ func TestPickHostIgnoresManufacturedLoadOnlyWhenEveryRunnerIsQuotaBounded(t *tes
 	}
 
 	bounded := newScaler(cpuReservedRunner("bounded", 6), 1)
+	if host, err := bounded.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("first sample without CPU utilization: pickHost() = (%q, %v), want hard-overload refusal", host, err)
+	}
+
+	bounded = newScaler(cpuReservedRunner("bounded", 6), 1)
+	bounded.coordinator().hostSamples["laforge"] = hostSample{
+		at: time.Now().Add(-30 * time.Second), idleSeconds: 984,
+	}
 	if host, err := bounded.pickHost(context.Background()); host != "laforge" || err != nil {
 		t.Fatalf("quota-bounded manufactured load: pickHost() = (%q, %v), want admission", host, err)
+	}
+
+	unboundedCandidate := newScaler(cpuReservedRunner("bounded", 6), 0)
+	unboundedCandidate.coordinator().hostSamples["laforge"] = hostSample{
+		at: time.Now().Add(-30 * time.Second), idleSeconds: 984,
+	}
+	if host, err := unboundedCandidate.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("unbounded candidate on bounded host: pickHost() = (%q, %v), want hard-overload refusal", host, err)
 	}
 
 	unboundedRunner := cpuReservedRunner("unbounded", 0)
