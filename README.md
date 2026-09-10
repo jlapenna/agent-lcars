@@ -27,6 +27,8 @@ maintainer follow-up.
 
 ## Operating surfaces
 
+See [Operations](OPERATIONS.md) for Work API access and parked-item cleanup.
+
 Use the console for decisions and inspection; use the supporting services when
 working on a specific part of the fleet.
 
