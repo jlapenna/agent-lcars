@@ -30,6 +30,9 @@ export async function createQuickTaskEvidenceLifecycle(params: {
         schemaVersion: QUICK_TASK_EVIDENCE_SCHEMA_VERSION,
         evidenceId: params.evidenceId,
         requestId: intent.requestId,
+        ...('workId' in intent && typeof intent.workId === 'string'
+          ? { workId: intent.workId }
+          : {}),
         repositoryId,
         normalizedSha256: evidence.sha256,
         visibilityAtUpload: visibility,
@@ -38,6 +41,7 @@ export async function createQuickTaskEvidenceLifecycle(params: {
       return store.create(evidence, binding);
     },
     async rollbackDefinitiveCreateFailure(created: QuickTaskEvidenceObject) {
+      if (created.createdByCall === false) return;
       await store.deleteGeneration(
         created.binding.evidenceId,
         created.generation,

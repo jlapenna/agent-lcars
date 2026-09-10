@@ -1,6 +1,8 @@
 'use server';
 
+import { workIdSchema, workSpecSchema } from '@agent-lcars/work';
 import { createServerFunctionable } from '@orpc/next';
+import { z } from 'zod';
 
 import { auth, githubAccessTokenFor } from '@/auth';
 import {
@@ -11,11 +13,33 @@ import {
   composeQuickTaskEvidenceIssueBody,
   deriveQuickTaskTitle,
 } from '@/lib/quick-task-evidence';
-import type { QuickTaskEvidenceIntent } from '@/lib/quick-task-evidence-contract';
+import {
+  isQuickTaskEvidenceId,
+  QUICK_TASK_EVIDENCE_MAX_INPUT_BYTES,
+} from '@/lib/quick-task-evidence-contract';
 import { createQuickTaskEvidenceLifecycle } from '@/lib/quick-task-evidence-lifecycle';
+import { forbiddenReason, isWorkOperatorPrincipal } from '@/lib/work-mint';
 import { workRouter } from '@/lib/work-router';
 
 import { context } from './context';
+
+const evidenceIntentSchema = z.strictObject({
+  workId: workIdSchema,
+  requestId: z.string().min(1).max(128),
+  evidenceId: z.string().refine(isQuickTaskEvidenceId),
+  repository: z.strictObject({
+    owner: z.string().min(1),
+    name: z.string().min(1),
+  }),
+  pipeline: z.enum(['claude', 'codex', 'opencode']),
+  description: z.string().min(1),
+  source: z.strictObject({
+    route: z.string(),
+    identities: z.string(),
+    capturedAt: z.string(),
+    deployment: z.string().optional(),
+  }),
+});
 
 const functionable = createServerFunctionable({ context });
 
@@ -50,18 +74,51 @@ export async function createItemWithEvidence(form: FormData) {
       undefined,
     ] as const;
   }
-  let intent: QuickTaskEvidenceIntent & { workId?: string };
+  let intent: z.infer<typeof evidenceIntentSchema>;
   try {
-    intent = JSON.parse(raw) as QuickTaskEvidenceIntent & { workId?: string };
+    intent = evidenceIntentSchema.parse(JSON.parse(raw));
   } catch {
     return [
       { code: 'BAD_REQUEST', message: 'Work evidence intent is invalid' },
       undefined,
     ] as const;
   }
+  if (file.size > QUICK_TASK_EVIDENCE_MAX_INPUT_BYTES) {
+    return [
+      { code: 'BAD_REQUEST', message: 'Work evidence exceeds the input limit' },
+      undefined,
+    ] as const;
+  }
+  const workContext = await context();
+  const { principal } = workContext;
+  if (!isWorkOperatorPrincipal(principal)) {
+    return [
+      { code: 'UNAUTHORIZED', message: 'work.operator scope required' },
+      undefined,
+    ] as const;
+  }
+  const repository = resolveWatchedRepo(intent.repository);
+  const spec = workSpecSchema.parse({
+    title: deriveQuickTaskTitle(intent.description),
+    description: composeQuickTaskEvidenceIssueBody(
+      { description: intent.description, source: intent.source },
+      repository,
+      process.env['AUTH_URL'] ?? '',
+      intent.evidenceId,
+    ),
+    pipeline: intent.pipeline,
+    target: { repo: `${repository.owner}/${repository.name}` },
+  });
+  const capabilityReason = forbiddenReason(principal, spec);
+  if (capabilityReason !== undefined) {
+    return [
+      { code: 'FORBIDDEN', message: capabilityReason },
+      undefined,
+    ] as const;
+  }
   const session = await auth();
   const token = session ? githubAccessTokenFor(session) : undefined;
-  if (!token || !intent.workId || !intent.evidenceId) {
+  if (!token) {
     return [
       {
         code: 'UNAUTHORIZED',
@@ -70,7 +127,6 @@ export async function createItemWithEvidence(form: FormData) {
       undefined,
     ] as const;
   }
-  const repository = resolveWatchedRepo(intent.repository);
   const { data: repo } = await createGithubUserClient(token).rest.repos.get({
     owner: repository.owner,
     repo: repository.name,
@@ -99,19 +155,13 @@ export async function createItemWithEvidence(form: FormData) {
   });
   const result = await createItemFn({
     id: intent.workId,
-    spec: {
-      title: deriveQuickTaskTitle(intent.description),
-      description: composeQuickTaskEvidenceIssueBody(
-        { description: intent.description, source: intent.source },
-        repository,
-        process.env['AUTH_URL'] ?? '',
-        intent.evidenceId,
-      ),
-      pipeline: intent.pipeline as 'claude' | 'codex' | 'opencode',
-      target: { repo: `${repository.owner}/${repository.name}` },
-    },
+    spec,
   });
-  if (result[0] && result[0].code !== 'TOO_MANY_REQUESTS' && evidence) {
+  if (
+    result[0] &&
+    (result[0].code === 'FORBIDDEN' || result[0].code === 'CONFLICT') &&
+    evidence
+  ) {
     await lifecycle.rollbackDefinitiveCreateFailure(evidence);
   }
   return result;
