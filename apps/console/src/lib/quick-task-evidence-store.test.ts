@@ -11,6 +11,7 @@ const binding: QuickTaskEvidenceBinding = {
   schemaVersion: 'v1',
   evidenceId,
   requestId: 'request-1',
+  workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
   repositoryId: 42,
   normalizedSha256: 'a'.repeat(64),
   visibilityAtUpload: 'private',
@@ -45,6 +46,22 @@ describe('GcsQuickTaskEvidenceStore.create', () => {
     await expect(store.create(evidence, binding)).resolves.toEqual({
       binding,
       generation: '7',
+      createdByCall: false,
+    });
+  });
+
+  it('marks a newly written generation as owned by this call', async () => {
+    const store = new GcsQuickTaskEvidenceStore({
+      file: () => ({
+        save: async () => undefined,
+        getMetadata: async () => [{ generation: '9' }],
+      }),
+    } as never);
+
+    await expect(store.create(evidence, binding)).resolves.toEqual({
+      binding,
+      generation: '9',
+      createdByCall: true,
     });
   });
 
@@ -52,6 +69,28 @@ describe('GcsQuickTaskEvidenceStore.create', () => {
     const store = new GcsQuickTaskEvidenceStore(
       bucketThatFailsSave(412) as never,
     );
+
+    await expect(store.create(evidence, binding)).rejects.toMatchObject({
+      statusCode: 409,
+    });
+  });
+
+  it('rejects replay of an evidence id bound to a different Work item', async () => {
+    const store = new GcsQuickTaskEvidenceStore({
+      file: () => ({
+        save: async () => Promise.reject({ code: 412 }),
+        getMetadata: async () => [
+          {
+            generation: '7',
+            metadata: {
+              ...binding,
+              workId: '01J5Z3K9QX8F0N2B4V6C8D1E4H',
+              repositoryId: '42',
+            },
+          },
+        ],
+      }),
+    } as never);
 
     await expect(store.create(evidence, binding)).rejects.toMatchObject({
       statusCode: 409,

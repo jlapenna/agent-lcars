@@ -21,13 +21,11 @@ test.describe('/shuttlebay workspace', () => {
         .getByRole('navigation', { name: 'Console sections' })
         .getByRole('link', { name: 'Shuttlebay' }),
     ).toHaveAttribute('aria-current', 'page');
-    // Shuttlebay used to be the one destination with no Quick task button,
+    // Shuttlebay used to be the one destination with no create button,
     // not by design: a `.lcars-command-utilities:has(...)` rule matched the
     // shared cluster instead of the mobile wrapper inside it and hid the
     // whole thing from 64em up (#1810).
-    await expect(page.getByRole('button', { name: 'Quick task' })).toHaveCount(
-      1,
-    );
+    await expect(page.getByRole('button', { name: 'New work' })).toHaveCount(1);
   });
 
   test('keeps every console destination reachable on a narrow phone', async ({
@@ -44,7 +42,7 @@ test.describe('/shuttlebay workspace', () => {
       header.getByRole('heading', { name: 'Shuttlebay' }),
     ).toBeVisible();
     await expect(
-      header.getByRole('button', { name: 'Quick task' }),
+      header.getByRole('button', { name: 'New work' }),
     ).toBeVisible();
     await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
     await page.getByRole('button', { name: 'More console options' }).click();

@@ -31,13 +31,9 @@ export function ConsoleCommandUtilities({
   sourceIdentities?: QuickTaskSourceIdentity[];
   refreshesAuthoritativeQueue?: boolean;
   includeNavigation?: boolean;
-  /** Both of Quick task's submission paths require an admin - `createQuickTask`
-   *  calls `requireAdmin()` and `/api/quick-task/v1` checks `isAdmin` - so a
-   *  route that admits non-admins must not offer the control to them; the
-   *  button would be enabled and every submission would 403. Every other
-   *  console destination is admin-gated at the page, which is why this
-   *  defaults to true; `/work` is the exception (see its own doc comment) and
-   *  passes the session's admin status through. */
+  /** Native creation requires a work.operator grant. Admin-gated routes use
+   * the production admin grant by default; `/work` resolves the signed-in
+   * principal explicitly because that route also admits ungranted users. */
   includeQuickTask?: boolean;
   navigationHrefs?: Partial<Record<NavKey, string>>;
 }) {

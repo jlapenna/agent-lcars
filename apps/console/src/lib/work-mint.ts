@@ -86,6 +86,13 @@ export interface GrantsPrincipal {
   pipelines: readonly string[];
 }
 
+/** Shared scope gate for every native Work creation adapter. */
+export function isWorkOperatorPrincipal(
+  principal: WorkPrincipal | undefined,
+): principal is WorkPrincipal {
+  return principal?.scopes.has('work.operator') === true;
+}
+
 /**
  * The two capability checks every run-minting call must clear: invoking a
  * pipeline is granted per principal, and the target repository must be one

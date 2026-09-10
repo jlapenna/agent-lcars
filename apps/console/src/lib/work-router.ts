@@ -15,6 +15,7 @@ import { githubDispatchRouter } from './github-dispatch-router';
 import { scheduleRouter } from './schedule-router';
 import {
   forbiddenReason,
+  isWorkOperatorPrincipal,
   liveNativeRunCount,
   mintItem,
   RETRY_AFTER_SECONDS,
@@ -42,7 +43,7 @@ const os = implement(itemsContract).$context<WorkContext>();
  */
 const operator = os.use(async ({ context, next }) => {
   const { principal } = context;
-  if (principal === undefined || !principal.scopes.has('work.operator')) {
+  if (!isWorkOperatorPrincipal(principal)) {
     throw new ORPCError('UNAUTHORIZED', {
       message: 'work.operator scope required',
     });

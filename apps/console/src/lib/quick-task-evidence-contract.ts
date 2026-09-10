@@ -31,6 +31,8 @@ const UUID_V4 =
 export type QuickTaskEvidenceId = string;
 
 export interface QuickTaskEvidenceIntent {
+  /** Native Work identifier. Absent only on historical issue evidence. */
+  workId?: string;
   requestId: string;
   evidenceId?: QuickTaskEvidenceId;
   repository: RepositoryRef;
@@ -49,6 +51,8 @@ export interface QuickTaskEvidenceBinding {
   schemaVersion: typeof QUICK_TASK_EVIDENCE_SCHEMA_VERSION;
   evidenceId: QuickTaskEvidenceId;
   requestId: string;
+  /** Present for native Work evidence; binds replay cleanup to one item. */
+  workId?: string;
   repositoryId: number;
   normalizedSha256: string;
   visibilityAtUpload: 'public' | 'private' | 'internal';
@@ -66,6 +70,8 @@ export interface QuickTaskNormalizedEvidence {
 export interface QuickTaskEvidenceObject {
   binding: QuickTaskEvidenceBinding;
   generation: string;
+  /** False when create recovered an exact object written by an earlier call. */
+  createdByCall?: boolean;
 }
 
 /** Frozen seam: called only by the winning Quick Task claimant before create. */

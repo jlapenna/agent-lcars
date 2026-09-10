@@ -18,6 +18,7 @@ const metadataFor = (binding: QuickTaskEvidenceBinding) => ({
   schemaVersion: binding.schemaVersion,
   evidenceId: binding.evidenceId,
   requestId: binding.requestId,
+  ...(binding.workId === undefined ? {} : { workId: binding.workId }),
   repositoryId: String(binding.repositoryId),
   normalizedSha256: binding.normalizedSha256,
   visibilityAtUpload: binding.visibilityAtUpload,
@@ -43,6 +44,7 @@ function hasExactBinding(
     metadata?.schemaVersion === binding.schemaVersion &&
     metadata.evidenceId === binding.evidenceId &&
     metadata.requestId === binding.requestId &&
+    metadata.workId === binding.workId &&
     metadata.repositoryId === String(binding.repositoryId) &&
     metadata.normalizedSha256 === binding.normalizedSha256 &&
     metadata.visibilityAtUpload === binding.visibilityAtUpload &&
@@ -70,6 +72,22 @@ export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
       });
     } catch (error) {
       if (isCreatePreconditionFailure(error)) {
+        try {
+          const [metadata] = await file.getMetadata();
+          if (
+            metadata.generation &&
+            hasExactBinding(metadata.metadata, binding)
+          ) {
+            return {
+              binding,
+              generation: String(metadata.generation),
+              createdByCall: false,
+            };
+          }
+        } catch {
+          // The precondition remains an immutable binding conflict when its
+          // existing metadata cannot be read.
+        }
         throw new QuickTaskEvidenceError(409, 'Evidence binding conflict');
       }
       // A network failure can arrive after GCS has committed the write. Do
@@ -81,7 +99,11 @@ export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
           metadata.generation &&
           hasExactBinding(metadata.metadata, binding)
         ) {
-          return { binding, generation: String(metadata.generation) };
+          return {
+            binding,
+            generation: String(metadata.generation),
+            createdByCall: false,
+          };
         }
       } catch {
         // The original storage error remains the safe public result.
@@ -89,7 +111,11 @@ export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
       throw new QuickTaskEvidenceError(503, 'Evidence storage is unavailable');
     }
     const [metadata] = await file.getMetadata();
-    return { binding, generation: String(metadata.generation) };
+    return {
+      binding,
+      generation: String(metadata.generation),
+      createdByCall: true,
+    };
   }
   async read(evidenceId: QuickTaskEvidenceId) {
     try {
@@ -115,6 +141,7 @@ export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
           schemaVersion: QUICK_TASK_EVIDENCE_SCHEMA_VERSION,
           evidenceId,
           requestId: m.requestId,
+          ...(m.workId === undefined ? {} : { workId: m.workId }),
           repositoryId: Number(m.repositoryId),
           normalizedSha256: m.normalizedSha256,
           visibilityAtUpload: m.visibilityAtUpload,

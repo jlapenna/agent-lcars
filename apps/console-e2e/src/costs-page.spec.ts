@@ -20,9 +20,7 @@ test.describe('/costs workspace @smoke', () => {
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
     await expectDesktopBridgeHeader(header);
     await expect(workspace).toBeVisible();
-    await expect(
-      page.getByRole('button', { name: 'Quick task' }),
-    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New work' })).toBeVisible();
     await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
     await expect(page.getByTestId('session-ledger')).toBeVisible();
     await expect(

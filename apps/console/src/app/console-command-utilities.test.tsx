@@ -63,12 +63,9 @@ describe('ConsoleCommandUtilities', () => {
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
   });
 
-  it('withholds Quick task where the viewer could not submit one', () => {
-    // Both submission paths are admin-only - `createQuickTask` calls
-    // `requireAdmin()` and `/api/quick-task/v1` checks `isAdmin` - and /work
-    // is the one console route that admits a non-admin (a `work.operator`
-    // grant holder). Offering the control there would render an enabled
-    // button whose every submission 403s.
+  it('withholds New work where the viewer has no work grant', () => {
+    // /work admits signed-in users without a work grant. Offering creation
+    // there would render an enabled button whose every submission is refused.
     render(
       <MantineProvider>
         <ConsoleCommandUtilities
