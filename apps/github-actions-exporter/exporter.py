@@ -55,6 +55,7 @@ FULL_SUITE_STEP_MARKER = "[full-suite]"
 PAGE_SIZE = 100
 RUN_SEARCH_LIMIT = 1000
 ONE_SECOND = timedelta(seconds=1)
+OPTIONAL_METADATA_RETRY_SECONDS = 300
 
 
 def environment_text(name: str, default: str = "") -> str:
@@ -324,11 +325,20 @@ class GitHubRequestError(RuntimeError):
 
     def __init__(self, endpoint: str, response: requests.Response) -> None:
         self.status_code = response.status_code
+        self.rate_limited = (
+            response.status_code == 429
+            or response.headers.get("x-ratelimit-remaining") == "0"
+            or response.headers.get("retry-after") is not None
+        )
         request_id = response.headers.get("x-github-request-id", "unknown")
         super().__init__(
             f"GitHub {endpoint} request failed with HTTP {response.status_code} "
             f"(request {request_id})"
         )
+
+
+class GitHubPayloadError(RuntimeError):
+    """A malformed GitHub response that callers may handle by endpoint role."""
 
 
 class GitHubAPI:
@@ -362,7 +372,9 @@ class GitHubAPI:
                 raise GitHubRequestError(endpoint, response) from exc
             payload = response.json()
             if not isinstance(payload, dict):
-                raise TypeError(f"GitHub {endpoint} response was not an object")
+                raise GitHubPayloadError(
+                    f"GitHub {endpoint} response was not an object"
+                )
             return payload
         finally:
             response.close()
@@ -451,7 +463,7 @@ class GitHubAPI:
         if not isinstance(groups, list) or not all(
             isinstance(group, dict) for group in groups
         ):
-            raise TypeError("GitHub concurrency-groups response was invalid")
+            raise GitHubPayloadError("GitHub concurrency-groups response was invalid")
         return groups
 
     def _list_paginated(
@@ -1410,6 +1422,7 @@ class Poller:
         self.database = database
         self.api = api
         self.state = state
+        self.concurrency_groups_retry_after: dict[str, float] = {}
         for repository in config.repositories:
             last_success = self.database.last_success_at(repository)
             self.state.last_success.labels(repository).set(
@@ -1489,12 +1502,48 @@ class Poller:
             # upsert_jobs whether the concurrency-group listing was ever
             # queried for this run -- see the "unknown" vs. "none" fallback
             # comment there.
-            groups = (
-                self.api.list_concurrency_groups(repository, int(run["id"]))
-                if run.get("status") in ACTIVE_STATUSES
-                else None
-            )
+            groups = None
+            if run.get("status") in ACTIVE_STATUSES:
+                groups = []
+                now = time.monotonic()
+                if now >= self.concurrency_groups_retry_after.get(repository, 0):
+                    try:
+                        groups = self.api.list_concurrency_groups(
+                            repository, int(run["id"])
+                        )
+                    except GitHubRequestError as exc:
+                        # A shared primary or secondary rate limit applies to
+                        # the core endpoints too. Abort the repository refresh
+                        # instead of spending requests that GitHub has already
+                        # told us it will reject.
+                        if exc.rate_limited:
+                            raise
+                        self._record_optional_metadata_failure(
+                            repository, int(run["id"]), now, exc
+                        )
+                    except (GitHubPayloadError, requests.RequestException) as exc:
+                        # Concurrency groups enrich labels but do not determine job
+                        # status. Do not discard a successfully fetched core jobs
+                        # snapshot when this optional endpoint is unavailable.
+                        self._record_optional_metadata_failure(
+                            repository, int(run["id"]), now, exc
+                        )
             self.database.upsert_jobs(repository, run, jobs, groups)
+
+    def _record_optional_metadata_failure(
+        self, repository: str, run_id: int, now: float, error: Exception
+    ) -> None:
+        self.concurrency_groups_retry_after[repository] = (
+            now + OPTIONAL_METADATA_RETRY_SECONDS
+        )
+        self.state.poll_errors.labels(repository, "concurrency_groups").inc()
+        LOGGER.warning(
+            "optional concurrency-group refresh failed for %s run %s (%s); "
+            "core job state retained with unknown concurrency metadata",
+            repository,
+            run_id,
+            error,
+        )
 
     def refresh_all(self) -> None:
         for repository in self.config.repositories:
