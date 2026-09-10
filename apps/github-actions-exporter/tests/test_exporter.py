@@ -7,7 +7,7 @@ import unittest
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 from prometheus_client import CollectorRegistry, generate_latest
 
@@ -839,6 +839,81 @@ class GitHubActionsExporterTests(unittest.TestCase):
         poller.refresh_repository(repository)
 
         api.list_concurrency_groups.assert_called_once_with(repository, 1)
+
+    def test_optional_concurrency_group_failure_keeps_core_job_refresh(self):
+        repository = "jlapenna/agent-lcars"
+        first_run = workflow_run(id=1, status="in_progress", conclusion=None)
+        second_run = workflow_run(id=2, status="in_progress", conclusion=None)
+        running_job = workflow_job(
+            id=101,
+            status="in_progress",
+            conclusion=None,
+            started_at="2026-08-05T04:19:39Z",
+            completed_at=None,
+        )
+        queued_job = workflow_job(
+            id=102,
+            status="queued",
+            conclusion=None,
+            started_at=None,
+            completed_at=None,
+        )
+        api = Mock()
+        api.list_runs.return_value = [first_run, second_run]
+        api.list_jobs.side_effect = [[running_job], [queued_job]]
+        response = Mock(status_code=403, headers={})
+        api.list_concurrency_groups.side_effect = exporter.GitHubRequestError(
+            "concurrency_groups", response
+        )
+        state = FakeState()
+        state.poll_errors = Mock()
+        poller = exporter.Poller(
+            exporter.Config(token="test", repositories=(repository,)),
+            self.database,
+            api,
+            state,
+        )
+
+        with self.assertLogs(exporter.LOGGER, level="WARNING") as logs:
+            poller.refresh_repository(repository)
+
+        self.assertTrue(self.database.backfill_complete(repository))
+        self.assertEqual(len(state.last_success.values), 2)
+        self.assertEqual(
+            [
+                (row["id"], row["status"], row["concurrency_group"])
+                for row in self.database.rows(
+                    "SELECT id, status, concurrency_group FROM jobs ORDER BY id"
+                )
+            ],
+            [(101, "in_progress", "unknown"), (102, "queued", "unknown")],
+        )
+        api.list_jobs.assert_has_calls([call(repository, 1), call(repository, 2)])
+        api.list_concurrency_groups.assert_called_once_with(repository, 1)
+        state.poll_errors.labels.assert_called_once_with(
+            repository, "concurrency_groups"
+        )
+        state.poll_errors.labels.return_value.inc.assert_called_once_with()
+        self.assertIn("core job state retained", "\n".join(logs.output))
+
+    def test_unexpected_optional_metadata_bug_still_fails_refresh(self):
+        repository = "jlapenna/agent-lcars"
+        run = workflow_run(id=1, status="in_progress", conclusion=None)
+        api = Mock()
+        api.list_runs.return_value = [run]
+        api.list_jobs.return_value = [workflow_job()]
+        api.list_concurrency_groups.side_effect = RuntimeError("programming bug")
+        poller = exporter.Poller(
+            exporter.Config(token="test", repositories=(repository,)),
+            self.database,
+            api,
+            FakeState(),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "programming bug"):
+            poller.refresh_repository(repository)
+
+        self.assertFalse(self.database.backfill_complete(repository))
 
     def test_failed_initial_backfill_is_retried(self):
         class FailingAPI(FakeAPI):

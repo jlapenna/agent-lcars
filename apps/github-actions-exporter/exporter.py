@@ -55,6 +55,7 @@ FULL_SUITE_STEP_MARKER = "[full-suite]"
 PAGE_SIZE = 100
 RUN_SEARCH_LIMIT = 1000
 ONE_SECOND = timedelta(seconds=1)
+OPTIONAL_METADATA_RETRY_SECONDS = 300
 
 
 def environment_text(name: str, default: str = "") -> str:
@@ -331,6 +332,10 @@ class GitHubRequestError(RuntimeError):
         )
 
 
+class GitHubPayloadError(RuntimeError):
+    """A malformed GitHub response that callers may handle by endpoint role."""
+
+
 class GitHubAPI:
     def __init__(self, config: Config, state: ExporterState) -> None:
         self.api_url = config.api_url
@@ -362,7 +367,9 @@ class GitHubAPI:
                 raise GitHubRequestError(endpoint, response) from exc
             payload = response.json()
             if not isinstance(payload, dict):
-                raise TypeError(f"GitHub {endpoint} response was not an object")
+                raise GitHubPayloadError(
+                    f"GitHub {endpoint} response was not an object"
+                )
             return payload
         finally:
             response.close()
@@ -451,7 +458,7 @@ class GitHubAPI:
         if not isinstance(groups, list) or not all(
             isinstance(group, dict) for group in groups
         ):
-            raise TypeError("GitHub concurrency-groups response was invalid")
+            raise GitHubPayloadError("GitHub concurrency-groups response was invalid")
         return groups
 
     def _list_paginated(
@@ -1410,6 +1417,7 @@ class Poller:
         self.database = database
         self.api = api
         self.state = state
+        self.concurrency_groups_retry_after: dict[str, float] = {}
         for repository in config.repositories:
             last_success = self.database.last_success_at(repository)
             self.state.last_success.labels(repository).set(
@@ -1489,11 +1497,36 @@ class Poller:
             # upsert_jobs whether the concurrency-group listing was ever
             # queried for this run -- see the "unknown" vs. "none" fallback
             # comment there.
-            groups = (
-                self.api.list_concurrency_groups(repository, int(run["id"]))
-                if run.get("status") in ACTIVE_STATUSES
-                else None
-            )
+            groups = None
+            if run.get("status") in ACTIVE_STATUSES:
+                groups = []
+                now = time.monotonic()
+                if now >= self.concurrency_groups_retry_after.get(repository, 0):
+                    try:
+                        groups = self.api.list_concurrency_groups(
+                            repository, int(run["id"])
+                        )
+                    except (
+                        GitHubRequestError,
+                        GitHubPayloadError,
+                        requests.RequestException,
+                    ):
+                        # Concurrency groups enrich labels but do not determine job
+                        # status. Do not discard a successfully fetched core jobs
+                        # snapshot when this optional endpoint is unavailable.
+                        self.concurrency_groups_retry_after[repository] = (
+                            now + OPTIONAL_METADATA_RETRY_SECONDS
+                        )
+                        self.state.poll_errors.labels(
+                            repository, "concurrency_groups"
+                        ).inc()
+                        LOGGER.warning(
+                            "optional concurrency-group refresh failed for %s run %s; "
+                            "core job state retained",
+                            repository,
+                            run["id"],
+                            exc_info=True,
+                        )
             self.database.upsert_jobs(repository, run, jobs, groups)
 
     def refresh_all(self) -> None:
