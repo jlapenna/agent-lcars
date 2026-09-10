@@ -14,7 +14,6 @@ import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refres
 import { admitGithubWork } from '@/lib/github-work-admission';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
-import { handlePushWebhookDelivery } from '@/lib/push-watch';
 import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 
 /**
@@ -151,13 +150,6 @@ export async function handleWebhookDelivery(
   deps: OrchestratorRouteDeps,
   input: { event: string; deliveryId: string; payload: unknown },
 ): Promise<RouteResult> {
-  // `push` has no GitHub issue/PR anchor, so it never goes through
-  // `interpretDelivery`/`admitGithubWork`/the anchor projection below — all
-  // of that machinery assumes an anchor. It mints a native work item
-  // instead; see `push-watch.ts`.
-  if (input.event === 'push') {
-    return handlePushWebhookDelivery(deps, input);
-  }
   try {
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {

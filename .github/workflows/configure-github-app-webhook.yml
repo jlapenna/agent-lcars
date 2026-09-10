@@ -8,9 +8,7 @@ on:
         required: true
         type: string
   # A verify-only pass, which needs no secret because it changes nothing.
-  # Without this the assertions below only ran when an operator happened to
-  # dispatch the workflow: push-watch was inert in production for five days
-  # with every check green (#1754, #1761).
+  # Detect changes to required App subscriptions between operator runs.
   # Daily rather than weekly: #1542 established that GitHub drops most
   # scheduled runs in this repository, so a weekly cadence can silently mean
   # months between checks. Daily is cheap (a handful of read-only App API
