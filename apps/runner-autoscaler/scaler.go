@@ -337,6 +337,9 @@ type hostLoad struct {
 	penalty              int
 	overloaded           bool
 	throttleBounded      bool
+	cooldownEligible     bool
+	cooldownDerived      bool
+	rawTelemetry         bool
 	observedAt           time.Time
 }
 
@@ -387,17 +390,19 @@ func (a *Scaler) scoreHostLoad(host string, load hostLoad) hostLoad {
 	return a.scoreHostLoadForQuota(host, load, false)
 }
 
-func (a *Scaler) scoreHostLoadForQuota(host string, load hostLoad, throttleBounded bool) hostLoad {
+func (a *Scaler) scoreHostLoadForQuota(host string, load hostLoad, throttleBounded bool, throttlePossible ...bool) hostLoad {
 	p := a.policy()
-	load.penalty, load.overloaded = 0, false
+	load.penalty, load.overloaded, load.cooldownEligible, load.cooldownDerived = 0, false, false, false
+	mayBeThrottled := len(throttlePossible) > 0 && throttlePossible[0]
 	// Load and CPU PSI may be relaxed only when the independent utilization
 	// gate has a real counter delta. A first sample cannot prove spare CPU.
 	throttleBounded = throttleBounded && load.cpuUtilizationKnown
 	load.throttleBounded = throttleBounded
-	band := func(value, soft, hard float64) {
+	band := func(value, soft, hard float64, cooldownEligible bool) {
 		switch {
 		case value >= hard:
 			load.penalty, load.overloaded = 100, true
+			load.cooldownEligible = load.cooldownEligible || cooldownEligible
 		case value >= soft:
 			load.penalty = maxPenalty(load.penalty, 10)
 		}
@@ -407,13 +412,14 @@ func (a *Scaler) scoreHostLoadForQuota(host string, load hostLoad, throttleBound
 		load.penalty = 100
 		if !throttleBounded {
 			load.penalty, load.overloaded = 100, true
+			load.cooldownEligible = !mayBeThrottled
 		}
 	case load.normalizedLoad >= p.loadBusy:
 		load.penalty = 10
 	case load.normalizedLoad >= p.loadSoft:
 		load.penalty = 2
 	}
-	band(load.cpuUtilization, p.cpuSoft, p.cpuHard)
+	band(load.cpuUtilization, p.cpuSoft, p.cpuHard, true)
 	if throttleBounded {
 		switch {
 		case load.cpuPressure >= p.psiHard:
@@ -422,15 +428,16 @@ func (a *Scaler) scoreHostLoadForQuota(host string, load hostLoad, throttleBound
 			load.penalty = maxPenalty(load.penalty, 10)
 		}
 	} else {
-		band(load.cpuPressure, p.psiSoft, p.psiHard)
+		band(load.cpuPressure, p.psiSoft, p.psiHard, !mayBeThrottled)
 	}
-	band(load.memoryPressure, p.psiSoft, p.psiHard)
+	band(load.memoryPressure, p.psiSoft, p.psiHard, true)
 	// Spark's unified LLM allocation makes generic available-memory ratios a
 	// poor admission signal; its dedicated inference/swap probe remains the
 	// authority while CPU/PSI still participate here.
 	if !a.hostMemoryExempt[host] {
 		if load.memoryAvailable <= p.memoryHard {
 			load.penalty, load.overloaded = 100, true
+			load.cooldownEligible = true
 		} else if load.memoryAvailable <= p.memorySoft {
 			load.penalty = maxPenalty(load.penalty, 10)
 		}
@@ -467,7 +474,7 @@ func (a *Scaler) scoreHostLoadForQuota(host string, load hostLoad, throttleBound
 // probeHostLoad reads node_load1 and derives the logical CPU count from the
 // number of idle CPU series. It fails open: telemetry trouble must not turn a
 // healthy Docker host into a fleet outage.
-func (a *Scaler) probeHostLoad(ctx context.Context, host string, throttleBounded ...bool) (hostLoad, error) {
+func (a *Scaler) probeHostLoad(ctx context.Context, host string, throttleBounded bool, throttlePossible ...bool) (hostLoad, error) {
 	if a.hostMetricsURLTemplate == "" && !a.coordinator().metricsViaSSH[host] {
 		return hostLoad{}, nil
 	}
@@ -518,6 +525,7 @@ func (a *Scaler) probeHostLoad(ctx context.Context, host string, throttleBounded
 	}
 	now := time.Now()
 	load := hostLoad{normalizedLoad: load1 / float64(len(cpus)), memoryAvailable: 1, memoryAvailableBytes: memAvailable, observedAt: now}
+	load.rawTelemetry = true
 	if memTotal > 0 {
 		load.memoryAvailable = memAvailable / memTotal
 	}
@@ -541,13 +549,13 @@ func (a *Scaler) probeHostLoad(ctx context.Context, host string, throttleBounded
 		fleet.hostSamples = make(map[string]hostSample)
 	}
 	fleet.hostSamples[host] = current
-	load = a.scoreHostLoadForQuota(host, load, len(throttleBounded) > 0 && throttleBounded[0])
-	load = a.applyOverloadCooldown(host, load, now)
 	if fleet.hostLoadCache == nil {
 		fleet.hostLoadCache = make(map[string]hostLoad)
 	}
 	fleet.hostLoadCache[host] = load
 	fleet.hostSampleMu.Unlock()
+	load = a.scoreHostLoadForQuota(host, load, throttleBounded, throttlePossible...)
+	load = a.applyOverloadCooldown(host, load, now)
 	a.recordHostLoadMetrics(host, load, true)
 	return load, nil
 }
@@ -573,16 +581,19 @@ func (a *Scaler) recordHostLoadMetrics(host string, load hostLoad, available boo
 	}
 }
 
-func (a *Scaler) currentHostLoad(ctx context.Context, host string, throttleBounded ...bool) (hostLoad, error) {
+func (a *Scaler) currentHostLoad(ctx context.Context, host string, throttleBounded bool, throttlePossible ...bool) (hostLoad, error) {
 	fleet := a.coordinator()
 	fleet.hostSampleMu.Lock()
 	cached, ok := fleet.hostLoadCache[host]
 	fleet.hostSampleMu.Unlock()
-	wantThrottleBounded := len(throttleBounded) > 0 && throttleBounded[0]
-	if ok && cached.throttleBounded == wantThrottleBounded && time.Since(cached.observedAt) < 2*hostSampleInterval {
-		return cached, nil
+	if ok && time.Since(cached.observedAt) < 2*hostSampleInterval {
+		if !cached.rawTelemetry {
+			return a.refreshOverloadCooldown(host, cached, time.Now()), nil
+		}
+		load := a.scoreHostLoadForQuota(host, cached, throttleBounded, throttlePossible...)
+		return a.observeOverloadCooldown(host, load, time.Now()), nil
 	}
-	return a.probeHostLoad(ctx, host, throttleBounded...)
+	return a.probeHostLoad(ctx, host, throttleBounded, throttlePossible...)
 }
 
 func (a *Scaler) RunHostSampler(ctx context.Context) {
@@ -609,8 +620,9 @@ func (a *Scaler) RunHostSampler(ctx context.Context) {
 // applyOverloadCooldown is the single authority that arms or extends a
 // host's cooldown window: callers must pass a load whose .overloaded bit
 // reflects a FRESH, raw scoreHostLoad result, measured right now, not a
-// value that has already been through this function (directly or via the
-// hostLoadCache). It is the arm/extend side of the state machine --
+// value that has already been through this function. hostLoadCache holds
+// raw telemetry so every lane can score the same sample for its own CPU
+// bound without changing the sampling baseline. It is the arm/extend side --
 // refreshOverloadCooldown is the read-only side placement uses to re-check
 // an existing window against the current time.
 func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
@@ -620,26 +632,40 @@ func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time
 	if fleet.overloadedUntil == nil {
 		fleet.overloadedUntil = make(map[string]time.Time)
 	}
-	if load.overloaded {
+	if load.overloaded && load.cooldownEligible {
 		fleet.overloadedUntil[host] = now.Add(a.policy().cooldown)
 		return load
 	}
 	if until := fleet.overloadedUntil[host]; now.Before(until) {
 		load.penalty = 100
 		load.overloaded = true
+		load.cooldownDerived = true
 	}
 	return load
 }
 
-// refreshOverloadCooldown re-evaluates whether host should still be treated
-// as overloaded for placement, against the live cooldown expiry, WITHOUT
-// ever arming or extending it. currentHostLoad's cache can be up to
-// 2*hostSampleInterval (30s) stale, and a cached entry's .overloaded bit is
-// not necessarily a fresh raw reading -- probeHostLoad sets it via
-// applyOverloadCooldown's check-only branch whenever a host's raw signal has
-// already recovered but its cooldown window has not yet elapsed, and that
-// cooldown-derived true then gets cached exactly like a genuine raw breach
-// would.
+// observeOverloadCooldown applies an existing global cooldown to a score
+// derived from cached raw telemetry without ever extending that cooldown.
+func (a *Scaler) observeOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
+	if load.overloaded {
+		return load
+	}
+	fleet := a.coordinator()
+	fleet.overloadMu.Lock()
+	until := fleet.overloadedUntil[host]
+	fleet.overloadMu.Unlock()
+	if now.Before(until) {
+		load.penalty = 100
+		load.overloaded = true
+		load.cooldownDerived = true
+	}
+	return load
+}
+
+// refreshOverloadCooldown re-evaluates a cooldown-derived legacy/test value
+// against the live expiry without ever arming or extending it. Production
+// hostLoadCache entries are rawTelemetry and currentHostLoad scores them
+// afresh, then uses observeOverloadCooldown.
 //
 // pickHostLocked used to feed that cached value straight back into
 // applyOverloadCooldown to keep the cooldown check live against wall-clock
@@ -658,7 +684,7 @@ func (a *Scaler) applyOverloadCooldown(host string, load hostLoad, now time.Time
 // last FRESH probe -- letting a window that has genuinely elapsed since the
 // cached read expire on schedule, without ever writing overloadedUntil.
 func (a *Scaler) refreshOverloadCooldown(host string, load hostLoad, now time.Time) hostLoad {
-	if !load.overloaded {
+	if !load.cooldownDerived {
 		return load
 	}
 	fleet := a.coordinator()
@@ -2196,8 +2222,9 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			// Relax throttle-manufactured signals only for a bounded candidate.
 			// An unbounded lane cannot inherit a safer bounded lane's decision;
 			// currentHostLoad's scoring-mode cache key forces a strict resample.
-			throttleBounded := a.runnerNanoCPUs > 0 && cpuErr == nil && allRunnersQuotaBounded && runningReservedCPU < hostCPUNano
-			measuredLoad, measuredLoadErr := a.currentHostLoad(ctx, dh.Name, throttleBounded)
+			throttlePossible := cpuErr == nil && allRunnersQuotaBounded && runningReservedCPU < hostCPUNano
+			throttleBounded := a.runnerNanoCPUs > 0 && throttlePossible
+			measuredLoad, measuredLoadErr := a.currentHostLoad(ctx, dh.Name, throttleBounded, throttlePossible)
 			load = measuredLoad
 			loadErr = errors.Join(loadErr, measuredLoadErr)
 			eligible := err == nil && placementHosts[dh.Name]

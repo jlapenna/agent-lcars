@@ -352,7 +352,7 @@ func TestScoreHostLoadPressureSignals(t *testing.T) {
 func TestOverloadCooldown(t *testing.T) {
 	now := time.Now()
 	scaler := &Scaler{}
-	loaded := scaler.applyOverloadCooldown("pike", hostLoad{normalizedLoad: 2, penalty: 100, overloaded: true}, now)
+	loaded := scaler.applyOverloadCooldown("pike", hostLoad{normalizedLoad: 2, penalty: 100, overloaded: true, cooldownEligible: true}, now)
 	if !loaded.overloaded || loaded.penalty != 100 {
 		t.Fatalf("initial overloaded sample = %#v", loaded)
 	}
@@ -705,6 +705,47 @@ func TestPickHostIgnoresManufacturedLoadOnlyWhenEveryRunnerIsQuotaBounded(t *tes
 	unbounded := newScaler(unboundedRunner, 0)
 	if host, err := unbounded.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
 		t.Fatalf("unbounded hard load: pickHost() = (%q, %v), want hard-overload refusal", host, err)
+	}
+}
+
+func TestMixedLanesShareRawSampleWithoutPoisoningBoundedPlacement(t *testing.T) {
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintln(w, "node_load1 26")
+		_, _ = fmt.Fprintln(w, "node_memory_MemAvailable_bytes 16000000000")
+		_, _ = fmt.Fprintln(w, "node_memory_MemTotal_bytes 32000000000")
+		for cpu := range 12 {
+			_, _ = fmt.Fprintf(w, "node_cpu_seconds_total{cpu=\"%d\",mode=\"idle\"} 100\n", cpu)
+		}
+	}))
+	t.Cleanup(metrics.Close)
+
+	newLane := func(name string, candidateCPUs float64, fleet *FleetCoordinator) *Scaler {
+		fake := newFakeDockerServer(t)
+		fake.setContainers([]container.Summary{cpuReservedRunner("bounded", 6)})
+		return &Scaler{
+			scaleSetName: name, runnerNanoCPUs: int64(candidateCPUs * 1e9), fleet: fleet,
+			dockerHosts:            []DockerHost{{Name: "laforge", Client: fake.client(t)}},
+			runners:                runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+			hostMetricsURLTemplate: metrics.URL + "/%s", logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+	}
+
+	fleet := newFleetCoordinator(8, nil, map[string]int{"bounded": 1, "unbounded": 1}, nil, []string{"bounded", "unbounded"})
+	fleet.hostSamples["laforge"] = hostSample{at: time.Now().Add(-30 * time.Second), idleSeconds: 984}
+	bounded := newLane("bounded", 1, fleet)
+	unbounded := newLane("unbounded", 0, fleet)
+
+	if host, err := bounded.pickHost(context.Background()); host != "laforge" || err != nil {
+		t.Fatalf("bounded lane initial placement = (%q, %v), want admission", host, err)
+	}
+	if host, err := unbounded.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("unbounded lane on shared raw sample = (%q, %v), want strict refusal", host, err)
+	}
+	if until := fleet.overloadedUntil["laforge"]; !until.IsZero() {
+		t.Fatalf("candidate-specific load refusal poisoned global cooldown until %v", until)
+	}
+	if host, err := bounded.pickHost(context.Background()); host != "laforge" || err != nil {
+		t.Fatalf("bounded lane after strict sibling refusal = (%q, %v), want admission", host, err)
 	}
 }
 
