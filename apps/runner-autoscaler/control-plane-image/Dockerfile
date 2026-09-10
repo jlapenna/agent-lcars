@@ -33,29 +33,33 @@ RUN rm -f \
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg git; \
+    apt-get install -y --no-install-recommends ca-certificates curl git; \
     install -m 0755 -d /etc/apt/keyrings; \
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
-      > /etc/apt/sources.list.d/nodesource.list; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends nodejs gh jq; \
+    apt-get install -y --no-install-recommends gh jq; \
+    # The Actions runner already carries the Node 24 runtime used to execute
+    # JavaScript actions. Expose that supported copy instead of installing a
+    # second 239 MB NodeSource package whose runtime dependency keeps Python
+    # in an otherwise Python-free control image.
+    ln -s /home/runner/externals/node24/bin/node /usr/local/bin/node; \
+    ln -s /home/runner/externals/node24/bin/npm /usr/local/bin/npm; \
+    ln -s /home/runner/externals/node24/bin/npx /usr/local/bin/npx; \
+    ln -s /home/runner/externals/node24/bin/corepack /usr/local/bin/corepack; \
     node --version; \
+    npm --version; \
     gh --version; \
     jq --version; \
-    # The runner base carries three npm copies. Replace their vulnerable
-    # node-tar implementations while retaining npm for control-plane agent
-    # jobs, which install their CLI into an unprivileged user prefix.
+    # Replace the runner's bundled npm copies' vulnerable node-tar
+    # implementations while retaining npm for control-plane agent jobs, which
+    # install their CLI into an unprivileged user prefix.
     mkdir -p /tmp/control-plane-tar; \
     npm install --prefix /tmp/control-plane-tar --no-save --ignore-scripts \
       --install-strategy=nested tar@7.5.22; \
     for tar_target in \
-      /usr/lib/node_modules/npm/node_modules/tar \
       /home/runner/externals/node24/lib/node_modules/npm/node_modules/tar \
       /home/runner/externals/node20/lib/node_modules/npm/node_modules/tar; do \
       rm -rf "${tar_target}"; \
@@ -78,7 +82,21 @@ RUN set -eux; \
     test ! -e /usr/bin/containerd-shim-runc-v2; \
     test ! -e /usr/bin/ctr; \
     test ! -e /usr/bin/runc; \
+    # Upstream installs software-properties-common to add its Git PPA, which
+    # pulls in Python even though neither the runner nor these control jobs use
+    # it. Remove only the installed Python packages and their build-time owner;
+    # do not autoremove the runner's broader OS dependency set.
+    python_packages="$( \
+      { dpkg-query -l 'python3*' 2>/dev/null || true; } \
+        | awk '$1 == "ii" { print $2 }' \
+    )"; \
+    apt-get purge -y software-properties-common ${python_packages}; \
+    dpkg -C; \
     rm -rf /var/lib/apt/lists/*
+
+COPY verify-runtime.sh /usr/local/bin/control-plane-verify-runtime
+RUN chmod 0755 /usr/local/bin/control-plane-verify-runtime \
+    && /usr/local/bin/control-plane-verify-runtime
 
 USER runner
 ENTRYPOINT ["/home/runner/run.sh"]
