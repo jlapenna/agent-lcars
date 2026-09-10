@@ -528,6 +528,27 @@ describe('postComment (direct Work admission)', () => {
     );
   });
 
+  it('preserves the posted reply when assignment fails', async () => {
+    const { createComment, setLabels } = mockOctokit(['status:needs-human']);
+    fixtureOrchestratorRuntime();
+    setLabels.mockRejectedValueOnce(new Error('GitHub unavailable'));
+
+    await expect(
+      postComment(
+        DEFAULT_REPO,
+        2709,
+        'Please investigate',
+        'jlapenna',
+        'claude',
+      ),
+    ).resolves.toEqual({
+      url: expect.any(String),
+      dispatched: false,
+      dispatchFailed: true,
+    });
+    expect(createComment).toHaveBeenCalledTimes(1);
+  });
+
   it('reports dispatched: false for a comment on an unassigned issue', async () => {
     mockOctokit(['status:needs-human']);
 

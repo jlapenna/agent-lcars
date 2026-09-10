@@ -129,6 +129,7 @@ export async function clearNeedsHumanLabel(
 export interface PostCommentResult {
   url: string;
   dispatched: boolean;
+  dispatchFailed?: boolean;
 }
 
 export async function postComment(
@@ -209,7 +210,13 @@ export async function postComment(
       !issue.pull_request &&
       matchingAgentPipelines(repo, currentLabels).length === 0
     ) {
-      await assignPipeline(repo, issueNumber, assignedPipeline, actorLogin);
+      try {
+        await assignPipeline(repo, issueNumber, assignedPipeline, actorLogin);
+      } catch {
+        // The comment is durable even when assignment loses a race or fails.
+        // Report that partial outcome so the client does not offer to repost it.
+        return { url: data.html_url, dispatched: false, dispatchFailed: true };
+      }
       await clearNeedsHumanLabel(repo, issueNumber);
       return { url: data.html_url, dispatched: true };
     }

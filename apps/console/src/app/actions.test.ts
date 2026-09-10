@@ -320,6 +320,23 @@ describe('agent-lcars Server Actions', () => {
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
+    it('reports a posted reply as success with a dispatch failure warning', async () => {
+      (postComment as Mock).mockResolvedValue({
+        url: 'https://x',
+        dispatched: false,
+        dispatchFailed: true,
+      });
+
+      await expect(
+        replyToItem(DEFAULT_REPO, 42, 'hi', 'claude'),
+      ).resolves.toEqual({
+        ok: true,
+        dispatched: false,
+        note: 'Reply posted, but dispatch failed. Refresh the item and retry assignment without reposting your reply.',
+      });
+      expect(revalidatePath).toHaveBeenCalledWith('/');
+    });
+
     it('replyToItem names the pipeline it dispatched', async () => {
       (postComment as Mock).mockResolvedValue({
         url: 'https://x',

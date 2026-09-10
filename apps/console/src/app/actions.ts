@@ -113,7 +113,7 @@ export async function replyToItem(
     if (!session.user.login) {
       throw new ActionError('Authenticated GitHub login is required', 401);
     }
-    const { dispatched } = await postComment(
+    const { dispatched, dispatchFailed } = await postComment(
       resolveWatchedRepo(repo),
       number,
       body,
@@ -127,9 +127,11 @@ export async function replyToItem(
     return {
       ok: true,
       dispatched,
-      note: dispatched
-        ? `Dispatched ${assignedPipeline ?? 'agent'}`
-        : 'No agent assigned - posted as a comment only',
+      note: dispatchFailed
+        ? 'Reply posted, but dispatch failed. Refresh the item and retry assignment without reposting your reply.'
+        : dispatched
+          ? `Dispatched ${assignedPipeline ?? 'agent'}`
+          : 'No agent assigned - posted as a comment only',
     };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
