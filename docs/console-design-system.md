@@ -146,8 +146,10 @@ page fine.
 ## Shared header and body layout
 
 `ConsoleAppShell` owns the transition from header to content. The body has a
-16px inset on every route, including detail and message states. Do not cancel
-it with negative margins or route-specific header offsets.
+16px vertical gutter on every route, including detail and message states. On
+desktop its leading edge aligns with the title and navigation, using the same
+frame inset token. Phones use 16px side insets to preserve reading width. Do
+not cancel these with negative margins or route-specific header offsets.
 
 At 768px and above the header has two rows: title and global actions first,
 then the destination rail. The frame reserves clearance below the elbow arm

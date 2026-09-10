@@ -642,6 +642,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    bottom edge instead of floating under the header with dead space beneath
    it, and a long route's footer simply follows the content (#1811, #1821). */
 .console-page-shell {
+  --lcars-content-gutter: 16px;
+  --lcars-content-start: var(--lcars-content-gutter);
   display: flex;
   min-height: 100vh;
   width: 100%;
@@ -652,7 +654,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .console-page-content {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 16px;
+  padding: var(--lcars-content-gutter);
+  padding-inline-start: var(--lcars-content-start);
 }
 
 .console-page-footer {
@@ -1466,6 +1469,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 @media (min-width: 48em) {
   .console-page-shell {
+    --lcars-elbow-rail: 48px;
+    --lcars-content-start: calc(var(--lcars-elbow-rail) + 20px);
     width: 100%;
     max-width: none;
     padding-top: 0 !important;
@@ -1473,7 +1478,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-header[data-current] {
     --lcars-elbow-arm: 16px;
-    --lcars-elbow-rail: 48px;
     --lcars-elbow-inner-radius: 16px;
     --lcars-elbow-outer-radius: 32px;
     display: grid;
@@ -1483,7 +1487,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
        the title's width or forces utilities to wrap into the elbow. */
     grid-template-rows: minmax(44px, auto) auto;
     padding: calc(var(--lcars-elbow-arm) + 12px) 16px 16px
-      calc(var(--lcars-elbow-rail) + 20px);
+      var(--lcars-content-start);
     box-sizing: border-box;
     margin-bottom: 0 !important;
     gap: 12px 20px;

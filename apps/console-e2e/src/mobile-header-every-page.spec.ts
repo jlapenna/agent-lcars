@@ -121,6 +121,25 @@ async function expectOneSharedMobileHeader(page: Page, current: string) {
     '16px',
   );
 
+  if ((page.viewportSize()?.width ?? 0) >= 768) {
+    const alignment = await page.evaluate(() => {
+      const content = document.querySelector('.console-page-content');
+      const title = document.querySelector(
+        '.console-header:not([data-streaming-fallback]) .lcars-header-title',
+      );
+      if (!content || !title) throw new Error('Shared shell is missing');
+      return {
+        contentStart:
+          content.getBoundingClientRect().left +
+          parseFloat(getComputedStyle(content).paddingLeft),
+        titleStart: title.getBoundingClientRect().left,
+      };
+    });
+    expect(
+      Math.abs(alignment.contentStart - alignment.titleStart),
+    ).toBeLessThanOrEqual(1);
+  }
+
   const widths = await page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
