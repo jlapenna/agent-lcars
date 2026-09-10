@@ -162,6 +162,18 @@ describe('LCARS design system contract', () => {
       expect(RULES).not.toMatch(/\.console-header\[data-current='\w+'\] \{/);
     });
 
+    it('derives accent ink where the route accent is assigned', () => {
+      // A derivation at `:root` resolves against the default amber before the
+      // route shell inherits it. Keep the scheme defaults for portals, then
+      // shadow them on the element that owns each route/pill/panel accent.
+      expect(RULES).toMatch(
+        /\[data-accent\] \{\s*--lcars-accent-ink: var\(--lcars-accent\);\s*\}/,
+      );
+      expect(RULES).toMatch(
+        /:root\[data-mantine-color-scheme='light'\] \[data-accent\] \{\s*--lcars-accent-ink: color-mix\(in srgb, var\(--lcars-accent\) 45%, black\);\s*\}/,
+      );
+    });
+
     it('lets no [data-accent] rule restate a colour', () => {
       // The header's segment strip did exactly this - five accents spelled as
       // ramp steps - and had already fallen out of sync with the table by the

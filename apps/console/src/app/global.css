@@ -340,6 +340,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-accent: var(--lcars-gold);
 }
 
+/* Derived on the same element that shadows `--lcars-accent`. A derivation at
+   `:root` computes against the default amber before it is inherited, so every
+   non-amber route would otherwise keep amber ink even though its blocks use
+   the correct route accent. The scheme-level declarations remain the amber
+   fallback for portals and the login page, which have no `[data-accent]`. */
+[data-accent] {
+  --lcars-accent-ink: var(--lcars-accent);
+}
+
+:root[data-mantine-color-scheme='light'] [data-accent] {
+  --lcars-accent-ink: color-mix(in srgb, var(--lcars-accent) 45%, black);
+}
+
 /* ---- Operational controls ----
    ONE button language for the whole console, in exactly two strengths.
 
