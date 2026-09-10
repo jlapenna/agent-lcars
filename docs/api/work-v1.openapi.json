@@ -28,9 +28,6 @@
           "defined": {
             "const": false
           },
-          "inferable": {
-            "type": "boolean"
-          },
           "code": {
             "type": "string"
           },
@@ -42,16 +39,13 @@
           },
           "data": {}
         },
-        "required": ["defined", "inferable", "code", "status", "message"]
+        "required": ["defined", "code", "status", "message"]
       },
       "Forbidden": {
         "type": "object",
         "properties": {
           "defined": {
             "const": true
-          },
-          "inferable": {
-            "type": "boolean"
           },
           "code": {
             "const": "FORBIDDEN"
@@ -64,16 +58,13 @@
           },
           "data": {}
         },
-        "required": ["defined", "inferable", "code", "status", "message"]
+        "required": ["defined", "code", "status", "message"]
       },
       "TooManyRequests": {
         "type": "object",
         "properties": {
           "defined": {
             "const": true
-          },
-          "inferable": {
-            "type": "boolean"
           },
           "code": {
             "const": "TOO_MANY_REQUESTS"
@@ -95,23 +86,13 @@
             "additionalProperties": false
           }
         },
-        "required": [
-          "defined",
-          "inferable",
-          "code",
-          "status",
-          "message",
-          "data"
-        ]
+        "required": ["defined", "code", "status", "message", "data"]
       },
       "Conflict": {
         "type": "object",
         "properties": {
           "defined": {
             "const": true
-          },
-          "inferable": {
-            "type": "boolean"
           },
           "code": {
             "const": "CONFLICT"
@@ -124,16 +105,13 @@
           },
           "data": {}
         },
-        "required": ["defined", "inferable", "code", "status", "message"]
+        "required": ["defined", "code", "status", "message"]
       },
       "NotFound": {
         "type": "object",
         "properties": {
           "defined": {
             "const": true
-          },
-          "inferable": {
-            "type": "boolean"
           },
           "code": {
             "const": "NOT_FOUND"
@@ -146,16 +124,13 @@
           },
           "data": {}
         },
-        "required": ["defined", "inferable", "code", "status", "message"]
+        "required": ["defined", "code", "status", "message"]
       },
       "BadRequest": {
         "type": "object",
         "properties": {
           "defined": {
             "const": true
-          },
-          "inferable": {
-            "type": "boolean"
           },
           "code": {
             "const": "BAD_REQUEST"
@@ -168,16 +143,13 @@
           },
           "data": {}
         },
-        "required": ["defined", "inferable", "code", "status", "message"]
+        "required": ["defined", "code", "status", "message"]
       },
       "Unauthorized": {
         "type": "object",
         "properties": {
           "defined": {
             "const": true
-          },
-          "inferable": {
-            "type": "boolean"
           },
           "code": {
             "const": "UNAUTHORIZED"
@@ -190,16 +162,13 @@
           },
           "data": {}
         },
-        "required": ["defined", "inferable", "code", "status", "message"]
+        "required": ["defined", "code", "status", "message"]
       },
       "InternalServerError": {
         "type": "object",
         "properties": {
           "defined": {
             "const": true
-          },
-          "inferable": {
-            "type": "boolean"
           },
           "code": {
             "const": "INTERNAL_SERVER_ERROR"
@@ -212,11 +181,11 @@
           },
           "data": {}
         },
-        "required": ["defined", "inferable", "code", "status", "message"]
+        "required": ["defined", "code", "status", "message"]
       }
     }
   },
-  "openapi": "3.1.2",
+  "openapi": "3.2.0",
   "paths": {
     "/items/{id}": {
       "put": {
