@@ -352,7 +352,7 @@ func TestScoreHostLoadPressureSignals(t *testing.T) {
 func TestOverloadCooldown(t *testing.T) {
 	now := time.Now()
 	scaler := &Scaler{}
-	loaded := scaler.applyOverloadCooldown("pike", hostLoad{normalizedLoad: 2, penalty: 100, overloaded: true}, now)
+	loaded := scaler.applyOverloadCooldown("pike", hostLoad{normalizedLoad: 2, penalty: 100, overloaded: true, cooldownEligible: true}, now)
 	if !loaded.overloaded || loaded.penalty != 100 {
 		t.Fatalf("initial overloaded sample = %#v", loaded)
 	}
@@ -451,16 +451,13 @@ func TestHostMetricsUsesPerHostTimeout(t *testing.T) {
 // 2*hostSampleInterval as authoritative, so this value flows straight
 // through to pickHostLocked exactly as a real probe's result would.
 //
-// This caches load AS GIVEN, with no cooldown processing -- a test that
-// wants a hard-overloaded reading must produce one the same way a real probe
-// would (see hardOverloadedLoad), which also arms fleet.overloadedUntil as a
-// side effect. Skipping that and caching a raw scoreHostLoad result directly
-// produces a cache state no real probe could ever leave behind
-// (overloaded=true with no armed cooldown), which would silently mask
-// refreshOverloadCooldown misbehaving -- exactly the gap that let
-// agent-lcars#259's cooldown-rearming bug through review the first time.
+// Production caches raw telemetry so each lane can score the same sample
+// against its own quota policy. Tests use this helper for the same shape;
+// callers that need a cooldown also arm overloadedUntil through
+// hardOverloadedLoad or applyOverloadCooldown.
 func seedHostLoad(fleet *FleetCoordinator, host string, load hostLoad) {
 	load.observedAt = time.Now()
+	load.rawTelemetry = true
 	fleet.hostLoadCache[host] = load
 }
 
@@ -581,6 +578,171 @@ func reservedRunner(id string, memory int64) container.Summary {
 			runnerScaleSetLabelKey: "e2e",
 			runnerMemoryLabelKey:   strconv.FormatInt(memory, 10),
 		},
+	}
+}
+
+func cpuReservedRunner(id string, cpus float64) container.Summary {
+	return container.Summary{
+		ID: id,
+		Labels: map[string]string{
+			runnerScaleSetLabelKey: "default",
+			runnerMemoryLabelKey:   "0",
+			runnerCPULabelKey:      strconv.FormatInt(int64(cpus*1e9), 10),
+		},
+	}
+}
+
+func cpuBoundScaler(t *testing.T, candidateCPUs float64, containers []container.Summary) *Scaler {
+	t.Helper()
+	fake := newFakeDockerServer(t)
+	fake.setContainers(containers)
+	return &Scaler{
+		scaleSetName:   "default",
+		runnerNanoCPUs: int64(candidateCPUs * 1e9),
+		dockerHosts:    []DockerHost{{Name: "laforge", Client: fake.client(t)}},
+		runners:        runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func TestPickHostChargesRunningCPUReservationsAgainstSafetyBudget(t *testing.T) {
+	scaler := cpuBoundScaler(t, 6, []container.Summary{cpuReservedRunner("first", 6)})
+	blocked := placementBlocked.WithLabelValues("default", "laforge", placementReasonCPUReservation)
+	before := testutil.ToFloat64(blocked)
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want 6+6 CPUs refused by a 10.8-CPU budget", host, err)
+	}
+	if !strings.Contains(err.Error(), "reserved=6000000000 candidate=6000000000 budget=10800000000") {
+		t.Fatalf("error %q does not report CPU reservation arithmetic", err)
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 1 {
+		t.Fatalf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonCPUReservation, got)
+	}
+}
+
+func TestPickHostAdmitsCPUReservationWithinSafetyBudget(t *testing.T) {
+	scaler := cpuBoundScaler(t, 6, []container.Summary{cpuReservedRunner("first", 4)})
+	if host, err := scaler.pickHost(context.Background()); host != "laforge" || err != nil {
+		t.Fatalf("pickHost() = (%q, %v), want 4+6 CPUs admitted by a 10.8-CPU budget", host, err)
+	}
+}
+
+func TestPickHostChargesInFlightCPUReservations(t *testing.T) {
+	scaler := cpuBoundScaler(t, 6, nil)
+	scaler.coordinator().reservedCPU["laforge"] = 6_000_000_000
+	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want in-flight CPU reservation to block placement", host, err)
+	}
+}
+
+func TestScoreHostLoadIgnoresThrottleSignalsOnlyForSafelyBoundedRunners(t *testing.T) {
+	scaler := &Scaler{}
+	manufactured := hostLoad{
+		normalizedLoad: 2.2, cpuPressure: 0.66, cpuUtilization: 0.50, cpuUtilizationKnown: true,
+		memoryAvailable: 0.50,
+	}
+	if got := scaler.scoreHostLoadForQuota("laforge", manufactured, true); got.overloaded {
+		t.Fatalf("quota-bounded manufactured load/CPU PSI marked hard-overloaded: %+v", got)
+	}
+	if got := scaler.scoreHostLoadForQuota("laforge", manufactured, false); !got.overloaded {
+		t.Fatalf("unbounded host did not retain load/CPU PSI hard gate: %+v", got)
+	}
+	trueUtilization := manufactured
+	trueUtilization.cpuUtilization = 0.96
+	if got := scaler.scoreHostLoadForQuota("laforge", trueUtilization, true); !got.overloaded {
+		t.Fatalf("quota-aware scoring suppressed true host CPU utilization: %+v", got)
+	}
+}
+
+func TestPickHostIgnoresManufacturedLoadOnlyWhenEveryRunnerIsQuotaBounded(t *testing.T) {
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintln(w, "node_load1 26")
+		_, _ = fmt.Fprintln(w, "node_memory_MemAvailable_bytes 16000000000")
+		_, _ = fmt.Fprintln(w, "node_memory_MemTotal_bytes 32000000000")
+		for cpu := range 12 {
+			_, _ = fmt.Fprintf(w, "node_cpu_seconds_total{cpu=\"%d\",mode=\"idle\"} 100\n", cpu)
+		}
+	}))
+	t.Cleanup(metrics.Close)
+
+	newScaler := func(runner container.Summary, candidateCPUs float64) *Scaler {
+		fake := newFakeDockerServer(t)
+		fake.setContainers([]container.Summary{runner})
+		return &Scaler{
+			scaleSetName: "default", runnerNanoCPUs: int64(candidateCPUs * 1e9),
+			dockerHosts:            []DockerHost{{Name: "laforge", Client: fake.client(t)}},
+			runners:                runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+			hostMetricsURLTemplate: metrics.URL + "/%s", logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+	}
+
+	bounded := newScaler(cpuReservedRunner("bounded", 6), 1)
+	if host, err := bounded.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("first sample without CPU utilization: pickHost() = (%q, %v), want hard-overload refusal", host, err)
+	}
+
+	bounded = newScaler(cpuReservedRunner("bounded", 6), 1)
+	bounded.coordinator().hostSamples["laforge"] = hostSample{
+		at: time.Now().Add(-30 * time.Second), idleSeconds: 984,
+	}
+	if host, err := bounded.pickHost(context.Background()); host != "laforge" || err != nil {
+		t.Fatalf("quota-bounded manufactured load: pickHost() = (%q, %v), want admission", host, err)
+	}
+
+	unboundedCandidate := newScaler(cpuReservedRunner("bounded", 6), 0)
+	unboundedCandidate.coordinator().hostSamples["laforge"] = hostSample{
+		at: time.Now().Add(-30 * time.Second), idleSeconds: 984,
+	}
+	if host, err := unboundedCandidate.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("unbounded candidate on bounded host: pickHost() = (%q, %v), want hard-overload refusal", host, err)
+	}
+
+	unboundedRunner := cpuReservedRunner("unbounded", 0)
+	unbounded := newScaler(unboundedRunner, 0)
+	if host, err := unbounded.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("unbounded hard load: pickHost() = (%q, %v), want hard-overload refusal", host, err)
+	}
+}
+
+func TestMixedLanesShareRawSampleWithoutPoisoningBoundedPlacement(t *testing.T) {
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintln(w, "node_load1 26")
+		_, _ = fmt.Fprintln(w, "node_memory_MemAvailable_bytes 16000000000")
+		_, _ = fmt.Fprintln(w, "node_memory_MemTotal_bytes 32000000000")
+		for cpu := range 12 {
+			_, _ = fmt.Fprintf(w, "node_cpu_seconds_total{cpu=\"%d\",mode=\"idle\"} 100\n", cpu)
+		}
+	}))
+	t.Cleanup(metrics.Close)
+
+	newLane := func(name string, candidateCPUs float64, fleet *FleetCoordinator) *Scaler {
+		fake := newFakeDockerServer(t)
+		fake.setContainers([]container.Summary{cpuReservedRunner("bounded", 6)})
+		return &Scaler{
+			scaleSetName: name, runnerNanoCPUs: int64(candidateCPUs * 1e9), fleet: fleet,
+			dockerHosts:            []DockerHost{{Name: "laforge", Client: fake.client(t)}},
+			runners:                runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+			hostMetricsURLTemplate: metrics.URL + "/%s", logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+	}
+
+	fleet := newFleetCoordinator(8, nil, map[string]int{"bounded": 1, "unbounded": 1}, nil, []string{"bounded", "unbounded"})
+	fleet.hostSamples["laforge"] = hostSample{at: time.Now().Add(-30 * time.Second), idleSeconds: 984}
+	bounded := newLane("bounded", 1, fleet)
+	unbounded := newLane("unbounded", 0, fleet)
+
+	if host, err := bounded.pickHost(context.Background()); host != "laforge" || err != nil {
+		t.Fatalf("bounded lane initial placement = (%q, %v), want admission", host, err)
+	}
+	if host, err := unbounded.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("unbounded lane on shared raw sample = (%q, %v), want strict refusal", host, err)
+	}
+	if until := fleet.overloadedUntil["laforge"]; !until.IsZero() {
+		t.Fatalf("candidate-specific load refusal poisoned global cooldown until %v", until)
+	}
+	if host, err := bounded.pickHost(context.Background()); host != "laforge" || err != nil {
+		t.Fatalf("bounded lane after strict sibling refusal = (%q, %v), want admission", host, err)
 	}
 }
 
@@ -1019,7 +1181,7 @@ func TestPickHostOverloadCooldownGatesUntilExpiry(t *testing.T) {
 
 	// A prior probe measured hard overload: seed the cache and the cooldown
 	// expiry exactly as probeHostLoad -> applyOverloadCooldown would have.
-	seedHostLoad(fleet, "pike", hostLoad{overloaded: true, penalty: 100})
+	seedHostLoad(fleet, "pike", hostLoad{normalizedLoad: 2, memoryAvailable: 1})
 	fleet.overloadedUntil["pike"] = now.Add(time.Minute)
 
 	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
@@ -1035,14 +1197,14 @@ func TestPickHostOverloadCooldownGatesUntilExpiry(t *testing.T) {
 	// cached while a cooldown window is still active (its own check-only
 	// branch forces true first), so caching it raw here would test a state
 	// that cannot actually occur.
-	seedHostLoad(fleet, "pike", scaler.applyOverloadCooldown("pike", hostLoad{overloaded: false}, time.Now()))
+	seedHostLoad(fleet, "pike", hostLoad{memoryAvailable: 1})
 	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
 		t.Fatalf("mid-cooldown recovery: pickHost() = (%q, %v), want (\"\", errFleetAtCapacity)", host, err)
 	}
 
 	// The cooldown window has elapsed: the host becomes eligible again.
 	fleet.overloadedUntil["pike"] = now.Add(-time.Minute)
-	seedHostLoad(fleet, "pike", hostLoad{overloaded: false})
+	seedHostLoad(fleet, "pike", hostLoad{memoryAvailable: 1})
 	picked, err := scaler.pickHost(context.Background())
 	if err != nil {
 		t.Fatalf("after cooldown expiry: pickHost returned error: %v", err)
@@ -2059,7 +2221,7 @@ func TestRunnerHostConfig(t *testing.T) {
 }
 
 func TestRunnerLabelsIncludeExactMemoryReservation(t *testing.T) {
-	labels := runnerLabels("e2e", "sprinkles", 12*gibibyte)
+	labels := runnerLabels("e2e", "sprinkles", 12*gibibyte, 0)
 	if labels[runnerScaleSetLabelKey] != "e2e" || labels[runnerRegistrationLabelKey] != "sprinkles" {
 		t.Fatalf("runner ownership labels = %#v", labels)
 	}
@@ -2459,7 +2621,7 @@ func TestMemoryReservationDefaultsToCeiling(t *testing.T) {
 	if got := scaler.memoryReservation(); got != 8*gibibyte {
 		t.Fatalf("memoryReservation() = %d, want the declared 8 GiB reservation", got)
 	}
-	if labels := runnerLabels("default", "primary", scaler.memoryReservation()); labels[runnerMemoryLabelKey] != "8589934592" {
+	if labels := runnerLabels("default", "primary", scaler.memoryReservation(), scaler.runnerNanoCPUs); labels[runnerMemoryLabelKey] != "8589934592" {
 		t.Fatalf("container label = %q, want the reservation the scheduler will recount, not the ceiling", labels[runnerMemoryLabelKey])
 	}
 }
@@ -2478,6 +2640,22 @@ func TestFleetReservationChargesDeclaredReservation(t *testing.T) {
 	reservation.release("default")
 	if got := fleet.reservedMemory["janeway"]; got != 0 {
 		t.Fatalf("reservedMemory after release = %d, want 0", got)
+	}
+}
+
+func TestFleetReservationChargesAndReleasesCPU(t *testing.T) {
+	scaler := cpuBoundScaler(t, 6, nil)
+	fleet := scaler.coordinator()
+	reservation, err := fleet.reserve(context.Background(), scaler, "test-runner-1")
+	if err != nil {
+		t.Fatalf("reserve() error = %v", err)
+	}
+	if got := fleet.reservedCPU["laforge"]; got != 6_000_000_000 {
+		t.Fatalf("in-flight reservedCPU = %d, want 6 CPUs", got)
+	}
+	reservation.release("default")
+	if got := fleet.reservedCPU["laforge"]; got != 0 {
+		t.Fatalf("reservedCPU after release = %d, want 0", got)
 	}
 }
 
