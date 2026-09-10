@@ -587,9 +587,6 @@ func (a *Scaler) currentHostLoad(ctx context.Context, host string, throttleBound
 	cached, ok := fleet.hostLoadCache[host]
 	fleet.hostSampleMu.Unlock()
 	if ok && time.Since(cached.observedAt) < 2*hostSampleInterval {
-		if !cached.rawTelemetry {
-			return a.refreshOverloadCooldown(host, cached, time.Now()), nil
-		}
 		load := a.scoreHostLoadForQuota(host, cached, throttleBounded, throttlePossible...)
 		return a.observeOverloadCooldown(host, load, time.Now()), nil
 	}
@@ -2220,8 +2217,8 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 				}
 			}
 			// Relax throttle-manufactured signals only for a bounded candidate.
-			// An unbounded lane cannot inherit a safer bounded lane's decision;
-			// currentHostLoad's scoring-mode cache key forces a strict resample.
+			// Every lane independently scores the same cached raw sample, so an
+			// unbounded candidate cannot inherit a bounded lane's relaxed verdict.
 			throttlePossible := cpuErr == nil && allRunnersQuotaBounded && runningReservedCPU < hostCPUNano
 			throttleBounded := a.runnerNanoCPUs > 0 && throttlePossible
 			measuredLoad, measuredLoadErr := a.currentHostLoad(ctx, dh.Name, throttleBounded, throttlePossible)

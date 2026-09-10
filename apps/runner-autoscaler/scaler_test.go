@@ -451,16 +451,13 @@ func TestHostMetricsUsesPerHostTimeout(t *testing.T) {
 // 2*hostSampleInterval as authoritative, so this value flows straight
 // through to pickHostLocked exactly as a real probe's result would.
 //
-// This caches load AS GIVEN, with no cooldown processing -- a test that
-// wants a hard-overloaded reading must produce one the same way a real probe
-// would (see hardOverloadedLoad), which also arms fleet.overloadedUntil as a
-// side effect. Skipping that and caching a raw scoreHostLoad result directly
-// produces a cache state no real probe could ever leave behind
-// (overloaded=true with no armed cooldown), which would silently mask
-// refreshOverloadCooldown misbehaving -- exactly the gap that let
-// agent-lcars#259's cooldown-rearming bug through review the first time.
+// Production caches raw telemetry so each lane can score the same sample
+// against its own quota policy. Tests use this helper for the same shape;
+// callers that need a cooldown also arm overloadedUntil through
+// hardOverloadedLoad or applyOverloadCooldown.
 func seedHostLoad(fleet *FleetCoordinator, host string, load hostLoad) {
 	load.observedAt = time.Now()
+	load.rawTelemetry = true
 	fleet.hostLoadCache[host] = load
 }
 
@@ -1184,7 +1181,7 @@ func TestPickHostOverloadCooldownGatesUntilExpiry(t *testing.T) {
 
 	// A prior probe measured hard overload: seed the cache and the cooldown
 	// expiry exactly as probeHostLoad -> applyOverloadCooldown would have.
-	seedHostLoad(fleet, "pike", hostLoad{overloaded: true, penalty: 100})
+	seedHostLoad(fleet, "pike", hostLoad{normalizedLoad: 2, memoryAvailable: 1})
 	fleet.overloadedUntil["pike"] = now.Add(time.Minute)
 
 	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
@@ -1200,14 +1197,14 @@ func TestPickHostOverloadCooldownGatesUntilExpiry(t *testing.T) {
 	// cached while a cooldown window is still active (its own check-only
 	// branch forces true first), so caching it raw here would test a state
 	// that cannot actually occur.
-	seedHostLoad(fleet, "pike", scaler.applyOverloadCooldown("pike", hostLoad{overloaded: false}, time.Now()))
+	seedHostLoad(fleet, "pike", hostLoad{memoryAvailable: 1})
 	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
 		t.Fatalf("mid-cooldown recovery: pickHost() = (%q, %v), want (\"\", errFleetAtCapacity)", host, err)
 	}
 
 	// The cooldown window has elapsed: the host becomes eligible again.
 	fleet.overloadedUntil["pike"] = now.Add(-time.Minute)
-	seedHostLoad(fleet, "pike", hostLoad{overloaded: false})
+	seedHostLoad(fleet, "pike", hostLoad{memoryAvailable: 1})
 	picked, err := scaler.pickHost(context.Background())
 	if err != nil {
 		t.Fatalf("after cooldown expiry: pickHost returned error: %v", err)
