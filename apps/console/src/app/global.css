@@ -340,6 +340,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-accent: var(--lcars-gold);
 }
 
+/* Derived on the same element that shadows `--lcars-accent`. A derivation at
+   `:root` computes against the default amber before it is inherited, so every
+   non-amber route would otherwise keep amber ink even though its blocks use
+   the correct route accent. The scheme-level declarations remain the amber
+   fallback for portals and the login page, which have no `[data-accent]`. */
+[data-accent] {
+  --lcars-accent-ink: var(--lcars-accent);
+}
+
+:root[data-mantine-color-scheme='light'] [data-accent] {
+  --lcars-accent-ink: color-mix(in srgb, var(--lcars-accent) 45%, black);
+}
+
 /* ---- Operational controls ----
    ONE button language for the whole console, in exactly two strengths.
 
@@ -579,6 +592,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-ink: var(--mantine-color-gray-0);
   --lcars-ink-dim: var(--mantine-color-dark-2);
   --lcars-ink-on-muted: var(--mantine-color-white);
+  /* The accent used as TEXT rather than as a block. On the dark plane the
+     palette anchor already reads well, so it is itself. */
+  --lcars-accent-ink: var(--lcars-accent);
   /* Links inside rendered Markdown. A stable link colour, deliberately not
      the route accent - a link's colour should mean "this is a link", not
      "this page is Costs". blue-3 clears AA against both the data plane
@@ -613,8 +629,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-surface-raised: #ffffff;
   --lcars-hairline: var(--mantine-color-gray-3);
   --lcars-ink: var(--mantine-color-dark-9);
-  --lcars-ink-dim: var(--mantine-color-gray-6);
+  /* gray-7, not gray-6. gray-6 measured 4.37:1 on the ground and 3.74:1 on
+     an accent-tinted panel - under the 4.5:1 AA bar for body text, on 416
+     text nodes, which was 83% of every contrast failure in the console
+     (#1843). gray-7 gives 6.64:1 and 5.44:1. */
+  --lcars-ink-dim: var(--mantine-color-gray-7);
   --lcars-ink-on-muted: var(--lcars-ink-on-accent);
+  /* ...but NOT on the light one. The palette anchors are the light end of
+     each ramp - which is exactly what makes near-black type work on a
+     full-strength block, and exactly what makes them fail as ink on a light
+     ground (orange-6 links measured 3.03:1, gold 1.58:1). Darkening the
+     accent uniformly covers all six without a second per-accent table:
+     worst case 4.87:1 on the darkest tinted panel, 5.56:1 on the ground. */
+  --lcars-accent-ink: color-mix(in srgb, var(--lcars-accent) 45%, black);
   /* blue-6: 6.24:1 on the ground, 5.28:1 on a light blockquote. */
   --lcars-link: var(--mantine-color-blue-6);
 
@@ -625,6 +652,60 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --mantine-color-default-filled: var(--mantine-color-gray-3);
   --mantine-color-text: var(--lcars-ink);
   --mantine-color-dimmed: var(--lcars-ink-dim);
+
+  /* Semantic status text - `<Text c="orange">` for a run diagnosis, `c="red"`
+     for an error. Mantine resolves `c` through `--mantine-color-<f>-text`,
+     which in light mode is the family's *filled* shade: chosen to sit on a
+     dark ground, and 3.03:1 on this one. Same problem as the accent used as
+     ink, and the same 60% derivation as the badges below, so all three read
+     as one rule rather than three special cases. Worst case 5.25:1.
+
+     Dark mode keeps Mantine's own value; it measured clean. */
+  --mantine-color-red-text: color-mix(
+    in srgb,
+    var(--mantine-color-red-filled) 60%,
+    black
+  );
+  --mantine-color-orange-text: color-mix(
+    in srgb,
+    var(--mantine-color-orange-filled) 60%,
+    black
+  );
+  --mantine-color-yellow-text: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-filled) 60%,
+    black
+  );
+  --mantine-color-green-text: color-mix(
+    in srgb,
+    var(--mantine-color-green-filled) 60%,
+    black
+  );
+  --mantine-color-teal-text: color-mix(
+    in srgb,
+    var(--mantine-color-teal-filled) 60%,
+    black
+  );
+  --mantine-color-blue-text: color-mix(
+    in srgb,
+    var(--mantine-color-blue-filled) 60%,
+    black
+  );
+  --mantine-color-violet-text: color-mix(
+    in srgb,
+    var(--mantine-color-violet-filled) 60%,
+    black
+  );
+  --mantine-color-grape-text: color-mix(
+    in srgb,
+    var(--mantine-color-grape-filled) 60%,
+    black
+  );
+  --mantine-color-gray-text: color-mix(
+    in srgb,
+    var(--mantine-color-gray-filled) 60%,
+    black
+  );
 }
 
 /* Card and Paper hardcode their own per-scheme background via `:where()`
@@ -642,6 +723,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    bottom edge instead of floating under the header with dead space beneath
    it, and a long route's footer simply follows the content (#1811, #1821). */
 .console-page-shell {
+  --lcars-content-gutter: 16px;
+  --lcars-content-start: var(--lcars-content-gutter);
   display: flex;
   min-height: 100vh;
   width: 100%;
@@ -652,6 +735,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .console-page-content {
   flex: 1 1 auto;
   min-height: 0;
+  padding: var(--lcars-content-gutter);
+  padding-inline-start: var(--lcars-content-start);
 }
 
 .console-page-footer {
@@ -699,32 +784,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 /* ---- Agents operations workspace (#251) ---- */
 
-.agents-utilities--mobile {
-  display: none;
-}
-
-.shuttlebay-utilities--mobile {
-  display: none;
-}
-
-.task-utilities--mobile {
-  display: none;
-}
-
-.session-detail-utilities--mobile {
-  display: none;
-}
-
-/* Removed in #1810: this rule meant to hide Shuttlebay's *mobile* utility
-   wrapper once the desktop rail is present, but `:has()` matched the shared
-   `.lcars-command-utilities` cluster — the mobile wrapper is always in the
-   DOM, merely `display: none` — so from 64em up it hid Shuttlebay's entire
-   utility cluster: Quick task, refresh and the overflow menu all vanished on
-   desktop while every other route kept them. The mobile wrapper is already
-   hidden by `.shuttlebay-utilities--mobile` above; nothing needs to hide the
-   cluster that contains it.
-
-   ---- Shuttlebay runner fleet ---- */
+/* ---- Shuttlebay runner fleet ---- */
 
 .shuttlebay-scale-set {
   padding: 12px 16px;
@@ -736,6 +796,65 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    under an otherwise complete LCARS header. */
 .console-message__body {
   padding: 20px 16px 24px 1.75rem;
+}
+
+/* Mantine's `<Anchor>` - the console's own navigation links, as distinct from
+   links inside rendered content below.
+
+   Their colour cannot be set through `--mantine-color-anchor`: MantineProvider
+   injects that variable at runtime from `primaryColor`, after every static
+   stylesheet, the same way it does `--mantine-color-body` (#1836). So it wins
+   whatever this file says, and on the light ground `primaryColor` resolved to
+   orange-6 at 3.03:1. Styling the element instead of the variable sidesteps
+   that: this is a real declaration on a real selector, competing only with
+   Mantine's own `.m_849cf0da`, which comes earlier in the cascade. */
+.mantine-Anchor-root {
+  color: var(--lcars-accent-ink);
+}
+
+/* Badges in light mode (#1848).
+   Mantine picks a badge's colours from the family's shade 6, which is chosen
+   to carry white text on a dark ground. On a light ground the same values
+   fail: white on green-6 measures 3.34:1 and on yellow-6 1.97:1, while the
+   `outline`/`light` variants put a mid-tone directly on the page at 2.4-2.9:1.
+   These are 9-10px labels, so they need the full 4.5:1 - the large-text
+   allowance does not apply.
+
+   There is no single ink that fixes it: near-black rescues green and yellow
+   but fails on blue-5 (3.88:1), and white does the reverse. So the fill moves
+   instead of the ink, which is the rule the rest of this system already
+   follows - a bright block with near-black type (see "Operational controls").
+   Mixing whatever `--badge-bg` resolves to toward white keeps each family's
+   hue, and therefore its meaning, while making one ink correct for all of
+   them: worst case 5.58:1 across the status palette, against 4.5 required.
+
+   Dark mode is untouched. Its fills are already dark and its badges measured
+   clean. */
+
+:root[data-mantine-color-scheme='light']
+  .mantine-Badge-root:is([data-variant='filled'], :not([data-variant])) {
+  /* `:not([data-variant])` matters: Mantine omits the attribute entirely when
+     the variant is the default, so a plain `<Badge color="green">` carries no
+     `data-variant` at all and a `[data-variant='filled']` selector misses it. */
+  background: color-mix(in srgb, var(--badge-bg) 60%, white);
+  color: var(--lcars-ink-on-accent);
+}
+
+/* The unfilled variants put their colour straight onto the page, so it is the
+   text that has to move. Same derivation as `--lcars-accent-ink`: worst case
+   5.25:1 on the darkest tinted panel. */
+:root[data-mantine-color-scheme='light']
+  .mantine-Badge-root:is(
+    [data-variant='light'],
+    [data-variant='outline'],
+    [data-variant='default']
+  ) {
+  color: color-mix(in srgb, var(--badge-color) 60%, black);
+}
+
+:root[data-mantine-color-scheme='light']
+  .mantine-Badge-root[data-variant='outline'] {
+  border-color: color-mix(in srgb, var(--badge-color) 60%, black);
 }
 
 /* ---- Rendered Markdown (#1843) ----
@@ -761,10 +880,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* ---- Work items (#1814) ---- */
-
-.work-utilities--mobile {
-  display: none;
-}
 
 .work-workspace__create,
 .work-workspace__list,
@@ -847,10 +962,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 /* ---- Sessions archive workspace (#253) ---- */
 
-.sessions-utilities--mobile {
-  display: none;
-}
-
 /* A two-module LCARS segment group: flat blocks that meet, with a hairline
    gap rather than an outline around the pair. */
 .sessions-view-toggle {
@@ -926,7 +1037,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .sessions-workspace .session-title-link:hover {
-  color: var(--lcars-accent);
+  color: var(--lcars-accent-ink);
 }
 
 .sessions-issue-groups {
@@ -1001,10 +1112,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* ---- Costs ledger workspace (#255) ---- */
-
-.costs-utilities--mobile {
-  display: none;
-}
 
 .costs-workspace__content {
   min-width: 0;
@@ -1099,7 +1206,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .costs-estimated-value__label {
-  color: var(--lcars-accent);
+  color: var(--lcars-accent-ink);
   font-family: var(--font-display), sans-serif;
   font-size: 0.625rem;
   letter-spacing: 0.04em;
@@ -1113,11 +1220,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* ---- Queue bridge / decision Inbox (#249) ---- */
-
-.deck-utilities--mobile,
-.inbox-utilities--mobile {
-  display: none;
-}
 
 .inbox-data-freshness {
   min-height: 20px;
@@ -1136,6 +1238,23 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
   padding-left: var(--mantine-spacing-md);
   border-left: 1px solid var(--mantine-color-default-border);
+}
+
+/* The slot owns arrangement regardless of which route supplies actions. */
+.console-utilities--desktop,
+.console-utilities--mobile,
+.lcars-command-utilities .mantine-Group-root {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.console-utilities--desktop {
+  display: flex;
+}
+
+.console-utilities--mobile {
+  display: none;
 }
 
 .lcars-command-utilities .mantine-Button-root,
@@ -1490,6 +1609,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 @media (min-width: 48em) {
   .console-page-shell {
+    --lcars-elbow-rail: 48px;
+    --lcars-content-start: calc(var(--lcars-elbow-rail) + 20px);
     width: 100%;
     max-width: none;
     padding-top: 0 !important;
@@ -1497,18 +1618,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-header[data-current] {
     --lcars-elbow-arm: 16px;
-    --lcars-elbow-rail: 48px;
     --lcars-elbow-inner-radius: 16px;
     --lcars-elbow-outer-radius: 32px;
     display: grid;
     position: relative;
     grid-template-columns: minmax(0, 1fr) max-content;
-    /* Fixed, border-box Bridge-header geometry keeps the shared shell stable
-       across route copy, font metrics, and browser rendering differences. */
-    height: 80px;
+    /* Title/actions first, destination rail second: navigation never steals
+       the title's width or forces utilities to wrap into the elbow. */
+    grid-template-rows: minmax(44px, auto) auto;
+    padding: calc(var(--lcars-elbow-arm) + 12px) 16px 16px
+      var(--lcars-content-start);
     box-sizing: border-box;
     margin-bottom: 0 !important;
-    gap: 0;
+    gap: 12px 20px;
     color: var(--mantine-color-text);
     background: var(--lcars-surface);
   }
@@ -1545,9 +1667,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: flex;
     min-width: 0;
     align-items: center;
-    /* Keep the desktop Bridge header at its deliberate 80px rhythm. The
-       extra left clearance belongs to the elbow; it should not add height. */
-    padding: 12px 20px 10px 4.25rem;
+    grid-column: 1;
+    grid-row: 1;
+    padding: 0;
   }
 
   .console-header[data-current] .lcars-header::before {
@@ -1577,23 +1699,16 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 
   .console-header[data-current] .lcars-command-row {
-    min-width: 0;
-    align-items: flex-start;
-    justify-content: flex-end;
-    padding: 0 16px 0 4px;
-    position: relative;
-    background: linear-gradient(
-      to bottom,
-      var(--lcars-accent) 0 var(--lcars-elbow-arm),
-      var(--lcars-surface) var(--lcars-elbow-arm) 100%
-    );
+    display: contents;
   }
 
   .console-header[data-current] .lcars-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
     align-items: center;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 4px;
-    padding-top: 1.25rem;
+    padding: 0;
   }
 
   /* Desktop docks the labels to each module's trailing edge; the color
@@ -1606,41 +1721,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     font-size: 0.875rem;
   }
 
-  /* LCARS controls are modular rather than evenly distributed, and the
-     destination labels are already different lengths, so the rail gets its
-     rhythm for free. It used to be pinned by a per-destination `min-width`
-     table instead — 39.25rem of fixed pills that, added to the title bay's
-     own 13rem minimum and the utility cluster, needed 1099px of header. At
-     1024px, an extremely ordinary laptop and iPad-landscape width, the
-     document overflowed its viewport horizontally on five of seven routes.
-     The e2e mobile-header suite asserts exactly that invariant but only at
-     320/390/768, so it never saw it (#1830).
-
-     Sizing the pills to their labels and letting the title bay give up all
-     its slack makes the rail fit whatever it is given, with no width tier to
-     keep in sync. */
-
+  /* Labels determine module width; the dedicated rail can wrap without
+     colliding with the title or global actions. */
   .console-header[data-current] .lcars-command-utilities {
+    grid-column: 2;
+    grid-row: 1;
     align-self: center;
+    margin: 0;
+    padding: 0;
     border-left: 0;
-  }
-
-  /* The workspace butts against the header's bottom edge, so it never draws
-     its own line there.
-
-     It deliberately does NOT force `min-height: calc(100vh - 80px)` any
-     more. That made a short route - Sessions with one collapsed group, Costs
-     with three rows - draw a bordered box down the whole viewport with
-     nothing in it, which is most of what read as "disjoint and awkward"
-     on Sessions (#1811). Now the frame ends where its content ends and the
-     console shell below stretches the page instead, on the same ground, so
-     there is nothing to see where there is nothing to show. */
-  .agents-workspace,
-  .sessions-workspace,
-  .costs-workspace,
-  .shuttlebay-workspace,
-  .work-workspace {
-    border-top: 0;
   }
 }
 
@@ -1657,38 +1746,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding-inline: 10px;
   }
 
-  .console-header[data-current]
-    .lcars-nav-pill[data-destination='shuttlebay']:not([data-active]),
-  .console-header[data-current]
-    .lcars-nav-pill[data-destination='work']:not([data-active]),
-  .console-header[data-current]
-    .lcars-nav-pill[data-accent='teal']:not([data-active]),
-  .console-header[data-current]
-    .lcars-nav-pill[data-accent='gold']:not([data-active]) {
+  .lcars-command-utilities .mantine-Text-root {
     display: none;
   }
 
-  .deck-utilities--desktop,
-  .inbox-utilities--desktop,
-  .agents-utilities--desktop,
-  .shuttlebay-utilities--desktop,
-  .work-utilities--desktop,
-  .sessions-utilities--desktop,
-  .costs-utilities--desktop,
-  .task-utilities--desktop,
-  .session-detail-utilities--desktop {
+  .console-utilities--desktop {
     display: none;
   }
 
-  .deck-utilities--mobile,
-  .inbox-utilities--mobile,
-  .agents-utilities--mobile,
-  .shuttlebay-utilities--mobile,
-  .work-utilities--mobile,
-  .sessions-utilities--mobile,
-  .costs-utilities--mobile,
-  .task-utilities--mobile,
-  .session-detail-utilities--mobile {
+  .console-utilities--mobile {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -1854,41 +1920,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     font-size: 0.6875rem;
   }
 
-  .deck-utilities--desktop,
-  .inbox-utilities--desktop,
-  .agents-utilities--desktop,
-  .shuttlebay-utilities--desktop,
-  .work-utilities--desktop,
-  .sessions-utilities--desktop,
-  .costs-utilities--desktop,
-  .task-utilities--desktop,
-  .session-detail-utilities--desktop {
+  .lcars-command-utilities .mantine-Text-root {
     display: none;
   }
 
-  .deck-utilities--mobile,
-  .inbox-utilities--mobile,
-  .agents-utilities--mobile,
-  .shuttlebay-utilities--mobile,
-  .work-utilities--mobile,
-  .sessions-utilities--mobile,
-  .costs-utilities--mobile,
-  .task-utilities--mobile,
-  .session-detail-utilities--mobile {
+  .console-utilities--desktop {
+    display: none;
+  }
+
+  .console-utilities--mobile {
     display: flex;
     align-items: center;
     gap: 4px;
-  }
-
-  /* A timestamp is useful beside the desktop session refresh action, but it
-     consumes the title bay on a phone. Keep the accessible refresh button and
-     place the timestamp in the refreshed page content instead. */
-  .session-detail-utilities--mobile .mantine-Group-root {
-    gap: 0;
-  }
-
-  .session-detail-utilities--mobile .mantine-Text-root {
-    display: none;
   }
 
   .agents-workspace {
@@ -1927,6 +1970,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     min-height: 44px;
   }
 
+  /* Run metadata can exceed the usable line at 320px once both destination
+     links are present. Move the links to their own full-width row rather than
+     letting the trailing session target escape the viewport. */
+  .agents-workspace .agent-run-meta__actions {
+    flex-basis: 100%;
+    margin-left: 0 !important;
+  }
+
   .mobile-history-disclosure:not([data-expanded])
     [data-mobile-history-extra='true'] {
     display: none;
@@ -1940,7 +1991,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     justify-content: center;
     gap: 6px;
     padding-inline: 12px;
-    color: var(--lcars-accent);
+    color: var(--lcars-accent-ink);
     font-weight: 600;
     border: 1px solid var(--mantine-color-default-border);
     border-radius: var(--mantine-radius-sm);
@@ -2389,7 +2440,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .deck-inbox-summary__count {
   min-width: 2.4rem;
-  color: var(--lcars-accent);
+  color: var(--lcars-accent-ink);
   font-family: var(--font-display), sans-serif;
   font-size: 2.3rem;
   line-height: 1;
@@ -2464,7 +2515,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .deck-inbox-summary[data-empty] .deck-inbox-summary__action {
-  color: var(--lcars-accent);
+  color: var(--lcars-accent-ink);
   background: color-mix(in srgb, var(--lcars-accent) 20%, var(--lcars-surface));
 }
 

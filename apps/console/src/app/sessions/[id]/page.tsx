@@ -159,7 +159,7 @@ const SessionDetailView = withConsolePageShell(
     subtitle,
     utilities: (
       <>
-        <div className="session-detail-utilities session-detail-utilities--desktop">
+        <div className="session-detail-utilities session-detail-utilities--desktop console-utilities--desktop">
           <QuickTaskButton
             watchedRepos={getWatchedRepos()}
             initialRepoKey={
@@ -175,7 +175,7 @@ const SessionDetailView = withConsolePageShell(
             initialLabel={formatRelativeTime(generatedAt)}
           />
         </div>
-        <div className="session-detail-utilities session-detail-utilities--mobile">
+        <div className="session-detail-utilities session-detail-utilities--mobile console-utilities--mobile">
           <QuickTaskButton
             watchedRepos={getWatchedRepos()}
             initialRepoKey={

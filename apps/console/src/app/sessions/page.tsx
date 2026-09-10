@@ -192,13 +192,13 @@ const SessionsPageView = withConsolePageShell(
     ),
     utilities: (
       <>
-        <div className="sessions-utilities sessions-utilities--desktop">
+        <div className="sessions-utilities sessions-utilities--desktop console-utilities--desktop">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             initialRepoKey={query.repo ? repoKey(query.repo) : undefined}
           />
         </div>
-        <div className="sessions-utilities sessions-utilities--mobile">
+        <div className="sessions-utilities sessions-utilities--mobile console-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             initialRepoKey={query.repo ? repoKey(query.repo) : undefined}

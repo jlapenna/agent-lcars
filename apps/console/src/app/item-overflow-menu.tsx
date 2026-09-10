@@ -175,8 +175,8 @@ export function useItemOverflowMenu(
       const result = await assignPipeline(item.repo, item.number, target);
       if (!result.ok) return showErrorToast(result.message);
       notifications.show({
-        message: `#${item.number} assigned to ${target}`,
-        color: 'green',
+        message: result.note ?? `#${item.number} assigned to ${target}`,
+        color: result.note ? 'yellow' : 'green',
       });
     });
   };

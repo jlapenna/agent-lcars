@@ -77,7 +77,7 @@ const TaskDetailView = withConsolePageShell(
     subtitle,
     utilities: (
       <>
-        <div className="task-utilities task-utilities--desktop">
+        <div className="task-utilities task-utilities--desktop console-utilities--desktop">
           <Group gap="xs" wrap="nowrap">
             <QuickTaskButton
               watchedRepos={getWatchedRepos()}
@@ -99,7 +99,7 @@ const TaskDetailView = withConsolePageShell(
             )}
           </Group>
         </div>
-        <div className="task-utilities task-utilities--mobile">
+        <div className="task-utilities task-utilities--mobile console-utilities--mobile">
           <Group gap="xs" wrap="nowrap">
             <QuickTaskButton
               watchedRepos={getWatchedRepos()}

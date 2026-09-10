@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Group,
+  SegmentedControl,
   Stack,
   Text,
   TextInput,
@@ -17,13 +18,15 @@ import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import type { ActionItem, MergeableState } from '../lib/action-items';
-import { type PrimaryAction } from '../lib/primary-action';
+import { type Pipeline, type PrimaryAction } from '../lib/primary-action';
 import {
   agentIntegration,
+  matchingAgentPipelines,
   repoDisplayName,
   repoItemKey,
   repoKey,
   selectedReplyPipeline,
+  supportedAgentPipelines,
 } from '../lib/watched-repo';
 import { approveAndRebase, mergePr, replyToItem } from './actions';
 import { ConsoleMarkdown } from './console-markdown';
@@ -39,6 +42,11 @@ import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { RetriggerButton } from './retrigger-button';
 import { UnstickPrsButton } from './unstick-prs-button';
+
+// SegmentedControl needs a real value for "no agent" - it has no empty
+// state - so the sentinel stands in for `undefined` at the control boundary
+// only, and never reaches the Server Action.
+const NO_REPLY_TARGET = 'none';
 
 const TRUNCATION_THRESHOLD = 400;
 const COLLAPSED_HEIGHT = 120;
@@ -208,6 +216,12 @@ export function ActionItemCard({
   // other cards it stays behind a "Reply…" toggle.
   const [replyOpen, setReplyOpen] = useState(primaryAction?.kind === 'reply');
   const [error, setError] = useState<string | undefined>();
+  // Which agent this one reply should hand an unassigned item to. Undefined
+  // means "comment only" - the pre-#1869 behavior, still the default so a
+  // reply never dispatches an agent the maintainer did not pick.
+  const [chosenReplyTarget, setChosenReplyTarget] = useState<
+    Pipeline | undefined
+  >();
   const [isPending, startTransition] = useTransition();
 
   // The Inbox detail pane (variant="workspace") reuses one ActionItemCard
@@ -225,6 +239,7 @@ export function ActionItemCard({
     setExpanded(false);
     setDescriptionExpanded(false);
     setLabelsExpanded(false);
+    setChosenReplyTarget(undefined);
   }
 
   // No current canonical assignment means a plain human reply. This matters
@@ -234,6 +249,21 @@ export function ActionItemCard({
   const replyMention = pipeline
     ? agentIntegration(item.repo, pipeline)?.replyTrigger
     : undefined;
+  // An unassigned open issue can be handed to any supported pipeline, the
+  // same "zero agent labels means never assigned" rule item-overflow-menu.tsx
+  // applies to its Assign actions. Offering the choice here is what keeps a
+  // `status:needs-human` item - whose prescribed primary action is `reply` -
+  // from being a dead end (#1869). Two or more agent labels is contradictory
+  // state with no implicit precedence, so no choice is offered there either.
+  const replyTargets =
+    pipeline === undefined &&
+    item.kind === 'issue' &&
+    matchingAgentPipelines(item.repo, item.labels).length === 0
+      ? supportedAgentPipelines(item.repo)
+      : [];
+  // The effective target: an existing assignment always wins; otherwise
+  // whatever the maintainer picked for this reply, defaulting to none.
+  const replyPipeline = pipeline ?? chosenReplyTarget;
 
   const handleReply = () => {
     if (!replyBody.trim()) return;
@@ -243,16 +273,19 @@ export function ActionItemCard({
         item.repo,
         item.number,
         replyBody,
-        pipeline,
+        replyPipeline,
       );
       if (!result.ok) {
         setError(result.message);
         return;
       }
       setReplyBody('');
+      setChosenReplyTarget(undefined);
       notifications.show({
-        message: `Reply posted on #${item.number}`,
-        color: 'green',
+        message: `#${item.number}: ${result.note}`,
+        // A comment that dispatched nobody is not a failure, but it is not
+        // the green "handed off" the maintainer was reaching for either.
+        color: result.dispatched && !result.warning ? 'green' : 'yellow',
       });
     });
   };
@@ -594,33 +627,55 @@ export function ActionItemCard({
         )}
 
         {replyOpen && (
-          <Group
-            gap="sm"
-            wrap="nowrap"
-            mt={4}
-            className={workspace ? 'queue-detail-reply' : undefined}
-          >
-            <TextInput
-              value={replyBody}
-              onChange={(e) => setReplyBody(e.currentTarget.value)}
-              onKeyDown={handleReplyKeyDown}
-              placeholder={
-                replyMention ? `Reply with ${replyMention}…` : 'Reply…'
-              }
-              // The reply field is conditionally mounted after an explicit
-              // user action, so focusing it is intentional here.
-              // eslint-disable-next-line jsx-a11y/no-autofocus
-              autoFocus={primaryAction?.kind !== 'reply'}
-              style={{ flex: 1, minWidth: 200 }}
-            />
-            <Button
-              variant={primaryAction?.kind === 'reply' ? 'filled' : 'default'}
-              disabled={isPending || !replyBody.trim()}
-              onClick={handleReply}
+          <Stack gap={6} mt={4}>
+            <Group
+              gap="sm"
+              wrap="nowrap"
+              className={workspace ? 'queue-detail-reply' : undefined}
             >
-              Reply
-            </Button>
-          </Group>
+              <TextInput
+                value={replyBody}
+                onChange={(e) => setReplyBody(e.currentTarget.value)}
+                onKeyDown={handleReplyKeyDown}
+                placeholder={
+                  replyMention ? `Reply with ${replyMention}…` : 'Reply…'
+                }
+                // The reply field is conditionally mounted after an explicit
+                // user action, so focusing it is intentional here.
+                // eslint-disable-next-line jsx-a11y/no-autofocus
+                autoFocus={primaryAction?.kind !== 'reply'}
+                style={{ flex: 1, minWidth: 200 }}
+              />
+              <Button
+                variant={primaryAction?.kind === 'reply' ? 'filled' : 'default'}
+                disabled={isPending || !replyBody.trim()}
+                onClick={handleReply}
+              >
+                {chosenReplyTarget ? 'Reply & dispatch' : 'Reply'}
+              </Button>
+            </Group>
+            {replyTargets.length > 0 && (
+              <SegmentedControl
+                size="xs"
+                value={chosenReplyTarget ?? NO_REPLY_TARGET}
+                onChange={(value) =>
+                  setChosenReplyTarget(
+                    value === NO_REPLY_TARGET ? undefined : (value as Pipeline),
+                  )
+                }
+                data={[
+                  { value: NO_REPLY_TARGET, label: 'Comment only' },
+                  ...replyTargets.map((target) => ({
+                    value: target,
+                    label:
+                      agentIntegration(item.repo, target)?.replyTrigger ??
+                      target,
+                  })),
+                ]}
+                aria-label={`Hand #${item.number} to an agent`}
+              />
+            )}
+          </Stack>
         )}
 
         {error && (
