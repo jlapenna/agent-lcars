@@ -552,6 +552,27 @@ describe('postComment (direct Work admission)', () => {
     ).toMatchObject({ pipeline: 'claude', params: { mode: 'implement' } });
   });
 
+  it('preserves the posted reply when reading dispatch state fails', async () => {
+    const { createComment, get } = mockOctokit(['status:needs-human']);
+    fixtureOrchestratorRuntime();
+    get.mockRejectedValueOnce(new Error('GitHub unavailable'));
+
+    await expect(
+      postComment(
+        DEFAULT_REPO,
+        2709,
+        'Please investigate',
+        'jlapenna',
+        'claude',
+      ),
+    ).resolves.toEqual({
+      url: expect.any(String),
+      dispatched: false,
+      dispatchWarning: 'dispatch-failed',
+    });
+    expect(createComment).toHaveBeenCalledTimes(1);
+  });
+
   it('reports dispatched: false for a comment on an unassigned issue', async () => {
     mockOctokit(['status:needs-human']);
 
@@ -706,6 +727,32 @@ describe('postComment (direct Work admission)', () => {
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'status:needs-human' }),
     );
+  });
+
+  it('preserves the admitted reply when needs-human projection refresh fails', async () => {
+    const { createComment } = mockOctokit();
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'seed-refresh-failure-reply',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+    refreshCurrentGithubAnchorProjection.mockRejectedValueOnce(
+      new Error('projection unavailable'),
+    );
+
+    await expect(
+      postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna', 'codex'),
+    ).resolves.toEqual({
+      url: expect.any(String),
+      dispatched: true,
+      dispatchWarning: 'projection-refresh-failed',
+    });
+    expect(createComment).toHaveBeenCalledTimes(1);
   });
 
   it('posting an unassigned comment does not sweep the orchestrator', async () => {

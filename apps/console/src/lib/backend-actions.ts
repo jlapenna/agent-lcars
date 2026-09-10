@@ -173,115 +173,119 @@ export async function postComment(
   // The immutable Task Work still supplies the authoritative target once the
   // caller has made that explicit choice.
   let handedBackToAgent = false;
-  if (assignedPipeline !== undefined) {
-    // A card's labels are only a render-time projection. Re-read the current
-    // GitHub labels at the dispatch boundary so a removed, changed, or
-    // contradictory assignment cannot be revived by a stale/crafted Server
-    // Action argument. `selectedReplyPipeline` accepts exactly one canonical
-    // agent:* target (or review:* target for a PR) and has no repo/provider-
-    // specific precedence.
-    const { data: issue } = await octokit.rest.issues.get({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-    });
-    const currentLabels = issue.labels.map((label) =>
-      typeof label === 'string' ? label : (label.name ?? ''),
-    );
-    const currentAssignment = selectedReplyPipeline(
-      repo,
-      currentLabels,
-      issue.pull_request ? 'pr' : 'issue',
-    );
-    const runtime = createOrchestratorRuntime();
-    const taskId = { repo: repoKey(repo), issue: issueNumber };
-    const existingTask = await runtime.store.readTask(taskId);
-    // Nothing owns this item yet, and the caller explicitly chose who should.
-    // `derivePrimaryAction` prescribes `reply` for every `status:needs-human`
-    // item, but an item can be needs-human with no `agent:*` label at all -
-    // and before #1869 that reply posted a comment, dispatched nobody, and
-    // still reported success, so the queue kept prescribing the same dead end
-    // (jlapenna/homelab#855). Treat the choice as the handoff it is:
-    // `assignPipeline` labels the issue and admits `mode: 'implement'`. The
-    // comment is already on the thread above, so the agent starts with the
-    // steer that prompted it.
-    //
-    // `existingTask === undefined` is load-bearing, not belt-and-braces: Work
-    // is immutable and written once per anchor, so an already-admitted task
-    // whose label was removed by hand must keep degrading to a plain comment
-    // (the `work.spec.pipeline` check below says the same thing for the
-    // assigned case). Without it `assignPipeline` throws its 409 and a reply
-    // that used to post silently would start failing outright.
-    if (
-      currentAssignment === undefined &&
-      existingTask === undefined &&
-      !issue.pull_request &&
-      matchingAgentPipelines(repo, currentLabels).length === 0
-    ) {
-      let assignment: AssignPipelineResult;
-      try {
-        assignment = await assignPipeline(
+  let dispatchWarning: AssignPipelineWarning | undefined;
+  try {
+    if (assignedPipeline !== undefined) {
+      // A card's labels are only a render-time projection. Re-read the current
+      // GitHub labels at the dispatch boundary so a removed, changed, or
+      // contradictory assignment cannot be revived by a stale/crafted Server
+      // Action argument. `selectedReplyPipeline` accepts exactly one canonical
+      // agent:* target (or review:* target for a PR) and has no repo/provider-
+      // specific precedence.
+      const { data: issue } = await octokit.rest.issues.get({
+        owner: repo.owner,
+        repo: repo.name,
+        issue_number: issueNumber,
+      });
+      const currentLabels = issue.labels.map((label) =>
+        typeof label === 'string' ? label : (label.name ?? ''),
+      );
+      const currentAssignment = selectedReplyPipeline(
+        repo,
+        currentLabels,
+        issue.pull_request ? 'pr' : 'issue',
+      );
+      const runtime = createOrchestratorRuntime();
+      const taskId = { repo: repoKey(repo), issue: issueNumber };
+      const existingTask = await runtime.store.readTask(taskId);
+      // Nothing owns this item yet, and the caller explicitly chose who should.
+      // `derivePrimaryAction` prescribes `reply` for every `status:needs-human`
+      // item, but an item can be needs-human with no `agent:*` label at all -
+      // and before #1869 that reply posted a comment, dispatched nobody, and
+      // still reported success, so the queue kept prescribing the same dead end
+      // (jlapenna/homelab#855). Treat the choice as the handoff it is:
+      // `assignPipeline` labels the issue and admits `mode: 'implement'`. The
+      // comment is already on the thread above, so the agent starts with the
+      // steer that prompted it.
+      //
+      // `existingTask === undefined` is load-bearing, not belt-and-braces: Work
+      // is immutable and written once per anchor, so an already-admitted task
+      // whose label was removed by hand must keep degrading to a plain comment
+      // (the `work.spec.pipeline` check below says the same thing for the
+      // assigned case). Without it `assignPipeline` throws its 409 and a reply
+      // that used to post silently would start failing outright.
+      if (
+        currentAssignment === undefined &&
+        existingTask === undefined &&
+        !issue.pull_request &&
+        matchingAgentPipelines(repo, currentLabels).length === 0
+      ) {
+        const assignment = await assignPipeline(
           repo,
           issueNumber,
           assignedPipeline,
           actorLogin,
         );
-      } catch {
-        // The comment is durable even when assignment loses a race or fails.
-        // Report that partial outcome so the client does not offer to repost it.
+        handedBackToAgent = assignment.dispatched;
+        dispatchWarning = assignment.warning;
+        await clearNeedsHumanLabel(repo, issueNumber);
         return {
           url: data.html_url,
-          dispatched: false,
-          dispatchWarning: 'dispatch-failed',
+          dispatched: handedBackToAgent,
+          ...(dispatchWarning === undefined ? {} : { dispatchWarning }),
         };
       }
-      await clearNeedsHumanLabel(repo, issueNumber);
-      return {
-        url: data.html_url,
-        dispatched: assignment.dispatched,
-        ...(assignment.warning === undefined
-          ? {}
-          : { dispatchWarning: assignment.warning }),
-      };
-    }
-    if (currentAssignment !== assignedPipeline) {
-      return { url: data.html_url, dispatched: false };
-    }
-    // A label can be visible before its webhook admission reaches the
-    // control plane. Preserve the comment in that transient state; the
-    // webhook remains responsible for first Work admission.
-    if (existingTask !== undefined) {
-      const work = workPayloadSchema.parse(existingTask.task.work);
-      // Assignment labels are an explicit present-tense handoff, whereas
-      // Work's pipeline is immutable. A rejected label-change webhook can
-      // therefore leave a new label beside older Work. Do not revive that
-      // older Work on a reply: all three sources must agree before a run can
-      // begin or the human handoff can be cleared.
-      if (work.spec.pipeline !== assignedPipeline) {
+      if (currentAssignment !== assignedPipeline) {
         return { url: data.html_url, dispatched: false };
       }
-      const outcome = await admitGithubWork(runtime, {
-        anchor: taskId,
-        requestId: `console-reply:${randomUUID()}`,
-        params: { mode: 'reply', reply: body },
-        work,
-      });
-      if (outcome.kind === 'busy') {
-        throw new ActionError('A run is already active for this task', 409);
+      // A label can be visible before its webhook admission reaches the
+      // control plane. Preserve the comment in that transient state; the
+      // webhook remains responsible for first Work admission.
+      if (existingTask !== undefined) {
+        const work = workPayloadSchema.parse(existingTask.task.work);
+        // Assignment labels are an explicit present-tense handoff, whereas
+        // Work's pipeline is immutable. A rejected label-change webhook can
+        // therefore leave a new label beside older Work. Do not revive that
+        // older Work on a reply: all three sources must agree before a run can
+        // begin or the human handoff can be cleared.
+        if (work.spec.pipeline !== assignedPipeline) {
+          return { url: data.html_url, dispatched: false };
+        }
+        const outcome = await admitGithubWork(runtime, {
+          anchor: taskId,
+          requestId: `console-reply:${randomUUID()}`,
+          params: { mode: 'reply', reply: body },
+          work,
+        });
+        if (outcome.kind === 'busy') {
+          throw new ActionError('A run is already active for this task', 409);
+        }
+        if (outcome.kind !== 'accepted') {
+          throw new ActionError(`Reply dispatch was ${outcome.kind}`, 409);
+        }
+        handedBackToAgent = true;
       }
-      if (outcome.kind !== 'accepted') {
-        throw new ActionError(`Reply dispatch was ${outcome.kind}`, 409);
-      }
-      handedBackToAgent = true;
     }
+    // `status:needs-human` is the agent-to-human handoff. Clearing it is only
+    // correct after this comment actually began a new agent run; a plain
+    // comment on an unassigned item must leave that human-work signal intact.
+    if (handedBackToAgent) {
+      await clearNeedsHumanLabel(repo, issueNumber);
+    }
+    return { url: data.html_url, dispatched: handedBackToAgent };
+  } catch {
+    // GitHub already accepted the comment. Every later read, admission, and
+    // cleanup failure is therefore a partial success: tell the client to
+    // clear its input and never invite a duplicate comment. Preserve whether
+    // Work admission completed before the failure.
+    return {
+      url: data.html_url,
+      dispatched: handedBackToAgent,
+      dispatchWarning:
+        dispatchWarning ??
+        (handedBackToAgent ? 'projection-refresh-failed' : 'dispatch-failed'),
+    };
   }
-  // `status:needs-human` is the agent-to-human handoff. Clearing it is only
-  // correct after this comment actually began a new agent run; a plain
-  // comment on an unassigned item must leave that human-work signal intact.
-  if (handedBackToAgent) {
-    await clearNeedsHumanLabel(repo, issueNumber);
-  }
-  return { url: data.html_url, dispatched: handedBackToAgent };
 }
 
 export async function approveAndMergePr(
