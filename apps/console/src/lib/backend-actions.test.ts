@@ -528,9 +528,9 @@ describe('postComment (direct Work admission)', () => {
     );
   });
 
-  it('preserves the posted reply when assignment fails', async () => {
+  it('preserves the posted reply and admitted dispatch when assignment labeling fails', async () => {
     const { createComment, setLabels } = mockOctokit(['status:needs-human']);
-    fixtureOrchestratorRuntime();
+    const { store } = fixtureOrchestratorRuntime();
     setLabels.mockRejectedValueOnce(new Error('GitHub unavailable'));
 
     await expect(
@@ -543,10 +543,13 @@ describe('postComment (direct Work admission)', () => {
       ),
     ).resolves.toEqual({
       url: expect.any(String),
-      dispatched: false,
-      dispatchFailed: true,
+      dispatched: true,
+      dispatchWarning: 'assignment-update-failed',
     });
     expect(createComment).toHaveBeenCalledTimes(1);
+    expect(
+      (await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 })).at(-1),
+    ).toMatchObject({ pipeline: 'claude', params: { mode: 'implement' } });
   });
 
   it('reports dispatched: false for a comment on an unassigned issue', async () => {

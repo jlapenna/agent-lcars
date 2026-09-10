@@ -99,7 +99,7 @@ function revalidateDashboard() {
  * comment on an item nobody owns (#1869).
  */
 export type ReplyResult =
-  | { ok: true; dispatched: boolean; note: string }
+  | { ok: true; dispatched: boolean; note: string; warning?: true }
   | { ok: false; message: string };
 
 export async function replyToItem(
@@ -113,7 +113,7 @@ export async function replyToItem(
     if (!session.user.login) {
       throw new ActionError('Authenticated GitHub login is required', 401);
     }
-    const { dispatched, dispatchFailed } = await postComment(
+    const { dispatched, dispatchWarning } = await postComment(
       resolveWatchedRepo(repo),
       number,
       body,
@@ -127,11 +127,17 @@ export async function replyToItem(
     return {
       ok: true,
       dispatched,
-      note: dispatchFailed
-        ? 'Reply posted, but dispatch failed. Refresh the item and retry assignment without reposting your reply.'
-        : dispatched
-          ? `Dispatched ${assignedPipeline ?? 'agent'}`
-          : 'No agent assigned - posted as a comment only',
+      ...(dispatchWarning === undefined ? {} : { warning: true as const }),
+      note:
+        dispatchWarning === 'assignment-update-failed' && dispatched
+          ? 'Reply posted and agent dispatched, but updating the GitHub assignment failed.'
+          : dispatchWarning === 'projection-refresh-failed'
+            ? 'Reply posted and agent dispatched, but the queue may take a moment to refresh.'
+            : dispatchWarning === 'dispatch-failed'
+              ? 'Reply posted, but dispatch failed. Refresh the item and retry assignment without reposting your reply.'
+              : dispatched
+                ? `Dispatched ${assignedPipeline ?? 'agent'}`
+                : 'No agent assigned - posted as a comment only',
     };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -318,14 +324,24 @@ export async function assignPipeline(
     if (!session.user.login) {
       throw new ActionError('Authenticated GitHub login is required', 401);
     }
-    await assignPipelineLib(
+    const result = await assignPipelineLib(
       resolveWatchedRepo(repo),
       number,
       pipeline,
       session.user.login,
     );
     revalidateDashboard();
-    return { ok: true };
+    return {
+      ok: true,
+      ...(result.warning === undefined
+        ? {}
+        : {
+            note:
+              result.warning === 'assignment-update-failed'
+                ? 'Agent dispatched, but updating the GitHub assignment failed.'
+                : 'Agent dispatched, but the queue may take a moment to refresh.',
+          }),
+    };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }

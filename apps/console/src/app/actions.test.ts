@@ -324,7 +324,7 @@ describe('agent-lcars Server Actions', () => {
       (postComment as Mock).mockResolvedValue({
         url: 'https://x',
         dispatched: false,
-        dispatchFailed: true,
+        dispatchWarning: 'dispatch-failed',
       });
 
       await expect(
@@ -332,9 +332,27 @@ describe('agent-lcars Server Actions', () => {
       ).resolves.toEqual({
         ok: true,
         dispatched: false,
+        warning: true,
         note: 'Reply posted, but dispatch failed. Refresh the item and retry assignment without reposting your reply.',
       });
       expect(revalidatePath).toHaveBeenCalledWith('/');
+    });
+
+    it('reports admitted dispatch when only GitHub assignment labeling fails', async () => {
+      (postComment as Mock).mockResolvedValue({
+        url: 'https://x',
+        dispatched: true,
+        dispatchWarning: 'assignment-update-failed',
+      });
+
+      await expect(
+        replyToItem(DEFAULT_REPO, 42, 'hi', 'claude'),
+      ).resolves.toEqual({
+        ok: true,
+        dispatched: true,
+        warning: true,
+        note: 'Reply posted and agent dispatched, but updating the GitHub assignment failed.',
+      });
     });
 
     it('replyToItem names the pipeline it dispatched', async () => {

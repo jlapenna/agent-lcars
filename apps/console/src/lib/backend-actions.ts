@@ -129,7 +129,15 @@ export async function clearNeedsHumanLabel(
 export interface PostCommentResult {
   url: string;
   dispatched: boolean;
-  dispatchFailed?: boolean;
+  dispatchWarning?: AssignPipelineWarning;
+}
+
+export type AssignPipelineWarning =
+  'dispatch-failed' | 'assignment-update-failed' | 'projection-refresh-failed';
+
+export interface AssignPipelineResult {
+  dispatched: true;
+  warning?: AssignPipelineWarning;
 }
 
 export async function postComment(
@@ -210,15 +218,31 @@ export async function postComment(
       !issue.pull_request &&
       matchingAgentPipelines(repo, currentLabels).length === 0
     ) {
+      let assignment: AssignPipelineResult;
       try {
-        await assignPipeline(repo, issueNumber, assignedPipeline, actorLogin);
+        assignment = await assignPipeline(
+          repo,
+          issueNumber,
+          assignedPipeline,
+          actorLogin,
+        );
       } catch {
         // The comment is durable even when assignment loses a race or fails.
         // Report that partial outcome so the client does not offer to repost it.
-        return { url: data.html_url, dispatched: false, dispatchFailed: true };
+        return {
+          url: data.html_url,
+          dispatched: false,
+          dispatchWarning: 'dispatch-failed',
+        };
       }
       await clearNeedsHumanLabel(repo, issueNumber);
-      return { url: data.html_url, dispatched: true };
+      return {
+        url: data.html_url,
+        dispatched: assignment.dispatched,
+        ...(assignment.warning === undefined
+          ? {}
+          : { dispatchWarning: assignment.warning }),
+      };
     }
     if (currentAssignment !== assignedPipeline) {
       return { url: data.html_url, dispatched: false };
@@ -678,7 +702,7 @@ export async function assignPipeline(
   issueNumber: number,
   targetPipeline: Pipeline,
   actorLogin: string,
-): Promise<void> {
+): Promise<AssignPipelineResult> {
   const targetIntegration = requireAgentIntegration(repo, targetPipeline);
   const taskId = { repo: repoKey(repo), issue: issueNumber };
   const existingTask = await createOrchestratorRuntime().store.readTask(taskId);
@@ -736,15 +760,29 @@ export async function assignPipeline(
   // same write, or action-items.ts keeps classifying the now-dispatched
   // issue as ready-for-agent and it lingers in the maintainer queue with a
   // misleading reason even though an agent label is now present.
-  await octokit.rest.issues.setLabels({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-    labels: labels
-      .filter((label) => label !== 'status:ready-for-agent')
-      .concat(targetIntegration.label),
-  });
-  await refreshGithubMutation(repo, issueNumber);
+  try {
+    await octokit.rest.issues.setLabels({
+      owner: repo.owner,
+      repo: repo.name,
+      issue_number: issueNumber,
+      labels: labels
+        .filter((label) => label !== 'status:ready-for-agent')
+        .concat(targetIntegration.label),
+    });
+  } catch {
+    // Work admission is authoritative and already durable. Preserve that
+    // successful dispatch even if its GitHub assignment projection cannot be
+    // updated; retrying admission would only conflict with immutable Work.
+    return { dispatched: true, warning: 'assignment-update-failed' };
+  }
+  try {
+    await refreshGithubMutation(repo, issueNumber);
+  } catch {
+    // The label write succeeded and its webhook can refresh the projection.
+    // Do not turn two durable successes into an apparent total failure.
+    return { dispatched: true, warning: 'projection-refresh-failed' };
+  }
+  return { dispatched: true };
 }
 
 const QUICK_TASK_LABEL = 'intake:quick-task';

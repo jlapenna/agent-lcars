@@ -285,7 +285,7 @@ export function ActionItemCard({
         message: `#${item.number}: ${result.note}`,
         // A comment that dispatched nobody is not a failure, but it is not
         // the green "handed off" the maintainer was reaching for either.
-        color: result.dispatched ? 'green' : 'yellow',
+        color: result.dispatched && !result.warning ? 'green' : 'yellow',
       });
     });
   };
