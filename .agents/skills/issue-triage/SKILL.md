@@ -68,19 +68,22 @@ placement, resource, and branch-protection controls.
 State precisely what a test proves. A synthetic or scaled experiment can
 support a mechanism or safety claim, but it does not replace an acceptance
 criterion requiring the exact production workload, hardware, role, or time
-window. Before launching a controlled experiment, define its workload,
+window. Before launching a controlled experiment within the user's requested
+scope, define its workload,
 resource and time bounds, stop and cleanup conditions, and required
 observations. Use the same metric and sampling definitions for comparisons;
 do not cherry-pick periods or present a short synthetic run as a representative
 production canary. Never compress or fabricate multi-day or multi-week
 observations.
 
-For authenticated verification, try the supported private local saved-session
-backend and the existing Secret Manager-backed verifier session before asking
-someone to sign in or grant access. Treat unavailable credentials as an access
-gate. A console admin session, a non-admin user session, and a Google Workspace
-grant are orthogonal forms of access; proving one does not prove either of the
-others.
+For authenticated verification, try credentials already available through the
+supported private local saved-session backend and the existing Secret
+Manager-backed verifier session before asking someone to sign in. Reusing an
+existing credential does not authorize minting a session or granting access.
+Treat unavailable credentials as an access gate. A console admin session, a
+non-admin user session, and LCARS Work control-plane authorization
+(`work.operator`) are orthogonal forms of access; proving one does not prove
+either of the others.
 
 When external support or a human-only action is required, existing approval to
 contact that party persists for the same scoped request. Prepare the complete,
