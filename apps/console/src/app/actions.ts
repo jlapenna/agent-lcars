@@ -93,18 +93,27 @@ function revalidateDashboard() {
   revalidatePath('/');
 }
 
+/**
+ * A reply's outcome. `dispatched` distinguishes the two very different
+ * things "Reply posted" used to cover: a real handoff to an agent, and a
+ * comment on an item nobody owns (#1869).
+ */
+export type ReplyResult =
+  | { ok: true; dispatched: boolean; note: string; warning?: true }
+  | { ok: false; message: string };
+
 export async function replyToItem(
   repo: WatchedRepo,
   number: number,
   body: string,
   assignedPipeline?: Pipeline,
-): Promise<ActionResult> {
+): Promise<ReplyResult> {
   const session = await requireAdmin();
   try {
     if (!session.user.login) {
       throw new ActionError('Authenticated GitHub login is required', 401);
     }
-    await postComment(
+    const { dispatched, dispatchWarning } = await postComment(
       resolveWatchedRepo(repo),
       number,
       body,
@@ -112,7 +121,24 @@ export async function replyToItem(
       assignedPipeline,
     );
     revalidateDashboard();
-    return { ok: true };
+    // A reply that dispatched nobody is a success, but not the one the
+    // maintainer meant when the queue told them to reply - say which of the
+    // two happened rather than reporting a uniform "Reply posted" (#1869).
+    return {
+      ok: true,
+      dispatched,
+      ...(dispatchWarning === undefined ? {} : { warning: true as const }),
+      note:
+        dispatchWarning === 'assignment-update-failed' && dispatched
+          ? 'Reply posted and agent dispatched, but updating the GitHub assignment failed.'
+          : dispatchWarning === 'projection-refresh-failed'
+            ? 'Reply posted and agent dispatched, but the queue may take a moment to refresh.'
+            : dispatchWarning === 'dispatch-failed'
+              ? 'Reply posted, but dispatch failed. Refresh the item and retry assignment without reposting your reply.'
+              : dispatched
+                ? `Dispatched ${assignedPipeline ?? 'agent'}`
+                : 'No agent assigned - posted as a comment only',
+    };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }
@@ -298,14 +324,24 @@ export async function assignPipeline(
     if (!session.user.login) {
       throw new ActionError('Authenticated GitHub login is required', 401);
     }
-    await assignPipelineLib(
+    const result = await assignPipelineLib(
       resolveWatchedRepo(repo),
       number,
       pipeline,
       session.user.login,
     );
     revalidateDashboard();
-    return { ok: true };
+    return {
+      ok: true,
+      ...(result.warning === undefined
+        ? {}
+        : {
+            note:
+              result.warning === 'assignment-update-failed'
+                ? 'Agent dispatched, but updating the GitHub assignment failed.'
+                : 'Agent dispatched, but the queue may take a moment to refresh.',
+          }),
+    };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }
