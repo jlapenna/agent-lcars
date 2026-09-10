@@ -17,7 +17,7 @@ import { getWatchedRepos } from './watched-repos-config';
  * boundary between the app and one instance of it a file boundary.
  *
  * The identity variables ({@link maintainerLogin}, {@link consoleUrl},
- * {@link artifactShareBaseUrl}, {@link pushWatchTargetRepo},
+ * {@link artifactShareBaseUrl},
  * {@link consoleRepositoryUrl}) are `required()`: there is no fallback to
  * this deployment's own values, so a fork that forgets to set one fails
  * loudly instead of silently inheriting this fleet's identity (#1731).
@@ -187,50 +187,6 @@ export function isControlPlaneRepository(fullName: string): boolean {
   return controlPlaneRepositories().includes(fullName);
 }
 
-/**
- * Repositories whose `push` webhook events mint a native "reconcile the
- * fleet" work item (see `push-watch.ts`) — deliberately separate from
- * {@link controlPlaneRepositories}. A repository here is *not* thereby made
- * eligible for the fleet's full issue/PR dispatch machinery; it is only
- * observed for its `main` branch moving. Parsed once from
- * `AGENT_LCARS_PUSH_WATCHED_REPOS` (a comma-separated `owner/name` list).
- *
- * Unset or empty means nothing is push-watched — this feature is additive
- * and opt-in, unlike {@link controlPlaneRepositories} (which throws on
- * misconfiguration because accepting an anchor with no rendering path is a
- * bug, not a degraded mode). There is no anchor here to render; an absent
- * or malformed entry just means fewer repositories are watched.
- */
-export function pushWatchedRepos(): string[] {
-  const raw = optional('AGENT_LCARS_PUSH_WATCHED_REPOS') ?? '';
-  return raw
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => OWNER_NAME_PATTERN.test(entry));
-}
-
-/** Exact, case-sensitive membership check against {@link pushWatchedRepos}. */
-export function isPushWatchedRepository(fullName: string): boolean {
-  return pushWatchedRepos().includes(fullName);
-}
-
-/**
- * Repository the work item minted by `push-watch.ts` always targets --
- * already an admitted {@link controlPlaneRepositories} entry, distinct from
- * whichever push-watched repository actually triggered the mint. `push-watch.ts`
- * used to hard-code this as `PUSH_WATCH_TARGET_REPO`; there was no override,
- * so a fork inherited this fleet's target with no way to redirect it.
- */
-export function pushWatchTargetRepo(): string {
-  const raw = required('AGENT_LCARS_PUSH_WATCH_TARGET_REPO');
-  if (!OWNER_NAME_PATTERN.test(raw)) {
-    throw new Error(
-      `AGENT_LCARS_PUSH_WATCH_TARGET_REPO ${JSON.stringify(raw)} is not a valid owner/name repository`,
-    );
-  }
-  return raw;
-}
-
 /** Command used to restore archived Claude transcripts: the fleet-tools
  * PATH bin (agent-lcars#1328) — installed on workstations and baked into
  * the runner image, so it is checkout-independent. */
@@ -293,7 +249,6 @@ export function validateDeploymentIdentity(): void {
   maintainerLogin();
   consoleUrl();
   artifactShareBaseUrl();
-  pushWatchTargetRepo();
   consoleRepositoryUrl();
   codexCentralAuthObject();
 }

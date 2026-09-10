@@ -37,16 +37,15 @@ else asks it:
 | this console's own URL    | `AGENT_LCARS_CONSOLE_URL`                           | `https://lcars.jlapenna.net` -- **required**, no fallback                                                                                                     |
 | console description       | `AGENT_LCARS_CONSOLE_DESCRIPTION`                   | `jlapenna/agent-lcars — multi-agent issue activity`; unset falls back to a generic, deployment-neutral string (build-time metadata can't read a required var) |
 | console repository URL    | derived from `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `https://github.com/jlapenna/agent-lcars` -- no separate var                                                                                                  |
-| push-watch target repo    | `AGENT_LCARS_PUSH_WATCH_TARGET_REPO`                | `jlapenna/homelab` -- **required**, no fallback                                                                                                               |
 | Codex central auth object | `AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT`             | `jlapenna/agent-lcars/auth.json` -- **required**, no fallback (#1751)                                                                                         |
 
 Repository identity is explicit: the watched and control-plane sets are both
 required and must match exactly. `apphosting.yaml` records that shared set so
 what production runs with is visible in config rather than only in source.
 
-Six of the values above are `required()`: maintainer login, artifact share
-base URL, this console's own URL, control-plane repository, the
-push-watch target repo (#1731), and the Codex central auth object (#1751).
+Five of the values above are `required()`: maintainer login, artifact share
+base URL, this console's own URL, control-plane repository, and the Codex
+central auth object (#1751).
 There is no fallback to this fleet's own values in source any more -- a
 fork that leaves one unset fails the process boot with a clear
 `process.env.<NAME> not defined` message
@@ -57,11 +56,6 @@ from `layout.tsx`'s static `export const metadata`, which Next.js evaluates
 during `next build` itself, before any runtime env is available -- a
 `required()` read there fails the production build, not a request. It falls
 back to a generic, deployment-neutral string instead.
-
-`push-watch.ts`'s minted work item always targets
-`AGENT_LCARS_PUSH_WATCH_TARGET_REPO`, regardless of which
-`AGENT_LCARS_PUSH_WATCHED_REPOS` entry triggered it -- see that module's own
-doc comment.
 
 `tools/saved-session`'s CLI tools (`capture.mjs`, `mint.mjs`, `verify.mjs`)
 default their `--origin` flag to `AGENT_LCARS_CONSOLE_URL` when it's set in
@@ -143,19 +137,6 @@ scope is refused from every other `/items`/`/schedules` operation
 tests). `pipelines` gates which pipelines the executor may claim, the same
 field an operator's grant uses to gate `create`/`redispatch`. `POST
 /runs/claim` derives selection from that grant alone.
-
-`svc:push-watch` is a third shape: it never authenticates an HTTP request at
-all (no bearer token, no session), so `scopes` is present only because the
-schema requires a non-empty list, not because anything checks it on this
-path. `apps/console/src/lib/push-watch.ts`'s webhook handler looks it up
-directly via `grantForPrincipal`, the same internal mechanism
-`schedule-router.ts`'s tick handler already uses for a schedule's
-`createdBy` principal — independent of any caller's own authenticated
-identity. Its `subjects` entry is unused (no token is ever verified against
-it) but still required by the grant schema. Its only real effect is gating
-`push-watch.ts`'s own `mintItem` call through the ordinary
-`forbiddenReason` check (pipeline + target-repo admission), exactly like
-every other minted item.
 
 The current operator grants list all three supported pipelines (`claude`,
 `codex`, `opencode`), including the maintainer, repository-bounded

@@ -269,7 +269,7 @@ async function renewCodexLease(
 /**
  * `complete`'s drain, guarded -- unlike every other mutating route's own
  * unguarded `await ...drain()` (`work-router.ts`'s cancel/redispatch,
- * `work-mint.ts`, `work-reply.ts`, `push-watch.ts`,
+ * `work-mint.ts`, `work-reply.ts`,
  * `github-work-admission.ts`). Those routes are fine letting a drain
  * failure fail the whole request: their caller is a human, a webhook
  * delivery, or a cron tick, any of which can simply be retried (GitHub
@@ -490,7 +490,7 @@ export const runsRouter = os.router({
       // entry (`orchestrator.report`'s `settle`), but it used to be the
       // one mutating route that never drained it -- every other one
       // (`work-router.ts`'s cancel/redispatch, `work-reply.ts`,
-      // `work-mint.ts`, `push-watch.ts`, `github-work-admission.ts`,
+      // `work-mint.ts`, `github-work-admission.ts`,
       // `orchestrator-routes.ts`'s reconcile) does. The outcome comment
       // and `status:needs-human` label then waited on an unrelated
       // webhook delivery or the 30-minute reconcile tick instead of

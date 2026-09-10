@@ -38,14 +38,6 @@ export interface EnvVars {
    *  the same thing: no channel has a target, so nothing is delivered --
    *  see `apps/console/src/lib/outcome-webhook.ts`'s `outcomeWebhookFor`. */
   AGENT_LCARS_OUTCOME_WEBHOOKS?: string;
-  /** Comma-separated `owner/name` repos whose `push` webhook mints a native
-   *  reconcile-the-fleet work item — see `push-watch.ts`. */
-  AGENT_LCARS_PUSH_WATCHED_REPOS?: string;
-  /** Repository the work item minted by a push-watch delivery always
-   *  targets, regardless of which push-watched repository triggered it.
-   *  Required, no fallback (#1731) -- see `deployment.ts`'s
-   *  `pushWatchTargetRepo`. */
-  AGENT_LCARS_PUSH_WATCH_TARGET_REPO?: string;
   AGENT_LCARS_WEBHOOK_QUEUE?: string;
   AGENT_LCARS_WEBHOOK_QUEUE_LOCATION?: string;
   AGENT_LCARS_WEBHOOK_SECRET?: string; // Secret
