@@ -1,67 +1,52 @@
-# Quick Task screenshot evidence production smoke runbook
+# Native Work screenshot evidence production smoke runbook
 
-This is a manual, admin-only production smoke test for the Quick Task
-screenshot-evidence path. Run it only when a maintainer has approved creating
-and then closing a disposable Quick Task in a watched repository. The test
-creates a real GitHub issue and a real evidence object; it is not a dry-run of
-the submission route.
+This is a manual production smoke test for screenshot evidence attached through
+the console's native **New work** flow. Run it only when a maintainer has
+approved dispatching and later canceling a disposable Work item. The test
+creates a real native Work item and a real evidence object.
 
-The production session must use one of the allowlisted GitHub logins
-(`AGENT_LCARS_ADMIN_GITHUB_LOGINS`). Do not use the E2E session header, a test
-fixture, a copied session cookie, or a deployment/debug bypass. E2E is
-intentionally disabled for this validation.
+The signed-in GitHub user must have a configured `work.operator` grant for the
+selected pipeline. The repository must be in the watched-repository allowlist.
+Do not use the E2E session header, a copied cookie, or a debug bypass.
 
 ## Safety rules
 
-- Use a disposable description and a repository where closing the resulting
-  issue is acceptable. Do not use a real customer task.
-- A successful submission applies both the intake:quick-task label and the
-  selected agent:* label. That can dispatch a real worker. Choose the pipeline
-  deliberately and get maintainer approval for that possible dispatch before
-  submitting.
-- Use a locally-created, non-sensitive PNG, JPEG, or WebP. The file may be
-  normalized and stored outside GitHub access controls, and the resulting
-  Markdown link is a bearer capability.
-- Keep the request ID, evidence ID, evidence URL, session cookie, response
-  body, and downloaded bytes in a private temporary directory only. Never put
-  them in an issue comment, PR, chat message, terminal transcript, or commit.
-- Do not paste the screenshot into GitHub, and do not add a comment containing
-  its URL. The Quick Task issue body is server-composed and will contain the
-  evidence link when a file is submitted.
-- Stop on any unexpected status, binding mismatch, storage error, or auth
-  result. Do not retry with the same evidence ID after an ambiguous failure;
-  reconcile it with the revocation tool first.
+- Use a disposable description and select the pipeline deliberately: submission
+  can dispatch a real worker immediately.
+- Use a locally-created, non-sensitive PNG, JPEG, or WebP. The normalized image
+  is stored outside GitHub access controls and its URL is a bearer capability.
+- Keep the work ID, request ID, evidence ID, evidence URL, and downloaded bytes
+  in a private temporary directory. Never publish them in issues, PRs, chat, or
+  committed files.
+- Stop on an unexpected authorization result, binding mismatch, storage error,
+  or ambiguous submission result. Reconcile uncertain evidence before retrying.
 
 ## Contract under test
 
-| Operation                                                   | Route and method                           | Authorization                                          | Expected result                                             |
-| ----------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------ | ----------------------------------------------------------- |
-| Submit with screenshot                                      | POST /api/quick-task/v1                    | Administrator session required                         | 201; JSON Quick Task receipt                                |
-| Submit without an admin session                             | POST /api/quick-task/v1                    | No session or non-admin session                        | 401 {"error":"Unauthorized"}; no issue or object is created |
-| Retrieve existing evidence                                  | GET /api/quick-task-evidence/v1/<uuid-v4>  | No session is required; the URL is a bearer capability | 200, normalized image/webp bytes                            |
-| Inspect existing evidence                                   | HEAD /api/quick-task-evidence/v1/<uuid-v4> | No session is required                                 | 200, the same success headers, and no body                  |
-| Retrieve malformed, absent, revoked, or unreadable evidence | GET or HEAD on the same route              | No session is required                                 | Identical opaque 404; no body or response headers           |
+| Operation                                                   | Surface                                      | Authorization                                                                       | Expected result                                                                                                  |
+| ----------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Create native Work with screenshot                          | Console **New work** modal                   | Signed-in principal with `work.operator`, selected pipeline, and watched repository | Work receipt links to `/work/<id>`; evidence is bound to the same request and referenced in the Work description |
+| Create without a Work grant                                 | Console header and native create action      | Signed-in principal without `work.operator`                                         | Trigger withheld; direct action is rejected and creates no Work or evidence                                      |
+| Retrieve existing evidence                                  | `GET /api/quick-task-evidence/v1/<uuid-v4>`  | Bearer URL; no session required                                                     | 200 normalized `image/webp`                                                                                      |
+| Inspect existing evidence                                   | `HEAD /api/quick-task-evidence/v1/<uuid-v4>` | No session required                                                                 | 200 with the same headers and no body                                                                            |
+| Retrieve malformed, absent, revoked, or unreadable evidence | GET or HEAD on the same route                | No session required                                                                 | Identical opaque 404                                                                                             |
 
-The submission body is multipart/form-data with exactly one intent field and,
-only for the screenshot variant, one evidence file field. The JSON intent
-contains requestId, optional evidenceId, repository (owner and name), pipeline,
-description, and source (route, identities, and capturedAt, with optional
-deployment). The browser must set the multipart boundary; do not hand-write a
-Content-Type boundary.
+The historical `/api/quick-task/v1` issue-creation endpoint is retired. Native
+creation uses the Work server action and canonical Work router. The existing
+evidence read URL remains stable so workers and historical tasks can retrieve
+previously attached screenshots.
 
-The server resolves the repository against the watched-repository allowlist,
-looks up its immutable numeric GitHub repository ID and visibility, normalizes
-the image to static lossless WebP, and composes the issue body and evidence
-URL. The client does not supply the Markdown URL. Supported input is PNG,
-JPEG, or WebP, at most 10 MiB encoded; the image normalizer also enforces the
-pixel, dimension, and normalized-output limits.
+The server resolves the selected repository against the watched allowlist,
+looks up its immutable GitHub repository ID and visibility, normalizes the
+image to static lossless WebP, stores its immutable request binding, and then
+creates the Work item. A definitive create rejection removes the newly written
+generation. A live-run-cap response retains it for automatic retry with the
+same Work, request, and evidence identifiers.
 
 ## 1. Prepare private test material
 
-Use a temporary directory outside the checkout. For example, create one with
-your normal local image tool, and put a plainly synthetic image there. Let the
-Quick Task UI generate fresh UUIDs for each request. Do not put the values in
-shell history if your workstation records it.
+Create a private temporary directory and a plainly synthetic PNG, JPEG, or
+WebP outside the checkout:
 
 ```
 TMP_DIR="$(mktemp -d)"
@@ -70,66 +55,30 @@ BASE_URL='https://lcars.jlapenna.net'
 BUCKET='agent-lcars-quick-task-evidence'
 ```
 
-Use the console’s Quick Task dialog for the normal admin path. Select the
-watched repository and pipeline, enter a disposable description such as
-[smoke] Quick Task screenshot evidence — close after validation, select the
-synthetic image in the optional Screenshot field, and submit once. The field
-accepts PNG, JPEG, or WebP up to 10 MiB before submission.
+Open the console with an authorized session, choose **New work**, select a
+watched repository and granted pipeline, enter a disposable description, add
+the synthetic screenshot, and choose **Create work item** once.
 
-In browser developer tools, confirm the request is the following before
-continuing. Do not copy the request’s Cookie header or full response into a
-ticket:
-
-```
-POST https://lcars.jlapenna.net/api/quick-task/v1
-Content-Type: multipart/form-data; boundary=<browser-generated-boundary>
-
-intent=<JSON object described above>
-evidence=<the selected image file>
-```
-
-The response must be 201. Its private JSON receipt contains the request ID, the
-created repository/issue number, and the GitHub issue URL. Capture the actual
-requestId and repository owner/name from that private response (or capture the
-request ID from the server marker if the browser does not expose the response).
-These repository values must describe the task the server actually created;
-do not rely on a remembered UI default or a hard-coded repository. The issue
-body must contain a server-composed Screenshot Markdown link; source context
-must be sanitized. It must not contain a browser-supplied origin or arbitrary
-raw URL. Capture the evidenceId only from that server-composed URL into a local
-variable. Keep the issue URL private until cleanup; never add a smoke-test
-comment. Do not invent any identity.
-
-Enter the actual values only into the private shell. The request ID and
-repository come from the 201 receipt (the request ID may instead come from the
-marker); the evidence ID comes from the server URL:
-
-    read -r REQUEST_ID
-    read -r EVIDENCE_ID
-    read -r REPOSITORY_OWNER
-    read -r REPOSITORY_NAME
+Expect a success notification linking to `work:<id>`. Open that native Work
+item and confirm its description contains the server-composed Screenshot link
+and sanitized source context. Capture the Work ID and evidence ID privately.
+The evidence object's request binding contains the request ID needed for the
+revocation audit; obtain it through the approved private storage metadata
+inspection in section 4. Record the selected repository owner and name as
+well. Do not infer or invent any identifier.
 
 ## 2. Check submission authorization
 
-From a private browser window with no LCARS session, or with a session that is
-not the allowlisted administrator, send a harmless request to the submission
-route:
-
-```
-curl -sS -D "$TMP_DIR/unauth-submit.headers" \
-  -o "$TMP_DIR/unauth-submit.body" \
-  -X POST "$BASE_URL/api/quick-task/v1"
-```
-
-Expect HTTP 401 and the JSON error {"error":"Unauthorized"}. The auth check
-runs before form parsing, so this probe must not create an issue, claim,
-evidence object, or GitHub write. Do not use a real request or evidence ID in
-this probe.
+Use a real signed-in test principal that intentionally lacks `work.operator`.
+Confirm **New work** is absent. If testing the server action directly through a
+local or staging harness, expect `UNAUTHORIZED` with `work.operator scope
+required`, and confirm no Work item or evidence object was created. Do not
+probe production by fabricating action payloads or session material.
 
 ## 3. Retrieve the evidence without a session
 
 Use the evidence UUID already captured in the private shell from the
-server-composed issue link. Do not paste the link or UUID into GitHub comments
+server-composed Work description. Do not paste the link or UUID into GitHub comments
 or shared logs. Use the generation returned by the private storage metadata
 check in the next section; do not guess it.
 
@@ -238,9 +187,7 @@ tombstone before attempting the object read.
 
 ## 5. Clean up
 
-- Close the disposable Quick Task issue in GitHub. Do not add a comment with
-  the evidence URL, evidence ID, request ID, screenshot, token, or raw test
-  output.
+- Cancel the disposable native Work item through the supported Work control. Do not publish the evidence URL, evidence ID, request ID, screenshot, token, or raw test output.
 - Remove the local temporary directory and any browser downloads. The trap
   above removes the files when the shell exits; verify no evidence image or
   response file remains in the checkout.
@@ -252,27 +199,19 @@ tombstone before attempting the object read.
   failure, include statuses and the redacted tool result, never the bearer
   material.
 
-The smoke is green only when the admin-only 201 submission, the
-unauthenticated bearer retrieval, the HEAD contract, the 401 submission guard,
-the dry-run binding audit, and the tombstone-plus-generation-matched
-revocation all pass.
+The smoke is green only when authorized native creation, the no-grant guard, unauthenticated bearer retrieval, the HEAD contract, the dry-run binding audit, and tombstone-plus-generation-matched revocation all pass.
 
 ## Source evidence
 
-The route and storage behavior documented here is covered by the current
-implementation and tests:
-
-- apps/console/src/app/api/quick-task/v1/route.ts and route.test.ts define
-  administrator authorization, the exact multipart fields, 201 receipt, and
-  401 behavior.
-- apps/console/src/app/api/quick-task-evidence/v1/[evidenceId]/route.ts and
-  route.test.ts define public GET/HEAD, fixed success headers, and the
-  identical empty 404 response for malformed, absent, revoked, and
-  unavailable IDs.
-- apps/console/src/lib/quick-task-evidence-contract.ts defines the limits,
+- `apps/console/src/app/quick-task-button.tsx` and
+  `apps/console/src/app/work/actions.ts` define the single native creation flow,
+  stable retry identifiers, and evidence lifecycle integration.
+- `apps/console/src/lib/work-router.ts` enforces the `work.operator`, pipeline,
+  and repository capabilities for canonical creation.
+- `apps/console/src/app/api/quick-task-evidence/v1/[evidenceId]/route.ts` and its
+  tests define stable public GET/HEAD behavior for current and historical
+  evidence.
+- `apps/console/src/lib/quick-task-evidence-contract.ts` defines evidence limits,
   object/tombstone prefixes, and response headers.
-- tools/quick-task-evidence-revoke.mjs and its test define the read-only
-  audit default, exact-binding checks, permanent tombstone, and
-  generation-matched deletion order.
-- docs/quick-task-evidence.md is the frozen contract for privacy, lifecycle,
-  and deployment boundaries.
+- `tools/quick-task-evidence-revoke.mjs` and its test define the binding audit,
+  permanent tombstone, and generation-matched deletion order.
