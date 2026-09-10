@@ -1,25 +1,22 @@
 # Verify — Definition of Done
 
-The core gate is executable in [the verification plan](../../../../.repo/verify.json),
-consumed by `.github/workflows/ci.yml`'s required Verify result:
+The full gate — this is what `.github/workflows/ci.yml`'s `Verify` job
+(a required check gating every merge) authoritatively runs on its own
+configured runner (`lcars-ci` for trusted work, GitHub-hosted for fork PRs):
 
 ```bash
-pnpm exec repo-verify --base origin/main       # explain
-pnpm exec repo-verify --base origin/main --run # execute
+pnpm check:dependencies    # lockfile / workspace-mandate integrity
+pnpm format:check          # prettier, nx format:check --all
+pnpm lint                  # nx run-many -t lint --all
+pnpm lint:circular          # madge circular-dependency check
+./tools/nx run-many -t test typecheck build test-race --all
 ```
 
-The plan includes dependency and contract checks, formatting, lint, circular
-dependencies, and the workspace test/typecheck/build/race gate. It does not
-replace CI's Terraform, runner-tooling, emulator, or E2E integration boundaries;
-those remain in the workflow with their required environments. `pnpm verify`
-is a legacy subset, not the full CI gate. No checks are dropped for Markdown.
-
-Local selection includes uncommitted/untracked changes; CI passes immutable
-refs. Select one check with `--check <id>`. Shared documentation contracts
-validate changed literal file links, skill frontmatter, and the generated
-[interface inventory](../../../../docs/interfaces.md). Refresh it with
-`pnpm exec repo-docs generate --output docs/interfaces.md`. Heading anchors,
-web URLs, and live deployment status are not inferred.
+The composite `pnpm verify` runs formatting, lint, circular-dependency checks,
+tests, typecheck, and build. It does not include `check:dependencies`,
+`test-race`, or the workflow's Terraform/tooling checks; do not call it the
+complete CI gate. Consult `.github/workflows/ci.yml` for those additional
+boundaries and use CI delegation below.
 
 ## CI delegation
 
