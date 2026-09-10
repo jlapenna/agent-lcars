@@ -302,14 +302,14 @@ const AgentsView = withConsolePageShell(
       ),
       utilities: (
         <>
-          <div className="agents-utilities agents-utilities--desktop">
+          <div className="agents-utilities agents-utilities--desktop console-utilities--desktop">
             <ConsoleCommandUtilities
               watchedRepos={watchedRepos}
               initialRepoKey={repoFilterKey}
               refreshesAuthoritativeQueue
             />
           </div>
-          <div className="agents-utilities agents-utilities--mobile">
+          <div className="agents-utilities agents-utilities--mobile console-utilities--mobile">
             <ConsoleCommandUtilities
               watchedRepos={watchedRepos}
               initialRepoKey={repoFilterKey}

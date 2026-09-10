@@ -88,13 +88,13 @@ const WorkView = withConsolePageShell(
     // (#1810).
     utilities: (
       <>
-        <div className="work-utilities work-utilities--desktop">
+        <div className="work-utilities work-utilities--desktop console-utilities--desktop">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             includeQuickTask={canQuickTask}
           />
         </div>
-        <div className="work-utilities work-utilities--mobile">
+        <div className="work-utilities work-utilities--mobile console-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             includeNavigation

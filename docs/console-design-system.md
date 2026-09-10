@@ -161,6 +161,32 @@ task's submission paths (`createQuickTask` → `requireAdmin()`, and
 `/api/quick-task/v1`) reject a `work.operator` who would otherwise use the
 page fine.
 
+## Shared header and body layout
+
+`ConsoleAppShell` owns the transition from header to content. The body has a
+16px vertical gutter on every route, including detail and message states. On
+desktop its leading edge aligns with the title and navigation, using the same
+frame inset token. Phones use 16px side insets to preserve reading width. Do
+not cancel these with negative margins or route-specific header offsets.
+
+At 768px and above the header has two rows: title and global actions first,
+then the destination rail. The frame reserves clearance below the elbow arm
+and grows with the rail if navigation wraps. Never restore a fixed desktop
+height or place navigation beside the title: long session titles and refresh
+metadata must not squeeze each other out of the frame.
+
+Below 768px the title and compact actions share one row; navigation is in the
+utility menu. Routes without utilities keep their active destination link.
+Utility variants use `console-utilities--desktop` and
+`console-utilities--mobile`; their visibility and horizontal alignment belong
+to the shared slot, never a list of route names. Tablet widths use compact
+utilities while retaining the full rail. Local item actions stay in the body
+or the existing overflow menu.
+
+The required E2E lane consumes `mobile-header-every-page.spec.ts`, which checks
+actual control bounds, elbow clearance, body inset, and document overflow
+across destinations and detail views at phone, tablet, and desktop widths.
+
 ## The trap: variables you cannot win
 
 `MantineProvider` generates a `<style>` block from the theme **at runtime** and

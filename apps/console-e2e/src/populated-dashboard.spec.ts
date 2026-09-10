@@ -552,7 +552,12 @@ test.describe('responsive decision inbox', () => {
       name: 'Search the Inbox',
     });
     const searchBounds = await search.boundingBox();
-    expect(searchBounds?.width).toBeGreaterThan(340);
+    const workspaceBounds = await workspace.boundingBox();
+    expect(workspaceBounds).not.toBeNull();
+    // Search fills the inset workspace, rather than consuming the page gutter.
+    expect(searchBounds?.width).toBeGreaterThan(
+      (workspaceBounds?.width ?? 0) - 32,
+    );
     await expect(
       workspace.getByRole('button', { name: 'Filter and sort' }),
     ).toHaveCSS('min-height', '44px');
@@ -760,9 +765,12 @@ test.describe('responsive agent operations', () => {
       const sectionBounds = await Promise.all(
         sections.map(async (section) => section.boundingBox()),
       );
+      const workspaceBounds = await workspace.boundingBox();
+      expect(workspaceBounds).not.toBeNull();
       expect(
         sectionBounds.every(
-          (bounds) => (bounds?.width ?? 0) >= viewport.width - 10,
+          (bounds) =>
+            (bounds?.width ?? 0) >= (workspaceBounds?.width ?? 0) - 10,
         ),
       ).toBe(true);
       const sectionTops = sectionBounds.map((bounds) => bounds?.y ?? -1);

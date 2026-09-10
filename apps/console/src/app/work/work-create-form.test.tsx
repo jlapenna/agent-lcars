@@ -1,6 +1,7 @@
 import { MantineProvider } from '@mantine/core';
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -23,6 +24,10 @@ import { WorkCreateForm } from './work-create-form';
 // later. Registered before any other afterAll so it observes the file's
 // real end state (Vitest runs afterAll in reverse registration order).
 afterAll(() => {
+  // The full suite can reach this file's afterAll before Testing Library's
+  // auto-cleanup hook has unmounted the final queued form. Unmount explicitly
+  // so its effect cancels the owned retry before the file-level leak audit.
+  cleanup();
   const leaked = sweepArmedTimers();
   // Thrown rather than `expect`ed: an assertion out here is not inside a
   // test block (vitest/no-standalone-expect), and a throw from afterAll

@@ -1,10 +1,16 @@
 import { expect, type Locator } from '@playwright/test';
 
-/** The desktop Bridge header is fixed so route copy cannot shift its workspace. */
+/** The frame grows to contain its title/actions and destination rows. */
 export async function expectDesktopBridgeHeader(header: Locator) {
   await expect(header).toBeVisible();
-  await expect(header).toHaveCSS('height', '80px');
-  expect((await header.boundingBox())?.height).toBe(80);
+  const boxes = await header.evaluate((element) => {
+    const header = element.getBoundingClientRect();
+    const rail = element.querySelector('.lcars-nav');
+    if (!rail) throw new Error('LCARS destination rail is missing');
+    const nav = rail.getBoundingClientRect();
+    return { bottom: header.bottom, navBottom: nav.bottom };
+  });
+  expect(boxes.bottom - boxes.navBottom).toBeGreaterThanOrEqual(12);
 }
 
 /** The desktop title and destination rail form one continuous LCARS assembly. */
@@ -23,7 +29,6 @@ export async function expectDesktopLcarsElbow(header: Locator) {
     const titleBayBounds = title
       .closest('.lcars-header')
       ?.getBoundingClientRect();
-    const commandRowBounds = commandRow.getBoundingClientRect();
     if (!titleBayBounds) throw new Error('LCARS title bay is missing');
     const titleBounds = title.getBoundingClientRect();
     const navBounds = nav.getBoundingClientRect();
@@ -70,8 +75,6 @@ export async function expectDesktopLcarsElbow(header: Locator) {
       navRight: navBounds.right,
       headerRight: headerBounds.right,
       headerTop: headerBounds.top,
-      commandRowLeft: commandRowBounds.left,
-      commandRowRight: commandRowBounds.right,
       innerTop: headerBounds.top + armWidth,
       innerLeft: headerBounds.left + railWidth,
       commandRowBackground: getComputedStyle(commandRow).backgroundImage,
@@ -89,15 +92,12 @@ export async function expectDesktopLcarsElbow(header: Locator) {
   expect(layout.titleTop).toBeGreaterThanOrEqual(layout.innerTop);
   expect(layout.titleLeft).toBeGreaterThan(layout.innerLeft);
   expect(layout.elbowRight).toBeGreaterThanOrEqual(layout.titleRight);
-  expect(layout.titleBayRight).toBe(layout.commandRowLeft);
   expect(layout.titleBayWidth).toBeGreaterThan(272);
-  expect(layout.commandRowRight).toBe(layout.headerRight);
-  expect(layout.navTop).toBe(layout.headerTop);
+  expect(layout.navTop).toBeGreaterThan(layout.titleTop);
   expect(layout.navLeft).toBeGreaterThan(layout.innerLeft);
   expect(layout.elbowRight).toBeGreaterThanOrEqual(layout.navRight);
   expect(layout.elbowRight).toBe(layout.headerRight);
-  expect(layout.commandRowBackground).toContain('linear-gradient');
-  expect(layout.commandRowBackground).not.toContain('none');
+  expect(layout.commandRowBackground).toBe('none');
   expect(layout.modules).toHaveLength(7);
   expect(
     new Set(layout.modules.map((module) => module.width)).size,

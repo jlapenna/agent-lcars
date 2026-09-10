@@ -18,7 +18,11 @@ const TABLET_VIEWPORT = { width: 768, height: 1024 } as const;
    used a fixed per-destination width table (#1830). The phone and tablet
    cases above never saw it, and neither did the 1280px default viewport: the
    bug lived in the gap between them. */
-const NARROW_DESKTOP_VIEWPORT = { width: 1024, height: 800 } as const;
+const DESKTOP_VIEWPORTS = [
+  { width: 768, height: 1024 },
+  { width: 1024, height: 800 },
+  { width: 1280, height: 900 },
+] as const;
 /* The console's destinations, in rail order (see CONSOLE_DESTINATIONS in
    console-navigation.ts). Spelled out here the same way
    lcars-interaction-states.spec.ts does rather than imported, so the e2e
@@ -81,6 +85,60 @@ async function expectOneSharedMobileHeader(page: Page, current: string) {
   await expect(
     header.locator('nav[aria-label="Console sections"]'),
   ).toHaveCount(1);
+
+  // Protect the reported overlap in the shared shell on every route. These
+  // bounds exercise the browser's actual layout, including nested utilities.
+  const geometry = await header.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const arm = parseFloat(
+      getComputedStyle(element).getPropertyValue('--lcars-elbow-arm'),
+    );
+    const controls = Array.from(element.querySelectorAll('a, button'))
+      .map((control) => control.getBoundingClientRect())
+      .filter((box) => box.width > 0 && box.height > 0);
+    return {
+      outsideFrame: controls.some(
+        (box) =>
+          box.top < bounds.top + arm + 4 || box.bottom > bounds.bottom - 4,
+      ),
+      overlapping: controls.some((box, index) =>
+        controls
+          .slice(index + 1)
+          .some(
+            (other) =>
+              box.left < other.right &&
+              box.right > other.left &&
+              box.top < other.bottom &&
+              box.bottom > other.top,
+          ),
+      ),
+    };
+  });
+  expect(geometry.outsideFrame).toBe(false);
+  expect(geometry.overlapping).toBe(false);
+  await expect(page.locator('.console-page-content')).toHaveCSS(
+    'padding-top',
+    '16px',
+  );
+
+  if ((page.viewportSize()?.width ?? 0) >= 768) {
+    const alignment = await page.evaluate(() => {
+      const content = document.querySelector('.console-page-content');
+      const title = document.querySelector(
+        '.console-header:not([data-streaming-fallback]) .lcars-header-title',
+      );
+      if (!content || !title) throw new Error('Shared shell is missing');
+      return {
+        contentStart:
+          content.getBoundingClientRect().left +
+          parseFloat(getComputedStyle(content).paddingLeft),
+        titleStart: title.getBoundingClientRect().left,
+      };
+    });
+    expect(
+      Math.abs(alignment.contentStart - alignment.titleStart),
+    ).toBeLessThanOrEqual(1);
+  }
 
   const widths = await page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
@@ -196,25 +254,27 @@ test.describe('shared mobile header on every console page and view @mobile-layou
     expect(Math.abs(refreshBox!.y - overflowBox!.y)).toBeLessThanOrEqual(1);
   });
 
-  for (const view of AUTHENTICATED_VIEWS) {
-    test(`fits ${view.name} in a ${NARROW_DESKTOP_VIEWPORT.width}px viewport`, async ({
-      page,
-    }) => {
-      await page.setViewportSize(NARROW_DESKTOP_VIEWPORT);
-      await setE2eAdminUser(page);
-      await page.goto(view.path);
-      await expectOneSharedMobileHeader(page, view.current);
+  for (const viewport of DESKTOP_VIEWPORTS) {
+    for (const view of AUTHENTICATED_VIEWS) {
+      test(`fits ${view.name} in a ${viewport.width}px viewport`, async ({
+        page,
+      }) => {
+        await page.setViewportSize(viewport);
+        await setE2eAdminUser(page);
+        await page.goto(view.path);
+        await expectOneSharedMobileHeader(page, view.current);
 
-      // Every destination stays reachable on the rail at this width; nothing
-      // is dropped from it, and nothing is pushed off the side of the
-      // document to make room. `expectOneSharedMobileHeader` above asserts
-      // the document width itself.
-      const rail = page.locator('nav[aria-label="Console sections"]');
-      for (const name of CONSOLE_DESTINATIONS) {
-        await expect(
-          rail.getByRole('link', { name, exact: true }),
-        ).toBeVisible();
-      }
-    });
+        // Every destination stays reachable on the rail at this width; nothing
+        // is dropped from it, and nothing is pushed off the side of the
+        // document to make room. `expectOneSharedMobileHeader` above asserts
+        // the document width itself.
+        const rail = page.locator('nav[aria-label="Console sections"]');
+        for (const name of CONSOLE_DESTINATIONS) {
+          await expect(
+            rail.getByRole('link', { name, exact: true }),
+          ).toBeVisible();
+        }
+      });
+    }
   }
 });

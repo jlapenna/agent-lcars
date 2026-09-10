@@ -127,10 +127,10 @@ const CostsPageView = withConsolePageShell(
     ),
     utilities: (
       <>
-        <div className="costs-utilities costs-utilities--desktop">
+        <div className="costs-utilities costs-utilities--desktop console-utilities--desktop">
           <ConsoleCommandUtilities watchedRepos={watchedRepos} />
         </div>
-        <div className="costs-utilities costs-utilities--mobile">
+        <div className="costs-utilities costs-utilities--mobile console-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             includeNavigation
