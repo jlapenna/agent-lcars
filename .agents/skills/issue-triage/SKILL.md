@@ -80,10 +80,10 @@ For authenticated verification, try credentials already available through the
 supported private local saved-session backend and the existing Secret
 Manager-backed verifier session before asking someone to sign in. Reusing an
 existing credential does not authorize minting a session or granting access.
-Treat unavailable credentials as an access gate. A console admin session, a
-non-admin user session, and LCARS Work control-plane authorization
-(`work.operator`) are orthogonal forms of access; proving one does not prove
-either of the others.
+Treat unavailable credentials as an access gate. Verify the required identity
+and scopes directly: console-admin authentication does not imply Work's
+`work.operator` grant, and an admin session does not prove non-admin-user
+behavior.
 
 When external support or a human-only action is required, existing approval to
 contact that party persists for the same scoped request. Prepare the complete,
