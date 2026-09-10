@@ -122,6 +122,25 @@ describe('New work creation', () => {
     await waitFor(() =>
       expect(createItemWithEvidence).toHaveBeenCalledTimes(1),
     );
+    const submitted = (createItemWithEvidence as Mock).mock
+      .calls[0][0] as FormData;
+    expect(submitted.get('evidence')).toBe(file);
+    const rawIntent = submitted.get('intent');
+    expect(typeof rawIntent).toBe('string');
+    const wireIntent = JSON.parse(rawIntent as string) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(wireIntent).sort()).toEqual([
+      'description',
+      'evidenceId',
+      'pipeline',
+      'repository',
+      'requestId',
+      'source',
+      'workId',
+    ]);
+    expect(wireIntent).not.toHaveProperty('file');
     expect(createItem).not.toHaveBeenCalled();
   });
 });

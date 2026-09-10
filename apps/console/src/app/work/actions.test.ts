@@ -133,14 +133,18 @@ describe('createItemWithEvidence', () => {
     expect(mocks.rollback).not.toHaveBeenCalled();
   });
 
-  it('rolls back a newly prepared generation after a definitive precommit conflict', async () => {
-    const prepared = { generation: '7', createdByCall: true, binding: {} };
-    mocks.prepare.mockResolvedValue(prepared);
+  it('retains a generation when a concurrent exact-binding retry wins before a conflict', async () => {
+    mocks.prepare.mockResolvedValue({
+      generation: '7',
+      createdByCall: true,
+      binding: {},
+    });
     mocks.create.mockResolvedValue([
       { code: 'CONFLICT', message: 'different spec' },
       undefined,
     ]);
     await createItemWithEvidence(form());
-    expect(mocks.rollback).toHaveBeenCalledWith(prepared);
+    expect(mocks.prepare).toHaveBeenCalled();
+    expect(mocks.rollback).not.toHaveBeenCalled();
   });
 });

@@ -246,11 +246,11 @@ export function QuickTaskButton({
     try {
       const [error] = request.file
         ? await (async () => {
-            const evidenceFile = request.file;
-            if (!evidenceFile) throw new Error('Work evidence is unavailable');
+            const { file, ...intent } = request;
+            if (!file) throw new Error('Work evidence is unavailable');
             const form = new FormData();
-            form.set('intent', JSON.stringify(request));
-            form.set('evidence', evidenceFile);
+            form.set('intent', JSON.stringify(intent));
+            form.set('evidence', file);
             return createItemWithEvidence(form);
           })()
         : await (async () => {

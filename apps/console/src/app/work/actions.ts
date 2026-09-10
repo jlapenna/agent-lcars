@@ -148,7 +148,7 @@ export async function createItemWithEvidence(form: FormData) {
     bytes: new Uint8Array(await file.arrayBuffer()),
     createdAt: intent.source.capturedAt,
   });
-  const evidence = await lifecycle.prepare({
+  await lifecycle.prepare({
     intent,
     repositoryId: repo.id,
     visibility,
@@ -157,13 +157,10 @@ export async function createItemWithEvidence(form: FormData) {
     id: intent.workId,
     spec,
   });
-  if (
-    result[0] &&
-    (result[0].code === 'FORBIDDEN' || result[0].code === 'CONFLICT') &&
-    evidence
-  ) {
-    await lifecycle.rollbackDefinitiveCreateFailure(evidence);
-  }
+  // Once uploaded, an exact-binding concurrent retry can recover this same
+  // generation and successfully mint the Work item first. No result from the
+  // later create call proves the generation is now unreferenced, including a
+  // spec conflict, so native evidence is retained for retry/reconciliation.
   return result;
 }
 export async function cancelItem(input: Parameters<typeof cancelItemFn>[0]) {
