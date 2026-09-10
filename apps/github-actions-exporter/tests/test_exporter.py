@@ -858,13 +858,39 @@ class GitHubActionsExporterTests(unittest.TestCase):
             started_at=None,
             completed_at=None,
         )
+        self.database.upsert_run(repository, first_run)
+        self.database.upsert_jobs(
+            repository,
+            first_run,
+            [
+                workflow_job(
+                    id=101,
+                    status="queued",
+                    conclusion=None,
+                    started_at=None,
+                    completed_at=None,
+                )
+            ],
+            [
+                {
+                    "group_name": "ci-main",
+                    "group_members": [{"job_id": 101}],
+                }
+            ],
+        )
         api = Mock()
         api.list_runs.return_value = [first_run, second_run]
         api.list_jobs.side_effect = [[running_job], [queued_job]]
         response = Mock(status_code=403, headers={})
-        api.list_concurrency_groups.side_effect = exporter.GitHubRequestError(
-            "concurrency_groups", response
-        )
+        error = exporter.GitHubRequestError("concurrency_groups", response)
+        recovered_groups = [
+            {"group_name": "ci-main", "group_members": [{"job_id": 101}]}
+        ]
+        api.list_concurrency_groups.side_effect = [
+            error,
+            recovered_groups,
+            recovered_groups,
+        ]
         state = FakeState()
         state.poll_errors = Mock()
         poller = exporter.Poller(
@@ -874,7 +900,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
             state,
         )
 
-        with self.assertLogs(exporter.LOGGER, level="WARNING") as logs:
+        with (
+            patch.object(exporter.time, "monotonic", side_effect=[100, 100]),
+            self.assertLogs(exporter.LOGGER, level="WARNING") as logs,
+        ):
             poller.refresh_repository(repository)
 
         self.assertTrue(self.database.backfill_complete(repository))
@@ -894,7 +923,53 @@ class GitHubActionsExporterTests(unittest.TestCase):
             repository, "concurrency_groups"
         )
         state.poll_errors.labels.return_value.inc.assert_called_once_with()
-        self.assertIn("core job state retained", "\n".join(logs.output))
+        self.assertIn(
+            "core job state retained with unknown concurrency metadata",
+            "\n".join(logs.output),
+        )
+
+        api.list_jobs.side_effect = [[running_job], [queued_job]]
+        with patch.object(exporter.time, "monotonic", side_effect=[401, 401]):
+            poller.refresh_repository(repository)
+
+        self.assertEqual(api.list_concurrency_groups.call_count, 3)
+        self.assertEqual(
+            self.database.rows(
+                "SELECT concurrency_group FROM jobs WHERE repository = ? AND id = ?",
+                (repository, running_job["id"]),
+            )[0]["concurrency_group"],
+            "ci-main",
+        )
+
+    def test_optional_metadata_rate_limit_still_aborts_core_refresh(self):
+        repository = "jlapenna/agent-lcars"
+        first_run = workflow_run(id=1, status="in_progress", conclusion=None)
+        second_run = workflow_run(id=2, status="in_progress", conclusion=None)
+        api = Mock()
+        api.list_runs.return_value = [first_run, second_run]
+        api.list_jobs.return_value = [workflow_job()]
+        response = Mock(
+            status_code=429,
+            headers={"x-ratelimit-remaining": "0", "x-github-request-id": "rate"},
+        )
+        error = exporter.GitHubRequestError("concurrency_groups", response)
+        api.list_concurrency_groups.side_effect = error
+        state = FakeState()
+        state.poll_errors = Mock()
+        poller = exporter.Poller(
+            exporter.Config(token="test", repositories=(repository,)),
+            self.database,
+            api,
+            state,
+        )
+
+        with self.assertRaises(exporter.GitHubRequestError) as raised:
+            poller.refresh_repository(repository)
+
+        self.assertIs(raised.exception, error)
+        self.assertFalse(self.database.backfill_complete(repository))
+        api.list_jobs.assert_called_once_with(repository, 1)
+        state.poll_errors.labels.assert_not_called()
 
     def test_unexpected_optional_metadata_bug_still_fails_refresh(self):
         repository = "jlapenna/agent-lcars"
