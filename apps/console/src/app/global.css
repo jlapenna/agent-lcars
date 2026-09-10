@@ -1970,6 +1970,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     min-height: 44px;
   }
 
+  /* Run metadata can exceed the usable line at 320px once both destination
+     links are present. Move the links to their own full-width row rather than
+     letting the trailing session target escape the viewport. */
+  .agents-workspace .agent-run-meta__actions {
+    flex-basis: 100%;
+    margin-left: 0 !important;
+  }
+
   .mobile-history-disclosure:not([data-expanded])
     [data-mobile-history-extra='true'] {
     display: none;

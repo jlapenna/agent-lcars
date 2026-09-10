@@ -28,6 +28,7 @@ export function ConsolePageShell({
     <Container
       size="xl"
       py="xl"
+      px={0}
       className={['console-page-shell', className].filter(Boolean).join(' ')}
       data-route={route}
       data-accent={accent}

@@ -392,7 +392,7 @@ export function LiveRunRow({
         <PipelineBadge pipeline={run.pipeline} />
         <RepoBadge repo={run.repo} />
       </Group>
-      <Group gap={6} wrap="nowrap">
+      <Group gap={6} wrap="wrap" className="agent-run-meta">
         <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
           {run.status === 'running' ? (
             <>
@@ -408,6 +408,7 @@ export function LiveRunRow({
         <Group
           gap={6}
           wrap="nowrap"
+          className="agent-run-meta__actions"
           style={{ marginLeft: 'auto', flexShrink: 0 }}
         >
           <Anchor
@@ -667,7 +668,7 @@ export function FinishedRunRow({
         <PipelineBadge pipeline={run.pipeline} />
         <RepoBadge repo={run.repo} />
       </Group>
-      <Group gap="xs" wrap="nowrap">
+      <Group gap="xs" wrap="wrap" className="agent-run-meta">
         <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
           {formatDuration(run.elapsedSeconds)} · finished{' '}
           <RelativeTime iso={run.updatedAt} />
@@ -675,6 +676,7 @@ export function FinishedRunRow({
         <Group
           gap={6}
           wrap="nowrap"
+          className="agent-run-meta__actions"
           style={{ marginLeft: 'auto', flexShrink: 0 }}
         >
           <Anchor
