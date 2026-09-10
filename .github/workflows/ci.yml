@@ -29,8 +29,6 @@ jobs:
     #
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-ci' }}
     timeout-minutes: 30
-    env:
-      VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
 
     steps:
       - uses: actions/checkout@v7
@@ -237,23 +235,20 @@ jobs:
           enable-cache: true
           cache-dependency-glob: apps/github-actions-exporter/requirements.lock
 
-      - name: Check generated interfaces and documentation
-        run: pnpm exec repo-verify --base "$VERIFY_BASE" --head "$GITHUB_SHA" --check docs --run
-
       - name: Check dependency integrity
-        run: pnpm exec repo-verify --base "$VERIFY_BASE" --head "$GITHUB_SHA" --check dependencies --run
+        run: pnpm check:dependencies
 
       - name: Check contracts
-        run: pnpm exec repo-verify --base "$VERIFY_BASE" --head "$GITHUB_SHA" --check contracts --run
+        run: pnpm check:contracts
 
       - name: Check formatting
-        run: pnpm exec repo-verify --base "$VERIFY_BASE" --head "$GITHUB_SHA" --check format --run
+        run: pnpm format:check
 
       - name: Lint
-        run: pnpm exec repo-verify --base "$VERIFY_BASE" --head "$GITHUB_SHA" --check lint --run
+        run: pnpm lint
 
       - name: Check circular dependencies
-        run: pnpm exec repo-verify --base "$VERIFY_BASE" --head "$GITHUB_SHA" --check circular --run
+        run: pnpm lint:circular
 
       - name: Test, typecheck, and build
         env:
@@ -267,7 +262,7 @@ jobs:
           # CGO_ENABLED='0' even now that gcc is actually installed).
           # Force it rather than trust the cached auto-detection.
           CGO_ENABLED: '1'
-        run: pnpm exec repo-verify --base "$VERIFY_BASE" --head "$GITHUB_SHA" --check workspace --run
+        run: ./tools/nx run-many -t test typecheck build test-race --all --parallel=2
 
       # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
       # emulator; ubuntu-latest (the fork-PR carve-out above) still
