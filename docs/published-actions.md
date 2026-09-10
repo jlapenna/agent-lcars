@@ -27,12 +27,12 @@ their operating constraints.
 
 ## Published reusable workflows
 
-| Workflow                       | Purpose                                          |
-| ------------------------------ | ------------------------------------------------ |
-| `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token.   |
-| `agent-automerge-reusable.yml` | Arm auto-merge and restore the post-merge chain. |
-| `repo-validation.yml`          | Run actionlint for a caller repository.          |
-| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job.   |
+| Workflow                       | Purpose                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------- |
+| `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token.                            |
+| `agent-automerge-reusable.yml` | Arm auto-merge and restore the post-merge chain.                          |
+| `repo-validation.yml`          | Run workflow and adopted documentation contracts for a caller repository. |
+| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job.                            |
 
 Hosted provider workflows are retired; providers execute through the Console
 QueueExecutor instead.

@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "inventory": "docs/interfaces.md",
+  "checks": [
+    {
+      "id": "dependencies",
+      "command": ["pnpm", "check:dependencies"]
+    },
+    {
+      "id": "contracts",
+      "command": ["pnpm", "check:contracts"]
+    },
+    {
+      "id": "format",
+      "command": ["pnpm", "format:check"]
+    },
+    {
+      "id": "lint",
+      "command": ["pnpm", "lint"]
+    },
+    {
+      "id": "circular",
+      "command": ["pnpm", "lint:circular"]
+    },
+    {
+      "id": "workspace",
+      "command": [
+        "./tools/nx",
+        "run-many",
+        "-t",
+        "test",
+        "typecheck",
+        "build",
+        "test-race",
+        "--all",
+        "--parallel=2"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--max-old-space-size=6144",
+        "NX_MAX_PARALLEL": "2",
+        "CGO_ENABLED": "1"
+      }
+    }
+  ]
+}
