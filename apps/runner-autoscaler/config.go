@@ -89,6 +89,9 @@ type Config struct {
 	// straight into the hard CPU/PSI pressure gate and a cooldown that then
 	// refuses every OTHER lane, while the host sits with gigabytes free.
 	RunnerCPUs float64
+	// CPUSafetyMargin is the fraction of Docker-reported host CPUs kept
+	// outside aggregate runner CPU reservations. Zero selects the default.
+	CPUSafetyMargin float64
 	// InferenceMetricsURLs is a per-host URL to probe for inference load
 	// (agent-lcars#1726, generalized from an earlier Spark-specific single
 	// global probe), keyed by Docker host name. Both exposition shapes are
@@ -186,6 +189,9 @@ func (c *Config) defaults() {
 	if c.MemorySafetyMargin == 0 {
 		c.MemorySafetyMargin = defaultMemorySafetyMargin
 	}
+	if c.CPUSafetyMargin == 0 {
+		c.CPUSafetyMargin = defaultCPUSafetyMargin
+	}
 }
 
 // isDigestImageReference rejects Docker's immutable @digest reference form.
@@ -255,6 +261,9 @@ func (c *Config) Validate() error {
 	}
 	if math.IsNaN(c.MemorySafetyMargin) || math.IsInf(c.MemorySafetyMargin, 0) || c.MemorySafetyMargin <= 0 || c.MemorySafetyMargin >= 1 {
 		return fmt.Errorf("memory safety margin must be greater than 0 and less than 1")
+	}
+	if math.IsNaN(c.CPUSafetyMargin) || math.IsInf(c.CPUSafetyMargin, 0) || c.CPUSafetyMargin <= 0 || c.CPUSafetyMargin >= 1 {
+		return fmt.Errorf("cpu safety margin must be greater than 0 and less than 1")
 	}
 	return nil
 }

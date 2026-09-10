@@ -62,6 +62,9 @@ func TestLoadOrchestratorConfig(t *testing.T) {
 	if got := resolved.Raw.Fleet.Placement.MemorySafetyMargin; got != defaultMemorySafetyMargin {
 		t.Fatalf("memory safety margin = %v, want default %v", got, defaultMemorySafetyMargin)
 	}
+	if got := resolved.Raw.Fleet.Placement.CPUSafetyMargin; got != defaultCPUSafetyMargin {
+		t.Fatalf("CPU safety margin = %v, want default %v", got, defaultCPUSafetyMargin)
+	}
 	// agent-lcars#1728: host_metrics_url_template has no fleet-named
 	// default; unset resolves to a domain-free template.
 	if got, want := resolved.Raw.Fleet.Placement.HostMetricsURLTemplate, "http://%s:9100/metrics"; got != want {
@@ -1435,6 +1438,25 @@ func TestOrchestratorConfigRejectsNegativeRunnerCPUs(t *testing.T) {
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "invalid runner_cpus") {
 		t.Fatalf("expected invalid runner_cpus error, got %v", err)
+	}
+}
+
+func TestOrchestratorConfigParsesCPUSafetyMargin(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    cpu_safety_margin: 0.25", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Raw.Fleet.Placement.CPUSafetyMargin; got != 0.25 {
+		t.Fatalf("CPUSafetyMargin = %v, want 0.25", got)
+	}
+}
+
+func TestOrchestratorConfigRejectsInvalidCPUSafetyMargin(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    cpu_safety_margin: 1", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "cpu_safety_margin") {
+		t.Fatalf("error = %v, want cpu_safety_margin complaint", err)
 	}
 }
 

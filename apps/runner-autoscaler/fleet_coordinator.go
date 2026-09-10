@@ -16,6 +16,7 @@ type FleetCoordinator struct {
 	maxRunners        int
 	reservations      map[string]int
 	reservedMemory    map[string]int64
+	reservedCPU       map[string]int64
 	startInFlight     map[string]bool
 	scaleSetDemand    map[string]schedulerDemand
 	priorities        map[string]int
@@ -91,6 +92,7 @@ type hostReservation struct {
 	fleet  *FleetCoordinator
 	host   string
 	memory int64
+	cpu    int64
 	// rung is the degradation-ladder rung pickHostLocked used to produce
 	// this reservation ("" for the normal declared-reservation path). See
 	// degradationRungObservedP95 / degradationRungFreeMemoryFloor
@@ -102,7 +104,7 @@ type hostReservation struct {
 func newFleetCoordinator(maxRunners int, limits map[string]int, weights, priorities map[string]int, order []string) *FleetCoordinator {
 	return &FleetCoordinator{
 		maxRunners:   maxRunners,
-		reservations: map[string]int{}, reservedMemory: map[string]int64{}, startInFlight: map[string]bool{},
+		reservations: map[string]int{}, reservedMemory: map[string]int64{}, reservedCPU: map[string]int64{}, startInFlight: map[string]bool{},
 		scaleSetDemand: map[string]schedulerDemand{}, priorities: priorities, lastFleetCounts: map[string]int{},
 		hostRunnerLimits: limits, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
 		hostRoles:   map[string]string{},
@@ -313,6 +315,7 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler, runnerNa
 
 	f.reservations[pick.host]++
 	f.reservedMemory[pick.host] += pick.reservedMemory
+	f.reservedCPU[pick.host] += pick.reservedCPU
 	f.startInFlight[pick.host] = true
 	demand := f.scaleSetDemand[scaleSet]
 	demand.reservations++
@@ -325,7 +328,7 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler, runnerNa
 		f.floorRunners[runnerName] = pick.host
 		placementDegradedActiveGauge.WithLabelValues(scaleSet, pick.host).Inc()
 	}
-	return &hostReservation{fleet: f, host: pick.host, memory: pick.reservedMemory, rung: pick.rung}, nil
+	return &hostReservation{fleet: f, host: pick.host, memory: pick.reservedMemory, cpu: pick.reservedCPU, rung: pick.rung}, nil
 }
 
 // protectedLaneWouldStarveLocked reports whether committing pick -- this
@@ -354,9 +357,11 @@ func (f *FleetCoordinator) protectedLaneWouldStarveLocked(ctx context.Context, p
 	}
 	f.reservations[pick.host]++
 	f.reservedMemory[pick.host] += pick.reservedMemory
+	f.reservedCPU[pick.host] += pick.reservedCPU
 	defer func() {
 		f.reservations[pick.host]--
 		f.reservedMemory[pick.host] -= pick.reservedMemory
+		f.reservedCPU[pick.host] -= pick.reservedCPU
 	}()
 	probe := protectedScaler.probeFleetHosts(ctx, f)
 	remaining := protectedScaler.laneAdmissibleSlotsOverHosts(f, probe, nil)
@@ -376,6 +381,12 @@ func (r *hostReservation) release(scaleSet string) {
 			r.fleet.reservedMemory[r.host] -= r.memory
 			if r.fleet.reservedMemory[r.host] < 0 {
 				r.fleet.reservedMemory[r.host] = 0
+			}
+		}
+		if r.cpu > 0 {
+			r.fleet.reservedCPU[r.host] -= r.cpu
+			if r.fleet.reservedCPU[r.host] < 0 {
+				r.fleet.reservedCPU[r.host] = 0
 			}
 		}
 		r.fleet.startInFlight[r.host] = false

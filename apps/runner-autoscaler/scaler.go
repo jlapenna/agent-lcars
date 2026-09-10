@@ -66,6 +66,9 @@ type Scaler struct {
 	// runnerNanoCPUs: Config.RunnerCPUs in Docker's NanoCPUs unit (1e9 per
 	// CPU). Zero means no quota (agent-lcars#1835).
 	runnerNanoCPUs int64
+	// cpuSafetyMargin is the fraction of host CPUs kept outside aggregate
+	// runner quota reservations.
+	cpuSafetyMargin float64
 	// runnerCgroupParent: see Config.RunnerCgroupParent. Empty disables the
 	// host-level runner slice (agent-lcars#1700). The controller only
 	// declares this slice's expected memory bound (published in
@@ -205,7 +208,10 @@ const (
 	runnerCompletionSettleGrace = 30 * time.Second
 )
 
-const defaultMemorySafetyMargin = 0.10
+const (
+	defaultMemorySafetyMargin = 0.10
+	defaultCPUSafetyMargin    = 0.10
+)
 
 func cleanRunnerExitIsSettling(state *container.State, now time.Time) bool {
 	if state == nil || state.Running || state.ExitCode != 0 {
@@ -327,6 +333,7 @@ type hostLoad struct {
 	swapPagesPerSec      float64
 	penalty              int
 	overloaded           bool
+	throttleBounded      bool
 	observedAt           time.Time
 }
 
@@ -374,8 +381,13 @@ func maxPenalty(current, next int) int {
 }
 
 func (a *Scaler) scoreHostLoad(host string, load hostLoad) hostLoad {
+	return a.scoreHostLoadForQuota(host, load, false)
+}
+
+func (a *Scaler) scoreHostLoadForQuota(host string, load hostLoad, throttleBounded bool) hostLoad {
 	p := a.policy()
 	load.penalty, load.overloaded = 0, false
+	load.throttleBounded = throttleBounded
 	band := func(value, soft, hard float64) {
 		switch {
 		case value >= hard:
@@ -386,14 +398,26 @@ func (a *Scaler) scoreHostLoad(host string, load hostLoad) hostLoad {
 	}
 	switch {
 	case load.normalizedLoad >= p.loadHard:
-		load.penalty, load.overloaded = 100, true
+		load.penalty = 100
+		if !throttleBounded {
+			load.penalty, load.overloaded = 100, true
+		}
 	case load.normalizedLoad >= p.loadBusy:
 		load.penalty = 10
 	case load.normalizedLoad >= p.loadSoft:
 		load.penalty = 2
 	}
 	band(load.cpuUtilization, p.cpuSoft, p.cpuHard)
-	band(load.cpuPressure, p.psiSoft, p.psiHard)
+	if throttleBounded {
+		switch {
+		case load.cpuPressure >= p.psiHard:
+			load.penalty = maxPenalty(load.penalty, 100)
+		case load.cpuPressure >= p.psiSoft:
+			load.penalty = maxPenalty(load.penalty, 10)
+		}
+	} else {
+		band(load.cpuPressure, p.psiSoft, p.psiHard)
+	}
 	band(load.memoryPressure, p.psiSoft, p.psiHard)
 	// Spark's unified LLM allocation makes generic available-memory ratios a
 	// poor admission signal; its dedicated inference/swap probe remains the
@@ -437,7 +461,7 @@ func (a *Scaler) scoreHostLoad(host string, load hostLoad) hostLoad {
 // probeHostLoad reads node_load1 and derives the logical CPU count from the
 // number of idle CPU series. It fails open: telemetry trouble must not turn a
 // healthy Docker host into a fleet outage.
-func (a *Scaler) probeHostLoad(ctx context.Context, host string) (hostLoad, error) {
+func (a *Scaler) probeHostLoad(ctx context.Context, host string, throttleBounded ...bool) (hostLoad, error) {
 	if a.hostMetricsURLTemplate == "" && !a.coordinator().metricsViaSSH[host] {
 		return hostLoad{}, nil
 	}
@@ -510,7 +534,7 @@ func (a *Scaler) probeHostLoad(ctx context.Context, host string) (hostLoad, erro
 		fleet.hostSamples = make(map[string]hostSample)
 	}
 	fleet.hostSamples[host] = current
-	load = a.scoreHostLoad(host, load)
+	load = a.scoreHostLoadForQuota(host, load, len(throttleBounded) > 0 && throttleBounded[0])
 	load = a.applyOverloadCooldown(host, load, now)
 	if fleet.hostLoadCache == nil {
 		fleet.hostLoadCache = make(map[string]hostLoad)
@@ -542,30 +566,25 @@ func (a *Scaler) recordHostLoadMetrics(host string, load hostLoad, available boo
 	}
 }
 
-func (a *Scaler) currentHostLoad(ctx context.Context, host string) (hostLoad, error) {
+func (a *Scaler) currentHostLoad(ctx context.Context, host string, throttleBounded ...bool) (hostLoad, error) {
 	fleet := a.coordinator()
 	fleet.hostSampleMu.Lock()
 	cached, ok := fleet.hostLoadCache[host]
 	fleet.hostSampleMu.Unlock()
-	if ok && time.Since(cached.observedAt) < 2*hostSampleInterval {
+	wantThrottleBounded := len(throttleBounded) > 0 && throttleBounded[0]
+	if ok && cached.throttleBounded == wantThrottleBounded && time.Since(cached.observedAt) < 2*hostSampleInterval {
 		return cached, nil
 	}
-	return a.probeHostLoad(ctx, host)
+	return a.probeHostLoad(ctx, host, throttleBounded...)
 }
 
 func (a *Scaler) RunHostSampler(ctx context.Context) {
 	sample := func() {
-		var wg sync.WaitGroup
-		for _, h := range a.dockerHosts {
-			wg.Add(1)
-			go func(host string) {
-				defer wg.Done()
-				if _, err := a.probeHostLoad(ctx, host); err != nil {
-					a.recordHostLoadMetrics(host, hostLoad{}, false)
-				}
-			}(h.Name)
-		}
-		wg.Wait()
+		// Pressure scoring depends on the current runner quota inventory.
+		// Reuse the same concurrent snapshot placement consumes so the
+		// background sampler cannot re-arm cooldown from CFS-manufactured
+		// load/PSI using a quota-blind probe.
+		a.probeFleetHosts(ctx, a.coordinator())
 	}
 	sample()
 	ticker := time.NewTicker(hostSampleInterval)
@@ -1290,11 +1309,30 @@ func declaredRunnerMemory(runner container.Summary) (int64, error) {
 	return 0, fmt.Errorf("runner %q is missing required %s label", runner.ID, runnerMemoryLabelKey)
 }
 
+func declaredRunnerCPU(runner container.Summary) (int64, error) {
+	raw, ok := runner.Labels[runnerCPULabelKey]
+	if !ok {
+		return 0, fmt.Errorf("runner %q is missing required %s label", runner.ID, runnerCPULabelKey)
+	}
+	cpu, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || cpu < 0 {
+		return 0, fmt.Errorf("runner %q has invalid %s label %q", runner.ID, runnerCPULabelKey, raw)
+	}
+	return cpu, nil
+}
+
 func (a *Scaler) resolvedMemorySafetyMargin() float64 {
 	if a.memorySafetyMargin > 0 {
 		return a.memorySafetyMargin
 	}
 	return defaultMemorySafetyMargin
+}
+
+func (a *Scaler) resolvedCPUSafetyMargin() float64 {
+	if a.cpuSafetyMargin > 0 {
+		return a.cpuSafetyMargin
+	}
+	return defaultCPUSafetyMargin
 }
 
 // containerMemoryUsage samples containerID's current memory usage via
@@ -1533,6 +1571,39 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 		return placementPick{}, fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
 
+	// A quota-bounded lane charges that quota as its CPU reservation. Keep
+	// the configured safety fraction outside aggregate running plus in-flight
+	// reservations, mirroring memory admission and closing the list/create
+	// race through FleetCoordinator.reservedCPU.
+	if a.runnerNanoCPUs > 0 {
+		var withinCPUBudget []DockerHost
+		var blockedDetails []string
+		var blockedHosts []string
+		for _, h := range withinHostLimits {
+			if cpuErr := probe.hostCPUErrors[h.Name]; cpuErr != nil {
+				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: CPU inventory unavailable (%v)", h.Name, cpuErr))
+				blockedHosts = append(blockedHosts, h.Name)
+				continue
+			}
+			total := probe.hostCPUNano[h.Name]
+			budget := int64(float64(total) * (1 - a.resolvedCPUSafetyMargin()))
+			reserved := probe.hostRunningReservedCPU[h.Name] + fleet.reservedCPU[h.Name]
+			if reserved+a.runnerNanoCPUs > budget {
+				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: reserved=%d candidate=%d budget=%d", h.Name, reserved, a.runnerNanoCPUs, budget))
+				blockedHosts = append(blockedHosts, h.Name)
+				continue
+			}
+			withinCPUBudget = append(withinCPUBudget, h)
+		}
+		if len(withinCPUBudget) == 0 {
+			for _, name := range blockedHosts {
+				placementBlocked.WithLabelValues(scaleSet, name, placementReasonCPUReservation).Inc()
+			}
+			return placementPick{}, fmt.Errorf("no reachable docker host can admit candidate CPU reservation %d NanoCPUs (%s): %w", a.runnerNanoCPUs, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
+		}
+		withinHostLimits = withinCPUBudget
+	}
+
 	// A host currently holding a rung-3 free-memory-floor placement is
 	// cordoned from every rung, for every lane, until that runner finishes:
 	// the floor's whole point is that a reachable idle host's spare memory
@@ -1719,14 +1790,14 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 				a.logger.Info("Degraded placement: admitting at the lane's observed p95 instead of its declared reservation",
 					slog.String("scale_set", scaleSet), slog.String("host", host), slog.String("rung", degradationRungObservedP95),
 					slog.Int64("reserved_bytes", reserved))
-				return placementPick{host: host, reservedMemory: reserved, rung: degradationRungObservedP95}, nil
+				return placementPick{host: host, reservedMemory: reserved, reservedCPU: a.runnerNanoCPUs, rung: degradationRungObservedP95}, nil
 			}
 			if host, available, ok := a.degradationLadderFreeMemoryFloor(probe, withinHostLimits, effectiveCount); ok {
 				placementDegradedTotal.WithLabelValues(scaleSet, degradationRungFreeMemoryFloor).Inc()
 				a.logger.Info("Degraded placement: admitting one runner on an idle host whose free memory exceeds the lane's ceiling",
 					slog.String("scale_set", scaleSet), slog.String("host", host), slog.String("rung", degradationRungFreeMemoryFloor),
 					slog.Int64("reserved_bytes", a.runnerMemory), slog.Int64("host_available_bytes", available))
-				return placementPick{host: host, reservedMemory: a.runnerMemory, rung: degradationRungFreeMemoryFloor}, nil
+				return placementPick{host: host, reservedMemory: a.runnerMemory, reservedCPU: a.runnerNanoCPUs, rung: degradationRungFreeMemoryFloor}, nil
 			}
 			placementDegradedTotal.WithLabelValues(scaleSet, degradationRungRefused).Inc()
 			a.logger.Info("Degraded placement refused: no host admits the declared reservation, the observed p95, or the free-memory floor",
@@ -1790,7 +1861,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 	fleet.placementCursor++
 	fleet.placementMu.Unlock()
 	placementDecisions.WithLabelValues(scaleSet, best).Inc()
-	return placementPick{host: best, reservedMemory: a.memoryReservation(), rung: ""}, nil
+	return placementPick{host: best, reservedMemory: a.memoryReservation(), reservedCPU: a.runnerNanoCPUs, rung: ""}, nil
 }
 
 // placementPick is pickHostLocked's decision: which host, how much of that
@@ -1800,6 +1871,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 type placementPick struct {
 	host           string
 	reservedMemory int64
+	reservedCPU    int64
 	rung           string
 }
 
@@ -1916,6 +1988,7 @@ type hostPingResult struct {
 	loadErr         error
 	fleetRunners    int
 	hostMemoryBytes int64
+	hostCPUNano     int64
 	// runningReservedMemory is the sum, across this host's running autoscaled
 	// runners, of what admission CHARGES each one: max(its declared
 	// reservation, its sampled current usage), or the declared reservation
@@ -1928,6 +2001,8 @@ type hostPingResult struct {
 	// github_runner_autoscaler_host_memory_observed_bytes and never itself
 	// used for admission.
 	observedReservedMemory int64
+	runningReservedCPU     int64
+	cpuErr                 error
 	memoryErr              error
 	// readinessBlocked distinguishes "this host was withheld by its
 	// readiness gate" from "this host is unreachable", so exhausting the
@@ -1952,9 +2027,12 @@ type fleetHostProbe struct {
 	hostRunningReservedMemory map[string]int64
 	// hostObservedMemory is the per-host sum of hostPingResult's
 	// observedReservedMemory -- see its doc comment.
-	hostObservedMemory map[string]int64
-	hostMemoryErrors   map[string]error
-	reachableHosts     []DockerHost
+	hostObservedMemory     map[string]int64
+	hostMemoryErrors       map[string]error
+	hostCPUNano            map[string]int64
+	hostRunningReservedCPU map[string]int64
+	hostCPUErrors          map[string]error
+	reachableHosts         []DockerHost
 	// inferenceLoaded is every probed host's isHostInferenceLoaded result
 	// (agent-lcars#1726), keyed by host name. A host absent here (no
 	// configured probe, or the probe wasn't run) reads back false.
@@ -2014,22 +2092,43 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			_, err := dh.Client.Ping(pingCtx)
 			cancel()
-			load, loadErr := a.currentHostLoad(ctx, dh.Name)
+			load := hostLoad{}
+			var loadErr error
 			fleetRunners := 0
 			runningReservedMemory := int64(0)
 			observedReservedMemory := int64(0)
+			runningReservedCPU := int64(0)
+			allRunnersQuotaBounded := false
 			var memoryErr error
+			var cpuErr error
 			if err == nil {
 				allRunners, listErr := dh.Client.ContainerList(ctx, container.ListOptions{
 					Filters: filters.NewArgs(filters.Arg("label", runnerScaleSetLabelKey)),
 				})
 				if listErr != nil {
 					loadErr = errors.Join(loadErr, fmt.Errorf("counting fleet runners: %w", listErr))
+					if a.runnerNanoCPUs > 0 {
+						cpuErr = errors.Join(cpuErr, fmt.Errorf("inventorying running CPU reservations: %w", listErr))
+					}
 					if a.runnerMemory > 0 {
 						memoryErr = errors.Join(memoryErr, fmt.Errorf("inventorying running memory reservations: %w", listErr))
 					}
 				} else {
 					fleetRunners = len(allRunners)
+					allRunnersQuotaBounded = fleetRunners > 0
+					for _, runner := range allRunners {
+						declared, runnerCPUErr := declaredRunnerCPU(runner)
+						if runnerCPUErr != nil {
+							cpuErr = errors.Join(cpuErr, runnerCPUErr)
+							allRunnersQuotaBounded = false
+							continue
+						}
+						if declared == 0 {
+							allRunnersQuotaBounded = false
+							cpuErr = errors.Join(cpuErr, fmt.Errorf("runner %q has no CPU reservation", runner.ID))
+						}
+						runningReservedCPU += declared
+					}
 				}
 				if a.runnerMemory > 0 && listErr == nil {
 					for _, runner := range allRunners {
@@ -2060,16 +2159,37 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 				}
 			}
 			hostMemoryBytes := int64(0)
-			if err == nil && a.runnerMemory > 0 {
+			hostCPUNano := int64(0)
+			if err == nil && (a.runnerMemory > 0 || a.runnerNanoCPUs > 0 || fleetRunners > 0) {
 				info, infoErr := dh.Client.Info(ctx)
 				if infoErr != nil {
-					memoryErr = errors.Join(memoryErr, fmt.Errorf("reading Docker host memory: %w", infoErr))
-				} else if info.MemTotal <= 0 {
-					memoryErr = errors.Join(memoryErr, fmt.Errorf("Docker reported invalid physical memory %d", info.MemTotal))
+					if a.runnerMemory > 0 {
+						memoryErr = errors.Join(memoryErr, fmt.Errorf("reading Docker host memory: %w", infoErr))
+					}
+					if a.runnerNanoCPUs > 0 || fleetRunners > 0 {
+						cpuErr = errors.Join(cpuErr, fmt.Errorf("reading Docker host CPUs: %w", infoErr))
+					}
 				} else {
-					hostMemoryBytes = info.MemTotal
+					if a.runnerMemory > 0 {
+						if info.MemTotal <= 0 {
+							memoryErr = errors.Join(memoryErr, fmt.Errorf("Docker reported invalid physical memory %d", info.MemTotal))
+						} else {
+							hostMemoryBytes = info.MemTotal
+						}
+					}
+					if a.runnerNanoCPUs > 0 || fleetRunners > 0 {
+						if info.NCPU <= 0 {
+							cpuErr = errors.Join(cpuErr, fmt.Errorf("Docker reported invalid CPU count %d", info.NCPU))
+						} else {
+							hostCPUNano = int64(info.NCPU) * 1e9
+						}
+					}
 				}
 			}
+			throttleBounded := cpuErr == nil && allRunnersQuotaBounded && runningReservedCPU < hostCPUNano
+			measuredLoad, measuredLoadErr := a.currentHostLoad(ctx, dh.Name, throttleBounded)
+			load = measuredLoad
+			loadErr = errors.Join(loadErr, measuredLoadErr)
 			eligible := err == nil && placementHosts[dh.Name]
 			if eligible && fleet.mainsRequired[dh.Name] {
 				if mainsErr := a.hostOnMains(ctx, dh.Name); mainsErr != nil {
@@ -2106,6 +2226,8 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 				host: dh, ok: err == nil, eligible: eligible, err: err,
 				load: load, loadErr: loadErr, fleetRunners: fleetRunners,
 				hostMemoryBytes: hostMemoryBytes, runningReservedMemory: runningReservedMemory,
+				hostCPUNano: hostCPUNano, runningReservedCPU: runningReservedCPU,
+				cpuErr:                 cpuErr,
 				observedReservedMemory: observedReservedMemory,
 				memoryErr:              memoryErr, readinessBlocked: readinessBlocked,
 			}
@@ -2135,6 +2257,9 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 	hostRunningReservedMemory := make(map[string]int64, len(a.dockerHosts))
 	hostObservedMemory := make(map[string]int64, len(a.dockerHosts))
 	hostMemoryErrors := make(map[string]error, len(a.dockerHosts))
+	hostCPUNano := make(map[string]int64, len(a.dockerHosts))
+	hostRunningReservedCPU := make(map[string]int64, len(a.dockerHosts))
+	hostCPUErrors := make(map[string]error, len(a.dockerHosts))
 	for res := range ch {
 		results = append(results, res)
 		if res.ok {
@@ -2142,6 +2267,11 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			hostMemoryBytes[res.host.Name] = res.hostMemoryBytes
 			hostRunningReservedMemory[res.host.Name] = res.runningReservedMemory
 			hostObservedMemory[res.host.Name] = res.observedReservedMemory
+			hostCPUNano[res.host.Name] = res.hostCPUNano
+			hostRunningReservedCPU[res.host.Name] = res.runningReservedCPU
+			if res.cpuErr != nil {
+				hostCPUErrors[res.host.Name] = res.cpuErr
+			}
 			if res.memoryErr != nil {
 				hostMemoryErrors[res.host.Name] = res.memoryErr
 			}
@@ -2194,6 +2324,8 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 		hostMemoryBytes: hostMemoryBytes, hostRunningReservedMemory: hostRunningReservedMemory,
 		hostObservedMemory: hostObservedMemory,
 		hostMemoryErrors:   hostMemoryErrors, reachableHosts: reachableHosts, inferenceLoaded: inferenceLoaded,
+		hostCPUNano: hostCPUNano, hostRunningReservedCPU: hostRunningReservedCPU,
+		hostCPUErrors: hostCPUErrors,
 	}
 }
 
@@ -2278,12 +2410,29 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 				headroom = 0
 			}
 		}
-
-		if a.runnerMemory <= 0 {
-			if !limited {
+		cpuSlots := 0
+		cpuLimited := a.runnerNanoCPUs > 0
+		if cpuLimited {
+			if probe.hostCPUErrors[name] != nil {
 				continue
 			}
-			total += headroom
+			budget := int64(float64(probe.hostCPUNano[name]) * (1 - a.resolvedCPUSafetyMargin()))
+			reserved := probe.hostRunningReservedCPU[name] + fleet.reservedCPU[name]
+			cpuSlots = int((budget - reserved) / a.runnerNanoCPUs)
+			if cpuSlots < 0 {
+				cpuSlots = 0
+			}
+		}
+
+		if a.runnerMemory <= 0 {
+			if !limited && !cpuLimited {
+				continue
+			}
+			slots := cpuSlots
+			if !cpuLimited || (limited && headroom < slots) {
+				slots = headroom
+			}
+			total += slots
 			continue
 		}
 
@@ -2329,6 +2478,9 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 
 		if limited && headroom < memorySlots {
 			memorySlots = headroom
+		}
+		if cpuLimited && cpuSlots < memorySlots {
+			memorySlots = cpuSlots
 		}
 		total += memorySlots
 	}
@@ -2617,6 +2769,9 @@ const (
 	// container. The current runner image requires this label for every
 	// placement reservation.
 	runnerMemoryLabelKey = "autoscaler.runner-memory-bytes"
+	// runnerCPULabelKey records the exact CPU reservation used for admission.
+	// Zero identifies an intentionally unbounded runner.
+	runnerCPULabelKey = "autoscaler.runner-cpu-nanocpus"
 	// runnerRegistrationLabelKey is a homelab#97 addition: which GitHub
 	// registration (account/repo) minted this runner. Purely descriptive --
 	// ownership/orphan-cleanup logic keys off runnerScaleSetLabelKey alone,
@@ -2663,11 +2818,12 @@ func registrationTarget(registrationURL string) (owner, repository string) {
 	return "", ""
 }
 
-func runnerLabels(scaleSet, registration string, memory int64) map[string]string {
+func runnerLabels(scaleSet, registration string, memory, cpu int64) map[string]string {
 	return map[string]string{
 		runnerScaleSetLabelKey:     scaleSet,
 		runnerRegistrationLabelKey: registration,
 		runnerMemoryLabelKey:       strconv.FormatInt(memory, 10),
+		runnerCPULabelKey:          strconv.FormatInt(cpu, 10),
 	}
 }
 
@@ -3056,7 +3212,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			Image:  preparedImage,
 			User:   "runner",
 			Cmd:    []string{"/home/runner/run.sh"},
-			Labels: runnerLabels(a.scaleSetName, a.registrationName, a.memoryReservation()),
+			Labels: runnerLabels(a.scaleSetName, a.registrationName, a.memoryReservation(), a.runnerNanoCPUs),
 			Env:    runnerEnvironment(jit.EncodedJITConfig, host),
 		},
 		hostConfig,

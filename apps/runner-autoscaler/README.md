@@ -611,11 +611,34 @@ scale_sets:
     runner_memory: 14g
     runner_memory_reservation: 8g
     runner_cpus: 6 # half of a 12-core host; a second tenant is still admissible
+fleet:
+  placement:
+    cpu_safety_margin: 0.10 # default: keep ten percent for the host
 ```
 
-Zero or omitted means no quota. The quota is a ceiling only -- it is not
-charged against a per-host CPU budget for admission; the existing load, CPU
-and PSI gates still decide whether the host can take another runner.
+Zero or omitted `runner_cpus` means no quota. A bounded lane charges its quota
+against each host's `nproc × (1 - cpu_safety_margin)` admission budget,
+including running containers and in-flight starts. An unbounded runner cannot
+be safely accounted beside bounded candidates, so a host containing one does
+not admit another CPU-bounded runner until it exits.
+
+CFS throttling itself inflates load average and CPU PSI because throttled
+threads remain runnable. When a host has at least one runner, every runner is
+quota-bounded, and their summed quotas remain below the host's core count, the
+hard-pressure score therefore treats load average and CPU PSI as placement
+penalties rather than hard-overload signals. The real host CPU-utilization
+gate remains active, as do memory PSI and available-memory gates. Missing
+quota labels, any unbounded runner, or quotas summing to the full host restores
+the ordinary load/PSI hard gates.
+
+CPU-budget refusals increment
+`github_runner_autoscaler_placement_blocked_total{reason="cpu_reservation"}`
+for the host that could not admit the candidate.
+
+Do not deploy `runner_cpus` with an autoscaler version that predates CPU
+reservation and throttle-aware pressure (the original #1837 implementation).
+That quota-only version can manufacture load/PSI hard-overload and make shared
+hosts less available than leaving runners uncapped.
 
 ### Host-level runner slice
 
@@ -1027,11 +1050,13 @@ physical_memory) / memoryReservation())` -- the same "Real-free-memory
   host busy with non-runner work cannot inflate this gauge past what it can
   really admit -- and capped again by that host's remaining `runner_limit`
   headroom.
-- An unbounded lane (no `runner_memory`) contributes only the host's
-  remaining `runner_limit` headroom, since there is no memory ceiling to
-  divide by. A host with neither bound configured cannot contribute a finite
-  number and is left out of the sum rather than reported as infinite
-  capacity.
+- A CPU-bounded lane (`runner_cpus` set) is capped by
+  `floor((nproc × (1 - cpu_safety_margin) - reserved CPU) / runner_cpus)`.
+  Running and in-flight reservations use the same accounting as placement.
+- A lane unbounded in both memory and CPU contributes only the host's
+  remaining `runner_limit` headroom. A host with none of those bounds
+  configured cannot contribute a finite number and is left out of the sum
+  rather than reported as infinite capacity.
 
 The gauge refreshes on every placement attempt (whether or not it succeeds)
 and at least once a minute via the fleet-wide tracked-runner reconciler, so

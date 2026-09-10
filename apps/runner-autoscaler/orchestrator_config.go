@@ -226,6 +226,9 @@ type FleetPlacementFile struct {
 	// MemorySafetyMargin is the fraction of Docker-reported physical host
 	// memory that aggregate runner reservations may not consume.
 	MemorySafetyMargin float64 `yaml:"memory_safety_margin,omitempty"`
+	// CPUSafetyMargin is the fraction of host cores unavailable to runner
+	// reservations. Zero selects the ten-percent default.
+	CPUSafetyMargin float64 `yaml:"cpu_safety_margin,omitempty"`
 	// MemorySafetyMarginMax caps that fraction's share in absolute terms
 	// (e.g. "6g"); empty means no cap. A fraction alone scales with the
 	// host, and ten percent of a 128 GiB box is a 13 GiB floor that keeps a
@@ -720,6 +723,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	}
 	if p.MemorySafetyMargin == 0 {
 		p.MemorySafetyMargin = defaultMemorySafetyMargin
+	}
+	if p.CPUSafetyMargin == 0 {
+		p.CPUSafetyMargin = defaultCPUSafetyMargin
+	}
+	if math.IsNaN(p.CPUSafetyMargin) || math.IsInf(p.CPUSafetyMargin, 0) || p.CPUSafetyMargin < 0 || p.CPUSafetyMargin >= 1 {
+		return fmt.Errorf("fleet.placement.cpu_safety_margin must be greater than 0 and less than 1")
 	}
 	if math.IsNaN(p.MemorySafetyMargin) || math.IsInf(p.MemorySafetyMargin, 0) || p.MemorySafetyMargin < 0 || p.MemorySafetyMargin >= 1 {
 		return fmt.Errorf("fleet.placement.memory_safety_margin must be greater than 0 and less than 1")

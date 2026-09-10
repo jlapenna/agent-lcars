@@ -35,6 +35,7 @@ type fakeDockerServer struct {
 	// memoryTotal is the Docker /info MemTotal value used by reservation-aware
 	// placement tests.
 	memoryTotal int64
+	ncpu        int
 	removed     []string // IDs passed to ContainerRemove, in call order
 	// removeForced records whether each ContainerRemove request asked Docker to
 	// force deletion. Queue retention must remain false here: a state race
@@ -103,7 +104,7 @@ func newFakeDockerServer(t *testing.T) *fakeDockerServer {
 	t.Helper()
 	f := &fakeDockerServer{
 		inspect: make(map[string]inspectStub), inspectCalls: make(map[string]int), tops: make(map[string]container.TopResponse),
-		memoryTotal: 64 * 1024 * 1024 * 1024,
+		memoryTotal: 64 * 1024 * 1024 * 1024, ncpu: 12,
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
@@ -213,11 +214,12 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info"):
 		f.mu.Lock()
 		memoryTotal := f.memoryTotal
+		ncpu := f.ncpu
 		containers := len(f.containers)
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ID": "fake", "Containers": containers, "MemTotal": memoryTotal,
+			"ID": "fake", "Containers": containers, "MemTotal": memoryTotal, "NCPU": ncpu,
 			"DriverStatus": [][2]string{}, "Plugins": map[string]any{},
 		})
 

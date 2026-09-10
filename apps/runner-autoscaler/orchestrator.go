@@ -455,6 +455,7 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 			c.HostMemorySafetyMargins[host] = margin
 		}
 		c.MemorySafetyMargin = resolved.Raw.Fleet.Placement.MemorySafetyMargin
+		c.CPUSafetyMargin = resolved.Raw.Fleet.Placement.CPUSafetyMargin
 		if capStr := resolved.Raw.Fleet.Placement.MemorySafetyMarginMax; capStr != "" {
 			// Already validated by loadOrchestratorConfig; a parse failure here
 			// would mean the two disagree, which must not silently drop the cap.
@@ -690,6 +691,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		hostMemoryOvercommit:       c.HostMemoryOvercommit,
 		hostMemorySafetyMargins:    c.HostMemorySafetyMargins,
 		memorySafetyMargin:         c.MemorySafetyMargin,
+		cpuSafetyMargin:            c.CPUSafetyMargin,
 		memorySafetyMarginMaxBytes: c.MemorySafetyMarginMaxBytes,
 		readinessMetricsURL:        c.ReadinessMetricsURL,
 		readinessMetric:            c.ReadinessMetric,
