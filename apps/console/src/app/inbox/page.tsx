@@ -156,13 +156,13 @@ const InboxView = withConsolePageShell(
     ),
     utilities: (
       <>
-        <div className="inbox-utilities inbox-utilities--desktop">
+        <div className="inbox-utilities inbox-utilities--desktop console-utilities--desktop">
           <QueueConsoleUtilities
             watchedRepos={watchedRepos}
             repoFilter={repoFilterKey}
           />
         </div>
-        <div className="inbox-utilities inbox-utilities--mobile">
+        <div className="inbox-utilities inbox-utilities--mobile console-utilities--mobile">
           <QueueConsoleUtilities
             watchedRepos={watchedRepos}
             repoFilter={repoFilterKey}

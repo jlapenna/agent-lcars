@@ -55,10 +55,10 @@ const ShuttlebayView = withConsolePageShell(
     subtitle: 'Live runner fleet and queue status',
     utilities: (
       <>
-        <div className="shuttlebay-utilities shuttlebay-utilities--desktop">
+        <div className="shuttlebay-utilities shuttlebay-utilities--desktop console-utilities--desktop">
           <ConsoleCommandUtilities watchedRepos={watchedRepos} />
         </div>
-        <div className="shuttlebay-utilities shuttlebay-utilities--mobile">
+        <div className="shuttlebay-utilities shuttlebay-utilities--mobile console-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             includeNavigation

@@ -261,13 +261,13 @@ const IndexView = withConsolePageShell(
     ),
     utilities: (
       <>
-        <div className="deck-utilities deck-utilities--desktop">
+        <div className="deck-utilities deck-utilities--desktop console-utilities--desktop">
           <QueueConsoleUtilities
             watchedRepos={watchedRepos}
             repoFilter={repoFilterKey}
           />
         </div>
-        <div className="deck-utilities deck-utilities--mobile">
+        <div className="deck-utilities deck-utilities--mobile console-utilities--mobile">
           <QueueConsoleUtilities
             watchedRepos={watchedRepos}
             repoFilter={repoFilterKey}

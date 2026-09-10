@@ -652,6 +652,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .console-page-content {
   flex: 1 1 auto;
   min-height: 0;
+  padding: 16px;
 }
 
 .console-page-footer {
@@ -699,32 +700,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 /* ---- Agents operations workspace (#251) ---- */
 
-.agents-utilities--mobile {
-  display: none;
-}
-
-.shuttlebay-utilities--mobile {
-  display: none;
-}
-
-.task-utilities--mobile {
-  display: none;
-}
-
-.session-detail-utilities--mobile {
-  display: none;
-}
-
-/* Removed in #1810: this rule meant to hide Shuttlebay's *mobile* utility
-   wrapper once the desktop rail is present, but `:has()` matched the shared
-   `.lcars-command-utilities` cluster — the mobile wrapper is always in the
-   DOM, merely `display: none` — so from 64em up it hid Shuttlebay's entire
-   utility cluster: Quick task, refresh and the overflow menu all vanished on
-   desktop while every other route kept them. The mobile wrapper is already
-   hidden by `.shuttlebay-utilities--mobile` above; nothing needs to hide the
-   cluster that contains it.
-
-   ---- Shuttlebay runner fleet ---- */
+/* ---- Shuttlebay runner fleet ---- */
 
 .shuttlebay-scale-set {
   padding: 12px 16px;
@@ -761,10 +737,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* ---- Work items (#1814) ---- */
-
-.work-utilities--mobile {
-  display: none;
-}
 
 .work-workspace__create,
 .work-workspace__list,
@@ -846,10 +818,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* ---- Sessions archive workspace (#253) ---- */
-
-.sessions-utilities--mobile {
-  display: none;
-}
 
 /* A two-module LCARS segment group: flat blocks that meet, with a hairline
    gap rather than an outline around the pair. */
@@ -1002,10 +970,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 /* ---- Costs ledger workspace (#255) ---- */
 
-.costs-utilities--mobile {
-  display: none;
-}
-
 .costs-workspace__content {
   min-width: 0;
 }
@@ -1114,11 +1078,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 /* ---- Queue bridge / decision Inbox (#249) ---- */
 
-.deck-utilities--mobile,
-.inbox-utilities--mobile {
-  display: none;
-}
-
 .inbox-data-freshness {
   min-height: 20px;
 }
@@ -1136,6 +1095,23 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
   padding-left: var(--mantine-spacing-md);
   border-left: 1px solid var(--mantine-color-default-border);
+}
+
+/* The slot owns arrangement regardless of which route supplies actions. */
+.console-utilities--desktop,
+.console-utilities--mobile,
+.lcars-command-utilities .mantine-Group-root {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.console-utilities--desktop {
+  display: flex;
+}
+
+.console-utilities--mobile {
+  display: none;
 }
 
 .lcars-command-utilities .mantine-Button-root,
@@ -1503,12 +1479,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: grid;
     position: relative;
     grid-template-columns: minmax(0, 1fr) max-content;
-    /* Fixed, border-box Bridge-header geometry keeps the shared shell stable
-       across route copy, font metrics, and browser rendering differences. */
-    height: 80px;
+    /* Title/actions first, destination rail second: navigation never steals
+       the title's width or forces utilities to wrap into the elbow. */
+    grid-template-rows: minmax(44px, auto) auto;
+    padding: calc(var(--lcars-elbow-arm) + 12px) 16px 16px
+      calc(var(--lcars-elbow-rail) + 20px);
     box-sizing: border-box;
     margin-bottom: 0 !important;
-    gap: 0;
+    gap: 12px 20px;
     color: var(--mantine-color-text);
     background: var(--lcars-surface);
   }
@@ -1545,9 +1523,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: flex;
     min-width: 0;
     align-items: center;
-    /* Keep the desktop Bridge header at its deliberate 80px rhythm. The
-       extra left clearance belongs to the elbow; it should not add height. */
-    padding: 12px 20px 10px 4.25rem;
+    grid-column: 1;
+    grid-row: 1;
+    padding: 0;
   }
 
   .console-header[data-current] .lcars-header::before {
@@ -1577,23 +1555,16 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 
   .console-header[data-current] .lcars-command-row {
-    min-width: 0;
-    align-items: flex-start;
-    justify-content: flex-end;
-    padding: 0 16px 0 4px;
-    position: relative;
-    background: linear-gradient(
-      to bottom,
-      var(--lcars-accent) 0 var(--lcars-elbow-arm),
-      var(--lcars-surface) var(--lcars-elbow-arm) 100%
-    );
+    display: contents;
   }
 
   .console-header[data-current] .lcars-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
     align-items: center;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 4px;
-    padding-top: 1.25rem;
+    padding: 0;
   }
 
   /* Desktop docks the labels to each module's trailing edge; the color
@@ -1606,41 +1577,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     font-size: 0.875rem;
   }
 
-  /* LCARS controls are modular rather than evenly distributed, and the
-     destination labels are already different lengths, so the rail gets its
-     rhythm for free. It used to be pinned by a per-destination `min-width`
-     table instead — 39.25rem of fixed pills that, added to the title bay's
-     own 13rem minimum and the utility cluster, needed 1099px of header. At
-     1024px, an extremely ordinary laptop and iPad-landscape width, the
-     document overflowed its viewport horizontally on five of seven routes.
-     The e2e mobile-header suite asserts exactly that invariant but only at
-     320/390/768, so it never saw it (#1830).
-
-     Sizing the pills to their labels and letting the title bay give up all
-     its slack makes the rail fit whatever it is given, with no width tier to
-     keep in sync. */
-
+  /* Labels determine module width; the dedicated rail can wrap without
+     colliding with the title or global actions. */
   .console-header[data-current] .lcars-command-utilities {
+    grid-column: 2;
+    grid-row: 1;
     align-self: center;
+    margin: 0;
+    padding: 0;
     border-left: 0;
-  }
-
-  /* The workspace butts against the header's bottom edge, so it never draws
-     its own line there.
-
-     It deliberately does NOT force `min-height: calc(100vh - 80px)` any
-     more. That made a short route - Sessions with one collapsed group, Costs
-     with three rows - draw a bordered box down the whole viewport with
-     nothing in it, which is most of what read as "disjoint and awkward"
-     on Sessions (#1811). Now the frame ends where its content ends and the
-     console shell below stretches the page instead, on the same ground, so
-     there is nothing to see where there is nothing to show. */
-  .agents-workspace,
-  .sessions-workspace,
-  .costs-workspace,
-  .shuttlebay-workspace,
-  .work-workspace {
-    border-top: 0;
   }
 }
 
@@ -1657,38 +1602,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding-inline: 10px;
   }
 
-  .console-header[data-current]
-    .lcars-nav-pill[data-destination='shuttlebay']:not([data-active]),
-  .console-header[data-current]
-    .lcars-nav-pill[data-destination='work']:not([data-active]),
-  .console-header[data-current]
-    .lcars-nav-pill[data-accent='teal']:not([data-active]),
-  .console-header[data-current]
-    .lcars-nav-pill[data-accent='gold']:not([data-active]) {
+  .lcars-command-utilities .mantine-Text-root {
     display: none;
   }
 
-  .deck-utilities--desktop,
-  .inbox-utilities--desktop,
-  .agents-utilities--desktop,
-  .shuttlebay-utilities--desktop,
-  .work-utilities--desktop,
-  .sessions-utilities--desktop,
-  .costs-utilities--desktop,
-  .task-utilities--desktop,
-  .session-detail-utilities--desktop {
+  .console-utilities--desktop {
     display: none;
   }
 
-  .deck-utilities--mobile,
-  .inbox-utilities--mobile,
-  .agents-utilities--mobile,
-  .shuttlebay-utilities--mobile,
-  .work-utilities--mobile,
-  .sessions-utilities--mobile,
-  .costs-utilities--mobile,
-  .task-utilities--mobile,
-  .session-detail-utilities--mobile {
+  .console-utilities--mobile {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -1854,41 +1776,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     font-size: 0.6875rem;
   }
 
-  .deck-utilities--desktop,
-  .inbox-utilities--desktop,
-  .agents-utilities--desktop,
-  .shuttlebay-utilities--desktop,
-  .work-utilities--desktop,
-  .sessions-utilities--desktop,
-  .costs-utilities--desktop,
-  .task-utilities--desktop,
-  .session-detail-utilities--desktop {
+  .lcars-command-utilities .mantine-Text-root {
     display: none;
   }
 
-  .deck-utilities--mobile,
-  .inbox-utilities--mobile,
-  .agents-utilities--mobile,
-  .shuttlebay-utilities--mobile,
-  .work-utilities--mobile,
-  .sessions-utilities--mobile,
-  .costs-utilities--mobile,
-  .task-utilities--mobile,
-  .session-detail-utilities--mobile {
+  .console-utilities--desktop {
+    display: none;
+  }
+
+  .console-utilities--mobile {
     display: flex;
     align-items: center;
     gap: 4px;
-  }
-
-  /* A timestamp is useful beside the desktop session refresh action, but it
-     consumes the title bay on a phone. Keep the accessible refresh button and
-     place the timestamp in the refreshed page content instead. */
-  .session-detail-utilities--mobile .mantine-Group-root {
-    gap: 0;
-  }
-
-  .session-detail-utilities--mobile .mantine-Text-root {
-    display: none;
   }
 
   .agents-workspace {
