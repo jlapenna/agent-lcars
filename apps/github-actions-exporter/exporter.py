@@ -1519,30 +1519,30 @@ class Poller:
                         if exc.rate_limited:
                             raise
                         self._record_optional_metadata_failure(
-                            repository, int(run["id"]), now
+                            repository, int(run["id"]), now, exc
                         )
-                    except (GitHubPayloadError, requests.RequestException):
+                    except (GitHubPayloadError, requests.RequestException) as exc:
                         # Concurrency groups enrich labels but do not determine job
                         # status. Do not discard a successfully fetched core jobs
                         # snapshot when this optional endpoint is unavailable.
                         self._record_optional_metadata_failure(
-                            repository, int(run["id"]), now
+                            repository, int(run["id"]), now, exc
                         )
             self.database.upsert_jobs(repository, run, jobs, groups)
 
     def _record_optional_metadata_failure(
-        self, repository: str, run_id: int, now: float
+        self, repository: str, run_id: int, now: float, error: Exception
     ) -> None:
         self.concurrency_groups_retry_after[repository] = (
             now + OPTIONAL_METADATA_RETRY_SECONDS
         )
         self.state.poll_errors.labels(repository, "concurrency_groups").inc()
         LOGGER.warning(
-            "optional concurrency-group refresh failed for %s run %s; "
+            "optional concurrency-group refresh failed for %s run %s (%s); "
             "core job state retained with unknown concurrency metadata",
             repository,
             run_id,
-            exc_info=True,
+            error,
         )
 
     def refresh_all(self) -> None:
