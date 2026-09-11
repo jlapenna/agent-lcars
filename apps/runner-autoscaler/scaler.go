@@ -1535,6 +1535,13 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 	scaleSet := a.scaleSetLabel()
 	probe := a.probeFleetHosts(ctx, fleet)
 	a.publishLaneAdmissibleSlots(fleet, probe)
+	var inventoryBlockedHosts []string
+	for _, res := range probe.results {
+		if res.ok && res.eligible && res.inventoryErr != nil {
+			inventoryBlockedHosts = append(inventoryBlockedHosts, res.host.Name)
+			placementBlocked.WithLabelValues(scaleSet, res.host.Name, placementReasonInventoryUnavailable).Inc()
+		}
+	}
 
 	// effectiveCount is the tie-break every rung uses to prefer the
 	// least-loaded candidate: the same "actual + in-flight + load penalty"
@@ -1558,6 +1565,12 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 				readinessBlockedHosts++
 				placementBlocked.WithLabelValues(scaleSet, res.host.Name, placementReasonReadiness).Inc()
 			}
+		}
+		if len(inventoryBlockedHosts) > 0 && readinessBlockedHosts > 0 {
+			return placementPick{}, fmt.Errorf("no docker host is eligible (%d with runner inventory unavailable; %d withheld by their readiness gate): %w", len(inventoryBlockedHosts), readinessBlockedHosts, errFleetAtCapacity)
+		}
+		if len(inventoryBlockedHosts) > 0 {
+			return placementPick{}, fmt.Errorf("no docker host is eligible (%d reachable host runner inventories unavailable): %w", len(inventoryBlockedHosts), errFleetAtCapacity)
 		}
 		if readinessBlockedHosts > 0 {
 			return placementPick{}, fmt.Errorf("no docker host is eligible (%d withheld by their readiness gate): %w", readinessBlockedHosts, errFleetAtCapacity)
@@ -2048,6 +2061,10 @@ type hostPingResult struct {
 	runningReservedCPU     int64
 	cpuErr                 error
 	memoryErr              error
+	// inventoryErr means Docker answered Ping but ContainerList did not
+	// produce an authoritative runner count. The host stays reachable while
+	// placement fails closed for this snapshot.
+	inventoryErr error
 	// readinessBlocked distinguishes "this host was withheld by its
 	// readiness gate" from "this host is unreachable", so exhausting the
 	// fleet reports the real cause instead of blaming the network.
@@ -2145,8 +2162,17 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			allRunnersQuotaBounded := false
 			var memoryErr error
 			var cpuErr error
+			var listErr error
+			inventoryCtx := ctx
 			if err == nil {
-				allRunners, listErr := dh.Client.ContainerList(ctx, container.ListOptions{
+				// One deadline covers the complete authoritative Docker inventory,
+				// including per-runner samples and host Info. Bounding only Ping
+				// leaves an accepted connection free to hold fleet.mu forever.
+				var cancelInventory context.CancelFunc
+				inventoryCtx, cancelInventory = context.WithTimeout(ctx, dockerInspectTimeout)
+				defer cancelInventory()
+				var allRunners []container.Summary
+				allRunners, listErr = dh.Client.ContainerList(inventoryCtx, container.ListOptions{
 					Filters: filters.NewArgs(filters.Arg("label", runnerScaleSetLabelKey)),
 				})
 				if listErr != nil {
@@ -2191,7 +2217,7 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 						// the purely-observational sum below, rather than
 						// silently charging or reporting zero.
 						observed := declared
-						if usage, statsErr := a.sampleContainerMemoryUsage(ctx, dh.Client, runner.ID); statsErr != nil {
+						if usage, statsErr := a.sampleContainerMemoryUsage(inventoryCtx, dh.Client, runner.ID); statsErr != nil {
 							a.logger.Debug("Runner memory usage sample unavailable; charging declared reservation",
 								slog.String("host", dh.Name), slog.String("container_id", runner.ID), slog.String("error", statsErr.Error()))
 						} else {
@@ -2204,8 +2230,8 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			}
 			hostMemoryBytes := int64(0)
 			hostCPUNano := int64(0)
-			if err == nil && (a.runnerMemory > 0 || a.runnerNanoCPUs > 0 || fleetRunners > 0) {
-				info, infoErr := dh.Client.Info(ctx)
+			if err == nil && listErr == nil && (a.runnerMemory > 0 || a.runnerNanoCPUs > 0 || fleetRunners > 0) {
+				info, infoErr := dh.Client.Info(inventoryCtx)
 				if infoErr != nil {
 					if a.runnerMemory > 0 {
 						memoryErr = errors.Join(memoryErr, fmt.Errorf("reading Docker host memory: %w", infoErr))
@@ -2277,7 +2303,7 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 				hostCPUNano: hostCPUNano, runningReservedCPU: runningReservedCPU,
 				cpuErr:                 cpuErr,
 				observedReservedMemory: observedReservedMemory,
-				memoryErr:              memoryErr, readinessBlocked: readinessBlocked,
+				memoryErr:              memoryErr, inventoryErr: listErr, readinessBlocked: readinessBlocked,
 			}
 		}(h)
 	}
@@ -2311,7 +2337,13 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 	for res := range ch {
 		results = append(results, res)
 		if res.ok {
-			fleetCounts[res.host.Name] = res.fleetRunners
+			if res.inventoryErr == nil {
+				fleetCounts[res.host.Name] = res.fleetRunners
+				hostFleetRunnersGauge.WithLabelValues(res.host.Name).Set(float64(res.fleetRunners))
+			} else {
+				a.logger.Warn("Docker runner inventory unavailable; excluding host from placement",
+					slog.String("host", res.host.Name), slog.String("error", res.inventoryErr.Error()))
+			}
 			hostMemoryBytes[res.host.Name] = res.hostMemoryBytes
 			hostRunningReservedMemory[res.host.Name] = res.runningReservedMemory
 			hostObservedMemory[res.host.Name] = res.observedReservedMemory
@@ -2323,7 +2355,6 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			if res.memoryErr != nil {
 				hostMemoryErrors[res.host.Name] = res.memoryErr
 			}
-			hostFleetRunnersGauge.WithLabelValues(res.host.Name).Set(float64(res.fleetRunners))
 			if res.loadErr != nil {
 				res.load.penalty = a.policy().telemetryPenalty
 				hostLoads[res.host.Name] = res.load
@@ -2360,7 +2391,7 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 	var reachableHosts []DockerHost
 	for _, configured := range a.dockerHosts {
 		for _, res := range results {
-			if res.ok && res.eligible && res.host.Name == configured.Name {
+			if res.ok && res.eligible && res.inventoryErr == nil && res.host.Name == configured.Name {
 				reachableHosts = append(reachableHosts, configured)
 				break
 			}
@@ -2430,7 +2461,7 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 	var eligible []hostPingResult
 	for _, res := range probe.results {
 		name := res.host.Name
-		if !res.ok || !res.eligible || fleet.startInFlight[name] {
+		if !res.ok || !res.eligible || res.inventoryErr != nil || fleet.startInFlight[name] {
 			continue
 		}
 		if include != nil && !include(name) {
