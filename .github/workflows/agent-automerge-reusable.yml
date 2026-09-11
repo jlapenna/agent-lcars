@@ -109,6 +109,16 @@ on:
         required: false
         type: string
         default: '[]'
+      post-ci-workflows:
+        description: >-
+          JSON array of additional workflow files dispatched only after a
+          restored ci-workflow succeeds. Each workflow must accept source_sha
+          and delivery_mode inputs so recovery stays bound to the validated
+          revision and records `recovered-ci` provenance. Empty disables this
+          hook. Natural push CI continues to own its workflow_run chain.
+        required: false
+        type: string
+        default: '[]'
       deploy-workflow:
         description: >-
           Workflow file dispatched on main after the restored ci-workflow
@@ -596,12 +606,18 @@ jobs:
           REQUIRED_CHECKS: ${{ inputs.required-checks }}
           CI_WORKFLOW: ${{ inputs.ci-workflow }}
           EXTRA_MAIN_WORKFLOWS: ${{ inputs.extra-main-workflows }}
+          POST_CI_WORKFLOWS: ${{ inputs.post-ci-workflows }}
           DEPLOY_WORKFLOW: ${{ inputs.deploy-workflow }}
           POST_DEPLOY_VERIFY_WORKFLOW: ${{ inputs.post-deploy-verify-workflow }}
           POST_SUBMIT_ENABLED: ${{ inputs.post-submit-enabled }}
           CHECK_WAIT_MINUTES: ${{ inputs.check-wait-minutes }}
         run: |
           set -euo pipefail
+
+          if ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' <<<"$POST_CI_WORKFLOWS" >/dev/null; then
+            echo "::error::post-ci-workflows must be a JSON array of non-empty workflow file names."
+            exit 1
+          fi
 
           if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = workflow_dispatch ]; then
             # A GITHUB_TOKEN-created PR can run CI, but that run does not
@@ -920,8 +936,8 @@ jobs:
             exit 1
           fi
 
-          if [ -z "$DEPLOY_WORKFLOW" ]; then
-            echo "Restored main CI run $CI_RUN succeeded; no deploy workflow is configured."
+          if [ -z "$DEPLOY_WORKFLOW" ] && [ "$(jq 'length' <<<"$POST_CI_WORKFLOWS")" -eq 0 ]; then
+            echo "Restored main CI run $CI_RUN succeeded; no post-CI workflow is configured."
             exit 0
           fi
           if [ "$POST_SUBMIT_ENABLED" != "true" ]; then
@@ -929,37 +945,98 @@ jobs:
             exit 0
           fi
 
-          DEPLOY_RUNS=$(gh api --paginate \
-            "repos/$REPO/actions/workflows/$DEPLOY_WORKFLOW/runs?branch=main&head_sha=$SAFETY_SHA&per_page=100" \
-            --slurp)
-          # DEPLOY_RUN_SELECTION_CONTRACT
-          DEPLOY_RUN_RECORDS=$(jq -c --arg sha "$SAFETY_SHA" '
-            [.[].workflow_runs[] | select(.head_sha == $sha)]
-            | sort_by(.created_at, .id)
-          ' <<<"$DEPLOY_RUNS")
-          while read -r CANCELLED_DEPLOY_RUN; do
-            [ -z "$CANCELLED_DEPLOY_RUN" ] && continue
-            DEPLOY_JOB_COUNT=$(gh api "repos/$REPO/actions/runs/$CANCELLED_DEPLOY_RUN/jobs" --jq '.total_count')
-            DEPLOY_RUN_RECORDS=$(jq -c \
-              --argjson runId "$CANCELLED_DEPLOY_RUN" \
-              --argjson jobCount "$DEPLOY_JOB_COUNT" '
-                map(if .id == $runId then . + {job_count: $jobCount} else . end)
-              ' <<<"$DEPLOY_RUN_RECORDS")
-          done < <(jq -r '.[] | select(.conclusion == "cancelled") | .id' <<<"$DEPLOY_RUN_RECORDS")
-          # DEPLOY_RUN_DECISION_CONTRACT: skipped runs and reliably empty
-          # concurrency cancellations did no deployment work. Failed runs
-          # and cancellations with any job remain terminal because a subset
-          # of targets may already have shipped.
-          DEPLOY_DECISION=$(jq -r '
-            if any(.[];
-              .conclusion != "skipped" and
-              (.conclusion != "cancelled" or .job_count != 0)
-            ) then "owned"
-            else "dispatch"
-            end
-          ' <<<"$DEPLOY_RUN_RECORDS")
-          if [ "$DEPLOY_DECISION" = owned ]; then
-            echo "$DEPLOY_WORKFLOW already has a run that owns safety target $SAFETY_SHA: $(jq -c '[.[] | select(.conclusion != "skipped" and (.conclusion != "cancelled" or .job_count != 0)) | {id,status,conclusion}]' <<<"$DEPLOY_RUN_RECORDS")"
+          POST_CI_PENDING=()
+          while read -r WORKFLOW; do
+            [ -n "$WORKFLOW" ] || continue
+            POST_CI_RUNS=$(gh api --paginate \
+              "repos/$REPO/actions/workflows/$WORKFLOW/runs?branch=main&head_sha=$SAFETY_SHA&per_page=100" \
+              --slurp)
+            POST_CI_RUN_RECORDS=$(jq -c --arg sha "$SAFETY_SHA" '
+              [.[].workflow_runs[] | select(.head_sha == $sha)]
+              | sort_by(.created_at, .id)
+            ' <<<"$POST_CI_RUNS")
+            while read -r CANCELLED_POST_CI_RUN; do
+              [ -n "$CANCELLED_POST_CI_RUN" ] || continue
+              POST_CI_JOB_COUNT=$(gh api "repos/$REPO/actions/runs/$CANCELLED_POST_CI_RUN/jobs" --jq '.total_count')
+              POST_CI_RUN_RECORDS=$(jq -c \
+                --argjson runId "$CANCELLED_POST_CI_RUN" \
+                --argjson jobCount "$POST_CI_JOB_COUNT" '
+                  map(if .id == $runId then . + {job_count: $jobCount} else . end)
+                ' <<<"$POST_CI_RUN_RECORDS")
+            done < <(jq -r '.[] | select(.conclusion == "cancelled") | .id' <<<"$POST_CI_RUN_RECORDS")
+            POST_CI_OWNERS=$(jq -c '
+              [.[] | select(
+                .conclusion != "skipped" and
+                (.conclusion != "cancelled" or .job_count != 0)
+              )]
+            ' <<<"$POST_CI_RUN_RECORDS")
+            if [ "$(jq 'length' <<<"$POST_CI_OWNERS")" -gt 0 ]; then
+              echo "$WORKFLOW already has a run that owns safety target $SAFETY_SHA."
+              continue
+            fi
+            POST_CI_PENDING+=("$WORKFLOW")
+          done < <(jq -r '.[]' <<<"$POST_CI_WORKFLOWS")
+
+          DEPLOY_NEEDED=false
+          if [ -n "$DEPLOY_WORKFLOW" ]; then
+            DEPLOY_RUNS=$(gh api --paginate \
+              "repos/$REPO/actions/workflows/$DEPLOY_WORKFLOW/runs?branch=main&head_sha=$SAFETY_SHA&per_page=100" \
+              --slurp)
+            # DEPLOY_RUN_SELECTION_CONTRACT
+            DEPLOY_RUN_RECORDS=$(jq -c --arg sha "$SAFETY_SHA" '
+              [.[].workflow_runs[] | select(.head_sha == $sha)]
+              | sort_by(.created_at, .id)
+            ' <<<"$DEPLOY_RUNS")
+            while read -r CANCELLED_DEPLOY_RUN; do
+              [ -z "$CANCELLED_DEPLOY_RUN" ] && continue
+              DEPLOY_JOB_COUNT=$(gh api "repos/$REPO/actions/runs/$CANCELLED_DEPLOY_RUN/jobs" --jq '.total_count')
+              DEPLOY_RUN_RECORDS=$(jq -c \
+                --argjson runId "$CANCELLED_DEPLOY_RUN" \
+                --argjson jobCount "$DEPLOY_JOB_COUNT" '
+                  map(if .id == $runId then . + {job_count: $jobCount} else . end)
+                ' <<<"$DEPLOY_RUN_RECORDS")
+            done < <(jq -r '.[] | select(.conclusion == "cancelled") | .id' <<<"$DEPLOY_RUN_RECORDS")
+            # DEPLOY_RUN_DECISION_CONTRACT: skipped runs and reliably empty
+            # concurrency cancellations did no deployment work. Failed runs
+            # and cancellations with any job remain terminal because a subset
+            # of targets may already have shipped.
+            DEPLOY_DECISION=$(jq -r '
+              if any(.[];
+                .conclusion != "skipped" and
+                (.conclusion != "cancelled" or .job_count != 0)
+              ) then "owned"
+              else "dispatch"
+              end
+            ' <<<"$DEPLOY_RUN_RECORDS")
+            if [ "$DEPLOY_DECISION" = owned ]; then
+              echo "$DEPLOY_WORKFLOW already has a run that owns safety target $SAFETY_SHA: $(jq -c '[.[] | select(.conclusion != "skipped" and (.conclusion != "cancelled" or .job_count != 0)) | {id,status,conclusion}]' <<<"$DEPLOY_RUN_RECORDS")"
+            else
+              DEPLOY_NEEDED=true
+            fi
+          fi
+
+          if [ "${#POST_CI_PENDING[@]}" -eq 0 ] && [ "$DEPLOY_NEEDED" != true ]; then
+            exit 0
+          fi
+
+          CURRENT_MAIN_SHA=$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')
+          # MAIN_DISPATCH_DECISION_CONTRACT
+          MAIN_DISPATCH_DECISION=$(jq -nr \
+            --arg safety "$SAFETY_SHA" --arg current "$CURRENT_MAIN_SHA" '
+              if $safety == $current then "dispatch" else "refuse" end
+            ')
+          if [ "$MAIN_DISPATCH_DECISION" != dispatch ]; then
+            echo "::error::Main advanced from CI-validated safety target $SAFETY_SHA to $CURRENT_MAIN_SHA while restoration waited; refusing post-CI dispatch for an unverified head."
+            exit 1
+          fi
+
+          for WORKFLOW in "${POST_CI_PENDING[@]}"; do
+            echo "Main CI run $CI_RUN passed; dispatching missing post-CI workflow $WORKFLOW for $SAFETY_SHA."
+            gh workflow run "$WORKFLOW" --repo "$REPO" --ref main \
+              -f source_sha="$SAFETY_SHA" -f delivery_mode=recovered-ci
+          done
+
+          if [ "$DEPLOY_NEEDED" != true ]; then
             exit 0
           fi
 
@@ -970,17 +1047,6 @@ jobs:
           # workflow. A residual race remains between this read and GitHub
           # resolving --ref; consumers that require atomic source binding
           # need their own immutable-source dispatch contract.
-          CURRENT_MAIN_SHA=$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')
-          # MAIN_DISPATCH_DECISION_CONTRACT
-          MAIN_DISPATCH_DECISION=$(jq -nr \
-            --arg safety "$SAFETY_SHA" --arg current "$CURRENT_MAIN_SHA" '
-              if $safety == $current then "dispatch" else "refuse" end
-            ')
-          if [ "$MAIN_DISPATCH_DECISION" != dispatch ]; then
-            echo "::error::Main advanced from CI-validated safety target $SAFETY_SHA to $CURRENT_MAIN_SHA while restoration waited; refusing to dispatch $DEPLOY_WORKFLOW for an unverified head."
-            exit 1
-          fi
-
           if [ -z "$POST_DEPLOY_VERIFY_WORKFLOW" ]; then
             echo "Main CI run $CI_RUN passed; dispatching the missing $DEPLOY_WORKFLOW run."
             gh workflow run "$DEPLOY_WORKFLOW" --repo "$REPO" --ref main
