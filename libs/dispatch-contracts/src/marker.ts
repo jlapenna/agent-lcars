@@ -18,6 +18,18 @@ interface AttemptLike {
 }
 
 /**
+ * Read the trailing `/r<n>` generation shared by GitHub and native Work run
+ * IDs. This parses the generation only, not the anchor prefix. Unknown or
+ * unsafe generations stay undefined; callers own their fallback policy.
+ */
+export function parseRunGeneration(runId: string): number | undefined {
+  const match = /\/r(\d+)$/u.exec(runId);
+  if (match === null) return undefined;
+  const generation = Number(match[1]);
+  return Number.isSafeInteger(generation) ? generation : undefined;
+}
+
+/**
  * The attempt's stable identity: `g<generation>:<intentId>`.
  *
  * #645 asks for "one immutable attemptId and workflow-run binding" per

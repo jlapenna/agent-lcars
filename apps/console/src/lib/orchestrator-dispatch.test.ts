@@ -334,6 +334,51 @@ function run(over: Partial<Run> = {}): Run {
   };
 }
 
+describe.each([
+  { ok: false, summary: 'failed', method: 'POST' },
+  { ok: true, summary: 'pull-request', method: 'DELETE' },
+])('outcome ordering for $summary', ({ ok, summary, method }) => {
+  it.each([
+    ['/r2', true],
+    ['/r9007199254740991', true],
+    ['/missing', false],
+    ['/r9007199254740993', false],
+  ])(
+    'only suppresses label changes for a known newer run: %s',
+    async (suffix, suppress) => {
+      const { store, orchestrator } = fixture();
+      const original = await requested(orchestrator);
+      await orchestrator.report(original.runId, { ok, summary });
+      // A later successful result resolves an old failure; a later park
+      // preserves the human-needed signal against an old success.
+      vi.spyOn(store, 'listRuns').mockResolvedValue([
+        run({
+          runId: `octo/example#7${suffix}`,
+          result: ok ? { ok: true, summary: 'park' } : { ok: true },
+        }),
+      ]);
+      const fetchImpl = vi.fn(
+        async (_url: RequestInfo | URL, _init?: RequestInit) =>
+          new Response(null, { status: 201 }),
+      );
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl: fetchImpl as typeof fetch,
+        now: () => NOW,
+      });
+      expect(result.reported).toEqual([original.runId]);
+      const labelCalls = fetchImpl.mock.calls.filter(([url]) =>
+        String(url).includes('/labels'),
+      );
+      expect(labelCalls.map(([, init]) => init?.method)).toEqual(
+        suppress ? [] : [method],
+      );
+    },
+  );
+});
+
 describe('outcomeCommentBody', () => {
   it('includes the agent final message on a parked run', () => {
     const body = outcomeCommentBody(

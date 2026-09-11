@@ -1,3 +1,4 @@
+import { parseRunGeneration } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
   isWorkAnchor,
@@ -909,20 +910,13 @@ async function hasLaterRunMatching(
 }
 
 function isLaterRun(candidate: Run, run: Run): boolean {
-  const candidateGeneration = runGeneration(candidate.runId);
-  const generation = runGeneration(run.runId);
+  const candidateGeneration = parseRunGeneration(candidate.runId);
+  const generation = parseRunGeneration(run.runId);
   return (
     candidateGeneration !== undefined &&
     generation !== undefined &&
     candidateGeneration > generation
   );
-}
-
-function runGeneration(runId: string): number | undefined {
-  const match = /\/r(\d+)$/u.exec(runId);
-  if (match === null) return undefined;
-  const generation = Number(match[1]);
-  return Number.isSafeInteger(generation) ? generation : undefined;
 }
 
 export function outcomeCommentBody(run: Run): string {

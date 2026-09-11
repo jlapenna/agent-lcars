@@ -40,6 +40,26 @@ function renderRuns(runs: OrchestratorRun[]) {
 }
 
 describe('RunsSection', () => {
+  it.each(['missing-generation', 'octo/example#42/r9007199254740993'])(
+    'omits an unknown generation badge for %s while retaining the run',
+    (runId) => {
+      renderRuns([makeRun({ runId })]);
+      const row = screen.getByTestId(`run-${runId}`);
+      expect(within(row).getByTestId('run-state').textContent).toBe('running');
+      expect(within(row).queryByText(/^g\d+$/)).toBeNull();
+    },
+  );
+
+  it('renders the generation of a native Work run', () => {
+    const runId = 'work:01J5Z3K9QX8F0N2B4V6C8D1E4H/r12';
+    renderRuns([
+      makeRun({ runId, task: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4H' } }),
+    ]);
+    expect(
+      within(screen.getByTestId(`run-${runId}`)).getByText('g12'),
+    ).toBeTruthy();
+  });
+
   it('renders a lost run along with the expiry event note explaining the retry', () => {
     const run = makeRun({
       runId: 'supersprinklesracing/sprinkles#42/r2',
