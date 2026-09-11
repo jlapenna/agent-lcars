@@ -1,4 +1,10 @@
-# Quick Task identity and retry contract
+# Historical GitHub Quick Task identity and retry contract
+
+The console now creates native Work through `app/work/actions.ts` (#1866).
+The unused GitHub creation server action and its claim-tag writer were removed
+in #1902. This document records the former writer protocol so existing issue
+markers and stored evidence remain interpretable; it is not an active creation
+API. Historical marker readers and authenticated evidence retrieval remain.
 
 A Quick Task is identified by a canonical `TaskRef`:
 

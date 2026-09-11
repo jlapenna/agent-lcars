@@ -6,17 +6,12 @@ import { createAdminAction } from '@/lib/auth-guards';
 
 import { auth } from '../auth';
 import {
-  type AuthoritativeTaskState,
-  readAuthoritativeTaskState,
-} from '../lib/authoritative-task-state';
-import {
   ActionError,
   approveAndMergePr,
   approveAndRebasePr,
   assignPipeline as assignPipelineLib,
   clearNeedsHumanLabel,
   closeIssue as closeIssueLib,
-  createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
@@ -26,12 +21,6 @@ import {
 import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
-import { quickTaskIssueCreatorFor } from '../lib/quick-task-author';
-import type {
-  QuickTaskReceipt,
-  QuickTaskRequest,
-} from '../lib/quick-task-contract';
-import { repoKey } from '../lib/watched-repo';
 
 // LAN preview goes through the shared test-session adapter inside auth()
 // (E2E_TESTING + the x-e2e-auth-user request header), so no bypass is
@@ -74,9 +63,6 @@ function toUserErrorMessage(error: unknown): string {
 // `message`, which is reserved for the failure case.
 export type ActionResult =
   { ok: true; note?: string } | { ok: false; message: string };
-
-export type QuickTaskResult =
-  ({ ok: true } & QuickTaskReceipt) | { ok: false; message: string };
 
 /**
  * Everything a mutation has to invalidate. `revalidatePath` alone would
@@ -222,53 +208,6 @@ export async function dispatchUnstickPrs(
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }
-}
-
-export async function createQuickTask(
-  request: QuickTaskRequest,
-): Promise<QuickTaskResult> {
-  const session = await requireAdmin();
-  try {
-    if (!session.user.login) {
-      throw new ActionError('Authenticated GitHub login is required', 401);
-    }
-    if (!request?.repository) {
-      throw new ActionError('Quick Task repository is required', 400);
-    }
-    const receipt = await createQuickTaskLib(
-      {
-        ...request,
-        repository: resolveWatchedRepo(request.repository),
-        actorLogin: session.user.login,
-      },
-      undefined,
-      quickTaskIssueCreatorFor(session),
-    );
-    revalidateDashboard();
-    return { ok: true, ...receipt };
-  } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
-  }
-}
-
-/**
- * Post-creation read for the Quick Task button's success notification: the
- * orchestrator-authoritative lifecycle state for the issue Quick Task just
- * filed, so the badge can show what actually happened next rather than
- * treating issue creation alone as the whole outcome. A missing read (the
- * repo is outside the orchestrator's control-plane coverage, or the ingest
- * webhook simply hasn't landed yet) is not an error - `undefined` here
- * just means the caller shows no state badge yet.
- */
-export async function readQuickTaskState(
-  task: QuickTaskReceipt['task'],
-): Promise<AuthoritativeTaskState | undefined> {
-  await requireAdmin();
-  const repository = resolveWatchedRepo(task.repository);
-  return readAuthoritativeTaskState({
-    repository: repoKey(repository),
-    issue: task.issueNumber,
-  });
 }
 
 export async function closeIssue(
