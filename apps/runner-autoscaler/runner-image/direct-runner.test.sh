@@ -139,13 +139,24 @@ JSON
       [ -n "$data_binary_file" ] && cat "$data_binary_file" >> "$CODEX_AUTH_PERSIST_LOG"
       echo '{"status":"updated"}'
     else
+      attempt=1
+      [ ! -f "$CODEX_AUTH_REQUEST_LOG" ] || attempt=$(( $(cat "$CODEX_AUTH_REQUEST_LOG") + 1 ))
+      echo "$attempt" > "$CODEX_AUTH_REQUEST_LOG"
+      if [ "${FAKE_CODEX_AUTH_TRANSPORT_FAIL:-0}" = 1 ]; then exit 7; fi
+      status="${FAKE_CODEX_AUTH_STATUS:-200}"
+      if [ "$attempt" -le "${FAKE_CODEX_AUTH_BUSY_COUNT:-0}" ]; then status=409; fi
+      if [ "$status" != 200 ]; then
+        printf '{"error":"private-body-must-not-be-logged"}\n%s' "$status"
+        exit 0
+      fi
       auth='{"tokens":{"access":"old"}}'
       auth_b64="$(printf '%s' "$auth" | base64 -w0)"
       auth_sha="$(printf '%s' "$auth" | sha256sum | awk '{print $1}')"
-      printf '{"authBase64":"%s","generation":"7","sha256":"%s"}\n' "$auth_b64" "$auth_sha"
+      printf '{"authBase64":"%s","generation":"7","sha256":"%s"}\n200' "$auth_b64" "$auth_sha"
     fi
     ;;
   */heartbeat)
+    echo heartbeat >> "$HEARTBEAT_LOG"
     echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
     ;;
   */complete)
@@ -461,6 +472,8 @@ run_scenario() {
   export CODEX_ENV_LOG="$dir/codex-env.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
+  export CODEX_AUTH_REQUEST_LOG="$dir/codex-auth-requests.log"
+  export HEARTBEAT_LOG="$dir/heartbeats.log"
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
   export OPENCODE_ENV_LOG="$dir/opencode-env.log"
   export OPENCODE_LAST_MESSAGE_PRECHECK_LOG="$dir/opencode-last-message-precheck.log"
@@ -508,7 +521,11 @@ run_scenario() {
 
   set +e
   scenario_log="$dir/direct-runner.log"
-  /bin/bash "$here/direct-runner.sh" >"$scenario_log" 2>&1
+  if [ "${FAKE_CANCEL_CODEX_WAIT:-0}" = 1 ]; then
+    timeout --signal=TERM --kill-after=2s 3s /bin/bash "$here/direct-runner.sh" >"$scenario_log" 2>&1
+  else
+    /bin/bash "$here/direct-runner.sh" >"$scenario_log" 2>&1
+  fi
   rc=$?
   set -e
   workspace="$scenario_runner_temp/checkout"
@@ -1204,5 +1221,56 @@ grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
   fail "checkout-token-401: complete call did not report outcome: no-deliverable ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario checkout-token-401: OK"
+
+# Credential contention is capacity: wait with a live heartbeat, then start
+# exactly once after release. The credential payload must never reach logs.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_CODEX_AUTH_BUSY_COUNT=1 CODEX_AUTH_WAIT_SECONDS=10
+run_scenario codex-auth-busy-then-success codex
+[ "$rc" = 0 ] || fail "codex-auth-busy-then-success: exit $rc ($(cat "$scenario_log"))"
+[ "$(cat "$CODEX_AUTH_REQUEST_LOG")" = 2 ] || fail 'busy credential was not retried once'
+[ -s "$CODEX_ARGS_LOG" ] || fail 'Codex never started after credential release'
+[ -s "$HEARTBEAT_LOG" ] || fail 'run heartbeat stopped while waiting for credentials'
+! grep -q 'private-body-must-not-be-logged' "$scenario_log" || fail 'broker error body leaked'
+echo 'scenario codex-auth-busy-then-success: OK'
+
+export FAKE_CODEX_AUTH_BUSY_COUNT=100 CODEX_AUTH_WAIT_SECONDS=1
+run_scenario codex-auth-wait-exhausted codex
+[ "$rc" = 75 ] || fail "codex-auth-wait-exhausted: exit $rc"
+[ ! -f "$CODEX_ARGS_LOG" ] || fail 'Codex started without the credential'
+grep -q 'credential wait exhausted' "$COMPLETE_LOG" || fail 'completion omitted capacity diagnostic'
+[ ! -s "$CODEX_AUTH_PERSIST_LOG" ] || fail 'unowned credential was persisted/released'
+[ -z "$(find "$LCARS_CODEX_VOLATILE_DIR" -mindepth 1 -print -quit)" ] || fail 'volatile credential state remained'
+echo 'scenario codex-auth-wait-exhausted: OK'
+unset FAKE_CODEX_AUTH_BUSY_COUNT
+
+for status in 401 403 500; do
+  export FAKE_CODEX_AUTH_STATUS="$status"
+  run_scenario "codex-auth-refused-$status" codex
+  [ "$rc" != 0 ] || fail 'nonretryable credential error succeeded'
+  [ "$(cat "$CODEX_AUTH_REQUEST_LOG")" = 1 ] || fail 'nonretryable credential error retried'
+  [ ! -f "$CODEX_ARGS_LOG" ] || fail 'Codex started on a refused credential'
+  grep -q "HTTP $status" "$COMPLETE_LOG" || fail 'safe HTTP diagnostic missing'
+  ! grep -q 'private-body-must-not-be-logged' "$scenario_log" || fail 'broker error body leaked'
+  echo "scenario codex-auth-refused-$status: OK"
+done
+unset FAKE_CODEX_AUTH_STATUS
+
+export FAKE_CODEX_AUTH_TRANSPORT_FAIL=1
+run_scenario codex-auth-transport-failure codex
+[ "$rc" != 0 ] || fail 'transport failure succeeded'
+[ "$(cat "$CODEX_AUTH_REQUEST_LOG")" = 1 ] || fail 'transport error retried indiscriminately'
+grep -q 'failed in transport' "$COMPLETE_LOG" || fail 'transport failure diagnostic missing'
+unset FAKE_CODEX_AUTH_TRANSPORT_FAIL
+echo 'scenario codex-auth-transport-failure: OK'
+
+export FAKE_CODEX_AUTH_BUSY_COUNT=100 CODEX_AUTH_WAIT_SECONDS=30 FAKE_CANCEL_CODEX_WAIT=1
+run_scenario codex-auth-cancelled codex
+[ "$rc" != 0 ] || fail 'cancelled credential wait succeeded'
+grep -q 'lease busy' "$scenario_log" || fail 'cancellation did not exercise credential waiting'
+grep -q 'credential wait cancelled' "$COMPLETE_LOG" || fail 'cancellation not reported'
+[ ! -f "$CODEX_ARGS_LOG" ] || fail 'Codex started after cancellation'
+[ -z "$(find "$LCARS_CODEX_VOLATILE_DIR" -mindepth 1 -print -quit)" ] || fail 'cancelled wait left volatile state'
+echo 'scenario codex-auth-cancelled: OK'
+unset FAKE_PIPELINE FAKE_BRIEF_NO_RESUME FAKE_CODEX_AUTH_BUSY_COUNT CODEX_AUTH_WAIT_SECONDS FAKE_CANCEL_CODEX_WAIT
 
 echo "direct-runner.sh: OK"
