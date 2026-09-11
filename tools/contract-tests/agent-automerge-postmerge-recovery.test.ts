@@ -111,8 +111,14 @@ function deployDecision(runs: Run[]): string {
 interface ShellScenario {
   ciRuns: Run[];
   deployRuns: Run[];
+  postCiRuns?: Run[];
+  postCiWorkflows?: string[];
+  postCiWorkflowsRaw?: string;
+  postSubmitEnabled?: string;
   currentMain?: string;
+  deployCurrentMain?: string;
   cancelledDeployJobCount?: number;
+  cancelledPostCiJobCount?: number;
 }
 
 const greenRollup = {
@@ -158,11 +164,19 @@ case "$args" in
     count=0
     [ ! -f "$REF_COUNT_PATH" ] || count=$(cat "$REF_COUNT_PATH")
     count=$((count + 1)); echo "$count" > "$REF_COUNT_PATH"
-    if [ "$count" -eq 1 ]; then echo "$SAFETY_SHA"; else echo "$CURRENT_MAIN_SHA"; fi
+    if [ "$count" -eq 1 ]; then
+      echo "$SAFETY_SHA"
+    elif [ "$count" -eq 2 ]; then
+      echo "$CURRENT_MAIN_SHA"
+    else
+      echo "$DEPLOY_CURRENT_MAIN_SHA"
+    fi
     ;;
   *"compare/"*) echo identical ;;
   *"actions/workflows/ci.yml/runs?"*) printf '[%s]\\n' "$CI_RUNS_JSON" ;;
+  *"actions/workflows/post-ci.yml/runs?"*) printf '[%s]\\n' "$POST_CI_RUNS_JSON" ;;
   *"actions/workflows/deploy.yml/runs?"*) printf '[%s]\\n' "$DEPLOY_RUNS_JSON" ;;
+  *"actions/runs/4/jobs"*) echo "$CANCELLED_POST_CI_JOB_COUNT" ;;
   *"/jobs"*) echo "$CANCELLED_DEPLOY_JOB_COUNT" ;;
   "run view "*) printf 'completed\\tsuccess\\n' ;;
   "workflow run "*)
@@ -196,17 +210,28 @@ esac
       REQUIRED_CHECKS: '["Verify","E2E Tests"]',
       CI_WORKFLOW: 'ci.yml',
       EXTRA_MAIN_WORKFLOWS: '[]',
+      POST_CI_WORKFLOWS:
+        scenario.postCiWorkflowsRaw ??
+        JSON.stringify(scenario.postCiWorkflows ?? []),
       DEPLOY_WORKFLOW: 'deploy.yml',
       POST_DEPLOY_VERIFY_WORKFLOW: 'post-deploy.yml',
-      POST_SUBMIT_ENABLED: 'true',
+      POST_SUBMIT_ENABLED: scenario.postSubmitEnabled ?? 'true',
       CHECK_WAIT_MINUTES: '1',
       SAFETY_SHA: sha,
       CURRENT_MAIN_SHA: scenario.currentMain ?? sha,
+      DEPLOY_CURRENT_MAIN_SHA:
+        scenario.deployCurrentMain ?? scenario.currentMain ?? sha,
       CI_RUNS_JSON: JSON.stringify({ workflow_runs: scenario.ciRuns }),
       DEPLOY_RUNS_JSON: JSON.stringify({
         workflow_runs: scenario.deployRuns,
       }),
+      POST_CI_RUNS_JSON: JSON.stringify({
+        workflow_runs: scenario.postCiRuns ?? [],
+      }),
       CANCELLED_DEPLOY_JOB_COUNT: String(scenario.cancelledDeployJobCount ?? 0),
+      CANCELLED_POST_CI_JOB_COUNT: String(
+        scenario.cancelledPostCiJobCount ?? 0,
+      ),
       GREEN_ROLLUP: JSON.stringify(greenRollup),
     },
   });
@@ -369,6 +394,134 @@ describe('agent automerge post-merge recovery admission', () => {
     ).toHaveLength(1);
   });
 
+  it('dispatches a missing post-CI workflow with exact source and recovery provenance', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [run({ id: 3, conclusion: 'success' })],
+      postCiRuns: [],
+      postCiWorkflows: ['post-ci.yml'],
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).not.toContain('unhandled fake gh call');
+    expect(result.calls).toContain(
+      `workflow run post-ci.yml --repo o/r --ref main -f source_sha=${sha} -f delivery_mode=recovered-ci`,
+    );
+    expect(
+      result.calls.filter((call) => call === 'dispatch:post-ci.yml'),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    ['successful', run({ id: 4, conclusion: 'success' }), 0],
+    ['partially cancelled', run({ id: 4, conclusion: 'cancelled' }), 2],
+  ])(
+    'does not duplicate a %s post-CI workflow',
+    (_label, existing, jobCount) => {
+      const result = executeRestoreStep({
+        ciRuns: [
+          run({
+            id: 2,
+            event: 'workflow_dispatch',
+            conclusion: 'success',
+          }),
+        ],
+        deployRuns: [run({ id: 3, conclusion: 'success' })],
+        postCiRuns: [existing],
+        postCiWorkflows: ['post-ci.yml'],
+        cancelledPostCiJobCount: jobCount,
+      });
+
+      expect(result.status).toBe(0);
+      expect(
+        result.calls.filter((call) => call === 'dispatch:post-ci.yml'),
+      ).toEqual([]);
+    },
+  );
+
+  it('replaces a cancelled zero-job post-CI run', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [run({ id: 3, conclusion: 'success' })],
+      postCiRuns: [run({ id: 4, conclusion: 'cancelled' })],
+      postCiWorkflows: ['post-ci.yml'],
+      cancelledPostCiJobCount: 0,
+    });
+
+    expect(result.status).toBe(0);
+    expect(
+      result.calls.filter((call) => call === 'dispatch:post-ci.yml'),
+    ).toHaveLength(1);
+  });
+
+  it('keeps every post-CI workflow paused when post-submit is disabled', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [],
+      postCiWorkflows: ['post-ci.yml'],
+      postSubmitEnabled: 'false',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain('Post-submit disabled');
+    expect(result.calls.filter((call) => call.startsWith('dispatch:'))).toEqual(
+      [],
+    );
+  });
+
+  it('rejects malformed post-CI workflow configuration before dispatch', () => {
+    const result = executeRestoreStep({
+      ciRuns: [],
+      deployRuns: [],
+      postCiWorkflowsRaw: '{"workflow":"post-ci.yml"}',
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      'post-ci-workflows must contain unique non-empty workflow file names',
+    );
+    expect(result.calls.filter((call) => call.startsWith('dispatch:'))).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    ['duplicate names', '["post-ci.yml","post-ci.yml"]'],
+    ['deploy overlap', '["deploy.yml"]'],
+  ])('rejects post-CI workflow configuration with %s', (_label, raw) => {
+    const result = executeRestoreStep({
+      ciRuns: [],
+      deployRuns: [],
+      postCiWorkflowsRaw: raw,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      'post-ci-workflows must contain unique non-empty workflow file names',
+    );
+    expect(result.calls.filter((call) => call.startsWith('dispatch:'))).toEqual(
+      [],
+    );
+  });
+
   it('executes a successful natural push without dispatching anything', () => {
     const result = executeRestoreStep({
       ciRuns: [run({ id: 1 })],
@@ -429,5 +582,52 @@ describe('agent automerge post-merge recovery admission', () => {
     expect(result.calls.filter((call) => call.startsWith('dispatch:'))).toEqual(
       [],
     );
+  });
+
+  it('does not fail an already-owned delivery merely because main advanced', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [run({ id: 3, conclusion: 'success' })],
+      currentMain: 'b'.repeat(40),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(
+      'already has a run that owns safety target',
+    );
+    expect(result.calls.filter((call) => call.startsWith('dispatch:'))).toEqual(
+      [],
+    );
+  });
+
+  it('keeps a source-bound post-CI dispatch but refuses a later unbound deploy after main advances', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [run({ id: 3, conclusion: 'skipped' })],
+      postCiRuns: [],
+      postCiWorkflows: ['post-ci.yml'],
+      deployCurrentMain: 'b'.repeat(40),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain('after source-bound post-CI dispatch');
+    expect(
+      result.calls.filter((call) => call === 'dispatch:post-ci.yml'),
+    ).toHaveLength(1);
+    expect(
+      result.calls.filter((call) => call === 'dispatch:deploy.yml'),
+    ).toEqual([]);
   });
 });
