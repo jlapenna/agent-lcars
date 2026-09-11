@@ -1582,8 +1582,11 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 		return placementPick{}, fmt.Errorf("fleet reached configured runner limit %d: %w", fleet.maxRunners, errFleetAtCapacity)
 	}
 	var withinHostLimits []DockerHost
+	var startBlockedHosts []string
+	hostLimitBlocked := 0
 	for _, h := range probe.reachableHosts {
 		if fleet.startInFlight[h.Name] {
+			startBlockedHosts = append(startBlockedHosts, h.Name)
 			continue
 		}
 		limit, limited := a.hostRunnerLimits[h.Name]
@@ -1592,9 +1595,20 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 		}
 		if !limited || probe.fleetCounts[h.Name]+fleet.reservations[h.Name] < limit {
 			withinHostLimits = append(withinHostLimits, h)
+		} else {
+			hostLimitBlocked++
 		}
 	}
 	if len(withinHostLimits) == 0 {
+		if len(startBlockedHosts) > 0 {
+			for _, host := range startBlockedHosts {
+				placementBlocked.WithLabelValues(scaleSet, host, placementReasonStartInFlight).Inc()
+			}
+			if hostLimitBlocked > 0 {
+				return placementPick{}, fmt.Errorf("no reachable docker host is currently eligible (%d temporarily serializing another runner start; %d at its configured runner limit): %w", len(startBlockedHosts), hostLimitBlocked, errFleetAtCapacity)
+			}
+			return placementPick{}, fmt.Errorf("every reachable docker host is temporarily serializing another runner start: %w", errFleetAtCapacity)
+		}
 		// Fleet-level: every host individually refused on its own limit, so
 		// no single host name is more at fault than another.
 		placementBlocked.WithLabelValues(scaleSet, "", placementReasonHostLimits).Inc()

@@ -22,6 +22,10 @@ import (
 const (
 	placementReasonFleetLimit = "fleet_limit"
 	placementReasonHostLimits = "host_limits"
+	// The host is temporarily withholding another runner start while its
+	// previous start reservation remains in flight. This is serialized-start
+	// coordination, not evidence that the host reached its runner limit.
+	placementReasonStartInFlight = "start_in_flight"
 	// A lower-priority scale set yielded the next safe capacity slot while a
 	// higher-priority scale set had pending demand and no runner of its own.
 	// This is a scheduler decision, not a host admission failure.
@@ -419,10 +423,10 @@ var (
 	placementBlocked = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_placement_blocked_total",
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by host and reason: " +
-			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
+			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " + placementReasonStartInFlight + ", " +
 			placementReasonMemoryReservation + ", " + placementReasonCPUReservation + ", " + placementReasonMemoryAvailable + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " +
 			placementReasonMaintenance + ", " + placementReasonPriorityReservation + ", " + placementReasonFloorOccupied + ". host names the specific host that refused the candidate for a " +
-			"per-host reason (" + placementReasonMemoryReservation + ", " + placementReasonCPUReservation + ", " + placementReasonMemoryAvailable + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " + placementReasonMaintenance + ", " + placementReasonFloorOccupied +
+			"per-host reason (" + placementReasonStartInFlight + ", " + placementReasonMemoryReservation + ", " + placementReasonCPUReservation + ", " + placementReasonMemoryAvailable + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " + placementReasonMaintenance + ", " + placementReasonFloorOccupied +
 			"); a fleet-level reason (" + placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " + placementReasonPriorityReservation +
 			") has no single host at fault and uses host=\"\".",
 	}, []string{"scale_set", "host", "reason"})

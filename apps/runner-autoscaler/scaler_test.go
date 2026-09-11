@@ -1154,6 +1154,76 @@ func TestPlacementBlockedHostLimitsUsesEmptyHostLabel(t *testing.T) {
 	}
 }
 
+func TestPlacementBlockedStartInFlightIsNotReportedAsHostLimit(t *testing.T) {
+	scaler := twoHostUnboundedScaler(t, "set", map[string]int{"laforge": 2})
+	fleet := scaler.coordinator()
+	fleet.startInFlight["laforge"] = true
+	serialized := placementBlocked.WithLabelValues("set", "laforge", placementReasonStartInFlight)
+	hostLimits := placementBlocked.WithLabelValues("set", "", placementReasonHostLimits)
+	serializedBefore := testutil.ToFloat64(serialized)
+	hostLimitsBefore := testutil.ToFloat64(hostLimits)
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want serialized-start capacity failure", host, err)
+	}
+	if !strings.Contains(err.Error(), "temporarily serializing another runner start") {
+		t.Errorf("pickHost() error = %q, want serialized-start diagnosis", err)
+	}
+	if got := testutil.ToFloat64(serialized) - serializedBefore; got != 1 {
+		t.Errorf("placement_blocked_total{host=%q,reason=%q} rose by %v, want 1", "laforge", placementReasonStartInFlight, got)
+	}
+	if got := testutil.ToFloat64(hostLimits) - hostLimitsBefore; got != 0 {
+		t.Errorf("placement_blocked_total{host=\"\",reason=%q} rose by %v, want 0", placementReasonHostLimits, got)
+	}
+
+	fleet.startInFlight["laforge"] = false
+	host, err = scaler.pickHost(context.Background())
+	if err != nil || host != "laforge" {
+		t.Fatalf("pickHost() after completed start = (%q, %v), want laforge to become selectable", host, err)
+	}
+}
+
+func TestPlacementBlockedMixedStartInFlightAndHostLimitIsTruthful(t *testing.T) {
+	limited := newFakeDockerServer(t)
+	limited.setContainers([]container.Summary{{
+		ID: "1", Labels: map[string]string{runnerScaleSetLabelKey: "set"}, State: container.StateRunning,
+	}})
+	starting := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName: "set",
+		dockerHosts: []DockerHost{
+			{Name: "laforge", Client: starting.client(t)},
+			{Name: "janeway", Client: limited.client(t)},
+		},
+		hostRunnerLimits: map[string]int{"laforge": 2, "janeway": 1},
+		runners:          runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	scaler.coordinator().startInFlight["laforge"] = true
+	serialized := placementBlocked.WithLabelValues("set", "laforge", placementReasonStartInFlight)
+	hostLimits := placementBlocked.WithLabelValues("set", "", placementReasonHostLimits)
+	serializedBefore := testutil.ToFloat64(serialized)
+	hostLimitsBefore := testutil.ToFloat64(hostLimits)
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want mixed capacity failure", host, err)
+	}
+	if !strings.Contains(err.Error(), "1 temporarily serializing another runner start; 1 at its configured runner limit") {
+		t.Errorf("pickHost() error = %q, want both exclusion causes", err)
+	}
+	if strings.Contains(err.Error(), "every reachable docker host is at its configured runner limit") {
+		t.Errorf("pickHost() error = %q falsely attributes every host to its configured limit", err)
+	}
+	if got := testutil.ToFloat64(serialized) - serializedBefore; got != 1 {
+		t.Errorf("placement_blocked_total{host=%q,reason=%q} rose by %v, want 1", "laforge", placementReasonStartInFlight, got)
+	}
+	if got := testutil.ToFloat64(hostLimits) - hostLimitsBefore; got != 0 {
+		t.Errorf("placement_blocked_total{host=\"\",reason=%q} rose by %v, want 0 for mixed exclusions", placementReasonHostLimits, got)
+	}
+}
+
 func TestDeclaredRunnerMemoryRequiresReservationLabel(t *testing.T) {
 	_, err := declaredRunnerMemory(container.Summary{ID: "missing-label"})
 	if err == nil || !strings.Contains(err.Error(), runnerMemoryLabelKey) {
