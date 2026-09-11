@@ -538,6 +538,10 @@ describe('claim -> brief -> heartbeat -> complete', () => {
 
     const brief = await call(runCtx, 'GET', runPath(runId, '/brief'));
     expect(brief.status).toBe(200);
+    expect(brief.json).toMatchObject({
+      generation: 1,
+      attemptId: `g1:${runId}`,
+    });
     expect((brief.json as { intentId: string; id: string }).intentId).toBe(
       runId,
     );
@@ -664,6 +668,74 @@ describe('claim -> brief -> heartbeat -> complete', () => {
   });
 });
 
+describe.each([
+  { repo: 'octo/example', issue: 42 },
+  { workId: wid('brief-identity') },
+])('brief identity for %j', (taskId) => {
+  it.each([
+    ['/r12', 12],
+    ['/r9007199254740991', Number.MAX_SAFE_INTEGER],
+    ['/missing', undefined],
+    ['/r9007199254740993', undefined],
+    ['/r0', undefined],
+  ])('handles the authoritative suffix %s', async (suffix, generation) => {
+    const { store, orchestrator, now } = fixture();
+    const outcome = await orchestrator.request({
+      taskId,
+      requestId: 'brief-identity',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'api' },
+        spec: {
+          title: 'Brief identity',
+          description: 'Use the stored generation.',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if ('refused' in outcome || outcome.run === undefined) {
+      throw new Error('expected a queued run');
+    }
+    const runId = outcome.run.runId.replace('/r1', suffix);
+    const versioned = await store.readTask(taskId);
+    if (versioned === undefined) throw new Error('missing task');
+    // Model an already-stored identity, including corruption admission would
+    // never mint. The real route still authenticates the run token.
+    await store.apply({
+      decision: {
+        task: { ...versioned.task, activeRunId: runId },
+        run: { ...outcome.run, runId },
+        outbox: [],
+      },
+      expectedRevision: versioned.revision,
+    });
+    await store.enqueueRun({ runId, now: NOW });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const response = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(response.status).toBe(generation === undefined ? 500 : 200);
+    expect(response.json).toMatchObject(
+      generation === undefined
+        ? { message: 'run has corrupted generation' }
+        : { generation, intentId: runId, attemptId: `g${generation}:${runId}` },
+    );
+    expect((response.json as { attemptId?: string }).attemptId).toBe(
+      generation === undefined ? undefined : `g${generation}:${runId}`,
+    );
+  });
+});
+
 describe('brief', () => {
   it('serves a GitHub issue or pull-request anchor with all direct-runner metadata', async () => {
     const { store, orchestrator, now } = fixture();
@@ -721,6 +793,8 @@ describe('brief', () => {
       runbook: 'pr-heal',
       context: 'nightly sweep',
       intentId: runId,
+      generation: 1,
+      attemptId: 'g1:octo/example#42/r1',
     });
     expect(r.json).toMatchObject({
       work: {

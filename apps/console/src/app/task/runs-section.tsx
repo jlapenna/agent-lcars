@@ -1,3 +1,4 @@
+import { parseRunGeneration } from '@agent-lcars/dispatch-contracts';
 import type { Run, RunEvent, RunState } from '@agent-lcars/orchestrator';
 import { isLive } from '@agent-lcars/orchestrator';
 import { Anchor, Badge, Divider, Group, Stack, Text } from '@mantine/core';
@@ -50,18 +51,6 @@ function runStateBadge(run: Run): { label: string; color: string } {
     label: RUN_STATE_LABELS[run.state],
     color: RUN_STATE_COLORS[run.state],
   };
-}
-
-/** Pulls the trailing generation number back out of a run's own
- * `{repo}#{issue}/r{generation}` id (see `libs/orchestrator/src/decide.ts`'s
- * `requestRun`) for a `g<N>` badge consistent with the legacy attempts
- * list's own vocabulary (task-detail.ts's `generationFromRunId`, kept
- * separate rather than imported so this component stays self-contained and
- * testable without dragging in that server-only module's transitive
- * imports). */
-function generationFromRunId(runId: string): number | undefined {
-  const match = /\/r(\d+)$/u.exec(runId);
-  return match ? Number(match[1]) : undefined;
 }
 
 function RunPipelineBadge({ pipeline }: { pipeline: string }) {
@@ -140,7 +129,7 @@ function RunResultView({ result }: { result: Run['result'] }) {
  */
 function RunRow({ run }: { run: Run }) {
   const badge = runStateBadge(run);
-  const generation = generationFromRunId(run.runId);
+  const generation = parseRunGeneration(run.runId);
   return (
     <Stack gap={6} data-testid={`run-${run.runId}`}>
       <Group gap="xs" wrap="wrap">

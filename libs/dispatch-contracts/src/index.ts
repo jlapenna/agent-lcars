@@ -5,7 +5,11 @@
  * Import this, do not re-derive it. See ../README.md.
  */
 
-export { formatAttemptId, formatClaimMarker } from './marker';
+export {
+  formatAttemptId,
+  formatClaimMarker,
+  parseRunGeneration,
+} from './marker';
 export type { DispatchOutcomeKind } from './outcomes';
 export type { AgentPipeline, PipelineContract } from './pipelines';
 export {

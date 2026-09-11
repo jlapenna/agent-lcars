@@ -2,6 +2,10 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
+import {
+  formatAttemptId,
+  parseRunGeneration,
+} from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
   isLive,
@@ -385,12 +389,18 @@ export const runsRouter = os.router({
       runbook: run.params?.['runbook'] ?? '',
       context: run.params?.['context'] ?? '',
     };
-    const generationMatch = /\/r(\d+)$/u.exec(run.runId);
-    const generation = generationMatch ? Number(generationMatch[1]) : 1;
+    const generation = parseRunGeneration(run.runId);
+    if (generation === undefined || generation < 1) {
+      // A stored identity is authoritative: never invent an attempt for a
+      // corrupt run. The brief contract requires a positive generation.
+      throw new ORPCError('INTERNAL_SERVER_ERROR', {
+        message: 'run has corrupted generation',
+      });
+    }
     const shared = {
       pipeline: run.pipeline,
       ...params,
-      attemptId: `g${generation}:${run.runId}`,
+      attemptId: formatAttemptId({ generation, intentId: run.runId }),
       generation,
       intentId: run.runId,
       ...(resume === undefined ? {} : { resume }),
