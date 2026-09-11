@@ -249,6 +249,42 @@ const context = {
 };
 
 describe('claim', () => {
+  it('starts the execution lease atomically after a long queue wait', async () => {
+    const { store, orchestrator, now, setNow } = fixture();
+    await seedQueuedRun(store, orchestrator, {
+      workId: wid('capacity-wait'),
+      now: NOW,
+    });
+    setNow('2026-08-26T16:00:00.000Z');
+    const claim = store.claimQueuedRun.bind(store);
+    vi.spyOn(store, 'claimQueuedRun').mockImplementation(async (input) => {
+      const result = await claim(input);
+      // Reconcile between the durable claim and the HTTP response. A split
+      // claim/renew would lose the run here after its six-hour queue wait.
+      expect(await orchestrator.sweepExpired()).toEqual({
+        lost: [],
+        retried: [],
+      });
+      return result;
+    });
+    const response = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'worker-with-capacity' },
+    );
+    expect(response.status).toBe(200);
+    expect(response.json).toMatchObject({
+      expiresAt: '2026-08-26T18:00:00.000Z',
+    });
+  });
+
   it('refuses a request with no principal', async () => {
     const { store, orchestrator, now } = fixture();
     const r = await call(

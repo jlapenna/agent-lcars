@@ -1127,6 +1127,225 @@ func TestQueueExecutorPollerCleanupDoesNotBlockClaims(t *testing.T) {
 	}
 }
 
+func TestPollOnceLeavesClaimQueuedUntilReservedCapacityIsAvailable(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"runId":"work:01CAPACITYWAIT/r1","token":"token","pipeline":"opencode"}`)
+	}))
+	defer server.Close()
+
+	capacity := false
+	launches := 0
+	tokens := 0
+	cfg := queueExecutorConfig{
+		consoleURL: server.URL,
+		runnerName: "test-runner",
+		idToken: func() (string, error) {
+			tokens++
+			return "token", nil
+		},
+		reserve: func() (*directRunnerReservation, error) {
+			if !capacity {
+				return nil, nil
+			}
+			return &directRunnerReservation{
+				release: func() {},
+				launch:  func(directRunnerLaunch) error { launches++; return nil },
+			}, nil
+		},
+	}
+
+	outcome, err := pollOnceWithOutcome(cfg)
+	if err != nil || outcome != queuePollOutcomeCapacityWait {
+		t.Fatalf("full-capacity poll = (%q, %v), want capacity_wait", outcome, err)
+	}
+	if tokens != 0 || requests != 0 || launches != 0 {
+		t.Fatalf("full capacity performed work: tokens=%d requests=%d launches=%d", tokens, requests, launches)
+	}
+
+	capacity = true
+	outcome, err = pollOnceWithOutcome(cfg)
+	if err != nil || outcome != queuePollOutcomeClaimed {
+		t.Fatalf("available-capacity poll = (%q, %v), want claimed", outcome, err)
+	}
+	if tokens != 1 || requests != 1 || launches != 1 {
+		t.Fatalf("available capacity did not launch exactly once: tokens=%d requests=%d launches=%d", tokens, requests, launches)
+	}
+}
+
+func TestPollOnceReservedCapacityLaunchesExactlyOnce(t *testing.T) {
+	t.Setenv("LCARS_QUEUE_MAX_CONCURRENT", "1")
+	t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
+	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
+
+	docker := newFakeDockerServer(t)
+	docker.setContainers([]container.Summary{{
+		ID:     "existing-direct-runner",
+		State:  container.StateRunning,
+		Labels: map[string]string{directRunnerLabelKey: "1"},
+	}})
+	newClient := func(target string) (*dockerclient.Client, error) {
+		if target != "fake-target" {
+			t.Fatalf("unexpected docker target %q", target)
+		}
+		return docker.client(t), nil
+	}
+	reservations := newDirectRunnerCapacityReservations(
+		resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}},
+		newClient,
+		discardLogger(),
+	)
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"runId":"work:01RESERVEDLAUNCH/r1","token":"token","pipeline":"codex"}`)
+	}))
+	defer server.Close()
+
+	cfg := queueExecutorConfig{
+		consoleURL: server.URL,
+		runnerName: "test-runner",
+		idToken:    func() (string, error) { return "token", nil },
+		reserve:    func() (*directRunnerReservation, error) { return reservations.reserve(context.Background()) },
+	}
+	outcome, err := pollOnceWithOutcome(cfg)
+	if err != nil || outcome != queuePollOutcomeCapacityWait {
+		t.Fatalf("full-fleet poll = (%q, %v), want capacity_wait", outcome, err)
+	}
+	if requests != 0 || docker.createCount() != 0 {
+		t.Fatalf("full-fleet poll side effects: requests=%d creates=%d, want 0 each", requests, docker.createCount())
+	}
+
+	docker.setContainers(nil)
+	outcome, err = pollOnceWithOutcome(cfg)
+	if err != nil || outcome != queuePollOutcomeClaimed {
+		t.Fatalf("reserved poll = (%q, %v), want claimed", outcome, err)
+	}
+	if requests != 1 || docker.createCount() != 1 {
+		t.Fatalf("reserved poll side effects: requests=%d creates=%d, want 1 each", requests, docker.createCount())
+	}
+}
+
+func TestDirectRunnerCapacityReservationsDoNotDoubleReserveOneSlot(t *testing.T) {
+	t.Setenv("LCARS_QUEUE_MAX_CONCURRENT", "1")
+	docker := newFakeDockerServer(t)
+	reservations := newDirectRunnerCapacityReservations(
+		resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}},
+		func(string) (*dockerclient.Client, error) { return docker.client(t), nil },
+		discardLogger(),
+	)
+
+	start := make(chan struct{})
+	results := make(chan *directRunnerReservation, 2)
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			reservation, err := reservations.reserve(context.Background())
+			results <- reservation
+			errs <- err
+		}()
+	}
+	close(start)
+
+	var held *directRunnerReservation
+	available := 0
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("reserve: %v", err)
+		}
+		reservation := <-results
+		if reservation != nil {
+			available++
+			held = reservation
+		}
+	}
+	if available != 1 {
+		t.Fatalf("concurrent reservations available = %d, want exactly 1", available)
+	}
+	held.release()
+	afterRelease, err := reservations.reserve(context.Background())
+	if err != nil || afterRelease == nil {
+		t.Fatalf("reserve after release = (%v, %v), want capacity", afterRelease, err)
+	}
+	afterRelease.release()
+}
+
+func TestPollOnceReleasesReservationOnEveryExit(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		body      string
+		tokenErr  error
+		launchErr error
+		wantError bool
+	}{
+		{name: "idle 204", status: http.StatusNoContent},
+		{name: "idle empty", status: http.StatusOK, body: `{}`},
+		{name: "authentication error", tokenErr: errors.New("no identity"), wantError: true},
+		{name: "claim rejected", status: http.StatusUnauthorized, wantError: true},
+		{name: "launch error", status: http.StatusOK, body: `{"runId":"work:01RELEASE/r1","token":"token","pipeline":"codex"}`, launchErr: errors.New("docker start failed"), wantError: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			releases := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			_, err := pollOnceWithOutcome(queueExecutorConfig{
+				consoleURL: server.URL,
+				runnerName: "test-runner",
+				idToken:    func() (string, error) { return "token", tc.tokenErr },
+				reserve: func() (*directRunnerReservation, error) {
+					return &directRunnerReservation{
+						release: func() { releases++ },
+						launch:  func(directRunnerLaunch) error { return tc.launchErr },
+					}, nil
+				},
+			})
+			if (err != nil) != tc.wantError {
+				t.Fatalf("poll error = %v, wantError=%v", err, tc.wantError)
+			}
+			if releases != 1 {
+				t.Fatalf("reservation releases = %d, want 1", releases)
+			}
+		})
+	}
+}
+
+func TestPollOnceDoesNotClaimWhenCapacityInventoryFails(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	reservations := newDirectRunnerCapacityReservations(
+		resolvedOrchestratorConfig{DockerHosts: []string{"host-a=unreachable"}},
+		func(string) (*dockerclient.Client, error) { return nil, errors.New("docker unavailable") },
+		discardLogger(),
+	)
+
+	outcome, err := pollOnceWithOutcome(queueExecutorConfig{
+		consoleURL: server.URL,
+		runnerName: "test-runner",
+		idToken:    func() (string, error) { return "token", nil },
+		reserve:    func() (*directRunnerReservation, error) { return reservations.reserve(context.Background()) },
+	})
+	if err == nil || outcome != queuePollOutcomePollError {
+		t.Fatalf("inventory-failed poll = (%q, %v), want poll_error", outcome, err)
+	}
+	if requests != 0 {
+		t.Fatalf("inventory failure made %d claim requests, want 0", requests)
+	}
+}
+
 // TestLaunchDirectRunnerRoundRobinsPastAFullHost exercises the whole
 // launchDirectRunner round-robin: the first configured host is at capacity,
 // so the container must land on the second.

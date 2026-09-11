@@ -554,7 +554,7 @@ var (
 	}, []string{"state"})
 	queueExecutorPollsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_polls_total",
-		Help: "Queue executor claim polls by non-claim outcome: draining, idle_204, idle_empty, or poll_error.",
+		Help: "Queue executor claim polls by non-claim outcome: draining, capacity_wait, idle_204, idle_empty, or poll_error.",
 	}, []string{"outcome"})
 	queueExecutorClaimsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_claims_total",
@@ -595,7 +595,7 @@ func recordQueueExecutorPollOutcome(outcome queuePollOutcome) {
 		queueExecutorLaunchesTotal.WithLabelValues("success").Inc()
 	case queuePollOutcomeLaunchErr:
 		queueExecutorLaunchesTotal.WithLabelValues("error").Inc()
-	case queuePollOutcomeDraining, queuePollOutcomeIdle204, queuePollOutcomeIdleEmpty, queuePollOutcomePollError:
+	case queuePollOutcomeDraining, queuePollOutcomeCapacityWait, queuePollOutcomeIdle204, queuePollOutcomeIdleEmpty, queuePollOutcomePollError:
 		queueExecutorPollsTotal.WithLabelValues(string(outcome)).Inc()
 	}
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { decidedRun, isRefusal } from './decide';
 import { MemoryStore } from './memory-store';
@@ -765,5 +765,30 @@ describe('concurrency', () => {
     expect(wins).toHaveLength(1);
     expect(refusals).toHaveLength(1);
     expect(refusals[0]).toMatchObject({ reason: 'task-busy' });
+  });
+});
+
+describe('capacity-wait lease recovery', () => {
+  it('rechecks queue state after an expired snapshot and still permits cancellation', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    clock.advanceMinutes(181);
+    const listExpired = store.listExpiredRuns.bind(store);
+    vi.spyOn(store, 'listExpiredRuns').mockImplementationOnce(async (now) => {
+      const snapshot = await listExpired(now);
+      await store.enqueueRun({ runId: run.runId, now });
+      return snapshot;
+    });
+    expect(await orchestrator.sweepExpired()).toEqual({
+      lost: [],
+      retried: [],
+    });
+    expect(await store.readTask(TASK)).toMatchObject({
+      task: { activeRunId: run.runId, consecutiveLost: 0 },
+    });
+    expect(
+      await orchestrator.cancel(run.runId, 'cancel queued work'),
+    ).not.toHaveProperty('refused');
+    expect(await store.readRun(run.runId)).toMatchObject({ state: 'canceled' });
   });
 });

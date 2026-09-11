@@ -73,9 +73,16 @@ calls `/api/control-plane/reconcile` every 30 minutes (also
 (`libs/orchestrator/src/orchestrator.ts`) followed by an outbox drain
 (`apps/console/src/lib/orchestrator-dispatch.ts`). What it actually does:
 
-- **Lease expiry, not liveness polling.** A live run holds a 2-hour lease
-  (`decide.ts`'s `LEASE_MS`) that only your own dispatch/report/renew calls
-  extend. If your job dies silently — runner loss, a timeout with no
+- **Capacity waits stay queued.** The singleton QueueExecutor reserves local
+  host capacity before requesting a claim. A full fleet produces the bounded
+  `capacity_wait` poll outcome without claiming work. Queued runs do not expire
+  or consume execution retries; claiming atomically starts a fresh two-hour
+  execution lease. A failed launch after claiming still uses lease recovery,
+  because the launch may have had side effects. Process-local reservations do
+  not coordinate separately running executor generations.
+- **Lease expiry, not liveness polling.** Pending dispatches and claimed runs
+  hold a 2-hour lease (`decide.ts`'s `RUN_LEASE_MS`) extended by dispatch,
+  claim, or renewal. If your job dies silently — runner loss, a timeout with no
   completion callback, anything that never reaches `expireLease` on its
   own — the sweep is what eventually notices: once the lease is past due,
   the run is marked `lost` and the task's mutex is released. There is

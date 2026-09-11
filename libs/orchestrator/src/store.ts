@@ -237,8 +237,9 @@ export interface OrchestratorStore {
 
   /** Transactionally claims the oldest (`createdAt`) `queued` run whose
    *  `pipeline` is one of `pipelines`, setting `queue.state = 'claimed'`
-   *  plus `claimedAt`/`claimedBy`/`tokenHash`. `undefined` when nothing is
-   *  queued for those pipelines. */
+   *  plus `claimedAt`/`claimedBy`/`tokenHash` and refreshing the execution
+   *  lease in the same transaction. `undefined` when nothing is queued for
+   *  those pipelines. */
   claimQueuedRun(input: {
     pipelines: readonly string[];
     now: string;

@@ -7,7 +7,12 @@ import {
 } from '@google-cloud/firestore';
 import { z } from 'zod';
 
-import { type Decision, isRefusal, type Refusal } from './decide';
+import {
+  type Decision,
+  isRefusal,
+  type Refusal,
+  runLeaseExpiresAt,
+} from './decide';
 import {
   byOutboxClaimFairness,
   type GithubAnchorProjection,
@@ -541,7 +546,9 @@ export class FirestoreStore implements OrchestratorStore {
     // `listLiveRuns` already runs (each covered by Firestore's automatic
     // single-field index) and apply the lease-expiry filter client-side.
     return (await this.listLiveRuns()).filter(
-      (run) => Date.parse(run.leaseExpiresAt) <= cutoff,
+      (run) =>
+        run.queue?.state !== 'queued' &&
+        Date.parse(run.leaseExpiresAt) <= cutoff,
     );
   }
 
@@ -614,6 +621,7 @@ export class FirestoreStore implements OrchestratorStore {
       if (first === undefined) return undefined;
       const claimed: Run = {
         ...first.run,
+        leaseExpiresAt: runLeaseExpiresAt(input.now),
         queue: {
           state: 'claimed',
           claimedAt: input.now,
