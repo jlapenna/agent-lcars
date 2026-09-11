@@ -342,16 +342,12 @@ export const runsRouter = os.router({
       });
       if (claimed === undefined) return undefined;
       if (!isLive(claimed.state)) continue;
-      const renewed = await context.orchestrator.renew(claimed.runId);
-      const expiresAt = isRefusal(renewed)
-        ? claimed.leaseExpiresAt
-        : (renewed.run?.leaseExpiresAt ?? claimed.leaseExpiresAt);
       return {
         runId: claimed.runId,
         ...('workId' in claimed.task ? { workId: claimed.task.workId } : {}),
         pipeline: claimed.pipeline,
         token,
-        expiresAt,
+        expiresAt: claimed.leaseExpiresAt,
       };
     }
     return undefined;

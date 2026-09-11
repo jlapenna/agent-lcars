@@ -708,6 +708,45 @@ export function runOrchestratorStoreContract(
         const expired = await store.listExpiredRuns(clock.now());
         expect(expired.map((run) => run.runId)).toEqual([kept.run.runId]);
       });
+
+      it('keeps an unclaimed queued run live past its request lease and starts a fresh lease when claimed', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const queued = await started(orchestrator, 'queued-capacity-wait');
+        await store.enqueueRun({ runId: queued.run.runId, now: clock.now() });
+        await orchestrator.confirmDispatch(queued.run.runId);
+
+        clock.advanceMinutes(181);
+        expect(await store.listExpiredRuns(clock.now())).toEqual([]);
+        expect((await orchestrator.sweepExpired()).lost).toEqual([]);
+
+        const claimed = await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: clock.now(),
+          claimedBy: 'runner-after-capacity',
+          tokenHash: 'a'.repeat(64),
+        });
+        expect(claimed?.runId).toBe(queued.run.runId);
+        expect(claimed?.leaseExpiresAt).toBe(
+          new Date(Date.parse(clock.now()) + 120 * 60_000).toISOString(),
+        );
+        expect(await store.readTask(TASK)).toMatchObject({
+          task: { activeRunId: queued.run.runId, consecutiveLost: 0 },
+        });
+        expect(await store.listExpiredRuns(clock.now())).toEqual([]);
+
+        clock.advanceMinutes(119);
+        expect(await orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        clock.advanceMinutes(2);
+        const swept = await orchestrator.sweepExpired();
+        expect(swept.lost.map((run) => run.runId)).toEqual([queued.run.runId]);
+        expect(swept.retried).toHaveLength(1);
+        expect(await store.readTask(TASK)).toMatchObject({
+          task: { consecutiveLost: 1 },
+        });
+      });
     });
 
     describe('live-run listing', () => {

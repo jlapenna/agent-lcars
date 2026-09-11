@@ -193,6 +193,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					queueStatus.configureEligibleHosts(queueExecutorResolved, newDockerClient)
 					setQueueExecutorStartupState(queueExecutorStateReady)
 					queueStatus.ready.Store(true)
+					capacityReservations := newDirectRunnerCapacityReservations(queueExecutorResolved, newDockerClient, logger)
 					go runQueueExecutorPoller(ctx, queueExecutorConfig{
 						consoleURL: consoleURL,
 						runnerName: runnerName,
@@ -201,6 +202,9 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 						},
 						launch: func(l directRunnerLaunch) error {
 							return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
+						},
+						reserve: func() (*directRunnerReservation, error) {
+							return capacityReservations.reserve(ctx)
 						},
 						draining: queueDraining.Load,
 						cleanup: func(cleanupCtx context.Context) error {

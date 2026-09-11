@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -66,6 +67,10 @@ type queueExecutorConfig struct {
 	// claims instead. Nothing in this file attempts to un-claim or retry a
 	// failed launch directly -- the retry is a different run entirely.
 	launch func(directRunnerLaunch) error
+	// reserve acquires one process-local, host-specific capacity slot before
+	// the durable claim. A nil reservation means every configured host is
+	// currently full, so the item remains queued without minting a token.
+	reserve func() (*directRunnerReservation, error)
 	// draining reports whether this instance is mid-SIGUSR1 drain (set in
 	// runOrchestrator's own select loop, via an atomic.Bool the poller
 	// goroutine reads -- see runOrchestrator's "Native work items,
@@ -91,6 +96,11 @@ type claimResponse struct {
 	ExpiresAt string `json:"expiresAt"`
 }
 
+type directRunnerReservation struct {
+	launch  func(directRunnerLaunch) error
+	release func()
+}
+
 // claimResponseBodyLimit bounds how much of a claim response pollOnce will
 // ever read, mirroring github_http.go's readBoundedBody convention: an
 // unbounded json.Decoder read against a misbehaving or compromised console
@@ -105,12 +115,13 @@ const claimResponseBodyLimit = 64 << 10
 type queuePollOutcome string
 
 const (
-	queuePollOutcomeDraining  queuePollOutcome = "draining"
-	queuePollOutcomeIdle204   queuePollOutcome = "idle_204"
-	queuePollOutcomeIdleEmpty queuePollOutcome = "idle_empty"
-	queuePollOutcomePollError queuePollOutcome = "poll_error"
-	queuePollOutcomeClaimed   queuePollOutcome = "claimed"
-	queuePollOutcomeLaunchErr queuePollOutcome = "launch_error"
+	queuePollOutcomeDraining     queuePollOutcome = "draining"
+	queuePollOutcomeIdle204      queuePollOutcome = "idle_204"
+	queuePollOutcomeIdleEmpty    queuePollOutcome = "idle_empty"
+	queuePollOutcomePollError    queuePollOutcome = "poll_error"
+	queuePollOutcomeClaimed      queuePollOutcome = "claimed"
+	queuePollOutcomeLaunchErr    queuePollOutcome = "launch_error"
+	queuePollOutcomeCapacityWait queuePollOutcome = "capacity_wait"
 )
 
 // pollOnce claims at most one run and, on success, launches it. "Nothing
@@ -130,6 +141,18 @@ func pollOnce(cfg queueExecutorConfig) error {
 func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 	if cfg.draining != nil && cfg.draining() {
 		return queuePollOutcomeDraining, nil
+	}
+	var reservation *directRunnerReservation
+	if cfg.reserve != nil {
+		var err error
+		reservation, err = cfg.reserve()
+		if err != nil {
+			return queuePollOutcomePollError, fmt.Errorf("reserving direct-runner capacity: %w", err)
+		}
+		if reservation == nil {
+			return queuePollOutcomeCapacityWait, nil
+		}
+		defer reservation.release()
 	}
 	client := cfg.httpClient
 	if client == nil {
@@ -185,7 +208,11 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		return queuePollOutcomeIdleEmpty, nil
 	}
 	queueExecutorClaimsTotal.Inc()
-	err = cfg.launch(directRunnerLaunch{
+	launch := cfg.launch
+	if reservation != nil {
+		launch = reservation.launch
+	}
+	err = launch(directRunnerLaunch{
 		runID:      claimed.RunID,
 		runToken:   claimed.Token,
 		pipeline:   claimed.Pipeline,
@@ -417,6 +444,92 @@ const (
 // placement here (explicitly not Scaler.pickHost's load-aware scoring), and
 // a single poller goroutine is the only production caller.
 var directRunnerHostCursor atomic.Uint64
+
+// directRunnerCapacityReservations serializes capacity admission, claim, and
+// launch inside the singleton QueueExecutor process. The launch path still
+// rechecks Docker's authoritative count: during a rolling replacement an old
+// daemon generation or an operator can consume the slot after this process
+// reserves it, and that uncertain post-claim failure must retain the normal
+// lease-recovery semantics rather than risk duplicate execution by unclaiming.
+type directRunnerCapacityReservations struct {
+	mu        sync.Mutex
+	held      map[string]int
+	resolved  resolvedOrchestratorConfig
+	newClient func(target string) (*dockerclient.Client, error)
+	logger    *slog.Logger
+}
+
+func newDirectRunnerCapacityReservations(resolved resolvedOrchestratorConfig, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) *directRunnerCapacityReservations {
+	return &directRunnerCapacityReservations{held: map[string]int{}, resolved: resolved, newClient: newClient, logger: logger}
+}
+
+func (r *directRunnerCapacityReservations) reserve(ctx context.Context) (*directRunnerReservation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	targets, order, err := ParseDockerHosts(r.resolved.DockerHosts)
+	if err != nil {
+		return nil, fmt.Errorf("parsing fleet docker hosts: %w", err)
+	}
+	if len(order) == 0 {
+		return nil, fmt.Errorf("no docker hosts configured")
+	}
+	maxConcurrent := directRunnerMaxConcurrent()
+	start := directRunnerHostCursor.Add(1) - 1
+	var probeErr error
+	for i := range order {
+		host := order[(start+uint64(i))%uint64(len(order))]
+		client, err := r.newClient(targets[host])
+		if err != nil {
+			probeErr = errors.Join(probeErr, fmt.Errorf("host %q: connecting: %w", host, err))
+			continue
+		}
+		listCtx, cancel := context.WithTimeout(ctx, dockerInspectTimeout)
+		running, listErr := client.ContainerList(listCtx, container.ListOptions{Filters: filters.NewArgs(filters.Arg("label", directRunnerLabelKey))})
+		cancel()
+		_ = client.Close()
+		if listErr != nil {
+			probeErr = errors.Join(probeErr, fmt.Errorf("host %q: listing direct-runner containers: %w", host, listErr))
+			continue
+		}
+		if len(running)+r.held[host] >= maxConcurrent {
+			continue
+		}
+		r.held[host]++
+		var once sync.Once
+		release := func() { once.Do(func() { r.mu.Lock(); r.held[host]--; r.mu.Unlock() }) }
+		return &directRunnerReservation{
+			release: release,
+			launch: func(l directRunnerLaunch) error {
+				return launchDirectRunnerReservedHost(ctx, host, targets[host], l, r.newClient, r.logger)
+			},
+		}, nil
+	}
+	// An entirely healthy fleet reporting full is an ordinary wait. Surface
+	// any inventory fault rather than claiming against uncertain capacity.
+	if probeErr != nil {
+		return nil, probeErr
+	}
+	return nil, nil
+}
+
+func launchDirectRunnerReservedHost(ctx context.Context, host, target string, l directRunnerLaunch, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) error {
+	runnerImage, err := directRunnerImage()
+	if err != nil {
+		return err
+	}
+	writerKeyHostPath, err := directRunnerTelemetryWriterHostPath()
+	if err != nil {
+		return err
+	}
+	binds, err := directRunnerProviderCredentialBinds(l.pipeline)
+	if err != nil {
+		return err
+	}
+	if err := launchDirectRunnerOnHost(ctx, newClient, host, target, runnerImage, writerKeyHostPath, binds, directRunnerMaxConcurrent(), l, logger); err != nil {
+		return fmt.Errorf("launching direct-mode runner for run %q: %w", l.runID, err)
+	}
+	return nil
+}
 
 // launchDirectRunner starts one direct-mode runner container for a
 // successful claim, on a host picked round-robin from resolved's configured

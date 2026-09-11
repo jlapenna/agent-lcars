@@ -1,4 +1,9 @@
-import { type Decision, isRefusal, type Refusal } from './decide';
+import {
+  type Decision,
+  isRefusal,
+  type Refusal,
+  runLeaseExpiresAt,
+} from './decide';
 import type {
   GithubAnchorProjection,
   LeasedOutboxEntry,
@@ -441,7 +446,9 @@ export class MemoryStore implements OrchestratorStore {
     const cutoff = Date.parse(now);
     return structuredClone(
       (await this.listLiveRuns()).filter(
-        (run) => Date.parse(run.leaseExpiresAt) <= cutoff,
+        (run) =>
+          run.queue?.state !== 'queued' &&
+          Date.parse(run.leaseExpiresAt) <= cutoff,
       ),
     );
   }
@@ -489,6 +496,7 @@ export class MemoryStore implements OrchestratorStore {
     if (candidate === undefined) return undefined;
     const claimed: Run = {
       ...candidate,
+      leaseExpiresAt: runLeaseExpiresAt(input.now),
       queue: {
         state: 'claimed',
         claimedAt: input.now,

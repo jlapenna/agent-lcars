@@ -65,10 +65,10 @@ export function decidedRun(decision: Decision): Run {
   return decision.run;
 }
 
-const LEASE_MS = 2 * 60 * 60 * 1_000;
+export const RUN_LEASE_MS = 2 * 60 * 60 * 1_000;
 
-function lease(now: string): string {
-  return new Date(Date.parse(now) + LEASE_MS).toISOString();
+export function runLeaseExpiresAt(now: string): string {
+  return new Date(Date.parse(now) + RUN_LEASE_MS).toISOString();
 }
 
 /** A task whose runs go `lost` this many times in a row stops auto-retrying
@@ -158,7 +158,7 @@ function mintRun(input: {
     requestId,
     requestSource: requestSource ?? 'caller',
     ...(params === undefined ? {} : { params }),
-    leaseExpiresAt: lease(now),
+    leaseExpiresAt: runLeaseExpiresAt(now),
     events: [{ at: now, to: 'pending', by: 'request' }],
     createdAt: now,
     updatedAt: now,
@@ -196,7 +196,7 @@ export function confirmDispatch(input: {
     run: {
       ...run,
       state: 'running',
-      leaseExpiresAt: lease(now),
+      leaseExpiresAt: runLeaseExpiresAt(now),
       events: [...run.events, { at: now, to: 'running', by: 'dispatch' }],
       updatedAt: now,
     },
@@ -215,7 +215,7 @@ export function renewLease(input: {
   if (task.activeRunId !== run.runId) return refused('stale-lease');
   return {
     task,
-    run: { ...run, leaseExpiresAt: lease(now), updatedAt: now },
+    run: { ...run, leaseExpiresAt: runLeaseExpiresAt(now), updatedAt: now },
     outbox: [],
   };
 }
@@ -297,6 +297,10 @@ export function expireLease(input: {
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (!isLive(run.state)) return refused('run-not-live');
+  // QueueExecutor capacity waits are not execution attempts. A queued run
+  // may wait past its original request lease without consuming the task's
+  // lost-run retry budget; the atomic claim refreshes the execution lease.
+  if (run.queue?.state === 'queued') return refused('stale-lease');
   if (Date.parse(run.leaseExpiresAt) > Date.parse(now)) {
     return refused('stale-lease'); // not actually expired
   }
