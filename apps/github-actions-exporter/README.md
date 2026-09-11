@@ -11,6 +11,12 @@ high-cardinality time-series store. Workflows use their stable YAML filename;
 job labels are capped at 100 distinct values per repository/workflow and any
 additional dynamic names are grouped under `__other__`.
 
+SQLite retains each job's raw `runner_name` for future offline correlation with
+the matching cAdvisor container series. It remains local durable data and is
+never exposed as a Prometheus label. Collection begins when a runner name is
+first observed. Legacy rows stay empty unless normal polling observes them
+again; no dedicated historical backfill is added.
+
 Jobs may opt into full-suite performance tracking by adding the literal
 `[full-suite]` marker to the step that runs the suite. Completed jobs export
 one of three bounded `execution` values: `full_suite` when that step ran,

@@ -145,6 +145,106 @@ class GitHubActionsExporterTests(unittest.TestCase):
 
         connection.close.assert_called_once_with()
 
+    def test_legacy_database_adds_empty_runner_name(self):
+        database_path = Path(self.temporary_directory.name) / "legacy.db"
+        connection = exporter.sqlite3.connect(database_path)
+        connection.executescript(
+            """
+            CREATE TABLE jobs (
+                repository TEXT NOT NULL,
+                id INTEGER NOT NULL,
+                run_id INTEGER NOT NULL,
+                workflow TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                conclusion TEXT,
+                created_at REAL,
+                started_at REAL,
+                completed_at REAL,
+                runner_group TEXT NOT NULL,
+                execution TEXT NOT NULL DEFAULT 'unknown',
+                concurrency_group TEXT NOT NULL DEFAULT 'none',
+                runs_on TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (repository, id)
+            );
+            INSERT INTO jobs (
+                repository, id, run_id, workflow, name, status, runner_group
+            ) VALUES ('jlapenna/agent-lcars', 456, 123, 'ci',
+                      'Full verification', 'completed', 'Default');
+            """
+        )
+        connection.close()
+
+        migrated = exporter.Database(str(database_path))
+        self.addCleanup(migrated.close)
+
+        row = migrated.rows("SELECT runner_name FROM jobs WHERE id = 456")[0]
+        self.assertEqual(row["runner_name"], "")
+
+    def test_runner_name_survives_partial_job_updates_and_restart(self):
+        repository = "jlapenna/agent-lcars"
+        run = workflow_run(status="in_progress", conclusion=None)
+        self.database.upsert_run(repository, run)
+
+        self.database.upsert_jobs(
+            repository,
+            run,
+            [workflow_job(status="queued", conclusion=None, runner_name="")],
+        )
+        self.assertEqual(
+            self.database.rows("SELECT runner_name FROM jobs WHERE id = 456")[0][
+                "runner_name"
+            ],
+            "",
+        )
+
+        self.database.upsert_jobs(
+            repository,
+            run,
+            [
+                workflow_job(
+                    status="in_progress",
+                    conclusion=None,
+                    runner_name="runner-homelab-autoscale-lcars-ci-abc123",
+                )
+            ],
+        )
+        self.database.upsert_jobs(
+            repository, run, [workflow_job(status="in_progress", runner_name="  ")]
+        )
+        self.assertEqual(
+            self.database.rows("SELECT runner_name FROM jobs WHERE id = 456")[0][
+                "runner_name"
+            ],
+            "runner-homelab-autoscale-lcars-ci-abc123",
+        )
+        self.database.upsert_jobs(
+            repository,
+            run,
+            [
+                workflow_job(
+                    status="in_progress",
+                    runner_name="runner-homelab-autoscale-lcars-ci-reassigned",
+                )
+            ],
+        )
+        completed_run = workflow_run()
+        self.database.upsert_run(repository, completed_run)
+        self.database.upsert_jobs(
+            repository, completed_run, [workflow_job(runner_name=None)]
+        )
+
+        database_path = self.database.connection.execute(
+            "PRAGMA database_list"
+        ).fetchone()["file"]
+        self.database.close()
+        restarted = exporter.Database(database_path)
+        self.addCleanup(restarted.close)
+        row = restarted.rows("SELECT runner_name FROM jobs WHERE id = 456")[0]
+        self.assertEqual(
+            row["runner_name"], "runner-homelab-autoscale-lcars-ci-reassigned"
+        )
+
     def test_completed_run_and_job_emit_aggregated_metrics(self):
         run = workflow_run()
         self.database.upsert_run("jlapenna/homelab", run)

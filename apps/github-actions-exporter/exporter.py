@@ -593,6 +593,7 @@ class Database:
                     runner_group TEXT NOT NULL,
                     execution TEXT NOT NULL DEFAULT 'unknown',
                     concurrency_group TEXT NOT NULL DEFAULT 'none',
+                    runner_name TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (repository, id)
                 );
 
@@ -625,6 +626,10 @@ class Database:
             if "runs_on" not in columns:
                 self.connection.execute(
                     "ALTER TABLE jobs ADD COLUMN runs_on TEXT NOT NULL DEFAULT ''"
+                )
+            if "runner_name" not in columns:
+                self.connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN runner_name TEXT NOT NULL DEFAULT ''"
                 )
             active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
             # A completed workflow cannot still have a queued/running job. GitHub's
@@ -951,8 +956,9 @@ class Database:
                     INSERT INTO jobs (
                         repository, id, run_id, workflow, name, status,
                         conclusion, created_at, started_at, completed_at,
-                        runner_group, execution, concurrency_group, runs_on
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        runner_group, execution, concurrency_group, runs_on,
+                        runner_name
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(repository, id) DO UPDATE SET
                         run_id = excluded.run_id,
                         workflow = excluded.workflow,
@@ -965,7 +971,11 @@ class Database:
                         runner_group = excluded.runner_group,
                         execution = excluded.execution,
                         concurrency_group = excluded.concurrency_group,
-                        runs_on = excluded.runs_on
+                        runs_on = excluded.runs_on,
+                        runner_name = CASE
+                            WHEN excluded.runner_name != '' THEN excluded.runner_name
+                            ELSE jobs.runner_name
+                        END
                     """,
                     (
                         repository,
@@ -982,6 +992,7 @@ class Database:
                         job_execution(job),
                         concurrency_group,
                         job_runs_on(job),
+                        metric_label(job.get("runner_name"), ""),
                     ),
                 )
             jobs_snapshot_consistent = True
