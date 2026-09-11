@@ -210,6 +210,9 @@ jobs:
       - name: Test repository symlink integrity
         run: bash tools/check-repo-symlinks.test.sh
 
+      - name: Test direct-runner evidence CLI
+        run: python3 -m unittest discover -s .agents/skills/debug-agent-run/scripts -p 'test_*.py'
+
       - name: Test shell bare-return lint (jlapenna/homelab#1087)
         run: bash tools/check-shell-bare-return.test.sh
 

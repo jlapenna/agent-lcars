@@ -29,58 +29,56 @@ a minute without GitHub:
 An agent can look identical from GitHub whether it is thinking hard, starved
 by a competing run, or wedged. It does not look identical in these two places.
 
-## 1. Find the live container
+## 1. Find the live or retained container
 
-`scripts/run-evidence.sh` does all of this; run it before doing anything by
-hand. What it does, so you can do it manually when it does not fit:
-
-Hop to the `homelab` bastion first — it holds the automation key that reaches
-the rest of the fleet (see the **oncall** skill's §0 for why, and for the
-separate-users gotcha on `pike`). From there, scan the hosts:
+Run the existing read-only helper first:
 
 ```bash
-ssh homelab@homelab.lan.jlapenna.net
-for h in laforge janeway picard pike oldbook; do
-  ssh -i ~/p/homelab/ansible/ssh_key/id_ed25519 homelab@$h.lan.jlapenna.net \
-    'docker ps --filter name=runner- --format "{{.Names}}|{{.CreatedAt}}"'
-done
+scripts/run-evidence.sh 1900
+scripts/run-evidence.sh 'jlapenna/agent-lcars#1900/r1'
+scripts/run-evidence.sh 'work:01ABC/r1'
 ```
 
-**Match the container to your run by creation time**, not by name — the name's
-suffix is random. A QueueExecutor container created within ~30s of your
-dispatch is yours. `lcars-ci` and `control` are different work.
+It connects to the SSH bastion, reads `fleet.hosts` from the running
+autoscaler's mounted `/config/orchestrator.yml`, and follows those declared
+Docker SSH endpoints. It selects containers by the direct-runner labels and
+prints the exact run ID, state, exit code, and timestamps. Retained exited
+containers are included but never executed. The bastion needs Python 3 and
+PyYAML; the workstation needs Python 3 and SSH.
 
-> **Nested-quoting trap.** `ssh → ssh → docker exec` mangles quotes three
-> times over and you will lose several minutes to it. Base64 the inner script
-> and decode it at the far end:
-> `B64=$(printf '%s' "$SCRIPT" | base64 -w0)` … `bash -c "echo $B64 | base64 -d | bash"`.
+Defaults can be overridden with `DEBUG_RUN_BASTION`, `DEBUG_RUN_AUTOSCALER`,
+`DEBUG_RUN_CONFIG` (a bastion-side config path), and `DEBUG_RUN_FLEET_KEY`
+(a bastion-side SSH key path). `DEBUG_RUN_HOSTS` restricts the scan to names
+from the configured inventory. A bare issue number is scoped to
+`DEBUG_RUN_REPO` (default `jlapenna/agent-lcars`); pass a full anchor/run ID
+for other repositories or native Work.
+
+Each command has a deadline, each host's inspection loop has a budget,
+and the total scan is bounded. Unavailable hosts produce a nonzero result
+and explicit incomplete evidence, not a claim that no agent is running.
+The helper does not print credentials, container environments, or raw logs.
 
 ## 2. Ground truth: has it committed anything?
 
-This is the question the deliverable gate ultimately answers, and you can
-answer it directly, mid-run, for free:
+For running containers, the same helper inspects the current
+`/tmp/agent-lcars-direct/checkout` and every linked worktree. It also recognizes
+the hosted checkout path if found inside a selected direct runner. Each
+worktree reports commits ahead of `origin/main` and changed-file count:
 
-```bash
-docker exec <container> bash -lc '
-  cd /home/runner/_work/agent-lcars/agent-lcars
-  git rev-list --count origin/main..HEAD    # commits made
-  git status --porcelain | wc -l            # uncommitted edits
-  git worktree list                         # agents here create one per issue
-'
-```
+| commits | dirty | What it proves                                                          |
+| ------: | ----: | ----------------------------------------------------------------------- |
+|       0 |     0 | No visible changes in this worktree yet.                                |
+|       0 |    >0 | Uncommitted work exists and is at risk when the container is removed.   |
+|      >0 |   any | Local commits exist; check GitHub separately to prove they were pushed. |
 
-**Check every worktree, not just the main checkout.** This repo mandates
-worktrees, so a compliant agent's work is in `agent-lcars-<issue>/` and the
-main checkout looks pristine while real edits sit next door.
+A clean primary checkout does not imply an idle agent: implementation belongs
+in linked worktrees. Missing checkouts can mean bootstrap has not finished.
+For an exited container, inspect its retained logs separately, with bounded
+output and credential redaction. Do not attempt `docker exec` on it.
 
-Reading these three numbers together tells you which failure you have, and
-they are genuinely different problems:
-
-| commits | dirty | What it means                                                       |
-| ------: | ----: | ------------------------------------------------------------------- |
-|       0 |     0 | Still in reconnaissance. Not a commit problem — it has not started. |
-|       0 |    >0 | **Work exists and will be destroyed** when the runner is torn down. |
-|      >0 |   any | It is checkpointing. Whatever else is wrong, the work will survive. |
+This helper targets QueueExecutor direct runners. For a GitHub Actions
+runner, use the workflow/job identity and retained job logs rather than
+inferring a direct-run identity from a random runner name.
 
 ## 3. Is it working, or starved?
 
@@ -99,7 +97,11 @@ Rough calibration measured 2026-08-16, one OpenCode agent, thinking disabled:
 **~1.5 completions/min**. A bucket near zero while the run is live means
 throttling or a wedged engine, not thinking.
 
-**Serialise agent dispatches.** Two concurrent OpenCode runs measured ~2.3
+**Serialise subscription Codex dispatches while #1903 is unresolved.** Its
+global credential lease is exclusive; simultaneous starts currently return
+409 and fail before a model turn. Never bypass that lease.
+
+**Serialise inference-backed OpenCode dispatches.** Two concurrent OpenCode runs measured ~2.3
 completions/min _combined_ — roughly half throughput each, with a five-minute
 near-stall. Picard is one GPU with a two-session ceiling. Dispatching a second
 agent to "get evidence faster" makes both runs slower and confounds whatever
@@ -144,7 +146,7 @@ which has the measured history and the bounds.
 
 ## 5. Order of operations
 
-1. `scripts/run-evidence.sh` — container, git state, LLM rate, in one shot.
+1. `scripts/run-evidence.sh` — exact run, container state, and all worktrees.
 2. If `commits=0, dirty=0`: it has not started. Check the LLM rate before
    assuming it is stuck.
 3. If `dirty>0`: work exists and is at risk. That is the urgent case.
