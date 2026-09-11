@@ -111,13 +111,15 @@ def probe_host(name, endpoint, config):
     ids = run(['docker', 'ps', '-a', '--filter', 'label=agent-lcars.direct-runner',
                '--format', '{{.ID}}']).splitlines()
     count = 0
+    failures = 0
     deadline = time.monotonic() + 30
     # Retention is bounded by the autoscaler; also bound pathological inventories.
     if len(ids) > 100:
         print(f'[{name}] inventory truncated to 100 containers')
     for container_id in ids[:100]:
         if time.monotonic() >= deadline:
-            raise ProbeError('host inspection exceeded 30 seconds; results incomplete')
+            print(f'[{name}] host inspection exceeded 30 seconds; results incomplete')
+            return count, failures + 1
         try:
             container, state, exit_code, run_id, started, finished = json.loads(
                 run(['docker', 'inspect', '--format', INSPECT, container_id]))
@@ -131,8 +133,9 @@ def probe_host(name, endpoint, config):
             if state == 'running':
                 print(run(['docker', 'exec', container_id, 'sh', '-c', WORKTREES]), end='')
         except (ProbeError, ValueError) as error:
+            failures += 1
             print(f'[{name}] container {container_id}: {error}')
-    return count
+    return count, failures
 
 
 def probe(config):
@@ -144,11 +147,13 @@ def probe(config):
             print('Scan exceeded 240 seconds; remaining hosts were not inspected')
             return 1
         try:
-            count += probe_host(name, endpoint, config)
+            found, incomplete = probe_host(name, endpoint, config)
+            count += found
+            failures += incomplete
         except (ProbeError, ValueError) as error:
             failures += 1
             print(f'[{name}] unavailable: {error}', flush=True)
-    print(f'Matching direct runners: {count}; unavailable hosts: {failures}')
+    print(f'Matching direct runners: {count}; incomplete probes: {failures}')
     return 1 if failures else 0
 
 

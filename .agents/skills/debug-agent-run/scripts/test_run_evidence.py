@@ -31,12 +31,17 @@ class EvidenceTest(unittest.TestCase):
         output = io.StringIO()
         with patch.object(evidence, 'host_command', side_effect=run), contextlib.redirect_stdout(output):
             count = evidence.probe_host('pike', 'local', {'selector': '1901', 'repo': 'jlapenna/agent-lcars'})
-        self.assertEqual(count, 2)
+        self.assertEqual(count, (2, 0))
         self.assertIn('state=exited exit=22', output.getvalue())
         self.assertIn('commits=2 dirty=3', output.getvalue())
         self.assertEqual([a[2] for a in calls if a[1] == 'exec'], ['live'])
         self.assertNotIn('1902', output.getvalue())
         self.assertNotIn('someone/else', output.getvalue())
+
+    def test_container_inspection_failure_is_not_a_successful_empty_scan(self):
+        with patch.object(evidence, 'host_command', side_effect=['vanished\n', evidence.ProbeError('inspect failed')]), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(evidence.probe_host('pike', 'local', {}), (0, 1))
 
     def test_full_run_and_anchor_selectors(self):
         run = 'work:01ABC/r2'
@@ -48,11 +53,11 @@ class EvidenceTest(unittest.TestCase):
     def test_unavailable_host_keeps_other_evidence_and_returns_failure(self):
         output = io.StringIO()
         with patch.object(evidence, 'hosts', return_value=[('down', 'local'), ('up', 'local')]), \
-             patch.object(evidence, 'probe_host', side_effect=[evidence.ProbeError('timed out'), 1]), \
+             patch.object(evidence, 'probe_host', side_effect=[evidence.ProbeError('timed out'), (1, 0)]), \
              contextlib.redirect_stdout(output):
             self.assertEqual(evidence.probe({}), 1)
         self.assertIn('[down] unavailable: timed out', output.getvalue())
-        self.assertIn('Matching direct runners: 1; unavailable hosts: 1', output.getvalue())
+        self.assertIn('Matching direct runners: 1; incomplete probes: 1', output.getvalue())
 
     def test_worktree_probe_reports_edits_outside_clean_primary(self):
         with tempfile.TemporaryDirectory() as directory:
