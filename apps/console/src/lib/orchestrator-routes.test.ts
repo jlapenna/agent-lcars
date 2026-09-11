@@ -155,6 +155,23 @@ async function dispatchedRun(
   return result.body['runId'] as string;
 }
 
+/** Claims an already-dispatched QueueExecutor run so lease expiry models a
+ * silent worker rather than capacity-bound work that is still waiting. */
+async function claimDispatchedRun(
+  deps: OrchestratorRouteDeps,
+  store: MemoryStore,
+): Promise<string> {
+  const runId = await dispatchedRun(deps);
+  const claimed = await store.claimQueuedRun({
+    pipelines: ['claude'],
+    now: T0,
+    claimedBy: 'test-executor',
+    tokenHash: 'test-token-hash',
+  });
+  expect(claimed?.runId).toBe(runId);
+  return runId;
+}
+
 describe('handleWebhookDelivery', () => {
   it.each(['issues', 'pull_request'])(
     'refreshes closed %s without admitting or dispatching work',
@@ -814,7 +831,7 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
 describe('handleReconcile', () => {
   it('marks an expired run lost, auto-retries it, dispatches the retry, and drains the outcome comment', async () => {
     const { deps, clock, calls, store } = fixture();
-    const runId = await dispatchedRun(deps);
+    const runId = await claimDispatchedRun(deps, store);
     calls.length = 0;
     clock.advanceMinutes(121); // past the 2-hour lease
 
@@ -865,7 +882,7 @@ describe('handleReconcile', () => {
       (currentStore, currentClock) =>
         new CallerWinsRetryRaceOrchestrator(currentStore, currentClock),
     );
-    const runId = await dispatchedRun(deps);
+    const runId = await claimDispatchedRun(deps, store);
     calls.length = 0;
     clock.advanceMinutes(121);
 
