@@ -446,6 +446,16 @@ with the exact restored GCS generation. The broker rejects known burned
 refresh lineages and treats a generation conflict as terminal, so a stale
 runner cannot overwrite a newer rotation.
 
+When another live run holds the global credential lease, the broker's HTTP
+409 response leaves the direct runner waiting with its run heartbeat active.
+It retries with backoff from 5 to 30 seconds for up to 1800 seconds.
+`CODEX_AUTH_WAIT_SECONDS` may be set from 0 through 7200; zero permits one
+request without waiting. Other HTTP failures and transport errors are not
+retried by this capacity wait. Exhaustion or cancellation reports a sanitized
+reason and cleans up volatile state, without persisting or releasing another
+run's credential. This behavior requires a runner image built from the fix;
+merging the source alone does not update existing images.
+
 Codex session files remain only in the runner's volatile filesystem until the
 telemetry sidecar has finalized and archived them; cleanup then removes the
 per-run directory. A retained Docker container therefore holds neither the

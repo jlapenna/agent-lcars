@@ -127,6 +127,8 @@ RESUME_TRANSCRIPT_URI="$(jq -r '.resume.transcriptGcsUri // empty' <<<"$brief")"
 COMPLETED=0
 CODEX_RUNTIME_DIR=''
 CODEX_STDERR_TEE_PID=''
+CODEX_AUTH_WAIT_PID=''
+EARLY_FAILURE_MESSAGE=''
 cleanup_codex_material() {
   if [ -n "$CODEX_STDERR_TEE_PID" ]; then
     kill "$CODEX_STDERR_TEE_PID" 2>/dev/null || true
@@ -145,10 +147,13 @@ cleanup_codex_material() {
 }
 report_early_failure() {
   early_exit_code=$?
+  [ -n "$CODEX_AUTH_WAIT_PID" ] && { kill "$CODEX_AUTH_WAIT_PID" 2>/dev/null || true; }
   [ -n "${HEARTBEAT_PID:-}" ] && { kill "$HEARTBEAT_PID" 2>/dev/null || true; }
   if [ "$early_exit_code" -ne 0 ] && [ "$COMPLETED" -ne 1 ]; then
     early_payload="$RUNNER_TEMP/early-failure-payload.json"
-    printf '%s' '{"outcome":"no-deliverable","outcomeReference":null}' > "$early_payload" 2>/dev/null
+    jq -cn --arg message "$EARLY_FAILURE_MESSAGE" \
+      '{outcome:"no-deliverable",outcomeReference:null} + (if $message == "" then {} else {message:$message} end)' \
+      > "$early_payload" 2>/dev/null
     curl -sf --config - >/dev/null 2>&1 <<CURLCFG || true
 url = "$RUNS_API/complete"
 request = "POST"
@@ -441,12 +446,76 @@ elif [ "$PIPELINE" = "codex" ]; then
   # The broker exposes the centrally owned lineage only to this live run
   # token. The target repository is independently bound to that token; the
   # direct container receives no GCS credential or object selector.
-  codex_auth="$(curl -sf --config - <<CURLCFG
+  # A live owner of the global subscription lease returns 409. That is
+  # ordinary capacity contention, not a failed agent turn (#1903). Keep the
+  # existing heartbeat alive while waiting; never bypass or release its lease.
+  auth_wait_seconds="${CODEX_AUTH_WAIT_SECONDS:-1800}"
+  if [[ ! "$auth_wait_seconds" =~ ^(0|[1-9][0-9]{0,3})$ ]] || [ "$auth_wait_seconds" -gt 7200 ]; then
+    EARLY_FAILURE_MESSAGE='CODEX_AUTH_WAIT_SECONDS must be an integer from 0 to 7200'
+    echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+    exit 1
+  fi
+  auth_deadline=$((SECONDS + auth_wait_seconds))
+  auth_delay=5
+  auth_first_request=1
+  trap 'EARLY_FAILURE_MESSAGE="Codex credential wait cancelled"; exit 143' TERM
+  trap 'EARLY_FAILURE_MESSAGE="Codex credential wait cancelled"; exit 130' INT
+  while true; do
+    auth_remaining=$((auth_deadline - SECONDS))
+    if [ "$auth_first_request" = 0 ] && [ "$auth_remaining" -le 0 ]; then
+      EARLY_FAILURE_MESSAGE="Codex credential wait exhausted after $auth_wait_seconds seconds (HTTP 409)"
+      echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+      exit 75
+    fi
+    auth_first_request=0
+    auth_request_timeout=60
+    if [ "$auth_remaining" -gt 0 ] && [ "$auth_remaining" -lt 60 ]; then
+      auth_request_timeout="$auth_remaining"
+    fi
+    # Keep both credentials and response bodies out of argv, disk and logs.
+    # Only the HTTP status is used on failure; do not echo the broker body.
+    if ! auth_response="$(curl -sS --write-out '\n%{http_code}' --config - <<CURLCFG
 url = "$RUNS_API/codex-auth"
 header = "$AUTH_HEADER"
-$CURL_TIMEOUT_CONFIG
+connect-timeout = 10
+max-time = $auth_request_timeout
 CURLCFG
-)"
+)"; then
+      EARLY_FAILURE_MESSAGE='Codex credential request failed in transport'
+      echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+      exit 1
+    fi
+    auth_status="${auth_response##*$'\n'}"
+    if [ "$auth_status" = 200 ]; then
+      codex_auth="${auth_response%$'\n'*}"
+      unset auth_response
+      break
+    fi
+    unset auth_response
+    if [ "$auth_status" != 409 ]; then
+      # Validate before putting a remote value into a diagnostic.
+      [[ "$auth_status" =~ ^[0-9]{3}$ ]] || auth_status=unknown
+      EARLY_FAILURE_MESSAGE="Codex credential request refused (HTTP $auth_status)"
+      echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+      exit 1
+    fi
+    auth_remaining=$((auth_deadline - SECONDS))
+    if [ "$auth_remaining" -le 0 ]; then
+      EARLY_FAILURE_MESSAGE="Codex credential wait exhausted after $auth_wait_seconds seconds (HTTP 409)"
+      echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+      exit 75
+    fi
+    auth_sleep="$auth_delay"
+    [ "$auth_sleep" -le "$auth_remaining" ] || auth_sleep="$auth_remaining"
+    echo "Codex credential lease busy; retrying in $auth_sleep seconds ($auth_remaining seconds remain)" >&2
+    sleep "$auth_sleep" &
+    CODEX_AUTH_WAIT_PID=$!
+    wait "$CODEX_AUTH_WAIT_PID"
+    CODEX_AUTH_WAIT_PID=''
+    auth_delay=$((auth_delay * 2))
+    [ "$auth_delay" -le 30 ] || auth_delay=30
+  done
+  trap - TERM INT
   CODEX_RESTORED_GENERATION="$(jq -r '.generation' <<<"$codex_auth")"
   CODEX_RESTORED_SHA256="$(jq -r '.sha256' <<<"$codex_auth")"
   CODEX_AUTH_FILE="$CODEX_HOME/auth.json"
