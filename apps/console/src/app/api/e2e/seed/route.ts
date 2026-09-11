@@ -20,7 +20,6 @@ import {
   E2E_FIXTURE_REPO,
   E2E_ITEM_NUMBERS,
   resetIssueContentEdits,
-  resetQuickTaskFixtures,
   setPopulatedFixtures,
 } from '../../../../lib/e2e-github-fixtures';
 import {
@@ -306,7 +305,6 @@ export async function POST(req: NextRequest) {
     if (body.action === 'reset') {
       setPopulatedFixtures(false);
       resetIssueContentEdits();
-      resetQuickTaskFixtures();
       revalidateDashboardCache();
       const telemetry = getAgentTelemetryWriterFirestore();
       const snapshot = await telemetry.collection(SESSIONS_COLLECTION).get();

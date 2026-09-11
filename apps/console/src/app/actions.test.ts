@@ -16,7 +16,6 @@ import {
   approveAndRebasePr,
   clearNeedsHumanLabel,
   closeIssue as closeIssueLib,
-  createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
@@ -33,7 +32,6 @@ import {
   approveAndRebase,
   clearHumanNeeded,
   closeIssue,
-  createQuickTask,
   dispatchUnstickPrs,
   mergePr,
   rebasePr,
@@ -43,7 +41,6 @@ import {
 } from './actions';
 
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
-const userIssueCreator = vi.fn();
 
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
@@ -69,7 +66,6 @@ vi.mock('../lib/backend-actions', () => {
     approveAndRebasePr: vi.fn(),
     clearNeedsHumanLabel: vi.fn(),
     closeIssue: vi.fn(),
-    createQuickTask: vi.fn(),
     dispatchUnstickPrs: vi.fn(),
     postComment: vi.fn(),
     retriggerIssue: vi.fn(),
@@ -95,25 +91,11 @@ vi.mock('@/lib/auth-guards', () => ({
 }));
 
 vi.mock('../auth', () => ({ auth: vi.fn() }));
-vi.mock('../lib/quick-task-author', () => ({
-  quickTaskIssueCreatorFor: vi.fn(() => userIssueCreator),
-}));
 
 const DEFAULT_REPO = {
   owner: 'supersprinklesracing',
   name: 'sprinkles',
   alias: 'sprinkles',
-};
-const QUICK_TASK_REQUEST = {
-  requestId: '11111111-1111-4111-8111-111111111111',
-  repository: DEFAULT_REPO,
-  pipeline: 'claude' as const,
-  description: 'Fix the flaky test',
-};
-const QUICK_TASK_RECEIPT = {
-  requestId: QUICK_TASK_REQUEST.requestId,
-  task: { repository: DEFAULT_REPO, issueNumber: 99 },
-  url: 'https://github.com/supersprinklesracing/sprinkles/issues/99',
 };
 
 describe('agent-lcars Server Actions', () => {
@@ -222,20 +204,6 @@ describe('agent-lcars Server Actions', () => {
         ok: false,
         message: 'Resource not accessible',
       });
-    });
-
-    it('createQuickTask returns { ok: false, message } instead of throwing', async () => {
-      (createQuickTaskLib as Mock).mockRejectedValue(
-        new ActionError('Task description is required', 400),
-      );
-
-      await expect(
-        createQuickTask({ ...QUICK_TASK_REQUEST, description: '' }),
-      ).resolves.toEqual({
-        ok: false,
-        message: 'Task description is required',
-      });
-      expect(revalidatePath).not.toHaveBeenCalled();
     });
 
     it('closeIssue returns { ok: false, message } instead of throwing', async () => {
@@ -418,69 +386,6 @@ describe('agent-lcars Server Actions', () => {
       );
     });
 
-    it('createQuickTask returns the canonical receipt and revalidates', async () => {
-      (createQuickTaskLib as Mock).mockResolvedValue(QUICK_TASK_RECEIPT);
-
-      await expect(createQuickTask(QUICK_TASK_REQUEST)).resolves.toEqual({
-        ok: true,
-        ...QUICK_TASK_RECEIPT,
-      });
-      expect(createQuickTaskLib).toHaveBeenCalledWith(
-        { ...QUICK_TASK_REQUEST, actorLogin: 'jlapenna' },
-        undefined,
-        userIssueCreator,
-      );
-      expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
-    });
-
-    it('createQuickTask forwards an explicit pipeline', async () => {
-      (createQuickTaskLib as Mock).mockResolvedValue(QUICK_TASK_RECEIPT);
-
-      await createQuickTask({ ...QUICK_TASK_REQUEST, pipeline: 'opencode' });
-
-      expect(createQuickTaskLib).toHaveBeenCalledWith(
-        {
-          ...QUICK_TASK_REQUEST,
-          pipeline: 'opencode',
-          actorLogin: 'jlapenna',
-        },
-        undefined,
-        userIssueCreator,
-      );
-    });
-
-    it('createQuickTask preserves the previewed evidence body across the Server Action boundary', async () => {
-      (createQuickTaskLib as Mock).mockResolvedValue(QUICK_TASK_RECEIPT);
-      const description = `Fix the session page refresh
-
-## Problem details
-
-### Observed
-The loading state never clears.
-
-### Done when
-The refresh path has browser coverage.
-
-## Source context
-
-- Repository: \`supersprinklesracing/sprinkles\`
-- Console route: \`/sessions/session-123\`
-- Session: session-123`;
-
-      await createQuickTask({ ...QUICK_TASK_REQUEST, description });
-
-      expect(createQuickTaskLib).toHaveBeenCalledWith(
-        {
-          ...QUICK_TASK_REQUEST,
-          description,
-          actorLogin: 'jlapenna',
-        },
-        undefined,
-        userIssueCreator,
-      );
-    });
-
     it('closeIssue returns { ok: true } and revalidates', async () => {
       (closeIssueLib as Mock).mockResolvedValue(undefined);
 
@@ -613,27 +518,6 @@ The refresh path has browser coverage.
       const result = await clearHumanNeeded(UNWATCHED_REPO, 2709);
       expect(result.ok).toBe(false);
       expect(clearNeedsHumanLabel).not.toHaveBeenCalled();
-    });
-
-    it('createQuickTask rejects an unwatched repo without calling createQuickTaskLib', async () => {
-      const result = await createQuickTask({
-        ...QUICK_TASK_REQUEST,
-        repository: UNWATCHED_REPO,
-      });
-      expect(result.ok).toBe(false);
-      expect(createQuickTaskLib).not.toHaveBeenCalled();
-    });
-
-    it('createQuickTask rejects a missing repo without falling back', async () => {
-      const result = await createQuickTask({
-        ...QUICK_TASK_REQUEST,
-        repository: undefined,
-      } as unknown as Parameters<typeof createQuickTask>[0]);
-      expect(result).toEqual({
-        ok: false,
-        message: 'Quick Task repository is required',
-      });
-      expect(createQuickTaskLib).not.toHaveBeenCalled();
     });
   });
 

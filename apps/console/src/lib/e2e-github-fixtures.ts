@@ -1,7 +1,6 @@
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 
 import { agentFleetLogin, maintainerLogin } from './deployment';
-import type { AgentPipeline } from './watched-repo';
 
 /**
  * Canned GitHub API responses for the e2e suite's *populated* mode, added
@@ -389,203 +388,6 @@ export function resetIssueContentEdits(): void {
   (globalThis as Record<string, unknown>)[ISSUE_CONTENT_EDITS_KEY] = new Map();
 }
 
-/**
- * Stateful Quick Task write-path fixture (agent-lcars#307 part A). Everything
- * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually
- * writes through `AGENT_CONSOLE_GITHUB_API_BASE_URL` - the claim tag/ref
- * ledger and the issue itself. Execution state is seeded through the
- * authoritative Task/Run fixture boundary, never synthesized from a GitHub
- * Actions attempt.
- *
- * Lives on `globalThis` for the same reason `POPULATED_KEY` does: Next
- * bundles `/api/e2e/github/*` and `/api/e2e/seed` as separate route modules
- * that only share a JS realm, not a module instance, and the seed route
- * needs to reset this between specs (see `resetQuickTaskFixtures`).
- */
-const QUICK_TASK_STATE_KEY = '__agentLcarsE2eQuickTaskState';
-
-interface QuickTaskFixtureIssue {
-  number: number;
-  title: string;
-  body: string;
-  labels: string[];
-  createdAt: string;
-  comments: { author: string; body: string }[];
-}
-
-interface QuickTaskFixtureState {
-  issues: QuickTaskFixtureIssue[];
-  /** Annotated tag objects keyed by SHA - `git.createTag` / `git.getTag`. */
-  claimTags: Map<string, { message: string; tag: string }>;
-  /** Claim ref SHAs keyed by `tags/agent-lcars/quick-task/<id>` -
-   * `git.createRef` / `git.getRef` / `git.deleteRef`. */
-  claimRefs: Map<string, string>;
-  /** Numbered well clear of curated `E2E_ITEM_NUMBERS` (9001-9010). */
-  nextIssueNumber: number;
-  tagSequence: number;
-}
-
-function freshQuickTaskState(): QuickTaskFixtureState {
-  return {
-    issues: [],
-    claimTags: new Map(),
-    claimRefs: new Map(),
-    nextIssueNumber: 20001,
-    tagSequence: 0,
-  };
-}
-
-function quickTaskState(): QuickTaskFixtureState {
-  const bag = globalThis as Record<string, unknown>;
-  if (!bag[QUICK_TASK_STATE_KEY]) {
-    bag[QUICK_TASK_STATE_KEY] = freshQuickTaskState();
-  }
-  return bag[QUICK_TASK_STATE_KEY] as QuickTaskFixtureState;
-}
-
-/** Called from `/api/e2e/seed`'s `reset` action so a Quick Task issue/claim
- * created by one spec never leaks into a later spec sharing the same
- * single-worker server process (see playwright.config.ts's `workers: 1`). */
-export function resetQuickTaskFixtures(): void {
-  (globalThis as Record<string, unknown>)[QUICK_TASK_STATE_KEY] =
-    freshQuickTaskState();
-}
-
-/** Description sentinel a spec can type into the real dialog to make the
- * fixture's issue-create endpoint fail closed with a definitive 4xx. Never
- * a value a real task would use. */
-export const E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION = 'E2E_QUICK_TASK_FORCE_4XX';
-
-/** Description sentinel that makes the E2E GitHub route hold one issue
- * creation long enough to prove the client can accept another Quick Task. */
-export const E2E_QUICK_TASK_DELAY_DESCRIPTION = 'E2E_QUICK_TASK_DELAY';
-
-export function createQuickTaskClaimTag(
-  message: string,
-  tag: string,
-): { sha: string } {
-  const state = quickTaskState();
-  state.tagSequence += 1;
-  const sha = String(state.tagSequence).padStart(40, 'a');
-  state.claimTags.set(sha, { message, tag });
-  return { sha };
-}
-
-export function getQuickTaskClaimTag(
-  sha: string,
-): { message: string; tag: string } | undefined {
-  return quickTaskState().claimTags.get(sha);
-}
-
-/** Returns `false` without mutating state when the ref already exists -
- * mirrors GitHub's real atomic-create semantics (`422 Reference already
- * exists`), which is the whole uniqueness boundary the claim-tag protocol in
- * docs/quick-task-identity.md depends on. */
-export function createQuickTaskClaimRef(ref: string, sha: string): boolean {
-  const state = quickTaskState();
-  if (state.claimRefs.has(ref)) return false;
-  state.claimRefs.set(ref, sha);
-  return true;
-}
-
-export function getQuickTaskClaimRefSha(ref: string): string | undefined {
-  return quickTaskState().claimRefs.get(ref);
-}
-
-/** Backs `DELETE /git/refs/{ref}` - the release half of the claim protocol
- * (`releaseQuickTaskClaim` in backend-actions.ts), exercised by a definitive
- * 4xx create failure. Returns whether a ref was actually removed so the
- * route can answer 204/404 like the real API. */
-export function deleteQuickTaskClaimRef(ref: string): boolean {
-  return quickTaskState().claimRefs.delete(ref);
-}
-
-/**
- * Creates the GitHub issue projection for a Quick Task. Its execution state
- * is independently supplied by the authoritative Task/Run fixture seam.
- */
-export function recordQuickTaskIssue(params: {
-  title: string;
-  body: string;
-  labels: string[];
-  pipeline: AgentPipeline;
-}): {
-  number: number;
-  html_url: string;
-  title: string;
-  body: string;
-  labels: { name: string }[];
-} {
-  const state = quickTaskState();
-  const number = state.nextIssueNumber++;
-  const now = new Date().toISOString();
-
-  state.issues.push({
-    number,
-    title: params.title,
-    body: params.body,
-    labels: params.labels,
-    createdAt: now,
-    comments: [],
-  });
-
-  return {
-    number,
-    html_url: itemUrl(number, 'issues'),
-    title: params.title,
-    body: params.body,
-    labels: params.labels.map((name) => ({ name })),
-  };
-}
-
-function quickTaskIssueRestShape(item: QuickTaskFixtureIssue) {
-  return {
-    number: item.number,
-    title: item.title,
-    body: item.body,
-    html_url: itemUrl(item.number, 'issues'),
-    user: { login: maintainerLogin() },
-    state: 'open',
-    updated_at: item.createdAt,
-    labels: item.labels.map((name) => ({ name })),
-    assignees: [],
-    comments: item.comments.length,
-  };
-}
-
-export function quickTaskIssue(number: number) {
-  const found = quickTaskState().issues.find(
-    (candidate) => candidate.number === number,
-  );
-  return found ? quickTaskIssueRestShape(found) : undefined;
-}
-
-/**
- * `GET /repos/{o}/{r}/issues?state=all` - what
- * `backend-actions.ts`'s `findExistingQuickTask` scans for the request-ID
- * marker before ever attempting a create, which is the entire idempotency
- * mechanism under test. It deliberately does not merge the curated queue
- * anchors: none carry a `quick-task-request` marker, so they could only add
- * noise and must not act as a fixture queue fallback.
- */
-export function quickTaskListingIssues() {
-  return quickTaskState().issues.map(quickTaskIssueRestShape);
-}
-
-function quickTaskIssueComments(number: number) {
-  const item = quickTaskState().issues.find(
-    (candidate) => candidate.number === number,
-  );
-  if (!item) return undefined;
-  return item.comments.map((comment, index) => ({
-    id: number * 1000 + index,
-    user: { login: comment.author },
-    body: comment.body,
-    html_url: `${itemUrl(number, 'issues')}#issuecomment-${number}${index}`,
-    created_at: item.createdAt,
-  }));
-}
-
 /** Exact issue-detail response shape, with a PR carrying `pull_request`.
  *
  * Console mutations feed this shape through the same anchor-projection
@@ -611,21 +413,11 @@ function issueFor(item: FixtureItem) {
   };
 }
 
-/** Stateful target for PATCH /issues/{number}. Supports both the curated
- * populated-dashboard issues and issues filed through Quick Task. */
+/** Stateful target for PATCH /issues/{number} on curated dashboard issues. */
 export function updateFixtureIssueContent(
   number: number,
   content: { title: string; body: string },
 ) {
-  const quickTask = quickTaskState().issues.find(
-    (candidate) => candidate.number === number,
-  );
-  if (quickTask) {
-    quickTask.title = content.title;
-    quickTask.body = content.body;
-    return quickTaskIssueRestShape(quickTask);
-  }
-
   const item = getFixtureItems().find(
     (candidate) => candidate.number === number && !candidate.isPr,
   );
@@ -634,14 +426,8 @@ export function updateFixtureIssueContent(
   return issueFor(item);
 }
 
-/** Individual issue read used by rendered mutation flows such as retrigger,
- * and by the canonical `/task/<owner>/
- * <repo>/<issue>` detail page (task-detail.ts) - which is why a Quick
- * Task-created issue is checked first and unconditionally: that page must
- * resolve a freshly filed task regardless of whether populated mode is on. */
+/** Exact issue read for rendered mutation flows and task detail pages. */
 export function issue(number: number) {
-  const quickTask = quickTaskIssue(number);
-  if (quickTask) return quickTask;
   if (!populatedFixturesEnabled()) return undefined;
   const item = getFixtureItems().find(
     (candidate) => candidate.number === number,
@@ -651,8 +437,6 @@ export function issue(number: number) {
 
 /** `GET /repos/{owner}/{repo}/issues/{number}/comments` */
 export function issueComments(number: number) {
-  const quickTask = quickTaskIssueComments(number);
-  if (quickTask) return quickTask;
   const item = getFixtureItems().find(
     (candidate) => candidate.number === number,
   );
@@ -669,24 +453,6 @@ export function issueComments(number: number) {
  * It deliberately has no list/query discovery surface: callers name each
  * already-known anchor and receive the same bounded detail GitHub returns. */
 export function githubAnchorGraphqlDetail(number: number) {
-  const quickTask = quickTaskState().issues.find(
-    (candidate) => candidate.number === number,
-  );
-  if (quickTask) {
-    return {
-      body: quickTask.body,
-      comments: {
-        nodes: quickTask.comments.map((comment) => ({
-          body: comment.body,
-          url: `${itemUrl(number, 'issues')}#issuecomment-${number}`,
-          createdAt: quickTask.createdAt,
-          updatedAt: quickTask.createdAt,
-          author: { login: comment.author },
-        })),
-      },
-    };
-  }
-
   if (!populatedFixturesEnabled()) return undefined;
   const item = getFixtureItems().find(
     (candidate) => candidate.number === number,
