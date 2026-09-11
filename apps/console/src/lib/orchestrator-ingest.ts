@@ -70,10 +70,16 @@ const issueBodySchema = z.object({
   body: z.string().nullable().optional(),
 });
 
+// Label routing requires lifecycle evidence. Tagged-comment follow-ups have
+// their own resume policy and deliberately keep the comment schema below.
+const labelAnchorSchema = issueBodySchema.extend({
+  state: z.enum(['open', 'closed']),
+});
+
 const issuesEventSchema = z.object({
   action: z.string(),
   repository: repositorySchema,
-  issue: issueBodySchema,
+  issue: labelAnchorSchema,
   label: labelSchema.optional(),
   sender: senderSchema,
 });
@@ -81,7 +87,7 @@ const issuesEventSchema = z.object({
 const pullRequestEventSchema = z.object({
   action: z.string(),
   repository: repositorySchema,
-  pull_request: issueBodySchema,
+  pull_request: labelAnchorSchema,
   label: labelSchema.optional(),
   sender: senderSchema,
 });
@@ -181,6 +187,7 @@ function interpretIssuesEvent(
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
   if (action !== 'labeled') return ignore('unhandled-action');
+  if (issue.state !== 'open') return ignore('anchor-closed');
 
   const pipeline = label && IMPLEMENT_LABELS[label.name];
   if (!pipeline) return ignore('no-trigger-label');
@@ -223,6 +230,7 @@ function interpretPullRequestEvent(
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
   if (action !== 'labeled') return ignore('unhandled-action');
+  if (pullRequest.state !== 'open') return ignore('anchor-closed');
 
   const labelName = label?.name;
   const implementPipeline = labelName && IMPLEMENT_LABELS[labelName];

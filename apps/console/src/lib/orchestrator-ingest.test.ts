@@ -13,7 +13,12 @@ function issuesLabeledPayload(overrides: Record<string, unknown> = {}) {
   return {
     action: 'labeled',
     repository: { full_name: REPO },
-    issue: { number: 42, title: 'Issue title', body: 'Issue body' },
+    issue: {
+      state: 'open',
+      number: 42,
+      title: 'Issue title',
+      body: 'Issue body',
+    },
     label: { name: 'agent:claude' },
     sender: { login: 'jlapenna' },
     ...overrides,
@@ -25,6 +30,7 @@ function pullRequestLabeledPayload(overrides: Record<string, unknown> = {}) {
     action: 'labeled',
     repository: { full_name: REPO },
     pull_request: {
+      state: 'open',
       number: 7,
       title: 'Pull request title',
       body: 'Pull request body',
@@ -39,7 +45,12 @@ function issueCommentPayload(overrides: Record<string, unknown> = {}) {
   return {
     action: 'created',
     repository: { full_name: REPO },
-    issue: { number: 9, title: 'Issue title', body: 'Issue body' },
+    issue: {
+      state: 'open',
+      number: 9,
+      title: 'Issue title',
+      body: 'Issue body',
+    },
     comment: {
       body: '@claude please take a look',
       author_association: 'OWNER',
@@ -63,6 +74,63 @@ const OVERLONG_DESCRIPTION =
   OVERLONG_MARKER;
 
 describe('interpretDelivery', () => {
+  it('retains explicit tagged follow-up requests on closed GitHub anchors', () => {
+    const result = interpretDelivery({
+      event: 'issue_comment',
+      deliveryId: DELIVERY_ID,
+      payload: issueCommentPayload({
+        issue: { number: 9, title: 'Delivered', state: 'closed' },
+      }),
+    });
+    expect(result).toMatchObject({
+      kind: 'request',
+      params: { mode: 'reply' },
+    });
+  });
+
+  it.each(['agent:claude', 'agent:codex', 'agent:opencode', 'review:codex'])(
+    'does not dispatch %s on a closed or merged anchor',
+    (label) => {
+      for (const event of ['issues', 'pull_request']) {
+        const key = event === 'issues' ? 'issue' : 'pull_request';
+        const payload = {
+          action: 'labeled',
+          repository: { full_name: REPO },
+          [key]: {
+            number: 42,
+            title: 'Already done',
+            state: 'closed',
+            merged: true,
+          },
+          label: { name: label },
+          sender: { login: 'jlapenna' },
+        };
+        expect(
+          interpretDelivery({ event, deliveryId: DELIVERY_ID, payload }),
+        ).toEqual({ kind: 'ignore', reason: 'anchor-closed' });
+      }
+    },
+  );
+
+  it.each([undefined, 'unknown'])(
+    'fails closed on missing/invalid label lifecycle %s',
+    (state) => {
+      for (const event of ['issues', 'pull_request']) {
+        const key = event === 'issues' ? 'issue' : 'pull_request';
+        const payload = {
+          action: 'labeled',
+          repository: { full_name: REPO },
+          [key]: { number: 42, title: 'Missing lifecycle', state },
+          label: { name: 'agent:codex' },
+          sender: { login: 'jlapenna' },
+        };
+        expect(
+          interpretDelivery({ event, deliveryId: DELIVERY_ID, payload }),
+        ).toEqual({ kind: 'ignore', reason: 'malformed-payload' });
+      }
+    },
+  );
+
   const cases: Array<{
     name: string;
     event: string;
@@ -109,7 +177,12 @@ describe('interpretDelivery', () => {
       name: 'issues labeled with a title/body/sender derives work',
       event: 'issues',
       payload: issuesLabeledPayload({
-        issue: { number: 42, title: 'Fix the thing', body: 'Please fix it.' },
+        issue: {
+          state: 'open',
+          number: 42,
+          title: 'Fix the thing',
+          body: 'Please fix it.',
+        },
         sender: { login: 'jlapenna' },
       }),
       expected: {
@@ -133,7 +206,12 @@ describe('interpretDelivery', () => {
       name: 'issues labeled without a sender are malformed',
       event: 'issues',
       payload: issuesLabeledPayload({
-        issue: { number: 42, title: 'Fix the thing', body: null },
+        issue: {
+          state: 'open',
+          number: 42,
+          title: 'Fix the thing',
+          body: null,
+        },
         sender: undefined,
       }),
       expected: { kind: 'ignore', reason: 'malformed-payload' },
@@ -143,6 +221,7 @@ describe('interpretDelivery', () => {
       event: 'issues',
       payload: issuesLabeledPayload({
         issue: {
+          state: 'open',
           number: 42,
           title: 'Fix the thing',
           body: OVERLONG_BODY,
@@ -178,6 +257,7 @@ describe('interpretDelivery', () => {
       event: 'issues',
       payload: issuesLabeledPayload({
         issue: {
+          state: 'open',
           number: 55,
           title: 'Quick task: fix the thing',
           body: 'Please fix it.\n\n<!-- agent-lcars:quick-task-request:v1 ... -->',
@@ -257,7 +337,12 @@ describe('interpretDelivery', () => {
       name: 'pull_request labeled agent:claude with a title/body/sender derives work',
       event: 'pull_request',
       payload: pullRequestLabeledPayload({
-        pull_request: { number: 7, title: 'Add the feature', body: 'Adds it.' },
+        pull_request: {
+          state: 'open',
+          number: 7,
+          title: 'Add the feature',
+          body: 'Adds it.',
+        },
         label: { name: 'agent:claude' },
         sender: { login: 'jlapenna' },
       }),
@@ -282,7 +367,12 @@ describe('interpretDelivery', () => {
       name: 'pull_request labeled review:codex with a title/body/sender derives work',
       event: 'pull_request',
       payload: pullRequestLabeledPayload({
-        pull_request: { number: 7, title: 'Add the feature', body: 'Adds it.' },
+        pull_request: {
+          state: 'open',
+          number: 7,
+          title: 'Add the feature',
+          body: 'Adds it.',
+        },
         label: { name: 'review:codex' },
         sender: { login: 'jlapenna' },
       }),
@@ -319,7 +409,12 @@ describe('interpretDelivery', () => {
       name: 'issue_comment reply derives work from the issue being replied to, not the comment',
       event: 'issue_comment',
       payload: issueCommentPayload({
-        issue: { number: 9, title: 'Question about X', body: 'Some context.' },
+        issue: {
+          state: 'open',
+          number: 9,
+          title: 'Question about X',
+          body: 'Some context.',
+        },
         sender: { login: 'jlapenna' },
       }),
       expected: {
@@ -590,7 +685,7 @@ describe('interpretDelivery', () => {
     {
       name: 'malformed payload (missing repository) -> ignore, no throw',
       event: 'issues',
-      payload: { action: 'labeled', issue: { number: 1 } },
+      payload: { action: 'labeled', issue: { state: 'open', number: 1 } },
       expected: { kind: 'ignore', reason: 'malformed-payload' },
     },
     {
@@ -636,6 +731,7 @@ describe('interpretDelivery', () => {
       deliveryId: DELIVERY_ID,
       payload: issuesLabeledPayload({
         issue: {
+          state: 'open',
           number: 55,
           title: 'Quick task: fix the thing',
           body:
