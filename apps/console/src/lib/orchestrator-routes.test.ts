@@ -111,7 +111,12 @@ function labeledIssuePayload(overrides: Record<string, unknown> = {}) {
   return {
     action: 'labeled',
     repository: { full_name: REPO },
-    issue: { number: ISSUE.issue, title: 'Issue title', body: 'Issue body' },
+    issue: {
+      state: 'open',
+      number: ISSUE.issue,
+      title: 'Issue title',
+      body: 'Issue body',
+    },
     label: { name: 'agent:claude' },
     sender: { login: 'jlapenna' },
     ...overrides,
@@ -151,6 +156,39 @@ async function dispatchedRun(
 }
 
 describe('handleWebhookDelivery', () => {
+  it.each(['issues', 'pull_request'])(
+    'refreshes closed %s without admitting or dispatching work',
+    async (event) => {
+      const { deps, store, calls } = fixture();
+      const key = event === 'issues' ? 'issue' : 'pull_request';
+      const payload = {
+        action: 'labeled',
+        repository: { full_name: REPO },
+        [key]: {
+          ...completeIssuePayload().issue,
+          state: 'closed',
+          merged: true,
+          merged_at: T0,
+        },
+        label: { name: 'agent:codex' },
+        sender: { login: 'jlapenna' },
+      };
+      const result = await handleWebhookDelivery(deps, {
+        event,
+        deliveryId: 'closed-label',
+        payload,
+      });
+      expect(result).toEqual({
+        status: 200,
+        body: { ignored: 'anchor-closed' },
+      });
+      expect(await store.readTask(ISSUE)).toBeUndefined();
+      expect(await store.listRuns(ISSUE)).toEqual([]);
+      expect(calls).toEqual([]);
+      expect(deps.refreshGithubAnchorProjection).toHaveBeenCalledWith(ISSUE);
+    },
+  );
+
   it('invalidates the queue only after a webhook projection refresh completes', async () => {
     const { deps } = fixture();
     const calls: string[] = [];
@@ -203,7 +241,7 @@ describe('handleWebhookDelivery', () => {
       payload: {
         action: 'dismissed',
         repository: { full_name: REPO },
-        pull_request: { number: ISSUE.issue },
+        pull_request: { state: 'open', number: ISSUE.issue },
         review: { id: 1234 },
       },
     });
@@ -350,7 +388,7 @@ describe('handleWebhookDelivery', () => {
       payload: {
         action: 'labeled',
         repository: { full_name: 'jlapenna/agent-lcars' },
-        issue: { number: 1, title: 'T', body: 'B' },
+        issue: { state: 'open', number: 1, title: 'T', body: 'B' },
         label: { name: 'agent:claude' },
         sender: { login: 'jlapenna' },
       },
@@ -404,6 +442,7 @@ describe('handleWebhookDelivery', () => {
     const requestId = '11111111-1111-4111-8111-111111111111';
     const payload = labeledIssuePayload({
       issue: {
+        state: 'open',
         number: ISSUE.issue,
         title: 'Quick Task',
         body: `Fix this.\n\n${formatQuickTaskMarker({
@@ -470,11 +509,11 @@ describe('handleWebhookDelivery', () => {
       deliveryId: 'delayed-first-quick-task-delivery',
       payload: completeIssuePayload({
         issue: {
+          state: 'open',
           number: ISSUE.issue,
           title: 'Quick Task',
           body,
           html_url: `https://github.com/${REPO}/issues/${ISSUE.issue}`,
-          state: 'open',
           updated_at: T0,
           user: { login: 'jlapenna' },
           labels: [{ name: 'agent:claude' }],
@@ -531,6 +570,7 @@ describe('handleWebhookDelivery', () => {
         action: 'created',
         repository: { full_name: REPO },
         issue: {
+          state: 'open',
           number: ISSUE.issue,
           title: 'Issue title',
           body: 'Issue body',
@@ -559,6 +599,7 @@ describe('handleWebhookDelivery', () => {
       action: 'labeled',
       repository: { full_name: REPO },
       pull_request: {
+        state: 'open',
         number: ISSUE.issue,
         title: 'Pull request title',
         body: 'Pull request body',
@@ -623,7 +664,12 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
     return {
       action: 'created',
       repository: { full_name: REPO },
-      issue: { number: ISSUE.issue, title: 'Issue title', body: 'Issue body' },
+      issue: {
+        state: 'open',
+        number: ISSUE.issue,
+        title: 'Issue title',
+        body: 'Issue body',
+      },
       comment: {
         body: '@claude Use Firestore.',
         author_association: 'MEMBER',
