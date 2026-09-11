@@ -614,8 +614,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' <<<"$POST_CI_WORKFLOWS" >/dev/null; then
-            echo "::error::post-ci-workflows must be a JSON array of non-empty workflow file names."
+          if ! jq -e --arg deploy "$DEPLOY_WORKFLOW" '
+            type == "array" and
+            all(.[]; type == "string" and length > 0) and
+            length == (unique | length) and
+            ($deploy == "" or index($deploy) == null)
+          ' <<<"$POST_CI_WORKFLOWS" >/dev/null; then
+            echo "::error::post-ci-workflows must contain unique non-empty workflow file names and must not include deploy-workflow."
             exit 1
           fi
 
@@ -1038,6 +1043,15 @@ jobs:
 
           if [ "$DEPLOY_NEEDED" != true ]; then
             exit 0
+          fi
+
+          # post-CI workflows bind their work to source_sha. The legacy deploy
+          # workflow has no immutable-source input, so close the wider dispatch
+          # window introduced by the post-CI loop with one final main read.
+          LEGACY_DEPLOY_MAIN_SHA=$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')
+          if [ "$LEGACY_DEPLOY_MAIN_SHA" != "$SAFETY_SHA" ]; then
+            echo "::error::Main advanced from CI-validated safety target $SAFETY_SHA to $LEGACY_DEPLOY_MAIN_SHA after source-bound post-CI dispatch; refusing to dispatch $DEPLOY_WORKFLOW for an unverified head."
+            exit 1
           fi
 
           # A generic reusable-workflow consumer need not support a

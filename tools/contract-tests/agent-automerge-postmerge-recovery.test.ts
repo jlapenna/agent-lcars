@@ -116,6 +116,7 @@ interface ShellScenario {
   postCiWorkflowsRaw?: string;
   postSubmitEnabled?: string;
   currentMain?: string;
+  deployCurrentMain?: string;
   cancelledDeployJobCount?: number;
   cancelledPostCiJobCount?: number;
 }
@@ -163,7 +164,13 @@ case "$args" in
     count=0
     [ ! -f "$REF_COUNT_PATH" ] || count=$(cat "$REF_COUNT_PATH")
     count=$((count + 1)); echo "$count" > "$REF_COUNT_PATH"
-    if [ "$count" -eq 1 ]; then echo "$SAFETY_SHA"; else echo "$CURRENT_MAIN_SHA"; fi
+    if [ "$count" -eq 1 ]; then
+      echo "$SAFETY_SHA"
+    elif [ "$count" -eq 2 ]; then
+      echo "$CURRENT_MAIN_SHA"
+    else
+      echo "$DEPLOY_CURRENT_MAIN_SHA"
+    fi
     ;;
   *"compare/"*) echo identical ;;
   *"actions/workflows/ci.yml/runs?"*) printf '[%s]\\n' "$CI_RUNS_JSON" ;;
@@ -212,6 +219,8 @@ esac
       CHECK_WAIT_MINUTES: '1',
       SAFETY_SHA: sha,
       CURRENT_MAIN_SHA: scenario.currentMain ?? sha,
+      DEPLOY_CURRENT_MAIN_SHA:
+        scenario.deployCurrentMain ?? scenario.currentMain ?? sha,
       CI_RUNS_JSON: JSON.stringify({ workflow_runs: scenario.ciRuns }),
       DEPLOY_RUNS_JSON: JSON.stringify({
         workflow_runs: scenario.deployRuns,
@@ -487,7 +496,26 @@ describe('agent automerge post-merge recovery admission', () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain(
-      'post-ci-workflows must be a JSON array of non-empty workflow file names',
+      'post-ci-workflows must contain unique non-empty workflow file names',
+    );
+    expect(result.calls.filter((call) => call.startsWith('dispatch:'))).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    ['duplicate names', '["post-ci.yml","post-ci.yml"]'],
+    ['deploy overlap', '["deploy.yml"]'],
+  ])('rejects post-CI workflow configuration with %s', (_label, raw) => {
+    const result = executeRestoreStep({
+      ciRuns: [],
+      deployRuns: [],
+      postCiWorkflowsRaw: raw,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      'post-ci-workflows must contain unique non-empty workflow file names',
     );
     expect(result.calls.filter((call) => call.startsWith('dispatch:'))).toEqual(
       [],
@@ -576,5 +604,30 @@ describe('agent automerge post-merge recovery admission', () => {
     expect(result.calls.filter((call) => call.startsWith('dispatch:'))).toEqual(
       [],
     );
+  });
+
+  it('keeps a source-bound post-CI dispatch but refuses a later unbound deploy after main advances', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [run({ id: 3, conclusion: 'skipped' })],
+      postCiRuns: [],
+      postCiWorkflows: ['post-ci.yml'],
+      deployCurrentMain: 'b'.repeat(40),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain('after source-bound post-CI dispatch');
+    expect(
+      result.calls.filter((call) => call === 'dispatch:post-ci.yml'),
+    ).toHaveLength(1);
+    expect(
+      result.calls.filter((call) => call === 'dispatch:deploy.yml'),
+    ).toEqual([]);
   });
 });
