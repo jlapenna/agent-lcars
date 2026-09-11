@@ -1224,6 +1224,144 @@ func TestPlacementBlockedMixedStartInFlightAndHostLimitIsTruthful(t *testing.T) 
 	}
 }
 
+func TestDockerInventoryFailureFailsClosedWithoutLosingKnownCount(t *testing.T) {
+	blocked := newFakeDockerServer(t)
+	_, releaseList := blocked.blockLists()
+	defer releaseList()
+	scaler := &Scaler{
+		scaleSetName:     "set",
+		dockerHosts:      []DockerHost{{Name: "laforge", Client: blocked.client(t)}},
+		hostRunnerLimits: map[string]int{"laforge": 4},
+		runners:          runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.lastFleetCounts["laforge"] = 2
+	hostFleetRunnersGauge.WithLabelValues("laforge").Set(2)
+	inventoryBlocked := placementBlocked.WithLabelValues("set", "laforge", placementReasonInventoryUnavailable)
+	blockedBefore := testutil.ToFloat64(inventoryBlocked)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	host, err := scaler.pickHost(ctx)
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want inventory-unavailable capacity failure", host, err)
+	}
+	if !strings.Contains(err.Error(), "runner inventories unavailable") {
+		t.Errorf("pickHost() error = %q, want inventory-unavailable diagnosis", err)
+	}
+	if got := fleet.lastFleetCounts["laforge"]; got != 2 {
+		t.Errorf("lastFleetCounts[laforge] = %d, want preserved known count 2", got)
+	}
+	if got := testutil.ToFloat64(hostFleetRunnersGauge.WithLabelValues("laforge")); got != 2 {
+		t.Errorf("host fleet runner gauge = %v, want preserved known count 2", got)
+	}
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("set")); got != 0 {
+		t.Errorf("lane_admissible_slots = %v, want 0 while inventory is unknown", got)
+	}
+	if got := testutil.ToFloat64(hostReachableGauge.WithLabelValues("laforge")); got != 1 {
+		t.Errorf("host_reachable = %v, want 1 because Docker Ping succeeded", got)
+	}
+	if got := testutil.ToFloat64(inventoryBlocked) - blockedBefore; got != 1 {
+		t.Errorf("placement_blocked_total{host=%q,reason=%q} rose by %v, want 1", "laforge", placementReasonInventoryUnavailable, got)
+	}
+}
+
+func TestDockerInventoryFailureDoesNotBlockHealthyHost(t *testing.T) {
+	blocked := newFakeDockerServer(t)
+	_, releaseList := blocked.blockLists()
+	defer releaseList()
+	healthy := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName: "set",
+		dockerHosts: []DockerHost{
+			{Name: "laforge", Client: blocked.client(t)},
+			{Name: "janeway", Client: healthy.client(t)},
+		},
+		hostRunnerLimits: map[string]int{"laforge": 4, "janeway": 4},
+		runners:          runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.lastFleetCounts["laforge"] = 3
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	host, err := scaler.pickHost(ctx)
+	if err != nil || host != "janeway" {
+		t.Fatalf("pickHost() = (%q, %v), want healthy janeway", host, err)
+	}
+	if got := fleet.lastFleetCounts["laforge"]; got != 3 {
+		t.Errorf("lastFleetCounts[laforge] = %d, want preserved known count 3", got)
+	}
+}
+
+func TestDockerInventoryInternalTimeoutReleasesFleetLockAndKeepsHealthyHost(t *testing.T) {
+	blocked := newFakeDockerServer(t)
+	listStarted, releaseList := blocked.blockLists()
+	defer releaseList()
+	healthy := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName: "set",
+		dockerHosts: []DockerHost{
+			{Name: "laforge", Client: blocked.client(t)},
+			{Name: "janeway", Client: healthy.client(t)},
+		},
+		hostRunnerLimits: map[string]int{"laforge": 4, "janeway": 4},
+		runners:          runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.reservations["laforge"] = 1
+	fleet.startInFlight["laforge"] = true
+	reservation := &hostReservation{fleet: fleet, host: "laforge"}
+
+	// Background has no caller deadline: only probeFleetHosts' internal
+	// dockerInspectTimeout can release the shared fleet lock here.
+	pickDone := make(chan struct{})
+	var picked string
+	var pickErr error
+	go func() {
+		picked, pickErr = scaler.pickHost(context.Background())
+		close(pickDone)
+	}()
+	select {
+	case <-listStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Docker inventory request did not start")
+	}
+	releaseDone := make(chan struct{})
+	go func() {
+		reservation.release("set")
+		close(releaseDone)
+	}()
+	select {
+	case <-releaseDone:
+		t.Fatal("reservation release unexpectedly acquired fleet lock during blocked inventory")
+	case <-time.After(10 * time.Millisecond):
+	}
+	started := time.Now()
+	select {
+	case <-pickDone:
+	case <-time.After(dockerInspectTimeout + 2*time.Second):
+		t.Fatal("Background-context inventory probe did not honor its internal deadline")
+	}
+	if elapsed := time.Since(started); elapsed < dockerInspectTimeout-500*time.Millisecond {
+		t.Fatalf("blocked inventory returned after %s, want internal %s deadline to decide", elapsed, dockerInspectTimeout)
+	}
+	if pickErr != nil || picked != "janeway" {
+		t.Fatalf("pickHost() = (%q, %v), want healthy janeway after blocked host times out", picked, pickErr)
+	}
+	select {
+	case <-releaseDone:
+	case <-time.After(time.Second):
+		t.Fatal("reservation release did not progress after internal inventory deadline")
+	}
+	if fleet.startInFlight["laforge"] || fleet.reservations["laforge"] != 0 {
+		t.Fatalf("released fleet state = startInFlight:%v reservations:%d, want false/0", fleet.startInFlight["laforge"], fleet.reservations["laforge"])
+	}
+}
+
 func TestDeclaredRunnerMemoryRequiresReservationLabel(t *testing.T) {
 	_, err := declaredRunnerMemory(container.Summary{ID: "missing-label"})
 	if err == nil || !strings.Contains(err.Error(), runnerMemoryLabelKey) {

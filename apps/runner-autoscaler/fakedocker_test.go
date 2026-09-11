@@ -44,7 +44,11 @@ type fakeDockerServer struct {
 	// listDelay stalls every ContainerList response, standing in for a slow
 	// fleet host. Lets a test distinguish concurrent from serial fan-out by
 	// wall-clock rather than by inspecting goroutines.
-	listDelay    time.Duration
+	listDelay time.Duration
+	// listBlock makes ContainerList wait for either explicit release or the
+	// request deadline, modeling a daemon that accepts a request and stalls.
+	listBlock    chan struct{}
+	listStarted  chan struct{}
 	inspectDelay time.Duration
 	// removeBlock, when non-nil, makes every ContainerRemove request wait
 	// until it is closed (or the request's own context is cancelled, e.g. by
@@ -186,6 +190,16 @@ func (f *fakeDockerServer) setMemoryTotal(bytes int64) {
 	f.memoryTotal = bytes
 }
 
+func (f *fakeDockerServer) blockLists() (<-chan struct{}, func()) {
+	f.mu.Lock()
+	f.listBlock = make(chan struct{})
+	f.listStarted = make(chan struct{}, 1)
+	block := f.listBlock
+	started := f.listStarted
+	f.mu.Unlock()
+	return started, func() { close(block) }
+}
+
 // removedIDs returns the container IDs passed to ContainerRemove so far, in
 // call order.
 func (f *fakeDockerServer) removedIDs() []string {
@@ -227,7 +241,20 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		cs := f.containers
 		delay := f.listDelay
+		block := f.listBlock
+		started := f.listStarted
 		f.mu.Unlock()
+		if block != nil {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			select {
+			case <-block:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		if delay > 0 {
 			time.Sleep(delay)
 		}
