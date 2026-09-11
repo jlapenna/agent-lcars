@@ -27,6 +27,9 @@ import (
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/google/uuid"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 )
 
 type Scaler struct {
@@ -1153,18 +1156,45 @@ func (a *Scaler) placementHostSet() map[string]bool {
 	return set
 }
 
-// parseMetricValue extracts the trailing numeric value from a Prometheus
-// exposition line (with or without a {labels} block).
+// parseMetricSample reads one scanner-delimited Prometheus text sample. Parsing
+// a line without TYPE metadata produces an untyped metric, regardless of the
+// exporter's gauge/counter type. The library handles labels and the optional
+// millisecond timestamp; neither can be mistaken for the sample value.
+//
+// Keep parsing local to the selected line: malformed unrelated exporter
+// metrics must not invalidate the signals these probes actually consume.
+func parseMetricSample(line string) (*dto.Metric, bool) {
+	if strings.ContainsAny(line, "\r\n") {
+		return nil, false
+	}
+	parser := expfmt.NewTextParser(model.UTF8Validation)
+	families, err := parser.TextToMetricFamilies(strings.NewReader(strings.TrimRight(line, " \t") + "\n"))
+	if err != nil || len(families) != 1 {
+		return nil, false
+	}
+	for _, family := range families {
+		if len(family.Metric) != 1 || family.Metric[0].Untyped == nil {
+			return nil, false
+		}
+		metric := family.Metric[0]
+		value := metric.GetUntyped().GetValue()
+		// Prometheus permits NaN/Inf, but they are not usable placement
+		// telemetry. In particular, +Inf must never satisfy a positive gate.
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, false
+		}
+		return metric, true
+	}
+	return nil, false
+}
+
+// parseMetricValue returns the finite sample value, ignoring its timestamp.
 func parseMetricValue(line string) (float64, bool) {
-	fields := strings.Fields(line)
-	if len(fields) < 2 {
+	metric, ok := parseMetricSample(line)
+	if !ok {
 		return 0, false
 	}
-	val, err := strconv.ParseFloat(fields[len(fields)-1], 64)
-	if err != nil {
-		return 0, false
-	}
-	return val, true
+	return metric.GetUntyped().GetValue(), true
 }
 
 // defaultInferenceIdleWatts is the power-draw ceiling, in watts, below which
@@ -2639,48 +2669,14 @@ const readinessClockSkewTolerance = 2 * time.Minute
 // `name="value"`: label keys are matched whole, so a series carrying
 // target_host or node_host cannot answer for a query about host.
 func metricLabelValue(line, label string) (string, bool) {
-	open := strings.Index(line, "{")
-	if open < 0 {
+	metric, ok := parseMetricSample(line)
+	if !ok {
 		return "", false
 	}
-	close := strings.LastIndex(line, "}")
-	if close < open {
-		return "", false
-	}
-
-	body := line[open+1 : close]
-	inQuotes := false
-	escaped := false
-	start := 0
-	for i := 0; i <= len(body); i++ {
-		// Split on commas outside quotes -- a label VALUE may legitimately
-		// contain a comma, so a plain strings.Split would corrupt the pair.
-		if i < len(body) {
-			c := body[i]
-			switch {
-			case escaped:
-				escaped = false
-				continue
-			case c == '\\' && inQuotes:
-				escaped = true
-				continue
-			case c == '"':
-				inQuotes = !inQuotes
-				continue
-			case c != ',' || inQuotes:
-				continue
-			}
+	for _, pair := range metric.Label {
+		if pair.GetName() == label {
+			return pair.GetValue(), true
 		}
-		key, value, found := strings.Cut(body[start:i], "=")
-		start = i + 1
-		if !found || strings.TrimSpace(key) != label {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		if unquoted, err := strconv.Unquote(value); err == nil {
-			return unquoted, true
-		}
-		return strings.Trim(value, `"`), true
 	}
 	return "", false
 }
