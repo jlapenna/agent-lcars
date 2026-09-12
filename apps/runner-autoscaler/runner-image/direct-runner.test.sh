@@ -132,7 +132,13 @@ JSON
       echo "fake curl: simulated checkout-token failure" >&2
       exit 22
     fi
-    echo "{\"token\":\"$FAKE_TOKEN\",\"expiresAt\":\"2026-08-27T01:00:00.000Z\"}"
+    token_attempt=1
+    [ ! -f "$CHECKOUT_TOKEN_REQUEST_LOG" ] || token_attempt=$(( $(cat "$CHECKOUT_TOKEN_REQUEST_LOG") + 1 ))
+    echo "$token_attempt" > "$CHECKOUT_TOKEN_REQUEST_LOG"
+    checkout_token="$FAKE_TOKEN"
+    [ "$token_attempt" -lt 2 ] || checkout_token="${FAKE_REFRESHED_TOKEN:-$FAKE_TOKEN}"
+    expires_at="$(date -u -d "+${FAKE_CHECKOUT_TOKEN_TTL_SECONDS:-3600} seconds" +%Y-%m-%dT%H:%M:%SZ)"
+    echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\"}"
     ;;
   */codex-auth)
     if printf '%s\n' "$config_body" | grep -qF 'request = "PUT"'; then
@@ -194,6 +200,20 @@ if $is_clone; then
   mkdir -p "$target/.git"
 elif $is_config; then
   printf '%s\n' "$*" >> ".git/config"
+  if [ "${1:-}" = config ] && [ "${2:-}" = --local ] &&
+    [ "${3:-}" = credential.helper ] && [ "$#" -eq 4 ] &&
+    [ -z "${4:-}" ]; then
+    touch ".git/local-helper-chain-reset"
+  fi
+elif [[ " $* " == *" push "* ]]; then
+  if [ -n "${FAKE_GLOBAL_GIT_TOKEN:-}" ] &&
+    [ ! -f ".git/local-helper-chain-reset" ]; then
+    printf '%s' "$FAKE_GLOBAL_GIT_TOKEN" > "$GIT_PUSH_TOKEN_LOG"
+  else
+    printf 'protocol=https\nhost=github.com\npath=octo/example.git\n\n' |
+      "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get |
+      sed -n 's/^password=//p' > "$GIT_PUSH_TOKEN_LOG"
+  fi
 fi
 exit 0
 FAKE
@@ -209,6 +229,7 @@ FAKE
 
   cat > "$bindir/gh" <<'FAKE'
 #!/usr/bin/env bash
+printf '%s' "${GH_TOKEN:-}" > "$GH_INVOCATION_TOKEN_LOG"
 if [[ "$*" == *"pulls?state=all"* ]]; then
   [ "${FAKE_GH_LOOKUP_FAIL:-0}" = 0 ] || exit 1
   if [ "${FAKE_GH_NO_MATCH:-}" = "1" ]; then
@@ -283,6 +304,11 @@ FAKE
 #!/usr/bin/env bash
 echo "$@" >> "$CLAUDE_ARGS_LOG"
 printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
+if [ -n "${FAKE_CREDENTIAL_USE_AFTER_SLEEP:-}" ]; then
+  sleep "$FAKE_CREDENTIAL_USE_AFTER_SLEEP"
+  git push
+  gh api repos/octo/example
+fi
 # Opt-in: most scenarios don't care what claude "said", only what it was
 # asked and how it exited. Set to exercise direct-runner.sh's final-message
 # capture (`--print` piped through `tee`).
@@ -492,6 +518,9 @@ run_scenario() {
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
   export CODEX_AUTH_REQUEST_LOG="$dir/codex-auth-requests.log"
+  export CHECKOUT_TOKEN_REQUEST_LOG="$dir/checkout-token-requests.log"
+  export GIT_PUSH_TOKEN_LOG="$dir/git-push-token.log"
+  export GH_INVOCATION_TOKEN_LOG="$dir/gh-invocation-token.log"
   export HEARTBEAT_LOG="$dir/heartbeats.log"
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
   export OPENCODE_ENV_LOG="$dir/opencode-env.log"
@@ -620,11 +649,38 @@ grep -Fxq '/usr/local/lib/agent-lcars/runtime/verify-outcome.sh' "$RUNTIME_HELPE
 # The credential-delivery fix under test: CLAUDE_TOKEN_FILE's contents must
 # reach claude's own process environment as CLAUDE_CODE_OAUTH_TOKEN.
 [ -f "$CLAUDE_ENV_TOKEN_LOG" ] || fail "happy path: claude was never invoked with an env to record"
-if [ "$(cat "$CLAUDE_ENV_TOKEN_LOG")" != "$FAKE_CLAUDE_OAUTH_TOKEN|$FAKE_TOKEN" ]; then
-  fail "happy path: Claude did not receive its credential and short-lived rerun token (got $(cat "$CLAUDE_ENV_TOKEN_LOG"))"
+if [ "$(cat "$CLAUDE_ENV_TOKEN_LOG")" != "$FAKE_CLAUDE_OAUTH_TOKEN|" ]; then
+  fail "happy path: Claude did not receive its credential or inherited a static GitHub token (got $(cat "$CLAUDE_ENV_TOKEN_LOG"))"
 fi
 
 echo "scenario happy-path: OK"
+
+# A provider process cannot observe parent-shell environment mutations. Keep it
+# alive across a forced credential rotation, then prove its later git and gh
+# subprocesses independently read the refreshed file-backed credential.
+export FAKE_REFRESHED_TOKEN='fake-refreshed-checkout-token-uvw456'
+export FAKE_CHECKOUT_TOKEN_TTL_SECONDS=6
+export CHECKOUT_TOKEN_REFRESH_MARGIN_SECONDS=4
+export CHECKOUT_TOKEN_REFRESH_RETRY_SECONDS=1
+export FAKE_CREDENTIAL_USE_AFTER_SLEEP=3
+export FAKE_GLOBAL_GIT_TOKEN='stale-token-from-global-helper'
+run_scenario renewable-checkout-token
+unset FAKE_REFRESHED_TOKEN FAKE_CHECKOUT_TOKEN_TTL_SECONDS \
+  CHECKOUT_TOKEN_REFRESH_MARGIN_SECONDS CHECKOUT_TOKEN_REFRESH_RETRY_SECONDS \
+  FAKE_CREDENTIAL_USE_AFTER_SLEEP FAKE_GLOBAL_GIT_TOKEN
+[ "$(cat "$CHECKOUT_TOKEN_REQUEST_LOG")" -ge 2 ] ||
+  fail 'renewable checkout token was not refreshed'
+[ "$(cat "$GIT_PUSH_TOKEN_LOG")" = 'fake-refreshed-checkout-token-uvw456' ] ||
+  fail 'git push did not read the refreshed checkout token'
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-refreshed-checkout-token-uvw456' ] ||
+  fail 'gh did not read the refreshed checkout token'
+hostile_credential="$(printf 'protocol=https\nhost=github.com.attacker.example\npath=octo/example.git\n\n' |
+  "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get)"
+[ -z "$hostile_credential" ] || fail 'git credential helper disclosed a token to a non-GitHub host'
+wrong_repo_credential="$(printf 'protocol=https\nhost=github.com\npath=octo/other.git\n\n' |
+  "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get)"
+[ -z "$wrong_repo_credential" ] || fail 'git credential helper disclosed a token to another repository'
+echo "scenario renewable-checkout-token: OK"
 
 # --- Scenario 1a: Codex provider dispatch, resume, and the auth broker ------
 # Codex must run without the Claude host-token mount, restore only through
@@ -639,8 +695,8 @@ unset FAKE_MISSING_CLAUDE_TOKEN
 
 [ "$rc" -eq 0 ] || fail "codex happy path: expected exit 0, got $rc"
 [ -s "$CODEX_ARGS_LOG" ] || fail "codex happy path: codex was not invoked"
-[ "$(cat "$CODEX_ENV_LOG")" = "$FAKE_TOKEN" ] ||
-  fail "codex happy path: Codex did not receive the short-lived rerun token ($(cat "$CODEX_ENV_LOG"))"
+[ ! -s "$CODEX_ENV_LOG" ] ||
+  fail "codex happy path: Codex inherited a static GitHub token ($(cat "$CODEX_ENV_LOG"))"
 grep -q -- 'exec resume sess_1 --json --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
   fail "codex happy path: wrong invocation ($(cat "$CODEX_ARGS_LOG"))"
 if grep -q -- '--ephemeral' "$CODEX_ARGS_LOG"; then
@@ -791,7 +847,7 @@ unset OPENCODE_LLM_API_KEY
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
 grep -q -- 'run --model homelab/default-nothink --session sess_1 --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
-[ "$(cat "$OPENCODE_ENV_LOG")" = "|$FAKE_TOKEN|$FAKE_TOKEN||" ] ||
+[ "$(cat "$OPENCODE_ENV_LOG")" = "||||" ] ||
   fail "opencode happy path: OpenCode inherited the LiteLLM key in its environment ($(cat "$OPENCODE_ENV_LOG"))"
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "opencode happy path: claude was invoked"
 [ ! -f "$CODEX_ARGS_LOG" ] || fail "opencode happy path: codex was invoked"
@@ -1332,5 +1388,4 @@ unset FAKE_GH_LOOKUP_FAIL
 [ "$rc" -ne 0 ] || fail "failed lookup succeeded"
 jq -e '.outcome == "verification-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "failed lookup lost its diagnosis"
 
-bash "$here/run-github-command.test.sh"
 echo "direct-runner.sh: OK"

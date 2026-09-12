@@ -62,6 +62,15 @@ export interface DispatchTokenProvider {
   tokenFor(repo: string): Promise<string>;
 }
 
+export interface ExpiringDispatchToken {
+  token: string;
+  expiresAt: string;
+}
+
+export interface ExpiringDispatchTokenProvider extends DispatchTokenProvider {
+  expiringTokenFor(repo: string): Promise<ExpiringDispatchToken>;
+}
+
 /** The permission set `AppInstallationTokenProvider` requests when minting
  * a repo's installation token, absent an explicit `permissions` option --
  * exactly what the outbox drain needs (issue and PR comments plus the
@@ -163,18 +172,25 @@ interface CachedInstallationToken {
  * failure, with a message describing what step failed and against which
  * repo -- never the JWT or the private key themselves.
  */
-export class AppInstallationTokenProvider implements DispatchTokenProvider {
+export class AppInstallationTokenProvider implements ExpiringDispatchTokenProvider {
   private readonly cache = new Map<string, CachedInstallationToken>();
 
   constructor(private readonly options: AppInstallationTokenProviderOptions) {}
 
   async tokenFor(repo: string): Promise<string> {
+    return (await this.expiringTokenFor(repo)).token;
+  }
+
+  async expiringTokenFor(repo: string): Promise<ExpiringDispatchToken> {
     const cached = this.cache.get(repo);
     if (
       cached !== undefined &&
       Date.now() < cached.expiresAtMs - TOKEN_REFRESH_BUFFER_MS
     ) {
-      return cached.token;
+      return {
+        token: cached.token,
+        expiresAt: new Date(cached.expiresAtMs).toISOString(),
+      };
     }
 
     const fetchImpl = this.options.fetchImpl ?? globalThis.fetch;
@@ -191,7 +207,10 @@ export class AppInstallationTokenProvider implements DispatchTokenProvider {
       this.options.permissions ?? DEFAULT_PERMISSIONS,
     );
     this.cache.set(repo, minted);
-    return minted.token;
+    return {
+      token: minted.token,
+      expiresAt: new Date(minted.expiresAtMs).toISOString(),
+    };
   }
 
   /** Drops `repo`'s cached token, forcing the next `tokenFor(repo)` call to
@@ -234,7 +253,7 @@ export class AppInstallationTokenProvider implements DispatchTokenProvider {
 export function createDispatchTokenProvider(
   env: Record<string, string | undefined>,
   permissions?: Record<string, string>,
-): DispatchTokenProvider {
+): ExpiringDispatchTokenProvider {
   const clientId = env['AGENT_LCARS_APP_CLIENT_ID'];
   if (clientId === undefined) {
     throw new Error('process.env.AGENT_LCARS_APP_CLIENT_ID not defined');
@@ -276,11 +295,12 @@ export function createDispatchTokenProvider(
  * that don't.
  */
 export function lazyDispatchTokenProvider(
-  factory: () => DispatchTokenProvider,
-): DispatchTokenProvider {
-  let provider: DispatchTokenProvider | undefined;
+  factory: () => ExpiringDispatchTokenProvider,
+): ExpiringDispatchTokenProvider {
+  let provider: ExpiringDispatchTokenProvider | undefined;
   return {
     tokenFor: (repo) => (provider ??= factory()).tokenFor(repo),
+    expiringTokenFor: (repo) => (provider ??= factory()).expiringTokenFor(repo),
   };
 }
 

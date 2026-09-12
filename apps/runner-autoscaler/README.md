@@ -260,6 +260,15 @@ passes, then sends a claim body containing only its runner identity.
 The server derives claimable pipelines from the authenticated `work.executor`
 grant; no autoscaler-local pipeline allowlist exists.
 
+Admission is provider-aware. The server selects the FIFO head of the granted
+pipeline with the fewest live claimed runs; provider-head age breaks occupancy
+ties. This keeps a busy provider from taking the next released fleet slot while
+another granted provider has fewer live claims. OpenCode is serialized because
+its sessions share the local inference backend, and Codex is serialized because
+its global subscription credential lease admits one session. Claude remains
+bounded by fleet host capacity. The claim request cannot select pipelines or
+change these server-owned limits.
+
 ### Native schedule ticker
 
 The same continuously running process ticks native schedules through
@@ -349,7 +358,7 @@ scale-set listeners:
 - `github_runner_autoscaler_queue_executor_polls_total{outcome}` separates a
   healthy empty queue (`idle_204` or `idle_empty`) from `poll_error` and the
   intentional `draining` skip.
-- `github_runner_autoscaler_queue_executor_claims_total` counts valid claims
+- `github_runner_autoscaler_queue_executor_claims_total{pipeline}` counts valid claims by provider pipeline
   returned by the server. `github_runner_autoscaler_queue_executor_launches_total{outcome}`
   then records whether that claim launched a direct runner (`success` or
   `error`). A launch error therefore remains visible as a successful claim

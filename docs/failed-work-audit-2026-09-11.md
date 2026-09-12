@@ -64,7 +64,8 @@ keeps failed items visible with recovery controls, and applies the human label
 only for explicit park results. It sets all provider invocations to 7,200
 seconds, verifies exact-marker artifacts even after nonzero exit, and reports
 runner, agent, timeout, provider-limit, and verification failures separately.
-Run-scoped Git/gh authentication renews through the existing checkout-token
+The concurrently merged [#1921](https://github.com/jlapenna/agent-lcars/pull/1921)
+renews run-scoped Git/gh authentication through the existing checkout-token
 API before network commands, keeping the App private key on the server and
 the two-hour allowance usable beyond GitHub's one-hour token lifetime.
 

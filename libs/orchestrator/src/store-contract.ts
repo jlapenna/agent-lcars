@@ -948,11 +948,15 @@ export function runOrchestratorStoreContract(
         return `01TESTQVEV${digits}`;
       }
 
-      async function queuedRun(orchestrator: Orchestrator, requestId: string) {
+      async function queuedRun(
+        orchestrator: Orchestrator,
+        requestId: string,
+        pipeline = 'claude',
+      ) {
         const outcome = await orchestrator.request({
           taskId: { workId: queueWorkId(requestId) },
           requestId,
-          pipeline: 'claude',
+          pipeline,
           work: TASK_WORK,
         });
         if (isRefusal(outcome)) throw new Error('unexpected refusal');
@@ -1035,6 +1039,76 @@ export function runOrchestratorStoreContract(
         expect(winner?.queue?.tokenHash).toBe(expectedTokenHash);
       });
 
+      it('serializes concurrent fair claims and distributes them across waiting providers', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const claudeFirst = await queuedRun(orchestrator, 'q5', 'claude');
+        await store.enqueueRun({ runId: claudeFirst.runId, now: clock.now() });
+        clock.advanceMinutes(1);
+        const claudeSecond = await queuedRun(orchestrator, 'q6', 'claude');
+        await store.enqueueRun({ runId: claudeSecond.runId, now: clock.now() });
+        clock.advanceMinutes(1);
+        const opencode = await queuedRun(orchestrator, 'q7', 'opencode');
+        await store.enqueueRun({ runId: opencode.runId, now: clock.now() });
+
+        const claims = await Promise.all([
+          store.claimQueuedRun({
+            pipelines: ['claude', 'opencode'],
+            now: clock.now(),
+            claimedBy: 'runner-1',
+            tokenHash: '6'.repeat(64),
+          }),
+          store.claimQueuedRun({
+            pipelines: ['claude', 'opencode'],
+            now: clock.now(),
+            claimedBy: 'runner-2',
+            tokenHash: '7'.repeat(64),
+          }),
+        ]);
+
+        expect(claims.map((run) => run?.runId).sort()).toEqual(
+          [claudeFirst.runId, opencode.runId].sort(),
+        );
+        expect((await store.readRun(claudeSecond.runId))?.queue?.state).toBe(
+          'queued',
+        );
+      });
+
+      it('atomically enforces exclusive provider ceilings across concurrent claims', async () => {
+        for (const [pipeline, offset] of [
+          ['opencode', 40],
+          ['codex', 50],
+        ] as const) {
+          const { store, orchestrator, clock } = await fixture();
+          const runs = [];
+          for (const value of [offset, offset + 1]) {
+            const run = await queuedRun(orchestrator, `q${value}`, pipeline);
+            await store.enqueueRun({ runId: run.runId, now: clock.now() });
+            runs.push(run);
+            clock.advanceMinutes(1);
+          }
+
+          const claims = await Promise.all([
+            store.claimQueuedRun({
+              pipelines: [pipeline],
+              now: clock.now(),
+              claimedBy: 'runner-1',
+              tokenHash: '4'.repeat(64),
+            }),
+            store.claimQueuedRun({
+              pipelines: [pipeline],
+              now: clock.now(),
+              claimedBy: 'runner-2',
+              tokenHash: '5'.repeat(64),
+            }),
+          ]);
+
+          expect(claims.filter((run) => run !== undefined)).toHaveLength(1);
+          expect(
+            (await store.listQueuedRuns()).map((run) => run.runId),
+          ).toEqual([runs[1]?.runId]);
+        }
+      });
+
       it('claimQueuedRun ignores a non-matching pipeline', async () => {
         const { store, orchestrator } = await fixture();
         const run = await queuedRun(orchestrator, 'q1');
@@ -1046,6 +1120,108 @@ export function runOrchestratorStoreContract(
           tokenHash: 'e'.repeat(64),
         });
         expect(claimed).toBeUndefined();
+      });
+
+      it('admits a waiting alternate ahead of a saturated provider and preserves provider FIFO', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        for (const requestId of ['q8', 'q9']) {
+          const run = await queuedRun(orchestrator, requestId, 'claude');
+          await store.enqueueRun({ runId: run.runId, now: clock.now() });
+          await store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: clock.now(),
+            claimedBy: `saturated-${requestId}`,
+            tokenHash: '8'.repeat(64),
+          });
+          clock.advanceMinutes(1);
+        }
+        const claudeFirst = await queuedRun(orchestrator, 'q10', 'claude');
+        await store.enqueueRun({
+          runId: claudeFirst.runId,
+          now: clock.now(),
+        });
+        clock.advanceMinutes(1);
+        const claudeSecond = await queuedRun(orchestrator, 'q11', 'claude');
+        await store.enqueueRun({
+          runId: claudeSecond.runId,
+          now: clock.now(),
+        });
+        clock.advanceMinutes(1);
+        const opencodeFirst = await queuedRun(orchestrator, 'q12', 'opencode');
+        await store.enqueueRun({
+          runId: opencodeFirst.runId,
+          now: clock.now(),
+        });
+        clock.advanceMinutes(1);
+        const opencodeSecond = await queuedRun(orchestrator, 'q13', 'opencode');
+        await store.enqueueRun({
+          runId: opencodeSecond.runId,
+          now: clock.now(),
+        });
+
+        const claimed: string[] = [];
+        for (let index = 0; index < 2; index++) {
+          const run = await store.claimQueuedRun({
+            pipelines: ['opencode', 'claude'],
+            now: clock.now(),
+            claimedBy: `runner-${index}`,
+            tokenHash: String(index).repeat(64),
+          });
+          if (run !== undefined) claimed.push(run.runId);
+        }
+
+        expect(claimed).toEqual([opencodeFirst.runId, claudeFirst.runId]);
+        expect((await store.readRun(opencodeSecond.runId))?.queue?.state).toBe(
+          'queued',
+        );
+        expect((await store.readRun(claudeSecond.runId))?.queue?.state).toBe(
+          'queued',
+        );
+      });
+
+      it('serializes OpenCode and admits its FIFO head after capacity releases', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const runs = [];
+        for (const requestId of ['q20', 'q21', 'q22']) {
+          const run = await queuedRun(orchestrator, requestId, 'opencode');
+          await store.enqueueRun({ runId: run.runId, now: clock.now() });
+          runs.push(run);
+          clock.advanceMinutes(1);
+        }
+        const claim = (runner: string, tokenDigit: string) =>
+          store.claimQueuedRun({
+            pipelines: ['opencode'],
+            now: clock.now(),
+            claimedBy: runner,
+            tokenHash: tokenDigit.repeat(64),
+          });
+
+        expect((await claim('runner-1', 'a'))?.runId).toBe(runs[0]?.runId);
+        expect(await claim('runner-2', 'b')).toBeUndefined();
+
+        const first = runs[0];
+        if (first === undefined) throw new Error('expected first run');
+        await orchestrator.report(first.runId, { ok: true });
+        expect((await claim('runner-2', 'b'))?.runId).toBe(runs[1]?.runId);
+      });
+
+      it('does not admit a second live Codex claim against its exclusive credential lease', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        for (const requestId of ['q30', 'q31']) {
+          const run = await queuedRun(orchestrator, requestId, 'codex');
+          await store.enqueueRun({ runId: run.runId, now: clock.now() });
+          clock.advanceMinutes(1);
+        }
+        const claim = (runner: string, tokenDigit: string) =>
+          store.claimQueuedRun({
+            pipelines: ['codex'],
+            now: clock.now(),
+            claimedBy: runner,
+            tokenHash: tokenDigit.repeat(64),
+          });
+
+        expect(await claim('runner-1', 'a')).toBeDefined();
+        expect(await claim('runner-2', 'b')).toBeUndefined();
       });
     });
 
