@@ -21,6 +21,11 @@ import {
   taskKey,
 } from './model';
 import {
+  type ProviderCooldown,
+  providerCooldownForRun,
+  providerIsCoolingDown,
+} from './provider-cooldown';
+import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
@@ -35,6 +40,7 @@ import {
 /** Reference implementation; also the test double. */
 export class MemoryStore implements OrchestratorStore {
   readonly #tasks = new Map<string, VersionedTask>();
+  readonly #providerCooldowns = new Map<string, ProviderCooldown>();
   readonly #runs = new Map<string, Run>();
   readonly #requestRuns = new Map<string, string>();
   readonly #requestBindings = new Map<
@@ -155,6 +161,12 @@ export class MemoryStore implements OrchestratorStore {
         this.#requestKey(run.task, run.requestSource, run.requestId),
         run.runId,
       );
+    }
+    for (const run of [decision.run, ...(decision.additionalRuns ?? [])]) {
+      if (run === undefined) continue;
+      const cooldown = providerCooldownForRun(run);
+      if (cooldown !== undefined)
+        this.#providerCooldowns.set(cooldown.pipeline, cooldown);
     }
     for (const entry of decision.outbox) {
       this.#outbox.set(entry.entryId, structuredClone(entry));
@@ -496,7 +508,14 @@ export class MemoryStore implements OrchestratorStore {
     tokenHash: string;
   }): Promise<Run | undefined> {
     const runs = [...this.#runs.values()];
-    const candidate = selectFairQueuedRun(runs, runs, input.pipelines);
+    const eligible = input.pipelines.filter(
+      (pipeline) =>
+        !providerIsCoolingDown(
+          this.#providerCooldowns.get(pipeline),
+          input.now,
+        ),
+    );
+    const candidate = selectFairQueuedRun(runs, runs, eligible);
     if (candidate === undefined) return undefined;
     const claimed: Run = {
       ...candidate,

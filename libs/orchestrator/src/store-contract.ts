@@ -1160,6 +1160,67 @@ export function runOrchestratorStoreContract(
         }
       });
 
+      it.each([
+        {
+          summary: 'provider-limit',
+          message: 'quota unavailable',
+          minutes: 15,
+        },
+        {
+          summary: 'no-deliverable',
+          message: "You've hit your weekly limit · resets 12am (UTC)",
+          minutes: 720,
+        },
+      ])(
+        'holds only the quota-limited provider after $summary until its deadline',
+        async ({ summary, message, minutes }) => {
+          const { store, orchestrator, clock } = await fixture();
+          const failed = await queuedRun(orchestrator, 'q901');
+          await store.enqueueRun({ runId: failed.runId, now: clock.now() });
+          const claim = {
+            pipelines: ['claude'],
+            now: clock.now(),
+            claimedBy: 'quota-test',
+            tokenHash: 'a'.repeat(64),
+          };
+          await store.claimQueuedRun(claim);
+          await orchestrator.report(failed.runId, {
+            ok: false,
+            summary,
+            message,
+          });
+
+          const held = await queuedRun(orchestrator, 'q902');
+          const healthy = await queuedRun(orchestrator, 'q903', 'opencode');
+          await store.enqueueRun({ runId: held.runId, now: clock.now() });
+          await store.enqueueRun({ runId: healthy.runId, now: clock.now() });
+          expect(
+            (
+              await store.claimQueuedRun({
+                ...claim,
+                pipelines: ['claude', 'opencode'],
+              })
+            )?.runId,
+          ).toBe(healthy.runId);
+          await orchestrator.report(healthy.runId, { ok: true });
+          expect((await store.readRun(held.runId))?.queue?.state).toBe(
+            'queued',
+          );
+          clock.advanceMinutes(minutes - 1);
+          expect(
+            await store.claimQueuedRun({ ...claim, now: clock.now() }),
+          ).toBeUndefined();
+          await orchestrator.sweepExpired();
+          expect((await store.readTask(held.task))?.task.consecutiveLost).toBe(
+            0,
+          );
+          clock.advanceMinutes(1);
+          expect(
+            (await store.claimQueuedRun({ ...claim, now: clock.now() }))?.runId,
+          ).toBe(held.runId);
+        },
+      );
+
       it('claimQueuedRun ignores a non-matching pipeline', async () => {
         const { store, orchestrator } = await fixture();
         const run = await queuedRun(orchestrator, 'q1');

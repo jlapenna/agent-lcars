@@ -87,6 +87,18 @@ runs it against both implementations:
   Collections default to `orchestrator-{tasks,runs,outbox}` (configurable
   prefix, used by tests to avoid collisions in a shared emulator).
 
+Explicit quota failures also record a provider admission hold in
+`orchestrator-provider-cooldowns`, atomically with the failed run. Claims read
+that hold inside their selection transaction. A recognized Claude UTC reset
+within seven days supplies the deadline; otherwise the provider is eligible
+for another probe after 15 minutes. The exact weekly-limit response from older
+runner images is supported alongside the current `provider-limit` outcome.
+Each record identifies its source run and observation/deadline timestamps.
+Queued tasks retain their requested provider and do not consume execution
+leases or lost-run retries while held. Other granted providers remain eligible.
+This does not reroute work, rewrite historical outcomes, or count held work as
+successful. Holds are created by new reports and expire automatically.
+
 The `FirestoreStore` half of the contract suite only runs when
 `FIRESTORE_EMULATOR_HOST` is set; otherwise it's skipped so the suite still
 passes hermetically. Against the repo's Firestore emulator
@@ -99,8 +111,9 @@ FIRESTORE_EMULATOR_HOST=localhost:4002 npx vitest run --project '@agent-lcars/or
 ## What this deliberately does not do
 
 - **Adjudicate results.** `RunResult` (`ok`, `summary`, `ref`) is recorded
-  verbatim from whatever the caller reports; the orchestrator never
-  interprets it.
+  verbatim from whatever the caller reports. Explicit quota failures affect
+  provider admission as described above; they do not change the recorded
+  outcome or establish a human handoff.
 - **Queue requests.** A request against a busy task is refused; callers
   explicitly retry once the live run settles.
 - **Guarantee exactly-once dispatch or delivery.** The invariant is mutual

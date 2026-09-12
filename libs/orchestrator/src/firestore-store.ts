@@ -4,6 +4,7 @@ import {
   FieldPath,
   FieldValue,
   Firestore,
+  type Transaction,
 } from '@google-cloud/firestore';
 import { z } from 'zod';
 
@@ -30,6 +31,10 @@ import {
   type TaskId,
   taskKey,
 } from './model';
+import {
+  providerCooldownForRun,
+  providerIsCoolingDown,
+} from './provider-cooldown';
 import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
@@ -80,6 +85,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #outbox: CollectionReference;
   readonly #requestBindings: CollectionReference;
   readonly #githubAnchors: CollectionReference;
+  readonly #providerCooldowns: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
     const prefix = options.collectionPrefix ?? 'orchestrator-';
@@ -98,6 +104,19 @@ export class FirestoreStore implements OrchestratorStore {
       `${prefix}request-bindings`,
     );
     this.#githubAnchors = this.#firestore.collection(`${prefix}github-anchors`);
+    this.#providerCooldowns = this.#firestore.collection(
+      `${prefix}provider-cooldowns`,
+    );
+  }
+
+  #writeProviderCooldown(tx: Transaction, run: Run): void {
+    const cooldown = providerCooldownForRun(run);
+    if (cooldown !== undefined) {
+      tx.set(
+        this.#providerCooldowns.doc(encodeURIComponent(cooldown.pipeline)),
+        cooldown,
+      );
+    }
   }
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
@@ -209,9 +228,11 @@ export class FirestoreStore implements OrchestratorStore {
       tx.set(taskRef, nextTaskDoc);
       if (outcome.run !== undefined) {
         tx.set(this.#runRef(outcome.run.runId), outcome.run);
+        this.#writeProviderCooldown(tx, outcome.run);
       }
       for (const run of outcome.additionalRuns ?? []) {
         tx.set(this.#runRef(run.runId), run);
+        this.#writeProviderCooldown(tx, run);
       }
       for (const entry of outcome.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
@@ -247,9 +268,11 @@ export class FirestoreStore implements OrchestratorStore {
 
       if (decision.run !== undefined) {
         tx.set(this.#runRef(decision.run.runId), decision.run);
+        this.#writeProviderCooldown(tx, decision.run);
       }
       for (const run of decision.additionalRuns ?? []) {
         tx.set(this.#runRef(run.runId), run);
+        this.#writeProviderCooldown(tx, run);
       }
       for (const entry of decision.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
@@ -610,7 +633,17 @@ export class FirestoreStore implements OrchestratorStore {
       // remains index-compatible with the former single-pipeline claim shape.
       // Reading selection and occupancy in this transaction makes a racing
       // claimant retry after the winner changes either value.
-      const granted = [...new Set(input.pipelines)];
+      const requested = [...new Set(input.pipelines)];
+      const cooldowns = await Promise.all(
+        requested.map((pipeline) =>
+          tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+        ),
+      );
+      const granted = requested.filter(
+        (_, index) =>
+          !providerIsCoolingDown(cooldowns[index]?.data(), input.now),
+      );
+      if (granted.length === 0) return undefined;
       const [queuedSnapshots, ...liveSnapshots] = await Promise.all([
         Promise.all(
           granted.map((pipeline) =>
