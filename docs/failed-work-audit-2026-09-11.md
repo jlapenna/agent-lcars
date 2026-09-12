@@ -2,8 +2,8 @@
 
 Window: September 11 midnight America/Los_Angeles (07:00 UTC) through the
 23:50 UTC run snapshot, with GitHub and archive evidence checked through
-September 12 00:04 UTC. Central Loki follow-up recovered startup errors
-through 00:20 UTC; a 00:25 UTC refresh found no newly settled runs. The wider UTC-day query returned 82 runs; five
+September 12 00:04 UTC. Central Loki follow-up recovered startup errors; a subsequent run refresh
+found no newly settled runs. The wider UTC-day query returned 82 runs; five
 failures before Pacific midnight are excluded from the counts below.
 
 77 attempts settled during the local-day window: 18 successful, 34 unsuccessful
