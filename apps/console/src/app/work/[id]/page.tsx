@@ -38,6 +38,7 @@ interface PageProps {
 
 const STATE_COLORS: Record<ItemView['state'], string> = {
   parked: 'yellow',
+  failed: 'red',
   running: 'blue',
   done: 'green',
   canceled: 'gray',
@@ -184,7 +185,10 @@ export function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
   }
 
   const { item } = detail;
-  const pinned = item.state === 'running' || item.state === 'parked';
+  const pinned =
+    item.state === 'running' ||
+    item.state === 'parked' ||
+    item.state === 'failed';
 
   return (
     <Stack gap="md">

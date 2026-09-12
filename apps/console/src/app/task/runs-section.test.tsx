@@ -12,7 +12,7 @@ import { RunsSection } from './runs-section';
 // needs at *import* time have to resolve; nothing here calls the mocked
 // functions themselves.
 vi.mock('../../lib/agent-activity', () => ({
-  RUN_TIMEOUT_MINUTES: 90,
+  RUN_TIMEOUT_MINUTES: 120,
   issueUrlForRun: () => undefined,
 }));
 

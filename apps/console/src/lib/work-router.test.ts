@@ -432,7 +432,7 @@ describe('items routes', () => {
       ok: false,
       summary: 'blocked',
     });
-    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('parked');
+    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('failed');
     const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
     expect(r.status).toBe(200);
     expect(r.json.runs).toHaveLength(2);
@@ -475,7 +475,7 @@ describe('items routes', () => {
       },
     });
     await ctx.runtime.orchestrator.report(`work:${ID}/r1`, { ok: false });
-    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('parked');
+    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('failed');
 
     const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
     expect(r.status).toBe(403);

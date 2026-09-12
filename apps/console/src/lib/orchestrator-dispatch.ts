@@ -704,7 +704,7 @@ async function isAnchorOpen(
  *   -> name that run instead, matching decide.ts's "refusal is fine"
  *   contract: no auto-retry to report, but the task isn't actually parked;
  * - no active run at all -> the auto-retry budget is exhausted; the task is
- *   genuinely parked, so also flag it for human attention.
+ *   failed without evidence of a human-only blocker.
  *
  * This is a best-effort read of state as of drain time, not a fact
  * captured durably alongside the lost run itself; in the common case the
@@ -745,18 +745,12 @@ async function describeLostOutcome(
       lostPrefix +
       `Auto-retry budget exhausted -- re-request manually (re-add the ` +
       `agent label) when ready.`,
-    needsHumanLabel: true,
+    needsHumanLabel: false,
   };
 }
 
-/** Flags the issue for human attention: once the auto-retry budget is
- *  exhausted (the `lost` branch), or whenever a run settles `finished` with
- *  `ok: false` (the run itself never called this a retryable loss, so no
- *  auto-retry will follow it -- the task is parked either way). Best-effort:
- *  a failure here must not fail the outcome-comment entry, which has already
- *  been posted and is about to be settled -- the operator already has the
- *  comment telling them what happened; a missing label is a cosmetic miss,
- *  not a functional one. */
+/** Projects an explicit agent park to GitHub. Best-effort: the durable
+ * run outcome remains authoritative if this label request fails. */
 async function addNeedsHumanLabelBestEffort(
   fetchImpl: typeof fetch,
   tokens: DispatchTokenProvider,
@@ -828,16 +822,9 @@ function githubHeaders(token: string): Record<string, string> {
  *  (which flags the issue despite `ok: true`). */
 const PARK_OUTCOME_SUMMARY = 'park';
 
-/** A finished run flags the issue for human attention either the old way
- *  (it failed outright, `ok: false`) or the new one (agent-protocol.md #4:
- *  it succeeded at leaving a real, marker-stamped `park` deliverable, but
- *  that deliverable itself says a human is needed). Both cases still post
- *  their own outcome comment above/alongside this label -- see
- *  `outcomeCommentBody`. */
+/** Only an explicit agent park establishes a human-only blocker. */
 function runNeedsHumanLabel(run: Run): boolean {
-  return (
-    run.result?.ok === false || run.result?.summary === PARK_OUTCOME_SUMMARY
-  );
+  return run.result?.summary === PARK_OUTCOME_SUMMARY;
 }
 
 /**
@@ -948,10 +935,11 @@ export function outcomeCommentBody(run: Run): string {
       if (run.result?.ok === false) {
         // Mirrors `describeLostOutcome`'s exhausted-budget clause: the run
         // itself never called this a retryable loss, so (unlike `lost`)
-        // no auto-retry will follow it -- the task is parked either way,
+        // no auto-retry will follow it -- the task failed,
         // and only a manual re-request moves it forward.
         lines.push(
-          'No auto-retry will follow -- re-request manually (re-add the ' +
+          'Execution failed; no human decision has been established. ' +
+            'No auto-retry will follow -- re-request manually (re-add the ' +
             'agent label) when ready.',
         );
       }

@@ -237,9 +237,10 @@ export const workRouter = os.router({
       const task = await context.runtime.store.readTask({ workId: input.id });
       if (task === undefined) throw errors.NOT_FOUND();
       const runs = await context.runtime.store.listRuns({ workId: input.id });
-      if (deriveItemState(task.task, runs) !== 'parked') {
+      const state = deriveItemState(task.task, runs);
+      if (state !== 'parked' && state !== 'failed') {
         throw errors.CONFLICT({
-          message: 'only a parked item can be redispatched',
+          message: 'only a parked or failed item can be redispatched',
         });
       }
 

@@ -31,31 +31,18 @@ Out of time, blocked, or unsure: commit and push what you have, _then_ say so.
 A pushed branch someone can read beats a perfect description of work that no
 longer exists.
 
-## Post your takeover comment before you start
+## Finish the action, including after compaction
 
-`gh issue comment` on the anchor, first action, before reading or planning. A
-run that works silently for an hour is indistinguishable from a hung one, and
-the maintainer cannot tell those apart while it is happening.
+A continuation after compaction is still the same headless assignment. If you
+say you will inspect, edit, test, or push, execute that action in this turn.
+Do not end with only a plan or a promise to continue. Re-read
+`$AGENT_DISPATCH_CONTEXT` when task identity or acceptance criteria are lost.
 
-## The marker is not your job
-
-`gh pr create`, `gh issue comment`, and `gh pr comment` stamp this run's
-`attempt-claim` marker automatically. Do not hand-write one, and do not strip
-one you see.
-
-## Park when you are blocked, do not burn the budget
-
-Being blocked on something only the maintainer can do is not a reason to keep
-working — it is a reason to park. When you hit a hard limit (a
-`.github/workflows/*` edit, a deploy, an IAM/permission change) or are otherwise
-blocked on a decision, an approval, or access you do not have, stop and park
-exactly:
-
-1. one comment saying what you need, ending with this pipeline's reply trigger
-   (`/opencode` or `/oc`),
-2. add `status:needs-human` and assign the maintainer `jlapenna`,
-3. then stop — do not keep iterating.
-
-Flag workflow-layer root causes in your report instead of trying to fix them
-yourself. A parked run costs minutes; a `trajectory-failure` at the wall costs
-the whole budget and looks identical to a crash.
+The shared `agent-protocol` skill owns takeover, exact attempt markers,
+delivery, and parking for both GitHub and native Work anchors. Follow its
+anchor-specific instructions; do not assume `gh` stamps markers for you.
+Before stopping, verify that the required deliverable carries your exact
+attempt marker. If a human decision is actually required, record the shared
+protocol's explicit park outcome rather than leaving an unanswered question
+only in the transcript. Provider limits and runner failures are execution
+failures, not evidence that a human must decide the task.
