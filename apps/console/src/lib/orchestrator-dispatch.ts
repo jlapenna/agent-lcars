@@ -14,6 +14,7 @@ import { workPayloadSchema } from '@agent-lcars/work';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin, consoleUrl } from './deployment';
+import { loadGithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import {
   deliverOutcomeWebhook as deliverOutcomeWebhookDefault,
@@ -659,33 +660,12 @@ async function isAnchorOpen(
   deps: DispatchDeps,
   target: AnchorTarget,
 ): Promise<boolean | undefined> {
-  const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
-  try {
-    const token = await deps.tokens.tokenFor(target.repo);
-    const response = await fetchImpl(
-      `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}`,
-      { method: 'GET', headers: githubHeaders(token) },
-    );
-    if (!response.ok) {
-      logger.error(
-        'agent-lcars: anchor lookup failed for %s#%s: %s',
-        target.repo,
-        target.issue,
-        response.status,
-      );
-      return undefined;
-    }
-    const body = (await response.json()) as { state?: unknown };
-    return body.state !== 'closed';
-  } catch (error) {
-    logger.error(
-      'agent-lcars: anchor lookup failed for %s#%s:',
-      target.repo,
-      target.issue,
-      error,
-    );
-    return undefined;
-  }
+  if (target.issue === undefined) return undefined;
+  const lifecycle = await loadGithubAnchorLifecycle(deps, {
+    repo: target.repo,
+    issue: target.issue,
+  });
+  return lifecycle === undefined ? undefined : lifecycle.state === 'open';
 }
 
 /**

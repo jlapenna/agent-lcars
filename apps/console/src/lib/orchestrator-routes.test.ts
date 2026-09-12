@@ -2,6 +2,7 @@ import { formatQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
 import {
   MemoryStore,
   Orchestrator,
+  type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
@@ -68,6 +69,7 @@ function fixture(
   const deps: OrchestratorRouteDeps = {
     store,
     orchestrator,
+    now: () => clock.now(),
     tokens,
     fetchImpl,
     // `now` pins `drainOutbox`'s own clock to `clock` -- the same one
@@ -122,6 +124,24 @@ function completeIssuePayload(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function closedIssuePayload(
+  number = ISSUE.issue,
+  closedAt = T0,
+  overrides: Record<string, unknown> = {},
+) {
+  return completeIssuePayload({
+    action: 'closed',
+    issue: {
+      ...completeIssuePayload().issue,
+      number,
+      state: 'closed',
+      closed_at: closedAt,
+      updated_at: closedAt,
+    },
+    ...overrides,
+  });
+}
+
 /** Drives a full label-delivery -> request -> dispatch cycle and returns the
  *  resulting runId, for tests that need an already-running run to build on. */
 async function dispatchedRun(
@@ -154,6 +174,211 @@ async function claimDispatchedRun(
 }
 
 describe('handleWebhookDelivery', () => {
+  it('cancels a queued implementation run when its GitHub anchor closes', async () => {
+    const { deps, store } = fixture();
+    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+      state: 'closed',
+      sourceUpdatedAt: T0,
+    });
+    const runId = await dispatchedRun(deps);
+    expect(await store.readRun(runId)).toMatchObject({
+      state: 'running',
+      queue: { state: 'queued' },
+      params: { mode: 'implement' },
+    });
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'issue-closed',
+      payload: closedIssuePayload(),
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'unhandled-action', canceledRunId: runId },
+    });
+    expect(await store.readRun(runId)).toMatchObject({
+      state: 'canceled',
+      queue: { state: 'queued' },
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          to: 'canceled',
+          note: `GitHub anchor confirmed closed at ${T0}`,
+        }),
+      ]),
+    });
+    expect((await store.readTask(ISSUE))?.task.activeRunId).toBeUndefined();
+  });
+
+  it('cancels queued implementation work when its pull request merges', async () => {
+    const { deps, store } = fixture();
+    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+      state: 'closed',
+      sourceUpdatedAt: T0,
+    });
+    const admitted = await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'pr-implementation',
+      payload: {
+        action: 'labeled',
+        repository: { full_name: REPO },
+        pull_request: {
+          state: 'open',
+          number: ISSUE.issue,
+          title: 'Implement on this pull request',
+          body: 'Queued implementation work.',
+        },
+        label: { name: 'agent:claude' },
+        sender: { login: 'jlapenna' },
+      },
+    });
+    const runId = admitted.body['runId'] as string;
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'pr-merged',
+      payload: {
+        action: 'closed',
+        repository: { full_name: REPO },
+        pull_request: {
+          ...completeIssuePayload().issue,
+          state: 'closed',
+          closed_at: T0,
+          merged: true,
+          merged_at: T0,
+        },
+        sender: { login: 'jlapenna' },
+      },
+    });
+    expect(result.body).toEqual({
+      ignored: 'unhandled-action',
+      canceledRunId: runId,
+    });
+    expect(await store.readRun(runId)).toMatchObject({
+      state: 'canceled',
+      queue: { state: 'queued' },
+    });
+  });
+
+  it('makes duplicate and stale close deliveries harmless to a reopened generation', async () => {
+    const { clock, deps, store } = fixture();
+    deps.loadGithubAnchorLifecycle = vi
+      .fn()
+      .mockResolvedValueOnce({ state: 'closed', sourceUpdatedAt: T0 })
+      .mockResolvedValueOnce({ state: 'closed', sourceUpdatedAt: T0 })
+      .mockResolvedValue({ state: 'open', sourceUpdatedAt: clock.now() });
+    const firstRunId = await dispatchedRun(deps);
+    const closure = {
+      event: 'issues',
+      deliveryId: 'old-close',
+      payload: closedIssuePayload(),
+    };
+    await handleWebhookDelivery(deps, closure);
+    await expect(handleWebhookDelivery(deps, closure)).resolves.toEqual({
+      status: 200,
+      body: { ignored: 'unhandled-action' },
+    });
+
+    clock.advanceMinutes(1);
+    const reopened = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'reopened-generation',
+      payload: labeledIssuePayload(),
+    });
+    const secondRunId = reopened.body['runId'] as string;
+    expect(secondRunId).not.toBe(firstRunId);
+
+    await expect(
+      handleWebhookDelivery(deps, {
+        ...closure,
+        deliveryId: 'old-close-redelivery',
+      }),
+    ).resolves.toEqual({
+      status: 200,
+      body: { ignored: 'unhandled-action' },
+    });
+    expect(await store.readRun(secondRunId)).toMatchObject({
+      state: 'running',
+      queue: { state: 'queued' },
+    });
+    expect((await store.readTask(ISSUE))?.task.activeRunId).toBe(secondRunId);
+  });
+
+  it('preserves the same queued generation when a delayed close arrives after reopen', async () => {
+    const { deps, store } = fixture();
+    const runId = await dispatchedRun(deps, 'same-generation-reopened');
+    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+      state: 'open',
+      sourceUpdatedAt: '2026-08-15T12:01:00.000Z',
+    });
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'delayed-close-after-reopen',
+      payload: closedIssuePayload(),
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'unhandled-action' },
+    });
+    expect(await store.readRun(runId)).toMatchObject({
+      state: 'running',
+      queue: { state: 'queued' },
+    });
+  });
+
+  it.each(['review', 'reply'] as const)(
+    'preserves queued %s work when the GitHub anchor closes',
+    async (mode) => {
+      const { deps, store, orchestrator } = fixture();
+      const requested = await orchestrator.request({
+        taskId: ISSUE,
+        requestId: `${mode}-request`,
+        pipeline: 'claude',
+        params: { mode },
+        work: workPayloadFromGithub({
+          title: 'Explicit closed-anchor work',
+          body: 'Keep supported modes usable.',
+          pipeline: 'claude',
+          repo: REPO,
+          actor: 'jlapenna',
+        }),
+      });
+      if ('refused' in requested || requested.run === undefined) {
+        throw new Error('expected run');
+      }
+      await deps.drain();
+
+      await handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: `closed-during-${mode}`,
+        payload: closedIssuePayload(),
+      });
+      expect(await store.readRun(requested.run.runId)).toMatchObject({
+        state: 'running',
+        queue: { state: 'queued' },
+        params: { mode },
+      });
+    },
+  );
+
+  it('does not cancel implementation work already claimed by an executor', async () => {
+    const { deps, store } = fixture();
+    const runId = await claimDispatchedRun(deps, store);
+
+    await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'closed-after-claim',
+      payload: closedIssuePayload(),
+    });
+    expect(await store.readRun(runId)).toMatchObject({
+      state: 'running',
+      queue: { state: 'claimed' },
+    });
+    expect((await store.readTask(ISSUE))?.task.activeRunId).toBe(runId);
+  });
+
   it.each(['issues', 'pull_request'])(
     'refreshes closed %s without admitting or dispatching work',
     async (event) => {
@@ -840,6 +1065,94 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
 });
 
 describe('handleReconcile', () => {
+  it('recovers queued implementations whose close webhook was missed', async () => {
+    const { deps, store } = fixture();
+    const runId = await dispatchedRun(deps, 'queued-before-close');
+    const listQueuedRuns = vi.spyOn(store, 'listQueuedRuns');
+    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+      state: 'closed',
+      sourceUpdatedAt: T0,
+    });
+
+    const result = await handleReconcile(deps);
+
+    expect(result.body['closedAnchorsCanceled']).toEqual([runId]);
+    expect(await store.readRun(runId)).toMatchObject({
+      state: 'canceled',
+      queue: { state: 'queued' },
+    });
+    expect(deps.loadGithubAnchorLifecycle).toHaveBeenCalledWith(ISSUE);
+    expect(listQueuedRuns).toHaveBeenCalledWith();
+  });
+
+  it('bounds exact lifecycle reads per maintenance pass', async () => {
+    const { clock, deps, orchestrator, store } = fixture();
+    for (let issue = 100; issue < 111; issue += 1) {
+      const outcome = await orchestrator.request({
+        taskId: { repo: REPO, issue },
+        requestId: `bounded-${issue}`,
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+        work: workPayloadFromGithub({
+          title: `Queued ${issue}`,
+          body: 'Bound maintenance GitHub reads.',
+          pipeline: 'claude',
+          repo: REPO,
+          actor: 'jlapenna',
+        }),
+      });
+      if ('refused' in outcome || outcome.run === undefined) {
+        throw new Error('expected queued run');
+      }
+      await store.enqueueRun({ runId: outcome.run.runId, now: T0 });
+      await orchestrator.confirmDispatch(outcome.run.runId);
+    }
+    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+      state: 'open',
+      sourceUpdatedAt: T0,
+    });
+
+    await handleReconcile(deps);
+    expect(deps.loadGithubAnchorLifecycle).toHaveBeenCalledTimes(10);
+    const firstPass = new Set(
+      vi
+        .mocked(deps.loadGithubAnchorLifecycle)
+        .mock.calls.map(([anchor]) => anchor.issue),
+    );
+    clock.advanceMinutes(5);
+    await handleReconcile(deps);
+    expect(deps.loadGithubAnchorLifecycle).toHaveBeenCalledTimes(20);
+    const bothPasses = new Set(
+      vi
+        .mocked(deps.loadGithubAnchorLifecycle)
+        .mock.calls.map(([anchor]) => anchor.issue),
+    );
+    expect(firstPass.size).toBe(10);
+    expect(bothPasses.size).toBe(11);
+  });
+
+  it('reaches implementations beyond 200 unrelated queued entries', async () => {
+    const { deps, store } = fixture();
+    const runId = await dispatchedRun(deps, 'beyond-prefix');
+    const target = await store.readRun(runId);
+    if (target === undefined) throw new Error('expected target run');
+    const unrelated = Array.from({ length: 200 }, (_, index) => ({
+      ...target,
+      runId: `native-prefix-${String(index).padStart(3, '0')}`,
+      task: { workId: `01PREFIX${String(index).padStart(18, '0')}` },
+    })) satisfies Run[];
+    vi.spyOn(store, 'listQueuedRuns').mockResolvedValue([...unrelated, target]);
+    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+      state: 'closed',
+      sourceUpdatedAt: T0,
+    });
+
+    const result = await handleReconcile(deps);
+
+    expect(result.body['closedAnchorsCanceled']).toEqual([runId]);
+    expect(deps.loadGithubAnchorLifecycle).toHaveBeenCalledTimes(1);
+  });
+
   it('continues through a backlog larger than one drain batch within a bounded pass', async () => {
     const { deps } = fixture();
     const entries = Array.from({ length: 25 }, (_, index) => `run-${index}`);

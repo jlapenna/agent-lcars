@@ -24,6 +24,7 @@ export function selectFairQueuedRun(
   queuedRuns: readonly Run[],
   liveRuns: readonly Run[],
   pipelines: readonly string[],
+  now?: string,
 ): Run | undefined {
   const granted = new Set(pipelines);
   const pipelineOrder = new Map(
@@ -42,7 +43,14 @@ export function selectFairQueuedRun(
 
   const heads = new Map<string, Run>();
   for (const run of queuedRuns) {
-    if (run.queue?.state !== 'queued' || !granted.has(run.pipeline)) continue;
+    if (
+      run.queue?.state !== 'queued' ||
+      !granted.has(run.pipeline) ||
+      (now !== undefined &&
+        run.queue.deferredUntil !== undefined &&
+        run.queue.deferredUntil > now)
+    )
+      continue;
     const current = heads.get(run.pipeline);
     if (
       current === undefined ||
@@ -138,6 +146,20 @@ export interface OrchestratorStore {
      * history lookup and any new Run. */
     requestBinding?: RequestBinding;
     decide(state: RequestTransactionState): Decision | Refusal;
+  }): Promise<Decision | Refusal>;
+
+  /**
+   * Atomically reads one run and its task, decides a transition, and commits
+   * it. Unlike `apply`, this transaction observes the run document too, so a
+   * concurrent queue claim cannot be overwritten by a decision made from an
+   * older `queue.state` snapshot.
+   */
+  transactRun(input: {
+    runId: string;
+    decide(state: {
+      task: VersionedTask | undefined;
+      run: Run | undefined;
+    }): Decision | Refusal;
   }): Promise<Decision | Refusal>;
   apply(input: {
     decision: Decision;
@@ -314,8 +336,19 @@ export interface OrchestratorStore {
     tokenHash: string;
   }): Promise<Run | undefined>;
 
-  /** Every `queue.state === 'queued'` run, oldest first, bounded by
-   *  `limit` (default 200). */
+  /** Returns a still-live claim to the queue only when the exact claimant
+   * and token hash still own it. Used when admission cannot verify an
+   * external precondition before exposing the token to a worker. */
+  releaseQueuedRunClaim(input: {
+    runId: string;
+    claimedBy: string;
+    tokenHash: string;
+    now: string;
+    deferredUntil?: string;
+  }): Promise<boolean>;
+
+  /** Every live run with `queue.state === 'queued'`, oldest first. An
+   * optional `limit` bounds the result after terminal entries are removed. */
   listQueuedRuns(limit?: number): Promise<Run[]>;
 }
 

@@ -9,6 +9,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import { required } from '@agent-lcars/util-server';
 
+import { loadGithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   createDispatchTokenProvider,
   type DispatchTokenProvider,
@@ -87,6 +88,11 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
   cached = {
     store,
     orchestrator,
+    now: utcClock.now,
+    loadGithubAnchorLifecycle: (anchor) => {
+      const github = orchestratorGithubRuntimeDeps(process.env);
+      return loadGithubAnchorLifecycle(github, anchor);
+    },
     drain: (limit?: number) => {
       const github = orchestratorGithubRuntimeDeps(process.env);
       return drainOutbox(

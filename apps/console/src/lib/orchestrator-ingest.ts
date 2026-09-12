@@ -51,6 +51,12 @@ export interface IngestIgnore {
 
 export type IngestResult = IngestDecision | IngestIgnore;
 
+export interface GithubAnchorClosure {
+  taskId: TaskId;
+  /** GitHub's source timestamp for this exact close transition. */
+  closedAt: string;
+}
+
 function ignore(reason: string): IngestIgnore {
   return { kind: 'ignore', reason };
 }
@@ -90,6 +96,23 @@ const pullRequestEventSchema = z.object({
   pull_request: labelAnchorSchema,
   label: labelSchema.optional(),
   sender: senderSchema,
+});
+
+const closedAnchorEventSchema = z.object({
+  action: z.literal('closed'),
+  repository: repositorySchema,
+  issue: z
+    .object({
+      number: z.number().int().positive(),
+      closed_at: z.iso.datetime({ offset: false }),
+    })
+    .optional(),
+  pull_request: z
+    .object({
+      number: z.number().int().positive(),
+      closed_at: z.iso.datetime({ offset: false }),
+    })
+    .optional(),
 });
 
 /** Exported for `tagged-reply-resume.ts`'s stateful second pass over a
@@ -337,4 +360,36 @@ export function interpretDelivery(input: {
     default:
       return ignore('unhandled-event');
   }
+}
+
+/**
+ * Extracts the source-ordered lifecycle transition that can retire queued
+ * implementation work. This is intentionally narrower than projection
+ * refresh: only GitHub's actual `closed` action is authoritative, and review
+ * or reply policy remains a stateful route concern.
+ */
+export function githubAnchorClosureFromDelivery(input: {
+  event: string;
+  payload: unknown;
+}): GithubAnchorClosure | undefined {
+  if (input.event !== 'issues' && input.event !== 'pull_request') {
+    return undefined;
+  }
+  const parsed = closedAnchorEventSchema.safeParse(input.payload);
+  if (
+    !parsed.success ||
+    !isControlPlaneRepository(parsed.data.repository.full_name)
+  ) {
+    return undefined;
+  }
+  const anchor =
+    input.event === 'issues' ? parsed.data.issue : parsed.data.pull_request;
+  if (anchor === undefined) return undefined;
+  const taskId = taskIdSchema.safeParse({
+    repo: parsed.data.repository.full_name,
+    issue: anchor.number,
+  });
+  return taskId.success
+    ? { taskId: taskId.data, closedAt: anchor.closed_at }
+    : undefined;
 }

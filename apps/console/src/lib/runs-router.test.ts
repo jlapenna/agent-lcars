@@ -108,6 +108,34 @@ async function seedQueuedRun(
   return runId;
 }
 
+async function seedQueuedGithubRun(
+  store: MemoryStore,
+  orchestrator: Orchestrator,
+  issue: number,
+): Promise<string> {
+  const outcome = await orchestrator.request({
+    taskId: { repo: 'jlapenna/agent-lcars', issue },
+    requestId: `github-${issue}`,
+    pipeline: 'claude',
+    params: { mode: 'implement' },
+    work: {
+      origin: { principal: 'github:jlapenna', channel: 'github' },
+      spec: {
+        title: `GitHub issue ${issue}`,
+        description: 'Queued implementation work.',
+        pipeline: 'claude',
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+    },
+  });
+  if ('refused' in outcome || outcome.run === undefined) {
+    throw new Error(`unexpected refusal seeding GitHub issue ${issue}`);
+  }
+  await store.enqueueRun({ runId: outcome.run.runId, now: NOW });
+  await orchestrator.confirmDispatch(outcome.run.runId);
+  return outcome.run.runId;
+}
+
 /** Forces `run.leaseExpiresAt` into the past directly on the store,
  *  simulating a runner that claimed and then went silent past its lease --
  *  no route exists to do this, so the test reaches under the router. */
@@ -479,6 +507,125 @@ describe('claim', () => {
     );
     expect(r.status).toBe(200);
     expect((r.json as { runId: string }).runId).toBe(liveRunId);
+  });
+
+  it('settles at most one closed GitHub backlog item per claim request', async () => {
+    const { store, orchestrator, now } = fixture();
+    const closedRunId = await seedQueuedGithubRun(store, orchestrator, 70);
+    const openRunId = await seedQueuedGithubRun(store, orchestrator, 71);
+    const lifecycle = vi.fn(async (anchor: { issue: number }) => ({
+      state: anchor.issue === 70 ? ('closed' as const) : ('open' as const),
+      sourceUpdatedAt: NOW,
+    }));
+    const drain = vi
+      .fn()
+      .mockResolvedValue({ dispatched: [], reported: [], failed: [] });
+
+    const response = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        drain,
+        loadGithubAnchorLifecycle: lifecycle,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-after-stale-backlog' },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.json).toBeUndefined();
+    expect(await store.readRun(closedRunId)).toMatchObject({
+      state: 'canceled',
+      queue: { state: 'claimed' },
+    });
+    expect(lifecycle).toHaveBeenCalledTimes(1);
+    expect(drain).toHaveBeenCalledTimes(1);
+
+    const next = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        drain,
+        loadGithubAnchorLifecycle: lifecycle,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-after-stale-backlog' },
+    );
+    expect((next.json as { runId: string }).runId).toBe(openRunId);
+    expect(lifecycle).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns unverifiable GitHub work to the queue without exposing a token', async () => {
+    const { store, orchestrator, now, setNow } = fixture();
+    const runId = await seedQueuedGithubRun(store, orchestrator, 72);
+    const healthyRunId = await seedQueuedGithubRun(store, orchestrator, 73);
+    const lifecycle = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ state: 'open', sourceUpdatedAt: NOW });
+
+    const response = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        loadGithubAnchorLifecycle: lifecycle,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-with-uncertain-github' },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.json).toBeUndefined();
+    expect(await store.readRun(runId)).toMatchObject({
+      state: 'running',
+      queue: {
+        state: 'queued',
+        deferredUntil: '2026-08-26T10:05:00.000Z',
+      },
+    });
+
+    const next = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        loadGithubAnchorLifecycle: lifecycle,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-with-uncertain-github' },
+    );
+    expect((next.json as { runId: string }).runId).toBe(healthyRunId);
+
+    setNow('2026-08-26T10:05:00.001Z');
+    const retried = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        loadGithubAnchorLifecycle: lifecycle,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-retrying-uncertain-github' },
+    );
+    expect((retried.json as { runId: string }).runId).toBe(runId);
   });
 
   it('grants only one token on a double claim of the same run', async () => {

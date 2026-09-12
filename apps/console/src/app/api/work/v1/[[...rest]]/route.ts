@@ -96,6 +96,11 @@ async function handle(request: Request): Promise<Response> {
       ...(principal === undefined ? {} : { principal }),
       store: runtime.store,
       orchestrator: runtime.orchestrator,
+      ...(runtime.loadGithubAnchorLifecycle === undefined
+        ? {}
+        : {
+            loadGithubAnchorLifecycle: runtime.loadGithubAnchorLifecycle,
+          }),
       // #1799: `complete` (the only run-token route that mutates the
       // outbox) drains it after a settled report, same as every other
       // mutating route -- reached through the same `runtime` this handler

@@ -40,6 +40,8 @@ export interface Refusal {
     | 'task-busy' // a live run holds the lock
     | 'duplicate-request' // same requestId as an existing run: return it
     | 'unknown-run'
+    | 'run-already-claimed' // guarded cancellation cannot stop active work
+    | 'run-newer-than-cutoff' // stale lifecycle event cannot stop newer work
     | 'run-not-live' // report/cancel/renew against a settled run
     | 'stale-lease' // renew/report from a run that already lost the lock
     | 'task-closed' // closeTask set closedAt; no further runs

@@ -1024,6 +1024,19 @@ export function runOrchestratorStoreContract(
         expect(queued[0]?.queue).toEqual({ state: 'queued' });
       });
 
+      it('does not let terminal queue remnants consume the live listing limit', async () => {
+        const { store, orchestrator } = await fixture();
+        const terminal = await queuedRun(orchestrator, 'q31');
+        await store.enqueueRun({ runId: terminal.runId, now: T0 });
+        await orchestrator.cancel(terminal.runId);
+        const live = await queuedRun(orchestrator, 'q32');
+        await store.enqueueRun({ runId: live.runId, now: T0 });
+
+        expect((await store.listQueuedRuns(1)).map((run) => run.runId)).toEqual(
+          [live.runId],
+        );
+      });
+
       it('claimQueuedRun picks the oldest queued run for a matching pipeline', async () => {
         const { store, orchestrator, clock } = await fixture();
         const first = await queuedRun(orchestrator, 'q1');
@@ -1088,6 +1101,76 @@ export function runOrchestratorStoreContract(
             ? 'c'.repeat(64)
             : 'd'.repeat(64);
         expect(winner?.queue?.tokenHash).toBe(expectedTokenHash);
+      });
+
+      it('releases only the exact live claim identity back to the queue', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q33');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: T0,
+          claimedBy: 'uncertain-runner',
+          tokenHash: 'f'.repeat(64),
+        });
+
+        await expect(
+          store.releaseQueuedRunClaim({
+            runId: run.runId,
+            claimedBy: 'wrong-runner',
+            tokenHash: 'f'.repeat(64),
+            now: T0,
+          }),
+        ).resolves.toBe(false);
+        await expect(
+          store.releaseQueuedRunClaim({
+            runId: run.runId,
+            claimedBy: 'uncertain-runner',
+            tokenHash: 'f'.repeat(64),
+            now: T0,
+          }),
+        ).resolves.toBe(true);
+        expect(await store.readRun(run.runId)).toMatchObject({
+          state: 'running',
+          queue: { state: 'queued' },
+        });
+      });
+
+      it('serializes a guarded cancellation against a queue claim', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q4');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+
+        const [claim, cancellation] = await Promise.all([
+          store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: T0,
+            claimedBy: 'racing-runner',
+            tokenHash: 'e'.repeat(64),
+          }),
+          orchestrator.cancelUnclaimedBefore({
+            runId: run.runId,
+            notAfter: T0,
+          }),
+        ]);
+        const stored = await store.readRun(run.runId);
+        if (stored?.state === 'canceled') {
+          expect(cancellation).not.toHaveProperty('refused');
+          // A store claim may drain the now-terminal queue entry, but it can
+          // never return the pre-cancellation live snapshot as executable.
+          expect(claim?.state).not.toBe('running');
+        } else {
+          expect(stored).toMatchObject({
+            state: 'running',
+            queue: { state: 'claimed', claimedBy: 'racing-runner' },
+          });
+          expect(cancellation).toMatchObject({
+            refused: true,
+            reason: 'run-already-claimed',
+          });
+        }
       });
 
       it('serializes concurrent fair claims and distributes them across waiting providers', async () => {

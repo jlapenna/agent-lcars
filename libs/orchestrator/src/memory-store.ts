@@ -123,6 +123,26 @@ export class MemoryStore implements OrchestratorStore {
     return outcome;
   }
 
+  async transactRun(input: {
+    runId: string;
+    decide(state: {
+      task: VersionedTask | undefined;
+      run: Run | undefined;
+    }): Decision | Refusal;
+  }): Promise<Decision | Refusal> {
+    // Keep the snapshot and write synchronous, matching `transactRequest`'s
+    // reference transaction semantics.
+    const run = structuredClone(this.#runs.get(input.runId));
+    const task =
+      run === undefined
+        ? undefined
+        : structuredClone(this.#tasks.get(taskKey(run.task)));
+    const outcome = input.decide({ task, run });
+    if (isRefusal(outcome)) return outcome;
+    this.#apply({ decision: outcome, expectedRevision: task?.revision });
+    return outcome;
+  }
+
   async apply(input: {
     decision: Decision;
     expectedRevision: number | undefined;
@@ -515,7 +535,7 @@ export class MemoryStore implements OrchestratorStore {
           input.now,
         ),
     );
-    const candidate = selectFairQueuedRun(runs, runs, eligible);
+    const candidate = selectFairQueuedRun(runs, runs, eligible, input.now);
     if (candidate === undefined) return undefined;
     const claimed: Run = {
       ...candidate,
@@ -532,12 +552,42 @@ export class MemoryStore implements OrchestratorStore {
     return structuredClone(claimed);
   }
 
+  async releaseQueuedRunClaim(input: {
+    runId: string;
+    claimedBy: string;
+    tokenHash: string;
+    now: string;
+    deferredUntil?: string;
+  }): Promise<boolean> {
+    const run = this.#runs.get(input.runId);
+    if (
+      run === undefined ||
+      !isLive(run.state) ||
+      run.queue?.state !== 'claimed' ||
+      run.queue.claimedBy !== input.claimedBy ||
+      run.queue.tokenHash !== input.tokenHash
+    ) {
+      return false;
+    }
+    this.#runs.set(run.runId, {
+      ...run,
+      queue: {
+        state: 'queued',
+        ...(input.deferredUntil === undefined
+          ? {}
+          : { deferredUntil: input.deferredUntil }),
+      },
+      updatedAt: input.now,
+    });
+    return true;
+  }
+
   async listQueuedRuns(limit?: number): Promise<Run[]> {
     return structuredClone(
       [...this.#runs.values()]
-        .filter((run) => run.queue?.state === 'queued')
+        .filter((run) => run.queue?.state === 'queued' && isLive(run.state))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-        .slice(0, limit ?? 200),
+        .slice(0, limit),
     );
   }
 }
