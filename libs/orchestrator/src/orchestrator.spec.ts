@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { decidedRun, isRefusal } from './decide';
+import { decidedRun, type Decision, isRefusal } from './decide';
 import { MemoryStore } from './memory-store';
 import type { TaskId } from './model';
-import { Orchestrator, type RequestInput } from './orchestrator';
+import { Orchestrator } from './orchestrator';
 import { OUTBOX_LEASE_MS } from './store';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
@@ -33,6 +33,21 @@ function fixture() {
   return { clock, store, orchestrator };
 }
 
+class InterruptingStore extends MemoryStore {
+  #interrupt = true;
+
+  override async apply(input: {
+    decision: Decision;
+    expectedRevision: number | undefined;
+  }): Promise<void> {
+    if (this.#interrupt && input.decision.additionalRuns !== undefined) {
+      this.#interrupt = false;
+      throw new Error('simulated process interruption before commit');
+    }
+    return super.apply(input);
+  }
+}
+
 function claimOutbox(store: MemoryStore, now = T0, limit = 10) {
   return store.claimPendingOutbox({
     limit,
@@ -47,30 +62,6 @@ function claimOutbox(store: MemoryStore, now = T0, limit = 10) {
  *  to simulate an operator's manual request landing in the narrow window
  *  between the expire commit and the auto-retry's own request, so that
  *  request observably loses the race. */
-class RacingOrchestrator extends Orchestrator {
-  #armed = true;
-  readonly #race: () => Promise<void>;
-
-  constructor(
-    ...args: [
-      ...ConstructorParameters<typeof Orchestrator>,
-      () => Promise<void>,
-    ]
-  ) {
-    const [store, clock, race] = args;
-    super(store, clock);
-    this.#race = race;
-  }
-
-  override async request(input: RequestInput) {
-    if (this.#armed && input.requestId.startsWith('retry:')) {
-      this.#armed = false;
-      await this.#race();
-    }
-    return super.request(input);
-  }
-}
-
 /** `request()` always mints a run, so callers can rely on `.run` directly
  *  instead of narrowing it at every call site. */
 async function started(
@@ -384,10 +375,11 @@ describe('auto-retry on loss', () => {
     clock.advanceMinutes(121);
     const swept = await orchestrator.sweepExpired();
     const newRunId = swept.retried[0]?.newRunId as string;
+    await orchestrator.confirmDispatch(newRunId);
+    await orchestrator.report(newRunId, { ok: true });
 
-    // Simulates a re-sweep or crash-retry landing on the same lost run:
-    // issuing the exact same retry request again maps to the run already
-    // created instead of starting a third one.
+    // Even after the successor is terminal, re-driving the exact retry key
+    // maps to it instead of starting a third run.
     const again = await orchestrator.request({
       taskId: TASK,
       requestId: `retry:${run.runId}`,
@@ -521,37 +513,38 @@ describe('auto-retry on loss', () => {
     expect(secondSweep.retried[0]?.lostRunId).toBe(fresh.run.runId);
   });
 
-  it('treats a refused retry as fine when an operator races it and wins: no duplicate run', async () => {
-    const { clock, store } = fixture();
-    const manualOrchestrator = new Orchestrator(store, clock);
-    const orchestrator = new RacingOrchestrator(store, clock, async () => {
-      // The operator's manual re-request lands first, in the narrow
-      // window between the expire commit and the auto-retry's own
-      // request -- so the auto-retry below finds the task already busy.
-      const manual = await manualOrchestrator.request({
-        taskId: TASK,
-        requestId: 'manual-race',
-        pipeline: 'claude',
-      });
-      if (isRefusal(manual)) {
-        throw new Error('test setup: manual race request unexpectedly refused');
-      }
-    });
-
+  it('serializes concurrent sweeps into one lost settlement and one retry', async () => {
+    const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator, 'req-1');
     clock.advanceMinutes(121);
-    const swept = await orchestrator.sweepExpired();
+    const sweeps = await Promise.all([
+      orchestrator.sweepExpired(),
+      orchestrator.sweepExpired(),
+    ]);
+    expect(sweeps.flatMap((result) => result.lost).map((r) => r.runId)).toEqual(
+      [run.runId],
+    );
+    expect(sweeps.flatMap((result) => result.retried)).toHaveLength(1);
+    expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
 
-    expect(swept.lost.map((r) => r.runId)).toEqual([run.runId]);
-    expect(swept.retried).toEqual([]); // refused: no retry recorded
+  it('recovers an interrupted atomic expiry on the next sweep', async () => {
+    const clock = new Clock(T0);
+    const store = new InterruptingStore();
+    const orchestrator = new Orchestrator(store, clock);
+    const { run } = await started(orchestrator);
+    clock.advanceMinutes(121);
 
-    const task = await store.readTask(TASK);
-    const activeRunId = task?.task.activeRunId;
-    expect(activeRunId).toBeDefined();
-    const activeRun =
-      activeRunId === undefined ? undefined : await store.readRun(activeRunId);
-    expect(activeRun?.requestId).toBe('manual-race'); // the operator's run won
-    expect(await store.listRuns(TASK)).toHaveLength(2); // original + operator's
+    await expect(orchestrator.sweepExpired()).rejects.toThrow(
+      'simulated process interruption',
+    );
+    expect((await store.readRun(run.runId))?.state).toBe('pending');
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+
+    const recovered = await orchestrator.sweepExpired();
+    expect(recovered.lost.map((item) => item.runId)).toEqual([run.runId]);
+    expect(recovered.retried).toHaveLength(1);
+    expect(await store.listRuns(TASK)).toHaveLength(2);
   });
 
   it('a lost run auto-retries', async () => {

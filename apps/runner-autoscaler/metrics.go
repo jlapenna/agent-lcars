@@ -568,6 +568,14 @@ var (
 		Name: "github_runner_autoscaler_schedule_ticks_total",
 		Help: "Server-owned Work API schedule tick attempts by outcome.",
 	}, []string{"outcome"})
+	maintenanceTicksTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_maintenance_ticks_total",
+		Help: "Server-owned control-plane maintenance tick attempts by outcome.",
+	}, []string{"outcome"})
+	maintenanceLastSuccessTimestamp = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_maintenance_last_success_timestamp_seconds",
+		Help: "Unix timestamp of the most recent successful control-plane maintenance tick.",
+	})
 )
 
 func setQueueExecutorStartupState(state queueExecutorStartupState) {
@@ -606,6 +614,15 @@ func recordScheduleTick(success bool) {
 		outcome = "success"
 	}
 	scheduleTicksTotal.WithLabelValues(outcome).Inc()
+}
+
+func recordMaintenanceTick(success bool) {
+	outcome := "error"
+	if success {
+		outcome = "success"
+		maintenanceLastSuccessTimestamp.SetToCurrentTime()
+	}
+	maintenanceTicksTotal.WithLabelValues(outcome).Inc()
 }
 
 func setCheckpointRestoreStatus(status string) {
@@ -693,6 +710,8 @@ func registerMetrics() {
 			queueExecutorClaimsTotal,
 			queueExecutorLaunchesTotal,
 			scheduleTicksTotal,
+			maintenanceTicksTotal,
+			maintenanceLastSuccessTimestamp,
 		)
 	})
 }

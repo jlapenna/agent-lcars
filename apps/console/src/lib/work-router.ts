@@ -12,6 +12,7 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { githubDispatchRouter } from './github-dispatch-router';
+import { handleReconcile } from './orchestrator-routes';
 import { scheduleRouter } from './schedule-router';
 import {
   forbiddenReason,
@@ -51,6 +52,15 @@ const operator = os.use(async ({ context, next }) => {
   return next({ context: { principal } });
 });
 
+const cron = os.use(async ({ context, next }) => {
+  if (!context.principal?.scopes.has('work.cron')) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.cron scope required',
+    });
+  }
+  return next({ context });
+});
+
 /** `list`/`get` additionally accept `work.reaper` (sub-project 6's
  *  session-pin tick, a read-only caller) -- `create`/`cancel`/`redispatch`
  *  stay `operator`-only; a reaper-scoped principal must never mint or
@@ -70,6 +80,23 @@ const reader = os.use(async ({ context, next }) => {
 });
 
 export const workRouter = os.router({
+  maintenanceTick: cron.maintenanceTick.handler(async ({ context }) => {
+    const result = await handleReconcile(context.runtime);
+    if (result.status !== 200) {
+      throw new ORPCError('INTERNAL_SERVER_ERROR', {
+        message: 'maintenance tick failed',
+      });
+    }
+    return result.body as {
+      lost: string[];
+      retried: { lostRunId: string; newRunId: string }[];
+      dispatched: string[];
+      reported: string[];
+      outboxProcessed: number;
+      outboxContinuationNeeded: boolean;
+      outboxDrainFailed?: { entryId: string; error: string }[];
+    };
+  }),
   create: operator.create.handler(async ({ input, context, errors }) => {
     const { principal } = context;
     const result = await mintItem(context, {

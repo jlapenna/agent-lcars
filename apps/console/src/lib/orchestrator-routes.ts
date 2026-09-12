@@ -31,7 +31,7 @@ import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
-  drain: () => Promise<DrainOutboxResult>;
+  drain: (limit?: number) => Promise<DrainOutboxResult>;
   /** Test seam for the exact server-side refresh; production uses the shared
    * reconciler rather than interpreting partial webhook payloads. */
   refreshGithubAnchorProjection?: (
@@ -259,7 +259,15 @@ export async function handleReconcile(
 ): Promise<RouteResult> {
   try {
     const swept = await deps.orchestrator.sweepExpired();
-    const drained = await deps.drain();
+    // One drain owns the whole bounded maintenance pass so its failed-entry
+    // exclusion remains effective across all 30 claims. The five-minute
+    // ticker continues any larger backlog on its next pass.
+    const outboxLimit = 30;
+    const drained = await deps.drain(outboxLimit);
+    const outboxProcessed =
+      drained.dispatched.length +
+      drained.reported.length +
+      drained.failed.length;
     return {
       status: 200,
       body: {
@@ -267,6 +275,8 @@ export async function handleReconcile(
         retried: swept.retried,
         dispatched: drained.dispatched,
         reported: drained.reported,
+        outboxProcessed,
+        outboxContinuationNeeded: outboxProcessed === outboxLimit,
         // #1548: the drain itself now logs every per-entry failure (see
         // `orchestrator-dispatch.ts`'s `logOutboxFailure`), but surfacing it
         // here means a reconcile run's response already shows an outbox
