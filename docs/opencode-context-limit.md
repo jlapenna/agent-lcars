@@ -97,9 +97,11 @@ If a real edit is ever truncated, the log will show it and this should go up.
 Do not raise it on the theory that bigger is safer: the cost is paid in
 minutes of a bounded budget.
 
-`default-nothink` carries the identical budget and rationale. It is the route
-this repo actually dispatches on (#1227); `default` keeps its entry because
-the two share a backend and must not drift apart on this number.
+`default-nothink` carries the identical budget and rationale. It was the
+dispatch route introduced in #1227 as an OpenCode compatibility workaround.
+The runner now dispatches `homelab/default`; `default-nothink` remains an
+available explicit override. The two entries share a backend and must not
+drift apart on this number.
 
 Related: agent-lcars#1210 cut the fixed pre-work reading that this budget is
 mostly spent on, and agent-lcars#1217 covers the separate 60-minute push

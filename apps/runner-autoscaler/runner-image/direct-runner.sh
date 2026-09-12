@@ -839,7 +839,7 @@ else
     OPENCODE_SESSION_ARGS=(--session "$RESUME_SESSION_ID")
   fi
 
-  OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default-nothink}"
+  OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default}"
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
   # leave the surrounding direct runner alive to finalize telemetry and
