@@ -151,6 +151,7 @@ export class Orchestrator {
           const replacement = requestRun({
             ...requestArgs,
             task: canceled.task,
+            activeRun: undefined,
           });
           if (isRefusal(replacement)) return replacement;
           return {
