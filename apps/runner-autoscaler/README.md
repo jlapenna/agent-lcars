@@ -289,6 +289,16 @@ autoscaler's process environment. The baked OpenCode config consumes the
 read-only key file directly, rather than exporting the key to the OpenCode
 process, so routine agent tool-shell environment inspection cannot recover it.
 
+Before telemetry starts, the direct runner synchronously initializes
+OpenCode's local store with a pure session listing, bounded to 30 seconds by
+default (`OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS`, valid range 1-120). This avoids
+a first-run migration race between OpenCode and its telemetry sidecar. If an
+OpenCode round exits zero after completed verifier lookups find no exact-marker
+deliverable, the runner may continue the one unambiguous workspace session
+once. That continuation shares the original `OPENCODE_TIMEOUT_SECONDS`
+deadline; nonzero exits, verifier lookup failures, structured terminal
+handoffs, ambiguous session discovery, and exhausted time stop immediately.
+
 The console claim call is authenticated with a Google ID token minted
 directly from the telemetry-writer service-account key (self-signed, no
 metadata server, no new IAM grant -- this fleet does not run on GCE/Cloud

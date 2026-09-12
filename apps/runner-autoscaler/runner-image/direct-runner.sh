@@ -354,6 +354,68 @@ PROMPT
 )"
 fi
 
+# OpenCode and the telemetry sidecar share its SQLite store. On a fresh home,
+# either process can otherwise race the initial schema migration and fail with
+# `database is locked` or `Failed query: CREATE TABLE workspace`. Initialize
+# the trusted store synchronously before the sidecar starts, without making an
+# inference request. The same listing also records the workspace's baseline
+# sessions so one fresh provider run can be continued only when it creates one
+# unambiguous session.
+OPENCODE_BASELINE_SESSIONS=''
+if [ "$PIPELINE" = "opencode" ]; then
+  OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
+  if [ ! -r "$OPENCODE_TOKEN_FILE" ]; then
+    echo "FATAL: $OPENCODE_TOKEN_FILE is required (OPENCODE_LLM_API_KEY source) but is missing or unreadable" >&2
+    exit 1
+  fi
+  OPENCODE_BIN="${OPENCODE_BIN:-/usr/local/bin/opencode}"
+  if [ ! -x "$OPENCODE_BIN" ]; then
+    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN is missing or not executable" >&2
+    exit 1
+  fi
+  if ! "$OPENCODE_BIN" run --help 2>&1 | grep -Fq -- '--auto'; then
+    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN does not support QueueExecutor's --auto mode" >&2
+    exit 1
+  fi
+  OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS="${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS:-30}"
+  case "$OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS" in
+    '' | *[!0-9]*)
+      echo "FATAL: OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS must be an integer from 1 to 120" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS" -lt 1 ] || [ "$OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS" -gt 120 ]; then
+    echo "FATAL: OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS must be an integer from 1 to 120" >&2
+    exit 1
+  fi
+  OPENCODE_BASELINE_SESSIONS="$RUNNER_TEMP/opencode-baseline-sessions.txt"
+  opencode_bootstrap_json="$RUNNER_TEMP/opencode-bootstrap-sessions.json"
+  if ! env -u OPENCODE_LLM_API_KEY \
+    timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
+    "$OPENCODE_BIN" --pure session list --format json > "$opencode_bootstrap_json"; then
+    EARLY_FAILURE_MESSAGE='OpenCode store initialization failed'
+    echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+    exit 1
+  fi
+  if [ -s "$opencode_bootstrap_json" ] &&
+    ! jq -e 'type == "array"' "$opencode_bootstrap_json" >/dev/null 2>&1; then
+    EARLY_FAILURE_MESSAGE='OpenCode store initialization returned malformed session data'
+    echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+    exit 1
+  fi
+  if [ -s "$opencode_bootstrap_json" ]; then
+    jq -r --arg directory "$PWD" '
+        .[]
+        | select((.id | type) == "string")
+        | select(.id | test("^[A-Za-z0-9._:-]+$"))
+        | select(.directory == $directory)
+        | .id
+      ' "$opencode_bootstrap_json" | sort -u > "$OPENCODE_BASELINE_SESSIONS"
+  else
+    : > "$OPENCODE_BASELINE_SESSIONS"
+  fi
+fi
+
 if [ "$PIPELINE" = "codex" ]; then
   # The sidecar starts before the agent invocation so it can emit live state.
   # Allocate the per-run tmpfs home first, then pass its eventual session root
@@ -661,21 +723,6 @@ else
   # provider process environment (and therefore cannot be inherited by the
   # agent's tool shells). It is never placed in Docker's inspectable
   # environment at container creation either.
-  OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
-  if [ ! -r "$OPENCODE_TOKEN_FILE" ]; then
-    echo "FATAL: $OPENCODE_TOKEN_FILE is required (OPENCODE_LLM_API_KEY source) but is missing or unreadable" >&2
-    exit 1
-  fi
-  OPENCODE_BIN="${OPENCODE_BIN:-/usr/local/bin/opencode}"
-  if [ ! -x "$OPENCODE_BIN" ]; then
-    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN is missing or not executable" >&2
-    exit 1
-  fi
-  if ! "$OPENCODE_BIN" run --help 2>&1 | grep -Fq -- '--auto'; then
-    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN does not support QueueExecutor's --auto mode" >&2
-    exit 1
-  fi
-
   # Native work items sub-project 10 (resumable conversations, plan 4): a
   # requested resume must restore OpenCode's own session, exactly as the
   # Claude and Codex branches above do for their own CLI. `opencode import`
@@ -726,15 +773,92 @@ else
   # No `tee` here means the live log is just the log, and the exit code
   # comes directly from `$?` rather than `${PIPESTATUS[0]}`.
   OPENCODE_LAST_MESSAGE_FILE="$RUNNER_TEMP/opencode-last-message.txt"
+  OPENCODE_DEADLINE=$((SECONDS + OPENCODE_TIMEOUT_SECONDS))
+  run_opencode_round() {
+    round_prompt="$1"
+    shift
+    round_remaining=$((OPENCODE_DEADLINE - SECONDS))
+    if [ "$round_remaining" -lt 1 ]; then
+      return 124
+    fi
+    env -u OPENCODE_LLM_API_KEY \
+      GITHUB_TOKEN="$CHECKOUT_TOKEN" \
+      timeout --signal=TERM --kill-after=30s "${round_remaining}s" \
+      "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
+        "$@" \
+        --auto "$round_prompt"
+  }
+
   set +e
-  env -u OPENCODE_LLM_API_KEY \
-    GITHUB_TOKEN="$CHECKOUT_TOKEN" \
-    timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
-    "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
-      "${OPENCODE_SESSION_ARGS[@]}" \
-      --auto "$AGENT_PROMPT"
+  run_opencode_round "$AGENT_PROMPT" "${OPENCODE_SESSION_ARGS[@]}"
   AGENT_EXIT=$?
   set -e
+
+  # One exit-zero provider turn can stop after describing its next action
+  # without publishing any exact-marker deliverable. Continue that SAME
+  # OpenCode session once, within the original deadline. The verifier must
+  # have completed its lookups and explicitly recorded NO_DELIVERABLE=1;
+  # lookup failures, non-zero provider exits, exact native park/no-op records,
+  # ambiguous fresh-session discovery, and exhausted time never retry.
+  OPENCODE_CONTINUATION_SESSION=''
+  native_terminal_recorded=false
+  if [ "$ANCHOR_TYPE" = "work" ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ]; then
+    native_claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
+    native_park_marker="<!-- agent-result:v1:park:${ATTEMPT_ID} -->"
+    native_no_op_marker="<!-- agent-result:v1:no-op:${ATTEMPT_ID} -->"
+    if printf '%s\n%s\n' "$native_park_marker" "$native_claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE" ||
+      printf '%s\n%s\n' "$native_no_op_marker" "$native_claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
+      native_terminal_recorded=true
+    fi
+  fi
+  OPENCODE_VERIFY_PROBE="$RUNNER_TEMP/opencode-first-round-verify.txt"
+  if [ "$AGENT_EXIT" -eq 0 ] && ! $native_terminal_recorded; then
+    set +e
+    AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
+      bash "$VERIFY_OUTCOME" > "$OPENCODE_VERIFY_PROBE" 2>&1
+    probe_exit=$?
+    set -e
+    if [ "$probe_exit" -ne 0 ] && grep -Fxq 'NO_DELIVERABLE=1' "$RUNTIME_ENV"; then
+      if [ -n "$RESUME_SESSION_ID" ]; then
+        OPENCODE_CONTINUATION_SESSION="$RESUME_SESSION_ID"
+      else
+        opencode_after_json="$RUNNER_TEMP/opencode-after-first-round.json"
+        opencode_after_sessions="$RUNNER_TEMP/opencode-after-first-round.txt"
+        if env -u OPENCODE_LLM_API_KEY \
+          timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
+          "$OPENCODE_BIN" --pure session list --format json > "$opencode_after_json" &&
+          jq -e 'type == "array"' "$opencode_after_json" >/dev/null 2>&1; then
+          jq -r --arg directory "$PWD" '
+              .[]
+              | select((.id | type) == "string")
+              | select(.id | test("^[A-Za-z0-9._:-]+$"))
+              | select(.directory == $directory)
+              | .id
+            ' "$opencode_after_json" | sort -u > "$opencode_after_sessions"
+          mapfile -t new_opencode_sessions < <(comm -13 "$OPENCODE_BASELINE_SESSIONS" "$opencode_after_sessions")
+          if [ "${#new_opencode_sessions[@]}" -eq 1 ]; then
+            OPENCODE_CONTINUATION_SESSION="${new_opencode_sessions[0]}"
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && [ $((OPENCODE_DEADLINE - SECONDS)) -gt 0 ]; then
+    OPENCODE_CONTINUATION_PROMPT="$(cat <<PROMPT
+Continue the same authorized task in this existing session. Complete the next
+concrete steps autonomously when they are routine. If a required human decision
+or external blocker prevents completion, preserve any useful work and publish
+the protocol's structured PARK handoff. Otherwise publish the requested exact-
+marker deliverable before stopping. This is the only continuation round and it
+shares the original provider time budget.
+PROMPT
+)"
+    set +e
+    run_opencode_round "$OPENCODE_CONTINUATION_PROMPT" --session "$OPENCODE_CONTINUATION_SESSION"
+    AGENT_EXIT=$?
+    set -e
+  fi
   # Same shared completion payload build plan 1 added for Claude
   # (`$LAST_MESSAGE_FILE`, read near the end of this script). Populated by
   # `"$SIDECAR_LIFECYCLE" finalize` below, not by this branch.
