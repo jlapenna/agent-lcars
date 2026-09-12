@@ -179,7 +179,10 @@ export async function handleWebhookDelivery(
       input.event === 'issue_comment' &&
       interpreted.params['mode'] === 'reply'
     ) {
-      const resumed = await attemptTaggedReplyResume(deps, input);
+      const resumed = await attemptTaggedReplyResume(deps, {
+        ...input,
+        pipeline: interpreted.pipeline,
+      });
       if (resumed !== undefined) {
         await refreshGithubAnchorProjectionAfterAdmission(deps, input);
         return resumed;

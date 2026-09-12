@@ -3,7 +3,7 @@ import 'server-only';
 import type { ScheduleStore } from '@agent-lcars/orchestrator';
 import { PIPELINES } from '@agent-lcars/work';
 
-import { issueCommentEventSchema } from './orchestrator-ingest';
+import { issueCommentEventSchema, type Pipeline } from './orchestrator-ingest';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal, WorkScope } from './work-auth';
 import { workMaxLiveRuns } from './work-grants';
@@ -26,7 +26,7 @@ type RouteResult = { status: number; body: Record<string, unknown> };
  * pipeline/repo check. Granted every pipeline directly, the same way
  * `pin:tick` (`work-auth.ts`) is a synthetic principal constructed inline
  * rather than resolved through `AGENT_LCARS_WORK_GRANTS`: a tagged reply
- * always continues a pipeline the anchor's own admission already chose,
+ * explicitly selects its pipeline through the already-validated trigger,
  * against a repository the pure interpreter already confirmed is
  * control-plane -- there is nothing left for a grant to gate here.
  */
@@ -94,7 +94,12 @@ function taggedReplyContext(runtime: OrchestratorRouteDeps): WorkContext {
  */
 export async function attemptTaggedReplyResume(
   deps: OrchestratorRouteDeps,
-  input: { event: string; deliveryId: string; payload: unknown },
+  input: {
+    event: string;
+    deliveryId: string;
+    payload: unknown;
+    pipeline: Pipeline;
+  },
 ): Promise<RouteResult | undefined> {
   if (input.event !== 'issue_comment') return undefined;
 
@@ -105,6 +110,9 @@ export async function attemptTaggedReplyResume(
   const outcome = await requestReply(taggedReplyContext(deps), {
     task: { repo: repository.full_name, issue: issue.number },
     text: comment.body,
+    // Preserve the validated trigger's provider choice. requestReply starts
+    // fresh on a provider switch and keeps the original Work spec intact.
+    pipeline: input.pipeline,
     channel: 'github',
     principal: `github:${sender.login}`,
     // The comment's own URL: an idempotent request id, so a redelivery of

@@ -79,6 +79,7 @@ function delivery(overrides: {
 }) {
   return {
     event: 'issue_comment',
+    pipeline: 'claude' as const,
     deliveryId: 'delivery-1',
     payload: {
       action: overrides.action ?? 'created',
@@ -196,6 +197,7 @@ describe('attemptTaggedReplyResume', () => {
       await attemptTaggedReplyResume(deps, {
         event: 'issues',
         deliveryId: 'd1',
+        pipeline: 'claude',
         payload: {},
       }),
     ).toBeUndefined();
@@ -208,6 +210,7 @@ describe('attemptTaggedReplyResume', () => {
       await attemptTaggedReplyResume(deps, {
         event: 'issue_comment',
         deliveryId: 'd1',
+        pipeline: 'claude',
         payload: { not: 'a valid comment payload' },
       }),
     ).toBeUndefined();
