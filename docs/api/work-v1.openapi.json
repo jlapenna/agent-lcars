@@ -187,6 +187,111 @@
   },
   "openapi": "3.2.0",
   "paths": {
+    "/maintenance/tick": {
+      "post": {
+        "operationId": "tickMaintenance",
+        "summary": "Run bounded control-plane maintenance (work.cron required)",
+        "tags": ["items", "cron"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "lost": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retried": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "lostRunId": {
+                            "type": "string"
+                          },
+                          "newRunId": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["lostRunId", "newRunId"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "dispatched": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "reported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "outboxProcessed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "outboxContinuationNeeded": {
+                      "type": "boolean"
+                    },
+                    "outboxDrainFailed": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "entryId": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["entryId", "error"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "lost",
+                    "retried",
+                    "dispatched",
+                    "reported",
+                    "outboxProcessed",
+                    "outboxContinuationNeeded"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/items/{id}": {
       "put": {
         "operationId": "createItem",
