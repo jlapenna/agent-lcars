@@ -147,3 +147,14 @@ configuration and asks the main session to use focused reads and durable
 working notes across compactions. These measures target observed behavior;
 they do not establish that the success-rate target has been met. The 60,000
 context limit remains unchanged pending new backend capacity measurements.
+
+The subsequent #5470/r3 run still had no visible edits at 17:17 UTC: 178
+steps, 28 compactions, and four source files read 14–17 times. A later
+read-only native database sample found 84 reads with no explicit limit and
+input reaching 93,696 tokens. OpenCode 1.18.25 defaults those reads to 2,000
+lines. The `bounded-read.js` plugin now uses the supported
+`tool.execute.before` hook to set an omitted limit to 120, matching the
+standing instructions. Explicit limits and offsets remain available for
+follow-up investigation. This reduces the default tool-response volume;
+it does not prove the repeated-investigation problem or success-rate target
+is solved. Neither the context declaration nor the two-hour run budget changes.

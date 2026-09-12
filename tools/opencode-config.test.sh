@@ -50,7 +50,7 @@ grep -Fq "Commit and push at the first working slice" "$orders" ||
 # LCARS_SESSION_ID contract used by the annotation CLI.
 session_plugin="$repo_root/agents/opencode/lcars-session.js"
 test -f "$session_plugin" || fail "agents/opencode/lcars-session.js is missing"
-jq -e '.plugin == ["./lcars-session.js"]' "$config" >/dev/null ||
+jq -e '.plugin == ["./lcars-session.js", "./bounded-read.js"]' "$config" >/dev/null ||
   fail "opencode.json must load the native LCARS session environment plugin"
 plugin_url="data:text/javascript;base64,$(base64 -w0 "$session_plugin")"
 node --input-type=module - "$plugin_url" <<'NODE'
@@ -73,6 +73,31 @@ const absent = { env: { KEEP: 'yes' } };
 await hooks['shell.env']({ cwd: '/repo', callID: 'call_2' }, absent);
 assert.deepEqual(absent.env, { KEEP: 'yes' });
 NODE
+
+# Omitted limits used OpenCode's 2000-line default in repeated investigations.
+read_plugin="$repo_root/agents/opencode/bounded-read.js"
+plugin_url="data:text/javascript;base64,$(base64 -w0 "$read_plugin")"
+node --input-type=module - "$plugin_url" <<'NODE'
+import assert from 'node:assert/strict';
+const hooks = await (await import(process.argv[2])).default();
+const read = { args: { filePath: '/repo/source.ts', offset: 241 } };
+await hooks['tool.execute.before']({ tool: 'read' }, read);
+assert.deepEqual(read.args, {
+  filePath: '/repo/source.ts', offset: 241, limit: 120,
+});
+for (const limit of [0, 50, 500, 2000]) {
+  const explicit = { args: { filePath: '/repo/source.ts', limit } };
+  await hooks['tool.execute.before']({ tool: 'read' }, explicit);
+  assert.equal(explicit.args.limit, limit);
+}
+const bash = { args: { command: 'git status' } };
+await hooks['tool.execute.before']({ tool: 'bash' }, bash);
+assert.deepEqual(bash.args, { command: 'git status' });
+NODE
+grep -Fq '/repo/agents/opencode/bounded-read.js' "$runner_dockerfile" ||
+  fail "runner image no longer installs the bounded read plugin"
+grep -Fq '/home/runner/.config/opencode/bounded-read.js' "$runner_dockerfile" ||
+  fail "runner image does not preserve the bounded read plugin path"
 
 # --- agent.*.prompt must stay unset ------------------------------------------
 # Measured 2026-08-16 against opencode 1.18.18 by capturing the wire request:
