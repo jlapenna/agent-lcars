@@ -117,8 +117,9 @@ agent dispatches. A flat rate across a window where runs both succeeded and
 failed is the tell.
 
 Useful error greps against `{container="litellm"}`: `capacity`, `503`,
-`ServiceUnavailable`, `429`. Note `default-nothink` has **no fallback group**
-(homelab#662), so a capacity rejection hard-fails the run.
+`ServiceUnavailable`, `429`. The runner's `default` route has **no fallback
+group** (nor does the legacy `default-nothink` alias), so a capacity rejection
+hard-fails the run.
 
 ## 4. What Loki does _not_ have
 

@@ -586,7 +586,8 @@ run_scenario() {
   printf '%s' 'fake-opencode-llm-key' > "$dir/opencode-llm-api-key"
   export OPENCODE_TOKEN_FILE="$dir/opencode-llm-api-key"
   export OPENCODE_BIN="$dir/bin/opencode"
-  export OPENCODE_MODEL='homelab/default-nothink'
+  # Exercise the adapter's production default instead of masking it here.
+  unset OPENCODE_MODEL
 
   # Bounds the background heartbeat loop's orphaned-sleep lifetime to
   # ~1 second instead of the production 300s default: fake `claude` returns
@@ -888,7 +889,7 @@ run_scenario opencode-happy opencode
 unset OPENCODE_LLM_API_KEY
 [ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc"
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
-grep -q -- 'run --model homelab/default-nothink --session sess_1 --auto' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --model homelab/default --session sess_1 --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
 [ "$(cat "$OPENCODE_ENV_LOG")" = "||||" ] ||
   fail "opencode happy path: OpenCode inherited the LiteLLM key in its environment ($(cat "$OPENCODE_ENV_LOG"))"
@@ -943,7 +944,7 @@ unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS
 [ "$rc" -eq 0 ] || fail "opencode premature stop: continuation did not produce verified completion"
 [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 2 ] ||
   fail "opencode premature stop: expected exactly two total provider rounds"
-grep -q -- 'run --model homelab/default-nothink --session ses_new_1 --auto Continue the same authorized task' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --model homelab/default --session ses_new_1 --auto Continue the same authorized task' "$OPENCODE_ARGS_LOG" ||
   fail "opencode premature stop: second round did not preserve the discovered session ($(cat "$OPENCODE_ARGS_LOG"))"
 mapfile -t opencode_run_timeouts < <(grep 'opencode.* run ' "$TIMEOUT_ARGS_LOG" | sed -nE 's/.* ([0-9]+)s .*opencode.*/\1/p')
 [ "${#opencode_run_timeouts[@]}" -eq 2 ] ||
@@ -1118,7 +1119,7 @@ unset FAKE_BRIEF_NO_RESUME
 if grep -q -- 'runner resume' "$NODE_ARGS_LOG" 2>/dev/null; then
   fail "opencode no-resume: runner resume was invoked despite no resume field in the brief ($(cat "$NODE_ARGS_LOG"))"
 fi
-grep -q -- 'run --model homelab/default-nothink --auto' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --model homelab/default --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode no-resume: opencode was not invoked with a fresh run ($(cat "$OPENCODE_ARGS_LOG"))"
 if grep -q -- '--session' "$OPENCODE_ARGS_LOG"; then
   fail "opencode no-resume: opencode received --session despite no resume field in the brief ($(cat "$OPENCODE_ARGS_LOG"))"

@@ -20,14 +20,14 @@
       },
       "models": {
         "default": {
-          "name": "Spark Default (DeepSeek-V4-Flash, pinned production route - no swap dependency). context 60000: see docs/opencode-context-limit.md - it is neither the backend's 262144 nor a guess, and changing it changes how often the agent loses its working memory.",
+          "name": "Spark Default (local production route). context 60000: see docs/opencode-context-limit.md - it is neither the backend's 262144 nor a guess, and changing it changes how often the agent loses its working memory.",
           "limit": {
             "context": 60000,
             "output": 8192
           }
         },
         "default-nothink": {
-          "name": "Spark Default with thinking disabled (same deepseek-v4-flash backend as `default`; LiteLLM forces thinking:{type:disabled} via extra_body). The route exists because opencode can only select a model NAME - its options/variants fields never reach the wire request. Same context budget and rationale as `default`: see docs/opencode-context-limit.md.",
+          "name": "Legacy Spark Default alias with thinking disabled server-side. Retained for explicit overrides; the runner uses `default`. Current OpenCode supports native reasoning options. Same context budget and rationale as `default`: see docs/opencode-context-limit.md.",
           "limit": {
             "context": 60000,
             "output": 8192
