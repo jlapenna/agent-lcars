@@ -37,6 +37,16 @@ export interface GithubWorkAdmissionInput {
   };
 }
 
+export interface GithubWorkRedispatchInput {
+  anchor: TaskId;
+  requestId: string;
+  params: Record<string, string>;
+  authorization: {
+    sourceRepository?: string;
+    grantsPrincipal: GrantsPrincipal;
+  };
+}
+
 export type GithubWorkAdmissionOutcome =
   | { kind: 'accepted'; runId: string; dispatched: boolean }
   | { kind: 'busy'; runId: string }
@@ -44,6 +54,11 @@ export type GithubWorkAdmissionOutcome =
   | { kind: 'conflict'; message: string }
   | { kind: 'invalid'; message: string }
   | { kind: 'forbidden'; message: string };
+
+export type GithubWorkRedispatchOutcome =
+  | Exclude<GithubWorkAdmissionOutcome, { kind: 'conflict' }>
+  | { kind: 'not-found' }
+  | { kind: 'conflict'; message: string };
 
 /**
  * Normalizes, validates, idempotently requests, and drains one GitHub-anchor
@@ -130,6 +145,76 @@ export async function admitGithubWork(
     return {
       kind: 'invalid',
       message: `Unexpected GitHub Work refusal: ${outcome.reason}`,
+    };
+  }
+
+  const { runId } = decidedRun(outcome);
+  const drained = await runtime.drain();
+  return {
+    kind: 'accepted',
+    runId,
+    dispatched: drained.dispatched.includes(runId),
+  };
+}
+
+/** Requests another run without accepting a replacement Work specification. */
+export async function redispatchGithubWork(
+  runtime: Pick<OrchestratorRouteDeps, 'orchestrator' | 'store' | 'drain'>,
+  input: GithubWorkRedispatchInput,
+): Promise<GithubWorkRedispatchOutcome> {
+  const parsedAnchor = taskIdSchema.safeParse(input.anchor);
+  if (!parsedAnchor.success || isWorkAnchor(parsedAnchor.data)) {
+    return {
+      kind: 'invalid',
+      message: 'A GitHub issue or pull-request anchor is required',
+    };
+  }
+  const anchor = parsedAnchor.data;
+
+  if (
+    input.authorization.sourceRepository !== undefined &&
+    input.authorization.sourceRepository !== anchor.repo
+  ) {
+    return {
+      kind: 'forbidden',
+      message: 'GitHub Actions principal may only dispatch its own repository',
+    };
+  }
+
+  const task = await runtime.store.readTask(anchor);
+  if (task === undefined) return { kind: 'not-found' };
+  const work = workPayloadSchema.parse(task.task.work);
+  if (work.spec.target.repo !== anchor.repo) {
+    return {
+      kind: 'invalid',
+      message: 'Stored GitHub Work target does not match its anchor repository',
+    };
+  }
+  const forbidden = forbiddenReason(
+    input.authorization.grantsPrincipal,
+    work.spec,
+  );
+  if (forbidden !== undefined) {
+    return { kind: 'forbidden', message: forbidden };
+  }
+
+  const outcome = await runtime.orchestrator.request({
+    taskId: anchor,
+    requestId: input.requestId,
+    pipeline: work.spec.pipeline,
+    params: input.params,
+  });
+  if (isRefusal(outcome)) {
+    const runId = outcome.existingRun?.runId;
+    if (outcome.reason === 'duplicate-request' && runId !== undefined) {
+      return { kind: 'duplicate', runId };
+    }
+    if (outcome.reason === 'task-busy' && runId !== undefined) {
+      return { kind: 'busy', runId };
+    }
+    return {
+      kind: 'conflict',
+      message: `GitHub Work cannot be redispatched: ${outcome.reason}`,
     };
   }
 

@@ -3267,6 +3267,181 @@
         ]
       }
     },
+    "/dispatches/github/redispatch": {
+      "post": {
+        "operationId": "redispatchGithubAnchor",
+        "summary": "Request another run of an admitted GitHub anchor",
+        "description": "Reuses the immutable Work specification stored by the first GitHub-anchor admission. Callers provide only fresh run parameters and an idempotency key.",
+        "tags": ["dispatches"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "anchor": {
+                    "type": "object",
+                    "properties": {
+                      "repo": {
+                        "type": "string",
+                        "maxLength": 140,
+                        "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                      },
+                      "issue": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": ["repo", "issue"],
+                    "additionalProperties": false
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": ["implement", "review"]
+                  },
+                  "reply": {
+                    "type": "string",
+                    "maxLength": 8192
+                  },
+                  "runbook": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "context": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "requestId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": ["anchor", "mode", "requestId"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "outcome": {
+                          "type": "string",
+                          "const": "accepted"
+                        },
+                        "runId": {
+                          "type": "string"
+                        },
+                        "dispatched": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": ["outcome", "runId", "dispatched"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "outcome": {
+                          "type": "string",
+                          "const": "duplicate"
+                        },
+                        "runId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["outcome", "runId"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "outcome": {
+                          "type": "string",
+                          "const": "busy"
+                        },
+                        "runId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["outcome", "runId"],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal may not request this pipeline, repository, or anchor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "GitHub anchor has not been admitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "GitHub anchor cannot be redispatched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/runs/claim": {
       "post": {
         "operationId": "claimRun",

@@ -59,6 +59,14 @@ anchor to that signed repository. The admitted request stores the same Work
 payload and reaches the same orchestrator → QueueExecutor route as every
 other Work API admission.
 
+Later runs use `POST /api/work/v1/dispatches/github/redispatch`. That route
+accepts the anchor, fresh run parameters, and a new `requestId`, but no Work
+specification. The server reuses the immutable specification stored by first
+admission and re-checks the caller's current repository and pipeline grants.
+Automation must use this route when an already-admitted issue needs another
+run; resubmitting the issue's current title or body to the admission route can
+correctly conflict when the GitHub content has changed.
+
 GitHub-anchor workflows use the published `oidc-post` composite's
 generic OIDC POST transport with
 `endpoint=https://lcars.jlapenna.net/api/work/v1/dispatches/github` and

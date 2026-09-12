@@ -888,6 +888,117 @@ describe('GitHub-anchor dispatch route', () => {
     });
   });
 
+  it('redispatches from the stored immutable Work with fresh run parameters', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const first = await call(ctx, 'POST', '/dispatches/github', input);
+    await ctx.runtime.orchestrator.report(first.json.runId as string, {
+      ok: true,
+    });
+
+    const redispatch = {
+      anchor,
+      mode: 'implement',
+      reply: 'Verify the newly deployed revision.',
+      runbook: 'verifying-post-deploy',
+      context: 'deployed revision abc123',
+      requestId: 'post-deploy:1633:abc123',
+    };
+    const second = await call(
+      ctx,
+      'POST',
+      '/dispatches/github/redispatch',
+      redispatch,
+    );
+    expect(second.status).toBe(200);
+    expect(second.json).toEqual({
+      outcome: 'accepted',
+      runId: 'jlapenna/agent-lcars#1633/r2',
+      dispatched: false,
+    });
+    expect((await ctx.runtime.store.readTask(anchor))?.task.work).toEqual({
+      origin: { principal: 'workflow:member-automation', channel: 'api' },
+      spec: input.spec,
+    });
+    expect(
+      await ctx.runtime.store.readRun(second.json.runId as string),
+    ).toMatchObject({
+      pipeline: input.spec.pipeline,
+      requestId: redispatch.requestId,
+      params: {
+        mode: redispatch.mode,
+        reply: redispatch.reply,
+        runbook: redispatch.runbook,
+        context: redispatch.context,
+      },
+    });
+
+    const duplicate = await call(
+      ctx,
+      'POST',
+      '/dispatches/github/redispatch',
+      redispatch,
+    );
+    expect(duplicate.json).toEqual({
+      outcome: 'duplicate',
+      runId: second.json.runId,
+    });
+    const busy = await call(ctx, 'POST', '/dispatches/github/redispatch', {
+      ...redispatch,
+      requestId: 'post-deploy:1633:def456',
+    });
+    expect(busy.json).toEqual({
+      outcome: 'busy',
+      runId: second.json.runId,
+    });
+  });
+
+  it('requires prior admission and re-checks the signed repository and pipeline grant', async () => {
+    const redispatch = {
+      anchor,
+      mode: 'implement' as const,
+      requestId: 'post-deploy:1633:abc123',
+    };
+    expect(
+      (
+        await call(
+          context({ principal: githubActionsOperator }),
+          'POST',
+          '/dispatches/github/redispatch',
+          redispatch,
+        )
+      ).status,
+    ).toBe(404);
+
+    const ctx = context({ principal: githubActionsOperator });
+    const first = await call(ctx, 'POST', '/dispatches/github', input);
+    await ctx.runtime.orchestrator.report(first.json.runId as string, {
+      ok: true,
+    });
+    const foreign = await call(
+      context({
+        runtime: ctx.runtime,
+        principal: {
+          ...githubActionsOperator,
+          sourceRepository: 'octo/other',
+        },
+      }),
+      'POST',
+      '/dispatches/github/redispatch',
+      redispatch,
+    );
+    expect(foreign.status).toBe(403);
+    const denied = await call(
+      context({
+        runtime: ctx.runtime,
+        principal: { ...githubActionsOperator, pipelines: ['claude'] },
+      }),
+      'POST',
+      '/dispatches/github/redispatch',
+      redispatch,
+    );
+    expect(denied.status).toBe(403);
+  });
+
   it('preserves an under-bound GitHub body in the stored Work spec', async () => {
     const ctx = context({ principal: githubActionsOperator });
     const description = '  Preserve this exact GitHub body.\n';

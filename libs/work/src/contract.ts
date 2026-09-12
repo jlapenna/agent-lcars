@@ -410,6 +410,39 @@ export const dispatchesContract = {
       }),
     )
     .output(githubDispatchResultSchema),
+  githubRedispatch: dispatchBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/dispatches/github/redispatch',
+        operationId: 'redispatchGithubAnchor',
+        summary: 'Request another run of an admitted GitHub anchor',
+        description:
+          'Reuses the immutable Work specification stored by the first ' +
+          'GitHub-anchor admission. Callers provide only fresh run ' +
+          'parameters and an idempotency key.',
+      }),
+    )
+    .errors({
+      NOT_FOUND: { message: 'GitHub anchor has not been admitted' },
+      FORBIDDEN: {
+        message:
+          'Principal may not request this pipeline, repository, or anchor',
+      },
+      CONFLICT: { message: 'GitHub anchor cannot be redispatched' },
+    })
+    .input(
+      z.strictObject({
+        anchor: githubDispatchAnchorSchema,
+        mode: githubDispatchModeSchema,
+        reply: z.string().max(8_192).optional(),
+        runbook: z.string().min(1).max(128).optional(),
+        context: z.string().max(4_096).optional(),
+        /** Caller-controlled idempotency key for this redispatch. */
+        requestId: z.string().min(1).max(128),
+      }),
+    )
+    .output(githubDispatchResultSchema),
 };
 
 /** A `cron` field is only accepted once it parses: `parseCron` throws on

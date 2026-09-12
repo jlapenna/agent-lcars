@@ -40,7 +40,10 @@ describe('itemsContract', () => {
 
 describe('dispatchesContract.github', () => {
   it('requires an explicit GitHub anchor, spec, mode, and request id while accepting every valid GitHub body', () => {
-    expect(Object.keys(dispatchesContract)).toEqual(['github']);
+    expect(Object.keys(dispatchesContract).sort()).toEqual([
+      'github',
+      'githubRedispatch',
+    ]);
     const [rawShape] = dispatchesContract.github['~orpc'].inputSchemas ?? [];
     const shape = rawShape as z.ZodTypeAny | undefined;
     const input = {
@@ -83,6 +86,22 @@ describe('dispatchesContract.github', () => {
         },
       }),
     ).toThrow();
+  });
+});
+
+describe('dispatchesContract.githubRedispatch', () => {
+  it('accepts fresh run parameters without accepting a Work spec', () => {
+    const [rawShape] =
+      dispatchesContract.githubRedispatch['~orpc'].inputSchemas ?? [];
+    const shape = rawShape as z.ZodTypeAny | undefined;
+    const input = {
+      anchor: { repo: 'jlapenna/agent-lcars', issue: 1633 },
+      mode: 'implement',
+      context: 'deployed revision abc123',
+      requestId: 'post-deploy:1633:abc123',
+    };
+    expect(shape?.parse(input)).toEqual(input);
+    expect(() => shape?.parse({ ...input, spec: {} })).toThrow();
   });
 });
 
@@ -271,6 +290,7 @@ describe('generateWorkOpenApi', () => {
     expect(Object.keys(doc.paths).sort()).toEqual(
       [
         '/dispatches/github',
+        '/dispatches/github/redispatch',
         '/items',
         '/items/{id}',
         '/items/{id}/cancel',
@@ -352,6 +372,7 @@ describe('generateWorkOpenApi', () => {
       'POST /items/{id}/reply': ['200', '403', '404', '409', '429'],
       'POST /maintenance/tick': ['200'],
       'POST /dispatches/github': ['200', '400', '403', '409'],
+      'POST /dispatches/github/redispatch': ['200', '403', '404', '409'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
       'GET /schedules/{id}': ['200', '404'],
       'GET /schedules': ['200'],
