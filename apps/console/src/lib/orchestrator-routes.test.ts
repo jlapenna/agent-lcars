@@ -720,6 +720,36 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
     });
   });
 
+  it.each([
+    ['/oc', 'opencode'],
+    ['/codex', 'codex'],
+  ])(
+    'honors %s after a Claude quota failure without changing the original spec',
+    async (command, pipeline) => {
+      const { deps, store } = fixture();
+      const runId = await dispatchedRun(deps, 'quota-failed-label');
+      await deps.orchestrator.report(runId, {
+        ok: false,
+        summary: 'provider-limit',
+      });
+      const payload = taggedCommentPayload();
+      payload.comment.body = `${command} Continue the original work with this provider.`;
+      const result = await handleWebhookDelivery(deps, {
+        event: 'issue_comment',
+        deliveryId: `provider-switch-${pipeline}`,
+        payload,
+      });
+      expect(result.status).toBe(200);
+      const runs = await store.listRuns(ISSUE);
+      expect(runs).toHaveLength(2);
+      expect(runs.at(-1)?.pipeline).toBe(pipeline);
+      expect(runs.at(-1)?.params?.['resumeSessionId']).toBeUndefined();
+      expect((await store.readTask(ISSUE))?.task.work).toMatchObject({
+        spec: { pipeline: 'claude' },
+      });
+    },
+  );
+
   it('refuses busy for a tagged comment while the anchor is still running -- no second run', async () => {
     const { deps, store } = fixture();
     await dispatchedRun(deps, 'label-delivery'); // left running, never reported
