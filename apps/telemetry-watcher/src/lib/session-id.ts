@@ -1,13 +1,11 @@
 import { isSafeIdentifier } from '@agent-lcars/telemetry';
 
 /**
- * Session id environment variables, in resolution-order preference. Both
- * `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` are confirmed present in
- * every tool-call environment on a real host (Claude Code and Codex each
- * set their own), so no hook, wrapper, or model-supplied id is needed to
- * populate them. `LCARS_SESSION_ID` exists purely as an explicit manual
- * override, checked first, for a human or a runtime neither of the other
- * two recognizes.
+ * Session id environment variables, in resolution-order preference.
+ * `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` are supplied by their own
+ * runtimes. OpenCode supplies its native id to the configured `shell.env`
+ * plugin hook, which exposes it as `LCARS_SESSION_ID`; the same variable is
+ * also the checked-first explicit override for humans and future runtimes.
  */
 export const SESSION_ID_ENV_VARS = [
   'LCARS_SESSION_ID',

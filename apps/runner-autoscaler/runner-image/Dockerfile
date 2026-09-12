@@ -524,6 +524,9 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/instructions.md \
     /home/runner/.config/opencode/instructions.md
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/agents/opencode/lcars-session.js \
+    /home/runner/.config/opencode/lcars-session.js
 
 USER runner
 

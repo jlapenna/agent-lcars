@@ -43,6 +43,37 @@ test -f "$orders" || fail "agents/opencode/instructions.md is missing"
 grep -Fq "Commit and push at the first working slice" "$orders" ||
   fail "the standing orders no longer carry the commit-early rule they exist for"
 
+# --- native session identity reaches OpenCode tool subprocesses ----------------
+# A fresh session is created inside `opencode run`, too late for direct-runner.sh
+# to export its id. OpenCode's shell.env hook receives the authoritative native
+# sessionID at each tool call; this plugin bridges that value into the same
+# LCARS_SESSION_ID contract used by the annotation CLI.
+session_plugin="$repo_root/agents/opencode/lcars-session.js"
+test -f "$session_plugin" || fail "agents/opencode/lcars-session.js is missing"
+jq -e '.plugin == ["./lcars-session.js"]' "$config" >/dev/null ||
+  fail "opencode.json must load the native LCARS session environment plugin"
+plugin_url="data:text/javascript;base64,$(base64 -w0 "$session_plugin")"
+node --input-type=module - "$plugin_url" <<'NODE'
+import assert from 'node:assert/strict';
+
+const module = await import(process.argv[2]);
+const hooks = await module.default();
+
+const native = { env: { KEEP: 'yes', LCARS_SESSION_ID: 'stale' } };
+await hooks['shell.env'](
+  { cwd: '/repo', sessionID: 'ses_native_123', callID: 'call_1' },
+  native,
+);
+assert.deepEqual(native.env, {
+  KEEP: 'yes',
+  LCARS_SESSION_ID: 'ses_native_123',
+});
+
+const absent = { env: { KEEP: 'yes' } };
+await hooks['shell.env']({ cwd: '/repo', callID: 'call_2' }, absent);
+assert.deepEqual(absent.env, { KEEP: 'yes' });
+NODE
+
 # --- agent.*.prompt must stay unset ------------------------------------------
 # Measured 2026-08-16 against opencode 1.18.18 by capturing the wire request:
 # setting `agent.build.prompt` REPLACES OpenCode's stock system prompt rather
@@ -85,6 +116,10 @@ grep -Fq '/repo/agents/opencode/instructions.md' "$runner_dockerfile" ||
   fail "runner image no longer installs the OpenCode standing instructions"
 grep -Fq '/home/runner/.config/opencode/instructions.md' "$runner_dockerfile" ||
   fail "runner image does not preserve opencode.json's relative instructions path"
+grep -Fq '/repo/agents/opencode/lcars-session.js' "$runner_dockerfile" ||
+  fail "runner image no longer installs the OpenCode LCARS session plugin"
+grep -Fq '/home/runner/.config/opencode/lcars-session.js' "$runner_dockerfile" ||
+  fail "runner image does not preserve opencode.json's relative session plugin path"
 grep -Fq 'https://github.com/jlapenna/repo-tools.git' "$runner_dockerfile" ||
   fail "runner image no longer clones repo-tools for OpenCode"
 grep -Fq 'git init /opt/repo-tools' "$runner_dockerfile" ||
