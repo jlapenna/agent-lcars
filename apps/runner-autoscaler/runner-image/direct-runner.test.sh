@@ -389,6 +389,9 @@ if [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ]; then
   run_count=$(( $(cat "$OPENCODE_RUN_COUNT_FILE") + 1 ))
 fi
 echo "$run_count" > "$OPENCODE_RUN_COUNT_FILE"
+if [ "${FAKE_OPENCODE_STALE_NO_DELIVERABLE:-}" = 1 ] && [ "$run_count" -eq 1 ]; then
+  echo 'NO_DELIVERABLE=1' >> "$RUNTIME_ENV"
+fi
 if [ "${FAKE_OPENCODE_NATIVE_PARK:-}" = 1 ]; then
   printf '%s\n%s\n' \
     "<!-- agent-result:v1:park:${ATTEMPT_ID} -->" \
@@ -971,6 +974,20 @@ unset FAKE_BRIEF_NO_RESUME FAKE_GH_LOOKUP_FAIL
   fail "opencode verifier lookup failure: provider retried after an inconclusive verifier"
 
 echo "scenario opencode-verifier-lookup-failure: OK"
+
+# A stale marker in the shared prepare environment may have come from an
+# agent-invoked verifier. A current lookup failure must remain inconclusive;
+# only the dedicated, freshly-empty probe environment can authorize recovery.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_LOOKUP_FAIL=1
+export FAKE_OPENCODE_STALE_NO_DELIVERABLE=1
+run_scenario opencode-stale-marker-lookup-failure opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_LOOKUP_FAIL
+unset FAKE_OPENCODE_STALE_NO_DELIVERABLE
+[ "$rc" -eq 1 ] || fail "opencode stale marker: expected terminal no-deliverable"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode stale marker: old shared verifier result authorized continuation"
+
+echo "scenario opencode-stale-marker-lookup-failure: OK"
 
 # Native structured park evidence is already a terminal handoff. It suppresses
 # continuation even though the GitHub verifier has no native comment to find.

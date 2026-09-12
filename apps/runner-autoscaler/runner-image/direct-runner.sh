@@ -895,13 +895,15 @@ else
     fi
   fi
   OPENCODE_VERIFY_PROBE="$RUNNER_TEMP/opencode-first-round-verify.txt"
+  OPENCODE_VERIFY_ENV="$RUNNER_TEMP/opencode-first-round-verify.env"
+  : > "$OPENCODE_VERIFY_ENV"
   if [ "$AGENT_EXIT" -eq 0 ] && ! $native_terminal_recorded; then
     set +e
-    AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" \
+    AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" RUNTIME_ENV="$OPENCODE_VERIFY_ENV" \
       bash "$VERIFY_OUTCOME" > "$OPENCODE_VERIFY_PROBE" 2>&1
     probe_exit=$?
     set -e
-    if [ "$probe_exit" -ne 0 ] && grep -Fxq 'NO_DELIVERABLE=1' "$RUNTIME_ENV"; then
+    if [ "$probe_exit" -ne 0 ] && grep -Fxq 'NO_DELIVERABLE=1' "$OPENCODE_VERIFY_ENV"; then
       if [ -n "$RESUME_SESSION_ID" ]; then
         OPENCODE_CONTINUATION_SESSION="$RESUME_SESSION_ID"
       else
