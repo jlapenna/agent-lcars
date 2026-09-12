@@ -335,7 +335,8 @@ function run(over: Partial<Run> = {}): Run {
 }
 
 describe.each([
-  { ok: false, summary: 'failed', method: 'POST' },
+  { ok: false, summary: 'failed', method: undefined },
+  { ok: true, summary: 'park', method: 'POST' },
   { ok: true, summary: 'pull-request', method: 'DELETE' },
 ])('outcome ordering for $summary', ({ ok, summary, method }) => {
   it.each([
@@ -354,7 +355,8 @@ describe.each([
       vi.spyOn(store, 'listRuns').mockResolvedValue([
         run({
           runId: `octo/example#7${suffix}`,
-          result: ok ? { ok: true, summary: 'park' } : { ok: true },
+          result:
+            method === 'DELETE' ? { ok: true, summary: 'park' } : { ok: true },
         }),
       ]);
       const fetchImpl = vi.fn(
@@ -373,7 +375,7 @@ describe.each([
         String(url).includes('/labels'),
       );
       expect(labelCalls.map(([, init]) => init?.method)).toEqual(
-        suppress ? [] : [method],
+        suppress || method === undefined ? [] : [method],
       );
     },
   );

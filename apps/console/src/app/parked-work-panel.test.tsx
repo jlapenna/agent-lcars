@@ -122,7 +122,7 @@ describe('ParkedWorkPanel', () => {
     });
     expect(redispatchButtons).toHaveLength(2);
     expect(
-      screen.getByRole('heading', { name: /Parked work \(2\)/ }),
+      screen.getByRole('heading', { name: /Stopped work \(2\)/ }),
     ).toBeInTheDocument();
 
     // Rows render oldest-first (asserted above), so the first Redispatch
@@ -192,7 +192,7 @@ describe('ParkedWorkPanel', () => {
       true,
     );
     expect(
-      screen.getByText('Older tasks may contain parked work.'),
+      screen.getByText('Older tasks may contain stopped work.'),
     ).toBeInTheDocument();
   });
 
@@ -201,11 +201,11 @@ describe('ParkedWorkPanel', () => {
     expect(screen.getByTestId('parked-work-panel')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'No parked work in the 200 most recently updated tasks.',
+        'No stopped work in the 200 most recently updated tasks.',
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Older tasks may contain parked work.'),
+      screen.getByText('Older tasks may contain stopped work.'),
     ).toBeInTheDocument();
   });
 });

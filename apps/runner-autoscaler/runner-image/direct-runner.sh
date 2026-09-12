@@ -151,8 +151,11 @@ report_early_failure() {
   [ -n "${HEARTBEAT_PID:-}" ] && { kill "$HEARTBEAT_PID" 2>/dev/null || true; }
   if [ "$early_exit_code" -ne 0 ] && [ "$COMPLETED" -ne 1 ]; then
     early_payload="$RUNNER_TEMP/early-failure-payload.json"
+    if [ -z "$EARLY_FAILURE_MESSAGE" ]; then
+      EARLY_FAILURE_MESSAGE="Runner setup or finalization failed (exit $early_exit_code). Inspect the retained runner diagnostics."
+    fi
     jq -cn --arg message "$EARLY_FAILURE_MESSAGE" \
-      '{outcome:"no-deliverable",outcomeReference:null} + (if $message == "" then {} else {message:$message} end)' \
+      '{outcome:"runner-failed",outcomeReference:null} + (if $message == "" then {} else {message:$message} end)' \
       > "$early_payload" 2>/dev/null
     curl -sf --config - >/dev/null 2>&1 <<CURLCFG || true
 url = "$RUNS_API/complete"
@@ -199,6 +202,17 @@ CHECKOUT_TOKEN="$(jq -r '.token' <<<"$checkout")"
 # token, not a new long-lived provider credential.
 export GH_TOKEN="$CHECKOUT_TOKEN"
 export ACTIONS_RERUN_TOKEN="$CHECKOUT_TOKEN"
+
+# Renew through the existing run-token API at each gh/Git network operation.
+# This keeps two-hour agents functional beyond GitHub's one-hour token TTL.
+export LCARS_REAL_GH="$(command -v gh)"
+export LCARS_REAL_GIT="$(command -v git)"
+run_command_dir="$RUNNER_TEMP/run-github-bin"
+mkdir -p "$run_command_dir"
+chmod 700 "$run_command_dir"
+ln -sf "$RUNTIME_HELPERS_DIR/run-github-command.sh" "$run_command_dir/gh"
+ln -sf "$RUNTIME_HELPERS_DIR/run-github-command.sh" "$run_command_dir/git"
+export PATH="$run_command_dir:$PATH"
 
 CHECKOUT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$CHECKOUT_TOKEN" | base64 -w0)"
 
@@ -428,13 +442,19 @@ if [ "$PIPELINE" = "claude" ]; then
   CLAUDE_CODE_OAUTH_TOKEN="$(cat "$CLAUDE_TOKEN_FILE")"
   export CLAUDE_CODE_OAUTH_TOKEN
 
+  CLAUDE_TIMEOUT_SECONDS="${CLAUDE_TIMEOUT_SECONDS:-7200}"
+  if ! [[ "$CLAUDE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$CLAUDE_TIMEOUT_SECONDS" -lt 1 ]; then
+    echo "FATAL: CLAUDE_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
   LAST_MESSAGE_FILE="$RUNNER_TEMP/last-message.txt"
   set +e
   # `--print` with the default text format writes exactly the agent's final
   # response to stdout, so `tee` both preserves the live log and captures
   # the message. The exit code must come from PIPESTATUS, not $?, which
   # after a pipe is tee's status.
-  claude \
+  timeout --signal=TERM --kill-after=30s "${CLAUDE_TIMEOUT_SECONDS}s" \
+    claude \
     --dangerously-skip-permissions \
     --allowedTools "Bash,Edit,Write,MultiEdit" \
     --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task" \
@@ -565,7 +585,7 @@ CURLCFG
   : > "$CODEX_FAILURE_MESSAGES"
   : > "$CODEX_STDERR"
   mkfifo "$CODEX_STDERR_PIPE"
-  CODEX_TIMEOUT_SECONDS="${CODEX_TIMEOUT_SECONDS:-4800}"
+  CODEX_TIMEOUT_SECONDS="${CODEX_TIMEOUT_SECONDS:-7200}"
   case "$CODEX_TIMEOUT_SECONDS" in
     '' | *[!0-9]*)
       echo "FATAL: CODEX_TIMEOUT_SECONDS must be a positive integer" >&2
@@ -705,7 +725,7 @@ else
   # leave the surrounding direct runner alive to finalize telemetry and
   # report no-deliverable rather than letting an unbounded provider retry
   # occupy a queue slot indefinitely.
-  OPENCODE_TIMEOUT_SECONDS="${OPENCODE_TIMEOUT_SECONDS:-3600}"
+  OPENCODE_TIMEOUT_SECONDS="${OPENCODE_TIMEOUT_SECONDS:-7200}"
   case "$OPENCODE_TIMEOUT_SECONDS" in
     '' | *[!0-9]*)
       echo "FATAL: OPENCODE_TIMEOUT_SECONDS must be a positive integer" >&2
@@ -755,10 +775,16 @@ WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
 cleanup_codex_material
 
 OUTCOME=no-deliverable
+if [ "$AGENT_EXIT" -eq 124 ]; then
+  OUTCOME=agent-timeout
+elif [ "$AGENT_EXIT" -ne 0 ]; then
+  OUTCOME=agent-failed
+fi
 OUTCOME_REFERENCE=null
 VERIFY_OUTPUT="$RUNNER_TEMP/verify-outcome-output"
-if [ "$AGENT_EXIT" -eq 0 ] &&
-  AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
+# A timeout or provider crash can happen after a PR was published. Always
+# verify exact attempt-bound artifacts before classifying execution failure.
+if AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
   bash "$VERIFY_OUTCOME" >"$VERIFY_OUTPUT" 2>&1; then
   cat "$VERIFY_OUTPUT"
   # The verifier proves that *some* exact marker-bound artifact exists; the
@@ -823,7 +849,7 @@ if [ "$AGENT_EXIT" -eq 0 ] &&
       echo "::warning::Could not classify a pull-request review deliverable for the completion callback" >&2
     fi
   fi
-elif [ "$AGENT_EXIT" -eq 0 ] && [ "$ANCHOR_TYPE" = "work" ]; then
+elif [ "$ANCHOR_TYPE" = "work" ]; then
   # A native Work terminal outcome is a deliberately narrow replacement for
   # the issue-comment evidence it cannot produce.  Do not parse agent stdout
   # or the expanded prompt: only an exact, private two-line file may settle a
@@ -844,12 +870,22 @@ elif [ "$AGENT_EXIT" -eq 0 ]; then
   cat "$VERIFY_OUTPUT"
 fi
 
+if [ "$OUTCOME" = no-deliverable ] && grep -q 'FAILED lookup' "$VERIFY_OUTPUT"; then
+  OUTCOME=verification-failed
+fi
+
 payload_file="$RUNNER_TEMP/complete-payload.json"
 # The tail, not the head: a park's blocker line and a PR summary both live
 # at the end of the final message. Missing or unreadable (every non-Claude
 # pipeline today; no message captured) is not an error -- the round still
 # has a real outcome, it just renders without a turn.
 AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || true)"
+# Capacity exhaustion is a provider failure, never a request for a human
+# task decision. Keep this narrow and only classify unsuccessful outcomes.
+if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]] &&
+  [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]]; then
+  OUTCOME=provider-limit
+fi
 jq -cn --arg outcome "$OUTCOME" --argjson ref "$OUTCOME_REFERENCE" \
   --arg message "$AGENT_MESSAGE" \
   '{outcome: $outcome, outcomeReference: $ref}

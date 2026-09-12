@@ -9,7 +9,7 @@ import {
 
 import { type WorkOrigin, workPayloadSchema, type WorkSpec } from './spec';
 
-export type ItemState = 'running' | 'done' | 'parked' | 'canceled';
+export type ItemState = 'running' | 'done' | 'parked' | 'failed' | 'canceled';
 
 /** Newest run first: createdAt descending, runId as a stable tiebreak. */
 export function latestRun(runs: readonly Run[]): Run | undefined {
@@ -33,16 +33,13 @@ export function deriveItemState(
   if (latest === undefined) return 'running';
   if (isLive(latest.state)) return 'running';
   if (latest.state === 'finished') {
-    // #1608 put `park` in OK_OUTCOMES (apps/console/src/lib/run-result.ts),
-    // so a run that parked with real evidence now settles `ok: true` too --
-    // `summary` is what still distinguishes it from an ordinary success.
-    // `ok: false` still reads `parked`: a failed run needs a human as well.
-    return latest.result?.ok && latest.result.summary !== 'park'
-      ? 'done'
-      : 'parked';
+    // Only an explicit park is a human handoff. Missing deliverables and
+    // execution failures need diagnosis, not a fabricated human decision.
+    if (latest.result?.summary === 'park') return 'parked';
+    return latest.result?.ok ? 'done' : 'failed';
   }
   // lost: the sweep retries until the budget is spent, then leaves it.
-  return task.consecutiveLost > MAX_AUTO_RETRIES ? 'parked' : 'running';
+  return task.consecutiveLost > MAX_AUTO_RETRIES ? 'failed' : 'running';
 }
 
 export interface ItemRunView {

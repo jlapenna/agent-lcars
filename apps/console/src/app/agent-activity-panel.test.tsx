@@ -38,7 +38,7 @@ vi.mock('../lib/agent-activity', async () => {
   >('../lib/agent-activity');
   return {
     RECENT_RUN_LIMIT: 8,
-    RUN_TIMEOUT_MINUTES: 90,
+    RUN_TIMEOUT_MINUTES: 120,
     MAX_TURNS_BUDGET: 200,
     QUEUE_STALL_THRESHOLD_SECONDS,
     findStalledQueuedRun: (liveRuns: AgentRun[]) =>
@@ -486,7 +486,7 @@ describe('AgentActivityPanel recent runs', () => {
         makeAgentRun({
           id: 11,
           conclusion: 'cancelled',
-          elapsedSeconds: 90 * 60,
+          elapsedSeconds: 120 * 60,
         }),
       ],
     });

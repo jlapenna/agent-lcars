@@ -20,6 +20,7 @@ import { formatRelativeTime } from '../format';
  *  likely to need attention (it settled without success and nobody has
  *  redispatched it yet), so it sorts to the top. */
 const STATE_ORDER: Record<ItemState, number> = {
+  failed: -1,
   parked: 0,
   running: 1,
   done: 2,
@@ -29,6 +30,7 @@ const STATE_ORDER: Record<ItemState, number> = {
 /** Same palette as the detail page's `STATE_COLORS` (`[id]/page.tsx`). */
 const STATE_COLORS: Record<ItemState, string> = {
   parked: 'yellow',
+  failed: 'red',
   running: 'blue',
   done: 'green',
   canceled: 'gray',

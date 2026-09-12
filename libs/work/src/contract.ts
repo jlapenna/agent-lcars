@@ -68,6 +68,7 @@ export const itemStateSchema = z.enum([
   'running',
   'done',
   'parked',
+  'failed',
   'canceled',
 ]);
 
@@ -206,7 +207,7 @@ export const itemsContract = {
         method: 'POST',
         path: '/items/{id}/redispatch',
         operationId: 'redispatchItem',
-        summary: 'Mint a fresh run for a parked item',
+        summary: 'Mint a fresh run for a parked or failed item',
       }),
     )
     .errors({
@@ -222,7 +223,7 @@ export const itemsContract = {
       },
       CONFLICT: {
         message:
-          'Only a parked item can be redispatched, or the named session has no archived transcript',
+          'Only a parked or failed item can be redispatched, or the named session has no archived transcript',
       },
       TOO_MANY_REQUESTS: {
         message: 'Fleet is at its live-run cap',

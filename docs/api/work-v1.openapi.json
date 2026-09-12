@@ -266,7 +266,13 @@
                     },
                     "state": {
                       "type": "string",
-                      "enum": ["running", "done", "parked", "canceled"]
+                      "enum": [
+                        "running",
+                        "done",
+                        "parked",
+                        "failed",
+                        "canceled"
+                      ]
                     },
                     "spec": {
                       "type": "object",
@@ -559,7 +565,13 @@
                     },
                     "state": {
                       "type": "string",
-                      "enum": ["running", "done", "parked", "canceled"]
+                      "enum": [
+                        "running",
+                        "done",
+                        "parked",
+                        "failed",
+                        "canceled"
+                      ]
                     },
                     "spec": {
                       "type": "object",
@@ -802,7 +814,7 @@
             "name": "state",
             "schema": {
               "type": "string",
-              "enum": ["running", "done", "parked", "canceled"]
+              "enum": ["running", "done", "parked", "failed", "canceled"]
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -869,7 +881,13 @@
                           },
                           "state": {
                             "type": "string",
-                            "enum": ["running", "done", "parked", "canceled"]
+                            "enum": [
+                              "running",
+                              "done",
+                              "parked",
+                              "failed",
+                              "canceled"
+                            ]
                           },
                           "spec": {
                             "type": "object",
@@ -1138,7 +1156,13 @@
                     },
                     "state": {
                       "type": "string",
-                      "enum": ["running", "done", "parked", "canceled"]
+                      "enum": [
+                        "running",
+                        "done",
+                        "parked",
+                        "failed",
+                        "canceled"
+                      ]
                     },
                     "spec": {
                       "type": "object",
@@ -1389,7 +1413,7 @@
     "/items/{id}/redispatch": {
       "post": {
         "operationId": "redispatchItem",
-        "summary": "Mint a fresh run for a parked item",
+        "summary": "Mint a fresh run for a parked or failed item",
         "tags": ["items"],
         "parameters": [
           {
@@ -1432,7 +1456,13 @@
                     },
                     "state": {
                       "type": "string",
-                      "enum": ["running", "done", "parked", "canceled"]
+                      "enum": [
+                        "running",
+                        "done",
+                        "parked",
+                        "failed",
+                        "canceled"
+                      ]
                     },
                     "spec": {
                       "type": "object",
@@ -1690,7 +1720,7 @@
             }
           },
           "409": {
-            "description": "Only a parked item can be redispatched, or the named session has no archived transcript",
+            "description": "Only a parked or failed item can be redispatched, or the named session has no archived transcript",
             "content": {
               "application/json": {
                 "schema": {
@@ -1786,7 +1816,13 @@
                     },
                     "state": {
                       "type": "string",
-                      "enum": ["running", "done", "parked", "canceled"]
+                      "enum": [
+                        "running",
+                        "done",
+                        "parked",
+                        "failed",
+                        "canceled"
+                      ]
                     },
                     "spec": {
                       "type": "object",

@@ -19,8 +19,9 @@ export type { AgentPipeline } from './github-client';
 import { logger } from '@agent-lcars/logging';
 
 import type { AgentPipeline } from './github-client';
-// Direct workers share the same 90-minute Run lease budget.
-export const RUN_TIMEOUT_MINUTES = 90;
+// Direct provider invocations share a two-hour runtime allowance.
+// The renewable run lease is separate from this wall-clock budget.
+export const RUN_TIMEOUT_MINUTES = 120;
 
 // Claude direct workers have a 200-turn budget. OpenCode has no equivalent
 // turn cap, so the turn-budget gauge only renders for `pipeline === 'claude'`
