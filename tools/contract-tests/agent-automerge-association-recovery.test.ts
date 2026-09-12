@@ -68,9 +68,11 @@ function pull(number: number, overrides: Partial<Pull> = {}): Pull {
 function executeAssociation({
   payload = [],
   responses = [],
+  mutateToSingleLookup = false,
 }: {
-  payload?: Pull[];
+  payload?: Pull[] | null;
   responses?: Array<Pull | Pull[] | 'error'>;
+  mutateToSingleLookup?: boolean;
 }) {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'association-recovery-'));
   const callsPath = path.join(temp, 'calls');
@@ -102,7 +104,13 @@ printf '%s\\n' "$response"
   chmodSync(fakeGh, 0o755);
   chmodSync(fakeSleep, 0o755);
 
-  const result = spawnSync('bash', ['-c', associationScript], {
+  const script = mutateToSingleLookup
+    ? associationScript.replace(
+        'for attempt in $(seq 1 6); do',
+        'for attempt in 1; do',
+      )
+    : associationScript;
+  const result = spawnSync('bash', ['-euo', 'pipefail', '-c', script], {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -130,7 +138,7 @@ printf '%s\\n' "$response"
 }
 
 describe('workflow-run PR association recovery', () => {
-  it('uses an exact-head payload association without querying REST', () => {
+  it('uses an exact-head payload association without a commit-association lookup', () => {
     const result = executeAssociation({
       payload: [pull(4, { head: { sha: 'b'.repeat(40) } }), pull(7)],
       responses: [pull(7)],
@@ -141,8 +149,44 @@ describe('workflow-run PR association recovery', () => {
     expect(result.calls).toEqual(['api repos/o/r/pulls/7']);
   });
 
+  it('falls back when payload PR verification returns another head', () => {
+    const result = executeAssociation({
+      payload: [pull(10)],
+      responses: [pull(10, { head: { sha: 'b'.repeat(40) } }), [pull(11)]],
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain('SELECTED_PR=11');
+    expect(result.calls).toEqual([
+      'api repos/o/r/pulls/10',
+      `api repos/o/r/commits/${headSha}/pulls`,
+    ]);
+  });
+
+  it('falls back when payload PR verification fails transiently', () => {
+    const result = executeAssociation({
+      payload: [pull(12)],
+      responses: ['error', [pull(13)]],
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain('could not be verified');
+    expect(result.output).toContain('SELECTED_PR=13');
+  });
+
+  it('falls back when the payload PR was closed without merging', () => {
+    const result = executeAssociation({
+      payload: [pull(14)],
+      responses: [pull(14, { state: 'closed' }), [pull(15)]],
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain('SELECTED_PR=15');
+  });
+
   it('recovers when an empty association becomes a merged PR', () => {
     const result = executeAssociation({
+      payload: null,
       responses: [
         [],
         [
@@ -160,6 +204,20 @@ describe('workflow-run PR association recovery', () => {
       2,
     );
     expect(result.calls).toContain('sleep:5');
+  });
+
+  it('demonstrates that the old single lookup misses delayed association', () => {
+    const result = executeAssociation({
+      payload: null,
+      responses: [[], [pull(8)]],
+      mutateToSingleLookup: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).not.toContain('SELECTED_PR=8');
+    expect(result.calls.filter((call) => call.startsWith('api '))).toHaveLength(
+      1,
+    );
   });
 
   it('ignores unrelated and unmerged closed candidates and selects deterministically', () => {
