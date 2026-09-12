@@ -15,8 +15,9 @@ Keep this file short. It is re-sent on every request.
 Work directly in this session. Delegated exploration is disabled for this
 serial inference runner: waiting on a child consumed an entire two-hour run.
 Use targeted glob/grep and short reads to answer a concrete implementation
-question. Start with at most 120 lines per read; expand only when a specific
-missing definition or caller requires it. Avoid batches of entire source files.
+question. Reads are capped at 120 lines. For a larger file, search for the
+specific definition or caller, then use targeted offsets to inspect the next
+relevant range. Avoid batches of entire source files.
 
 Maintain a short working note in the task worktree: acceptance criteria,
 verified paths and line ranges, decisions, checks performed, and the next
