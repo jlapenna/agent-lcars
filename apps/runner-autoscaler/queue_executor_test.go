@@ -105,6 +105,42 @@ func TestTickSchedulesOnceUsesWorkAPIAndGoogleBearer(t *testing.T) {
 	}
 }
 
+func TestTickMaintenanceOnceUsesWorkAPIAndGoogleBearer(t *testing.T) {
+	var gotPath, gotBearer string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBearer = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"lost":[],"retried":[],"dispatched":[],"reported":[],"outboxProcessed":0,"outboxContinuationNeeded":false}`))
+	}))
+	defer server.Close()
+
+	err := tickMaintenanceOnce(scheduleTickerConfig{
+		consoleURL: server.URL,
+		idToken:    func() (string, error) { return "google-id-token", nil },
+	})
+	if err != nil {
+		t.Fatalf("tickMaintenanceOnce: %v", err)
+	}
+	if gotPath != "/api/work/v1/maintenance/tick" || gotBearer != "Bearer google-id-token" {
+		t.Fatalf("request path/bearer = %q/%q", gotPath, gotBearer)
+	}
+}
+
+func TestTickMaintenanceOnceReportsOutboxFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"lost":[],"retried":[],"dispatched":[],"reported":[],"outboxProcessed":1,"outboxContinuationNeeded":true,"outboxDrainFailed":[{"entryId":"dispatch/run-1","error":"unavailable"}]}`))
+	}))
+	defer server.Close()
+	err := tickMaintenanceOnce(scheduleTickerConfig{
+		consoleURL: server.URL,
+		idToken:    func() (string, error) { return "token", nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "1 outbox failures") {
+		t.Fatalf("tickMaintenanceOnce error = %v", err)
+	}
+}
+
 func TestTickSchedulesOnceReportsNonSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -191,6 +227,22 @@ func TestScheduleTickMetricsExposeSuccessAndError(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(scheduleTicksTotal.WithLabelValues("error")); got != failure+1 {
 		t.Fatalf("schedule tick error metric = %v, want %v", got, failure+1)
+	}
+}
+
+func TestMaintenanceTickMetricsExposeSuccessErrorAndFreshness(t *testing.T) {
+	success := testutil.ToFloat64(maintenanceTicksTotal.WithLabelValues("success"))
+	failure := testutil.ToFloat64(maintenanceTicksTotal.WithLabelValues("error"))
+	recordMaintenanceTick(true)
+	recordMaintenanceTick(false)
+	if got := testutil.ToFloat64(maintenanceTicksTotal.WithLabelValues("success")); got != success+1 {
+		t.Fatalf("maintenance tick success metric = %v, want %v", got, success+1)
+	}
+	if got := testutil.ToFloat64(maintenanceTicksTotal.WithLabelValues("error")); got != failure+1 {
+		t.Fatalf("maintenance tick error metric = %v, want %v", got, failure+1)
+	}
+	if got := testutil.ToFloat64(maintenanceLastSuccessTimestamp); got <= 0 {
+		t.Fatalf("maintenance last success timestamp = %v, want positive", got)
 	}
 }
 

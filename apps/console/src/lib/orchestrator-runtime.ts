@@ -87,13 +87,16 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
   cached = {
     store,
     orchestrator,
-    drain: () => {
+    drain: (limit?: number) => {
       const github = orchestratorGithubRuntimeDeps(process.env);
-      return drainOutbox({
-        store,
-        orchestrator,
-        ...github,
-      });
+      return drainOutbox(
+        {
+          store,
+          orchestrator,
+          ...github,
+        },
+        limit,
+      );
     },
   };
   return cached;

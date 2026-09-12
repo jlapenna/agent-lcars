@@ -25,12 +25,13 @@ describe('WORK_ID_PATTERN', () => {
 });
 
 describe('itemsContract', () => {
-  it('declares the six item procedures', () => {
+  it('declares item and maintenance procedures', () => {
     expect(Object.keys(itemsContract).sort()).toEqual([
       'cancel',
       'create',
       'get',
       'list',
+      'maintenanceTick',
       'redispatch',
       'reply',
     ]);
@@ -275,6 +276,7 @@ describe('generateWorkOpenApi', () => {
         '/items/{id}/cancel',
         '/items/{id}/redispatch',
         '/items/{id}/reply',
+        '/maintenance/tick',
         '/schedules',
         '/schedules/tick',
         '/schedules/{id}',
@@ -348,6 +350,7 @@ describe('generateWorkOpenApi', () => {
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409', '429'],
       'POST /items/{id}/reply': ['200', '403', '404', '409', '429'],
+      'POST /maintenance/tick': ['200'],
       'POST /dispatches/github': ['200', '400', '403', '409'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
       'GET /schedules/{id}': ['200', '404'],

@@ -65,12 +65,12 @@ forever. `Orchestrator.sweepExpired()` (driven by a scheduled reconcile call,
 not by this library) settles every expired run, then immediately requests a
 fresh run for each task that hasn't gone `lost` more than `MAX_AUTO_RETRIES`
 (2) times in a row since its last `finished`/`canceled` settlement, using a
-deterministic `retry:<lostRunId>` request ID so a re-swept or re-driven
-retry maps to the run already created instead of starting a second one. Past
-that budget the task is left parked for a manual request. A known,
-documented gap: a crash between the expire commit (already durable) and the
-retry request is not itself durable — see `Orchestrator.sweepExpired`'s own
-doc comment for the accepted tradeoff.
+deterministic `retry:<lostRunId>` request ID. Loss settlement, retry creation,
+and both outbox entries commit atomically; a crash commits all or none, and a
+repeated or concurrent sweep cannot create a duplicate. Past that budget the
+task is left parked for a manual request. Lost records written by older builds
+without a successor remain parked and require a manual request; no migration
+can safely infer whether their missing retry already launched externally.
 
 ## The store contract
 

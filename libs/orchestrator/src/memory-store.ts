@@ -149,6 +149,13 @@ export class MemoryStore implements OrchestratorStore {
         decision.run.runId,
       );
     }
+    for (const run of decision.additionalRuns ?? []) {
+      this.#runs.set(run.runId, structuredClone(run));
+      this.#requestRuns.set(
+        this.#requestKey(run.task, run.requestSource, run.requestId),
+        run.runId,
+      );
+    }
     for (const entry of decision.outbox) {
       this.#outbox.set(entry.entryId, structuredClone(entry));
     }
