@@ -9,7 +9,7 @@ umask 077
 : "${RUNTIME_OUTPUT:?RUNTIME_OUTPUT is required}"
 : "${RUNTIME_ENV:?RUNTIME_ENV is required}"
 : "${REPOSITORY:?REPOSITORY is required}"
-: "${GH_TOKEN:?GH_TOKEN is required}"
+command -v gh >/dev/null || { echo '::error::gh is required' >&2; exit 1; }
 
 bash "$RUNTIME_HELPERS_DIR/assert-consumer-boundaries.sh" "$WORKSPACE" "$REPOSITORY"
 

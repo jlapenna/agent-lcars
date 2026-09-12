@@ -230,7 +230,13 @@ async function call(
 
 const context = {
   tokens: { tokenFor: async () => 'ambient-token' },
-  checkoutTokens: { tokenFor: async () => 'checkout-token' },
+  checkoutTokens: {
+    tokenFor: async () => 'checkout-token',
+    expiringTokenFor: async () => ({
+      token: 'checkout-token',
+      expiresAt: '2026-08-26T11:00:00.000Z',
+    }),
+  },
   // #1799: every test below that does not care about draining gets a
   // no-op stub -- only the `complete` drain tests override it.
   drain: async () => ({ dispatched: [], reported: [], failed: [] }),
@@ -1617,14 +1623,21 @@ describe('checkoutToken', () => {
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(runToken),
     });
-    const tokenFor = vi.fn(async (repo: string) => `ghs_secret-for-${repo}`);
+    const expiresAt = '2026-08-26T10:53:21.000Z';
+    const expiringTokenFor = vi.fn(async (repo: string) => ({
+      token: `ghs_secret-for-${repo}`,
+      expiresAt,
+    }));
     const r = await call(
       {
         store,
         orchestrator,
         now,
         tokens: context.tokens,
-        checkoutTokens: { tokenFor },
+        checkoutTokens: {
+          tokenFor: async (repo) => (await expiringTokenFor(repo)).token,
+          expiringTokenFor,
+        },
         codexAuth: context.codexAuth,
         bearerToken: runToken,
       },
@@ -1632,8 +1645,8 @@ describe('checkoutToken', () => {
       runPath(runId, '/checkout-token'),
     );
     expect(r.status).toBe(200);
-    expect(tokenFor).toHaveBeenCalledWith('jlapenna/agent-lcars');
-    expect(tokenFor).toHaveBeenCalledTimes(1);
+    expect(expiringTokenFor).toHaveBeenCalledWith('jlapenna/agent-lcars');
+    expect(expiringTokenFor).toHaveBeenCalledTimes(1);
 
     const body = r.json as {
       token: string;
@@ -1642,13 +1655,7 @@ describe('checkoutToken', () => {
     };
     expect(body.repository).toBe('jlapenna/agent-lcars');
     expect(body.token).toBe('ghs_secret-for-jlapenna/agent-lcars');
-    // Final-review fix: `expiresAt` used to be computed from the real wall
-    // clock (`Date.now()`) rather than `context.now()`, so this exact value
-    // was untestable. NOW + 45 minutes, exactly, only holds if it came from
-    // the injected clock.
-    expect(body.expiresAt).toBe(
-      new Date(Date.parse(NOW) + 45 * 60_000).toISOString(),
-    );
+    expect(body.expiresAt).toBe(expiresAt);
     // The run's own bearer credential must never surface here -- a mix-up
     // would hand the caller the wrong secret entirely.
     expect(body.token).not.toBe(runToken);

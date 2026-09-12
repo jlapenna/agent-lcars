@@ -556,10 +556,10 @@ var (
 		Name: "github_runner_autoscaler_queue_executor_polls_total",
 		Help: "Queue executor claim polls by non-claim outcome: draining, capacity_wait, idle_204, idle_empty, or poll_error.",
 	}, []string{"outcome"})
-	queueExecutorClaimsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	queueExecutorClaimsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_claims_total",
-		Help: "Successful queue claims returned by the control plane before direct-runner launch.",
-	})
+		Help: "Successful queue claims returned by the control plane before direct-runner launch, by provider pipeline.",
+	}, []string{"pipeline"})
 	queueExecutorLaunchesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_launches_total",
 		Help: "Direct-runner launch attempts after a successful claim, by outcome: success or error.",

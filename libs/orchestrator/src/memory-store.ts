@@ -26,6 +26,7 @@ import {
   type OrchestratorStore,
   type RequestBinding,
   type RequestTransactionState,
+  selectFairQueuedRun,
   StoreConflict,
   type TaskListCursor,
   type VersionedTask,
@@ -494,12 +495,8 @@ export class MemoryStore implements OrchestratorStore {
     claimedBy: string;
     tokenHash: string;
   }): Promise<Run | undefined> {
-    const pipelines = new Set(input.pipelines);
-    const candidate = [...this.#runs.values()]
-      .filter(
-        (run) => run.queue?.state === 'queued' && pipelines.has(run.pipeline),
-      )
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    const runs = [...this.#runs.values()];
+    const candidate = selectFairQueuedRun(runs, runs, input.pipelines);
     if (candidate === undefined) return undefined;
     const claimed: Run = {
       ...candidate,

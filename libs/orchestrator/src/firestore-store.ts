@@ -36,6 +36,7 @@ import {
   type OrchestratorStore,
   type RequestBinding,
   type RequestTransactionState,
+  selectFairQueuedRun,
   StoreConflict,
   type TaskListCursor,
   type VersionedTask,
@@ -604,26 +605,47 @@ export class FirestoreStore implements OrchestratorStore {
     tokenHash: string;
   }): Promise<Run | undefined> {
     return this.#firestore.runTransaction(async (tx) => {
-      // One query per candidate pipeline, each a two-clause equality query
-      // (`queue.state == 'queued' AND pipeline == p`) -- like `listRuns`'s
-      // GitHub-anchor query, this is equality-only across both fields and
-      // needs no composite index, so splitting by pipeline keeps every
-      // query shape identical to a single-pipeline claim rather than
-      // reaching for an `in` filter that would change that shape.
-      const snapshots = await Promise.all(
-        input.pipelines.map((pipeline) =>
-          tx.get(
-            this.#runs
-              .where('queue.state', '==', 'queued')
-              .where('pipeline', '==', pipeline),
+      // One query per candidate pipeline for queued work and each live state.
+      // Every query uses two equality clauses, so provider-aware occupancy
+      // remains index-compatible with the former single-pipeline claim shape.
+      // Reading selection and occupancy in this transaction makes a racing
+      // claimant retry after the winner changes either value.
+      const granted = [...new Set(input.pipelines)];
+      const [queuedSnapshots, ...liveSnapshots] = await Promise.all([
+        Promise.all(
+          granted.map((pipeline) =>
+            tx.get(
+              this.#runs
+                .where('queue.state', '==', 'queued')
+                .where('pipeline', '==', pipeline),
+            ),
           ),
         ),
-      );
-      const candidates = snapshots
+        ...LIVE_STATES.map((state) =>
+          Promise.all(
+            granted.map((pipeline) =>
+              tx.get(
+                this.#runs
+                  .where('state', '==', state)
+                  .where('pipeline', '==', pipeline),
+              ),
+            ),
+          ),
+        ),
+      ]);
+      const queued = queuedSnapshots
         .flatMap((snapshot) => snapshot.docs)
-        .map((doc) => ({ doc, run: runSchema.parse(doc.data()) }))
-        .sort((a, b) => a.run.createdAt.localeCompare(b.run.createdAt));
-      const first = candidates[0];
+        .map((doc) => ({ doc, run: runSchema.parse(doc.data()) }));
+      const live = liveSnapshots
+        .flatMap((snapshots) => snapshots)
+        .flatMap((snapshot) => snapshot.docs)
+        .map((doc) => runSchema.parse(doc.data()));
+      const selected = selectFairQueuedRun(
+        queued.map(({ run }) => run),
+        live,
+        granted,
+      );
+      const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;
       const claimed: Run = {
         ...first.run,
