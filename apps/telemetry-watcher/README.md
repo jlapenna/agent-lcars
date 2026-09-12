@@ -112,7 +112,9 @@ and `src/lib/session-title-selection.ts` for the rank.
 
   (`lcars session title --clear` removes it.) The CLI resolves the session
   id itself, in order: `LCARS_SESSION_ID` → `CLAUDE_CODE_SESSION_ID` →
-  `CODEX_THREAD_ID`. The first one present _and_ passing `isSafeIdentifier`
+  `CODEX_THREAD_ID`. Claude and Codex export their native variables directly;
+  the runner's OpenCode `shell.env` plugin maps OpenCode's native session id
+  to `LCARS_SESSION_ID` for each tool call. The first one present _and_ passing `isSafeIdentifier`
   wins — a present-but-unsafe value is a hard failure, not a fall-through to
   the next candidate, so a malformed id can never silently retarget another
   runtime's session. The CLI writes
