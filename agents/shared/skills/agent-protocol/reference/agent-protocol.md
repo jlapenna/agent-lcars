@@ -139,6 +139,11 @@ channel. No issue write.
 
 ## 4. Parking — blocked on a human
 
+Use PARK when progress requires a human decision, approval, or access you
+cannot obtain through the authorized workflow. A timeout, provider quota,
+runner/setup failure, or missing deliverable does not establish that blocker.
+Preserve the execution diagnosis instead of inventing a human handoff.
+
 End your response with `PARK <blocker and resume trigger>`. A park is a
 real outcome, not silence: it must leave the same kind of durable,
 marker-stamped evidence any other outcome does (§5), or it is
@@ -207,13 +212,14 @@ branch on the reference format:
   that record only after the worker job closes; a bare response remains
   insufficient.
 
-A run whose own worker crashed or was cancelled outright — never reached its
-own turn end, so it never had the chance to park itself per §4 — is a
-machine-authored parking path instead. Its failure reporter must post the
-visible failure, add `status:needs-human`, and add the repository maintainer
-as an assignee. These updates are additive: keep the selected `agent:*` label
-for explicit redispatch, preserve an independent `status:blocked` label, and
-never remove an existing assignee.
+A worker crash, cancellation, quota failure, or timeout is an execution
+outcome. Its failure reporter must preserve the visible diagnosis and verify
+existing exact-marker deliverables even after a nonzero exit. A missing
+artifact remains a failed run. Only an explicit human blocker (§4) warrants
+`status:needs-human`; execution failure alone must not assign the maintainer
+or manufacture a park. Keep the selected `agent:*` label for explicit
+redispatch, preserve an independent `status:blocked` label, and never remove
+an existing assignee.
 
 **Stamp the deliverable with your attempt's claim marker.** This is the only
 evidence the finalizer accepts: the fleet's earlier time-window/bot-login
@@ -336,18 +342,18 @@ spend your own turn budget on the actual work instead.
 
 ## 7. Budget discipline
 
-State your job's hard timeout up front (check your own workflow's
-`timeout-minutes`) and pace your work against it. **A timeout-kill posts
-nothing on its own** — the run is simply cancelled, so if you have not
-already pushed work and posted a status comment before you'd hit the wall,
-nothing survives. Build your own reporting in well before the deadline, not
-only at the very end.
+State the supplied runtime budget up front and pace your work against it.
+QueueExecutor defaults to two hours per provider; hosted workflows use their
+own `timeout-minutes`. Commit and push incrementally, and report progress
+through §3 before the deadline. The runner can verify published artifacts
+after a timeout, but cannot turn unpublished work into a deliverable.
 
 Apply a **one-diagnosis-one-targeted-action** rule when fixing a failure:
 diagnose, apply one targeted fix, and re-check. If the same failure
-signature recurs after that targeted fix, stop and escalate (park per §4)
-rather than blind-iterating — repeated guessing burns the budget without
-converging and is indistinguishable, from the outside, from a stuck run.
+signature recurs after that targeted fix, preserve the evidence and identify
+the next action instead of blind-iterating. Park per §4 only when that action
+requires a human. Repeated provider or runner failures remain execution
+failures; they do not become human decisions by recurring.
 
 **Never apply a `ci:*` or `automation:*` label to widen your own run.** They
 are maintainer-requested workflow controls, not verification you may select:
