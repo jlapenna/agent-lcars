@@ -234,9 +234,8 @@ if [ ! -d "$workspace/.git" ]; then
   # top of the one-shot `ps aux`/cmdline visibility every argv-based secret
   # already has. `-c http.extraheader=...` scopes the credential to this
   # one invocation only; nothing derived from it lands in the resulting
-  # `.git/config` (that file gets its OWN copy of the same header below,
-  # once the repo exists, for the agent's later pushes -- expected data at
-  # rest, the same shape actions/checkout's persist-credentials leaves).
+  # `.git/config`; the temporary local header below is removed as soon as
+  # the renewable credential helper is installed.
   # --filter=blob:none (not --depth=1): a shallow clone has no history at
   # all, which is fine for reading files but breaks anything that needs to
   # walk commits (blame, log, a merge base) -- the partial-clone filter
@@ -247,9 +246,7 @@ if [ ! -d "$workspace/.git" ]; then
     clone --filter=blob:none "https://github.com/${TARGET_REPO}.git" "$workspace"
 fi
 cd "$workspace"
-# Same persisted-credential shape actions/checkout leaves behind with
-# persist-credentials: true -- the agent's own git pushes authenticate
-# without a second token hand-off.
+# Supply the initial credential only until the renewable helper is installed.
 git config --local "http.https://github.com/.extraheader" "$CHECKOUT_AUTH_HEADER"
 
 REAL_GH_BIN="$(command -v gh)"
@@ -288,8 +285,10 @@ export PATH="$CREDENTIAL_BIN:$PATH"
 # Direct-runner tasks must invoke `gh` through PATH; bypassing that boundary
 # with an absolute binary path is unsupported because it cannot rotate auth.
 git config --local --unset-all "http.https://github.com/.extraheader"
-git config --local --unset-all credential.helper || true
-git config --local credential.helper "$CREDENTIAL_BIN/git-credential-lcars"
+# An empty helper entry resets helpers inherited from system/global config;
+# the following entry is then the only helper Git consults for this checkout.
+git config --local credential.helper ''
+git config --local --add credential.helper "$CREDENTIAL_BIN/git-credential-lcars"
 git config --local credential.https://github.com.useHttpPath true
 
 checkout_refresh_loop() {

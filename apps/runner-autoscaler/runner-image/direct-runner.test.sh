@@ -200,10 +200,20 @@ if $is_clone; then
   mkdir -p "$target/.git"
 elif $is_config; then
   printf '%s\n' "$*" >> ".git/config"
+  if [ "${1:-}" = config ] && [ "${2:-}" = --local ] &&
+    [ "${3:-}" = credential.helper ] && [ "$#" -eq 4 ] &&
+    [ -z "${4:-}" ]; then
+    touch ".git/local-helper-chain-reset"
+  fi
 elif [[ " $* " == *" push "* ]]; then
-  printf 'protocol=https\nhost=github.com\npath=octo/example.git\n\n' |
-    "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get |
-    sed -n 's/^password=//p' > "$GIT_PUSH_TOKEN_LOG"
+  if [ -n "${FAKE_GLOBAL_GIT_TOKEN:-}" ] &&
+    [ ! -f ".git/local-helper-chain-reset" ]; then
+    printf '%s' "$FAKE_GLOBAL_GIT_TOKEN" > "$GIT_PUSH_TOKEN_LOG"
+  else
+    printf 'protocol=https\nhost=github.com\npath=octo/example.git\n\n' |
+      "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get |
+      sed -n 's/^password=//p' > "$GIT_PUSH_TOKEN_LOG"
+  fi
 fi
 exit 0
 FAKE
@@ -634,10 +644,11 @@ export FAKE_CHECKOUT_TOKEN_TTL_SECONDS=6
 export CHECKOUT_TOKEN_REFRESH_MARGIN_SECONDS=4
 export CHECKOUT_TOKEN_REFRESH_RETRY_SECONDS=1
 export FAKE_CREDENTIAL_USE_AFTER_SLEEP=3
+export FAKE_GLOBAL_GIT_TOKEN='stale-token-from-global-helper'
 run_scenario renewable-checkout-token
 unset FAKE_REFRESHED_TOKEN FAKE_CHECKOUT_TOKEN_TTL_SECONDS \
   CHECKOUT_TOKEN_REFRESH_MARGIN_SECONDS CHECKOUT_TOKEN_REFRESH_RETRY_SECONDS \
-  FAKE_CREDENTIAL_USE_AFTER_SLEEP
+  FAKE_CREDENTIAL_USE_AFTER_SLEEP FAKE_GLOBAL_GIT_TOKEN
 [ "$(cat "$CHECKOUT_TOKEN_REQUEST_LOG")" -ge 2 ] ||
   fail 'renewable checkout token was not refreshed'
 [ "$(cat "$GIT_PUSH_TOKEN_LOG")" = 'fake-refreshed-checkout-token-uvw456' ] ||
