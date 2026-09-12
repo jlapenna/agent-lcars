@@ -8,7 +8,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
-import { deriveItemState } from '@agent-lcars/work/derive';
+import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
 import {
   forbiddenReason,
@@ -133,7 +133,7 @@ export async function requestReply(
     return { ok: false, code: 'CONFLICT', message: 'task-closed' };
 
   const { spec } = workPayloadSchema.parse(task.task.work);
-  const latest = runs.at(-1);
+  const latest = latestRun(runs);
   // Widened to `string` by `Run.pipeline`/`ReplyRequest.pipeline` (both
   // opaque routing data, not the enum `WorkSpec.pipeline` is) -- always one
   // of the same three values in practice, since each was itself validated

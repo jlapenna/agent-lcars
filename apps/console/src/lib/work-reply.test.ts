@@ -6,7 +6,7 @@ import {
   Orchestrator,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkContext } from './work-mint';
 import { requestReply, resumeUriFor, selectResumeSession } from './work-reply';
@@ -220,6 +220,43 @@ function sessionDoc(over: Partial<SessionDoc> = {}): SessionDoc {
 }
 
 describe('requestReply', () => {
+  it('keeps the newest generation provider when history is returned in document order', async () => {
+    const { store, orchestrator, context } = fixture({
+      principal: { ...operator, pipelines: ['claude', 'opencode'] },
+    });
+    for (let generation = 1; generation <= 10; generation++) {
+      const outcome = await orchestrator.request({
+        taskId: ANCHOR,
+        requestId: `generation-${generation}`,
+        pipeline: generation === 10 ? 'opencode' : 'claude',
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec,
+        },
+      });
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      await orchestrator.report(decidedRun(outcome).runId, {
+        ok: true,
+        summary: 'park',
+      });
+    }
+    const history = await store.listRuns(ANCHOR);
+    history.sort((left, right) => left.runId.localeCompare(right.runId));
+    expect(history.at(-1)?.runId).toMatch(/\/r9$/);
+    vi.spyOn(store, 'listRuns').mockResolvedValue(history);
+    const outcome = await requestReply(context, {
+      task: ANCHOR,
+      text: 'Continue the task.',
+      channel: 'github',
+      principal: 'github:jlapenna',
+      ref: 'comment-generation-11',
+    });
+    expect(outcome).toMatchObject({ ok: true });
+    expect(await store.readActiveRun(ANCHOR)).toMatchObject({
+      pipeline: 'opencode',
+    });
+  });
+
   it('switches an explicitly selected provider while queued and preserves the specification', async () => {
     const { store, orchestrator, context } = fixture({
       principal: { ...operator, pipelines: ['claude', 'opencode'] },
