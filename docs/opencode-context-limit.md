@@ -97,11 +97,9 @@ If a real edit is ever truncated, the log will show it and this should go up.
 Do not raise it on the theory that bigger is safer: the cost is paid in
 minutes of a bounded budget.
 
-`default-nothink` carries the identical budget and rationale. It was the
-dispatch route introduced in #1227 as an OpenCode compatibility workaround.
-The runner now dispatches `homelab/default`; `default-nothink` remains an
-available explicit override. The two entries share a backend and must not
-drift apart on this number.
+The runner dispatches `homelab/default`. The historical `default-nothink`
+workaround introduced in #1227 has been retired; use native client reasoning
+controls when thinking should be disabled.
 
 Related: agent-lcars#1210 cut the fixed pre-work reading that this budget is
 mostly spent on, and agent-lcars#1217 covers the separate 60-minute push

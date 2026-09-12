@@ -25,13 +25,6 @@
             "context": 60000,
             "output": 8192
           }
-        },
-        "default-nothink": {
-          "name": "Legacy Spark Default alias with thinking disabled server-side. Retained for explicit overrides; the runner uses `default`. Current OpenCode supports native reasoning options. Same context budget and rationale as `default`: see docs/opencode-context-limit.md.",
-          "limit": {
-            "context": 60000,
-            "output": 8192
-          }
         }
       }
     }
