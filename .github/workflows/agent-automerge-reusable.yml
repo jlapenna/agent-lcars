@@ -601,6 +601,7 @@ jobs:
           HEAD_SHA: ${{ inputs.monitor-head-sha || github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_PR: ${{ inputs.monitor-pr || github.event.pull_request.number }}
+          EVENT_WORKFLOW_PRS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
           REPO: ${{ github.repository }}
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
           REQUIRED_CHECKS: ${{ inputs.required-checks }}
@@ -633,12 +634,58 @@ jobs:
             PR="$EVENT_PR"
             WAIT_FOR_CHECKS=true
           else
-            PR=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-              --jq 'map(select(.state == "open" or .merged_at != null))[0].number // empty')
+            # WORKFLOW_RUN_PR_ASSOCIATION_CONTRACT: GitHub can briefly return no
+            # commit association while an auto-merged PR changes state. Prefer
+            # the immutable head association carried by the event itself, then
+            # retry the REST lookup. Select deterministically among exact-head
+            # open/merged candidates; never attach restoration to another head.
+            PAYLOAD_PR=$(jq -r --arg sha "$HEAD_SHA" '
+              [(. // [])[] | select(.head.sha == $sha)]
+              | sort_by(.number)
+              | last.number // empty
+            ' <<<"${EVENT_WORKFLOW_PRS:-[]}")
+            PR=""
+            if [ -n "$PAYLOAD_PR" ]; then
+              if PAYLOAD_PR_VIEW=$(gh api "repos/$REPO/pulls/$PAYLOAD_PR"); then
+                PR=$(jq -r --arg sha "$HEAD_SHA" '
+                  select(
+                    .head.sha == $sha and
+                    (.state == "open" or .merged_at != null)
+                  )
+                  | .number // empty
+                ' <<<"$PAYLOAD_PR_VIEW")
+              else
+                echo "::warning::Payload PR #$PAYLOAD_PR could not be verified; falling back to commit association lookup."
+              fi
+            fi
+            ASSOCIATION_LOOKUP_SUCCEEDED=false
+            if [ -z "$PR" ]; then
+              for attempt in $(seq 1 6); do
+                if ASSOCIATED_PRS=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls"); then
+                  ASSOCIATION_LOOKUP_SUCCEEDED=true
+                  PR=$(jq -r --arg sha "$HEAD_SHA" '
+                    [.[] | select(
+                      .head.sha == $sha and
+                      (.state == "open" or .merged_at != null)
+                    )]
+                    | sort_by((if .state == "open" then 1 else 0 end), .updated_at, .number)
+                    | last.number // empty
+                  ' <<<"$ASSOCIATED_PRS")
+                  [ -z "$PR" ] || break
+                else
+                  echo "::warning::PR association lookup for $HEAD_SHA failed (attempt $attempt/6); retrying."
+                fi
+                [ "$attempt" -eq 6 ] || sleep 5
+              done
+            fi
             WAIT_FOR_CHECKS=false
+            if [ -z "$PR" ] && [ "$ASSOCIATION_LOOKUP_SUCCEEDED" != true ]; then
+              echo "::error::PR association lookup for $HEAD_SHA failed on every attempt; restoration ownership is unknown."
+              exit 1
+            fi
           fi
           if [ -z "$PR" ]; then
-            echo "No pull request is associated with $HEAD_SHA; nothing to restore."
+            echo "No matching open or merged pull request is associated with $HEAD_SHA after bounded retries; nothing to restore."
             exit 0
           fi
 
