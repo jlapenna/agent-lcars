@@ -1504,3 +1504,14 @@ the same reason, though it is not one of `validateReloadCompatibility`'s
 rejections: its console and credential environment is not part of
 `orchestrator.yml`, so there is nothing for a reload to reject -- the poller
 goroutine simply never learns a reload happened.
+
+On controller startup, QueueExecutor also inspects retained direct-runner
+containers before accepting new claims. An owned container still in Docker's
+`created` state with a zero `StartedAt` is resumed in place, subject to the
+host's direct-runner concurrency limit. This repairs a controller restart
+between create and start without minting a duplicate attempt. Running, exited,
+previously started, and foreign containers are never restarted. The adapter's
+initial authenticated Work brief rejects settled or expired attempts before
+checkout or model execution. Unreachable hosts, full hosts, and ambiguous
+Docker starts are retained and reported; normal lease recovery remains the
+fallback when startup recovery cannot proceed.
