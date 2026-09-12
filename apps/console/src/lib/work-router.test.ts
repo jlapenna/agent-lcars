@@ -186,6 +186,7 @@ describe('items routes', () => {
     expect(response.json).toMatchObject({
       lost: [],
       retried: [],
+      closedAnchorsCanceled: [],
       outboxProcessed: 0,
       outboxContinuationNeeded: false,
     });

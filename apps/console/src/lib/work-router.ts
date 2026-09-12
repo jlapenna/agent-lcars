@@ -90,6 +90,8 @@ export const workRouter = os.router({
     return result.body as {
       lost: string[];
       retried: { lostRunId: string; newRunId: string }[];
+      closedAnchorsCanceled: string[];
+      closedAnchorChecksFailed?: string[];
       dispatched: string[];
       reported: string[];
       outboxProcessed: number;
