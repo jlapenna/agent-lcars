@@ -1103,7 +1103,7 @@ export function runOrchestratorStoreContract(
         expect(queued[0]?.queue).toEqual({ state: 'queued' });
       });
 
-      it('does not let terminal queue remnants consume the live listing limit', async () => {
+      it('does not let terminal queue remnants consume listing or claim capacity', async () => {
         const { store, orchestrator } = await fixture();
         const terminal = await queuedRun(orchestrator, 'q31');
         await store.enqueueRun({ runId: terminal.runId, now: T0 });
@@ -1114,6 +1114,17 @@ export function runOrchestratorStoreContract(
         expect((await store.listQueuedRuns(1)).map((run) => run.runId)).toEqual(
           [live.runId],
         );
+        const claimed = await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: T0,
+          claimedBy: 'executor',
+          tokenHash: 'a'.repeat(64),
+        });
+        expect(claimed?.runId).toBe(live.runId);
+        expect(await store.readRun(terminal.runId)).toMatchObject({
+          state: 'canceled',
+          queue: { state: 'queued' },
+        });
       });
 
       it('claimQueuedRun picks the oldest queued run for a matching pipeline', async () => {
@@ -1237,9 +1248,7 @@ export function runOrchestratorStoreContract(
         const stored = await store.readRun(run.runId);
         if (stored?.state === 'canceled') {
           expect(cancellation).not.toHaveProperty('refused');
-          // A store claim may drain the now-terminal queue entry, but it can
-          // never return the pre-cancellation live snapshot as executable.
-          expect(claim?.state).not.toBe('running');
+          expect(claim).toBeUndefined();
         } else {
           expect(stored).toMatchObject({
             state: 'running',
