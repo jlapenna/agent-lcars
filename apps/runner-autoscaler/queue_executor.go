@@ -207,7 +207,7 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		// container with a missing run id or token.
 		return queuePollOutcomeIdleEmpty, nil
 	}
-	queueExecutorClaimsTotal.Inc()
+	queueExecutorClaimsTotal.WithLabelValues(claimed.Pipeline).Inc()
 	launch := cfg.launch
 	if reservation != nil {
 		launch = reservation.launch

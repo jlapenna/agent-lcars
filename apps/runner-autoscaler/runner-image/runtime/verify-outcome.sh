@@ -51,7 +51,7 @@
 # falling through to the generic "no deliverable" message.
 set -uo pipefail
 
-: "${GH_TOKEN:?GH_TOKEN is required}"
+command -v gh >/dev/null || { echo '::error::gh is required' >&2; exit 1; }
 : "${AGENT:?AGENT is required}"
 : "${REPO:?REPO is required}"
 # Empty for a native work-item run: there is no issue or pull request

@@ -274,6 +274,28 @@ describe('AppInstallationTokenProvider', () => {
     expect(calls).toHaveLength(2); // no additional fetch calls
   });
 
+  it("returns GitHub's actual expiration for both minted and cached tokens", async () => {
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const { fetchImpl, calls } = fakeAppFetch({
+      tokenBody: { token: 'ghs_expiring', expires_at: expiresAt },
+    });
+    const provider = new AppInstallationTokenProvider({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+    });
+
+    await expect(provider.expiringTokenFor(REPO)).resolves.toEqual({
+      token: 'ghs_expiring',
+      expiresAt,
+    });
+    await expect(provider.expiringTokenFor(REPO)).resolves.toEqual({
+      token: 'ghs_expiring',
+      expiresAt,
+    });
+    expect(calls).toHaveLength(2);
+  });
+
   it('refreshes when the cached token is within 5 minutes of expiry', async () => {
     const { fetchImpl, calls } = fakeAppFetch({
       tokenBody: {
