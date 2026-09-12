@@ -2,7 +2,6 @@ import { formatQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
 import {
   MemoryStore,
   Orchestrator,
-  type RequestInput,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
@@ -54,24 +53,6 @@ function fakeFetch(): { fetchImpl: typeof fetch; calls: FetchCall[] } {
     return new Response(null, { status: 201 });
   }) as typeof fetch;
   return { fetchImpl, calls };
-}
-
-class CallerWinsRetryRaceOrchestrator extends Orchestrator {
-  #armed = true;
-
-  override async request(input: RequestInput) {
-    if (this.#armed && input.requestSource === 'auto-retry') {
-      this.#armed = false;
-      await super.request({
-        taskId: input.taskId,
-        requestId: input.requestId,
-        pipeline: input.pipeline,
-        ...(input.params === undefined ? {} : { params: input.params }),
-        ...(input.work === undefined ? {} : { work: input.work }),
-      });
-    }
-    return super.request(input);
-  }
 }
 
 function fixture(
@@ -829,6 +810,23 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
 });
 
 describe('handleReconcile', () => {
+  it('continues through a backlog larger than one drain batch within a bounded pass', async () => {
+    const { deps } = fixture();
+    const entries = Array.from({ length: 25 }, (_, index) => `run-${index}`);
+    deps.drain = vi.fn(async (limit = 10) => ({
+      dispatched: entries.slice(0, limit),
+      reported: [],
+      failed: [],
+    }));
+
+    const result = await handleReconcile(deps);
+
+    expect(result.body['dispatched']).toEqual(entries);
+    expect(result.body['outboxProcessed']).toBe(25);
+    expect(result.body['outboxContinuationNeeded']).toBe(false);
+    expect(deps.drain).toHaveBeenCalledWith(30);
+  });
+
   it('marks an expired run lost, auto-retries it, dispatches the retry, and drains the outcome comment', async () => {
     const { deps, clock, calls, store } = fixture();
     const runId = await claimDispatchedRun(deps, store);
@@ -875,33 +873,5 @@ describe('handleReconcile', () => {
     };
     expect(commentBody.body).toContain(newRunId);
     expect(commentBody.body).toContain('attempt 2 of 3');
-  });
-
-  it('reports a caller-owned matching replacement as already in progress', async () => {
-    const { deps, clock, calls, store } = fixture(
-      (currentStore, currentClock) =>
-        new CallerWinsRetryRaceOrchestrator(currentStore, currentClock),
-    );
-    const runId = await claimDispatchedRun(deps, store);
-    calls.length = 0;
-    clock.advanceMinutes(121);
-
-    const result = await handleReconcile(deps);
-
-    expect(result.body['lost']).toEqual([runId]);
-    expect(result.body['retried']).toEqual([]);
-    const activeRun = await store.readActiveRun(ISSUE);
-    expect(activeRun).toMatchObject({
-      requestId: `retry:${runId}`,
-      requestSource: 'caller',
-    });
-    const commentCall = calls.find((call) => call.url.includes('/comments'));
-    const commentBody = JSON.parse(String(commentCall?.init.body)) as {
-      body: string;
-    };
-    expect(commentBody.body).toContain(
-      `Run ${activeRun?.runId} is already in progress.`,
-    );
-    expect(commentBody.body).not.toContain('Retrying automatically');
   });
 });

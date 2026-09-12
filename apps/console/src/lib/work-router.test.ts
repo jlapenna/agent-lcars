@@ -7,7 +7,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { controlPlaneRepository } from './deployment';
 import { createWorkHandler, type WorkContext } from './work-router';
@@ -142,6 +142,7 @@ describe('items routes', () => {
       ['GET', '/items'],
       ['POST', `/items/${ID}/cancel`],
       ['POST', `/items/${ID}/redispatch`],
+      ['POST', '/maintenance/tick', {}],
     ] as const) {
       const r = await call(ctx, m, p, b);
       expect(r.status, `${m} ${p}`).toBe(401);
@@ -168,6 +169,30 @@ describe('items routes', () => {
       const r = await call(ctx, m, p, b);
       expect(r.status, `${m} ${p}`).toBe(401);
     }
+  });
+
+  it('allows only work.cron to run bounded maintenance', async () => {
+    const drain = vi.fn().mockResolvedValue({
+      dispatched: [],
+      reported: [],
+      failed: [],
+    });
+    const ctx = context({
+      principal: cronTick,
+      runtime: { ...context().runtime, drain },
+    });
+    const response = await call(ctx, 'POST', '/maintenance/tick', {});
+    expect(response.status).toBe(200);
+    expect(response.json).toMatchObject({
+      lost: [],
+      retried: [],
+      outboxProcessed: 0,
+      outboxContinuationNeeded: false,
+    });
+    expect(drain).toHaveBeenCalledWith(30);
+    expect(
+      (await call(context(), 'POST', '/maintenance/tick', {})).status,
+    ).toBe(401);
   });
 
   it('refuses every items route for a work.executor-only principal, which carries no work.operator scope', async () => {
@@ -407,7 +432,7 @@ describe('items routes', () => {
       ok: false,
       summary: 'blocked',
     });
-    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('parked');
+    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('failed');
     const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
     expect(r.status).toBe(200);
     expect(r.json.runs).toHaveLength(2);
@@ -450,7 +475,7 @@ describe('items routes', () => {
       },
     });
     await ctx.runtime.orchestrator.report(`work:${ID}/r1`, { ok: false });
-    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('parked');
+    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('failed');
 
     const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
     expect(r.status).toBe(403);

@@ -68,6 +68,7 @@ export const itemStateSchema = z.enum([
   'running',
   'done',
   'parked',
+  'failed',
   'canceled',
 ]);
 
@@ -92,6 +93,32 @@ const withBearer = <T extends object>(current: T) => ({
 const base = oc.meta(openapi({ tags: ['items'], spec: withBearer }));
 
 export const itemsContract = {
+  maintenanceTick: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/maintenance/tick',
+        operationId: 'tickMaintenance',
+        summary: 'Run bounded control-plane maintenance (work.cron required)',
+        tags: ['cron'],
+      }),
+    )
+    .input(z.strictObject({}))
+    .output(
+      z.strictObject({
+        lost: z.array(z.string()),
+        retried: z.array(
+          z.strictObject({ lostRunId: z.string(), newRunId: z.string() }),
+        ),
+        dispatched: z.array(z.string()),
+        reported: z.array(z.string()),
+        outboxProcessed: z.number().int().nonnegative(),
+        outboxContinuationNeeded: z.boolean(),
+        outboxDrainFailed: z
+          .array(z.strictObject({ entryId: z.string(), error: z.string() }))
+          .optional(),
+      }),
+    ),
   create: base
     .meta(
       openapi({
@@ -206,7 +233,7 @@ export const itemsContract = {
         method: 'POST',
         path: '/items/{id}/redispatch',
         operationId: 'redispatchItem',
-        summary: 'Mint a fresh run for a parked item',
+        summary: 'Mint a fresh run for a parked or failed item',
       }),
     )
     .errors({
@@ -222,7 +249,7 @@ export const itemsContract = {
       },
       CONFLICT: {
         message:
-          'Only a parked item can be redispatched, or the named session has no archived transcript',
+          'Only a parked or failed item can be redispatched, or the named session has no archived transcript',
       },
       TOO_MANY_REQUESTS: {
         message: 'Fleet is at its live-run cap',

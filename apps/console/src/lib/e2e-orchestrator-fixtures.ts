@@ -221,7 +221,7 @@ function populatedFixture() {
       issue: E2E_ITEM_NUMBERS.readyForAgent,
       pipeline: 'claude',
       state: 'canceled',
-      createdAt: minutesAgo(210),
+      createdAt: minutesAgo(240),
       updatedAt: timestamps.timedOut,
     }),
     runFor({

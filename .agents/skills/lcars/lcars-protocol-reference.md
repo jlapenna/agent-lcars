@@ -67,9 +67,10 @@ aligned for both modes regardless of how the run was requested.
 
 ## Reconciliation and lease recovery
 
-There is no ledger to reconcile today. `.github/workflows/dispatch-reconcile.yml`
-calls `/api/control-plane/reconcile` every 30 minutes (also
-`workflow_dispatch`-able); that handler is `Orchestrator.sweepExpired()`
+There is no ledger to reconcile today. The runner autoscaler's five-minute
+maintenance ticker calls `/api/work/v1/maintenance/tick` using its existing
+`work.cron` service identity. `.github/workflows/dispatch-reconcile.yml` also
+calls `/api/control-plane/reconcile` every 30 minutes as a fallback. Both run `Orchestrator.sweepExpired()`
 (`libs/orchestrator/src/orchestrator.ts`) followed by an outbox drain
 (`apps/console/src/lib/orchestrator-dispatch.ts`). What it actually does:
 

@@ -68,7 +68,6 @@ async function ParkedWork() {
     if (!work.principal?.scopes.has('work.operator')) return null;
     const page = await listWorkSummaries(work.runtime.store, {
       limit: 200,
-      state: 'parked',
     });
     const items = await excludeClosedGithubAnchors(
       work.runtime.store,

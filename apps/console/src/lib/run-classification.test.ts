@@ -60,7 +60,7 @@ describe('classifyAgentRun', () => {
 
   it('feeds RUN_TIMEOUT_MINUTES into the classifier so a near-budget cancel reads as timeout', () => {
     const result = classifyAgentRun(
-      makeRun({ conclusion: 'cancelled', elapsedSeconds: 90 * 60 }),
+      makeRun({ conclusion: 'cancelled', elapsedSeconds: 120 * 60 }),
     );
     expect(result.status).toBe('timeout');
   });

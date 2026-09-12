@@ -12,35 +12,38 @@ vi.mock('next/navigation', () => ({
 }));
 
 describe('WorkActions', () => {
-  it('offers redispatch only when parked and cancel unless settled', () => {
-    const noop = vi.fn(async () => [null, undefined] as const);
-    const { rerender } = render(
-      <MantineProvider>
-        <WorkActions
-          id="x"
-          state="parked"
-          cancel={noop}
-          redispatch={noop}
-          reply={noop}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.getByRole('button', { name: /Redispatch/ })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /Cancel/ })).toBeEnabled();
-    rerender(
-      <MantineProvider>
-        <WorkActions
-          id="x"
-          state="done"
-          cancel={noop}
-          redispatch={noop}
-          reply={noop}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.queryByRole('button', { name: /Redispatch/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Cancel/ })).toBeNull();
-  });
+  it.each(['parked', 'failed'] as const)(
+    'offers redispatch for %s and cancel unless settled',
+    (state) => {
+      const noop = vi.fn(async () => [null, undefined] as const);
+      const { rerender } = render(
+        <MantineProvider>
+          <WorkActions
+            id="x"
+            state={state}
+            cancel={noop}
+            redispatch={noop}
+            reply={noop}
+          />
+        </MantineProvider>,
+      );
+      expect(screen.getByRole('button', { name: /Redispatch/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /Cancel/ })).toBeEnabled();
+      rerender(
+        <MantineProvider>
+          <WorkActions
+            id="x"
+            state="done"
+            cancel={noop}
+            redispatch={noop}
+            reply={noop}
+          />
+        </MantineProvider>,
+      );
+      expect(screen.queryByRole('button', { name: /Redispatch/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: /Cancel/ })).toBeNull();
+    },
+  );
 
   it('offers no actions at all while a run is live', () => {
     const noop = vi.fn(async () => [null, undefined] as const);

@@ -66,12 +66,13 @@ export function WorkActions({
   const [freshSessionNote, setFreshSessionNote] = useState(false);
 
   const canCancel = state !== 'done' && state !== 'canceled';
-  const canRedispatch = state === 'parked';
+  const canRedispatch = state === 'parked' || state === 'failed';
   // A reply is new information for a stopped item: parked (the agent asked
   // a question) or done ("one more tweak" on a finished item is a reply,
   // not a new item -- spec decision 2).
   const canReply =
-    (state === 'parked' || state === 'done') && reply !== undefined;
+    (state === 'parked' || state === 'failed' || state === 'done') &&
+    reply !== undefined;
 
   if (!canCancel && !canRedispatch && !canReply) return null;
 

@@ -71,7 +71,7 @@ describe('deriveItemState', () => {
       'finished not ok',
       task(),
       [run(1, 'finished', { result: { ok: false } })],
-      'parked',
+      'failed',
     ],
     [
       // #1608 put `park` in OK_OUTCOMES, so a parked run now settles with
@@ -95,7 +95,7 @@ describe('deriveItemState', () => {
       'lost, budget spent',
       task({ consecutiveLost: 3 }),
       [run(1, 'lost')],
-      'parked',
+      'failed',
     ],
     [
       'lost, budget left',
@@ -215,7 +215,7 @@ describe('toWorkSummary', () => {
     expect(summary).toMatchObject({
       id: 'octo/example#7',
       anchor: { repo: 'octo/example', issue: 7 },
-      state: 'parked',
+      state: 'failed',
       spec: payload.spec,
     });
   });

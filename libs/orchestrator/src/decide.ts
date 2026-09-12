@@ -27,6 +27,10 @@ export interface Decision {
   readonly task: Task;
   /** Absent only for decisions that touch the task alone (`closeTask`). */
   readonly run?: Run;
+  /** Additional runs committed in the same transaction. Lease expiry uses
+   * this for its successor so a crash cannot separate loss settlement from
+   * retry creation. */
+  readonly additionalRuns?: readonly Run[];
   readonly outbox: readonly OutboxEntry[];
 }
 
@@ -318,6 +322,36 @@ export function expireLease(input: {
     settled,
     now,
   );
+}
+
+/** Atomically settle an expired run and, while budget remains, mint its
+ * deterministic successor. Both runs and both outbox effects are one
+ * Decision, hence one store transaction. */
+export function expireLeaseAndRetry(input: {
+  now: string;
+  task: Task;
+  run: Run;
+}): Decision | Refusal {
+  const expired = expireLease(input);
+  if (isRefusal(expired) || expired.task.consecutiveLost > MAX_AUTO_RETRIES) {
+    return expired;
+  }
+  const lostRun = decidedRun(expired);
+  const retry = mintRun({
+    now: input.now,
+    taskId: lostRun.task,
+    task: expired.task,
+    requestId: `retry:${lostRun.runId}`,
+    requestSource: 'auto-retry',
+    pipeline: lostRun.pipeline,
+    ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
+  });
+  return {
+    task: retry.task,
+    run: lostRun,
+    additionalRuns: [decidedRun(retry)],
+    outbox: [...expired.outbox, ...retry.outbox],
+  };
 }
 
 /**

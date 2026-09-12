@@ -55,7 +55,7 @@ describe('listWorkSummaries', () => {
         expect.objectContaining({
           id: 'jlapenna/agent-lcars#1502',
           anchor: { repo: 'jlapenna/agent-lcars', issue: 1502 },
-          state: 'parked',
+          state: 'failed',
         }),
         expect.objectContaining({
           id: `work:${nativeId}`,
@@ -83,7 +83,7 @@ describe('listWorkSummaries', () => {
     if ('refused' in parked || 'refused' in running)
       throw new Error('expected task requests to succeed');
     await orchestrator.confirmDispatch(parked.run.runId);
-    await orchestrator.report(parked.run.runId, { ok: false });
+    await orchestrator.report(parked.run.runId, { ok: true, summary: 'park' });
 
     // Same instant orders by anchor key. A one-row raw page can legitimately
     // be empty after state filtering, but the cursor still makes the next
@@ -138,7 +138,7 @@ describe('excludeClosedGithubAnchors', () => {
     if ('refused' in github)
       throw new Error('expected task request to succeed');
     await orchestrator.confirmDispatch(github.run.runId);
-    await orchestrator.report(github.run.runId, { ok: false });
+    await orchestrator.report(github.run.runId, { ok: true, summary: 'park' });
     await projectAnchorState(
       store,
       { repo: 'jlapenna/agent-lcars', issue: 1502 },
@@ -167,9 +167,9 @@ describe('excludeClosedGithubAnchors', () => {
     if ('refused' in github || 'refused' in native)
       throw new Error('expected task requests to succeed');
     await orchestrator.confirmDispatch(github.run.runId);
-    await orchestrator.report(github.run.runId, { ok: false });
+    await orchestrator.report(github.run.runId, { ok: true, summary: 'park' });
     await orchestrator.confirmDispatch(native.run.runId);
-    await orchestrator.report(native.run.runId, { ok: false });
+    await orchestrator.report(native.run.runId, { ok: true, summary: 'park' });
     await projectAnchorState(
       store,
       { repo: 'jlapenna/agent-lcars', issue: 1502 },
@@ -194,7 +194,7 @@ describe('excludeClosedGithubAnchors', () => {
     if ('refused' in github)
       throw new Error('expected task request to succeed');
     await orchestrator.confirmDispatch(github.run.runId);
-    await orchestrator.report(github.run.runId, { ok: false });
+    await orchestrator.report(github.run.runId, { ok: true, summary: 'park' });
 
     const page = await listWorkSummaries(store, { limit: 10, state: 'parked' });
     const items = await excludeClosedGithubAnchors(store, page.items);

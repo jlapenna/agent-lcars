@@ -163,6 +163,9 @@ JSON
     ;;
   */heartbeat)
     echo heartbeat >> "$HEARTBEAT_LOG"
+    if [ "${FAKE_HEARTBEAT_FAIL:-}" = 1 ]; then
+      exit 22
+    fi
     echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
     ;;
   */complete)
@@ -369,11 +372,10 @@ if [ "${1:-}" = run ] && [ "${2:-}" = --help ]; then
   [ "${FAKE_OPENCODE_NO_AUTO:-}" = 1 ] || echo '      --auto         auto-approve permissions'
   exit 0
 fi
-echo "$@" >> "$OPENCODE_ARGS_LOG"
-printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
 if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
+  touch "$tmp/opencode-initialized"
   echo bootstrap >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
-  if [ "${FAKE_OPENCODE_BOOTSTRAP_FAIL:-}" = 1 ]; then exit 1; fi
+  if [ "${FAKE_OPENCODE_BOOTSTRAP_FAIL:-}" = 1 ] || [ "${FAKE_OPENCODE_INIT_EXIT:-0}" -ne 0 ]; then exit 1; fi
   if [ "${FAKE_OPENCODE_MALFORMED_SESSIONS:-}" = 1 ]; then echo '{}'; exit 0; fi
   if [ "${FAKE_OPENCODE_EMPTY_BOOTSTRAP:-}" = 1 ] && [ ! -f "${OPENCODE_FAKE_SESSIONS_FILE:-/nonexistent}" ]; then exit 0; fi
   sessions='[]'
@@ -383,6 +385,8 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
   printf '%s\n' "$sessions"
   exit 0
 fi
+echo "$@" >> "$OPENCODE_ARGS_LOG"
+printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
 echo run >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
 run_count=1
 if [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ]; then
@@ -418,7 +422,10 @@ FAKE
 
   cat > "$bindir/timeout" <<'FAKE'
 #!/usr/bin/env bash
-if [ -n "${TIMEOUT_ARGS_LOG:-}" ]; then printf '%s\n' "$*" >> "$TIMEOUT_ARGS_LOG"; fi
+printf '%s\n' "$*" >> "$RUNNER_TEMP/timeout-args.log"
+if [ -n "${TIMEOUT_ARGS_LOG:-}" ] && [ "$TIMEOUT_ARGS_LOG" != "$RUNNER_TEMP/timeout-args.log" ]; then
+  printf '%s\n' "$*" >> "$TIMEOUT_ARGS_LOG"
+fi
 exec /usr/bin/timeout "$@"
 FAKE
   chmod +x "$bindir/timeout"
@@ -434,6 +441,9 @@ cat > "$bindir/node" <<'FAKE'
 echo "$@" >> "$NODE_ARGS_LOG"
 if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
   echo sidecar >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
+  if [ ! -f "$tmp/opencode-initialized" ]; then
+    touch "$tmp/opencode-startup-race"
+  fi
 fi
 # Stands in for the real sidecar's `runner finalize` subcommand (issue
 # #1784): when direct-runner.sh's sidecar-lifecycle.sh threads
@@ -502,6 +512,7 @@ FAKE
 
 run_scenario() {
   name="$1"
+  rm -f "$tmp/opencode-initialized" "$tmp/opencode-startup-race"
   export FAKE_PIPELINE="${2:-claude}"
   # A QueueExecutor container is not a GitHub Actions worker.  CI itself
   # exports this event context, so clear it explicitly before each fixture to
@@ -794,8 +805,8 @@ unset FAKE_RESUME_FAIL
 
 [ "$rc" -ne 0 ] || fail "codex resume-failed: expected a restore failure"
 [ -f "$COMPLETE_LOG" ] || fail "codex resume-failed: direct-runner.sh never called POST .../complete"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "codex resume-failed: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
+  fail "codex resume-failed: complete call did not report runner-failed ($(cat "$COMPLETE_LOG"))"
 [ ! -f "$CODEX_ARGS_LOG" ] ||
   fail "codex resume-failed: codex started after a failed restore ($(cat "$CODEX_ARGS_LOG"))"
 
@@ -820,15 +831,15 @@ echo "scenario codex-last-message: OK"
 # A positive #1192 refresh-failure signature must reach the broker as the
 # narrow enum that makes persistence an authoritative no-write. The agent run
 # itself still fails and reports no-deliverable.
-export FAKE_CODEX_BURNED=1
+export FAKE_CODEX_BURNED=1 FAKE_GH_NO_MATCH=1
 run_scenario codex-burned codex
-unset FAKE_CODEX_BURNED
+unset FAKE_CODEX_BURNED FAKE_GH_NO_MATCH
 
 [ "$rc" -ne 0 ] || fail "codex burned auth: expected a non-zero exit"
 jq -e '.authFailure == "refresh-token-reused"' "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||
   fail "codex burned auth: broker payload did not carry the exact failure enum ($(cat "$CODEX_AUTH_PERSIST_LOG"))"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "codex burned auth: completion did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"agent-failed"' "$COMPLETE_LOG" ||
+  fail "codex burned auth: completion did not report agent-failed ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario codex-burned: OK"
 
@@ -848,9 +859,9 @@ echo "scenario codex-signature-in-agent-text: OK"
 
 # Codex also emits origin diagnostics on stderr. Capture that stream
 # separately from JSONL and classify the known signature there.
-export FAKE_CODEX_STDERR_BURNED=1
+export FAKE_CODEX_STDERR_BURNED=1 FAKE_GH_NO_MATCH=1
 run_scenario codex-burned-stderr codex
-unset FAKE_CODEX_STDERR_BURNED
+unset FAKE_CODEX_STDERR_BURNED FAKE_GH_NO_MATCH
 
 [ "$rc" -ne 0 ] || fail "codex stderr burned auth: expected a non-zero exit"
 jq -e '.authFailure == "access-token-refresh-failed"' "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||
@@ -941,6 +952,20 @@ mapfile -t opencode_run_timeouts < <(grep 'opencode.* run ' "$TIMEOUT_ARGS_LOG" 
   fail "opencode premature stop: continuation reset the provider time budget ($(cat "$TIMEOUT_ARGS_LOG"))"
 
 echo "scenario opencode-premature-stop: OK"
+
+# A continuation is a new grant of execution. If the run was cancelled or
+# lost its lease while the first round was active, its authenticated heartbeat
+# is refused and the provider must not receive the second round.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_OPENCODE_RUNS=2
+export FAKE_HEARTBEAT_FAIL=1
+run_scenario opencode-continuation-heartbeat-refused opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_OPENCODE_RUNS
+unset FAKE_HEARTBEAT_FAIL
+[ "$rc" -eq 1 ] || fail "opencode heartbeat refused: expected terminal no-deliverable"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode heartbeat refused: provider continued after authorization was rejected"
+
+echo "scenario opencode-continuation-heartbeat-refused: OK"
 
 # A resumed run already has the authoritative session id; continuation reuses
 # it instead of selecting a different session from the store.
@@ -1070,13 +1095,13 @@ echo "scenario opencode-last-message: OK"
 # non-zero exit here must still classify the run as no-deliverable -- if a
 # stray pipe stage were reintroduced downstream of a naive `$?` switch, its
 # own (successful) exit status would silently mask this failure instead.
-export FAKE_OPENCODE_EXIT_CODE=5
+export FAKE_OPENCODE_EXIT_CODE=5 FAKE_GH_NO_MATCH=1
 run_scenario opencode-exit-nonzero opencode
-unset FAKE_OPENCODE_EXIT_CODE
+unset FAKE_OPENCODE_EXIT_CODE FAKE_GH_NO_MATCH
 
 [ "$rc" -eq 1 ] || fail "opencode exit-nonzero: expected exit 1, got $rc"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "opencode exit-nonzero: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"agent-failed"' "$COMPLETE_LOG" ||
+  fail "opencode exit-nonzero: complete call did not report agent-failed ($(cat "$COMPLETE_LOG"))"
 [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
   fail "opencode exit-nonzero: provider retried a non-zero deterministic failure"
 
@@ -1109,8 +1134,8 @@ unset FAKE_RESUME_FAIL
 
 [ "$rc" -ne 0 ] || fail "opencode resume-failed: expected a restore failure"
 [ -f "$COMPLETE_LOG" ] || fail "opencode resume-failed: direct-runner.sh never called POST .../complete"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "opencode resume-failed: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
+  fail "opencode resume-failed: complete call did not report runner-failed ($(cat "$COMPLETE_LOG"))"
 if grep -q -- 'run --model' "$OPENCODE_ARGS_LOG"; then
   fail "opencode resume-failed: provider run started after a failed restore ($(cat "$OPENCODE_ARGS_LOG"))"
 fi
@@ -1138,22 +1163,34 @@ printf '<!-- agent-result:v1:park:g1:work:01DIRECTRUNNERTESTFIXTURE1/r1 -->\n<!-
 
 echo "scenario codex-native-park: OK"
 
-# The QueueExecutor adapter must enforce the 60-minute OpenCode bound
+# The QueueExecutor adapter must enforce the two-hour OpenCode bound
 # locally. A short override makes this regression deterministic without
-# waiting an hour: timeout sends TERM to the trusted CLI, then the runner
+# waiting two hours: timeout sends TERM to the trusted CLI, then the runner
 # finalizes and reports the failed/no-deliverable run instead of wedging a
 # queue slot indefinitely.
 export FAKE_OPENCODE_SLEEP_SECONDS=2
-export OPENCODE_TIMEOUT_SECONDS=1
+export OPENCODE_TIMEOUT_SECONDS=1 FAKE_GH_NO_MATCH=1
 run_scenario opencode-timeout opencode
-unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS
+unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS FAKE_GH_NO_MATCH
 
 [ "$rc" -ne 0 ] || fail "opencode timeout: expected a non-zero exit, got 0"
 [ -f "$COMPLETE_LOG" ] || fail "opencode timeout: direct-runner.sh never called POST .../complete"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "opencode timeout: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"agent-timeout"' "$COMPLETE_LOG" ||
+  fail "opencode timeout: complete call did not report agent-timeout ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario opencode-timeout: OK"
+
+[ ! -e "$tmp/opencode-startup-race" ] || fail "telemetry opened OpenCode before database initialization"
+
+export FAKE_OPENCODE_INIT_EXIT=1
+run_scenario opencode-init-failure opencode
+unset FAKE_OPENCODE_INIT_EXIT
+[ "$rc" -ne 0 ] || fail "OpenCode initialization failure was ignored"
+[ ! -s "$OPENCODE_ARGS_LOG" ] || fail "agent ran after database initialization failure"
+if grep -q 'runner sidecar' "$NODE_ARGS_LOG" 2>/dev/null; then
+  fail "telemetry started after database initialization failure"
+fi
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" || fail "initialization failure misclassified"
 
 # The queued direct path must reject a reviewed OpenCode CLI that no longer
 # supports the non-interactive --auto contract before it attempts a real turn.
@@ -1164,8 +1201,8 @@ unset FAKE_OPENCODE_NO_AUTO
 [ "$rc" -ne 0 ] || fail "opencode no-auto: expected a non-zero exit"
 [ ! -s "$OPENCODE_ARGS_LOG" ] ||
   fail "opencode no-auto: invoked OpenCode after the capability preflight ($(cat "$OPENCODE_ARGS_LOG"))"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "opencode no-auto: completion did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
+  fail "opencode no-auto: completion did not report runner-failed ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario opencode-no-auto: OK"
 
@@ -1318,8 +1355,8 @@ unset FAKE_RESUME_FAIL
 
 [ "$rc" -ne 0 ] || fail "resume-failed: expected a restore failure"
 [ -f "$COMPLETE_LOG" ] || fail "resume-failed: direct-runner.sh never called POST .../complete"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "resume-failed: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
+  fail "resume-failed: complete call did not report runner-failed ($(cat "$COMPLETE_LOG"))"
 [ ! -f "$CLAUDE_ARGS_LOG" ] ||
   fail "resume-failed: claude started after a failed restore ($(cat "$CLAUDE_ARGS_LOG"))"
 
@@ -1333,8 +1370,8 @@ unset FAKE_RESUME_EMPTY
 
 [ "$rc" -ne 0 ] || fail "resume-empty: expected an empty restore failure"
 [ -f "$COMPLETE_LOG" ] || fail "resume-empty: direct-runner.sh never called POST .../complete"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "resume-empty: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
+  fail "resume-empty: complete call did not report runner-failed ($(cat "$COMPLETE_LOG"))"
 [ ! -f "$CLAUDE_ARGS_LOG" ] ||
   fail "resume-empty: claude started after an empty restore ($(cat "$CLAUDE_ARGS_LOG"))"
 
@@ -1445,8 +1482,8 @@ unset FAKE_MISSING_CLAUDE_TOKEN
 [ "$rc" -ne 0 ] || fail "missing-claude-token: expected a non-zero exit, got 0"
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "missing-claude-token: claude was invoked despite a missing token file"
 [ -f "$COMPLETE_LOG" ] || fail "missing-claude-token: direct-runner.sh never called POST .../complete despite a claimed, token-valid run"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "missing-claude-token: complete call did not report outcome: no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
+  fail "missing-claude-token: complete call did not report outcome: runner-failed ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario missing-claude-token: OK"
 
@@ -1462,8 +1499,8 @@ unset FAKE_CHECKOUT_TOKEN_FAIL
 [ "$rc" -ne 0 ] || fail "checkout-token-401: expected a non-zero exit, got 0"
 [ ! -f "$GIT_CLONE_ARGV_LOG" ] || fail "checkout-token-401: git clone ran despite a failed checkout-token call"
 [ -f "$COMPLETE_LOG" ] || fail "checkout-token-401: direct-runner.sh never called POST .../complete despite a claimed, token-valid run"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "checkout-token-401: complete call did not report outcome: no-deliverable ($(cat "$COMPLETE_LOG"))"
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
+  fail "checkout-token-401: complete call did not report outcome: runner-failed ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario checkout-token-401: OK"
 
@@ -1517,5 +1554,33 @@ grep -q 'credential wait cancelled' "$COMPLETE_LOG" || fail 'cancellation not re
 [ -z "$(find "$LCARS_CODEX_VOLATILE_DIR" -mindepth 1 -print -quit)" ] || fail 'cancelled wait left volatile state'
 echo 'scenario codex-auth-cancelled: OK'
 unset FAKE_PIPELINE FAKE_BRIEF_NO_RESUME FAKE_CODEX_AUTH_BUSY_COUNT CODEX_AUTH_WAIT_SECONDS FAKE_CANCEL_CODEX_WAIT
+
+
+# Published, exact-marker deliverables survive a provider's nonzero exit.
+export FAKE_OPENCODE_EXIT_CODE=124
+run_scenario opencode-timeout-with-pr opencode
+unset FAKE_OPENCODE_EXIT_CODE
+[ "$rc" -eq 0 ] || fail "timeout with PR: lost a published deliverable"
+jq -e '.outcome == "pull-request" and .outcomeReference.number == 12' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "timeout with PR: wrong outcome"
+
+export FAKE_GH_NO_MATCH=1
+export FAKE_CLAUDE_STDOUT="You've hit your weekly limit · resets Sep 13, 12am (UTC)"
+run_scenario provider-quota
+unset FAKE_GH_NO_MATCH FAKE_CLAUDE_STDOUT
+[ "$rc" -ne 0 ] || fail "quota: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "quota: wrong failure classification"
+
+# All default provider invocations receive the same two-hour allowance.
+for provider in claude codex opencode; do
+  run_scenario "two-hour-$provider" "$provider"
+  [ "$rc" -eq 0 ] || fail "$provider default runtime: run failed"
+  grep -q -- '--signal=TERM --kill-after=30s 7200s' "$scenario_runner_temp/timeout-args.log" || fail "$provider default runtime is not two hours"
+done
+
+export FAKE_GH_LOOKUP_FAIL=1
+run_scenario lookup-failure
+unset FAKE_GH_LOOKUP_FAIL
+[ "$rc" -ne 0 ] || fail "failed lookup succeeded"
+jq -e '.outcome == "verification-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "failed lookup lost its diagnosis"
 
 echo "direct-runner.sh: OK"

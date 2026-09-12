@@ -4,9 +4,8 @@ import {
   confirmDispatch,
   decidedRun,
   type Decision,
-  expireLease,
+  expireLeaseAndRetry,
   isRefusal,
-  MAX_AUTO_RETRIES,
   type Refusal,
   refused,
   renewLease,
@@ -179,66 +178,27 @@ export class Orchestrator {
    * starting a second one; this is the same duplicate-request idempotency
    * `request()` already gives every caller, not a new mechanism.
    *
-   * A refusal on the retry request (most likely `task-busy`, when an
-   * operator manually re-requested the task in the window between the
-   * expire commit and this call) is not an error: something is already
-   * live for the task, so this simply records no retry for that run.
-   *
-   * KNOWN GAP: a crash between the expire commit (already durable, via the
-   * `transactOnRun` call above) and the retry request below is not itself
-   * durable -- that one auto-retry is lost, and the task is left merely
-   * unlocked, exactly as it was before this feature existed. A manual
-   * request still works. Accepted for this fleet: the deterministic
-   * requestId keeps the common (no-crash) path idempotent, which is the
-   * case that actually recurs -- the sweep itself runs repeatedly.
+   * Loss settlement and retry creation are one store transaction. A crash
+   * commits both or neither; repeated and concurrent sweeps therefore cannot
+   * lose the retry or mint a duplicate.
    */
   async sweepExpired(): Promise<SweepResult> {
     const now = this.clock.now();
     const lost: Run[] = [];
     const retried: { lostRunId: string; newRunId: string }[] = [];
     for (const run of await this.store.listExpiredRuns(now)) {
-      const settled = await this.#settleAndRetry(
-        run.runId,
-        (task, current) => expireLease({ now, task, run: current }),
-        retried,
+      const outcome = await this.transactOnRun(run.runId, (task, current) =>
+        expireLeaseAndRetry({ now, task, run: current }),
       );
-      if (settled !== undefined) lost.push(settled);
+      if (isRefusal(outcome)) continue;
+      const settled = decidedRun(outcome);
+      lost.push(settled);
+      const retry = outcome.additionalRuns?.[0];
+      if (retry !== undefined) {
+        retried.push({ lostRunId: settled.runId, newRunId: retry.runId });
+      }
     }
     return { lost, retried };
-  }
-
-  /** Shared body of both settle paths: apply `decide` to `runId`, and -- if
-   *  it settled the run and the task still has auto-retry budget -- request
-   *  the deterministic `retry:<runId>` follow-up, appending it to `retried`.
-   *  Returns the settled run, or undefined if the decision was refused. */
-  async #settleAndRetry(
-    runId: string,
-    decide: (task: VersionedTask['task'], run: Run) => Decision | Refusal,
-    retried: { lostRunId: string; newRunId: string }[],
-  ): Promise<Run | undefined> {
-    const outcome = await this.transactOnRun(runId, decide);
-    if (isRefusal(outcome)) return undefined;
-    // expireLease, the only decision #settleAndRetry uses, always carries a
-    // run.
-    const settledRun = decidedRun(outcome);
-
-    if (outcome.task.consecutiveLost > MAX_AUTO_RETRIES) {
-      return settledRun;
-    }
-    const retry = await this.request({
-      taskId: settledRun.task,
-      requestId: `retry:${settledRun.runId}`,
-      requestSource: 'auto-retry',
-      pipeline: settledRun.pipeline,
-      ...(settledRun.params === undefined ? {} : { params: settledRun.params }),
-    });
-    if (!isRefusal(retry)) {
-      retried.push({
-        lostRunId: settledRun.runId,
-        newRunId: decidedRun(retry).runId,
-      });
-    }
-    return settledRun;
   }
 
   async #once<T extends Decision>(

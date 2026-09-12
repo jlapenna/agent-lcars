@@ -42,6 +42,18 @@ type scheduleTickFailure struct {
 	Message    string `json:"message"`
 }
 
+type maintenanceTickResponse struct {
+	Lost                     []string `json:"lost"`
+	Dispatched               []string `json:"dispatched"`
+	Reported                 []string `json:"reported"`
+	OutboxProcessed          int      `json:"outboxProcessed"`
+	OutboxContinuationNeeded bool     `json:"outboxContinuationNeeded"`
+	OutboxDrainFailed        []struct {
+		EntryID string `json:"entryId"`
+		Error   string `json:"error"`
+	} `json:"outboxDrainFailed"`
+}
+
 // scheduleTickerConfig is deliberately narrower than queueExecutorConfig:
 // ticking schedules only needs the existing Work API URL and its Google ID
 // token path. It neither claims a run nor knows any provider or repository.
@@ -56,6 +68,29 @@ type scheduleTickerConfig struct {
 // the API, keeping the daemon's schedule authority separate from its ability
 // to claim queued runs.
 func tickSchedulesOnce(cfg scheduleTickerConfig) error {
+	return postCronTick(cfg, "/api/work/v1/schedules/tick", func(body []byte) error {
+		_, err := parseScheduleTickResponse(body)
+		return err
+	})
+}
+
+func tickMaintenanceOnce(cfg scheduleTickerConfig) error {
+	return postCronTick(cfg, "/api/work/v1/maintenance/tick", func(body []byte) error {
+		var result maintenanceTickResponse
+		if err := json.Unmarshal(body, &result); err != nil {
+			return fmt.Errorf("decoding maintenance tick response: %w", err)
+		}
+		if result.OutboxProcessed < 0 {
+			return fmt.Errorf("decoding maintenance tick response: invalid outboxProcessed")
+		}
+		if len(result.OutboxDrainFailed) > 0 {
+			return fmt.Errorf("maintenance tick completed with %d outbox failures", len(result.OutboxDrainFailed))
+		}
+		return nil
+	})
+}
+
+func postCronTick(cfg scheduleTickerConfig, path string, validate func([]byte) error) error {
 	client := cfg.httpClient
 	if client == nil {
 		client = &http.Client{Timeout: 60 * time.Second}
@@ -66,7 +101,7 @@ func tickSchedulesOnce(cfg scheduleTickerConfig) error {
 	}
 	req, err := http.NewRequest(
 		http.MethodPost,
-		strings.TrimRight(cfg.consoleURL, "/")+"/api/work/v1/schedules/tick",
+		strings.TrimRight(cfg.consoleURL, "/")+path,
 		bytes.NewReader([]byte("{}")),
 	)
 	if err != nil {
@@ -85,16 +120,18 @@ func tickSchedulesOnce(cfg scheduleTickerConfig) error {
 		return fmt.Errorf("reading schedule tick response: %w", err)
 	}
 	if resp.StatusCode == http.StatusOK {
-		result, err := parseScheduleTickResponse(body)
-		if err != nil {
+		if err := validate(body); err != nil {
 			return err
 		}
-		if len(*result.Errors) > 0 {
-			return fmt.Errorf(
-				"schedule tick completed with %d per-schedule errors: %s",
-				len(*result.Errors),
-				scheduleTickFailureDetails(*result.Errors),
-			)
+		if path == "/api/work/v1/schedules/tick" {
+			result, _ := parseScheduleTickResponse(body)
+			if len(*result.Errors) > 0 {
+				return fmt.Errorf(
+					"schedule tick completed with %d per-schedule errors: %s",
+					len(*result.Errors),
+					scheduleTickFailureDetails(*result.Errors),
+				)
+			}
 		}
 		return nil
 	}
@@ -153,9 +190,16 @@ func runScheduleTicker(ctx context.Context, cfg scheduleTickerConfig, logger *sl
 		if err := tickSchedulesOnce(cfg); err != nil {
 			recordScheduleTick(false)
 			logger.Warn("schedule tick failed", slog.String("error", err.Error()))
+		} else {
+			recordScheduleTick(true)
+		}
+		if err := tickMaintenanceOnce(cfg); err != nil {
+			recordMaintenanceTick(false)
+			logger.Warn("maintenance tick failed", slog.String("error", err.Error()))
 			return
 		}
-		recordScheduleTick(true)
+		recordMaintenanceTick(true)
+		logger.Info("maintenance tick completed")
 	}
 	tick()
 	ticker := time.NewTicker(scheduleTickInterval)

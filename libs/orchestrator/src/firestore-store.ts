@@ -210,6 +210,9 @@ export class FirestoreStore implements OrchestratorStore {
       if (outcome.run !== undefined) {
         tx.set(this.#runRef(outcome.run.runId), outcome.run);
       }
+      for (const run of outcome.additionalRuns ?? []) {
+        tx.set(this.#runRef(run.runId), run);
+      }
       for (const entry of outcome.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
@@ -244,6 +247,9 @@ export class FirestoreStore implements OrchestratorStore {
 
       if (decision.run !== undefined) {
         tx.set(this.#runRef(decision.run.runId), decision.run);
+      }
+      for (const run of decision.additionalRuns ?? []) {
+        tx.set(this.#runRef(run.runId), run);
       }
       for (const entry of decision.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);

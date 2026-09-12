@@ -23,7 +23,7 @@ function githubIssueHref(anchor: { repo: string; issue: number }): string {
  *
  * Every control here acts on exactly one row, and that was not visible: the
  * rows were an undivided stack and every button read just "Redispatch", so a
- * section headed "Parked work (4)" showing one button read as one control
+ * section headed "Stopped work (4)" showing one button read as one control
  * over all of it (#1816). Each row is delimited and its controls name their
  * own item; the sibling half of that report - rows whose anchor has no native
  * work id rendering nothing at all - is answered by `githubIssueHref` above. */
@@ -39,7 +39,7 @@ export function ParkedWorkPanel({
   redispatch: WorkAction;
 }) {
   const parked = items
-    .filter((item) => item.state === 'parked')
+    .filter((item) => item.state === 'parked' || item.state === 'failed')
     .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
   if (parked.length === 0 && !hasMoreTasks) return null;
   return (
@@ -48,16 +48,16 @@ export function ParkedWorkPanel({
       padding="md"
       mb="xl"
       component="section"
-      aria-label="Parked work"
+      aria-label="Stopped work"
       className="lcars-panel"
       data-testid="parked-work-panel"
     >
       <Title order={3} size="h5">
-        Parked work ({parked.length})
+        Stopped work ({parked.length})
       </Title>
       {parked.length === 0 ? (
         <Text size="sm" c="dimmed" mt="xs">
-          No parked work in the 200 most recently updated tasks.
+          No stopped work in the 200 most recently updated tasks.
         </Text>
       ) : (
         <Stack gap={0} mt="xs">
@@ -77,8 +77,8 @@ export function ParkedWorkPanel({
                   </Anchor>
                   <Text size="xs" c="dimmed">
                     {item.spec.target.repo} ·{' '}
-                    <span>{latest?.result?.summary ?? 'lost'}</span> · parked{' '}
-                    {formatRelativeTime(item.updatedAt)}
+                    <span>{latest?.result?.summary ?? 'lost'}</span> ·{' '}
+                    {item.state} {formatRelativeTime(item.updatedAt)}
                   </Text>
                 </Stack>
                 {'workId' in item.anchor ? (
@@ -108,7 +108,7 @@ export function ParkedWorkPanel({
       )}
       {hasMoreTasks && (
         <Text size="xs" c="dimmed" mt="xs">
-          Older tasks may contain parked work.
+          Older tasks may contain stopped work.
         </Text>
       )}
     </Card>
