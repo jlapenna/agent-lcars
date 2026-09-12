@@ -163,6 +163,9 @@ JSON
     ;;
   */heartbeat)
     echo heartbeat >> "$HEARTBEAT_LOG"
+    if [ "${FAKE_HEARTBEAT_FAIL:-}" = 1 ]; then
+      exit 22
+    fi
     echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
     ;;
   */complete)
@@ -219,20 +222,17 @@ exit 0
 FAKE
   chmod +x "$bindir/git"
 
-  cat > "$bindir/timeout" <<'FAKE'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$RUNNER_TEMP/timeout-args.log"
-exec /usr/bin/timeout "$@"
-FAKE
-  chmod +x "$bindir/timeout"
-
-
   cat > "$bindir/gh" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s' "${GH_TOKEN:-}" > "$GH_INVOCATION_TOKEN_LOG"
 if [[ "$*" == *"pulls?state=all"* ]]; then
-  [ "${FAKE_GH_LOOKUP_FAIL:-0}" = 0 ] || exit 1
-  if [ "${FAKE_GH_NO_MATCH:-}" = "1" ]; then
+  if [ "${FAKE_GH_LOOKUP_FAIL:-}" = 1 ]; then
+    exit 1
+  elif [ -n "${FAKE_GH_MATCH_AFTER_OPENCODE_RUNS:-}" ] &&
+    [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ] &&
+    [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -ge "$FAKE_GH_MATCH_AFTER_OPENCODE_RUNS" ]; then
+    echo '12'
+  elif [ "${FAKE_GH_NO_MATCH:-}" = "1" ]; then
     echo ""
   else
     echo '12'
@@ -368,16 +368,44 @@ FAKE
 
 cat > "$bindir/opencode" <<'FAKE'
 #!/usr/bin/env bash
-if [ "${1:-}" = --pure ] && [ "${2:-}" = session ]; then
-  touch "$tmp/opencode-initialized"
-  exit "${FAKE_OPENCODE_INIT_EXIT:-0}"
-fi
 if [ "${1:-}" = run ] && [ "${2:-}" = --help ]; then
   [ "${FAKE_OPENCODE_NO_AUTO:-}" = 1 ] || echo '      --auto         auto-approve permissions'
   exit 0
 fi
+if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
+  touch "$tmp/opencode-initialized"
+  echo bootstrap >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
+  if [ "${FAKE_OPENCODE_BOOTSTRAP_FAIL:-}" = 1 ] || [ "${FAKE_OPENCODE_INIT_EXIT:-0}" -ne 0 ]; then exit 1; fi
+  if [ "${FAKE_OPENCODE_MALFORMED_SESSIONS:-}" = 1 ]; then echo '{}'; exit 0; fi
+  if [ "${FAKE_OPENCODE_EMPTY_BOOTSTRAP:-}" = 1 ] && [ ! -f "${OPENCODE_FAKE_SESSIONS_FILE:-/nonexistent}" ]; then exit 0; fi
+  sessions='[]'
+  if [ -f "${OPENCODE_FAKE_SESSIONS_FILE:-/nonexistent}" ]; then
+    sessions="$(cat "$OPENCODE_FAKE_SESSIONS_FILE")"
+  fi
+  printf '%s\n' "$sessions"
+  exit 0
+fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
+echo run >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
+run_count=1
+if [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ]; then
+  run_count=$(( $(cat "$OPENCODE_RUN_COUNT_FILE") + 1 ))
+fi
+echo "$run_count" > "$OPENCODE_RUN_COUNT_FILE"
+if [ "${FAKE_OPENCODE_STALE_NO_DELIVERABLE:-}" = 1 ] && [ "$run_count" -eq 1 ]; then
+  echo 'NO_DELIVERABLE=1' >> "$RUNTIME_ENV"
+fi
+if [ "${FAKE_OPENCODE_NATIVE_PARK:-}" = 1 ]; then
+  printf '%s\n%s\n' \
+    "<!-- agent-result:v1:park:${ATTEMPT_ID} -->" \
+    "<!-- attempt-claim:${ATTEMPT_ID} -->" > "$NATIVE_WORK_OUTCOME_FILE"
+fi
+if [ "${FAKE_OPENCODE_CREATE_AMBIGUOUS_SESSIONS:-}" = 1 ]; then
+  printf '[{"id":"ses_new_1","directory":"%s"},{"id":"ses_new_2","directory":"%s"}]\n' "$PWD" "$PWD" > "$OPENCODE_FAKE_SESSIONS_FILE"
+elif [ ! -f "$OPENCODE_FAKE_SESSIONS_FILE" ] || [ "$(cat "$OPENCODE_FAKE_SESSIONS_FILE")" = '[]' ]; then
+  printf '[{"id":"ses_new_1","directory":"%s"}]\n' "$PWD" > "$OPENCODE_FAKE_SESSIONS_FILE"
+fi
 if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
   sleep "$FAKE_OPENCODE_SLEEP_SECONDS"
 fi
@@ -392,16 +420,27 @@ exit "${FAKE_OPENCODE_EXIT_CODE:-0}"
 FAKE
   chmod +x "$bindir/opencode"
 
+  cat > "$bindir/timeout" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$RUNNER_TEMP/timeout-args.log"
+if [ -n "${TIMEOUT_ARGS_LOG:-}" ] && [ "$TIMEOUT_ARGS_LOG" != "$RUNNER_TEMP/timeout-args.log" ]; then
+  printf '%s\n' "$*" >> "$TIMEOUT_ARGS_LOG"
+fi
+exec /usr/bin/timeout "$@"
+FAKE
+  chmod +x "$bindir/timeout"
+
   # Fake node helper for the direct-runner resume test:
   # records its argv (proving direct-runner.sh's `runner resume` call site
   # passes the right session id/transcript uri/cwd) and either prints a
   # fake resumed local path or, when FAKE_RESUME_FAIL is set, fails. A
   # successful command can also return an empty path, which is equally
   # invalid for the requested-resume contract.
-  cat > "$bindir/node" <<'FAKE'
+cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$NODE_ARGS_LOG"
-if [ "${FAKE_PIPELINE:-}" = opencode ] && [ "${3:-}" = sidecar ]; then
+if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
+  echo sidecar >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
   if [ ! -f "$tmp/opencode-initialized" ]; then
     touch "$tmp/opencode-startup-race"
   fi
@@ -525,6 +564,10 @@ run_scenario() {
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
   export OPENCODE_ENV_LOG="$dir/opencode-env.log"
   export OPENCODE_LAST_MESSAGE_PRECHECK_LOG="$dir/opencode-last-message-precheck.log"
+  export OPENCODE_SEQUENCE_LOG="$dir/opencode-sequence.log"
+  export OPENCODE_FAKE_SESSIONS_FILE="$dir/opencode-sessions.json"
+  export OPENCODE_RUN_COUNT_FILE="$dir/opencode-run-count"
+  export TIMEOUT_ARGS_LOG="$dir/timeout-args.log"
   export RUNTIME_HELPERS_DEFAULT_LOG="$dir/runtime-helpers-default.log"
 
   # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
@@ -865,6 +908,155 @@ grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE
 
 echo "scenario opencode-happy: OK"
 
+first_opencode_step="$(head -n1 "$OPENCODE_SEQUENCE_LOG")"
+[ "$first_opencode_step" = bootstrap ] ||
+  fail "opencode bootstrap: sidecar/provider touched the store before synchronous initialization ($(cat "$OPENCODE_SEQUENCE_LOG"))"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode verified deliverable: provider was continued despite exact verifier success"
+
+echo "scenario opencode-bootstrap-order: OK"
+
+# OpenCode 1.18.30 returns successful empty stdout for a fresh pure session
+# listing. That is a valid empty baseline, while non-empty malformed JSON still
+# fails closed.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_OPENCODE_EMPTY_BOOTSTRAP=1
+run_scenario opencode-empty-bootstrap opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_OPENCODE_EMPTY_BOOTSTRAP
+[ "$rc" -eq 0 ] || fail "opencode empty bootstrap: successful empty listing blocked the run"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode empty bootstrap: provider did not run exactly once"
+
+echo "scenario opencode-empty-bootstrap: OK"
+
+# An exit-zero fresh run with completed verifier lookups but no artifact gets
+# exactly one continuation in the one newly-created workspace session. The
+# fake verifier begins succeeding only after that second provider invocation.
+export FAKE_BRIEF_NO_RESUME=1
+export FAKE_GH_NO_MATCH=1
+export FAKE_GH_MATCH_AFTER_OPENCODE_RUNS=2
+export FAKE_OPENCODE_SLEEP_SECONDS=1
+export OPENCODE_TIMEOUT_SECONDS=5
+run_scenario opencode-premature-stop opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_OPENCODE_RUNS
+unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS
+
+[ "$rc" -eq 0 ] || fail "opencode premature stop: continuation did not produce verified completion"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 2 ] ||
+  fail "opencode premature stop: expected exactly two total provider rounds"
+grep -q -- 'run --model homelab/default-nothink --session ses_new_1 --auto Continue the same authorized task' "$OPENCODE_ARGS_LOG" ||
+  fail "opencode premature stop: second round did not preserve the discovered session ($(cat "$OPENCODE_ARGS_LOG"))"
+mapfile -t opencode_run_timeouts < <(grep 'opencode.* run ' "$TIMEOUT_ARGS_LOG" | sed -nE 's/.* ([0-9]+)s .*opencode.*/\1/p')
+[ "${#opencode_run_timeouts[@]}" -eq 2 ] ||
+  fail "opencode premature stop: did not record two bounded provider rounds ($(cat "$TIMEOUT_ARGS_LOG"))"
+[ "${opencode_run_timeouts[1]}" -lt "${opencode_run_timeouts[0]}" ] ||
+  fail "opencode premature stop: continuation reset the provider time budget ($(cat "$TIMEOUT_ARGS_LOG"))"
+
+echo "scenario opencode-premature-stop: OK"
+
+# A continuation is a new grant of execution. If the run was cancelled or
+# lost its lease while the first round was active, its authenticated heartbeat
+# is refused and the provider must not receive the second round.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_OPENCODE_RUNS=2
+export FAKE_HEARTBEAT_FAIL=1
+run_scenario opencode-continuation-heartbeat-refused opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_OPENCODE_RUNS
+unset FAKE_HEARTBEAT_FAIL
+[ "$rc" -eq 1 ] || fail "opencode heartbeat refused: expected terminal no-deliverable"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode heartbeat refused: provider continued after authorization was rejected"
+
+echo "scenario opencode-continuation-heartbeat-refused: OK"
+
+# A resumed run already has the authoritative session id; continuation reuses
+# it instead of selecting a different session from the store.
+export FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_OPENCODE_RUNS=2
+run_scenario opencode-resumed-premature-stop opencode
+unset FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_OPENCODE_RUNS
+[ "$rc" -eq 0 ] || fail "opencode resumed premature stop: continuation failed"
+[ "$(grep -c -- 'run --model.*--session sess_1' "$OPENCODE_ARGS_LOG")" -eq 2 ] ||
+  fail "opencode resumed premature stop: both rounds did not preserve sess_1 ($(cat "$OPENCODE_ARGS_LOG"))"
+
+echo "scenario opencode-resumed-premature-stop: OK"
+
+# Multiple new workspace sessions make ownership ambiguous. Do not guess which
+# conversation to continue.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_OPENCODE_CREATE_AMBIGUOUS_SESSIONS=1
+run_scenario opencode-ambiguous-session opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_OPENCODE_CREATE_AMBIGUOUS_SESSIONS
+[ "$rc" -eq 1 ] || fail "opencode ambiguous session: expected terminal no-deliverable"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode ambiguous session: provider continued without one unambiguous session"
+
+echo "scenario opencode-ambiguous-session: OK"
+
+# A verifier lookup failure is distinct from a completed no-deliverable check
+# and must not cause another provider invocation.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_LOOKUP_FAIL=1
+run_scenario opencode-verifier-lookup-failure opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_LOOKUP_FAIL
+[ "$rc" -eq 1 ] || fail "opencode verifier lookup failure: expected terminal no-deliverable"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode verifier lookup failure: provider retried after an inconclusive verifier"
+
+echo "scenario opencode-verifier-lookup-failure: OK"
+
+# A stale marker in the shared prepare environment may have come from an
+# agent-invoked verifier. A current lookup failure must remain inconclusive;
+# only the dedicated, freshly-empty probe environment can authorize recovery.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_LOOKUP_FAIL=1
+export FAKE_OPENCODE_STALE_NO_DELIVERABLE=1
+run_scenario opencode-stale-marker-lookup-failure opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_LOOKUP_FAIL
+unset FAKE_OPENCODE_STALE_NO_DELIVERABLE
+[ "$rc" -eq 1 ] || fail "opencode stale marker: expected terminal no-deliverable"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode stale marker: old shared verifier result authorized continuation"
+
+echo "scenario opencode-stale-marker-lookup-failure: OK"
+
+# Native structured park evidence is already a terminal handoff. It suppresses
+# continuation even though the GitHub verifier has no native comment to find.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_OPENCODE_NATIVE_PARK=1
+run_scenario opencode-native-park-no-continuation opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_OPENCODE_NATIVE_PARK
+[ "$rc" -eq 0 ] || fail "opencode native park: expected structured terminal success"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode native park: provider continued after structured park"
+grep -q '"outcome":"park"' "$COMPLETE_LOG" ||
+  fail "opencode native park: completion was not park ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario opencode-native-park-no-continuation: OK"
+
+# A GitHub structured no-op is an exact-marker deliverable and suppresses the
+# recovery round just like a park.
+export FAKE_ANCHOR=github FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1
+export FAKE_GH_MARKER_COMMENT=1 FAKE_GH_MARKER_NO_OP=1
+run_scenario opencode-github-no-op-no-continuation opencode
+unset FAKE_ANCHOR FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH
+unset FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_NO_OP
+[ "$rc" -eq 0 ] || fail "opencode GitHub no-op: expected structured terminal success"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode GitHub no-op: provider continued after structured no-op"
+grep -q '"outcome":"no-op"' "$COMPLETE_LOG" ||
+  fail "opencode GitHub no-op: completion was not no-op ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario opencode-github-no-op-no-continuation: OK"
+
+# A failed bounded initialization reports immediately and never starts the
+# telemetry sidecar or an inference-bearing provider round.
+export FAKE_OPENCODE_BOOTSTRAP_FAIL=1
+run_scenario opencode-bootstrap-failed opencode
+unset FAKE_OPENCODE_BOOTSTRAP_FAIL
+[ "$rc" -ne 0 ] || fail "opencode bootstrap failed: expected non-zero exit"
+[ -f "$COMPLETE_LOG" ] || fail "opencode bootstrap failed: missing completion report"
+[ ! -f "$OPENCODE_RUN_COUNT_FILE" ] ||
+  fail "opencode bootstrap failed: provider run started after initialization failure"
+if grep -q -- 'runner sidecar' "$NODE_ARGS_LOG" 2>/dev/null; then
+  fail "opencode bootstrap failed: telemetry sidecar started before initialization completed"
+fi
+
+echo "scenario opencode-bootstrap-failed: OK"
+
 # QueueExecutor does not manufacture a GitHub Actions event.  Its OpenCode
 # adapter must therefore use the ordinary headless CLI, not `github run`,
 # whose action-only event parser rejects an unset GITHUB_EVENT_NAME.
@@ -910,6 +1102,8 @@ unset FAKE_OPENCODE_EXIT_CODE FAKE_GH_NO_MATCH
 [ "$rc" -eq 1 ] || fail "opencode exit-nonzero: expected exit 1, got $rc"
 grep -q '"outcome":"agent-failed"' "$COMPLETE_LOG" ||
   fail "opencode exit-nonzero: complete call did not report agent-failed ($(cat "$COMPLETE_LOG"))"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode exit-nonzero: provider retried a non-zero deterministic failure"
 
 echo "scenario opencode-exit-nonzero: OK"
 
@@ -942,8 +1136,9 @@ unset FAKE_RESUME_FAIL
 [ -f "$COMPLETE_LOG" ] || fail "opencode resume-failed: direct-runner.sh never called POST .../complete"
 grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
   fail "opencode resume-failed: complete call did not report runner-failed ($(cat "$COMPLETE_LOG"))"
-[ ! -s "$OPENCODE_ARGS_LOG" ] ||
-  fail "opencode resume-failed: opencode started after a failed restore ($(cat "$OPENCODE_ARGS_LOG"))"
+if grep -q -- 'run --model' "$OPENCODE_ARGS_LOG"; then
+  fail "opencode resume-failed: provider run started after a failed restore ($(cat "$OPENCODE_ARGS_LOG"))"
+fi
 
 echo "scenario opencode-resume-failed: OK"
 
