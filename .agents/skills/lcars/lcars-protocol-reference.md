@@ -57,13 +57,30 @@ could not tell your run's work from an unrelated bot touch in the same
 window.
 
 The GitHub App subscribes to issue, issue-comment, and pull-request events.
-`orchestrator-ingest.ts` acts only on the `labeled` action for both label
-families (#565) and on `issue_comment`'s `created` action for reply
-commands; `unlabeled`, `closed`, `reopened`, and any other action are
-received but ignored today (`ignore('unhandled-action')` /
-`ignore('unhandled-event')`) — there is no relabel/close-driven cleanup in
-the current design. The native outcome verifier keeps the deliverable contract
-aligned for both modes regardless of how the run was requested.
+`orchestrator-ingest.ts` acts on the `labeled` action for both label families
+(#565) and on `issue_comment`'s `created` action for reply commands. An
+`issues` or `pull_request` `closed` action also retires a queued, unclaimed
+`mode: implement` run for that anchor (#1937). The transition is transactional
+with queue claiming and fenced by GitHub's `closed_at`, so claimed workers and
+a newer post-reopen generation survive a racing or delayed close delivery.
+Review and tagged-reply modes remain usable on closed anchors. `unlabeled`,
+`reopened`, and other actions are otherwise received but ignored
+(`ignore('unhandled-action')` / `ignore('unhandled-event')`). The native
+outcome verifier keeps the deliverable contract aligned for every mode
+regardless of how the run was requested.
+
+Close-event handling is not the only recovery path. Each maintenance tick
+checks a bounded set of queued GitHub implementation runs against GitHub's
+current lifecycle state, which retires backlog created before #1937 and work
+whose close webhook was dropped. The QueueExecutor claim route repeats that
+exact check after reserving a run but before returning its token, closing the
+interval between maintenance passes without launching a worker for a closed
+anchor. The lifecycle read has one four-second deadline covering token minting
+and HTTP. If it cannot prove the anchor's state, claim atomically returns the
+run to `queued` under the exact claimant and token identity; uncertain data
+neither launches nor discards implementation work. Maintenance rotates its
+ten-anchor check window every five-minute tick so an old open or unavailable
+anchor cannot permanently hide later closed backlog.
 
 ## Reconciliation and lease recovery
 

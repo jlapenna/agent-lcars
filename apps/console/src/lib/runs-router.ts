@@ -22,6 +22,7 @@ import { implement, ORPCError } from '@orpc/server';
 import { anchorTarget } from './anchor-target';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
 import { consoleUrl } from './deployment';
+import type { GithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type {
   DispatchTokenProvider,
   ExpiringDispatchTokenProvider,
@@ -56,6 +57,11 @@ export interface RunsContext {
    *  file already constructs for `work-router.ts` (see
    *  `app/api/work/v1/[[...rest]]/route.ts`). */
   drain: () => Promise<DrainOutboxResult>;
+  /** Exact lifecycle read before exposing a claimed GitHub implementation
+   * run to a worker. Undefined is allowed for isolated callers/tests. */
+  loadGithubAnchorLifecycle?: (
+    anchor: Extract<Run['task'], { repo: string }>,
+  ) => Promise<GithubAnchorLifecycle | undefined>;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
    *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
    *  `expiresAt`) must be deterministic under test, not tied to wall-clock
@@ -345,6 +351,53 @@ export const runsRouter = os.router({
       });
       if (claimed === undefined) return undefined;
       if (!isLive(claimed.state)) continue;
+      if (
+        !isWorkAnchor(claimed.task) &&
+        claimed.params?.['mode'] === 'implement' &&
+        context.loadGithubAnchorLifecycle !== undefined
+      ) {
+        const lifecycle = await context.loadGithubAnchorLifecycle(claimed.task);
+        if (lifecycle === undefined) {
+          // The QueueExecutor's whole claim request is bounded at ten
+          // seconds. Return uncertain work to the queue under the exact
+          // claim identity and retry on a later poll; never expose a run we
+          // could not prove still actionable, and never consume its work.
+          const released = await context.store.releaseQueuedRunClaim({
+            runId: claimed.runId,
+            claimedBy: input.runner,
+            tokenHash: hashRunToken(token),
+            now: context.now().toISOString(),
+            deferredUntil: new Date(
+              context.now().getTime() + 5 * 60_000,
+            ).toISOString(),
+          });
+          if (!released) {
+            const current = await context.store.readRun(claimed.runId);
+            if (current !== undefined && isLive(current.state)) {
+              throw new Error(
+                'could not safely release unverifiable queue claim',
+              );
+            }
+          }
+          return undefined;
+        }
+        if (lifecycle?.state === 'closed') {
+          // No run token has left this handler yet, so settling the freshly
+          // claimed run here cannot interrupt a worker. This final check
+          // closes the maintenance interval and recovers arbitrarily old
+          // queued records without waiting for another webhook.
+          const canceled = await context.orchestrator.cancel(
+            claimed.runId,
+            `GitHub anchor confirmed closed at ${lifecycle.sourceUpdatedAt}`,
+          );
+          if (!isRefusal(canceled)) {
+            await context.drain();
+            return undefined;
+          }
+          const current = await context.store.readRun(claimed.runId);
+          if (current === undefined || !isLive(current.state)) continue;
+        }
+      }
       return {
         runId: claimed.runId,
         ...('workId' in claimed.task ? { workId: claimed.task.workId } : {}),

@@ -280,6 +280,51 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
+  async transactRun(input: {
+    runId: string;
+    decide(state: {
+      task: VersionedTask | undefined;
+      run: Run | undefined;
+    }): Decision | Refusal;
+  }): Promise<Decision | Refusal> {
+    const runRef = this.#runRef(input.runId);
+    return this.#firestore.runTransaction(async (tx) => {
+      const runSnapshot = await tx.get(runRef);
+      const run = runSnapshot.exists
+        ? runSchema.parse(runSnapshot.data())
+        : undefined;
+      const taskRef = run === undefined ? undefined : this.#taskRef(run.task);
+      const taskSnapshot =
+        taskRef === undefined ? undefined : await tx.get(taskRef);
+      const task =
+        taskSnapshot === undefined || !taskSnapshot.exists
+          ? undefined
+          : taskDocSchema.parse(taskSnapshot.data());
+      const outcome = input.decide({ task, run });
+      if (isRefusal(outcome)) return outcome;
+
+      if (taskRef === undefined) {
+        throw new Error('run transaction decision has no task reference');
+      }
+      tx.set(taskRef, {
+        task: outcome.task,
+        revision: (task?.revision ?? 0) + 1,
+      });
+      if (outcome.run !== undefined) {
+        tx.set(this.#runRef(outcome.run.runId), outcome.run);
+        this.#writeProviderCooldown(tx, outcome.run);
+      }
+      for (const additionalRun of outcome.additionalRuns ?? []) {
+        tx.set(this.#runRef(additionalRun.runId), additionalRun);
+        this.#writeProviderCooldown(tx, additionalRun);
+      }
+      for (const entry of outcome.outbox) {
+        tx.set(this.#outboxRef(entry.entryId), entry);
+      }
+      return outcome;
+    });
+  }
+
   async beginGithubAnchorProjectionRefresh(
     anchor: GithubAnchorProjection['anchor'],
   ): Promise<number> {
@@ -677,6 +722,7 @@ export class FirestoreStore implements OrchestratorStore {
         queued.map(({ run }) => run),
         live,
         granted,
+        input.now,
       );
       const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;
@@ -711,8 +757,43 @@ export class FirestoreStore implements OrchestratorStore {
       .get();
     return snapshot.docs
       .map((doc) => runSchema.parse(doc.data()))
+      .filter((run) => isLive(run.state))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .slice(0, limit ?? 200);
+      .slice(0, limit);
+  }
+
+  async releaseQueuedRunClaim(input: {
+    runId: string;
+    claimedBy: string;
+    tokenHash: string;
+    now: string;
+    deferredUntil?: string;
+  }): Promise<boolean> {
+    const ref = this.#runRef(input.runId);
+    return this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (!snapshot.exists) return false;
+      const run = runSchema.parse(snapshot.data());
+      if (
+        !isLive(run.state) ||
+        run.queue?.state !== 'claimed' ||
+        run.queue.claimedBy !== input.claimedBy ||
+        run.queue.tokenHash !== input.tokenHash
+      ) {
+        return false;
+      }
+      tx.set(ref, {
+        ...run,
+        queue: {
+          state: 'queued',
+          ...(input.deferredUntil === undefined
+            ? {}
+            : { deferredUntil: input.deferredUntil }),
+        },
+        updatedAt: input.now,
+      });
+      return true;
+    });
   }
 
   #taskRef(id: TaskId): DocumentReference {

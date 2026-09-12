@@ -233,6 +233,9 @@ export type RunResult = z.infer<typeof runResultSchema>;
  *  token; `apps/console/src/lib/run-token.ts` mints/hashes it. */
 export const runQueueSchema = z.strictObject({
   state: z.enum(['queued', 'claimed']),
+  /** A lifecycle lookup could not verify this run. Claims skip it until this
+   * instant so one broken GitHub anchor cannot block its whole pipeline. */
+  deferredUntil: isoUtc.optional(),
   claimedAt: isoUtc.optional(),
   claimedBy: z.string().min(1).max(256).optional(),
   tokenHash: z

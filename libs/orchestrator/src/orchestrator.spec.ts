@@ -761,6 +761,74 @@ describe('concurrency', () => {
   });
 });
 
+describe('guarded pre-claim cancellation', () => {
+  it('cancels a queued run at or before the lifecycle cutoff', async () => {
+    const { store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await store.enqueueRun({ runId: run.runId, now: T0 });
+    await orchestrator.confirmDispatch(run.runId);
+
+    const outcome = await orchestrator.cancelUnclaimedBefore({
+      runId: run.runId,
+      notAfter: T0,
+      note: 'anchor closed',
+    });
+    expect(outcome).not.toHaveProperty('refused');
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'canceled',
+      queue: { state: 'queued' },
+    });
+  });
+
+  it('fences a stale cutoff from a newer run', async () => {
+    const { clock, store, orchestrator } = fixture();
+    clock.advanceMinutes(1);
+    const { run } = await started(orchestrator);
+    await store.enqueueRun({ runId: run.runId, now: clock.now() });
+    await orchestrator.confirmDispatch(run.runId);
+
+    await expect(
+      orchestrator.cancelUnclaimedBefore({
+        runId: run.runId,
+        notAfter: T0,
+      }),
+    ).resolves.toMatchObject({
+      refused: true,
+      reason: 'run-newer-than-cutoff',
+    });
+    expect(await store.readRun(run.runId)).toMatchObject({ state: 'running' });
+  });
+
+  it('cannot overwrite a queue claim that wins the transaction race', async () => {
+    const { store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await store.enqueueRun({ runId: run.runId, now: T0 });
+    await orchestrator.confirmDispatch(run.runId);
+
+    const [claimed, canceled] = await Promise.all([
+      store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: T0,
+        claimedBy: 'executor-that-won',
+        tokenHash: 'a'.repeat(64),
+      }),
+      orchestrator.cancelUnclaimedBefore({
+        runId: run.runId,
+        notAfter: T0,
+      }),
+    ]);
+    expect(claimed?.runId).toBe(run.runId);
+    expect(canceled).toMatchObject({
+      refused: true,
+      reason: 'run-already-claimed',
+    });
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'running',
+      queue: { state: 'claimed', claimedBy: 'executor-that-won' },
+    });
+  });
+});
+
 describe('capacity-wait lease recovery', () => {
   it('rechecks queue state after an expired snapshot and still permits cancellation', async () => {
     const { clock, store, orchestrator } = fixture();

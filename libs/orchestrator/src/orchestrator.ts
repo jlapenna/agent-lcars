@@ -157,6 +157,40 @@ export class Orchestrator {
     );
   }
 
+  /**
+   * Cancel a run only while it has not been claimed by an executor and only
+   * when it predates the lifecycle event requesting cancellation. The store
+   * observes the run in the same transaction as the transition, fencing a
+   * concurrent claim and a newer generation from stale close deliveries.
+   */
+  async cancelUnclaimedBefore(input: {
+    runId: string;
+    notAfter: string;
+    note?: string;
+  }): Promise<Decision | Refusal> {
+    const now = this.clock.now();
+    return this.store.transactRun({
+      runId: input.runId,
+      decide: ({ task, run }) => {
+        if (task === undefined || run === undefined) {
+          return refused('unknown-run');
+        }
+        if (run.queue?.state === 'claimed') {
+          return refused('run-already-claimed');
+        }
+        if (Date.parse(run.createdAt) > Date.parse(input.notAfter)) {
+          return refused('run-newer-than-cutoff');
+        }
+        return cancelRun({
+          now,
+          task: task.task,
+          run,
+          ...(input.note === undefined ? {} : { note: input.note }),
+        });
+      },
+    });
+  }
+
   async close(taskId: TaskId): Promise<Decision | Refusal> {
     return this.transact(taskId, async (task, activeRun) =>
       closeTask({ now: this.clock.now(), task: task?.task, activeRun }),
