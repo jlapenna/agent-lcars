@@ -10,6 +10,26 @@ system message does not.
 
 Keep this file short. It is re-sent on every request.
 
+## Keep investigation bounded
+
+Work directly in this session. Delegated exploration is disabled for this
+serial inference runner: waiting on a child consumed an entire two-hour run.
+Use targeted glob/grep and short reads to answer a concrete implementation
+question. Start with at most 120 lines per read; expand only when a specific
+missing definition or caller requires it. Avoid batches of entire source files.
+
+Maintain a short working note in the task worktree: acceptance criteria,
+verified paths and line ranges, decisions, checks performed, and the next
+concrete edit or experiment. After compaction, read that note and continue the
+recorded action. Do not restart repository exploration or reread already
+understood files simply because compaction occurred. Revalidate only facts
+that are missing or may have changed.
+
+Once the relevant data flow and failure are understood, make the smallest
+justified edit or run a focused experiment. If another read would repeat a
+known fact, stop reading and use that fact. Never invent an edit merely to
+show progress; identify the specific unresolved question instead.
+
 ## Commit and push at the first working slice
 
 Not at the end. Not after verification. The moment an edit compiles or a test
