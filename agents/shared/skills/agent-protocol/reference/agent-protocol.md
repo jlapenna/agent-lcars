@@ -355,18 +355,28 @@ the next action instead of blind-iterating. Park per §4 only when that action
 requires a human. Repeated provider or runner failures remain execution
 failures; they do not become human decisions by recurring.
 
-**Never apply a `ci:*` or `automation:*` label to widen your own run.** They
-are maintainer-requested workflow controls, not verification you may select:
-each one exists to make a run broader, more expensive, or more privileged
-than the repository's default. The budget they spend is not your run's — it
-is the fleet's. Sprinkles measured that
-(supersprinklesracing/sprinkles#5244): a single `ci:run-e2e` applied at
-`gh pr create` time bypassed affected-project selection, ran every E2E
-project across every app, saturated the shared self-hosted runner fleet, and
-left that pull request and unrelated ones blocked for six hours. The lane
-your repository already runs by default is your evidence. If you believe a
-broader run is genuinely required, park per §4 and ask for it, rather than
-spending everyone else's capacity on your own judgement.
+**Do not use workflow controls to broaden your own verification without
+maintainer authorization.** All-project labels such as `ci:run-e2e`, global
+repository-variable changes, privileged automation, and extra visual lanes
+remain maintainer decisions. Sprinkles measured the cost in #5244: one
+all-project E2E override bypassed affected selection and blocked unrelated
+work for six hours.
+
+A trusted repository policy may explicitly authorize the exact
+`ci:run-functional-e2e` label for a PR while its ordinary functional lane is
+paused. Use that standing authorization when all of these hold:
+
+- The PR's acceptance criteria require browser verification that has not run.
+- The repository's instructions explicitly permit that label, and its current
+  workflow preserves affected-project selection and runs functional tests only.
+- The action changes only that PR's label; it does not enable all projects,
+  visual snapshots, privileged jobs, deployment, or global workflow controls.
+
+Record the policy and selected lane in the PR handoff, apply the authorized
+label, and continue through the selected checks. Do not park merely to ask for
+permission the trusted repository policy already grants. A label name alone
+is not authorization: if these conditions do not hold, preserve the evidence
+and ask for the exact broader verification needed per §4.
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
