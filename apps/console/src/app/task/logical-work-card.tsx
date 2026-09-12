@@ -11,8 +11,10 @@ import {
   Title,
 } from '@mantine/core';
 
+import type { ActionItem } from '../../lib/action-items';
 import type { LogicalWork, LogicalWorkState } from '../../lib/logical-work';
 import { PipelineBadge, RepoBadge } from '../agent-activity-panel';
+import { ItemOverflowMenu } from '../item-overflow-menu';
 import { RunsSection } from './runs-section';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
@@ -42,11 +44,18 @@ export function LogicalWorkCard({
   runs,
   anchorState,
   spec,
+  item,
 }: {
   work: LogicalWork;
   runs: OrchestratorRun[];
   anchorState: 'open' | 'closed';
   spec?: WorkSpec;
+  /** This task's own queue item, so its actions (edit, close, assign,
+   * review) sit with the task body rather than only in the app header —
+   * the header is far from the content a maintainer is looking at when
+   * deciding what to do with a task. Omitted by hosts without item state
+   * (agents' claimed-idle section). */
+  item?: ActionItem;
 }) {
   return (
     <Card
@@ -101,13 +110,16 @@ export function LogicalWorkCard({
               <RepoBadge repo={work.task.repository} />
             </Group>
           </Stack>
-          <Text size="xs" c="dimmed">
-            {work.provenance.kind === 'authoritative'
-              ? `authoritative state rev ${work.provenance.revision ?? 'unknown'}`
-              : work.provenance.kind === 'unavailable'
-                ? 'authoritative lifecycle state unavailable'
-                : 'no authoritative run history'}
-          </Text>
+          <Group gap="xs" wrap="nowrap" align="flex-start">
+            <Text size="xs" c="dimmed">
+              {work.provenance.kind === 'authoritative'
+                ? `authoritative state rev ${work.provenance.revision ?? 'unknown'}`
+                : work.provenance.kind === 'unavailable'
+                  ? 'authoritative lifecycle state unavailable'
+                  : 'no authoritative run history'}
+            </Text>
+            {item && <ItemOverflowMenu item={item} />}
+          </Group>
         </Group>
 
         {work.anomalies.length > 0 && (

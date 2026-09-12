@@ -12,7 +12,6 @@ import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleFooter } from '../../../../console-footer';
 import { repoScopedConsoleHrefs } from '../../../../console-hrefs';
 import { formatRelativeTime } from '../../../../format';
-import { ItemOverflowMenu } from '../../../../item-overflow-menu';
 import { NavPageLoading } from '../../../../page-loading';
 import { QueueUtilityMenu } from '../../../../queue-utility-menu';
 import { QuickTaskButton } from '../../../../quick-task-button';
@@ -63,6 +62,7 @@ function TaskDetailViewContent({ detail }: TaskDetailViewProps) {
           runs={detail.runs}
           anchorState={detail.anchorState}
           spec={detail.spec}
+          item={detail.item.kind === 'issue' ? detail.item : undefined}
         />
       )}
     </>
@@ -94,9 +94,6 @@ const TaskDetailView = withConsolePageShell(
               initialLabel={formatRelativeTime(generatedAt)}
               refreshesAuthoritativeQueue
             />
-            {detail.status === 'ok' && detail.item.kind === 'issue' && (
-              <ItemOverflowMenu item={detail.item} />
-            )}
           </Group>
         </div>
         <div className="task-utilities task-utilities--mobile console-utilities--mobile">
