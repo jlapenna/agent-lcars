@@ -196,6 +196,9 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					capacityReservations := newDirectRunnerCapacityReservations(queueExecutorResolved, newDockerClient, logger)
 					go runQueueExecutorPoller(ctx, queueExecutorConfig{
 						consoleURL: consoleURL,
+						recover: func(recoveryCtx context.Context) error {
+							return recoverCreatedDirectRunners(recoveryCtx, queueExecutorResolved, newDockerClient, logger)
+						},
 						runnerName: runnerName,
 						idToken: func() (string, error) {
 							return idTokenFromSource(tokenSource)

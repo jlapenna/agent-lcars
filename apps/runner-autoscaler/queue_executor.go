@@ -44,6 +44,8 @@ type queueExecutorConfig struct {
 	consoleURL string
 	runnerName string
 	httpClient *http.Client
+	// recover resumes containers interrupted between create and start before new claims.
+	recover func(context.Context) error
 	// idToken mints a Google ID token for the console's work audience.
 	// Production wires this to idTokenFromTelemetryWriterKey below; tests
 	// inject a stub.
@@ -269,6 +271,11 @@ func idTokenFromSource(source oauth2.TokenSource) (string, error) {
 // brand new run minted by auto-retry), since there is no un-claim callback
 // to call here instead.
 func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interval time.Duration, logger *slog.Logger) {
+	if cfg.recover != nil {
+		if err := cfg.recover(ctx); err != nil {
+			logger.Warn("Direct-runner startup recovery incomplete", slog.Any("error", err))
+		}
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	cleanupTicker := time.NewTicker(directRunnerCleanupInterval)
