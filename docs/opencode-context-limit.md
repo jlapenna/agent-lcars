@@ -128,3 +128,22 @@ That distinction is the whole reason the commit rule kept being ignored. It
 was stated in the dispatch prompt, in `agent-protocol.md` §6, and in the
 brief's checkpoints — all turn-0 or tool-read content. `tools/opencode-config.test.sh`
 fails the build if `agent.*.prompt` is ever set again.
+
+## September 12 recovery audit: read loops despite two hours
+
+The exported OpenCode 1.18.25 transcripts for Sprinkles #5475/r3 and #5473/r3
+showed 37 compactions each, 178 and 139 model steps, and 315 and 282 read calls.
+Neither recorded an edit/write call before the two-hour timeout. The same
+source files were read 25–30 times. Individual input counts reached 84,968 and
+82,027 tokens despite the configured 60,000 context: large tool responses can
+overshoot the compaction threshold before the next check.
+
+#5467/r3 instead stalled in a delegated exploration task after only nine model
+steps. The parent export recorded the child call as still running at timeout;
+it does not prove whether the child was doing useful work.
+
+The runner now denies the Task tool using OpenCode's supported permission
+configuration and asks the main session to use focused reads and durable
+working notes across compactions. These measures target observed behavior;
+they do not establish that the success-rate target has been met. The 60,000
+context limit remains unchanged pending new backend capacity measurements.

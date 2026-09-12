@@ -4,7 +4,8 @@
   "skills": ["/opt/repo-tools/plugins/repo-tools/skills"],
   "permission": {
     "external_directory": "allow",
-    "doom_loop": "allow"
+    "doom_loop": "allow",
+    "task": "deny"
   },
   "compaction": {
     "reserved": 3000,
