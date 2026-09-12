@@ -40,8 +40,15 @@ all 42 items remain unfinished.
   obsolete parking rules; they now defer to the canonical agent protocol and
   explicitly require action after compaction.
 - #5455/r1, #5463/r2, and #5470/r2 failed within seconds without an archived
-  session; their retained containers were unavailable. Their exact bootstrap
-  failure is **unresolved**, not inferred to be an authentication failure.
+  session; their retained containers were unavailable. Central Loki logs recovered
+  #5463/r2's startup error: OpenCode's SQLite migration failed while creating
+  the `workspace` table at 15:12:48 UTC. Both the main CLI and telemetry's
+  session discovery initialize that database; simultaneous first opens are
+  a plausible cause, not conclusively proven by the SQL error alone. The
+  runner now completes a bounded database initialization before starting
+  telemetry. #5470/r2's central logs report `database is locked` immediately
+  after telemetry startup at 15:57 UTC. #5455/r1's exact startup failure
+  remains unresolved.
 
 ## Remediation
 

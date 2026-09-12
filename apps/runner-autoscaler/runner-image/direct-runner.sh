@@ -390,6 +390,22 @@ if [ "$PIPELINE" = "codex" ]; then
   fi
 fi
 
+# OpenCode session discovery also opens and migrates its SQLite database.
+# Finish the first initialization before telemetry can spawn a second CLI;
+# concurrent first opens can both try to CREATE TABLE workspace.
+if [ "$PIPELINE" = "opencode" ]; then
+  OPENCODE_BIN="${OPENCODE_BIN:-/usr/local/bin/opencode}"
+  if [ ! -x "$OPENCODE_BIN" ]; then
+    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN is missing or not executable" >&2
+    exit 1
+  fi
+  if ! timeout --signal=TERM --kill-after=10 120 \
+    "$OPENCODE_BIN" --pure session list --format json -n 1 >/dev/null; then
+    echo "FATAL: OpenCode database initialization failed before telemetry startup" >&2
+    exit 1
+  fi
+fi
+
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \

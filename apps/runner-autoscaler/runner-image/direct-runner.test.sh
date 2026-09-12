@@ -342,6 +342,10 @@ FAKE
 
 cat > "$bindir/opencode" <<'FAKE'
 #!/usr/bin/env bash
+if [ "${1:-}" = --pure ] && [ "${2:-}" = session ]; then
+  touch "$tmp/opencode-initialized"
+  exit "${FAKE_OPENCODE_INIT_EXIT:-0}"
+fi
 if [ "${1:-}" = run ] && [ "${2:-}" = --help ]; then
   [ "${FAKE_OPENCODE_NO_AUTO:-}" = 1 ] || echo '      --auto         auto-approve permissions'
   exit 0
@@ -371,6 +375,11 @@ FAKE
   cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$NODE_ARGS_LOG"
+if [ "${FAKE_PIPELINE:-}" = opencode ] && [ "${3:-}" = sidecar ]; then
+  if [ ! -f "$tmp/opencode-initialized" ]; then
+    touch "$tmp/opencode-startup-race"
+  fi
+fi
 # Stands in for the real sidecar's `runner finalize` subcommand (issue
 # #1784): when direct-runner.sh's sidecar-lifecycle.sh threads
 # --opencode-last-message-file through, this simulates the sidecar writing
@@ -438,6 +447,7 @@ FAKE
 
 run_scenario() {
   name="$1"
+  rm -f "$tmp/opencode-initialized" "$tmp/opencode-startup-race"
   export FAKE_PIPELINE="${2:-claude}"
   # A QueueExecutor container is not a GitHub Actions worker.  CI itself
   # exports this event context, so clear it explicitly before each fixture to
@@ -918,6 +928,18 @@ grep -q '"outcome":"agent-timeout"' "$COMPLETE_LOG" ||
   fail "opencode timeout: complete call did not report agent-timeout ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario opencode-timeout: OK"
+
+[ ! -e "$tmp/opencode-startup-race" ] || fail "telemetry opened OpenCode before database initialization"
+
+export FAKE_OPENCODE_INIT_EXIT=1
+run_scenario opencode-init-failure opencode
+unset FAKE_OPENCODE_INIT_EXIT
+[ "$rc" -ne 0 ] || fail "OpenCode initialization failure was ignored"
+[ ! -s "$OPENCODE_ARGS_LOG" ] || fail "agent ran after database initialization failure"
+if grep -q 'runner sidecar' "$NODE_ARGS_LOG" 2>/dev/null; then
+  fail "telemetry started after database initialization failure"
+fi
+grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" || fail "initialization failure misclassified"
 
 # The queued direct path must reject a reviewed OpenCode CLI that no longer
 # supports the non-interactive --auto contract before it attempts a real turn.
