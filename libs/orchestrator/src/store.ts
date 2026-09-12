@@ -9,6 +9,71 @@ import type {
 } from './model';
 import { taskKey } from './model';
 
+/** Server-owned direct-runner admission ceilings. OpenCode is serialized to
+ * protect the shared local inference backend from measured contention. Codex
+ * is serialized because its global subscription credential lease rejects a
+ * second concurrent session. Claude remains bounded by fleet host capacity.
+ * This policy is deliberately absent from the claim request contract. */
+export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
+  Record<string, number | undefined>
+> = Object.freeze({ codex: 1, opencode: 1 });
+
+/** Selects one provider head using least live occupancy, then FIFO age.
+ * Callers must pass only server-authorized pipelines. */
+export function selectFairQueuedRun(
+  queuedRuns: readonly Run[],
+  liveRuns: readonly Run[],
+  pipelines: readonly string[],
+): Run | undefined {
+  const granted = new Set(pipelines);
+  const pipelineOrder = new Map(
+    [...granted].map((pipeline, index) => [pipeline, index]),
+  );
+  const occupancy = new Map([...granted].map((pipeline) => [pipeline, 0]));
+  for (const run of liveRuns) {
+    if (
+      granted.has(run.pipeline) &&
+      run.queue?.state === 'claimed' &&
+      (run.state === 'pending' || run.state === 'running')
+    ) {
+      occupancy.set(run.pipeline, (occupancy.get(run.pipeline) ?? 0) + 1);
+    }
+  }
+
+  const heads = new Map<string, Run>();
+  for (const run of queuedRuns) {
+    if (run.queue?.state !== 'queued' || !granted.has(run.pipeline)) continue;
+    const current = heads.get(run.pipeline);
+    if (
+      current === undefined ||
+      run.createdAt < current.createdAt ||
+      (run.createdAt === current.createdAt && run.runId < current.runId)
+    ) {
+      heads.set(run.pipeline, run);
+    }
+  }
+
+  return [...heads.values()]
+    .filter((run) => {
+      const ceiling = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[run.pipeline];
+      return (
+        ceiling === undefined || (occupancy.get(run.pipeline) ?? 0) < ceiling
+      );
+    })
+    .sort((left, right) => {
+      const occupied =
+        (occupancy.get(left.pipeline) ?? 0) -
+        (occupancy.get(right.pipeline) ?? 0);
+      return (
+        occupied ||
+        left.createdAt.localeCompare(right.createdAt) ||
+        (pipelineOrder.get(left.pipeline) ?? 0) -
+          (pipelineOrder.get(right.pipeline) ?? 0) ||
+        left.runId.localeCompare(right.runId)
+      );
+    })[0];
+}
+
 /** GitHub delivery normally takes seconds; five minutes tolerates a slow call
  *  while still making a crashed drain retryable promptly. */
 export const OUTBOX_LEASE_MS = 5 * 60_000;
@@ -235,8 +300,10 @@ export interface OrchestratorStore {
    *  or `claimed` is left untouched. */
   enqueueRun(input: { runId: string; now: string }): Promise<void>;
 
-  /** Transactionally claims the oldest (`createdAt`) `queued` run whose
-   *  `pipeline` is one of `pipelines`, setting `queue.state = 'claimed'`
+  /** Transactionally claims a provider-fair `queued` run whose `pipeline` is
+   *  one of `pipelines`: least live claimed occupancy across providers, then
+   *  the oldest provider head, while preserving FIFO within each provider
+   *  and enforcing server-owned provider ceilings. Sets `queue.state = 'claimed'`
    *  plus `claimedAt`/`claimedBy`/`tokenHash` and refreshing the execution
    *  lease in the same transaction. `undefined` when nothing is queued for
    *  those pipelines. */
