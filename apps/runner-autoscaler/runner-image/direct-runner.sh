@@ -128,6 +128,7 @@ COMPLETED=0
 CODEX_RUNTIME_DIR=''
 CODEX_STDERR_TEE_PID=''
 CODEX_AUTH_WAIT_PID=''
+CHECKOUT_REFRESH_PID=''
 EARLY_FAILURE_MESSAGE=''
 cleanup_codex_material() {
   if [ -n "$CODEX_STDERR_TEE_PID" ]; then
@@ -149,6 +150,7 @@ report_early_failure() {
   early_exit_code=$?
   [ -n "$CODEX_AUTH_WAIT_PID" ] && { kill "$CODEX_AUTH_WAIT_PID" 2>/dev/null || true; }
   [ -n "${HEARTBEAT_PID:-}" ] && { kill "$HEARTBEAT_PID" 2>/dev/null || true; }
+  [ -n "$CHECKOUT_REFRESH_PID" ] && { kill "$CHECKOUT_REFRESH_PID" 2>/dev/null || true; wait "$CHECKOUT_REFRESH_PID" 2>/dev/null || true; }
   if [ "$early_exit_code" -ne 0 ] && [ "$COMPLETED" -ne 1 ]; then
     early_payload="$RUNNER_TEMP/early-failure-payload.json"
     jq -cn --arg message "$EARLY_FAILURE_MESSAGE" \
@@ -180,25 +182,44 @@ case "$MODE" in
     ;;
 esac
 
-checkout="$(curl -sf --config - <<CURLCFG
+CHECKOUT_CREDENTIAL_DIR="$RUNNER_TEMP/github-credentials"
+mkdir -m 700 "$CHECKOUT_CREDENTIAL_DIR"
+CHECKOUT_TOKEN_FILE="$CHECKOUT_CREDENTIAL_DIR/token"
+CHECKOUT_EXPIRY_FILE="$CHECKOUT_CREDENTIAL_DIR/expires-at"
+
+refresh_checkout_token() {
+  checkout_response="$CHECKOUT_CREDENTIAL_DIR/response.$$"
+  if ! curl -sf --config - >"$checkout_response" <<CURLCFG
 url = "$RUNS_API/checkout-token"
 header = "$AUTH_HEADER"
 $CURL_TIMEOUT_CONFIG
 CURLCFG
-)"
-CHECKOUT_TOKEN="$(jq -r '.token' <<<"$checkout")"
+  then
+    rm -f -- "$checkout_response"
+    return 1
+  fi
+  token="$(jq -er '.token | select(length > 0)' "$checkout_response")" || { rm -f -- "$checkout_response"; return 1; }
+  expires_text="$(jq -er '.expiresAt | select(length > 0)' "$checkout_response")" || { rm -f -- "$checkout_response"; return 1; }
+  expires_at="$(date -d "$expires_text" +%s)" || { rm -f -- "$checkout_response"; return 1; }
+  token_tmp="$CHECKOUT_TOKEN_FILE.$$"
+  expiry_tmp="$CHECKOUT_EXPIRY_FILE.$$"
+  (umask 077; printf '%s' "$token" >"$token_tmp"; printf '%s' "$expires_at" >"$expiry_tmp")
+  mv -f -- "$token_tmp" "$CHECKOUT_TOKEN_FILE"
+  mv -f -- "$expiry_tmp" "$CHECKOUT_EXPIRY_FILE"
+  rm -f -- "$checkout_response"
+}
+
+refresh_checkout_token || { echo 'FATAL: checkout credential request failed' >&2; exit 1; }
+CHECKOUT_TOKEN="$(cat "$CHECKOUT_TOKEN_FILE")"
 # Ruling (design spec, "Direct runner mode"): direct mode uses this ONE
 # agent-lcars[bot] installation token, minted by checkout-token, for BOTH
 # checkout and the agent's own push -- the codex/opencode lane's pattern,
 # not claude's. The claude lane's own claude[bot]-push boundary (#645)
 # exists because the claude-code-action vends its own separate push
 # credential internally; direct mode never runs that Action, so there is
-# no second credential to vend. Its repository-scoped actions:write grant
-# is also exposed as ACTIONS_RERUN_TOKEN for agent-protocol.md §8's
-# `gh run rerun --failed` path; this is the same short-lived installation
-# token, not a new long-lived provider credential.
-export GH_TOKEN="$CHECKOUT_TOKEN"
-export ACTIONS_RERUN_TOKEN="$CHECKOUT_TOKEN"
+# no second credential to vend. Repository-scoped `gh` and git calls use the
+# renewable command wrappers installed below rather than a static child-process
+# environment variable.
 
 CHECKOUT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$CHECKOUT_TOKEN" | base64 -w0)"
 
@@ -230,6 +251,70 @@ cd "$workspace"
 # persist-credentials: true -- the agent's own git pushes authenticate
 # without a second token hand-off.
 git config --local "http.https://github.com/.extraheader" "$CHECKOUT_AUTH_HEADER"
+
+REAL_GH_BIN="$(command -v gh)"
+CREDENTIAL_BIN="$CHECKOUT_CREDENTIAL_DIR/bin"
+mkdir -m 700 "$CREDENTIAL_BIN"
+cat >"$CREDENTIAL_BIN/gh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+token="\$(cat '$CHECKOUT_TOKEN_FILE')"
+unset GITHUB_TOKEN
+GH_TOKEN="\$token" exec '$REAL_GH_BIN' "\$@"
+EOF
+cat >"$CREDENTIAL_BIN/git-credential-lcars" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = get ]; then
+  protocol=''
+  host=''
+  path=''
+  while IFS='=' read -r key value; do
+    case "\$key" in
+      protocol) protocol="\$value" ;;
+      host) host="\$value" ;;
+      path) path="\$value" ;;
+    esac
+  done
+  if [ "\$protocol" = https ] && [ "\$host" = github.com ] &&
+    { [ "\$path" = '$TARGET_REPO' ] || [ "\$path" = '$TARGET_REPO.git' ]; }; then
+    printf 'username=x-access-token\\npassword=%s\\n' "\$(cat '$CHECKOUT_TOKEN_FILE')"
+  fi
+fi
+EOF
+chmod 700 "$CREDENTIAL_BIN/gh" "$CREDENTIAL_BIN/git-credential-lcars"
+export PATH="$CREDENTIAL_BIN:$PATH"
+# The wrapper captures the trusted image's gh binary before changing PATH.
+# Direct-runner tasks must invoke `gh` through PATH; bypassing that boundary
+# with an absolute binary path is unsupported because it cannot rotate auth.
+git config --local --unset-all "http.https://github.com/.extraheader"
+git config --local --unset-all credential.helper || true
+git config --local credential.helper "$CREDENTIAL_BIN/git-credential-lcars"
+git config --local credential.https://github.com.useHttpPath true
+
+checkout_refresh_loop() {
+  refresh_margin="${CHECKOUT_TOKEN_REFRESH_MARGIN_SECONDS:-240}"
+  retry_seconds="${CHECKOUT_TOKEN_REFRESH_RETRY_SECONDS:-30}"
+  while true; do
+    expiry="$(cat "$CHECKOUT_EXPIRY_FILE")"
+    now="$(date +%s)"
+    delay=$((expiry - now - refresh_margin))
+    [ "$delay" -gt 0 ] || delay=1
+    sleep "$delay" & wait $!
+    if ! refresh_checkout_token; then
+      echo "GitHub credential refresh failed; retrying in $retry_seconds seconds" >&2
+      sleep "$retry_seconds" & wait $!
+    fi
+  done
+}
+checkout_refresh_loop &
+CHECKOUT_REFRESH_PID=$!
+
+# Provider child processes cannot receive later mutations to this shell's
+# environment. Git and the sanctioned gh command therefore read the renewable
+# credential file for each invocation; clear inherited static tokens so they
+# cannot override those paths after rotation.
+unset CHECKOUT_TOKEN CHECKOUT_AUTH_HEADER GITHUB_TOKEN GH_TOKEN ACTIONS_RERUN_TOKEN
 
 # Every QueueExecutor agent commit needs this Git identity; without it an
 # agent commit fails outright.
@@ -727,8 +812,7 @@ else
   # comes directly from `$?` rather than `${PIPESTATUS[0]}`.
   OPENCODE_LAST_MESSAGE_FILE="$RUNNER_TEMP/opencode-last-message.txt"
   set +e
-  env -u OPENCODE_LLM_API_KEY \
-    GITHUB_TOKEN="$CHECKOUT_TOKEN" \
+  env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
     timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
     "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
       "${OPENCODE_SESSION_ARGS[@]}" \
@@ -758,7 +842,7 @@ OUTCOME=no-deliverable
 OUTCOME_REFERENCE=null
 VERIFY_OUTPUT="$RUNNER_TEMP/verify-outcome-output"
 if [ "$AGENT_EXIT" -eq 0 ] &&
-  AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
+  AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" \
   bash "$VERIFY_OUTCOME" >"$VERIFY_OUTPUT" 2>&1; then
   cat "$VERIFY_OUTPUT"
   # The verifier proves that *some* exact marker-bound artifact exists; the

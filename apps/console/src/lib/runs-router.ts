@@ -22,7 +22,10 @@ import { implement, ORPCError } from '@orpc/server';
 import { anchorTarget } from './anchor-target';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
 import { consoleUrl } from './deployment';
-import type { DispatchTokenProvider } from './github-app-tokens';
+import type {
+  DispatchTokenProvider,
+  ExpiringDispatchTokenProvider,
+} from './github-app-tokens';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
@@ -41,7 +44,7 @@ export interface RunsContext {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
   tokens: DispatchTokenProvider;
-  checkoutTokens: DispatchTokenProvider;
+  checkoutTokens: ExpiringDispatchTokenProvider;
   codexAuth: CodexAuthStore;
   /** Same outbox drain every other mutating route reaches through
    *  `WorkContext.runtime.drain` (`work-router.ts`, `work-mint.ts`,
@@ -524,18 +527,11 @@ export const runsRouter = os.router({
         ? (await context.store.readTask(run.task))?.task
         : undefined;
     const target = anchorTarget(run, task);
-    const token = await context.checkoutTokens.tokenFor(target.repo);
+    const token = await context.checkoutTokens.expiringTokenFor(target.repo);
     return {
-      token,
+      token: token.token,
       repository: target.repo,
-      // The provider caches per-repo until close to expiry (see
-      // `AppInstallationTokenProvider`) but does not expose that instant;
-      // installation tokens are always valid ~1h, so a conservative fixed
-      // window is honest here rather than fabricating precision the
-      // provider does not return. `context.now()`, not `Date.now()`,
-      // matches `requireRunToken`'s own injected clock -- deterministic
-      // under test.
-      expiresAt: new Date(context.now().getTime() + 45 * 60_000).toISOString(),
+      expiresAt: token.expiresAt,
     };
   }),
 
