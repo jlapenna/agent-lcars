@@ -87,10 +87,12 @@ function taggedReplyContext(runtime: OrchestratorRouteDeps): WorkContext {
  * so the caller falls through to the unchanged `admitGithubWork` path:
  * `NOT_FOUND` above all, since a tagged comment on an issue with no task
  * yet is how work is started by comment, and that must keep working. A
- * running anchor (`CONFLICT`/`task-busy`) falls through too, but that is
- * safe -- `admitGithubWork`'s own concurrency guard (`decide.ts`'s
+ * claimed or same-provider queued anchor (`CONFLICT`/`task-busy`) falls
+ * through too, but that is safe -- `admitGithubWork`'s concurrency guard (`decide.ts`'s
  * `requestRun`) refuses the very same live run before a second one could
- * ever be created.
+ * ever be created. An explicit provider switch may atomically replace an
+ * unclaimed queued attempt through `requestReply`; a claim that wins the
+ * transaction race prevents replacement.
  */
 export async function attemptTaggedReplyResume(
   deps: OrchestratorRouteDeps,

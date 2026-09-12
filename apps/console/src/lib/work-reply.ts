@@ -129,11 +129,6 @@ export async function requestReply(
 
   const runs = await context.runtime.store.listRuns(request.task);
   const state = deriveItemState(task.task, runs);
-  // A reply is new information for an item that has stopped. A live run
-  // already has the conversation open; queuing the reply is option B's
-  // territory, so refuse with the orchestrator's own vocabulary.
-  if (state === 'running')
-    return { ok: false, code: 'CONFLICT', message: 'task-busy' };
   if (state === 'canceled')
     return { ok: false, code: 'CONFLICT', message: 'task-closed' };
 
@@ -150,6 +145,19 @@ export async function requestReply(
   const forbidden = forbiddenReason(principal, { ...spec, pipeline });
   if (forbidden !== undefined)
     return { ok: false, code: 'FORBIDDEN', message: forbidden };
+
+  const activeRun = runs.find((run) => run.runId === task.task.activeRunId);
+  const replaceQueuedRunId =
+    request.pipeline !== undefined &&
+    activeRun?.queue?.state === 'queued' &&
+    activeRun.pipeline !== pipeline
+      ? activeRun.runId
+      : undefined;
+  // An explicit provider switch may replace queued work, but never an
+  // executing conversation. The transaction rechecks this exact run and
+  // its claim state so a concurrent executor or newer request wins safely.
+  if (state === 'running' && replaceQueuedRunId === undefined)
+    return { ok: false, code: 'CONFLICT', message: 'task-busy' };
 
   // Cross-CLI resume is meaningless: a Codex thread cannot continue a
   // Claude session. Switching pipeline is allowed, it just starts fresh.
@@ -169,7 +177,10 @@ export async function requestReply(
     }
   }
 
-  if ((await liveNativeRunCount(context)) >= context.maxLiveRuns) {
+  if (
+    replaceQueuedRunId === undefined &&
+    (await liveNativeRunCount(context)) >= context.maxLiveRuns
+  ) {
     return {
       ok: false,
       code: 'TOO_MANY_REQUESTS',
@@ -184,6 +195,7 @@ export async function requestReply(
         ? `${taskKey(request.task)}:${task.task.runCount + 1}`
         : `reply:${request.ref}`,
     pipeline,
+    ...(replaceQueuedRunId === undefined ? {} : { replaceQueuedRunId }),
     params: {
       mode: 'reply',
       reply: request.text.slice(0, REPLY_MAX),

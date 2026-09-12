@@ -220,6 +220,74 @@ function sessionDoc(over: Partial<SessionDoc> = {}): SessionDoc {
 }
 
 describe('requestReply', () => {
+  it('switches an explicitly selected provider while queued and preserves the specification', async () => {
+    const { store, orchestrator, context } = fixture({
+      principal: { ...operator, pipelines: ['claude', 'opencode'] },
+      maxLiveRuns: 0,
+      sessionDocsForRuns: async () => {
+        throw new Error('a provider switch must not resume another CLI');
+      },
+    });
+    const first = await orchestrator.request({
+      taskId: ANCHOR,
+      requestId: 'first',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec,
+      },
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    const old = decidedRun(first);
+    await store.enqueueRun({ runId: old.runId, now: NOW });
+    await orchestrator.confirmDispatch(old.runId);
+    const outcome = await requestReply(context, {
+      task: ANCHOR,
+      pipeline: 'opencode',
+      text: '/opencode Retry the original task.',
+      channel: 'github',
+      principal: 'github:jlapenna',
+      ref: 'comment-switch-1',
+    });
+    expect(outcome).toMatchObject({ ok: true, resumed: false });
+    expect(await store.readRun(old.runId)).toMatchObject({ state: 'canceled' });
+    expect(await store.readActiveRun(ANCHOR)).toMatchObject({
+      pipeline: 'opencode',
+      params: { reply: '/opencode Retry the original task.' },
+    });
+    expect((await store.readTask(ANCHOR))?.task.work).toEqual(first.task.work);
+  });
+
+  it('does not replace queued work for a provider the caller cannot use', async () => {
+    const { store, orchestrator, context } = fixture();
+    const first = await orchestrator.request({
+      taskId: ANCHOR,
+      requestId: 'first',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec,
+      },
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    const old = decidedRun(first);
+    await store.enqueueRun({ runId: old.runId, now: NOW });
+    await orchestrator.confirmDispatch(old.runId);
+    expect(
+      await requestReply(context, {
+        task: ANCHOR,
+        pipeline: 'opencode',
+        text: 'switch',
+        channel: 'github',
+        principal: 'github:jlapenna',
+      }),
+    ).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(await store.readActiveRun(ANCHOR)).toMatchObject({
+      runId: old.runId,
+    });
+    expect(await store.listRuns(ANCHOR)).toHaveLength(1);
+  });
+
   it('replies to a GitHub-anchored task', async () => {
     const { store, orchestrator, context } = fixture({
       sessionDocsForRuns: async () => [
