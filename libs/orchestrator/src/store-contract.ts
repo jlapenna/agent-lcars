@@ -695,6 +695,57 @@ export function runOrchestratorStoreContract(
     });
 
     describe('expired-run listing', () => {
+      it('atomically persists loss, its successor, both effects, and terminal retry idempotency', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const original = await started(orchestrator, 'atomic-expiry');
+        await orchestrator.confirmDispatch(original.run.runId);
+        const initialDispatch = onlyClaim(
+          await claimOutbox(store, clock.now(), 1),
+        );
+        await store.settleOutbox({
+          entryId: initialDispatch.entryId,
+          claimId: initialDispatch.claimId,
+          state: 'done',
+          now: clock.now(),
+        });
+
+        clock.advanceMinutes(121);
+        const swept = await orchestrator.sweepExpired();
+        const successorId = swept.retried[0]?.newRunId;
+        expect(successorId).toBe(`${taskKey(TASK)}/r2`);
+        expect(await store.readRun(original.run.runId)).toMatchObject({
+          state: 'lost',
+        });
+        expect(await store.readRun(successorId as string)).toMatchObject({
+          state: 'pending',
+          requestId: `retry:${original.run.runId}`,
+          requestSource: 'auto-retry',
+        });
+        expect(await store.readTask(TASK)).toMatchObject({
+          task: { activeRunId: successorId, runCount: 2, consecutiveLost: 1 },
+        });
+
+        const effects = await claimOutbox(store, clock.now(), 10);
+        expect(effects.map((entry) => entry.entryId).sort()).toEqual(
+          [`dispatch/${successorId}`, `outcome/${original.run.runId}`].sort(),
+        );
+
+        await orchestrator.confirmDispatch(successorId as string);
+        await orchestrator.report(successorId as string, { ok: true });
+        const replay = await orchestrator.request({
+          taskId: TASK,
+          requestId: `retry:${original.run.runId}`,
+          requestSource: 'auto-retry',
+          pipeline: original.run.pipeline,
+        });
+        expect(replay).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({ runId: successorId }),
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(2);
+      });
+
       it('lists a live run only once its lease has passed, and excludes a renewed one', async () => {
         const { clock, store, orchestrator } = await fixture();
         const kept = await started(orchestrator, 'req-1');

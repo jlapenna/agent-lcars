@@ -178,11 +178,6 @@ export class Orchestrator {
    * starting a second one; this is the same duplicate-request idempotency
    * `request()` already gives every caller, not a new mechanism.
    *
-   * A refusal on the retry request (most likely `task-busy`, when an
-   * operator manually re-requested the task in the window between the
-   * expire commit and this call) is not an error: something is already
-   * live for the task, so this simply records no retry for that run.
-   *
    * Loss settlement and retry creation are one store transaction. A crash
    * commits both or neither; repeated and concurrent sweeps therefore cannot
    * lose the retry or mint a duplicate.
