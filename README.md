@@ -83,3 +83,7 @@ Start with the focused document that matches your task. This README intentionall
 does not duplicate deployment steps, runner topology, credential setup, or
 migration history; those operational contracts live with their owning systems
 and should be verified there.
+
+## Native work smoke 92c154a428c4
+
+Native work smoke line: 2026-09-12 UTC, nonce 92c154a428c4.
