@@ -3,7 +3,7 @@ import 'server-only';
 import { dispatchesContract } from '@agent-lcars/work';
 import { implement, ORPCError } from '@orpc/server';
 
-import { admitGithubWork } from './github-work-admission';
+import { admitGithubWork, redispatchGithubWork } from './github-work-admission';
 import type { WorkContext } from './work-mint';
 
 const os = implement(dispatchesContract).$context<WorkContext>();
@@ -75,4 +75,40 @@ export const githubDispatchRouter = os.router({
       dispatched: outcome.dispatched,
     };
   }),
+  githubRedispatch: operator.githubRedispatch.handler(
+    async ({ input, context, errors }) => {
+      const { principal } = context;
+      const params: Record<string, string> = { mode: input.mode };
+      if (input.reply !== undefined) params['reply'] = input.reply;
+      if (input.runbook !== undefined) params['runbook'] = input.runbook;
+      if (input.context !== undefined) params['context'] = input.context;
+
+      const outcome = await redispatchGithubWork(context.runtime, {
+        anchor: input.anchor,
+        requestId: input.requestId,
+        params,
+        authorization: {
+          ...(principal.sourceRepository === undefined
+            ? {}
+            : { sourceRepository: principal.sourceRepository }),
+          grantsPrincipal: principal,
+        },
+      });
+      if (outcome.kind === 'not-found') throw errors.NOT_FOUND();
+      if (outcome.kind === 'invalid' || outcome.kind === 'conflict') {
+        throw errors.CONFLICT({ message: outcome.message });
+      }
+      if (outcome.kind === 'forbidden') {
+        throw errors.FORBIDDEN({ message: outcome.message });
+      }
+      if (outcome.kind === 'duplicate' || outcome.kind === 'busy') {
+        return { outcome: outcome.kind, runId: outcome.runId };
+      }
+      return {
+        outcome: 'accepted' as const,
+        runId: outcome.runId,
+        dispatched: outcome.dispatched,
+      };
+    },
+  ),
 });
