@@ -761,6 +761,108 @@ describe('concurrency', () => {
   });
 });
 
+describe('queued provider replacement', () => {
+  async function queued() {
+    const f = fixture();
+    const { run } = await started(f.orchestrator);
+    await f.store.enqueueRun({ runId: run.runId, now: T0 });
+    await f.orchestrator.confirmDispatch(run.runId);
+    return { ...f, run };
+  }
+
+  it('settles the old run and admits one replacement without changing Work', async () => {
+    const { store, orchestrator, run } = await queued();
+    const input = {
+      taskId: TASK,
+      requestId: 'switch-1',
+      pipeline: 'opencode',
+      replaceQueuedRunId: run.runId,
+    };
+    const result = await orchestrator.request(input);
+    if (isRefusal(result)) throw new Error(result.reason);
+    const replacement = decidedRun(result);
+    expect(replacement).toMatchObject({
+      pipeline: 'opencode',
+      state: 'pending',
+    });
+    expect(await store.readRun(run.runId)).toMatchObject({ state: 'canceled' });
+    expect(await store.readTask(TASK)).toMatchObject({
+      task: { activeRunId: replacement.runId, runCount: 2, work: TASK_WORK },
+    });
+    expect(result.outbox.map((entry) => entry.kind)).toEqual([
+      'report-outcome',
+      'dispatch-run',
+    ]);
+    expect(await orchestrator.request(input)).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: { runId: replacement.runId },
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
+
+  it('refuses replacement after an executor claims the same run', async () => {
+    const { store, orchestrator, run } = await queued();
+    const [claimed, replacement] = await Promise.all([
+      store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: T0,
+        claimedBy: 'executor',
+        tokenHash: 'a'.repeat(64),
+      }),
+      orchestrator.request({
+        taskId: TASK,
+        requestId: 'switch-1',
+        pipeline: 'opencode',
+        replaceQueuedRunId: run.runId,
+      }),
+    ]);
+    expect(claimed?.runId).toBe(run.runId);
+    expect(replacement).toMatchObject({
+      refused: true,
+      reason: 'run-already-claimed',
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'running',
+      queue: { state: 'claimed' },
+    });
+  });
+
+  it('fences a stale replacement request from a newer queued generation', async () => {
+    const { store, orchestrator, run } = await queued();
+    await orchestrator.cancel(run.runId);
+    const next = await started(orchestrator, 'newer');
+    await store.enqueueRun({ runId: next.run.runId, now: T0 });
+    await orchestrator.confirmDispatch(next.run.runId);
+    expect(
+      await orchestrator.request({
+        taskId: TASK,
+        requestId: 'stale-switch',
+        pipeline: 'opencode',
+        replaceQueuedRunId: run.runId,
+      }),
+    ).toMatchObject({ refused: true, reason: 'stale-lease' });
+    expect(await store.readActiveRun(TASK)).toMatchObject({
+      runId: next.run.runId,
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
+
+  it('keeps same-provider queued work protected', async () => {
+    const { store, orchestrator, run } = await queued();
+    expect(
+      await orchestrator.request({
+        taskId: TASK,
+        requestId: 'same-provider',
+        pipeline: 'claude',
+        replaceQueuedRunId: run.runId,
+      }),
+    ).toMatchObject({ refused: true, reason: 'task-busy' });
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+  });
+});
+
 describe('guarded pre-claim cancellation', () => {
   it('cancels a queued run at or before the lifecycle cutoff', async () => {
     const { store, orchestrator } = fixture();

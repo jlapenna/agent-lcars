@@ -45,6 +45,7 @@ export function selectFairQueuedRun(
   for (const run of queuedRuns) {
     if (
       run.queue?.state !== 'queued' ||
+      (run.state !== 'pending' && run.state !== 'running') ||
       !granted.has(run.pipeline) ||
       (now !== undefined &&
         run.queue.deferredUntil !== undefined &&

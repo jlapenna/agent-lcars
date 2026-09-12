@@ -110,6 +110,12 @@ describe('deriveItemState', () => {
 });
 
 describe('latestRun', () => {
+  it('uses numeric generation when timestamps tie across r9 and r10', () => {
+    const older = run(9, 'finished');
+    const newer = run(10, 'finished', { createdAt: older.createdAt });
+    expect(latestRun([newer, older])?.runId).toBe(`work:${WORK_ID}/r10`);
+  });
+
   it('picks the newest by createdAt', () => {
     expect(
       latestRun([run(1, 'finished'), run(3, 'lost'), run(2, 'canceled')])

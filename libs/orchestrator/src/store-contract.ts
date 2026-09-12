@@ -234,6 +234,85 @@ export function runOrchestratorStoreContract(
         expect(await store.listRuns(TASK)).toHaveLength(1);
       });
 
+      it('atomically replaces one queued generation under overlapping provider switches', async () => {
+        const { store, orchestrator } = await fixture();
+        const { run } = await started(orchestrator);
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        const request = (requestId: string) =>
+          orchestrator.request({
+            taskId: TASK,
+            requestId,
+            pipeline: 'opencode',
+            replaceQueuedRunId: run.runId,
+          });
+        const outcomes = await Promise.all([
+          request('switch-a'),
+          request('switch-b'),
+        ]);
+        const accepted = outcomes.find((outcome) => !isRefusal(outcome));
+        if (accepted === undefined || isRefusal(accepted))
+          throw new Error('expected a replacement');
+        expect(outcomes.filter(isRefusal)).toEqual([
+          expect.objectContaining({ reason: 'stale-lease' }),
+        ]);
+        expect(await store.readRun(run.runId)).toMatchObject({
+          state: 'canceled',
+        });
+        expect(await store.readTask(TASK)).toMatchObject({
+          task: {
+            activeRunId: decidedRun(accepted).runId,
+            runCount: 2,
+            work: TASK_WORK,
+          },
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(2);
+        expect(await request(decidedRun(accepted).requestId)).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: { runId: decidedRun(accepted).runId },
+        });
+      });
+
+      it('serializes provider replacement against an executor claim', async () => {
+        const { store, orchestrator } = await fixture();
+        const { run } = await started(orchestrator);
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        const [claimed, replacement] = await Promise.all([
+          store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: T0,
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+          }),
+          orchestrator.request({
+            taskId: TASK,
+            requestId: 'switch',
+            pipeline: 'opencode',
+            replaceQueuedRunId: run.runId,
+          }),
+        ]);
+        if (claimed !== undefined) {
+          expect(claimed.runId).toBe(run.runId);
+          expect(replacement).toMatchObject({
+            refused: true,
+            reason: 'run-already-claimed',
+          });
+          expect(await store.listRuns(TASK)).toHaveLength(1);
+          expect(await store.readRun(run.runId)).toMatchObject({
+            state: 'running',
+            queue: { state: 'claimed' },
+          });
+        } else {
+          expect(replacement).not.toHaveProperty('refused');
+          expect(await store.readRun(run.runId)).toMatchObject({
+            state: 'canceled',
+          });
+          expect(await store.listRuns(TASK)).toHaveLength(2);
+        }
+      });
+
       it('checks immutable Work within the overlapping first-request transaction', async () => {
         const { store, orchestrator } = await fixture();
         const workFor = (pipeline: 'claude' | 'codex') => ({
@@ -1024,7 +1103,7 @@ export function runOrchestratorStoreContract(
         expect(queued[0]?.queue).toEqual({ state: 'queued' });
       });
 
-      it('does not let terminal queue remnants consume the live listing limit', async () => {
+      it('does not let terminal queue remnants consume listing or claim capacity', async () => {
         const { store, orchestrator } = await fixture();
         const terminal = await queuedRun(orchestrator, 'q31');
         await store.enqueueRun({ runId: terminal.runId, now: T0 });
@@ -1035,6 +1114,17 @@ export function runOrchestratorStoreContract(
         expect((await store.listQueuedRuns(1)).map((run) => run.runId)).toEqual(
           [live.runId],
         );
+        const claimed = await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: T0,
+          claimedBy: 'executor',
+          tokenHash: 'a'.repeat(64),
+        });
+        expect(claimed?.runId).toBe(live.runId);
+        expect(await store.readRun(terminal.runId)).toMatchObject({
+          state: 'canceled',
+          queue: { state: 'queued' },
+        });
       });
 
       it('claimQueuedRun picks the oldest queued run for a matching pipeline', async () => {
@@ -1158,9 +1248,7 @@ export function runOrchestratorStoreContract(
         const stored = await store.readRun(run.runId);
         if (stored?.state === 'canceled') {
           expect(cancellation).not.toHaveProperty('refused');
-          // A store claim may drain the now-terminal queue entry, but it can
-          // never return the pre-cancellation live snapshot as executable.
-          expect(claim?.state).not.toBe('running');
+          expect(claim).toBeUndefined();
         } else {
           expect(stored).toMatchObject({
             state: 'running',

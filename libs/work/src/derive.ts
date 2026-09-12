@@ -11,11 +11,12 @@ import { type WorkOrigin, workPayloadSchema, type WorkSpec } from './spec';
 
 export type ItemState = 'running' | 'done' | 'parked' | 'failed' | 'canceled';
 
-/** Newest run first: createdAt descending, runId as a stable tiebreak. */
+/** Newest run first: createdAt descending, numeric run generation as a tiebreak. */
 export function latestRun(runs: readonly Run[]): Run | undefined {
   return [...runs].sort(
     (a, b) =>
-      b.createdAt.localeCompare(a.createdAt) || b.runId.localeCompare(a.runId),
+      b.createdAt.localeCompare(a.createdAt) ||
+      b.runId.localeCompare(a.runId, undefined, { numeric: true }),
   )[0];
 }
 

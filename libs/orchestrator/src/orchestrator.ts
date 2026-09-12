@@ -62,6 +62,9 @@ export interface RequestInput {
    * canonical identity; the store records the first source request with the
    * request transaction rather than leaving a pre-request race to a caller. */
   requestBinding?: RequestBinding;
+  /** Replace only this exact unclaimed queue attempt when changing provider.
+   * Cancellation and admission share the request transaction and its claim fence. */
+  replaceQueuedRunId?: string;
   /**
    * Called with an already-admitted Task's immutable Work while the request
    * transaction still owns its consistent snapshot. Returning false refuses
@@ -113,17 +116,51 @@ export class Orchestrator {
         if (previousRun !== undefined) {
           return refused('duplicate-request', previousRun);
         }
-        return requestRun({
+        const requestArgs = {
           now,
-          task: task?.task,
           taskId: input.taskId,
-          activeRun,
           requestId,
           requestSource,
           pipeline: input.pipeline,
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
-        });
+        };
+        if (input.replaceQueuedRunId !== undefined) {
+          if (
+            task === undefined ||
+            activeRun?.runId !== input.replaceQueuedRunId
+          ) {
+            return refused('stale-lease');
+          }
+          if (activeRun.queue?.state === 'claimed') {
+            return refused('run-already-claimed');
+          }
+          if (
+            activeRun.queue?.state !== 'queued' ||
+            activeRun.pipeline === input.pipeline
+          ) {
+            return refused('task-busy');
+          }
+          const canceled = cancelRun({
+            now,
+            task: task.task,
+            run: activeRun,
+            note: `queued provider switch to ${input.pipeline}`,
+          });
+          if (isRefusal(canceled)) return canceled;
+          const replacement = requestRun({
+            ...requestArgs,
+            task: canceled.task,
+            activeRun: undefined,
+          });
+          if (isRefusal(replacement)) return replacement;
+          return {
+            ...replacement,
+            additionalRuns: [decidedRun(canceled)],
+            outbox: [...canceled.outbox, ...replacement.outbox],
+          };
+        }
+        return requestRun({ ...requestArgs, task: task?.task, activeRun });
       },
     });
   }
