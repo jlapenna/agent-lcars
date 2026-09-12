@@ -1,11 +1,20 @@
-/** Keep omitted read limits aligned with the fleet's focused-read policy. */
+const MAX_READ_LINES = 120;
+
+/** Keep every read within the fleet's focused-read policy. */
 export default async function boundedRead() {
   return {
     'tool.execute.before': async ({ tool }, output) => {
-      if (tool === 'read' && output.args.limit === undefined) {
-        // Explicit ranges remain available when the agent needs more context.
-        output.args.limit = 120;
+      if (tool !== 'read') {
+        return;
       }
+
+      const requestedLimit = output.args.limit;
+      output.args.limit =
+        typeof requestedLimit === 'number' &&
+        Number.isFinite(requestedLimit) &&
+        requestedLimit > 0
+          ? Math.min(requestedLimit, MAX_READ_LINES)
+          : MAX_READ_LINES;
     },
   };
 }

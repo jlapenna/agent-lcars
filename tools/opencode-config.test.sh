@@ -74,7 +74,8 @@ await hooks['shell.env']({ cwd: '/repo', callID: 'call_2' }, absent);
 assert.deepEqual(absent.env, { KEEP: 'yes' });
 NODE
 
-# Omitted limits used OpenCode's 2000-line default in repeated investigations.
+# Omitted and oversized limits produced large responses during repeated
+# investigations. Keep every read at or below the focused-read ceiling.
 read_plugin="$repo_root/agents/opencode/bounded-read.js"
 plugin_url="data:text/javascript;base64,$(base64 -w0 "$read_plugin")"
 node --input-type=module - "$plugin_url" <<'NODE'
@@ -85,11 +86,32 @@ await hooks['tool.execute.before']({ tool: 'read' }, read);
 assert.deepEqual(read.args, {
   filePath: '/repo/source.ts', offset: 241, limit: 120,
 });
-for (const limit of [0, 50, 500, 2000]) {
+for (const [limit, expected] of [
+  [1, 1],
+  [50, 50],
+  [120, 120],
+  [121, 120],
+  [500, 120],
+  [2000, 120],
+  [0, 120],
+  [-1, 120],
+  [Number.NaN, 120],
+  [Number.POSITIVE_INFINITY, 120],
+]) {
   const explicit = { args: { filePath: '/repo/source.ts', limit } };
   await hooks['tool.execute.before']({ tool: 'read' }, explicit);
-  assert.equal(explicit.args.limit, limit);
+  assert.equal(explicit.args.limit, expected);
 }
+const invalid = { args: { filePath: '/repo/source.ts', limit: '500' } };
+await hooks['tool.execute.before']({ tool: 'read' }, invalid);
+assert.equal(invalid.args.limit, 120);
+const oversizedRange = {
+  args: { filePath: '/repo/source.ts', offset: 481, limit: 500 },
+};
+await hooks['tool.execute.before']({ tool: 'read' }, oversizedRange);
+assert.deepEqual(oversizedRange.args, {
+  filePath: '/repo/source.ts', offset: 481, limit: 120,
+});
 const bash = { args: { command: 'git status' } };
 await hooks['tool.execute.before']({ tool: 'bash' }, bash);
 assert.deepEqual(bash.args, { command: 'git status' });

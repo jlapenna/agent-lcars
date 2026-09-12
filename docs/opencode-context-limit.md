@@ -152,9 +152,23 @@ The subsequent #5470/r3 run still had no visible edits at 17:17 UTC: 178
 steps, 28 compactions, and four source files read 14–17 times. A later
 read-only native database sample found 84 reads with no explicit limit and
 input reaching 93,696 tokens. OpenCode 1.18.25 defaults those reads to 2,000
-lines. The `bounded-read.js` plugin now uses the supported
+lines. The first `bounded-read.js` plugin used the supported
 `tool.execute.before` hook to set an omitted limit to 120, matching the
-standing instructions. Explicit limits and offsets remain available for
-follow-up investigation. This reduces the default tool-response volume;
-it does not prove the repeated-investigation problem or success-rate target
-is solved. Neither the context declaration nor the two-hour run budget changes.
+standing instructions, while preserving every explicit limit and offset.
+That reduced the default tool-response volume without changing the context
+declaration or two-hour run budget.
+
+The next natural run, Sprinkles `#5473/r4`, proved that omitted-only behavior
+was insufficient. Its export recorded 152 build-model steps plus 37 compaction
+events (189 loop events, or one compaction per 5.1), 319 reads, no durable
+edit, and a two-hour timeout. Although 48 reads used the 120-line default, 248
+explicitly requested more than 120 lines, including 36 requests over 500 and
+a maximum of 1,200. The requested read-line budget was 95,134 lines; applying
+a 120-line ceiling to the same requests would have bounded it to 37,413.
+
+The hook therefore caps every read at 120 lines while preserving smaller
+positive limits and offsets. Larger files require search plus targeted offset
+ranges. This is a bound on the OpenCode `read` tool only: shell commands,
+search output, total context, and model output retain their existing separate
+limits. It reduces one measured source of oversized tool responses; it does
+not establish durable progress or close the runtime acceptance gate.
