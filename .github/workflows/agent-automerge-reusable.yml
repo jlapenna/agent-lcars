@@ -422,6 +422,164 @@ jobs:
           echo "Reconciliation checked=$CHECKED armed=$ARMED failed=$FAILED"
           [ "$FAILED" -eq 0 ]
 
+      # #1953: GitHub's `dismiss_stale_reviews` branch protection does NOT
+      # auto-remove a review authored by a GitHub App, so once a fleet review
+      # bot (agent-lcars[bot]) submits CHANGES_REQUESTED it keeps
+      # reviewDecision blocked across EVERY later push. An auto-merge-armed PR
+      # then parks forever with green checks and no error anywhere:
+      # mergeStateStatus never reaches CLEAN (measured on supersprinklesracing
+      # PR #5577, 2026-09-13). Same silent-stall family as the behind-branch
+      # stall below, but the trigger is the review gate, not a behind head.
+      # This self-heals only where it cannot be wrong. The PR must be
+      # agent-authored (the same bot-logins admission gate as the arm step --
+      # a human PR keeps human review), auto-merge already armed (the opt-in),
+      # every review thread resolved, and every completed check green with
+      # none running. Even then it removes only CHANGES_REQUESTED reviews that
+      # are BOTH authored by a bot-logins identity AND stale -- submitted
+      # before the current head commit's committer date. A review of the live
+      # head is a live objection and is kept; a human-authored review is never
+      # touched. The REST dismissals endpoint needs `message`
+      # (`dismissal_message` 422s). Bounded to a handful per run, matching the
+      # behind-branch sweep; a GITHUB_TOKEN refusal is tallied as a failure
+      # rather than a warning, because surfacing the stuck state is half the
+      # point here (the app-token follow-up is only needed if that refusal is
+      # ever actually observed).
+      - name: Dismiss stale bot CHANGES_REQUESTED reviews on armed green agent PRs
+        env:
+          AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          MAX_DISMISSALS=5
+          CANDIDATES=0
+          DISMISSED=0
+          FAILED=0
+
+          OPEN_PRS_FILE="$RUNNER_TEMP/agent-automerge-review-prs.tsv"
+          gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.draft == false) | [.number, .user.login, ([.labels[].name] | index("status:needs-human") != null)] | @tsv' \
+            >"$OPEN_PRS_FILE"
+          mapfile -t OPEN_PRS <"$OPEN_PRS_FILE"
+
+          for ROW in "${OPEN_PRS[@]}"; do
+            if [ "$DISMISSED" -ge "$MAX_DISMISSALS" ]; then
+              echo "Reached the per-run cap of $MAX_DISMISSALS stale review dismissal(s); stopping."
+              break
+            fi
+
+            IFS=$'\t' read -r PR AUTHOR PARKED <<<"$ROW"
+
+            # The agent-authorship admission gate, identical in scope to the
+            # arm step above: a human PR's review gate stays human.
+            if [ "$PARKED" = true ] || \
+               ! jq -e --arg login "$AUTHOR" 'index($login) != null' \
+                 <<<"$AGENT_BOT_LOGINS" >/dev/null; then
+              continue
+            fi
+
+            VIEW=$(gh pr view "$PR" --repo "$REPO" \
+              --json autoMergeRequest,reviewDecision,headRefOid,statusCheckRollup)
+
+            # Auto-merge armed is the opt-in, and a requested-changes decision
+            # is the only reason this step cares about the PR at all.
+            if ! jq -e '
+              .autoMergeRequest != null and
+              .reviewDecision == "CHANGES_REQUESTED"
+            ' <<<"$VIEW" >/dev/null; then
+              continue
+            fi
+
+            # Every completed check must be green and none may still be
+            # running -- the same gate the behind-branch sweep uses, so a
+            # review is never dismissed while the fix that addressed it is
+            # still validating. StatusContext (legacy commit status) carries
+            # `state` instead of CheckRun's status/conclusion.
+            if ! jq -e '
+              ([.statusCheckRollup[]?] | all(.status == null or .status == "COMPLETED")) and
+              ([.statusCheckRollup[]?] | all(
+                if has("conclusion") and .conclusion != "" then .conclusion == "SUCCESS"
+                elif has("state") then .state == "SUCCESS"
+                else true end
+              ))
+            ' <<<"$VIEW" >/dev/null; then
+              continue
+            fi
+
+            # An unresolved thread is a reviewer still asking for something --
+            # the same guard the behind-branch sweep applies. --paginate so a
+            # busier PR's threads past the first 50 are not silently dropped.
+            # shellcheck disable=SC2016
+            UNRESOLVED=$(gh api graphql --paginate \
+              -f query='query($owner:String!,$name:String!,$pr:Int!,$endCursor:String){
+                repository(owner:$owner,name:$name){
+                  pullRequest(number:$pr){
+                    reviewThreads(first:50, after:$endCursor){
+                      nodes { isResolved }
+                      pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }
+              }' \
+              -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" \
+              --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)' \
+              | wc -l)
+            if [ "$UNRESOLVED" -gt 0 ]; then
+              echo "PR #$PR is blocked by CHANGES_REQUESTED but has $UNRESOLVED unresolved review thread(s); leaving it for a human."
+              continue
+            fi
+
+            HEAD_SHA=$(jq -r '.headRefOid' <<<"$VIEW")
+            HEAD_DATE=$(gh api "repos/$REPO/commits/$HEAD_SHA" \
+              --jq '.commit.committer.date')
+
+            # Select only stale bot-authored requested-changes reviews.
+            # submitted_at and the committer date are both ISO-8601 UTC with a
+            # trailing Z, so a lexicographic string compare is chronological.
+            # `index` returns null for an absent login and 0 for the first --
+            # jq treats 0 as truthy, so a login at position 0 still matches.
+            REVIEWS=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews?per_page=100")
+            STALE_BOT_REVIEWS=$(jq -c \
+              --arg head_date "$HEAD_DATE" \
+              --argjson bots "$AGENT_BOT_LOGINS" '
+              [
+                .[]
+                | select(.state == "CHANGES_REQUESTED")
+                | select(.user.login as $l | $bots | index($l) != null)
+                | select(.submitted_at < $head_date)
+                | { id, login: .user.login, submitted_at }
+              ]
+            ' <<<"$REVIEWS")
+            STALE_COUNT=$(jq 'length' <<<"$STALE_BOT_REVIEWS")
+            if [ "$STALE_COUNT" -eq 0 ]; then
+              echo "PR #$PR is CHANGES_REQUESTED but carries no stale bot-authored requested-changes review; leaving it as a live gate."
+              continue
+            fi
+
+            CANDIDATES=$((CANDIDATES + 1))
+            while IFS=$'\t' read -r RID RLOGIN RSUBMITTED; do
+              if [ -z "$RID" ]; then
+                continue
+              fi
+              DISMISS_ERR="$RUNNER_TEMP/agent-automerge-review-dismiss-$PR.err"
+              if gh api "repos/$REPO/pulls/$PR/reviews/$RID/dismissals" \
+                --method PUT \
+                --field message="Auto-dismissed by the fleet auto-merge sweep (#1953): this stale requested-changes review ($RLOGIN, submitted $RSUBMITTED) predates the current head $HEAD_SHA; all required checks are green and every review thread is resolved." \
+                >/dev/null 2>"$DISMISS_ERR"; then
+                echo "Dismissed stale CHANGES_REQUESTED review $RID ($RLOGIN) on PR #$PR."
+                DISMISSED=$((DISMISSED + 1))
+              else
+                echo "::error::Could not dismiss stale CHANGES_REQUESTED review $RID on PR #$PR: $(tr '\n' ' ' <"$DISMISS_ERR")"
+                FAILED=$((FAILED + 1))
+              fi
+              rm -f "$DISMISS_ERR"
+            done < <(jq -r '.[] | [.id, .login, .submitted_at] | @tsv' <<<"$STALE_BOT_REVIEWS")
+          done
+
+          echo "Stale-bot-review sweep: candidates=$CANDIDATES reviews_dismissed=$DISMISSED failed=$FAILED (cap=$MAX_DISMISSALS)"
+          [ "$FAILED" -eq 0 ]
+
       # #1748: the fleet's `Protect main` ruleset requires an up-to-date
       # head, and GitHub's auto-merge never updates a branch on its own --
       # so once any other PR merges, every armed PR behind it sits forever
