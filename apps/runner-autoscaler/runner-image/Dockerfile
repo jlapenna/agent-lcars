@@ -530,8 +530,18 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/bounded-read.js \
     /home/runner/.config/opencode/bounded-read.js
+COPY --from=telemetry-watcher-build \
+    /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.sh \
+    /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
+    /repo/apps/runner-autoscaler/runner-image/opencode-version \
+    /usr/local/lib/agent-lcars/opencode-continuation-test/
 
 USER runner
+
+# Exercise the exact installed CLI and global config through a deterministic
+# localhost provider. Unit-importing the hooks cannot prove that OpenCode
+# reloads instructions and hooks after its own automatic compaction boundary.
+RUN bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh
 
 # Register the shared source checkout in each provider's own runner-user
 # plugin state. Both providers require their own installed plugin snapshot;
