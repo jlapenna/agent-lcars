@@ -123,7 +123,9 @@ on:
         description: >-
           Workflow file dispatched on main after the restored ci-workflow
           run succeeds (GITHUB_TOKEN chains suppress the natural
-          workflow_run trigger). Empty disables the deploy restore.
+          workflow_run trigger). The workflow must accept source_sha and
+          delivery_mode inputs so recovery and duplicate suppression stay
+          bound to the validated revision. Empty disables the deploy restore.
         required: false
         type: string
         default: ''
@@ -861,6 +863,7 @@ jobs:
           # main still contains this PR, then reuse/restore the safety
           # chain at the current descendant SHA instead.
           SAFETY_SHA=$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')
+          SAFETY_COMMITTED_AT=$(gh api "repos/$REPO/commits/$SAFETY_SHA" --jq '.commit.committer.date')
           MAIN_RELATION=$(gh api "repos/$REPO/compare/$MERGE_SHA...$SAFETY_SHA" --jq '.status')
           case "$MAIN_RELATION" in
             identical | ahead) ;;
@@ -997,25 +1000,79 @@ jobs:
             exit 0
           fi
 
+          # DELIVERY_SOURCE_PROVENANCE_CONTRACT: configured post-CI and deploy
+          # workflows publish their resolved immutable source in run-name as
+          # `[source:<40 lowercase hex>]`. GitHub's workflow_run head_sha is
+          # only the main tip when the child run is created, so it is useful
+          # for finding legacy ambiguity but never establishes ownership.
+          # All configured workflows share one wait budget.
+          DELIVERY_WAIT_REMAINING=$((CHECK_WAIT_MINUTES * 12))
+          load_delivery_run_records() {
+            local workflow="$1" ambiguous_active legacy_unproven
+            while true; do
+              DELIVERY_RUNS=$(gh api --paginate \
+                "repos/$REPO/actions/workflows/$workflow/runs?branch=main&created=%3E%3D$SAFETY_COMMITTED_AT&per_page=100" \
+                --slurp)
+              DELIVERY_RUN_RECORDS=$(jq -c '
+                [.[].workflow_runs[] |
+                  . + {source_sha: (
+                    (try ((.display_title // "") |
+                      capture("\\[source:(?<source>[0-9a-f]{40})\\]").source)
+                    catch null) // ""
+                  )}]
+                | sort_by(.created_at, .id)
+              ' <<<"$DELIVERY_RUNS")
+              ambiguous_active=$(jq -r --arg sha "$SAFETY_SHA" '
+                any(.[];
+                  .head_sha == $sha and .status != "completed" and
+                  .source_sha != $sha)
+              ' <<<"$DELIVERY_RUN_RECORDS")
+              [ "$ambiguous_active" != true ] && break
+              if [ "$DELIVERY_WAIT_REMAINING" -le 0 ]; then
+                echo "::error::$workflow still has an active run whose displayed head is $SAFETY_SHA but whose immutable source is different or absent; recovery will not overlap it."
+                return 1
+              fi
+              DELIVERY_WAIT_REMAINING=$((DELIVERY_WAIT_REMAINING - 1))
+              sleep 5
+            done
+
+            while read -r cancelled_run; do
+              [ -n "$cancelled_run" ] || continue
+              job_count=$(gh api "repos/$REPO/actions/runs/$cancelled_run/jobs" --jq '.total_count')
+              DELIVERY_RUN_RECORDS=$(jq -c \
+                --argjson runId "$cancelled_run" \
+                --argjson jobCount "$job_count" '
+                  map(if .id == $runId then . + {job_count: $jobCount} else . end)
+                ' <<<"$DELIVERY_RUN_RECORDS")
+            done < <(jq -r --arg sha "$SAFETY_SHA" '
+              .[] | select(
+                .conclusion == "cancelled" and
+                (.source_sha == $sha or
+                 (.source_sha == "" and .head_sha == $sha))
+              ) | .id
+            ' <<<"$DELIVERY_RUN_RECORDS")
+
+            legacy_unproven=$(jq -c --arg sha "$SAFETY_SHA" '
+              [.[] | select(
+                .head_sha == $sha and .source_sha == "" and
+                .status == "completed" and
+                .conclusion != "skipped" and
+                (.conclusion != "cancelled" or .job_count != 0)
+              ) | {id,status,conclusion}]
+            ' <<<"$DELIVERY_RUN_RECORDS")
+            if [ "$(jq 'length' <<<"$legacy_unproven")" -gt 0 ]; then
+              echo "::error::$workflow has completed legacy run(s) with work for displayed head $SAFETY_SHA but no immutable source provenance: $legacy_unproven. Refusing both duplicate dispatch and an unproven ownership claim."
+              return 1
+            fi
+          }
+
           POST_CI_PENDING=()
           while read -r WORKFLOW; do
             [ -n "$WORKFLOW" ] || continue
-            POST_CI_RUNS=$(gh api --paginate \
-              "repos/$REPO/actions/workflows/$WORKFLOW/runs?branch=main&head_sha=$SAFETY_SHA&per_page=100" \
-              --slurp)
+            load_delivery_run_records "$WORKFLOW" || exit 1
             POST_CI_RUN_RECORDS=$(jq -c --arg sha "$SAFETY_SHA" '
-              [.[].workflow_runs[] | select(.head_sha == $sha)]
-              | sort_by(.created_at, .id)
-            ' <<<"$POST_CI_RUNS")
-            while read -r CANCELLED_POST_CI_RUN; do
-              [ -n "$CANCELLED_POST_CI_RUN" ] || continue
-              POST_CI_JOB_COUNT=$(gh api "repos/$REPO/actions/runs/$CANCELLED_POST_CI_RUN/jobs" --jq '.total_count')
-              POST_CI_RUN_RECORDS=$(jq -c \
-                --argjson runId "$CANCELLED_POST_CI_RUN" \
-                --argjson jobCount "$POST_CI_JOB_COUNT" '
-                  map(if .id == $runId then . + {job_count: $jobCount} else . end)
-                ' <<<"$POST_CI_RUN_RECORDS")
-            done < <(jq -r '.[] | select(.conclusion == "cancelled") | .id' <<<"$POST_CI_RUN_RECORDS")
+              [.[] | select(.source_sha == $sha)]
+            ' <<<"$DELIVERY_RUN_RECORDS")
             POST_CI_OWNERS=$(jq -c '
               [.[] | select(
                 .conclusion != "skipped" and
@@ -1031,23 +1088,11 @@ jobs:
 
           DEPLOY_NEEDED=false
           if [ -n "$DEPLOY_WORKFLOW" ]; then
-            DEPLOY_RUNS=$(gh api --paginate \
-              "repos/$REPO/actions/workflows/$DEPLOY_WORKFLOW/runs?branch=main&head_sha=$SAFETY_SHA&per_page=100" \
-              --slurp)
+            load_delivery_run_records "$DEPLOY_WORKFLOW" || exit 1
             # DEPLOY_RUN_SELECTION_CONTRACT
             DEPLOY_RUN_RECORDS=$(jq -c --arg sha "$SAFETY_SHA" '
-              [.[].workflow_runs[] | select(.head_sha == $sha)]
-              | sort_by(.created_at, .id)
-            ' <<<"$DEPLOY_RUNS")
-            while read -r CANCELLED_DEPLOY_RUN; do
-              [ -z "$CANCELLED_DEPLOY_RUN" ] && continue
-              DEPLOY_JOB_COUNT=$(gh api "repos/$REPO/actions/runs/$CANCELLED_DEPLOY_RUN/jobs" --jq '.total_count')
-              DEPLOY_RUN_RECORDS=$(jq -c \
-                --argjson runId "$CANCELLED_DEPLOY_RUN" \
-                --argjson jobCount "$DEPLOY_JOB_COUNT" '
-                  map(if .id == $runId then . + {job_count: $jobCount} else . end)
-                ' <<<"$DEPLOY_RUN_RECORDS")
-            done < <(jq -r '.[] | select(.conclusion == "cancelled") | .id' <<<"$DEPLOY_RUN_RECORDS")
+              [.[] | select(.source_sha == $sha)]
+            ' <<<"$DELIVERY_RUN_RECORDS")
             # DEPLOY_RUN_DECISION_CONTRACT: skipped runs and reliably empty
             # concurrency cancellations did no deployment work. Failed runs
             # and cancellations with any job remain terminal because a subset
@@ -1092,25 +1137,10 @@ jobs:
             exit 0
           fi
 
-          # post-CI workflows bind their work to source_sha. The legacy deploy
-          # workflow has no immutable-source input, so close the wider dispatch
-          # window introduced by the post-CI loop with one final main read.
-          LEGACY_DEPLOY_MAIN_SHA=$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')
-          if [ "$LEGACY_DEPLOY_MAIN_SHA" != "$SAFETY_SHA" ]; then
-            echo "::error::Main advanced from CI-validated safety target $SAFETY_SHA to $LEGACY_DEPLOY_MAIN_SHA after source-bound post-CI dispatch; refusing to dispatch $DEPLOY_WORKFLOW for an unverified head."
-            exit 1
-          fi
-
-          # A generic reusable-workflow consumer need not support a
-          # source_sha input. Since --ref main resolves at dispatch time,
-          # fail closed if main advanced while this job waited rather than
-          # intentionally send an unverified descendant to the deploy
-          # workflow. A residual race remains between this read and GitHub
-          # resolving --ref; consumers that require atomic source binding
-          # need their own immutable-source dispatch contract.
           if [ -z "$POST_DEPLOY_VERIFY_WORKFLOW" ]; then
             echo "Main CI run $CI_RUN passed; dispatching the missing $DEPLOY_WORKFLOW run."
-            gh workflow run "$DEPLOY_WORKFLOW" --repo "$REPO" --ref main
+            gh workflow run "$DEPLOY_WORKFLOW" --repo "$REPO" --ref main \
+              -f source_sha="$SAFETY_SHA" -f delivery_mode=recovered-ci
             exit 0
           fi
 
@@ -1121,7 +1151,8 @@ jobs:
           # returned by gh instead of trying to rediscover the run using
           # SAFETY_SHA after main moves.
           echo "Main CI run $CI_RUN passed; dispatching the missing $DEPLOY_WORKFLOW run."
-          DEPLOY_URL=$(gh workflow run "$DEPLOY_WORKFLOW" --repo "$REPO" --ref main)
+          DEPLOY_URL=$(gh workflow run "$DEPLOY_WORKFLOW" --repo "$REPO" --ref main \
+            -f source_sha="$SAFETY_SHA" -f delivery_mode=recovered-ci)
           DEPLOY_RUN=${DEPLOY_URL##*/}
           if [ -z "$DEPLOY_URL" ] || ! [[ "$DEPLOY_RUN" =~ ^[0-9]+$ ]]; then
             echo "::error::Dispatching the restored deploy did not return a run URL (got: $DEPLOY_URL)."
