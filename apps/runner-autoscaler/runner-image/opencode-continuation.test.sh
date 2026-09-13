@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Artifact-boundary contract for the pinned OpenCode CLI, global standing
-# instructions, bounded-read hook, automatic compaction, and continuation.
+# instructions, context lifecycle hooks, automatic compaction, and continuation.
 # It proves framework delivery and hook execution, not model obedience.
 set -euo pipefail
 
@@ -53,15 +53,24 @@ printf '{}\n' > "$tmp/models.json"
 # and plugins but remove that unrelated provider from the isolated test home.
 jq 'del(.provider.homelab)' "$source_config_dir/opencode.json" > "$tmp/home/.config/opencode/opencode.json"
 cp "$source_config_dir/instructions.md" \
-  "$source_config_dir/bounded-read.js" \
+  "$source_config_dir/context-lifecycle.js" \
   "$source_config_dir/lcars-session.js" \
   "$tmp/home/.config/opencode/"
-python3 - "$tmp/workspace/fixture.txt" <<'PY'
+mkdir -p "$tmp/workspace/.claude/worktrees/task/app"
+python3 - "$tmp/workspace" <<'PY'
 import sys
 from pathlib import Path
 
-Path(sys.argv[1]).write_text(
-    "".join(f"LINE-{line:03d} " + ("x" * 120) + "\n" for line in range(1, 201)),
+root = Path(sys.argv[1])
+worktree = root / ".claude/worktrees/task"
+# Same large root document under two distinct checkout paths reproduces the
+# production instruction amplification; the child rule must remain present.
+text = "ROOT_INSTRUCTION_SENTINEL\n" + ("Required root guidance. " * 2500) + "\n"
+(root / "AGENTS.md").write_text(text)
+(worktree / "AGENTS.md").write_text(text)
+(worktree / "app/AGENTS.md").write_text("CHILD_INSTRUCTION_SENTINEL\n")
+(worktree / "app/fixture.txt").write_text(
+    "".join(f"LINE-{line:03d} " + ("x" * 120) + "\n" for line in range(1, 301)),
     encoding="utf-8",
 )
 PY
@@ -99,7 +108,8 @@ cat > "$tmp/workspace/opencode.json" <<JSON
           "name": "Local deterministic continuation contract",
           "limit": {
             "context": 4000,
-            "output": 500
+            "input": 4000,
+            "output": 8192
           }
         }
       }
@@ -137,8 +147,9 @@ env \
     fail "real OpenCode continuation run failed"
   }
 
-python3 - "$tmp/observations.ndjson" <<'PY'
+python3 - "$tmp/observations.ndjson" "$tmp/data/opencode/opencode.db" <<'PY'
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -182,7 +193,23 @@ assert continuation["tools"] and continuation["hasSummary"], continuation
 assert continuation["hasSyntheticContinuation"], continuation
 assert continuation["hasStandingInstructions"], continuation
 assert finished["toolMessageCount"] == 1, finished
-assert finished["toolHasLine120"] and not finished["toolHasLine121"], finished
+assert finished["toolHasLine120"] and finished["toolHasLine121"], finished
+assert finished["toolHasLine200"], finished
+assert compaction["maxTokens"] == 4096, compaction
+for item in observations:
+    if item["tools"]:
+        assert item["rootInstructionCount"] == 1, item
+        if item["toolMessageCount"]:
+            assert item["hasChildInstructions"], item
+# Request-local transformations must never erase archived instruction content.
+with sqlite3.connect(f"file:{sys.argv[2]}?mode=ro", uri=True) as db:
+    parts = [json.loads(row[0]) for row in db.execute("select data from part")]
+reads = [part["state"] for part in parts
+         if part.get("type") == "tool" and part.get("tool") == "read"
+         and part.get("state", {}).get("status") == "completed"]
+assert any("ROOT_INSTRUCTION_SENTINEL" in state["output"] for state in reads)
+assert all(state["input"]["limit"] == 200 for state in reads)
+
 PY
 
 echo "OpenCode real-framework compaction and continuation contract: OK"
