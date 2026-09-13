@@ -4,6 +4,10 @@ import { isAbsolute } from 'node:path';
 // A working-set budget, not a per-read limit. Recent turns and instructions
 // are exempt; native session history remains intact for inspection/recovery.
 const READ_HISTORY_BYTES = 96_000;
+// Keep policy documents, working notes, dispatch JSON, and unknown formats.
+// Only reproducible source-code bodies are eligible for early eviction.
+const SOURCE_FILE =
+  /\.(?:[cm]?[jt]sx?|go|py|rs|sh|bash|css|scss|html|vue|svelte|sql)$/i;
 const SUMMARY_OUTPUT_TOKENS = 4096;
 
 function splitInstructions(output, loaded) {
@@ -105,8 +109,9 @@ export default async function contextLifecycle() {
             bodies,
           );
           const bytes = Buffer.byteLength(content);
-          const keep = recent.has(message) || bytes <= remaining;
-          if (keep) remaining = Math.max(0, remaining - bytes);
+          const eligible = SOURCE_FILE.test(state.input?.filePath ?? '');
+          const keep = !eligible || recent.has(message) || bytes <= remaining;
+          if (keep && eligible) remaining = Math.max(0, remaining - bytes);
           // This hook transforms request-local messages, not persisted parts.
           // Keep source arguments, all scoped instructions, and recent reads.
           part.state = {

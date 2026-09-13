@@ -14,7 +14,7 @@ working-set size are separate:
 | Compaction output ceiling      |   4096 | Bounds summary generation, including reasoning  |
 
 These are runner settings, not workstation or LiteLLM routing changes. The
-provider timeout remains two hours. Nothing changes the task's feature scope.
+agent execution budget remains two hours. Nothing changes the task's feature scope.
 
 ## Why this changed
 
@@ -62,8 +62,9 @@ requests do not reset working instruction identity. It does not rewrite source
 files or persistently delete tool results.
 
 The same request-local hook retains the latest two assistant messages' reads
-and a 96,000-byte budget of read content, walking newest first. Instructions
-are exempt. Older read bodies leave the active request with a recovery notice;
+and a 96,000-byte budget of source-code read content, walking newest first.
+Instructions, Markdown policy/working notes, dispatch JSON, and unknown file
+formats are exempt. Older read bodies leave the active request with a recovery notice;
 original arguments and complete native session history remain available. This
 runs between tool turns, whereas the pinned runtime's normal pruning runs
 when its autonomous loop exits. Non-read results, errors, skills, user prompts,

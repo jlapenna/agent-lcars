@@ -66,6 +66,27 @@ try {
   assert.equal(messages[2].parts[0].state.input.limit, 500);
   assert(original.parts[0].state.output.includes('OLD SOURCE'));
 
+  // Required protocol documents, dispatch briefs, and working notes must
+  // not be sacrificed to the source-code history budget.
+  const protocol = read('protocol', 'REQUIRED PROTOCOL'.repeat(20000));
+  protocol.parts[0].state.input.filePath = '/protocol/agent-protocol.md';
+  const brief = read('brief', 'DISPATCH BRIEF'.repeat(20000));
+  brief.parts[0].state.input.filePath = '/dispatch/context.json';
+  const protectedMessages = [
+    protocol,
+    brief,
+    read('new1', 'NEW'.repeat(40000)),
+    read('new2', 'NEW'),
+  ];
+  await hooks['experimental.chat.messages.transform'](
+    {},
+    { messages: protectedMessages },
+  );
+  assert(
+    protectedMessages[0].parts[0].state.output.includes('REQUIRED PROTOCOL'),
+  );
+  assert(protectedMessages[1].parts[0].state.output.includes('DISPATCH BRIEF'));
+
   // A summary request has no root system instructions; continuation still
   // deduplicates a newly loaded root copy without deleting a scoped override.
   await hooks['experimental.chat.system.transform'](
