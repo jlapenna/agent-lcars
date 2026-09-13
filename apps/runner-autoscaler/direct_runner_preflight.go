@@ -28,8 +28,8 @@ func directRunnerPermanentCredentialMounts() ([]directRunnerCredentialMount, err
 		containerPath: directRunnerTelemetryWriterMountPath,
 	}}
 	for _, adapter := range directRunnerAdapters {
-		if adapter.pipeline == "opencode" {
-			if _, err := directRunnerOpenCodeRouteStatusURL(); err != nil {
+		if adapter.environment != nil {
+			if _, err := adapter.environment(); err != nil {
 				return nil, fmt.Errorf("%s adapter: %w", adapter.pipeline, err)
 			}
 		}
