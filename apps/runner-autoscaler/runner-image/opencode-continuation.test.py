@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 root = Path(sys.argv[1])
-fixture = root / "workspace" / "fixture.txt"
+fixture = root / "workspace/.claude/worktrees/task/app/fixture.txt"
 request_count = 0
 
 
@@ -24,7 +24,7 @@ def chunk(*, content=None, tool_call=None, finish_reason=None):
                 "type": "function",
                 "function": {
                     "name": "read",
-                    "arguments": json.dumps({"filePath": str(fixture)}),
+                    "arguments": json.dumps({"filePath": str(fixture), "limit": 200}),
                 },
             }
         ]
@@ -71,6 +71,10 @@ class Handler(BaseHTTPRequestHandler):
             "toolMessageCount": len(tool_messages),
             "toolHasLine120": "LINE-120" in tool_text,
             "toolHasLine121": "LINE-121" in tool_text,
+            "toolHasLine200": "LINE-200" in tool_text,
+            "rootInstructionCount": serialized.count("ROOT_INSTRUCTION_SENTINEL"),
+            "hasChildInstructions": "CHILD_INSTRUCTION_SENTINEL" in tool_text,
+            "maxTokens": body.get("max_tokens", body.get("max_completion_tokens")),
         }
         with (root / "observations.ndjson").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(observation, sort_keys=True) + "\n")
@@ -86,7 +90,7 @@ class Handler(BaseHTTPRequestHandler):
             usage = 100
         else:
             first = chunk(tool_call=f"read-{request_count}")
-            usage = 3600 if not has_summary else 100
+            usage = 3600 if not has_summary and tool_messages else 100
 
         finish = "tool_calls" if "tool_calls" in first["choices"][0]["delta"] else "stop"
         frames = [

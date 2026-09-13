@@ -1,174 +1,110 @@
-# Why `homelab/default` declares a 60000-token context
+# OpenCode working context and compaction
 
-`opencode.json` tells OpenCode how much context the model has. OpenCode uses
-that number for one thing: deciding when to compact. Compaction fires as the
-conversation approaches `limit.context - compaction.reserved`, and it evicts
-the file contents the agent has read. The agent then notices it no longer
-remembers a document it was told to follow, and reads it again.
+The shared runner uses OpenCode 1.18.25 against `homelab/default`, currently
+Qwen3.8 Flash Next on the two-Spark SGLang lane. Model capacity and the desired
+working-set size are separate:
 
-So this number is not documentation. It is the knob that decides how often a
-dispatched agent loses its working memory — and it was wrong in this repo, in
-the expensive direction, for as long as OpenCode has run here.
+| Setting                        | Tokens | Purpose                                         |
+| ------------------------------ | -----: | ----------------------------------------------- |
+| `limit.context`                | 262144 | Current serving process capacity                |
+| `limit.input`                  | 110000 | Explicit input budget before compaction reserve |
+| `compaction.reserved`          |  30000 | Headroom for tool batches and continuation      |
+| Effective compaction threshold |  80000 | `input - reserved` in the pinned runtime        |
+| `limit.output`                 |   8192 | Working-turn output allowance                   |
+| Compaction output ceiling      |   4096 | Bounds summary generation, including reasoning  |
 
-## What was wrong
+These are runner settings, not workstation or LiteLLM routing changes. The
+provider timeout remains two hours. Nothing changes the task's feature scope.
 
-This repo declared `context: 24000`. That value is a leftover from when
-LiteLLM's `default` route pointed at Gemma-4 31B; the route now serves
-`deepseek-v4-flash` with `max_input_tokens: 262144`
-(`homelab:litellm/runtime/config.yaml`). The stale model name in the same
-entry — "Gemma-4 31B" — was the other half of the same leftover.
+## Why this changed
 
-With `reserved: 3000`, OpenCode compacted at ~21,000 tokens. That is roughly
-what a dispatch costs before any work happens: the system prompt and tool
-schemas, the dispatch brief, and the two protocol documents. So the agent
-compacted almost immediately and then repeatedly, re-reading the protocols
-after each one.
+The September 12 audit found 37 compactions in failed Sprinkles #5473/r4,
+spending 78.3 of its 120 minutes awaiting summaries. The 152 completed assistant
+messages included those summaries: 115 working turns plus 37 compaction turns,
+not 189. Successful #5465/r3 still spent 43.6 minutes awaiting 22 summaries.
 
-## The evidence
+Initial requests used about 24,350 tokens. The old `context: 60000`,
+`output: 8192`, no-input configuration actually triggered at **51,808**, not
+57,000: OpenCode ignores `reserved` in that branch. The [pinned overflow
+implementation](https://github.com/anomalyco/opencode/blob/v1.18.25/packages/opencode/src/session/overflow.ts)
+uses `input - reserved` when an explicit input limit exists and otherwise
+`context - maxOutputTokens`. It checks completed-response usage; this is not a
+hard admission ceiling on the next request. Large tool batches can overshoot.
 
-Measured from real run logs, counting `agent: "compaction"` events:
+The previous 60k justification concerned a DeepSeek `ds4-serve` serial fallback
+that rejected prompts above 64k in August. It does not describe today's Qwen
+lane. Read-only process inspection confirmed `--context-length 262144`,
+`--max-running-requests 8`, tensor parallelism 2, and two nodes. Two serial
+synthetic requests to that serving process accepted 142,907 and 226,907 input
+tokens and returned two output tokens in 49.46 and 34.20 seconds respectively.
+These probes establish service above the former cliff, **not** eight-request
+throughput, real coding quality, or an optimal threshold. The 80k working
+threshold is a conservative initial operating point below those probes, with
+substantial capacity left for overshoot. Re-evaluate it from delivered work
+and latency after rollout; do not equate the advertised capacity with the
+appropriate compaction trigger.
 
-| run                            | declared context | compactions | steps | outcome                        |
-| ------------------------------ | ---------------: | ----------: | ----: | ------------------------------ |
-| agent-lcars #1173 (2026-08-16) |           24,000 |           2 |    11 | never reached the task         |
-| agent-lcars #1173 (2026-08-15) |           24,000 |           9 |    52 | work done, then lost unpushed  |
-| sprinkles #4451 (2026-08-16)   |          262,144 |       **0** |     8 | grew to 70,354 tokens, refused |
+## Instruction identity and active read history
 
-One compaction every ~5.5 steps in this repo. The 2026-08-16 run spent its
-whole 35 minutes reading the protocols three times and dumping `env` four
-times, and exited without editing a file.
+A nested task worktree can contain the same root `AGENTS.md` as the primary
+checkout. The instance's system prompt already includes the primary document,
+but OpenCode discovers the worktree copy as another instruction path. After
+compaction discards its loaded-path metadata, that copy is attached again.
+In #5473, these attachments accounted for 52.5% of read-output characters; in
+successful #5465, 73.8%. A capped 60-line read still returned 62,868 characters.
 
-The sprinkles row is the same knob failing the other way. Declaring the
-backend's full 262144 means OpenCode never compacts, so the prompt grew past
-the point where `ds4-serve` will serve it and the run died on
-`Server is temporarily at capacity for a 70354-token prompt (deep prompts are
-not served on the serial fallback path)`.
+`agents/opencode/context-lifecycle.js` uses the supported system/message hooks
+to recognize instruction files actually present in the working system prompt.
+It verifies their current bytes before omitting an exactly identical attached
+copy from a request. Different child rules, changed documents, and prefix-only
+matches remain. It keeps source paths and instruction metadata. Summary
+requests do not reset working instruction identity. It does not rewrite source
+files or persistently delete tool results.
 
-## Why 60000 and not 262144
+The same request-local hook retains the latest two assistant messages' reads
+and a 96,000-byte budget of read content, walking newest first. Instructions
+are exempt. Older read bodies leave the active request with a recovery notice;
+original arguments and complete native session history remain available. This
+runs between tool turns, whereas the pinned runtime's normal pruning runs
+when its autonomous loop exits. Non-read results, errors, skills, user prompts,
+and unfinished tool calls are untouched. The byte budget is an approximate
+working-set policy, not a tokenizer estimate or hard overall request limit;
+recent reads can exceed it.
 
-Both failures above come from the same number, set wrong in opposite
-directions, so the right value is bounded on both sides:
+The hard 120-line plugin has been removed. Native OpenCode read limits and
+explicit larger ranges work normally. Reducing every read to small slices did
+not control appended instructions and could force additional calls.
 
-- **Floor:** it must be comfortably above a dispatch's fixed cost (~21k), or
-  the agent compacts before it can work. 60000 leaves ~57k of working context
-  after `reserved`, roughly 2.7x what this repo had.
-- **Ceiling:** requests over **64k** switch `ds4-serve` to plain
-  (non-speculative) decode — "almost certainly the serial fallback path"
-  behind homelab#48's capacity 503, per `litellm/runtime/config.yaml`'s own
-  note. Staying under it keeps every dispatch on the fast path and off the
-  rejection path that killed sprinkles#4451.
+## Compaction and continued work
 
-262144 is the backend's real limit and is _not_ the right value here: it is
-above the ceiling, not below it. The backend can hold that much; the server
-will not reliably serve a prompt that large under load.
+The compaction hook adds a short handoff instruction without replacing the
+native summary prompt. It requests at most 600 words prioritizing objective,
+deliverable, worktree/claim, edits/tests, unresolved questions, and next action.
+The `chat.params` hook bounds compaction output at 4096 tokens while preserving
+any smaller configured limit and leaving working turns unchanged. The word
+count is model guidance; the token ceiling is sent on the wire. This bounds
+cost but is not a guarantee of summary completeness or model obedience.
 
-## If you change this
+Standing instructions remain home-relative so they load in every workspace
+(#1947). The agent should use its working note after compaction and continue
+the pending action. Observed summaries retained detailed plans even in failed
+runs; repeated inspection is not proof that all task state was forgotten.
 
-Re-measure, do not reason. Count compactions per step in a real run:
+## Verification and runtime acceptance
 
-```bash
-gh run view <run-id> --log | grep -c 'agent: "compaction"'
-```
+`tools/opencode-config.test.sh` is consumed by required CI. It exercises
+instruction equivalence, changed/scoped rules, session separation, active
+read-history retention, and output-budget behavior. The image build's existing
+`opencode-continuation.test.sh` gate runs the actual pinned CLI against a
+localhost deterministic provider, using duplicate worktree instructions and a
+distinct child rule. Wire assertions cover instructions exactly once before
+and after compaction, preserved child rules, explicit reads above 120 lines,
+standing instructions, continuation, and the summary token ceiling. It uses no
+production credentials or model inference.
 
-Fewer than one compaction per ~15 steps means the agent keeps its working
-memory across a task. Zero compactions across a long run means the limit is
-too high and you are heading for the 64k cliff instead.
-
-## `limit.output` = 8192
-
-2048 was the same Gemma-era leftover as the context value, and it is the cap
-on what the model may emit in a single turn. A 300-line TSX component is
-roughly 4,000 tokens, so 2048 could not have written one — the agent would
-have been truncated mid-file at the exact step that matters.
-
-There is **no measured evidence it was ever hit**, and that is worth stating
-plainly: across every run examined, the agent never reached a file write, so
-nothing in the logs shows a truncated edit. This is a constraint removed
-before it bites, not a diagnosed failure.
-
-8192 is derived from the step budget rather than picked. With thinking
-disabled and the prompt under the 64k cliff, `ds4-serve` decodes at roughly
-48ms/token (its own tuning note; deep prompts run 146–177ms/token). A
-maximal 8192-token turn therefore costs ~6.5 minutes — about 11% of the
-60-minute agent step (#1226). At 16384 a single runaway turn would eat 22% of
-the run, which is a worse failure than a truncated write.
-
-If a real edit is ever truncated, the log will show it and this should go up.
-Do not raise it on the theory that bigger is safer: the cost is paid in
-minutes of a bounded budget.
-
-The runner dispatches `homelab/default`. The historical `default-nothink`
-workaround introduced in #1227 has been retired; use native client reasoning
-controls when thinking should be disabled.
-
-Related: agent-lcars#1210 cut the fixed pre-work reading that this budget is
-mostly spent on, and agent-lcars#1217 covers the separate 60-minute push
-credential expiry.
-
-## Where OpenCode's standing orders live, and why not in `agent.*.prompt`
-
-`opencode.json`'s `instructions` points at `agents/opencode/instructions.md`.
-Measured 2026-08-16 against opencode 1.18.18, by pointing the provider
-`baseURL` at a local server and reading the request off the wire:
-
-| config                | system message | stock build prompt |
-| --------------------- | -------------: | ------------------ |
-| `agent.build.prompt`  |   10,929 chars | **destroyed**      |
-| `instructions: [...]` |   19,602 chars | intact             |
-
-`agent.*.prompt` **replaces** OpenCode's built-in system prompt instead of
-appending to it — the override cost ~8.7KB of stock tool guidance and the
-opening line `"You are opencode, an interactive CLI tool..."` went with it.
-`instructions` is additive and lands in the _same system message_, which is
-the property that matters: the system message is re-sent on every request and
-survives compaction, while a turn-0 user prompt is competing with a hundred
-summary lines by the second compaction.
-
-That distinction is the whole reason the commit rule kept being ignored. It
-was stated in the dispatch prompt, in `agent-protocol.md` §6, and in the
-brief's checkpoints — all turn-0 or tool-read content. `tools/opencode-config.test.sh`
-fails the build if `agent.*.prompt` is ever set again.
-
-## September 12 recovery audit: read loops despite two hours
-
-The exported OpenCode 1.18.25 transcripts for Sprinkles #5475/r3 and #5473/r3
-showed 37 compactions each, 178 and 139 model steps, and 315 and 282 read calls.
-Neither recorded an edit/write call before the two-hour timeout. The same
-source files were read 25–30 times. Individual input counts reached 84,968 and
-82,027 tokens despite the configured 60,000 context: large tool responses can
-overshoot the compaction threshold before the next check.
-
-#5467/r3 instead stalled in a delegated exploration task after only nine model
-steps. The parent export recorded the child call as still running at timeout;
-it does not prove whether the child was doing useful work.
-
-The runner now denies the Task tool using OpenCode's supported permission
-configuration and asks the main session to use focused reads and durable
-working notes across compactions. These measures target observed behavior;
-they do not establish that the success-rate target has been met. The 60,000
-context limit remains unchanged pending new backend capacity measurements.
-
-The subsequent #5470/r3 run still had no visible edits at 17:17 UTC: 178
-steps, 28 compactions, and four source files read 14–17 times. A later
-read-only native database sample found 84 reads with no explicit limit and
-input reaching 93,696 tokens. OpenCode 1.18.25 defaults those reads to 2,000
-lines. The first `bounded-read.js` plugin used the supported
-`tool.execute.before` hook to set an omitted limit to 120, matching the
-standing instructions, while preserving every explicit limit and offset.
-That reduced the default tool-response volume without changing the context
-declaration or two-hour run budget.
-
-The next natural run, Sprinkles `#5473/r4`, proved that omitted-only behavior
-was insufficient. Its export recorded 152 build-model steps plus 37 compaction
-events (189 loop events, or one compaction per 5.1), 319 reads, no durable
-edit, and a two-hour timeout. Although 48 reads used the 120-line default, 248
-explicitly requested more than 120 lines, including 36 requests over 500 and
-a maximum of 1,200. The requested read-line budget was 95,134 lines; applying
-a 120-line ceiling to the same requests would have bounded it to 37,413.
-
-The hook therefore caps every read at 120 lines while preserving smaller
-positive limits and offsets. Larger files require search plus targeted offset
-ranges. This is a bound on the OpenCode `read` tool only: shell commands,
-search output, total context, and model output retain their existing separate
-limits. It reduces one measured source of oversized tool responses; it does
-not establish durable progress or close the runtime acceptance gate.
+After publishing, inspect natural runs on the exact image digest. Compare time
+to first edit/commit, commits and PRs per wall-clock hour, summary wall time,
+input usage, repeated unchanged ranges, and serving errors/load. Compare like
+workloads with one variable changed at a time when tuning further. A lower
+compactions-per-step ratio alone is not evidence of useful delivery. Keep
+#1942's natural-run acceptance separate from the framework and capacity probes.

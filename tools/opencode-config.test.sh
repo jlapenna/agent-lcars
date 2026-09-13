@@ -54,7 +54,7 @@ grep -Fq "Commit and push at the first working slice" "$orders" ||
 # LCARS_SESSION_ID contract used by the annotation CLI.
 session_plugin="$repo_root/agents/opencode/lcars-session.js"
 test -f "$session_plugin" || fail "agents/opencode/lcars-session.js is missing"
-jq -e '.plugin == ["./lcars-session.js", "./bounded-read.js"]' "$config" >/dev/null ||
+jq -e '.plugin == ["./lcars-session.js", "./context-lifecycle.js"]' "$config" >/dev/null ||
   fail "opencode.json must load the native LCARS session environment plugin"
 plugin_url="data:text/javascript;base64,$(base64 -w0 "$session_plugin")"
 node --input-type=module - "$plugin_url" <<'NODE'
@@ -78,54 +78,12 @@ await hooks['shell.env']({ cwd: '/repo', callID: 'call_2' }, absent);
 assert.deepEqual(absent.env, { KEEP: 'yes' });
 NODE
 
-# Omitted and oversized limits produced large responses during repeated
-# investigations. Keep every read at or below the focused-read ceiling.
-read_plugin="$repo_root/agents/opencode/bounded-read.js"
-plugin_url="data:text/javascript;base64,$(base64 -w0 "$read_plugin")"
-node --input-type=module - "$plugin_url" <<'NODE'
-import assert from 'node:assert/strict';
-const hooks = await (await import(process.argv[2])).default();
-const read = { args: { filePath: '/repo/source.ts', offset: 241 } };
-await hooks['tool.execute.before']({ tool: 'read' }, read);
-assert.deepEqual(read.args, {
-  filePath: '/repo/source.ts', offset: 241, limit: 120,
-});
-for (const [limit, expected] of [
-  [1, 1],
-  [50, 50],
-  [120, 120],
-  [121, 120],
-  [500, 120],
-  [2000, 120],
-  [0, 120],
-  [-1, 120],
-  [Number.NaN, 120],
-  [Number.POSITIVE_INFINITY, 120],
-]) {
-  const explicit = { args: { filePath: '/repo/source.ts', limit } };
-  await hooks['tool.execute.before']({ tool: 'read' }, explicit);
-  assert.equal(explicit.args.limit, expected);
-}
-const invalid = { args: { filePath: '/repo/source.ts', limit: '500' } };
-await hooks['tool.execute.before']({ tool: 'read' }, invalid);
-assert.equal(invalid.args.limit, 120);
-const oversizedRange = {
-  args: { filePath: '/repo/source.ts', offset: 481, limit: 500 },
-};
-await hooks['tool.execute.before']({ tool: 'read' }, oversizedRange);
-assert.deepEqual(oversizedRange.args, {
-  filePath: '/repo/source.ts', offset: 481, limit: 120,
-});
-const bash = { args: { command: 'git status' } };
-await hooks['tool.execute.before']({ tool: 'bash' }, bash);
-assert.deepEqual(bash.args, { command: 'git status' });
-NODE
-grep -Fq '/repo/agents/opencode/bounded-read.js' "$runner_dockerfile" ||
-  fail "runner image no longer installs the bounded read plugin"
+# Protect request history and authoritative instructions at the plugin boundary.
+node "$repo_root/tools/opencode-context.test.mjs"
+grep -Fq '/repo/agents/opencode/context-lifecycle.js' "$runner_dockerfile" ||
+  fail "runner image no longer installs the context lifecycle plugin"
 grep -Fq 'RUN bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh' "$runner_dockerfile" ||
   fail "runner image no longer exercises the real OpenCode continuation contract"
-grep -Fq '/home/runner/.config/opencode/bounded-read.js' "$runner_dockerfile" ||
-  fail "runner image does not preserve the bounded read plugin path"
 
 # --- agent.*.prompt must stay unset ------------------------------------------
 # Measured 2026-08-16 against opencode 1.18.18 by capturing the wire request:
@@ -138,18 +96,14 @@ if jq -e '.agent // {} | to_entries | map(select(.value.prompt)) | length > 0' "
   fail "agent.*.prompt REPLACES OpenCode's stock system prompt (measured, opencode 1.18.18) - use .instructions to add text"
 fi
 
-# --- the context/output budget must stay inside its documented bounds --------
-# docs/opencode-context-limit.md derives both. The floor is a dispatch's ~21k
-# fixed cost; the ceiling is the 64k point where ds4-serve drops to
-# non-speculative decode.
-while read -r model context output; do
-  [ "$context" -gt 24000 ] ||
-    fail "$model context $context is at or below the fixed cost of a dispatch; the agent will compact before it can work"
-  [ "$context" -lt 64000 ] ||
-    fail "$model context $context crosses the 64k ds4-serve deep-prompt threshold (docs/opencode-context-limit.md)"
-  [ "$output" -ge 4096 ] ||
-    fail "$model output $output cannot emit a whole component file in one turn"
-done < <(jq -r '.provider.homelab.models | to_entries[] | "\(.key) \(.value.limit.context) \(.value.limit.output)"' "$config")
+# Explicit input plus headroom must fit the backend; a completed-turn usage
+# threshold is not a hard admission limit for the next batch of tool results.
+jq -e '
+  .compaction.reserved as $reserved |
+  .provider.homelab.models | to_entries | all(.[].value.limit;
+    .input > $reserved and (.input - $reserved) > 50000 and
+    .input + .output < .context and .output >= 4096)
+' "$config" >/dev/null || fail "model limits lack a usable explicit input budget and backend headroom"
 
 # --- the runner owns the shared configuration --------------------------------
 # The provider config and standing instructions apply to every agent job, so
