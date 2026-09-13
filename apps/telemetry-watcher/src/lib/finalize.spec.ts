@@ -423,7 +423,7 @@ describe('finalizeSidecar', () => {
     );
   });
 
-  it('threads the OpenCode route status endpoint into final capture', async () => {
+  it('threads the controller-observed OpenCode backend into final capture', async () => {
     const { store } = createFakeStore();
     const { uploadTranscript } = createFakeUploader();
     const captureOpenCodeExports = vi.fn(async () => ({
@@ -436,7 +436,7 @@ describe('finalizeSidecar', () => {
     await finalizeSidecar({
       config: baseConfig({
         runId: '42',
-        opencodeRouteStatusUrl: 'http://llama-swap.test:8000/running',
+        opencodeResolvedModel: 'qwen3.8-flash-next',
       }),
       store,
       captureOpenCodeExports,
@@ -447,7 +447,7 @@ describe('finalizeSidecar', () => {
 
     expect(captureOpenCodeExports).toHaveBeenCalledWith(
       expect.objectContaining({
-        routeStatusUrl: 'http://llama-swap.test:8000/running',
+        resolvedModel: 'qwen3.8-flash-next',
       }),
     );
   });

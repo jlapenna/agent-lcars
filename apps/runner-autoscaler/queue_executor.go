@@ -424,6 +424,8 @@ const (
 	// only below this tmpfs. Direct-runner containers remain inspectable after
 	// exit, but Docker discards tmpfs contents when the container stops.
 	directRunnerCodexVolatileMountPath = "/run/agent-lcars-codex"
+	directRunnerRouteStatusMaxBytes    = 64 * 1024
+	directRunnerRouteStatusTimeout     = 2 * time.Second
 	// directRunnerExitedRetentionAge keeps an exited direct-runner's logs
 	// available for a full day. The direct runner remains one-shot, so this
 	// retention does not alter execution or the Work API's lease recovery.
@@ -673,7 +675,7 @@ func directRunnerOpenCodeTokenHostPath() (string, error) {
 	return path, nil
 }
 
-func directRunnerOpenCodeEnvironment() ([]string, error) {
+func directRunnerOpenCodeRouteStatusURL() (*url.URL, error) {
 	raw := strings.TrimSpace(os.Getenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL"))
 	if raw == "" {
 		return nil, fmt.Errorf("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL is required to launch an OpenCode direct-mode runner")
@@ -682,7 +684,79 @@ func directRunnerOpenCodeEnvironment() ([]string, error) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
 		return nil, fmt.Errorf("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL must be an http(s) URL without embedded credentials")
 	}
-	return []string{"OPENCODE_ROUTE_STATUS_URL=" + raw}, nil
+	return parsed, nil
+}
+
+func safeModelIdentifier(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for index, character := range []byte(value) {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || (index > 0 && (character == '.' || character == '_' || character == '-')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func resolveOpenCodeBackend(ctx context.Context, statusURL *url.URL) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{
+		Timeout: directRunnerRouteStatusTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("route status returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, directRunnerRouteStatusMaxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > directRunnerRouteStatusMaxBytes {
+		return "", fmt.Errorf("route status exceeded %d bytes", directRunnerRouteStatusMaxBytes)
+	}
+	var status struct {
+		Running []struct {
+			Model string `json:"model"`
+			State string `json:"state"`
+		} `json:"running"`
+	}
+	if err := json.Unmarshal(body, &status); err != nil {
+		return "", err
+	}
+	ready := make([]string, 0, len(status.Running))
+	for _, running := range status.Running {
+		if running.State == "ready" && safeModelIdentifier(running.Model) {
+			ready = append(ready, running.Model)
+		}
+	}
+	if len(ready) != 1 {
+		return "", fmt.Errorf("route status reported %d ready physical backends; expected exactly one", len(ready))
+	}
+	return ready[0], nil
+}
+
+func directRunnerOpenCodeEnvironment(ctx context.Context) ([]string, error) {
+	statusURL, err := directRunnerOpenCodeRouteStatusURL()
+	if err != nil {
+		return nil, err
+	}
+	model, err := resolveOpenCodeBackend(ctx, statusURL)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"OPENCODE_RESOLVED_MODEL=" + model}, nil
 }
 
 // directRunnerProviderCredentialBinds is the generic provider-adapter
@@ -707,7 +781,7 @@ func (m directRunnerCredentialMount) bind() string {
 type directRunnerAdapter struct {
 	pipeline         string
 	credentialMounts func() ([]directRunnerCredentialMount, error)
-	environment      func() ([]string, error)
+	environment      func(context.Context) ([]string, error)
 }
 
 var directRunnerAdapters = []directRunnerAdapter{
@@ -724,7 +798,7 @@ var directRunnerAdapters = []directRunnerAdapter{
 	{
 		pipeline:         "codex",
 		credentialMounts: func() ([]directRunnerCredentialMount, error) { return nil, nil },
-		environment:      func() ([]string, error) { return nil, nil },
+		environment:      func(context.Context) ([]string, error) { return nil, nil },
 	},
 	{
 		pipeline: "opencode",
@@ -761,14 +835,14 @@ func directRunnerProviderCredentialBinds(pipeline string) ([]string, error) {
 	return binds, nil
 }
 
-func directRunnerProviderEnvironment(pipeline string) ([]string, error) {
+func directRunnerProviderEnvironment(ctx context.Context, pipeline string) ([]string, error) {
 	pipeline = strings.ToLower(strings.TrimSpace(pipeline))
 	for _, adapter := range directRunnerAdapters {
 		if adapter.pipeline == pipeline {
 			if adapter.environment == nil {
 				return nil, nil
 			}
-			return adapter.environment()
+			return adapter.environment(ctx)
 		}
 	}
 	return nil, fmt.Errorf("no direct-runner provider adapter for pipeline %q", pipeline)
@@ -919,9 +993,9 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 		"LCARS_RUN_ID=" + l.runID,
 		"LCARS_RUN_TOKEN=" + l.runToken,
 	}
-	providerEnv, err := directRunnerProviderEnvironment(l.pipeline)
+	providerEnv, err := directRunnerProviderEnvironment(ctx, l.pipeline)
 	if err != nil {
-		return err
+		logger.Warn("Could not observe routed OpenCode backend; launching without resolved-model telemetry", slog.String("runId", l.runID), slog.String("error", err.Error()))
 	}
 	env = append(env, providerEnv...)
 	if l.consoleURL != "" {

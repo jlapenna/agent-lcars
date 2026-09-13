@@ -447,10 +447,11 @@ and it is required only when the executor grant permits `claude`; a
 Codex-only executor neither resolves nor mounts this file.
 
 OpenCode runners also require `LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL`, the
-read-only llama-swap `/running` endpoint. The executor passes it into only the
-OpenCode container as `OPENCODE_ROUTE_STATUS_URL`; final telemetry records the
-single ready physical backend beside the client-requested LiteLLM route. No
-gateway or model credential is sent to that endpoint.
+read-only llama-swap `/running` endpoint. The controller queries it before an
+OpenCode launch and passes only the single ready physical model identifier into
+that runner as `OPENCODE_RESOLVED_MODEL`; final telemetry records it beside the
+client-requested LiteLLM route. Placement hosts therefore need no direct access
+to llama-swap, and no gateway or model credential is sent to the endpoint.
 
 **Placing the secret's value on the Docker host is still a one-time,
 maintainer-gated action this repo's own code cannot perform**: a maintainer
