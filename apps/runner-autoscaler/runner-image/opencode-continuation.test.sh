@@ -8,6 +8,19 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 opencode_bin="${OPENCODE_BIN:-/usr/local/bin/opencode}"
 expected_version="$(tr -d '\r\n' < "$here/opencode-version")"
 expected_version="${expected_version#v}"
+framework_timeout_seconds=60
+version_timeout_seconds=10
+# The multi-platform publisher executes the arm64 CLI through QEMU on its
+# amd64 BuildKit host. The same deterministic framework sequence takes more
+# than the native deadline there, before the localhost provider sees a first
+# request. This remains a test-process bound; provider and runner limits are
+# unchanged.
+case "$(uname -m)" in
+  aarch64 | arm64)
+    version_timeout_seconds=60
+    framework_timeout_seconds=180
+    ;;
+esac
 
 fail() {
   echo "FAIL: $*" >&2
@@ -15,7 +28,9 @@ fail() {
 }
 
 test -x "$opencode_bin" || fail "OpenCode executable is unavailable at $opencode_bin"
-[ "$("$opencode_bin" --version)" = "$expected_version" ] ||
+actual_version="$(timeout -k 2s "${version_timeout_seconds}s" "$opencode_bin" --version)" ||
+  fail "pinned OpenCode version probe did not complete"
+[ "$actual_version" = "$expected_version" ] ||
   fail "test must run against pinned OpenCode $expected_version"
 
 tmp="$(mktemp -d)"
@@ -107,14 +122,18 @@ env \
   XDG_CONFIG_HOME="$tmp/home/.config" \
   XDG_DATA_HOME="$tmp/data" \
   XDG_STATE_HOME="$tmp/state" \
-  timeout -k 2s 60s "$opencode_bin" run \
+  timeout -k 2s "${framework_timeout_seconds}s" "$opencode_bin" run \
   --model continuation-contract/test \
   --auto \
   --dir "$tmp/workspace" \
   "Read fixture.txt, preserve the task state, and continue after compaction." \
   >"$tmp/opencode.stdout" 2>"$tmp/opencode.stderr" || {
     cat "$tmp/opencode.stderr" >&2
-    cat "$tmp/observations.ndjson" >&2 2>/dev/null || true
+    if [ -s "$tmp/observations.ndjson" ]; then
+      cat "$tmp/observations.ndjson" >&2
+    else
+      echo "OpenCode continuation observations: 0 (startup did not reach localhost provider)" >&2
+    fi
     fail "real OpenCode continuation run failed"
   }
 
