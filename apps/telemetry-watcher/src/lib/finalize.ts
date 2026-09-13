@@ -169,6 +169,7 @@ export async function finalizeSidecar(
         workspaceDir: config.opencodeWorkspaceDir,
         exportsDir: config.opencodeExportsDir,
         lastMessageFile: config.opencodeLastMessageFile,
+        routeStatusUrl: config.opencodeRouteStatusUrl,
       });
     } catch (error) {
       logger.warn(

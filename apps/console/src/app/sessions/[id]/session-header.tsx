@@ -102,6 +102,9 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
             {doc.model}
           </Field>
         )}
+        {doc.resolvedModel && (
+          <Field label="Resolved backend">{doc.resolvedModel}</Field>
+        )}
         {doc.permissionMode && (
           <Field label="Permission mode">{doc.permissionMode}</Field>
         )}

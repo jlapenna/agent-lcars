@@ -131,6 +131,8 @@ export interface SessionSummary {
    * requested route (for example `homelab/default`), not the physical
    * backend selected later by the gateway. */
   model?: string;
+  /** Physical backend observed behind a routed model request. */
+  resolvedModel?: string;
   permissionMode?: string;
   startedAt: string;
   lastActivityAt: string;
@@ -203,6 +205,8 @@ interface BaseSessionDoc {
   lastToolCall?: ToolCallDigest;
   /** Persisted client-reported model selection; see SessionSummary.model. */
   model?: string;
+  /** Physical backend observed behind a routed model request. */
+  resolvedModel?: string;
   permissionMode?: string;
   title?: string;
   /** See {@link SessionSummary.status}. Rendered under the title with its
@@ -340,7 +344,8 @@ export interface BuildSessionDocOptions {
  * a caller can never mistakenly request deletion of a field this contract
  * doesn't cover.
  */
-export type ClearableSessionField = 'status' | 'statusUpdatedAt';
+export type ClearableSessionField =
+  'status' | 'statusUpdatedAt' | 'resolvedModel';
 
 /**
  * The complete description of one Firestore write: the document to merge,

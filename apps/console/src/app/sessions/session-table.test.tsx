@@ -102,9 +102,16 @@ describe('SessionTable', () => {
   });
 
   it('identifies the model column as the client-requested model or route', () => {
-    renderTable([makeRow({ model: 'homelab/default' })]);
+    renderTable([
+      makeRow({
+        model: 'homelab/default',
+        resolvedModel: 'qwen3.8-flash-next',
+      }),
+    ]);
     expect(screen.getByText('Requested model / route')).toBeTruthy();
-    expect(screen.getByText('homelab/default')).toBeTruthy();
+    expect(screen.getByText('Resolved backend')).toBeTruthy();
+    expect(screen.getAllByText(/homelab\/default/)).toHaveLength(2);
+    expect(screen.getAllByText(/qwen3\.8-flash-next/)).toHaveLength(2);
   });
 
   it('keeps host metadata in the desktop table and out of the phone card', () => {

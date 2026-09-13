@@ -423,6 +423,35 @@ describe('finalizeSidecar', () => {
     );
   });
 
+  it('threads the OpenCode route status endpoint into final capture', async () => {
+    const { store } = createFakeStore();
+    const { uploadTranscript } = createFakeUploader();
+    const captureOpenCodeExports = vi.fn(async () => ({
+      status: 'ok' as const,
+      selected: 0,
+      exported: 0,
+      failed: 0,
+    }));
+
+    await finalizeSidecar({
+      config: baseConfig({
+        runId: '42',
+        opencodeRouteStatusUrl: 'http://llama-swap.test:8000/running',
+      }),
+      store,
+      captureOpenCodeExports,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      uploadTranscript,
+    });
+
+    expect(captureOpenCodeExports).toHaveBeenCalledWith(
+      expect.objectContaining({
+        routeStatusUrl: 'http://llama-swap.test:8000/running',
+      }),
+    );
+  });
+
   it('omits lastMessageFile from captureOpenCodeExports when config has none', async () => {
     const { store } = createFakeStore();
     const { uploadTranscript } = createFakeUploader();

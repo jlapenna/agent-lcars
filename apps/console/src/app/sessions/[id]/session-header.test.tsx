@@ -95,9 +95,17 @@ describe('SessionHeader', () => {
   });
 
   it('labels an OpenCode model selection as the requested route', () => {
-    renderHeader(cliDoc({ agent: 'opencode', model: 'homelab/default' }));
+    renderHeader(
+      cliDoc({
+        agent: 'opencode',
+        model: 'homelab/default',
+        resolvedModel: 'qwen3.8-flash-next',
+      }),
+    );
     expect(screen.getByText('Requested route')).toBeTruthy();
     expect(screen.getByText('homelab/default')).toBeTruthy();
+    expect(screen.getByText('Resolved backend')).toBeTruthy();
+    expect(screen.getByText('qwen3.8-flash-next')).toBeTruthy();
   });
 
   it('keeps native agent model selections labeled as models', () => {

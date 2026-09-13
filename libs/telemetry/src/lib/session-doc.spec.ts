@@ -33,6 +33,29 @@ function baseSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
 }
 
 describe('buildSessionDoc', () => {
+  it('persists requested and resolved model identities separately', () => {
+    const doc = buildSessionDoc(
+      baseSummary({
+        agent: 'opencode',
+        model: 'homelab/default',
+        resolvedModel: 'qwen3.8-flash-next',
+      }),
+      'ended',
+    );
+
+    expect(doc.model).toBe('homelab/default');
+    expect(doc.resolvedModel).toBe('qwen3.8-flash-next');
+  });
+
+  it('clears a stale backend when OpenCode has no current observation', () => {
+    const write = buildSessionWrite(
+      baseSummary({ agent: 'opencode', status: 'running' }),
+      'live',
+    );
+
+    expect(write.clearFields).toEqual(['resolvedModel']);
+  });
+
   it('builds a cli doc with only cli-relevant optional fields', () => {
     const doc = buildSessionDoc(
       baseSummary({

@@ -247,6 +247,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
 LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH=/secrets/telemetry-writer.json
 LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH=/secrets/claude-code-oauth-token
 LCARS_QUEUE_OPENCODE_KEY_HOST_PATH=/secrets/opencode-llm-api-key
+LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL=http://llama-swap.example:8000/running
 LCARS_QUEUE_MAX_CONCURRENT=1
 LCARS_QUEUE_RUNNER_IMAGE=registry.example.com/homelab-runner:jit-node24
 ```
@@ -444,6 +445,12 @@ host** -- the same "cannot be inferred, so it is required and fails loudly"
 reasoning as `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH` immediately above,
 and it is required only when the executor grant permits `claude`; a
 Codex-only executor neither resolves nor mounts this file.
+
+OpenCode runners also require `LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL`, the
+read-only llama-swap `/running` endpoint. The executor passes it into only the
+OpenCode container as `OPENCODE_ROUTE_STATUS_URL`; final telemetry records the
+single ready physical backend beside the client-requested LiteLLM route. No
+gateway or model credential is sent to that endpoint.
 
 **Placing the secret's value on the Docker host is still a one-time,
 maintainer-gated action this repo's own code cannot perform**: a maintainer

@@ -67,4 +67,15 @@ describe('opencodeAdapter', () => {
       ]),
     ).toEqual([]);
   });
+
+  it('carries an allowlisted physical backend observation into the summary', () => {
+    const summary = opencodeAdapter.reduce([
+      JSON.stringify({
+        info: { id: 'ses_routed', resolvedModel: 'qwen3.8-flash-next' },
+        messages: [],
+      }),
+    ]);
+
+    expect(summary[0]?.resolvedModel).toBe('qwen3.8-flash-next');
+  });
 });

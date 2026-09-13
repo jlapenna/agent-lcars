@@ -46,6 +46,9 @@ export interface RunnerConfig extends Pick<
    * (`runner sidecar`'s live ticks, and any pipeline other than OpenCode),
    * which is exactly when `captureOpenCodeExports` must skip the write. */
   opencodeLastMessageFile?: string;
+  /** Read-only llama-swap endpoint used after an OpenCode run to record the
+   * physical backend selected behind the requested LiteLLM route. */
+  opencodeRouteStatusUrl?: string;
   /** QueueExecutor run ID — tags every doc this run ships as `runId`. */
   runId?: string;
   /** Work intent ID — tags every doc this run ships as `intentId`, the join
@@ -183,6 +186,9 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
     sessionStateDir: defaultSessionStateDir(),
     ...(flags.opencodeLastMessageFile !== undefined && {
       opencodeLastMessageFile: flags.opencodeLastMessageFile,
+    }),
+    ...(process.env['OPENCODE_ROUTE_STATUS_URL'] && {
+      opencodeRouteStatusUrl: process.env['OPENCODE_ROUTE_STATUS_URL'],
     }),
     host: base.host,
     heartbeatIntervalMs: base.heartbeatIntervalMs,

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -781,6 +782,35 @@ func TestDirectRunnerProviderCredentialBinds(t *testing.T) {
 	}
 }
 
+func TestDirectRunnerProviderEnvironment(t *testing.T) {
+	t.Setenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL", "http://llama-swap.test:8000/running")
+
+	opencode, err := directRunnerProviderEnvironment("opencode")
+	if err != nil {
+		t.Fatalf("opencode environment: %v", err)
+	}
+	if !slices.Equal(opencode, []string{"OPENCODE_ROUTE_STATUS_URL=http://llama-swap.test:8000/running"}) {
+		t.Fatalf("opencode environment = %v", opencode)
+	}
+	for _, pipeline := range []string{"claude", "codex"} {
+		env, err := directRunnerProviderEnvironment(pipeline)
+		if err != nil || len(env) != 0 {
+			t.Fatalf("%s environment = %v, %v; want empty", pipeline, env, err)
+		}
+	}
+}
+
+func TestDirectRunnerOpenCodeEnvironmentRejectsUnsafeURL(t *testing.T) {
+	for _, value := range []string{"", "file:///tmp/running", "http://user:secret@llama-swap.test/running"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL", value)
+			if _, err := directRunnerOpenCodeEnvironment(); err == nil {
+				t.Fatal("expected invalid route status URL to fail closed")
+			}
+		})
+	}
+}
+
 // TestNewDirectRunnerIDTokenSourceErrors pins the plumbing runOrchestrator
 // relies on to disable the queue poller (rather than start it and fail
 // every poll) when the credentials file is missing or unreadable: a bad
@@ -938,6 +968,7 @@ func TestLaunchCodexDirectRunnerMountsNoProviderCredential(t *testing.T) {
 }
 
 func TestLaunchOpenCodeDirectRunnerMountsOnlyProviderCredential(t *testing.T) {
+	t.Setenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL", "http://llama-swap.test:8000/running")
 	f := newFakeDockerServer(t)
 	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
 
@@ -967,6 +998,10 @@ func TestLaunchOpenCodeDirectRunnerMountsOnlyProviderCredential(t *testing.T) {
 	}
 	if len(created.HostConfig.Tmpfs) != 0 {
 		t.Fatalf("opencode must not receive Codex's auth tmpfs, got %v", created.HostConfig.Tmpfs)
+	}
+	wantRouteStatus := "OPENCODE_ROUTE_STATUS_URL=http://llama-swap.test:8000/running"
+	if !slices.Contains(created.Env, wantRouteStatus) {
+		t.Fatalf("OpenCode route status URL was not passed to the container: %v", created.Env)
 	}
 	for _, env := range created.Env {
 		if strings.Contains(env, "OPENCODE_LLM_API_KEY") {
