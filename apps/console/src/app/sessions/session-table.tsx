@@ -175,7 +175,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
               <TableTh>Issue</TableTh>
               <TableTh>PRs</TableTh>
               <TableTh>Host / Run</TableTh>
-              <TableTh>Model</TableTh>
+              <TableTh>Requested model / route</TableTh>
               <TableTh>Turns</TableTh>
               <TableTh>Cost-weighted tokens</TableTh>
               <TableTh>Cost</TableTh>

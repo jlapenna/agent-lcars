@@ -127,6 +127,9 @@ export interface SessionSummary {
    * never set it here (they're tagged via `BuildSessionDocOptions.repo`
    * instead — see `buildSessionDoc`). */
   repo?: { owner: string; name: string };
+  /** Client-reported model selection. For routed providers this is the
+   * requested route (for example `homelab/default`), not the physical
+   * backend selected later by the gateway. */
   model?: string;
   permissionMode?: string;
   startedAt: string;
@@ -198,6 +201,7 @@ interface BaseSessionDoc {
   toolCallCounts: Record<string, number>;
   tokens: TokenUsage;
   lastToolCall?: ToolCallDigest;
+  /** Persisted client-reported model selection; see SessionSummary.model. */
   model?: string;
   permissionMode?: string;
   title?: string;

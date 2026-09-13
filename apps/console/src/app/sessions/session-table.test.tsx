@@ -101,6 +101,12 @@ describe('SessionTable', () => {
     expect(screen.getByText('joes-workstation')).toBeTruthy();
   });
 
+  it('identifies the model column as the client-requested model or route', () => {
+    renderTable([makeRow({ model: 'homelab/default' })]);
+    expect(screen.getByText('Requested model / route')).toBeTruthy();
+    expect(screen.getByText('homelab/default')).toBeTruthy();
+  });
+
   it('keeps host metadata in the desktop table and out of the phone card', () => {
     renderTable([
       makeRow({

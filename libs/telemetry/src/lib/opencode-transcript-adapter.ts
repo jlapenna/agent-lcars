@@ -161,6 +161,8 @@ export const opencodeAdapter: TranscriptAdapter = {
         ...(asString(info['directory']) && {
           cwd: asString(info['directory']),
         }),
+        // OpenCode records the provider/model it requested. A gateway such
+        // as LiteLLM may resolve this route to a different physical backend.
         ...(modelId && {
           model: providerId ? `${providerId}/${modelId}` : modelId,
         }),

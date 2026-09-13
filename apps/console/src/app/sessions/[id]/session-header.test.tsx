@@ -94,6 +94,18 @@ describe('SessionHeader', () => {
     expect(screen.getByText('feat/x')).toBeTruthy();
   });
 
+  it('labels an OpenCode model selection as the requested route', () => {
+    renderHeader(cliDoc({ agent: 'opencode', model: 'homelab/default' }));
+    expect(screen.getByText('Requested route')).toBeTruthy();
+    expect(screen.getByText('homelab/default')).toBeTruthy();
+  });
+
+  it('keeps native agent model selections labeled as models', () => {
+    renderHeader(cliDoc({ model: 'claude-opus-4-1' }));
+    expect(screen.getByText('Model')).toBeTruthy();
+    expect(screen.getByText('claude-opus-4-1')).toBeTruthy();
+  });
+
   it('renders the CLI-only summary-only note', () => {
     renderHeader(cliDoc());
     expect(screen.getByTestId('cli-summary-note')).toBeTruthy();
