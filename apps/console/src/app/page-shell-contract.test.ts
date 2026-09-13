@@ -53,4 +53,25 @@ describe('console page-shell contract', () => {
       source(join(APP_DIRECTORY, 'with-console-page-shell.tsx')),
     ).not.toContain("'use client'");
   });
+
+  it('feeds every header-rendering page through the shared command cluster', () => {
+    // The three-dots menu is the one constant control in the header's
+    // top-right slot on every page at every breakpoint. Task and session
+    // detail once built their utility rows by hand and shipped the menu
+    // into the mobile variant only, so desktop headers had no overflow
+    // control at all. Every page must compose `ConsoleCommandUtilities`
+    // (directly or through `QueueConsoleUtilities`) into both shared
+    // responsive slots; the login route is exempt because it suppresses
+    // the header chrome entirely.
+    for (const page of pageFiles(APP_DIRECTORY)) {
+      const pageSource = source(page);
+      if (pageSource.includes('hideHeader')) continue;
+      expect(pageSource).toMatch(
+        /ConsoleCommandUtilities|QueueConsoleUtilities/,
+        `${page} must expose its header utilities through the shared cluster`,
+      );
+      expect(pageSource).toContain('console-utilities--desktop');
+      expect(pageSource).toContain('console-utilities--mobile');
+    }
+  });
 });

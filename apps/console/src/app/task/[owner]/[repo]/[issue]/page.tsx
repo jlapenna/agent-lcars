@@ -1,22 +1,17 @@
-import { Group, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../../../../auth';
-import { consoleRepositoryUrl } from '../../../../../lib/deployment';
 import { getWatchedRepos } from '../../../../../lib/github-client';
 import type { QuickTaskSourceIdentity } from '../../../../../lib/quick-task-evidence';
 import { getTaskDetail } from '../../../../../lib/task-detail';
+import { ConsoleCommandUtilities } from '../../../../console-command-utilities';
 import { ConsoleFooter } from '../../../../console-footer';
 import { repoScopedConsoleHrefs } from '../../../../console-hrefs';
-import { formatRelativeTime } from '../../../../format';
 import { NavPageLoading } from '../../../../page-loading';
-import { QueueUtilityMenu } from '../../../../queue-utility-menu';
-import { QuickTaskButton } from '../../../../quick-task-button';
-import { RefreshButton } from '../../../../refresh-button';
-import { SignOutButton } from '../../../../sign-out-button';
 import { withConsolePageShell } from '../../../../with-console-page-shell';
 import { LogicalWorkCard } from '../../../logical-work-card';
 
@@ -78,53 +73,41 @@ const TaskDetailView = withConsolePageShell(
     utilities: (
       <>
         <div className="task-utilities task-utilities--desktop console-utilities--desktop">
-          <Group gap="xs" wrap="nowrap">
-            <QuickTaskButton
-              watchedRepos={getWatchedRepos()}
-              initialRepoKey={
-                detail.status === 'ok'
-                  ? `${detail.repo.owner}/${detail.repo.name}`
-                  : undefined
-              }
-              sourceIdentities={taskSourceIdentities(detail)}
-              size="compact-xs"
-            />
-            <RefreshButton
-              generatedAt={generatedAt}
-              initialLabel={formatRelativeTime(generatedAt)}
-              refreshesAuthoritativeQueue
-            />
-          </Group>
+          <ConsoleCommandUtilities
+            watchedRepos={getWatchedRepos()}
+            initialRepoKey={
+              detail.status === 'ok'
+                ? `${detail.repo.owner}/${detail.repo.name}`
+                : undefined
+            }
+            sourceIdentities={taskSourceIdentities(detail)}
+            refreshesAuthoritativeQueue
+            generatedAt={generatedAt}
+            item={
+              detail.status === 'ok' && detail.item.kind === 'issue'
+                ? detail.item
+                : undefined
+            }
+          />
         </div>
         <div className="task-utilities task-utilities--mobile console-utilities--mobile">
-          <Group gap="xs" wrap="nowrap">
-            <QuickTaskButton
-              watchedRepos={getWatchedRepos()}
-              initialRepoKey={
-                detail.status === 'ok'
-                  ? `${detail.repo.owner}/${detail.repo.name}`
-                  : undefined
-              }
-              sourceIdentities={taskSourceIdentities(detail)}
-              size="compact-xs"
-            />
-            <RefreshButton
-              generatedAt={generatedAt}
-              initialLabel={formatRelativeTime(generatedAt)}
-              refreshesAuthoritativeQueue
-            />
-            <QueueUtilityMenu
-              repositoryUrl={consoleRepositoryUrl()}
-              includeNavigation
-              navigationHrefs={repoScopedConsoleHrefs(`${owner}/${repo}`)}
-              signOutControl={<SignOutButton />}
-              item={
-                detail.status === 'ok' && detail.item.kind === 'issue'
-                  ? detail.item
-                  : undefined
-              }
-            />
-          </Group>
+          <ConsoleCommandUtilities
+            watchedRepos={getWatchedRepos()}
+            initialRepoKey={
+              detail.status === 'ok'
+                ? `${detail.repo.owner}/${detail.repo.name}`
+                : undefined
+            }
+            sourceIdentities={taskSourceIdentities(detail)}
+            refreshesAuthoritativeQueue
+            includeNavigation
+            navigationHrefs={repoScopedConsoleHrefs(`${owner}/${repo}`)}
+            item={
+              detail.status === 'ok' && detail.item.kind === 'issue'
+                ? detail.item
+                : undefined
+            }
+          />
         </div>
       </>
     ),

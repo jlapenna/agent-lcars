@@ -18,7 +18,10 @@ import { notFound, redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { auth } from '@/auth';
+import { getWatchedRepos } from '@/lib/github-client';
+import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
+import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
@@ -169,13 +172,21 @@ export function SessionsList({
 type WorkDetail =
   { status: 'ok'; item: ItemView } | { status: 'error'; message: string };
 
-interface WorkDetailViewProps {
+/** The body only needs the resolved item; the two command-rail props belong
+ *  to the header shell, keeping the exported content component testable
+ *  without an auth principal. */
+interface WorkDetailContentProps {
   detail: WorkDetail;
   title: string;
   subtitle: string;
 }
 
-export function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
+interface WorkDetailViewProps extends WorkDetailContentProps {
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  canCreateWork: boolean;
+}
+
+export function WorkDetailViewContent({ detail }: WorkDetailContentProps) {
   if (detail.status === 'error') {
     return (
       <Text c="dimmed" size="sm">
@@ -226,11 +237,28 @@ export function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
 
 const WorkDetailView = withConsolePageShell(
   WorkDetailViewContent,
-  ({ title, subtitle }: WorkDetailViewProps) => ({
+  ({ title, subtitle, watchedRepos, canCreateWork }: WorkDetailViewProps) => ({
     className: 'work-page-shell',
     current: 'work',
     title,
     subtitle,
+    utilities: (
+      <>
+        <div className="work-detail-utilities work-detail-utilities--desktop console-utilities--desktop">
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            includeQuickTask={canCreateWork}
+          />
+        </div>
+        <div className="work-detail-utilities work-detail-utilities--mobile console-utilities--mobile">
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            includeNavigation
+            includeQuickTask={canCreateWork}
+          />
+        </div>
+      </>
+    ),
   }),
 );
 
@@ -265,7 +293,24 @@ async function WorkDetailPageContent({ params }: PageProps) {
       ? `Work item · ${id} · updated ${formatRelativeTime(detail.item.updatedAt)}`
       : `Work item · ${id}`;
 
-  return <WorkDetailView detail={detail} title={title} subtitle={subtitle} />;
+  // Like `/work` itself, this route admits signed-in users without a
+  // work.operator grant, so creation is only offered when the principal
+  // actually holds it (same resolution as work/page.tsx).
+  return (
+    <WorkDetailView
+      detail={detail}
+      title={title}
+      subtitle={subtitle}
+      watchedRepos={getWatchedRepos()}
+      canCreateWork={
+        session.user?.login !== undefined &&
+        resolvePrincipal(
+          `github:${session.user.login}`,
+          workGrants(),
+        )?.scopes.includes('work.operator') === true
+      }
+    />
+  );
 }
 
 export default function WorkDetailPage({ params }: PageProps) {

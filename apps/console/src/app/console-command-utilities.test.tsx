@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ActionItem } from '../lib/action-items';
 import { ConsoleCommandUtilities } from './console-command-utilities';
 
 vi.mock('./quick-task-button', () => ({
@@ -13,11 +14,14 @@ vi.mock('./quick-task-button', () => ({
 vi.mock('./refresh-button', () => ({
   RefreshButton: ({
     refreshesAuthoritativeQueue,
+    generatedAt,
   }: {
     refreshesAuthoritativeQueue?: boolean;
+    generatedAt?: string;
   }) => (
     <button>
       Refresh: {refreshesAuthoritativeQueue ? 'authoritative queue' : 'route'}
+      {generatedAt ? ` @ ${generatedAt}` : ''}
     </button>
   ),
 }));
@@ -29,13 +33,16 @@ vi.mock('./queue-utility-menu', () => ({
     includeNavigation,
     navigationHrefs,
     signOutControl,
+    item,
   }: {
     includeNavigation?: boolean;
     navigationHrefs?: { sessions?: string };
     signOutControl: ReactNode;
+    item?: { number: number };
   }) => (
     <div>
       {includeNavigation ? `Navigate: ${navigationHrefs?.sessions}` : 'Menu'}
+      {item ? ` #${item.number}` : ''}
       {signOutControl}
     </div>
   ),
@@ -83,5 +90,30 @@ describe('ConsoleCommandUtilities', () => {
     expect(screen.getByText('Refresh: route')).toBeTruthy();
     expect(screen.getByText('Navigate: /sessions?days=90')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
+  });
+
+  it('forwards detail-page freshness age and item actions to the cluster', () => {
+    // Task/session detail used to hand-build their utility rows, so the
+    // shared cluster must accept what those routes need: the real age of
+    // the cached sources beside refresh, and the item whose overflow
+    // actions fold into the single three-dots trigger (#1676).
+    render(
+      <MantineProvider>
+        <ConsoleCommandUtilities
+          watchedRepos={watchedRepos}
+          initialRepoKey="jlapenna/agent-lcars"
+          refreshesAuthoritativeQueue
+          generatedAt="2026-09-12T10:00:00.000Z"
+          item={{ number: 12 } as ActionItem}
+        />
+      </MantineProvider>,
+    );
+
+    expect(
+      screen.getByText(
+        'Refresh: authoritative queue @ 2026-09-12T10:00:00.000Z',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('Menu #12')).toBeTruthy();
   });
 });
