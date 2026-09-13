@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -783,17 +784,21 @@ func TestDirectRunnerProviderCredentialBinds(t *testing.T) {
 }
 
 func TestDirectRunnerProviderEnvironment(t *testing.T) {
-	t.Setenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL", "http://llama-swap.test:8000/running")
+	status := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"running":[{"model":"qwen3.8-flash-next","state":"ready"}]}`)
+	}))
+	defer status.Close()
+	t.Setenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL", status.URL)
 
-	opencode, err := directRunnerProviderEnvironment("opencode")
+	opencode, err := directRunnerProviderEnvironment(context.Background(), "opencode")
 	if err != nil {
 		t.Fatalf("opencode environment: %v", err)
 	}
-	if !slices.Equal(opencode, []string{"OPENCODE_ROUTE_STATUS_URL=http://llama-swap.test:8000/running"}) {
+	if !slices.Equal(opencode, []string{"OPENCODE_RESOLVED_MODEL=qwen3.8-flash-next"}) {
 		t.Fatalf("opencode environment = %v", opencode)
 	}
 	for _, pipeline := range []string{"claude", "codex"} {
-		env, err := directRunnerProviderEnvironment(pipeline)
+		env, err := directRunnerProviderEnvironment(context.Background(), pipeline)
 		if err != nil || len(env) != 0 {
 			t.Fatalf("%s environment = %v, %v; want empty", pipeline, env, err)
 		}
@@ -804,10 +809,24 @@ func TestDirectRunnerOpenCodeEnvironmentRejectsUnsafeURL(t *testing.T) {
 	for _, value := range []string{"", "file:///tmp/running", "http://user:secret@llama-swap.test/running"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL", value)
-			if _, err := directRunnerOpenCodeEnvironment(); err == nil {
+			if _, err := directRunnerOpenCodeRouteStatusURL(); err == nil {
 				t.Fatal("expected invalid route status URL to fail closed")
 			}
 		})
+	}
+}
+
+func TestResolveOpenCodeBackendBoundsResponseBody(t *testing.T) {
+	status := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, directRunnerRouteStatusMaxBytes+1))
+	}))
+	defer status.Close()
+	parsed, err := url.Parse(status.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveOpenCodeBackend(context.Background(), parsed); err == nil || !strings.Contains(err.Error(), "exceeded") {
+		t.Fatalf("resolve error = %v, want bounded-response failure", err)
 	}
 }
 
@@ -968,7 +987,11 @@ func TestLaunchCodexDirectRunnerMountsNoProviderCredential(t *testing.T) {
 }
 
 func TestLaunchOpenCodeDirectRunnerMountsOnlyProviderCredential(t *testing.T) {
-	t.Setenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL", "http://llama-swap.test:8000/running")
+	status := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"running":[{"model":"qwen3.8-flash-next","state":"ready"}]}`)
+	}))
+	defer status.Close()
+	t.Setenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL", status.URL)
 	f := newFakeDockerServer(t)
 	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
 
@@ -999,9 +1022,9 @@ func TestLaunchOpenCodeDirectRunnerMountsOnlyProviderCredential(t *testing.T) {
 	if len(created.HostConfig.Tmpfs) != 0 {
 		t.Fatalf("opencode must not receive Codex's auth tmpfs, got %v", created.HostConfig.Tmpfs)
 	}
-	wantRouteStatus := "OPENCODE_ROUTE_STATUS_URL=http://llama-swap.test:8000/running"
-	if !slices.Contains(created.Env, wantRouteStatus) {
-		t.Fatalf("OpenCode route status URL was not passed to the container: %v", created.Env)
+	wantResolvedModel := "OPENCODE_RESOLVED_MODEL=qwen3.8-flash-next"
+	if !slices.Contains(created.Env, wantResolvedModel) {
+		t.Fatalf("controller-observed OpenCode backend was not passed to the container: %v", created.Env)
 	}
 	for _, env := range created.Env {
 		if strings.Contains(env, "OPENCODE_LLM_API_KEY") {
