@@ -11,8 +11,6 @@ const SESSION_LIMIT = 20;
 const LIST_MAX_BYTES = 1024 * 1024;
 const EXPORT_MAX_BYTES = 32 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 10_000;
-const ROUTE_STATUS_TIMEOUT_MS = 2_000;
-const ROUTE_STATUS_MAX_BYTES = 64 * 1024;
 
 interface CommandOptions {
   timeout: number;
@@ -56,12 +54,8 @@ export interface CaptureOpenCodeExportsOptions {
    * the one-shot `finalize` pass, run once after the provider exits, knows
    * the run is actually over. */
   lastMessageFile?: string;
-  /** Read-only llama-swap status endpoint. Finalize supplies this only after
-   * the OpenCode process exits, making the observation a stable record of
-   * the physical backend that served the routed request. */
-  routeStatusUrl?: string;
-  /** Test seam for the bounded route-status lookup. */
-  resolveRouteBackend?: (url: string) => Promise<string | undefined>;
+  /** Physical backend selected by LiteLLM for this OpenCode run. */
+  resolvedModel?: string;
 }
 
 export interface CaptureOpenCodeExportsResult {
@@ -367,60 +361,6 @@ function boundedString(value: unknown, maxLength = 256): string | undefined {
     : undefined;
 }
 
-/** Resolves the one ready llama-swap backend without forwarding credentials. */
-export async function resolveOpenCodeRouteBackend(
-  statusUrl: string,
-): Promise<string | undefined> {
-  let url: URL;
-  try {
-    url = new URL(statusUrl);
-  } catch {
-    return undefined;
-  }
-  if (
-    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
-    !url.hostname ||
-    url.username ||
-    url.password
-  ) {
-    return undefined;
-  }
-  try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(ROUTE_STATUS_TIMEOUT_MS),
-      redirect: 'error',
-    });
-    if (!response.ok) return undefined;
-    const reader = response.body?.getReader();
-    if (!reader) return undefined;
-    const chunks: Uint8Array[] = [];
-    let bytes = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > ROUTE_STATUS_MAX_BYTES) {
-        await reader.cancel();
-        return undefined;
-      }
-      chunks.push(value);
-    }
-    const body = Buffer.concat(chunks, bytes).toString('utf8');
-    const parsed = asRecord(JSON.parse(body));
-    const running = Array.isArray(parsed?.['running']) ? parsed['running'] : [];
-    const ready = running.flatMap((entry): string[] => {
-      const record = asRecord(entry);
-      const model = boundedString(record?.['model'], 128);
-      return record?.['state'] === 'ready' && model && isSafeIdentifier(model)
-        ? [model]
-        : [];
-    });
-    return ready.length === 1 ? ready[0] : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function requestedHomelabRoute(normalized: Record<string, unknown>): boolean {
   const messages = Array.isArray(normalized['messages'])
     ? normalized['messages']
@@ -639,8 +579,6 @@ export async function captureOpenCodeExports(
   // only one direct-runner.sh's single `opencode run --auto` invocation for
   // this job could have touched.
   const mostRecentSession = sessions[0];
-  const resolveRouteBackend =
-    options.resolveRouteBackend ?? resolveOpenCodeRouteBackend;
 
   for (const session of sessions) {
     const destination = path.join(sessionsDir, `${session.id}.jsonl`);
@@ -665,10 +603,11 @@ export async function captureOpenCodeExports(
       const provisional = materializeSafeExport(exportRecord, session);
       if (
         session === mostRecentSession &&
-        options.routeStatusUrl &&
+        options.resolvedModel &&
+        isSafeIdentifier(options.resolvedModel) &&
         requestedHomelabRoute(provisional)
       ) {
-        resolvedModel = await resolveRouteBackend(options.routeStatusUrl);
+        resolvedModel = options.resolvedModel;
       }
       const normalized = materializeSafeExport(
         exportRecord,

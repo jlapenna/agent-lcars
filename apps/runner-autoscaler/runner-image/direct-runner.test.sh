@@ -4,6 +4,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../../.." && pwd)"
 dockerfile="$here/Dockerfile"
+real_node="$(command -v node)"
 
 # The image artifact must carry the native helpers that direct-runner uses.
 # This is a focused packaging contract: the direct scenarios below exercise
@@ -409,6 +410,9 @@ fi
 if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
   sleep "$FAKE_OPENCODE_SLEEP_SECONDS"
 fi
+if [ -n "${FAKE_OPENCODE_RESOLVED_MODEL:-}" ]; then
+  printf '%s' "$FAKE_OPENCODE_RESOLVED_MODEL" > "$RUNNER_TEMP/opencode-proxy/resolved-model"
+fi
 # Opt-in: proves direct-runner.sh no longer scrapes OpenCode's own formatted
 # stdout for the final message (issue #1784) -- opencode-last-message sets
 # this to something distinct from FAKE_OPENCODE_LAST_MESSAGE and asserts the
@@ -454,6 +458,7 @@ fi
 # scenario asserts against. $1 is the invoked script path (real `node
 # <script> <args>` shape), so the subcommand pair is $2/$3, not $1/$2.
 if [ "${2:-}" = runner ] && [ "${3:-}" = finalize ]; then
+  printf '%s' "${OPENCODE_RESOLVED_MODEL:-}" > "${OPENCODE_RESOLVED_MODEL_LOG:-/dev/null}"
   prev=""
   last_message_path=""
   for arg in "$@"; do
@@ -546,6 +551,10 @@ run_scenario() {
   export HOME="$dir/home"
   export LCARS_CODEX_VOLATILE_DIR="$dir/codex-volatile"
   mkdir -p "$scenario_runner_temp" "$HOME" "$LCARS_CODEX_VOLATILE_DIR"
+  mkdir -p "$HOME/.config/opencode"
+  cp -R "$repo_root/agents/opencode/." "$HOME/.config/opencode/"
+  export OPENCODE_PROXY_NODE="$real_node"
+  export OPENCODE_PROXY_SCRIPT="$here/opencode-litellm-proxy.mjs"
 
   export COMPLETE_LOG="$dir/complete-calls.log"
   export GIT_CLONE_ARGV_LOG="$dir/git-clone-argv.log"
@@ -564,6 +573,7 @@ run_scenario() {
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
   export OPENCODE_ENV_LOG="$dir/opencode-env.log"
   export OPENCODE_LAST_MESSAGE_PRECHECK_LOG="$dir/opencode-last-message-precheck.log"
+  export OPENCODE_RESOLVED_MODEL_LOG="$dir/opencode-resolved-model.log"
   export OPENCODE_SEQUENCE_LOG="$dir/opencode-sequence.log"
   export OPENCODE_FAKE_SESSIONS_FILE="$dir/opencode-sessions.json"
   export OPENCODE_RUN_COUNT_FILE="$dir/opencode-run-count"
@@ -885,9 +895,10 @@ echo "scenario codex-burned-stderr: OK"
 # gets --agent opencode, and opencode itself gets --session sess_1, keeping
 # --model and --auto exactly as before.
 export OPENCODE_LLM_API_KEY='ambient-opencode-key-must-not-reach-agent'
+export FAKE_OPENCODE_RESOLVED_MODEL='qwen3.8-flash-next'
 run_scenario opencode-happy opencode
-unset OPENCODE_LLM_API_KEY
-[ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc"
+unset OPENCODE_LLM_API_KEY FAKE_OPENCODE_RESOLVED_MODEL
+[ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc ($(cat "$scenario_log"))"
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
 grep -q -- 'run --model homelab/default --session sess_1 --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
@@ -906,6 +917,8 @@ grep -q -- '--session-id sess_1' "$NODE_ARGS_LOG" ||
   fail "opencode happy path: runner resume was not passed the session id ($(cat "$NODE_ARGS_LOG"))"
 grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE_ARGS_LOG" ||
   fail "opencode happy path: runner resume was not passed the transcript uri ($(cat "$NODE_ARGS_LOG"))"
+[ "$(cat "$OPENCODE_RESOLVED_MODEL_LOG")" = 'qwen3.8-flash-next' ] ||
+  fail "opencode happy path: finalizer did not receive the resolved physical model ($(cat "$OPENCODE_RESOLVED_MODEL_LOG"))"
 
 echo "scenario opencode-happy: OK"
 
