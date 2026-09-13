@@ -391,8 +391,21 @@ export async function resolveOpenCodeRouteBackend(
       redirect: 'error',
     });
     if (!response.ok) return undefined;
-    const body = await response.text();
-    if (Buffer.byteLength(body) > ROUTE_STATUS_MAX_BYTES) return undefined;
+    const reader = response.body?.getReader();
+    if (!reader) return undefined;
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > ROUTE_STATUS_MAX_BYTES) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+    const body = Buffer.concat(chunks, bytes).toString('utf8');
     const parsed = asRecord(JSON.parse(body));
     const running = Array.isArray(parsed?.['running']) ? parsed['running'] : [];
     const ready = running.flatMap((entry): string[] => {
@@ -403,17 +416,6 @@ export async function resolveOpenCodeRouteBackend(
         : [];
     });
     return ready.length === 1 ? ready[0] : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function previousResolvedModel(destination: string): string | undefined {
-  try {
-    const prior = asRecord(JSON.parse(fs.readFileSync(destination, 'utf8')));
-    const info = asRecord(prior?.['info']);
-    const model = boundedString(info?.['resolvedModel'], 128);
-    return model && isSafeIdentifier(model) ? model : undefined;
   } catch {
     return undefined;
   }
@@ -659,15 +661,14 @@ export async function captureOpenCodeExports(
         throw new Error('OpenCode export is not an object');
       }
       const exportRecord = parsed as Record<string, unknown>;
-      let resolvedModel = previousResolvedModel(destination);
+      let resolvedModel: string | undefined;
       const provisional = materializeSafeExport(exportRecord, session);
       if (
         session === mostRecentSession &&
         options.routeStatusUrl &&
         requestedHomelabRoute(provisional)
       ) {
-        resolvedModel =
-          (await resolveRouteBackend(options.routeStatusUrl)) ?? resolvedModel;
+        resolvedModel = await resolveRouteBackend(options.routeStatusUrl);
       }
       const normalized = materializeSafeExport(
         exportRecord,

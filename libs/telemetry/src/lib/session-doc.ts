@@ -233,21 +233,12 @@ export function parseSessionDoc(value: unknown): SessionDoc {
  * the write and the daemon's dedupe-cache key are deliberately the same
  * value.
  *
- * `clearFields` is derived PURELY from `summary.status`: no status on the
- * summary means BOTH `status` and `statusUpdatedAt` are requested for
- * deletion, unconditionally — there is no separate "should I clear" branch
- * anywhere, and no state to track. This holds even for a summary that never
- * had a status at all (every runner-mode / antigravity-mode write, and
- * every ordinary session that has never called `lcars session status`):
- * deleting an absent Firestore field is a no-op, and the write-cache means
- * it only ever goes out once per session before the identical write is
- * deduped away. Gating this on "is the status overlay even enabled" would
- * buy nothing and reintroduce exactly the kind of condition someone can
- * forget — see the corrected design in issue #1257's own discussion for the
- * fuller argument against a stateful "did a clear just happen" flag: that
- * shape makes `clearFields` an input independent of `doc`, which is exactly
- * what let a doc-only write cache silently swallow a delete in the first
- * place.
+ * `clearFields` is derived solely from the current summary. Missing status
+ * clears both status fields; a missing OpenCode backend observation clears
+ * `resolvedModel`, preventing a resumed run from displaying the backend from
+ * an earlier request. Deleting an absent Firestore field is a no-op, and the
+ * write cache deduplicates identical writes. Keeping this derivation stateless
+ * also ensures the cache key describes the entire write operation.
  */
 export function buildSessionWrite(
   summary: SessionSummary,
@@ -255,7 +246,12 @@ export function buildSessionWrite(
   options: BuildSessionDocOptions = {},
 ): SessionWrite {
   const doc = buildSessionDoc(summary, liveness, options);
-  const clearFields: ClearableSessionField[] =
-    summary.status === undefined ? ['status', 'statusUpdatedAt'] : [];
+  const clearFields: ClearableSessionField[] = [];
+  if (summary.status === undefined) {
+    clearFields.push('status', 'statusUpdatedAt');
+  }
+  if (summary.agent === 'opencode' && summary.resolvedModel === undefined) {
+    clearFields.push('resolvedModel');
+  }
   return { doc, clearFields };
 }

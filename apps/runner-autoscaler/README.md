@@ -247,6 +247,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
 LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH=/secrets/telemetry-writer.json
 LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH=/secrets/claude-code-oauth-token
 LCARS_QUEUE_OPENCODE_KEY_HOST_PATH=/secrets/opencode-llm-api-key
+LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL=http://llama-swap.example:8000/running
 LCARS_QUEUE_MAX_CONCURRENT=1
 LCARS_QUEUE_RUNNER_IMAGE=registry.example.com/homelab-runner:jit-node24
 ```

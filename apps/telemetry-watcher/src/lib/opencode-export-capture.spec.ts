@@ -7,6 +7,7 @@ import {
   captureOpenCodeExports,
   isTrustedOpenCodePath,
   OPENCODE_CAPTURE_LIMITS,
+  resolveOpenCodeRouteBackend,
   resolveTrustedOpenCodeExecutable,
   RunOpenCode,
   RunOpenCodeToFile,
@@ -235,7 +236,7 @@ describe('captureOpenCodeExports', () => {
     expect(materialized.info.resolvedModel).toBe('qwen3.8-flash-next');
   });
 
-  it('preserves an earlier backend observation when a later lookup fails', async () => {
+  it('omits a backend observation when the route lookup fails', async () => {
     const runOpenCode: RunOpenCode = () =>
       JSON.stringify([{ id: 'ses_1', directory: workspace, updated: 100 }]);
     const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
@@ -265,18 +266,13 @@ describe('captureOpenCodeExports', () => {
     await captureOpenCodeExports({
       ...common,
       routeStatusUrl: 'http://llama-swap.test:8000/running',
-      resolveRouteBackend: async () => 'qwen3.8-flash-next',
-    });
-    await captureOpenCodeExports({
-      ...common,
-      routeStatusUrl: 'http://llama-swap.test:8000/running',
       resolveRouteBackend: async () => undefined,
     });
 
     const materialized = JSON.parse(
       fs.readFileSync(path.join(root, 'sessions', 'ses_1.jsonl'), 'utf8'),
     );
-    expect(materialized.info.resolvedModel).toBe('qwen3.8-flash-next');
+    expect(materialized.info).not.toHaveProperty('resolvedModel');
   });
 
   it('writes the most recently updated session raw export last-assistant text to lastMessageFile', async () => {
@@ -663,5 +659,49 @@ describe('captureOpenCodeExports', () => {
     expect(fs.readFileSync(path.join(sessionsDir, 'keep.txt'), 'utf8')).toBe(
       'keep',
     );
+  });
+});
+
+describe('resolveOpenCodeRouteBackend', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns the single ready physical backend', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              running: [{ model: 'qwen3.8-flash-next', state: 'ready' }],
+            }),
+          ),
+        ),
+      ),
+    );
+
+    await expect(
+      resolveOpenCodeRouteBackend('http://llama-swap.test:8000/running'),
+    ).resolves.toBe('qwen3.8-flash-next');
+  });
+
+  it('stops reading when the response exceeds the byte limit', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(65 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Promise.resolve(new Response(body))),
+    );
+
+    await expect(
+      resolveOpenCodeRouteBackend('http://llama-swap.test:8000/running'),
+    ).resolves.toBeUndefined();
+    expect(cancelled).toBe(true);
   });
 });

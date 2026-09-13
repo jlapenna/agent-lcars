@@ -344,7 +344,8 @@ export interface BuildSessionDocOptions {
  * a caller can never mistakenly request deletion of a field this contract
  * doesn't cover.
  */
-export type ClearableSessionField = 'status' | 'statusUpdatedAt';
+export type ClearableSessionField =
+  'status' | 'statusUpdatedAt' | 'resolvedModel';
 
 /**
  * The complete description of one Firestore write: the document to merge,
