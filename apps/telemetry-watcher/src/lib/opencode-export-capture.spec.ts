@@ -194,6 +194,91 @@ describe('captureOpenCodeExports', () => {
     ).toBe(true);
   });
 
+  it('persists the physical backend observed for the newest routed session', async () => {
+    const runOpenCode: RunOpenCode = () =>
+      JSON.stringify([{ id: 'ses_1', directory: workspace, updated: 100 }]);
+    const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
+      fs.writeFileSync(
+        output,
+        JSON.stringify({
+          info: { id: args[2] },
+          messages: [
+            {
+              info: {
+                role: 'assistant',
+                providerID: 'homelab',
+                modelID: 'default',
+              },
+              parts: [],
+            },
+          ],
+        }),
+      );
+    };
+    const resolveRouteBackend = vi.fn(async () => 'qwen3.8-flash-next');
+
+    await captureOpenCodeExports({
+      workspaceDir: workspace,
+      exportsDir: root,
+      routeStatusUrl: 'http://llama-swap.test:8000/running',
+      resolveRouteBackend,
+      runOpenCode,
+      runOpenCodeToFile,
+    });
+
+    expect(resolveRouteBackend).toHaveBeenCalledWith(
+      'http://llama-swap.test:8000/running',
+    );
+    const materialized = JSON.parse(
+      fs.readFileSync(path.join(root, 'sessions', 'ses_1.jsonl'), 'utf8'),
+    );
+    expect(materialized.info.resolvedModel).toBe('qwen3.8-flash-next');
+  });
+
+  it('preserves an earlier backend observation when a later lookup fails', async () => {
+    const runOpenCode: RunOpenCode = () =>
+      JSON.stringify([{ id: 'ses_1', directory: workspace, updated: 100 }]);
+    const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
+      fs.writeFileSync(
+        output,
+        JSON.stringify({
+          info: { id: args[2] },
+          messages: [
+            {
+              info: {
+                role: 'assistant',
+                providerID: 'homelab',
+                modelID: 'default',
+              },
+              parts: [],
+            },
+          ],
+        }),
+      );
+    };
+    const common = {
+      workspaceDir: workspace,
+      exportsDir: root,
+      runOpenCode,
+      runOpenCodeToFile,
+    };
+    await captureOpenCodeExports({
+      ...common,
+      routeStatusUrl: 'http://llama-swap.test:8000/running',
+      resolveRouteBackend: async () => 'qwen3.8-flash-next',
+    });
+    await captureOpenCodeExports({
+      ...common,
+      routeStatusUrl: 'http://llama-swap.test:8000/running',
+      resolveRouteBackend: async () => undefined,
+    });
+
+    const materialized = JSON.parse(
+      fs.readFileSync(path.join(root, 'sessions', 'ses_1.jsonl'), 'utf8'),
+    );
+    expect(materialized.info.resolvedModel).toBe('qwen3.8-flash-next');
+  });
+
   it('writes the most recently updated session raw export last-assistant text to lastMessageFile', async () => {
     const lastMessageFile = path.join(root, 'opencode-last-message.txt');
     const runOpenCode: RunOpenCode = () =>

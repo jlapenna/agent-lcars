@@ -130,6 +130,7 @@ export interface SessionRow {
   runId?: string;
   runUrl?: string;
   model?: string;
+  resolvedModel?: string;
   turns: number;
   totalTokens: number;
   totalCostUsd?: number;
@@ -203,6 +204,7 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
         runUrl: historicalWorkflowRunUrl(doc.repo, doc.runId),
       }),
     ...(doc.model && { model: doc.model }),
+    ...(doc.resolvedModel && { resolvedModel: doc.resolvedModel }),
     turns: doc.turns,
     totalTokens: tokens,
     ...(doc.totalCostUsd !== undefined && { totalCostUsd: doc.totalCostUsd }),

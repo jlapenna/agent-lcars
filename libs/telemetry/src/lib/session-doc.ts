@@ -96,6 +96,7 @@ export function buildSessionDoc(
     tokens: summary.tokens,
     ...(summary.lastToolCall && { lastToolCall: summary.lastToolCall }),
     ...(summary.model && { model: summary.model }),
+    ...(summary.resolvedModel && { resolvedModel: summary.resolvedModel }),
     ...(summary.permissionMode && { permissionMode: summary.permissionMode }),
     ...(summary.title && { title: summary.title }),
     ...(summary.status && { status: summary.status }),

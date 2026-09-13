@@ -86,6 +86,13 @@ function SessionCard({ row }: { row: SessionRow }) {
           liveness={row.liveness}
         />
 
+        {(row.model || row.resolvedModel) && (
+          <Text size="xs" c="dimmed">
+            {row.model ?? '—'}
+            {row.resolvedModel ? ` → ${row.resolvedModel}` : ''}
+          </Text>
+        )}
+
         {(row.issueNumber !== undefined || row.prUrls.length > 0) && (
           <Group gap={10} wrap="wrap">
             {row.issueNumber !== undefined && row.issueUrl && (
@@ -156,7 +163,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
       </Stack>
 
       <TableScrollContainer
-        minWidth={960}
+        minWidth={1080}
         visibleFrom="sm"
         className="sessions-table-scroll"
       >
@@ -176,6 +183,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
               <TableTh>PRs</TableTh>
               <TableTh>Host / Run</TableTh>
               <TableTh>Requested model / route</TableTh>
+              <TableTh>Resolved backend</TableTh>
               <TableTh>Turns</TableTh>
               <TableTh>Cost-weighted tokens</TableTh>
               <TableTh>Cost</TableTh>
@@ -263,6 +271,11 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                 <TableTd>
                   <Text size="xs" c="dimmed">
                     {row.model ?? '—'}
+                  </Text>
+                </TableTd>
+                <TableTd>
+                  <Text size="xs" c="dimmed">
+                    {row.resolvedModel ?? '—'}
                   </Text>
                 </TableTd>
                 <TableTd>{row.turns}</TableTd>

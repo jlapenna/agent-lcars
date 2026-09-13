@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -672,6 +673,18 @@ func directRunnerOpenCodeTokenHostPath() (string, error) {
 	return path, nil
 }
 
+func directRunnerOpenCodeEnvironment() ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL"))
+	if raw == "" {
+		return nil, fmt.Errorf("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL is required to launch an OpenCode direct-mode runner")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+		return nil, fmt.Errorf("LCARS_QUEUE_OPENCODE_ROUTE_STATUS_URL must be an http(s) URL without embedded credentials")
+	}
+	return []string{"OPENCODE_ROUTE_STATUS_URL=" + raw}, nil
+}
+
 // directRunnerProviderCredentialBinds is the generic provider-adapter
 // credential boundary. Routing and admission never consult it: the queue has
 // already claimed an authorized run, and this function only supplies that
@@ -694,6 +707,7 @@ func (m directRunnerCredentialMount) bind() string {
 type directRunnerAdapter struct {
 	pipeline         string
 	credentialMounts func() ([]directRunnerCredentialMount, error)
+	environment      func() ([]string, error)
 }
 
 var directRunnerAdapters = []directRunnerAdapter{
@@ -710,6 +724,7 @@ var directRunnerAdapters = []directRunnerAdapter{
 	{
 		pipeline:         "codex",
 		credentialMounts: func() ([]directRunnerCredentialMount, error) { return nil, nil },
+		environment:      func() ([]string, error) { return nil, nil },
 	},
 	{
 		pipeline: "opencode",
@@ -720,6 +735,7 @@ var directRunnerAdapters = []directRunnerAdapter{
 			}
 			return []directRunnerCredentialMount{{hostPath: path, containerPath: directRunnerOpenCodeTokenMountPath}}, nil
 		},
+		environment: directRunnerOpenCodeEnvironment,
 	},
 }
 
@@ -743,6 +759,19 @@ func directRunnerProviderCredentialBinds(pipeline string) ([]string, error) {
 		binds = append(binds, mount.bind())
 	}
 	return binds, nil
+}
+
+func directRunnerProviderEnvironment(pipeline string) ([]string, error) {
+	pipeline = strings.ToLower(strings.TrimSpace(pipeline))
+	for _, adapter := range directRunnerAdapters {
+		if adapter.pipeline == pipeline {
+			if adapter.environment == nil {
+				return nil, nil
+			}
+			return adapter.environment()
+		}
+	}
+	return nil, fmt.Errorf("no direct-runner provider adapter for pipeline %q", pipeline)
 }
 
 // cleanupExitedDirectRunners sweeps only containers this queue executor owns:
@@ -890,6 +919,11 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 		"LCARS_RUN_ID=" + l.runID,
 		"LCARS_RUN_TOKEN=" + l.runToken,
 	}
+	providerEnv, err := directRunnerProviderEnvironment(l.pipeline)
+	if err != nil {
+		return err
+	}
+	env = append(env, providerEnv...)
 	if l.consoleURL != "" {
 		env = append(env, "LCARS_CONSOLE_URL="+l.consoleURL)
 	}

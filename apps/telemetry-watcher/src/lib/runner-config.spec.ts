@@ -14,6 +14,7 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_SHARE_DIR',
   'FIRESTORE_EMULATOR_HOST',
   'GITHUB_REPOSITORY',
+  'OPENCODE_ROUTE_STATUS_URL',
 ] as const;
 
 describe('loadRunnerConfig', () => {
@@ -198,6 +199,15 @@ describe('loadRunnerConfig', () => {
     const config = loadRunnerConfig([]);
 
     expect(config.opencodeLastMessageFile).toBeUndefined();
+  });
+
+  it('loads the OpenCode route status endpoint from the environment', () => {
+    process.env['OPENCODE_ROUTE_STATUS_URL'] =
+      'http://llama-swap.lan.jlapenna.net:8000/running';
+
+    expect(loadRunnerConfig([]).opencodeRouteStatusUrl).toBe(
+      'http://llama-swap.lan.jlapenna.net:8000/running',
+    );
   });
 
   it('threads the derived transcriptsBucket through from loadConfig (issue #24)', () => {

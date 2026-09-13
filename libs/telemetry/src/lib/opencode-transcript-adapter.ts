@@ -152,6 +152,7 @@ export const opencodeAdapter: TranscriptAdapter = {
     const providerId = messageProviderId ?? asString(model?.['providerID']);
     const title = asString(info['title']);
     const infoCost = asNumber(info['cost']);
+    const resolvedModel = asString(info['resolvedModel']);
 
     return [
       {
@@ -166,6 +167,8 @@ export const opencodeAdapter: TranscriptAdapter = {
         ...(modelId && {
           model: providerId ? `${providerId}/${modelId}` : modelId,
         }),
+        ...(resolvedModel &&
+          isSafeIdentifier(resolvedModel) && { resolvedModel }),
         startedAt,
         lastActivityAt,
         turns,
