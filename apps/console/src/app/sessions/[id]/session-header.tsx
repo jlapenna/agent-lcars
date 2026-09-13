@@ -97,7 +97,11 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
       />
 
       <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
-        {doc.model && <Field label="Model">{doc.model}</Field>}
+        {doc.model && (
+          <Field label={doc.agent === 'opencode' ? 'Requested route' : 'Model'}>
+            {doc.model}
+          </Field>
+        )}
         {doc.permissionMode && (
           <Field label="Permission mode">{doc.permissionMode}</Field>
         )}
