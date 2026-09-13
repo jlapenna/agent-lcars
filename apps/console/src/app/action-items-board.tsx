@@ -5,6 +5,7 @@ import { getWatchedRepos } from '../lib/github-client';
 import { repoKey } from '../lib/watched-repo';
 import { RepoBadge } from './agent-activity-panel';
 import type { BoardCard } from './board-card';
+import { bridgeSelectionHref, itemKey } from './bridge-selection';
 import { QueueWorkspace } from './queue-workspace';
 import { SectionHeading } from './section-heading';
 
@@ -47,8 +48,10 @@ export function DecisionInbox({
  */
 export function BridgeSections({
   waitingOnDeploy,
+  repoFilterKey,
 }: {
   waitingOnDeploy: BoardCard[];
+  repoFilterKey?: string;
 }) {
   if (waitingOnDeploy.length === 0) return null;
 
@@ -82,7 +85,16 @@ export function BridgeSections({
                 {item.kind === 'pr' ? 'PR' : 'Issue'}
               </Badge>
               <RepoBadge repo={item.repo} />
-              <Text size="sm" fw={600} truncate>
+              <Text
+                component="a"
+                href={bridgeSelectionHref(itemKey(item), repoFilterKey)}
+                size="sm"
+                fw={600}
+                c="inherit"
+                td="none"
+                truncate
+                className="bridge-row-select"
+              >
                 #{item.number} {item.title}
               </Text>
             </Group>

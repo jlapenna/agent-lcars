@@ -1567,6 +1567,93 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   padding-block: 4px;
 }
 
+/* ---- Bridge two-panel view (#-less: desktop master/detail) ----
+   Below 1024px the Bridge is exactly the stacked operational readout it has
+   always been and the detail column is display:none - a selection reveals the
+   detail in place of the list (mobile), so nothing about the narrow layout
+   changes unless a row is tapped. At 1024px+ the grid activates the second
+   pane and pins the detail so the list stays browsable beside it. */
+.bridge-workspace {
+  display: block;
+}
+
+.bridge-workspace__list {
+  min-width: 0;
+}
+
+.bridge-workspace__detail {
+  display: none;
+  min-width: 0;
+}
+
+.bridge-workspace[data-sel] .bridge-workspace__list {
+  display: none;
+}
+
+.bridge-workspace[data-sel] .bridge-workspace__detail {
+  display: block;
+}
+
+.bridge-detail__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: var(--mantine-spacing-sm);
+}
+
+.bridge-detail-back {
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--lcars-accent-ink);
+}
+
+.bridge-detail__scope {
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.bridge-detail-state {
+  display: flex;
+  min-height: 12rem;
+  padding: var(--mantine-spacing-lg);
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--mantine-spacing-sm);
+  border-left: var(--lcars-spine-width) solid var(--lcars-accent);
+}
+
+.bridge-row-select:hover {
+  text-decoration: underline;
+}
+
+@media (min-width: 64em) {
+  .bridge-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 24px;
+  }
+
+  /* A selection on desktop is additive, not a swap: the list stays visible
+     while the detail opens beside it. */
+  .bridge-workspace[data-sel] .bridge-workspace__list {
+    display: block;
+  }
+
+  .bridge-workspace__detail {
+    position: sticky;
+    top: var(--mantine-spacing-md);
+    display: block;
+    padding-left: 24px;
+    border-left: 1px solid var(--lcars-hairline);
+  }
+}
+
 .queue-label-disclosure {
   min-height: 24px;
   font-family: var(--font-display), sans-serif;
