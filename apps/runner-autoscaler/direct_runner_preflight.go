@@ -28,11 +28,6 @@ func directRunnerPermanentCredentialMounts() ([]directRunnerCredentialMount, err
 		containerPath: directRunnerTelemetryWriterMountPath,
 	}}
 	for _, adapter := range directRunnerAdapters {
-		if adapter.environment != nil {
-			if _, err := adapter.environment(); err != nil {
-				return nil, fmt.Errorf("%s adapter: %w", adapter.pipeline, err)
-			}
-		}
 		adapterMounts, err := adapter.credentialMounts()
 		if err != nil {
 			return nil, fmt.Errorf("%s adapter: %w", adapter.pipeline, err)

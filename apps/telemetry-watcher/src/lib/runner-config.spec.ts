@@ -14,7 +14,7 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_SHARE_DIR',
   'FIRESTORE_EMULATOR_HOST',
   'GITHUB_REPOSITORY',
-  'OPENCODE_ROUTE_STATUS_URL',
+  'OPENCODE_RESOLVED_MODEL',
 ] as const;
 
 describe('loadRunnerConfig', () => {
@@ -201,12 +201,11 @@ describe('loadRunnerConfig', () => {
     expect(config.opencodeLastMessageFile).toBeUndefined();
   });
 
-  it('loads the OpenCode route status endpoint from the environment', () => {
-    process.env['OPENCODE_ROUTE_STATUS_URL'] =
-      'http://llama-swap.lan.jlapenna.net:8000/running';
+  it('loads the LiteLLM-selected OpenCode backend from the environment', () => {
+    process.env['OPENCODE_RESOLVED_MODEL'] = 'qwen3.8-flash-next';
 
-    expect(loadRunnerConfig([]).opencodeRouteStatusUrl).toBe(
-      'http://llama-swap.lan.jlapenna.net:8000/running',
+    expect(loadRunnerConfig([]).opencodeResolvedModel).toBe(
+      'qwen3.8-flash-next',
     );
   });
 

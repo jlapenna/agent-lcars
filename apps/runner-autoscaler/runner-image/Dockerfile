@@ -531,6 +531,14 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/context-lifecycle.js \
     /home/runner/.config/opencode/context-lifecycle.js
 COPY --from=telemetry-watcher-build \
+    /repo/apps/runner-autoscaler/runner-image/opencode-litellm-proxy.mjs \
+    /usr/local/lib/agent-lcars/opencode-litellm-proxy.mjs
+COPY --from=telemetry-watcher-build \
+    /repo/apps/runner-autoscaler/runner-image/opencode-litellm-proxy.test.mjs \
+    /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs
+RUN node --test /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs && \
+    rm /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs
+COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.sh \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
     /repo/apps/runner-autoscaler/runner-image/opencode-version \

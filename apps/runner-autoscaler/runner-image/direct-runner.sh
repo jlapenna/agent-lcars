@@ -129,6 +129,7 @@ CODEX_RUNTIME_DIR=''
 CODEX_STDERR_TEE_PID=''
 CODEX_AUTH_WAIT_PID=''
 CHECKOUT_REFRESH_PID=''
+OPENCODE_PROXY_PID=''
 EARLY_FAILURE_MESSAGE=''
 cleanup_codex_material() {
   if [ -n "$CODEX_STDERR_TEE_PID" ]; then
@@ -144,6 +145,13 @@ cleanup_codex_material() {
     # container stops, even though the stopped container itself is retained.
     rm -rf -- "$CODEX_RUNTIME_DIR"
     CODEX_RUNTIME_DIR=''
+  fi
+}
+cleanup_opencode_proxy() {
+  if [ -n "$OPENCODE_PROXY_PID" ]; then
+    kill "$OPENCODE_PROXY_PID" 2>/dev/null || true
+    wait "$OPENCODE_PROXY_PID" 2>/dev/null || true
+    OPENCODE_PROXY_PID=''
   fi
 }
 report_early_failure() {
@@ -169,6 +177,7 @@ data-binary = "@$early_payload"
 CURLCFG
   fi
   cleanup_codex_material
+  cleanup_opencode_proxy
   return 0
 }
 trap report_early_failure EXIT
@@ -840,6 +849,44 @@ else
   fi
 
   OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default}"
+  # Keep the request on the authenticated LiteLLM edge while capturing the
+  # deployment id LiteLLM selected for each response. The loopback-only proxy
+  # maps that id through the same virtual-key-authorized /model/info surface
+  # and writes only a bounded model identifier; agent tool shells receive
+  # neither the key nor direct access to llama-swap.
+  OPENCODE_PROXY_DIR="$RUNNER_TEMP/opencode-proxy"
+  OPENCODE_PROXY_PORT_FILE="$OPENCODE_PROXY_DIR/port"
+  OPENCODE_RESOLVED_MODEL_FILE="$OPENCODE_PROXY_DIR/resolved-model"
+  OPENCODE_CONFIG_DIR="$OPENCODE_PROXY_DIR/config"
+  mkdir -m 700 -p "$OPENCODE_PROXY_DIR" "$OPENCODE_CONFIG_DIR"
+  OPENCODE_BASE_CONFIG_DIR="${OPENCODE_BASE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
+  cp -R "$OPENCODE_BASE_CONFIG_DIR/." "$OPENCODE_CONFIG_DIR/"
+  OPENCODE_PROXY_UPSTREAM="${OPENCODE_PROXY_UPSTREAM:-https://llm.lan.jlapenna.net}"
+  OPENCODE_PROXY_NODE="${OPENCODE_PROXY_NODE:-/usr/bin/node}"
+  OPENCODE_PROXY_SCRIPT="${OPENCODE_PROXY_SCRIPT:-/usr/local/lib/agent-lcars/opencode-litellm-proxy.mjs}"
+  OPENCODE_PROXY_UPSTREAM="$OPENCODE_PROXY_UPSTREAM" \
+    OPENCODE_PROXY_RESOLVED_MODEL_FILE="$OPENCODE_RESOLVED_MODEL_FILE" \
+    OPENCODE_PROXY_PORT_FILE="$OPENCODE_PROXY_PORT_FILE" \
+    "$OPENCODE_PROXY_NODE" "$OPENCODE_PROXY_SCRIPT" &
+  OPENCODE_PROXY_PID=$!
+  for _ in $(seq 1 50); do
+    [ -s "$OPENCODE_PROXY_PORT_FILE" ] && break
+    kill -0 "$OPENCODE_PROXY_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  OPENCODE_PROXY_PORT="$(cat "$OPENCODE_PROXY_PORT_FILE" 2>/dev/null || true)"
+  case "$OPENCODE_PROXY_PORT" in
+    '' | *[!0-9]*)
+      echo "FATAL: OpenCode LiteLLM telemetry proxy failed to start" >&2
+      exit 1
+      ;;
+  esac
+  opencode_proxy_config="$OPENCODE_CONFIG_DIR/opencode.json.tmp"
+  jq --arg base_url "http://127.0.0.1:${OPENCODE_PROXY_PORT}/v1" \
+    '.provider.homelab.options.baseURL = $base_url' \
+    "$OPENCODE_CONFIG_DIR/opencode.json" > "$opencode_proxy_config"
+  mv "$opencode_proxy_config" "$OPENCODE_CONFIG_DIR/opencode.json"
+  export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
   # leave the surrounding direct runner alive to finalize telemetry and
@@ -973,6 +1020,11 @@ PROMPT
   # (`$LAST_MESSAGE_FILE`, read near the end of this script). Populated by
   # `"$SIDECAR_LIFECYCLE" finalize` below, not by this branch.
   LAST_MESSAGE_FILE="$OPENCODE_LAST_MESSAGE_FILE"
+  cleanup_opencode_proxy
+  if [ -s "$OPENCODE_RESOLVED_MODEL_FILE" ]; then
+    OPENCODE_RESOLVED_MODEL="$(tr -d '\r\n' < "$OPENCODE_RESOLVED_MODEL_FILE")"
+    export OPENCODE_RESOLVED_MODEL
+  fi
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
