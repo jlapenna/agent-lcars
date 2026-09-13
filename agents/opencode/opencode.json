@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": ["./instructions.md"],
+  "instructions": ["~/.config/opencode/instructions.md"],
   "plugin": ["./lcars-session.js", "./bounded-read.js"],
   "skills": ["/opt/repo-tools/plugins/repo-tools/skills"],
   "permission": {

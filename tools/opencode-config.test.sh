@@ -32,10 +32,14 @@ config_dir="$(dirname "$config")"
 for path in "${instruction_paths[@]}"; do
   case "$path" in
     http://* | https://*) continue ;;
+    '~/.config/opencode/'*) path="$config_dir/${path##*/}" ;;
+    *) path="$config_dir/$path" ;;
   esac
-  test -f "$config_dir/$path" ||
+  test -f "$path" ||
     fail "instructions entry '$path' does not exist; OpenCode drops missing files silently"
 done
+jq -e '.instructions == ["~/.config/opencode/instructions.md"]' "$config" >/dev/null ||
+  fail "runner-global instructions must use a home-relative path; ./ resolves from each workspace and is silently dropped"
 
 # --- the standing orders must still say the thing they exist to say ----------
 orders="$repo_root/agents/opencode/instructions.md"
@@ -118,6 +122,8 @@ assert.deepEqual(bash.args, { command: 'git status' });
 NODE
 grep -Fq '/repo/agents/opencode/bounded-read.js' "$runner_dockerfile" ||
   fail "runner image no longer installs the bounded read plugin"
+grep -Fq 'RUN bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh' "$runner_dockerfile" ||
+  fail "runner image no longer exercises the real OpenCode continuation contract"
 grep -Fq '/home/runner/.config/opencode/bounded-read.js' "$runner_dockerfile" ||
   fail "runner image does not preserve the bounded read plugin path"
 
