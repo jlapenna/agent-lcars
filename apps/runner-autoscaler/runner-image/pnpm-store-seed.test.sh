@@ -42,7 +42,7 @@ if ! grep -Fq 'COPY --from=pnpm10-store-seed --chown=runner:runner \' "$dockerfi
   echo 'runner image must copy the pnpm 10 compatibility store into the final image' >&2
   exit 1
 fi
-if rg -q '^FROM --platform=.* AS pnpm(10-)?store-seed$' "$dockerfile"; then
+if grep -Eq '^FROM --platform=.* AS pnpm(10)?-store-seed$' "$dockerfile"; then
   echo 'pnpm seeds must build for the target image architecture, not a fixed builder platform' >&2
   exit 1
 fi
