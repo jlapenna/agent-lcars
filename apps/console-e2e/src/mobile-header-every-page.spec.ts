@@ -38,37 +38,54 @@ const CONSOLE_DESTINATIONS = [
 ] as const;
 
 const AUTHENTICATED_VIEWS = [
-  { name: 'Bridge', path: '/', current: 'deck' },
+  { name: 'Bridge', path: '/', current: 'deck', overflowMenu: true },
   {
     name: 'selected inbox item',
     path: `/inbox?item=supersprinklesracing%2Fsprinkles%23${E2E_ITEM_NUMBERS.humanNeeded}`,
     current: 'inbox',
+    overflowMenu: true,
   },
-  { name: 'Agents', path: '/agents', current: 'agents' },
-  { name: 'Shuttlebay', path: '/shuttlebay', current: 'shuttlebay' },
-  { name: 'Work', path: '/work', current: 'work' },
+  { name: 'Agents', path: '/agents', current: 'agents', overflowMenu: true },
+  {
+    name: 'Shuttlebay',
+    path: '/shuttlebay',
+    current: 'shuttlebay',
+    overflowMenu: true,
+  },
+  { name: 'Work', path: '/work', current: 'work', overflowMenu: true },
   {
     name: 'sessions by issue',
     path: '/sessions',
     current: 'sessions',
+    overflowMenu: true,
   },
   {
     name: 'sessions flat',
     path: '/sessions?view=flat',
     current: 'sessions',
+    overflowMenu: true,
   },
   {
     name: 'session detail',
     path: `/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`,
     current: 'sessions',
+    overflowMenu: true,
   },
-  { name: 'Costs', path: '/costs', current: 'costs' },
+  { name: 'Costs', path: '/costs', current: 'costs', overflowMenu: true },
   {
     name: 'task detail',
     path: `/task/supersprinklesracing/sprinkles/${E2E_ITEM_NUMBERS.humanNeeded}`,
     current: 'deck',
+    overflowMenu: true,
   },
-  { name: 'not found', path: '/not-a-console-route', current: 'deck' },
+  // The shared 404 is a message state: its nav rail is the way back, and it
+  // renders no command cluster at all.
+  {
+    name: 'not found',
+    path: '/not-a-console-route',
+    current: 'deck',
+    overflowMenu: false,
+  },
 ] as const;
 
 async function expectOneSharedMobileHeader(page: Page, current: string) {
@@ -147,6 +164,35 @@ async function expectOneSharedMobileHeader(page: Page, current: string) {
   expect(widths.document).toBeLessThanOrEqual(widths.viewport);
 }
 
+/* The three-dots overflow menu is the one constant control in the header's
+   top-right slot on every page. Task and session detail once shipped it in
+   the mobile utilities variant only, so desktop headers on those routes had
+   no overflow menu at all; assert the variant that is visible at this width
+   (mobile below 64em, desktop from 64em up - see the .console-utilities--*
+   rules) carries it on every page, and that the commandless 404 shows
+   nothing. */
+async function expectOneHeaderOverflowMenu(
+  page: Page,
+  current: string,
+  visible: boolean,
+) {
+  const desktopSlot = (page.viewportSize()?.width ?? 0) >= 64 * 16;
+  const header = page.locator(
+    `.console-header[data-current="${current}"]:not([data-streaming-fallback])`,
+  );
+  const utilities = header.locator(
+    `.console-utilities--${desktopSlot ? 'desktop' : 'mobile'}`,
+  );
+  const trigger = utilities.getByRole('button', {
+    name: 'More console options',
+  });
+  if (visible) {
+    await expect(trigger).toBeVisible();
+  } else {
+    await expect(trigger).toHaveCount(0);
+  }
+}
+
 usePopulatedFixtures();
 
 test.describe('shared mobile header on every console page and view @mobile-layout', () => {
@@ -162,6 +208,11 @@ test.describe('shared mobile header on every console page and view @mobile-layou
         await test.step(view.name, async () => {
           await page.goto(view.path);
           await expectOneSharedMobileHeader(page, view.current);
+          await expectOneHeaderOverflowMenu(
+            page,
+            view.current,
+            view.overflowMenu,
+          );
         });
       }
     });
@@ -263,6 +314,11 @@ test.describe('shared mobile header on every console page and view @mobile-layou
         await setE2eAdminUser(page);
         await page.goto(view.path);
         await expectOneSharedMobileHeader(page, view.current);
+        await expectOneHeaderOverflowMenu(
+          page,
+          view.current,
+          view.overflowMenu,
+        );
 
         // Every destination stays reachable on the rail at this width; nothing
         // is dropped from it, and nothing is pushed off the side of the

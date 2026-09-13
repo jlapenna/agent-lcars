@@ -6,19 +6,14 @@ import { Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../../auth';
-import { consoleRepositoryUrl } from '../../../lib/deployment';
 import { getWatchedRepos } from '../../../lib/github-client';
 import type { QuickTaskSourceIdentity } from '../../../lib/quick-task-evidence';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
+import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { ConsoleFooter } from '../../console-footer';
 import { repoScopedConsoleHrefs } from '../../console-hrefs';
-import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
-import { QueueUtilityMenu } from '../../queue-utility-menu';
-import { QuickTaskButton } from '../../quick-task-button';
-import { RefreshButton } from '../../refresh-button';
-import { SignOutButton } from '../../sign-out-button';
 import { withConsolePageShell } from '../../with-console-page-shell';
 import { SessionHeader } from './session-header';
 import { TranscriptTimelineView } from './transcript-timeline-view';
@@ -95,6 +90,16 @@ interface SessionDetailViewProps {
   subtitle: string;
 }
 
+/** Session repository scope for the header's command cluster - factored out
+ * since the desktop and mobile utility blocks both need it. */
+function sessionRepoKey(
+  detail: Awaited<ReturnType<typeof getSessionDetail>>,
+): string | undefined {
+  return detail.status === 'ok' && detail.doc.repo
+    ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
+    : undefined;
+}
+
 /** Quick task evidence identities for a session detail page - factored out
  * since the header's desktop and mobile utility blocks both need it. */
 function sessionSourceIdentities(
@@ -160,46 +165,20 @@ const SessionDetailView = withConsolePageShell(
     utilities: (
       <>
         <div className="session-detail-utilities session-detail-utilities--desktop console-utilities--desktop">
-          <QuickTaskButton
+          <ConsoleCommandUtilities
             watchedRepos={getWatchedRepos()}
-            initialRepoKey={
-              detail.status === 'ok' && detail.doc.repo
-                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
-                : undefined
-            }
+            initialRepoKey={sessionRepoKey(detail)}
             sourceIdentities={sessionSourceIdentities(detail)}
-            size="compact-xs"
-          />
-          <RefreshButton
             generatedAt={generatedAt}
-            initialLabel={formatRelativeTime(generatedAt)}
           />
         </div>
         <div className="session-detail-utilities session-detail-utilities--mobile console-utilities--mobile">
-          <QuickTaskButton
+          <ConsoleCommandUtilities
             watchedRepos={getWatchedRepos()}
-            initialRepoKey={
-              detail.status === 'ok' && detail.doc.repo
-                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
-                : undefined
-            }
+            initialRepoKey={sessionRepoKey(detail)}
             sourceIdentities={sessionSourceIdentities(detail)}
-            size="compact-xs"
-          />
-          <RefreshButton
-            generatedAt={generatedAt}
-            initialLabel={formatRelativeTime(generatedAt)}
-            compact
-          />
-          <QueueUtilityMenu
-            repositoryUrl={consoleRepositoryUrl()}
             includeNavigation
-            navigationHrefs={repoScopedConsoleHrefs(
-              detail.status === 'ok' && detail.doc.repo
-                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
-                : undefined,
-            )}
-            signOutControl={<SignOutButton />}
+            navigationHrefs={repoScopedConsoleHrefs(sessionRepoKey(detail))}
           />
         </div>
       </>
