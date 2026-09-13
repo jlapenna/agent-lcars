@@ -6,6 +6,14 @@ on:
     types: [completed]
   workflow_dispatch:
     inputs:
+      source_sha:
+        description: Exact CI-validated revision for recovered deployment
+        required: false
+        type: string
+      delivery_mode:
+        description: Recovery provenance (recovered-ci for auto-merge repair)
+        required: false
+        type: string
       build_mode:
         description: App Hosting build path
         type: choice
@@ -17,6 +25,10 @@ on:
         options:
           - prebuilt
           - managed
+
+# The reusable auto-merge recovery reads this source marker from Actions run
+# metadata; keep it identical to the revision checked out and annotated below.
+run-name: Deploy console [source:${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}]
 
 permissions:
   contents: read
@@ -84,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}
 
       - uses: ./.github/actions/setup-nx-remote-cache
         if: inputs.build_mode == 'prebuilt'
@@ -119,7 +131,7 @@ jobs:
             --backend "${{ vars.APPHOSTING_BACKEND_ID }}" \
             --root-dir apps/console \
             --runtime nodejs24 \
-            --commit "${{ github.event.workflow_run.head_sha || github.sha }}"
+            --commit "${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}"
 
       - name: Deploy with managed App Hosting build
         id: managed
@@ -215,7 +227,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          DEPLOYED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          DEPLOYED_SHA: ${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}
           VERSION: ${{ steps.release.outputs.version }}
         shell: bash
         run: |

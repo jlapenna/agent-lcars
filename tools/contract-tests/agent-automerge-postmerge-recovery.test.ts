@@ -53,6 +53,10 @@ function jq(program: string, input: unknown, args: string[] = []): unknown {
 
 const selectCi = jqAfter('CI_RUN_SELECTION_CONTRACT', 'CI_RUN_RECORD=$(jq');
 const decideCi = jqAfter('CI_RUN_DECISION_CONTRACT', 'CI_DECISION=$(jq');
+const selectDeliverySources = jqAfter(
+  'DELIVERY_SOURCE_PROVENANCE_CONTRACT',
+  'DELIVERY_RUN_RECORDS=$(jq',
+);
 const selectDeploys = jqAfter(
   'DEPLOY_RUN_SELECTION_CONTRACT',
   'DEPLOY_RUN_RECORDS=$(jq',
@@ -69,7 +73,8 @@ const decideMainDispatch = jqAfter(
 interface Run {
   id: number;
   head_sha: string;
-  event: 'push' | 'workflow_dispatch';
+  event: 'push' | 'workflow_dispatch' | 'workflow_run';
+  display_title: string;
   status: 'queued' | 'in_progress' | 'completed';
   conclusion: string | null;
   created_at: string;
@@ -82,6 +87,7 @@ function run(overrides: Partial<Run> & Pick<Run, 'id'>): Run {
   return {
     id: overrides.id,
     head_sha: sha,
+    display_title: `Delivery [source:${sha}]`,
     event: 'push',
     status: 'completed',
     conclusion: 'success',
@@ -100,11 +106,8 @@ function ciDecision(selected: Run | Record<string, never>): string {
 }
 
 function deployDecision(runs: Run[]): string {
-  const selected = jq(
-    selectDeploys,
-    [{ workflow_runs: runs }],
-    ['--arg', 'sha', sha],
-  );
+  const sourced = jq(selectDeliverySources, [{ workflow_runs: runs }]);
+  const selected = jq(selectDeploys, sourced, ['--arg', 'sha', sha]);
   return jq(decideDeploy, selected) as string;
 }
 
@@ -332,13 +335,40 @@ describe('agent automerge post-merge recovery admission', () => {
     expect(deployDecision([existing])).toBe('dispatch');
   });
 
+  it('does not let an ancestor workflow_run displayed at B own B', () => {
+    const ancestor = 'b'.repeat(40);
+    expect(
+      deployDecision([
+        run({
+          id: 1,
+          event: 'workflow_run',
+          head_sha: sha,
+          display_title: `Deploy [source:${ancestor}]`,
+        }),
+      ]),
+    ).toBe('dispatch');
+  });
+
+  it('retains a B owner even when its displayed head has advanced to C', () => {
+    expect(
+      deployDecision([
+        run({
+          id: 1,
+          event: 'workflow_run',
+          head_sha: 'c'.repeat(40),
+          display_title: `Deploy [source:${sha}]`,
+        }),
+      ]),
+    ).toBe('owned');
+  });
+
   it('retains an older paginated partial deployment even when a newer run was skipped', () => {
     const selected = jq(
       selectDeploys,
-      [
+      jq(selectDeliverySources, [
         { workflow_runs: [run({ id: 2, conclusion: 'skipped' })] },
         { workflow_runs: [run({ id: 1, conclusion: 'failure' })] },
-      ],
+      ]),
       ['--arg', 'sha', sha],
     );
     expect(jq(decideDeploy, selected)).toBe('owned');
@@ -389,6 +419,9 @@ describe('agent automerge post-merge recovery admission', () => {
     expect(
       result.calls.filter((call) => call === 'dispatch:deploy.yml'),
     ).toHaveLength(1);
+    expect(result.calls).toContain(
+      `workflow run deploy.yml --repo o/r --ref main -f source_sha=${sha} -f delivery_mode=recovered-ci`,
+    );
     expect(
       result.calls.filter((call) => call === 'dispatch:post-deploy.yml'),
     ).toHaveLength(1);
@@ -464,6 +497,112 @@ describe('agent automerge post-merge recovery admission', () => {
     expect(
       result.calls.filter((call) => call === 'dispatch:post-ci.yml'),
     ).toHaveLength(1);
+  });
+
+  it('does not let an ancestor post-CI run displayed at B own B', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [run({ id: 3, conclusion: 'success' })],
+      postCiRuns: [
+        run({
+          id: 4,
+          event: 'workflow_run',
+          head_sha: sha,
+          display_title: `Deploy rules [source:${'b'.repeat(40)}]`,
+        }),
+      ],
+      postCiWorkflows: ['post-ci.yml'],
+    });
+
+    expect(result.status).toBe(0);
+    expect(
+      result.calls.filter((call) => call === 'dispatch:post-ci.yml'),
+    ).toHaveLength(1);
+  });
+
+  it('fails closed for a completed unproven legacy deploy with work', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [
+        run({ id: 3, head_sha: sha, display_title: 'Deploy (legacy)' }),
+      ],
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      'completed legacy run(s) with work for displayed head',
+    );
+    expect(
+      result.calls.filter((call) => call === 'dispatch:deploy.yml'),
+    ).toEqual([]);
+  });
+
+  it('does not inspect jobs for an unrelated historical cancellation', () => {
+    const unrelated = 'b'.repeat(40);
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [
+        run({
+          id: 99,
+          head_sha: unrelated,
+          conclusion: 'cancelled',
+          display_title: `Deploy [source:${unrelated}]`,
+        }),
+      ],
+    });
+
+    expect(result.status).toBe(0);
+    expect(
+      result.calls.some((call) => call.includes('actions/runs/99/jobs')),
+    ).toBe(false);
+    expect(
+      result.calls.filter((call) => call === 'dispatch:deploy.yml'),
+    ).toHaveLength(1);
+  });
+
+  it('waits boundedly rather than overlapping an active wrong-source deploy', () => {
+    const result = executeRestoreStep({
+      ciRuns: [
+        run({
+          id: 2,
+          event: 'workflow_dispatch',
+          conclusion: 'success',
+        }),
+      ],
+      deployRuns: [
+        run({
+          id: 3,
+          head_sha: sha,
+          status: 'in_progress',
+          conclusion: null,
+          display_title: `Deploy [source:${'b'.repeat(40)}]`,
+        }),
+      ],
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain('recovery will not overlap it');
+    expect(
+      result.calls.filter((call) => call === 'dispatch:deploy.yml'),
+    ).toEqual([]);
   });
 
   it('keeps every post-CI workflow paused when post-submit is disabled', () => {
@@ -606,7 +745,7 @@ describe('agent automerge post-merge recovery admission', () => {
     );
   });
 
-  it('keeps a source-bound post-CI dispatch but refuses a later unbound deploy after main advances', () => {
+  it('keeps both recovered deliveries bound when main advances after admission', () => {
     const result = executeRestoreStep({
       ciRuns: [
         run({
@@ -621,13 +760,12 @@ describe('agent automerge post-merge recovery admission', () => {
       deployCurrentMain: 'b'.repeat(40),
     });
 
-    expect(result.status).toBe(1);
-    expect(result.output).toContain('after source-bound post-CI dispatch');
+    expect(result.status).toBe(0);
     expect(
       result.calls.filter((call) => call === 'dispatch:post-ci.yml'),
     ).toHaveLength(1);
-    expect(
-      result.calls.filter((call) => call === 'dispatch:deploy.yml'),
-    ).toEqual([]);
+    expect(result.calls).toContain(
+      `workflow run deploy.yml --repo o/r --ref main -f source_sha=${sha} -f delivery_mode=recovered-ci`,
+    );
   });
 });

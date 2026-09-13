@@ -80,6 +80,14 @@ describe('console deployment workflow', () => {
     expect(workflow).toContain('node tools/deploy-console-prebuilt.mjs');
     expect(workflow).toContain("if: inputs.build_mode == 'prebuilt'");
     expect(workflow).toContain("if: inputs.build_mode != 'prebuilt'");
+    expect(workflow).toContain(
+      'run-name: Deploy console [source:${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}]',
+    );
+    expect(
+      workflow.match(
+        /inputs\.source_sha \|\| github\.event\.workflow_run\.head_sha \|\| github\.sha/g,
+      )?.length,
+    ).toBeGreaterThanOrEqual(4);
   });
 
   it('translates the App Hosting YAML into a local build contract', async () => {
