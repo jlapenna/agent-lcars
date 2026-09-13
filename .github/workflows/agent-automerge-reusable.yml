@@ -863,7 +863,6 @@ jobs:
           # main still contains this PR, then reuse/restore the safety
           # chain at the current descendant SHA instead.
           SAFETY_SHA=$(gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha')
-          SAFETY_COMMITTED_AT=$(gh api "repos/$REPO/commits/$SAFETY_SHA" --jq '.commit.committer.date')
           MAIN_RELATION=$(gh api "repos/$REPO/compare/$MERGE_SHA...$SAFETY_SHA" --jq '.status')
           case "$MAIN_RELATION" in
             identical | ahead) ;;
@@ -1011,7 +1010,7 @@ jobs:
             local workflow="$1" ambiguous_active legacy_unproven
             while true; do
               DELIVERY_RUNS=$(gh api --paginate \
-                "repos/$REPO/actions/workflows/$workflow/runs?branch=main&created=%3E%3D$SAFETY_COMMITTED_AT&per_page=100" \
+                "repos/$REPO/actions/workflows/$workflow/runs?branch=main&per_page=100" \
                 --slurp)
               DELIVERY_RUN_RECORDS=$(jq -c '
                 [.[].workflow_runs[] |

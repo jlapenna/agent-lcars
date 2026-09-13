@@ -175,7 +175,6 @@ case "$args" in
       echo "$DEPLOY_CURRENT_MAIN_SHA"
     fi
     ;;
-  *"commits/$SAFETY_SHA --jq .commit.committer.date"*) echo '2026-09-10T13:00:00Z' ;;
   *"compare/"*) echo identical ;;
   *"actions/workflows/ci.yml/runs?"*) printf '[%s]\\n' "$CI_RUNS_JSON" ;;
   *"actions/workflows/post-ci.yml/runs?"*) printf '[%s]\\n' "$POST_CI_RUNS_JSON" ;;
