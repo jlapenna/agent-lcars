@@ -72,6 +72,8 @@ const TaskDetailView = withConsolePageShell(
     subtitle,
     utilities: (
       <>
+        {/* Item actions deliberately stay on the LogicalWorkCard body
+            (#1928); the header dots carry only the shared console utilities. */}
         <div className="task-utilities task-utilities--desktop console-utilities--desktop">
           <ConsoleCommandUtilities
             watchedRepos={getWatchedRepos()}
@@ -83,11 +85,6 @@ const TaskDetailView = withConsolePageShell(
             sourceIdentities={taskSourceIdentities(detail)}
             refreshesAuthoritativeQueue
             generatedAt={generatedAt}
-            item={
-              detail.status === 'ok' && detail.item.kind === 'issue'
-                ? detail.item
-                : undefined
-            }
           />
         </div>
         <div className="task-utilities task-utilities--mobile console-utilities--mobile">
@@ -102,11 +99,6 @@ const TaskDetailView = withConsolePageShell(
             refreshesAuthoritativeQueue
             includeNavigation
             navigationHrefs={repoScopedConsoleHrefs(`${owner}/${repo}`)}
-            item={
-              detail.status === 'ok' && detail.item.kind === 'issue'
-                ? detail.item
-                : undefined
-            }
           />
         </div>
       </>
