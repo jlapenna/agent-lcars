@@ -198,7 +198,12 @@ branch on the reference format:
 
 - **Issue anchor** (`anchor.type` is `issue`, `anchor.number` set — every
   label-driven or reply dispatch, with or without a `work` payload):
-  reference the anchor as `Fixes #<N>` in the PR body, as always. A no-op
+  reference the anchor as `Fixes #<N>` in the PR body, as always. When the
+  PR deliberately leaves the anchor open, write `Tracks #<N>` and put no
+  close/fix/resolve keyword, in any tense, in front of `#<N>` anywhere in
+  the body — GitHub matches them inside negated prose ("tracks, not fixes,
+  #N" linked the issue for closing), and removing the keyword in a later edit
+  did not unlink it. A no-op
   is available: post the structured `<!-- agent-result:v1:no-op -->`
   comment alongside your attempt-claim marker. A blocked run parks the
   same way, with the structured `<!-- agent-result:v1:park -->` marker
