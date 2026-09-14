@@ -172,6 +172,12 @@ jobs:
       - name: Test reviewed OpenCode release installation
         run: bash apps/runner-autoscaler/runner-image/install-opencode-release.test.sh
 
+      # The runner image build runs this same file with `node --test`; without
+      # this step a broken import passed Verify and blocked every image
+      # promotion after #1960.
+      - name: Test the OpenCode LiteLLM proxy
+        run: node --test apps/runner-autoscaler/runner-image/opencode-litellm-proxy.test.mjs
+
       - name: Test control-plane native cross-compilation (#1436)
         run: bash apps/runner-autoscaler/control-plane-image.test.sh
 

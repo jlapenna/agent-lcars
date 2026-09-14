@@ -1,10 +1,10 @@
+/* eslint-disable vitest/no-import-node-test -- the runner image build runs this test with node --test, where Vitest is not installed. */
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-import test from 'vitest';
+import { test } from 'node:test';
 
 import {
   createLiteLLMProxy,
