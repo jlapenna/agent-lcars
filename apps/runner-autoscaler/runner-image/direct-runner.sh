@@ -221,7 +221,23 @@ CURLCFG
   rm -f -- "$checkout_response"
 }
 
-refresh_checkout_token || { echo 'FATAL: checkout credential request failed' >&2; exit 1; }
+# A claimed run must not be lost to one transient console error: the first
+# credential request retries with backoff, like checkout_refresh_loop does for
+# renewals. A persistent failure (for example a rejected run token) still
+# fails the run once the bounded attempts are exhausted.
+checkout_attempt=1
+checkout_attempts="${CHECKOUT_TOKEN_BOOTSTRAP_ATTEMPTS:-4}"
+checkout_retry_seconds="${CHECKOUT_TOKEN_BOOTSTRAP_RETRY_SECONDS:-5}"
+until refresh_checkout_token; do
+  if [ "$checkout_attempt" -ge "$checkout_attempts" ]; then
+    echo 'FATAL: checkout credential request failed' >&2
+    exit 1
+  fi
+  echo "GitHub checkout credential request failed (attempt $checkout_attempt of $checkout_attempts); retrying in $checkout_retry_seconds seconds" >&2
+  sleep "$checkout_retry_seconds"
+  checkout_attempt=$((checkout_attempt + 1))
+  checkout_retry_seconds=$((checkout_retry_seconds * 2))
+done
 CHECKOUT_TOKEN="$(cat "$CHECKOUT_TOKEN_FILE")"
 # Ruling (design spec, "Direct runner mode"): direct mode uses this ONE
 # agent-lcars[bot] installation token, minted by checkout-token, for BOTH
