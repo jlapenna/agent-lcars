@@ -23,6 +23,7 @@
     },
     "schemas": {
       "UndefinedError": {
+        "title": "UndefinedError",
         "type": "object",
         "properties": {
           "defined": {
@@ -42,6 +43,7 @@
         "required": ["defined", "code", "status", "message"]
       },
       "Forbidden": {
+        "title": "FORBIDDEN",
         "type": "object",
         "properties": {
           "defined": {
@@ -61,6 +63,7 @@
         "required": ["defined", "code", "status", "message"]
       },
       "TooManyRequests": {
+        "title": "TOO_MANY_REQUESTS",
         "type": "object",
         "properties": {
           "defined": {
@@ -89,6 +92,7 @@
         "required": ["defined", "code", "status", "message", "data"]
       },
       "Conflict": {
+        "title": "CONFLICT",
         "type": "object",
         "properties": {
           "defined": {
@@ -108,6 +112,7 @@
         "required": ["defined", "code", "status", "message"]
       },
       "NotFound": {
+        "title": "NOT_FOUND",
         "type": "object",
         "properties": {
           "defined": {
@@ -127,6 +132,7 @@
         "required": ["defined", "code", "status", "message"]
       },
       "BadRequest": {
+        "title": "BAD_REQUEST",
         "type": "object",
         "properties": {
           "defined": {
@@ -146,6 +152,7 @@
         "required": ["defined", "code", "status", "message"]
       },
       "Unauthorized": {
+        "title": "UNAUTHORIZED",
         "type": "object",
         "properties": {
           "defined": {
@@ -165,6 +172,7 @@
         "required": ["defined", "code", "status", "message"]
       },
       "InternalServerError": {
+        "title": "INTERNAL_SERVER_ERROR",
         "type": "object",
         "properties": {
           "defined": {
