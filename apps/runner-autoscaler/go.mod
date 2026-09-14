@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	cloud.google.com/go/firestore v1.25.0
-	github.com/actions/scaleset v0.4.1-0.20260721134647-cb0405b2d874
+	github.com/actions/scaleset v0.4.1-0.20260911130003-21ecccd60efb
 	github.com/containerd/errdefs v1.0.0
 	github.com/docker/cli v29.8.0+incompatible
 	github.com/docker/docker v28.5.2+incompatible
@@ -13,13 +13,13 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-retryablehttp v0.7.8
 	github.com/prometheus/client_golang v1.24.1
-	github.com/prometheus/client_model v0.6.2
-	github.com/prometheus/common v0.70.1
+	github.com/prometheus/client_model v0.6.3
+	github.com/prometheus/common v0.71.0
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/net v0.59.0
 	golang.org/x/oauth2 v0.37.0
-	google.golang.org/api v0.297.0
+	google.golang.org/api v0.298.0
 )
 
 require (
