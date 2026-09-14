@@ -330,6 +330,27 @@ cannot be armed, park with the exact failure instead of requesting review or
 claiming the PR is ready. A deliberately parked draft stays draft and must not
 be armed until its blocker is cleared.
 
+**Refresh feedback before every ready or arm.** Immediately before marking a
+PR ready, arming auto-merge, or re-arming it — including after a CI wait on a
+PR you already armed once — read everything posted since you last looked:
+paginated comments and reviews on the delivery PR and on the anchor issue, and
+the PR's unresolved review threads.
+
+```bash
+gh api "repos/<owner/repo>/issues/<PR>/comments?per_page=100" --paginate
+gh api "repos/<owner/repo>/pulls/<PR>/reviews?per_page=100" --paginate
+gh api "repos/<owner/repo>/issues/<anchor>/comments?per_page=100" --paginate
+gh api graphql --paginate -F o=<owner> -F r=<repo> -F n=<PR> -f query='query($o:String!,$r:String!,$n:Int!,$endCursor:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$endCursor){nodes{isResolved path comments(first:1){nodes{body}}} pageInfo{hasNextPage endCursor}}}}}'
+```
+
+Green CI does not answer feedback. Fix each actionable item on the branch, or
+reply with evidence that it does not apply, before arming. When someone else
+has disabled auto-merge, converted the PR to draft, or narrowed its closing
+reference (`Fixes #N` to `Tracks #N`), that is a deliberate hold: do not mark
+ready, re-arm, or restore the reference until the hold's stated gate is met
+and your PR comment says how. Agent-fixable feedback is work, not a park —
+park only for a decision or access that genuinely needs a human.
+
 That backstop also keeps an armed PR moving once `main` moves out from under
 it: under a strict "up to date" ruleset, GitHub's own auto-merge never
 updates a BEHIND branch on its own, so a scheduled sweep in
