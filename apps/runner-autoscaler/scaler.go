@@ -1564,6 +1564,7 @@ func headroomPreferredHosts(tied []string, headroom map[string]int64) []string {
 func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (placementPick, error) {
 	scaleSet := a.scaleSetLabel()
 	probe := a.probeFleetHosts(ctx, fleet)
+	a.publishHostMemoryGauges(probe)
 	a.publishLaneAdmissibleSlots(fleet, probe)
 	var inventoryBlockedHosts []string
 	for _, res := range probe.results {
@@ -1756,21 +1757,21 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 			reserved := running + inFlight
 			overcommit := a.effectiveMemoryOvercommit(h.Name, probe)
 			budget := int64(float64(total-a.marginBytesFor(h.Name, total)) * overcommit)
+			// hostMemoryBudgetGauge, hostMemoryObservedGauge,
+			// hostMemoryOvercommitEffectiveGauge, and the runner-slice-bound
+			// pair are published unconditionally for every reachable probed
+			// host by publishHostMemoryGauges (called once in pickHostLocked,
+			// right after the probe) rather than here: this loop only ever
+			// runs over withinHostLimits, a subset already narrowed by
+			// upstream admission filters (runner_limit, the CPU budget, a
+			// rung-3 floor cordon, ...), so declaring a host's bound here
+			// made the declaration depend on the same admission funnel it
+			// was meant to be independent of (agent-lcars#1973).
+			// hostMemoryReservedGauge stays here: "reserved" (running +
+			// in-flight) is this candidate's own charge against the host,
+			// not a host-capacity figure every lane should declare
+			// regardless of admission.
 			hostMemoryReservedGauge.WithLabelValues(h.Name).Set(float64(reserved))
-			hostMemoryBudgetGauge.WithLabelValues(h.Name).Set(float64(budget))
-			hostMemoryObservedGauge.WithLabelValues(h.Name).Set(float64(probe.hostObservedMemory[h.Name]))
-			hostMemoryOvercommitEffectiveGauge.WithLabelValues(h.Name).Set(overcommit)
-			// Declare (never apply -- agent-lcars#1712) this host's expected
-			// collective runner-slice bound alongside the other
-			// host-memory-observation gauges above, independent of whether
-			// this particular candidate is ultimately admitted. Nothing is
-			// published when the slice is disabled (runner_cgroup_parent ==
-			// "").
-			if a.runnerCgroupParent != "" {
-				sliceMax, sliceHigh := runnerSliceBudget(total, margin)
-				runnerSliceExpectedMemoryMaxGauge.WithLabelValues(h.Name, a.runnerCgroupParent).Set(float64(sliceMax))
-				runnerSliceExpectedMemoryHighGauge.WithLabelValues(h.Name, a.runnerCgroupParent).Set(float64(sliceHigh))
-			}
 
 			if memoryErr := probe.hostMemoryErrors[h.Name]; memoryErr != nil {
 				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: memory inventory unavailable (%v)", h.Name, memoryErr))
@@ -2602,6 +2603,50 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 func (a *Scaler) publishLaneAdmissibleSlots(fleet *FleetCoordinator, probe fleetHostProbe) {
 	laneAdmissibleSlotsGauge.WithLabelValues(a.scaleSetLabel()).Set(float64(a.laneAdmissibleSlots(fleet, probe)))
 	lanePermanentAdmissibleSlotsGauge.WithLabelValues(a.scaleSetLabel()).Set(float64(a.lanePermanentAdmissibleSlots(fleet, probe)))
+}
+
+// publishHostMemoryGauges declares every reachable probed host's
+// memory-budget and (when a runner cgroup slice is configured) collective
+// runner-slice-bound gauges from probe alone, independent of whether any
+// lane's admission funnel (runner_limit, the CPU budget, a rung-3 floor
+// cordon, ...) lets that host reach pickHostLocked's memory-reservation loop
+// this generation (agent-lcars#1973). Before this pass existed, those gauges
+// were set only inside that loop -- so a host that never won a lane's
+// funnel in a given controller generation had no series at all: Prometheus
+// client gauges exist only once .Set() and are wiped on every restart. That
+// silently starved the RunnerSliceUnbounded and RunnerSliceBoundDrift
+// alerts, which both join on these same series. Every value here is a pure
+// function of probe plus static Scaler config, so it is identical whether
+// computed here or inside that loop for any host both cover.
+//
+// Gated on a.runnerMemory > 0, matching the loop's own top-level gate:
+// an unbounded lane has never published a meaningful memory budget, and
+// this pass does not change that.
+func (a *Scaler) publishHostMemoryGauges(probe fleetHostProbe) {
+	if a.runnerMemory <= 0 {
+		return
+	}
+	margin := a.resolvedMemorySafetyMargin()
+	for _, res := range probe.results {
+		if !res.ok {
+			continue
+		}
+		host := res.host.Name
+		total := probe.hostMemoryBytes[host]
+		if total <= 0 {
+			continue
+		}
+		overcommit := a.effectiveMemoryOvercommit(host, probe)
+		budget := int64(float64(total-a.marginBytesFor(host, total)) * overcommit)
+		hostMemoryBudgetGauge.WithLabelValues(host).Set(float64(budget))
+		hostMemoryObservedGauge.WithLabelValues(host).Set(float64(probe.hostObservedMemory[host]))
+		hostMemoryOvercommitEffectiveGauge.WithLabelValues(host).Set(overcommit)
+		if a.runnerCgroupParent != "" {
+			sliceMax, sliceHigh := runnerSliceBudget(total, margin)
+			runnerSliceExpectedMemoryMaxGauge.WithLabelValues(host, a.runnerCgroupParent).Set(float64(sliceMax))
+			runnerSliceExpectedMemoryHighGauge.WithLabelValues(host, a.runnerCgroupParent).Set(float64(sliceHigh))
+		}
+	}
 }
 
 // refreshAdmissibleSlots re-probes the fleet and republishes

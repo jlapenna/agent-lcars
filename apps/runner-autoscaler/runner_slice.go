@@ -36,7 +36,9 @@ const runnerSliceMemoryHighFraction = 0.95
 //
 // This controller only ever DECLARES these numbers (published as the
 // github_runner_autoscaler_runner_slice_expected_memory_max_bytes and
-// _expected_memory_high_bytes gauges in scaler.go's pickHostLocked, next to
+// _expected_memory_high_bytes gauges by scaler.go's publishHostMemoryGauges,
+// called once per pickHostLocked for every reachable probed host regardless
+// of that generation's lane admission funnel -- agent-lcars#1973 -- next to
 // the other host-memory-observation gauges) -- it does not, and structurally
 // cannot, apply them to the host itself. An earlier version of this file set
 // the slice's memory properties directly against the host, either locally or

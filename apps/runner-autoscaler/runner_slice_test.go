@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -46,6 +49,62 @@ func TestPickHostPublishesRunnerSliceExpectedBudget(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(runnerSliceExpectedMemoryHighGauge.WithLabelValues("janeway", "homelab-runners.slice")); got != float64(wantHigh) {
 		t.Errorf("runner_slice_expected_memory_high_bytes = %v, want %v", got, wantHigh)
+	}
+}
+
+// TestPickHostPublishesMemoryGaugesForHostExcludedByRunnerLimit pins
+// agent-lcars#1973: "limited" is reachable, has known physical memory, and
+// survives probeFleetHosts -- but a lane's own admission funnel
+// (hostRunnerLimits, here) filters it out of withinHostLimits before
+// pickHostLocked's memory-reservation loop ever runs, purely because it
+// already holds a runner from an earlier placement. That must not erase its
+// runner-slice-bound or host-memory-budget declaration: Prometheus client
+// gauges exist only once .Set() and are wiped on every controller restart,
+// so a host that never wins a lane's funnel in a given generation previously
+// had no series at all (the pike/laptop symptom in #1973), which in turn
+// starved the RunnerSliceUnbounded/RunnerSliceBoundDrift alerts that join on
+// these same gauges.
+func TestPickHostPublishesMemoryGaugesForHostExcludedByRunnerLimit(t *testing.T) {
+	limitedFake := newFakeDockerServer(t)
+	limitedFake.setMemoryTotal(16 * gibibyte)
+	limitedFake.setContainers([]container.Summary{reservedRunner("existing", 2*gibibyte)})
+
+	openFake := newFakeDockerServer(t)
+	openFake.setMemoryTotal(32 * gibibyte)
+
+	scaler := &Scaler{
+		scaleSetName:       "e2e",
+		runnerMemory:       2 * gibibyte,
+		runnerCgroupParent: "homelab-runners.slice",
+		memorySafetyMargin: 0.10,
+		dockerHosts: []DockerHost{
+			{Name: "limited", Client: limitedFake.client(t)},
+			{Name: "open", Client: openFake.client(t)},
+		},
+		hostRunnerLimits: map[string]int{"limited": 1},
+		runners:          runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if host != "open" {
+		t.Fatalf("pickHost() = %q, want %q ('limited' already holds a runner at its runner_limit of 1)", host, "open")
+	}
+
+	wantMax, wantHigh := runnerSliceBudget(16*gibibyte, 0.10)
+	if got := testutil.ToFloat64(runnerSliceExpectedMemoryMaxGauge.WithLabelValues("limited", "homelab-runners.slice")); got != float64(wantMax) {
+		t.Errorf("runner_slice_expected_memory_max_bytes{host=limited} = %v, want %v (excluded-by-runner_limit host must still declare its bound)", got, wantMax)
+	}
+	if got := testutil.ToFloat64(runnerSliceExpectedMemoryHighGauge.WithLabelValues("limited", "homelab-runners.slice")); got != float64(wantHigh) {
+		t.Errorf("runner_slice_expected_memory_high_bytes{host=limited} = %v, want %v", got, wantHigh)
+	}
+	total := 16 * gibibyte
+	wantBudget := total - int64(0.10*float64(total))
+	if got := testutil.ToFloat64(hostMemoryBudgetGauge.WithLabelValues("limited")); got != float64(wantBudget) {
+		t.Errorf("host_memory_budget_bytes{host=limited} = %v, want %v (excluded-by-runner_limit host must still declare its budget)", got, wantBudget)
 	}
 }
 
