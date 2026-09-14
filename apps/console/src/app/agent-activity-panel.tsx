@@ -88,6 +88,20 @@ export interface RunItemRef {
 
 type ActivityRowVariant = 'detail' | 'operations';
 
+/** How many of the most recent outcomes the Bridge's operations panel shows.
+ * Exported so the two-panel detail resolver selects from the *same* slice the
+ * list renders - a run that ages past this cutoff has no row to select and so
+ * must not resolve to detail either. */
+export const RECENT_OUTCOMES_LIMIT = 5;
+
+/** A CLI session the Bridge lists as current work. Exported for the same
+ * reason as `RECENT_OUTCOMES_LIMIT`: the detail resolver and the list must
+ * agree on which sessions exist, or an ended session lingers in the detail
+ * pane after its row disappears. */
+export function isActiveCliSession(session: CliSession): boolean {
+  return session.liveness === 'live' || session.liveness === 'idle';
+}
+
 /**
  * The bold leading label on an operational row. On the Bridge's unified
  * two-panel view the row doubles as the master list, so the title becomes the
@@ -938,9 +952,7 @@ export function AgentActivityPanel({
     ? `/agents?${new URLSearchParams({ repo: repoFilter })}`
     : '/agents';
 
-  const activeSessions = cliSessions.filter(
-    (session) => session.liveness === 'live' || session.liveness === 'idle',
-  );
+  const activeSessions = cliSessions.filter(isActiveCliSession);
 
   // The Bridge doubles as the master list of its two-panel view: each
   // operational row's title links to its `?sel=` key so the right pane opens

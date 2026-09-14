@@ -30,7 +30,12 @@ import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
 import { type BoardCard, BridgeSections } from './action-items-board';
-import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
+import {
+  AgentActivityPanel,
+  isActiveCliSession,
+  RECENT_OUTCOMES_LIMIT,
+  type RunItemRef,
+} from './agent-activity-panel';
 import { BridgeDetail } from './bridge-detail';
 import { resolveBridgeDetail } from './bridge-rows';
 import { parseBridgeSelection } from './bridge-selection';
@@ -186,19 +191,25 @@ async function IndexBody({
     .map((item) => toCard(item));
 
   // The right pane of the two-panel view (desktop ≥1024px). Resolved from the
-  // `?sel=` key against the same filtered records the left column shows, so a
-  // stale or out-of-scope selection resolves to the empty state rather than
-  // detail the list no longer offers.
+  // `?sel=` key against the *same* records the left column actually renders -
+  // the same recent-run slice and the same live/idle session filter the
+  // operations panel uses - so a row that has scrolled out of the list (a
+  // run past the outcome cutoff, a session that ended) resolves to the empty
+  // state rather than lingering as detail with no row to select.
   const detail = resolveBridgeDetail({
     selectedKey,
     liveRuns: filteredActivity.liveRuns,
-    recentRuns: filteredActivity.recentRuns,
-    cliSessions: filteredCliSessions,
+    recentRuns: filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT),
+    cliSessions: filteredCliSessions.filter(isActiveCliSession),
     waitingOnDeploy: deployCards,
     itemsByRunId,
     sessionsByRunId,
     multiRepo,
   });
+  // Base the mobile detail swap on whether a *resolved* row exists, not on the
+  // raw `?sel=`: a stale, filtered-out, or malformed key must leave the mobile
+  // list visible (its empty state carries no back control to recover to).
+  const hasSelection = detail.kind !== 'none';
 
   return (
     <>
@@ -214,7 +225,7 @@ async function IndexBody({
 
       <section
         className="bridge-workspace"
-        data-sel={selectedKey ? '' : undefined}
+        data-sel={hasSelection ? '' : undefined}
       >
         <div className="bridge-workspace__list">
           <DeckInboxSummary
