@@ -133,6 +133,15 @@ JSON
       echo "fake curl: simulated checkout-token failure" >&2
       exit 22
     fi
+    if [ -n "${FAKE_CHECKOUT_TOKEN_FAIL_COUNT:-}" ]; then
+      failures=0
+      [ ! -f "$CHECKOUT_TOKEN_REQUEST_LOG.failures" ] || failures=$(cat "$CHECKOUT_TOKEN_REQUEST_LOG.failures")
+      if [ "$failures" -lt "$FAKE_CHECKOUT_TOKEN_FAIL_COUNT" ]; then
+        echo $((failures + 1)) > "$CHECKOUT_TOKEN_REQUEST_LOG.failures"
+        echo "fake curl: simulated transient checkout-token HTTP 500" >&2
+        exit 22
+      fi
+    fi
     token_attempt=1
     [ ! -f "$CHECKOUT_TOKEN_REQUEST_LOG" ] || token_attempt=$(( $(cat "$CHECKOUT_TOKEN_REQUEST_LOG") + 1 ))
     echo "$token_attempt" > "$CHECKOUT_TOKEN_REQUEST_LOG"
@@ -1506,9 +1515,9 @@ echo "scenario missing-claude-token: OK"
 # token-valid window, not just the claude-token check above -- this is the
 # earliest such point (immediately after /brief succeeds). No checkout ever
 # happens, so no GIT_CLONE_ARGV_LOG is written either.
-export FAKE_CHECKOUT_TOKEN_FAIL=1
+export FAKE_CHECKOUT_TOKEN_FAIL=1 CHECKOUT_TOKEN_BOOTSTRAP_RETRY_SECONDS=0
 run_scenario checkout-token-401
-unset FAKE_CHECKOUT_TOKEN_FAIL
+unset FAKE_CHECKOUT_TOKEN_FAIL CHECKOUT_TOKEN_BOOTSTRAP_RETRY_SECONDS
 
 [ "$rc" -ne 0 ] || fail "checkout-token-401: expected a non-zero exit, got 0"
 [ ! -f "$GIT_CLONE_ARGV_LOG" ] || fail "checkout-token-401: git clone ran despite a failed checkout-token call"
@@ -1516,7 +1525,26 @@ unset FAKE_CHECKOUT_TOKEN_FAIL
 grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
   fail "checkout-token-401: complete call did not report outcome: runner-failed ($(cat "$COMPLETE_LOG"))"
 
+[ "$(grep -c 'GitHub checkout credential request failed (attempt' "$scenario_log")" = 3 ] ||
+  fail "checkout-token-401: persistent failure was not retried exactly three times ($(cat "$scenario_log"))"
+
 echo "scenario checkout-token-401: OK"
+
+# --- Scenario 5b: transient checkout-token failure ---------------------------
+# jlapenna/homelab#1366/r1 was lost to one console HTTP 500 on this request.
+# Two transient failures must be absorbed and the run must proceed normally.
+export FAKE_CHECKOUT_TOKEN_FAIL_COUNT=2 CHECKOUT_TOKEN_BOOTSTRAP_RETRY_SECONDS=0
+run_scenario checkout-token-transient
+unset FAKE_CHECKOUT_TOKEN_FAIL_COUNT CHECKOUT_TOKEN_BOOTSTRAP_RETRY_SECONDS
+
+[ "$rc" = 0 ] || fail "checkout-token-transient: expected success after retries, got $rc ($(cat "$scenario_log"))"
+[ -f "$GIT_CLONE_ARGV_LOG" ] || fail "checkout-token-transient: checkout never ran after the credential retries"
+[ "$(cat "$CHECKOUT_TOKEN_REQUEST_LOG.failures")" = 2 ] ||
+  fail "checkout-token-transient: expected exactly two simulated failures"
+grep -q 'GitHub checkout credential request failed (attempt 2 of 4)' "$scenario_log" ||
+  fail "checkout-token-transient: retry was not logged ($(cat "$scenario_log"))"
+
+echo "scenario checkout-token-transient: OK"
 
 # Credential contention is capacity: wait with a live heartbeat, then start
 # exactly once after release. The credential payload must never reach logs.
