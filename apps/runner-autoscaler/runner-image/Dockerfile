@@ -200,16 +200,10 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 #   - Node 24: the base image's system Node is too old for pnpm/action-setup's
 #     self-installer (members#2004).
 #
-# NO docker CLI. It was here for the members `e2e-docker` job, which shelled
-# out to a host socket bind-mounted into the runner. No scale set mounts
-# docker.sock any more (agent-lcars#101, jlapenna/homelab#168 — the e2e lane
-# now runs on a runner image that IS the sandbox, so it never needs to
-# create a container), which leaves the client with nothing to talk to.
-#
-# Removing it is the point rather than tidiness: this shared runner image
-# executes arbitrary QueueExecutor work. A tool that cannot reach a daemon
-# today is still a tool that starts working the moment someone re-adds a
-# socket somewhere.
+# The Docker client supports remote BuildKit and static Compose validation;
+# the worker has no local Docker daemon or mounted host socket.
+FROM ghcr.io/astral-sh/uv:0.12.10@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500 AS uv-runtime
+
 FROM ${RUNNER_BASE}
 
 ARG GO_VERSION
@@ -328,6 +322,17 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 # Add entrypoint wrapper
+# Repository worktree initializers require Python hook tooling. Keep the
+# binaries image-owned and the Python packages isolated from Ubuntu's
+# externally managed Python; the runner writes only its own hook caches.
+COPY --from=uv-runtime /uv /uvx /usr/local/bin/
+COPY requirements-precommit.txt /usr/local/share/agent-lcars-tooling/requirements-precommit.txt
+RUN uv venv --python /usr/bin/python3 /opt/runner-python-tools && \
+    uv pip install --python /opt/runner-python-tools/bin/python --no-cache \
+      -r /usr/local/share/agent-lcars-tooling/requirements-precommit.txt && \
+    ln -s /opt/runner-python-tools/bin/pre-commit /usr/local/bin/pre-commit
+COPY python-hooks.test.sh /usr/local/lib/agent-lcars/python-hooks.test.sh
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
@@ -545,6 +550,9 @@ COPY --from=telemetry-watcher-build \
     /usr/local/lib/agent-lcars/opencode-continuation-test/
 
 USER runner
+
+# Prove the installed binaries and real hook enforcement as the job user.
+RUN uv --version && bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 
 # Exercise the exact installed CLI and global config through a deterministic
 # localhost provider. Unit-importing the hooks cannot prove that OpenCode

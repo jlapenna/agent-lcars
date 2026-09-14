@@ -8,6 +8,7 @@ e2e.log
 # Probably never intentional
 *.log
 *.txt
+!apps/runner-autoscaler/runner-image/requirements-precommit.txt
 
 # Vendored font binaries must ship with their upstream OFL notices.
 !apps/console/public/fonts/*-OFL.txt
