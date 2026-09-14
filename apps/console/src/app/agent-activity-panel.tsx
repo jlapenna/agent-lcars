@@ -39,6 +39,7 @@ import {
 } from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
+import { bridgeSelectionHref, runKey, sessionKey } from './bridge-selection';
 import { Eyebrow } from './eyebrow';
 import { formatCost, formatDuration } from './format';
 import { RelativeTime } from './relative-time';
@@ -86,6 +87,53 @@ export interface RunItemRef {
 }
 
 type ActivityRowVariant = 'detail' | 'operations';
+
+/** How many of the most recent outcomes the Bridge's operations panel shows.
+ * Exported so the two-panel detail resolver selects from the *same* slice the
+ * list renders - a run that ages past this cutoff has no row to select and so
+ * must not resolve to detail either. */
+export const RECENT_OUTCOMES_LIMIT = 5;
+
+/** A CLI session the Bridge lists as current work. Exported for the same
+ * reason as `RECENT_OUTCOMES_LIMIT`: the detail resolver and the list must
+ * agree on which sessions exist, or an ended session lingers in the detail
+ * pane after its row disappears. */
+export function isActiveCliSession(session: CliSession): boolean {
+  return session.liveness === 'live' || session.liveness === 'idle';
+}
+
+/**
+ * The bold leading label on an operational row. On the Bridge's unified
+ * two-panel view the row doubles as the master list, so the title becomes the
+ * selection control (a `?sel=` link that opens this row in the right pane);
+ * everywhere else it stays the plain non-interactive text it has always been.
+ * Only the operations variant passes `selectHref`, so the /agents detail rows -
+ * which render the same components at the `detail` variant - are untouched.
+ */
+function RowTitle({ text, selectHref }: { text: string; selectHref?: string }) {
+  if (!selectHref) {
+    return (
+      <Text size="sm" fw={600} truncate>
+        {text}
+      </Text>
+    );
+  }
+  return (
+    <Text
+      component="a"
+      href={selectHref}
+      size="sm"
+      fw={600}
+      c="inherit"
+      td="none"
+      truncate
+      className="bridge-row-select"
+      data-testid="bridge-row-select"
+    >
+      {text}
+    </Text>
+  );
+}
 
 function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
   const issueNumber = item?.number ?? run.issueNumber;
@@ -292,6 +340,7 @@ export function LiveRunRow({
   item,
   session,
   variant = 'detail',
+  selectHref,
 }: {
   run: AgentRun;
   item?: RunItemRef;
@@ -301,6 +350,7 @@ export function LiveRunRow({
    * existed (PRD user story 16) - no empty chrome, no "unavailable" noise. */
   session?: IssueAgentSessionDoc;
   variant?: ActivityRowVariant;
+  selectHref?: string;
 }) {
   const budgetFraction = run.elapsedSeconds / (RUN_TIMEOUT_MINUTES * 60);
 
@@ -310,9 +360,12 @@ export function LiveRunRow({
     return (
       <div className="operations-row" data-testid="current-run-row">
         <Stack gap={5} style={{ minWidth: 0 }}>
-          <Text size="sm" fw={600} truncate>
-            {item ? `#${item.number} ${item.title}` : operationsRunTitle(run)}
-          </Text>
+          <RowTitle
+            text={
+              item ? `#${item.number} ${item.title}` : operationsRunTitle(run)
+            }
+            selectHref={selectHref}
+          />
           <Group gap="xs" wrap="wrap">
             <Badge
               variant="filled"
@@ -496,11 +549,13 @@ export function LiveRunGroupList({
   itemsByRunId = {},
   sessionsByRunId = {},
   variant = 'detail',
+  selectHrefFor,
 }: {
   liveRuns: AgentRun[];
   itemsByRunId?: Record<string, RunItemRef>;
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   variant?: ActivityRowVariant;
+  selectHrefFor?: (run: AgentRun) => string;
 }) {
   return (
     <Stack gap="xs">
@@ -512,6 +567,7 @@ export function LiveRunGroupList({
             item={itemsByRunId[run.id]}
             session={sessionsByRunId[run.id]}
             variant={variant}
+            selectHref={selectHrefFor?.(run)}
           />
         ));
         if (group.runs.length === 1) {
@@ -585,10 +641,12 @@ export function FinishedRunRow({
   run,
   session,
   variant = 'detail',
+  selectHref,
 }: {
   run: AgentRun;
   session?: IssueAgentSessionDoc;
   variant?: ActivityRowVariant;
+  selectHref?: string;
 }) {
   const classification = classifyAgentRun(run, session);
   const issueUrl = issueUrlForRun(run);
@@ -604,9 +662,7 @@ export function FinishedRunRow({
         data-status={classification.status}
       >
         <Stack gap={5} style={{ minWidth: 0 }}>
-          <Text size="sm" fw={600} truncate>
-            {operationsRunTitle(run)}
-          </Text>
+          <RowTitle text={operationsRunTitle(run)} selectHref={selectHref} />
           <Group gap="xs" wrap="wrap">
             <Badge
               variant="light"
@@ -738,9 +794,11 @@ function cliSessionLabel(session: CliSession): string {
 export function CliSessionRow({
   session,
   variant = 'detail',
+  selectHref,
 }: {
   session: CliSession;
   variant?: ActivityRowVariant;
+  selectHref?: string;
 }) {
   const { host, artifacts } = session;
   const label = cliSessionLabel(session);
@@ -752,9 +810,7 @@ export function CliSessionRow({
         data-testid={`cli-session-${session.sessionId}`}
       >
         <Stack gap={5} style={{ minWidth: 0 }}>
-          <Text size="sm" fw={600} truncate>
-            {label}
-          </Text>
+          <RowTitle text={label} selectHref={selectHref} />
           <SessionStatusLine
             status={session.status}
             statusUpdatedAt={session.statusUpdatedAt}
@@ -896,9 +952,14 @@ export function AgentActivityPanel({
     ? `/agents?${new URLSearchParams({ repo: repoFilter })}`
     : '/agents';
 
-  const activeSessions = cliSessions.filter(
-    (session) => session.liveness === 'live' || session.liveness === 'idle',
-  );
+  const activeSessions = cliSessions.filter(isActiveCliSession);
+
+  // The Bridge doubles as the master list of its two-panel view: each
+  // operational row's title links to its `?sel=` key so the right pane opens
+  // that row's detail without leaving the page. `repoFilter` is already the
+  // active repo *key*, so selection links preserve the scope.
+  const selectHrefFor = (run: AgentRun) =>
+    bridgeSelectionHref(runKey(run), repoFilter);
 
   return (
     <Card
@@ -936,6 +997,7 @@ export function AgentActivityPanel({
                   itemsByRunId={itemsByRunId}
                   sessionsByRunId={sessionsByRunId}
                   variant="operations"
+                  selectHrefFor={selectHrefFor}
                 />
               )}
               {activeSessions.length > 0 && (
@@ -946,6 +1008,10 @@ export function AgentActivityPanel({
                       key={session.sessionId}
                       session={session}
                       variant="operations"
+                      selectHref={bridgeSelectionHref(
+                        sessionKey(session),
+                        repoFilter,
+                      )}
                     />
                   ))}
                 </Stack>
@@ -969,6 +1035,7 @@ export function AgentActivityPanel({
                   run={run}
                   session={sessionsByRunId[run.id]}
                   variant="operations"
+                  selectHref={bridgeSelectionHref(runKey(run), repoFilter)}
                 />
               ))}
             </Stack>

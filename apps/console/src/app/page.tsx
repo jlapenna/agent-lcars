@@ -30,7 +30,15 @@ import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
 import { type BoardCard, BridgeSections } from './action-items-board';
-import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
+import {
+  AgentActivityPanel,
+  isActiveCliSession,
+  RECENT_OUTCOMES_LIMIT,
+  type RunItemRef,
+} from './agent-activity-panel';
+import { BridgeDetail } from './bridge-detail';
+import { resolveBridgeDetail } from './bridge-rows';
+import { parseBridgeSelection } from './bridge-selection';
 import { DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
 import { DataFreshness } from './data-freshness';
@@ -92,13 +100,19 @@ async function ParkedWork() {
 }
 
 interface PageProps {
-  searchParams: Promise<{ repo?: string }>;
+  searchParams: Promise<{ repo?: string; sel?: string }>;
 }
 
 async function IndexBody({
   repoFilter,
+  repoFilterKey,
+  selectedKey,
+  multiRepo,
 }: {
   repoFilter: WatchedRepo | undefined;
+  repoFilterKey?: string;
+  selectedKey?: string;
+  multiRepo: boolean;
 }) {
   const [
     {
@@ -172,6 +186,31 @@ async function IndexBody({
 
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 
+  const deployCards = queueView.waitingOnDeploy
+    .filter((i) => matchesFilter(i.repo))
+    .map((item) => toCard(item));
+
+  // The right pane of the two-panel view (desktop ≥1024px). Resolved from the
+  // `?sel=` key against the *same* records the left column actually renders -
+  // the same recent-run slice and the same live/idle session filter the
+  // operations panel uses - so a row that has scrolled out of the list (a
+  // run past the outcome cutoff, a session that ended) resolves to the empty
+  // state rather than lingering as detail with no row to select.
+  const detail = resolveBridgeDetail({
+    selectedKey,
+    liveRuns: filteredActivity.liveRuns,
+    recentRuns: filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT),
+    cliSessions: filteredCliSessions.filter(isActiveCliSession),
+    waitingOnDeploy: deployCards,
+    itemsByRunId,
+    sessionsByRunId,
+    multiRepo,
+  });
+  // Base the mobile detail swap on whether a *resolved* row exists, not on the
+  // raw `?sel=`: a stale, filtered-out, or malformed key must leave the mobile
+  // list visible (its empty state carries no back control to recover to).
+  const hasSelection = detail.kind !== 'none';
+
   return (
     <>
       <DataFreshness
@@ -184,33 +223,41 @@ async function IndexBody({
         </Box>
       )}
 
-      <DeckInboxSummary
-        count={
-          queueView.yourQueue.filter((item) => matchesFilter(item.repo)).length
-        }
-        inboxHref={
-          repoScopedConsoleHrefs(repoFilter ? repoKey(repoFilter) : undefined)
-            ?.inbox ?? '/inbox'
-        }
-      />
+      <section
+        className="bridge-workspace"
+        data-sel={hasSelection ? '' : undefined}
+      >
+        <div className="bridge-workspace__list">
+          <DeckInboxSummary
+            count={
+              queueView.yourQueue.filter((item) => matchesFilter(item.repo))
+                .length
+            }
+            inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
+          />
 
-      <Suspense fallback={null}>
-        <ParkedWork />
-      </Suspense>
+          <Suspense fallback={null}>
+            <ParkedWork />
+          </Suspense>
 
-      <AgentActivityPanel
-        activity={filteredActivity}
-        cliSessions={filteredCliSessions}
-        itemsByRunId={itemsByRunId}
-        sessionsByRunId={sessionsByRunId}
-        repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
-      />
+          <AgentActivityPanel
+            activity={filteredActivity}
+            cliSessions={filteredCliSessions}
+            itemsByRunId={itemsByRunId}
+            sessionsByRunId={sessionsByRunId}
+            repoFilter={repoFilterKey}
+          />
 
-      <BridgeSections
-        waitingOnDeploy={queueView.waitingOnDeploy
-          .filter((i) => matchesFilter(i.repo))
-          .map((item) => toCard(item))}
-      />
+          <BridgeSections
+            waitingOnDeploy={deployCards}
+            repoFilterKey={repoFilterKey}
+          />
+        </div>
+
+        <div className="bridge-workspace__detail">
+          <BridgeDetail detail={detail} repoFilterKey={repoFilterKey} />
+        </div>
+      </section>
     </>
   );
 }
@@ -227,13 +274,25 @@ interface IndexViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
   repoFilter: ReturnType<typeof parseRepoFilterParam>;
   repoFilterKey?: string;
+  selectedKey?: string;
+  multiRepo: boolean;
   subtitle: string;
 }
 
-function IndexViewContent({ repoFilter }: IndexViewProps) {
+function IndexViewContent({
+  repoFilter,
+  repoFilterKey,
+  selectedKey,
+  multiRepo,
+}: IndexViewProps) {
   return (
     <Suspense fallback={<PageLoading rows={6} header={false} />}>
-      <IndexBody repoFilter={repoFilter} />
+      <IndexBody
+        repoFilter={repoFilter}
+        repoFilterKey={repoFilterKey}
+        selectedKey={selectedKey}
+        multiRepo={multiRepo}
+      />
     </Suspense>
   );
 }
@@ -287,6 +346,7 @@ async function IndexShell({ searchParams }: PageProps) {
 
   const repoFilter = parseRepoFilterParam(params.repo);
   const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
+  const selectedKey = parseBridgeSelection(params.sel);
 
   const subtitle =
     watchedRepos.length <= 1
@@ -300,6 +360,8 @@ async function IndexShell({ searchParams }: PageProps) {
       watchedRepos={watchedRepos}
       repoFilter={repoFilter}
       repoFilterKey={repoFilterKey}
+      selectedKey={selectedKey}
+      multiRepo={watchedRepos.length > 1}
       subtitle={subtitle}
     />
   );
