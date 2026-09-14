@@ -340,7 +340,7 @@ the PR's unresolved review threads.
 gh api "repos/<owner/repo>/issues/<PR>/comments?per_page=100" --paginate
 gh api "repos/<owner/repo>/pulls/<PR>/reviews?per_page=100" --paginate
 gh api "repos/<owner/repo>/issues/<anchor>/comments?per_page=100" --paginate
-gh api graphql -F o=<owner> -F r=<repo> -F n=<PR> -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved path comments(first:1){nodes{body}}}}}}}'
+gh api graphql --paginate -F o=<owner> -F r=<repo> -F n=<PR> -f query='query($o:String!,$r:String!,$n:Int!,$endCursor:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$endCursor){nodes{isResolved path comments(first:1){nodes{body}}} pageInfo{hasNextPage endCursor}}}}}'
 ```
 
 Green CI does not answer feedback. Fix each actionable item on the branch, or
