@@ -241,8 +241,7 @@ RUN set -eux; \
     OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)"; \
     printf '%s\n' "$OPENCODE_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; \
     OPENCODE_VERSION="$OPENCODE_VERSION" TARGETARCH="$TARGETARCH" \
-      bash /usr/local/lib/agent-lcars/install-opencode-release.sh; \
-    /usr/local/bin/opencode --version
+      bash /usr/local/lib/agent-lcars/install-opencode-release.sh
 
 # Keep Corepack's selected pnpm version tied to this repo's one
 # packageManager declaration instead of introducing a Dockerfile pin that can
@@ -550,6 +549,12 @@ COPY --from=telemetry-watcher-build \
     /usr/local/lib/agent-lcars/opencode-continuation-test/
 
 USER runner
+
+# Even --version creates /tmp/opencode. Execute the CLI only as the job user
+# so image construction does not leave a root-owned, unwritable scratch path.
+RUN /usr/local/bin/opencode --version && \
+    test "$(id -u)" -ne 0 && \
+    probe="$(mktemp /tmp/opencode/runner-write.XXXXXX)" && rm -- "$probe"
 
 # Prove the installed binaries and real hook enforcement as the job user.
 RUN uv --version && bash /usr/local/lib/agent-lcars/python-hooks.test.sh
