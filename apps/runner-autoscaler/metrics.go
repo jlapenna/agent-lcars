@@ -496,6 +496,10 @@ var (
 		Name: "github_runner_autoscaler_scale_set_session_started_timestamp_seconds",
 		Help: "Unix time the current GitHub listener session for this scale set was (re)created.",
 	}, []string{"scale_set"})
+	scaleSetSessionInfoGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_scale_set_session_info",
+		Help: "Static identity of the current GitHub listener message session for this scale set. Always 1; join scale_set to session_id to name the session GitHub Support should look up on a stranded-job recurrence (agent-lcars#1975, agent-lcars#1716, GitHub Support ticket #4758522). Exactly one series per scale set: a session recreation deletes the previous session_id series first.",
+	}, []string{"scale_set", "session_id"})
 	listenerRestarts = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_listener_restarts_total",
 		Help: "Listener reconnection attempts after an unexpected failure.",
@@ -693,6 +697,7 @@ func registerMetrics() {
 			scaleSetStatsGauge,
 			scaleSetLastMessageTimestampGauge,
 			scaleSetSessionStartedTimestampGauge,
+			scaleSetSessionInfoGauge,
 			quiesceGenerationTimeouts,
 			pendingRunnersGauge,
 			pendingSinceTimestampGauge,

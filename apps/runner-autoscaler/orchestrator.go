@@ -806,7 +806,7 @@ func runListenerSupervisor(ctx context.Context, runtime *scaleSetRuntime, logger
 			session, err := client.MessageSessionClient(ctx, runtime.scaler.scaleSetID, owner)
 			sessionErr = err
 			if sessionErr == nil {
-				statsRecorder := newScaleSetStatsRecorder(runtime.config.ScaleSetName, runtime.scaler.logger.With("component", "scale_set_stats"))
+				statsRecorder := newScaleSetStatsRecorder(runtime.config.ScaleSetName, session.Session().SessionID, runtime.scaler.logger.With("component", "scale_set_stats"))
 				setListener, listenerErr := listener.New(session, listener.Config{
 					ScaleSetID: runtime.scaler.scaleSetID,
 					MaxRunners: runtime.config.MaxRunners,

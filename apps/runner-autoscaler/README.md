@@ -157,6 +157,14 @@ but the assigned-job count the scaler already consumes:
   restart (and this timestamp jump forward) with no new message ever
   following it; that gap between the two timestamps is the signal a
   healthy-looking listener can still be silently starved.
+- `github_runner_autoscaler_scale_set_session_info{scale_set,session_id}`
+  -- always 1; names the current listener message session's own ID
+  (`scaleset.RunnerScaleSetSession.SessionID`), the piece of evidence GitHub
+  Support ticket #4758522 asked the fleet to capture for a stranded-job
+  recurrence (agent-lcars#1975, agent-lcars#1716). Set at the same
+  construction as the timestamp above; a session recreation deletes the
+  previous `session_id` series first, so exactly one series exists per scale
+  set.
 
 `github_runner_autoscaler_desired_runners` continues to be set only by
 `Scaler.HandleDesiredRunnerCount`, not by this recorder's
