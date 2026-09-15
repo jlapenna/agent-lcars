@@ -6,13 +6,22 @@
     "sprinkles, and sync-padd. Carries only the common core; genuinely",
     "repo-local policy stays in each consumer's renovate.json.",
     "nx-cache-server keeps its deliberately stricter pin-digests config and",
-    "www/girosf have no Renovate — both stay off this preset on purpose."
+    "www/girosf have no Renovate — both stay off this preset on purpose.",
+    "toolSettings.nodeMaxMemory (MiB, npm manager only) bounds the pnpm",
+    "artifact updates Renovate runs: in a large workspace (sprinkles) they hit",
+    "Mend-hosted timeout/resource limits, and Mend demotes such a repo to its",
+    "weekly Blocked schedule until one clean run (sprinkles went silent",
+    "2026-08-24 to 2026-09-15). 2048 sits inside Mend's recommended",
+    "1.5-2.5 GB range (https://docs.renovatebot.com/mend-hosted/faq/)."
   ],
   "extends": ["config:recommended"],
   "labels": ["bot:renovate", "type:dependency-update"],
   "platformAutomerge": true,
   "rebaseWhen": "conflicted",
   "schedule": ["after 8pm on monday"],
+  "toolSettings": {
+    "nodeMaxMemory": 2048
+  },
   "packageRules": [
     {
       "description": "Group and automerge updates that preserve the declared compatibility range",
@@ -32,6 +41,11 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["local/**", "docker-registry.lan.jlapenna.net/**"],
       "enabled": false
+    },
+    {
+      "description": "Match pnpm 11's own default 24-hour minimumReleaseAge install-time policy, for every pnpm 11 consumer. Without this, Renovate can open and auto-merge an npm bump for a package published hours ago, landing a lockfile entry that pnpm itself then rejects on the very next install (agent-lcars#1345/#1391). Consumers without npm packages are unaffected.",
+      "matchManagers": ["npm"],
+      "minimumReleaseAge": "1 day"
     }
   ]
 }
