@@ -6,13 +6,25 @@
     "sprinkles, and sync-padd. Carries only the common core; genuinely",
     "repo-local policy stays in each consumer's renovate.json.",
     "nx-cache-server keeps its deliberately stricter pin-digests config and",
-    "www/girosf have no Renovate — both stay off this preset on purpose."
+    "www/girosf have no Renovate — both stay off this preset on purpose.",
+    "toolSettings.nodeMaxMemory (integer MiB, npm manager only) caps the Node",
+    "child processes Renovate spawns (pnpm lockfile/artifact updates), not",
+    "Renovate's own process. sprinkles' hosted job on 2026-09-15 used 3.0 GB",
+    "of Mend Community Cloud's 3.0 GB whole-job memory cap (11m of a 30m",
+    "execution limit); jobs that hit that cap are demoted to Mend's weekly",
+    "Blocked schedule until one clean run, consistent with sprinkles going",
+    "silent 2026-08-24 to 2026-09-15. The cap covers Renovate plus pnpm, so",
+    "this uses 1536, the bottom of Mend's recommended 1.5-2.5 GB range",
+    "(https://docs.renovatebot.com/mend-hosted/faq/)."
   ],
   "extends": ["config:recommended"],
   "labels": ["bot:renovate", "type:dependency-update"],
   "platformAutomerge": true,
   "rebaseWhen": "conflicted",
   "schedule": ["after 8pm on monday"],
+  "toolSettings": {
+    "nodeMaxMemory": 1536
+  },
   "packageRules": [
     {
       "description": "Group and automerge updates that preserve the declared compatibility range",
@@ -32,6 +44,11 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["local/**", "docker-registry.lan.jlapenna.net/**"],
       "enabled": false
+    },
+    {
+      "description": "Match pnpm 11's own default 24-hour minimumReleaseAge install-time policy, for every pnpm 11 consumer. Without this, Renovate can open and auto-merge an npm bump for a package published hours ago, landing a lockfile entry that pnpm itself then rejects on the very next install (agent-lcars#1345/#1391). Consumers without npm packages are unaffected.",
+      "matchManagers": ["npm"],
+      "minimumReleaseAge": "1 day"
     }
   ]
 }
