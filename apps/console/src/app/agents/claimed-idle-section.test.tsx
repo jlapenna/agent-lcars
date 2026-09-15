@@ -59,6 +59,7 @@ function renderSection(
   items: ActionItem[],
   cliSessions: CliSession[] = [],
   authoritativeStates?: Map<string, AuthoritativeTaskState>,
+  unavailableTaskKeys?: ReadonlySet<string>,
 ) {
   render(
     <MantineProvider>
@@ -66,6 +67,7 @@ function renderSection(
         items={items}
         cliSessions={cliSessions}
         authoritativeStates={authoritativeStates}
+        unavailableTaskKeys={unavailableTaskKeys}
       />
     </MantineProvider>,
   );
@@ -173,7 +175,7 @@ describe('ClaimedIdleSection', () => {
     );
 
     expect(screen.getByTestId('claimed-idle-reason').textContent).toBe(
-      'Finished · awaiting close-out',
+      'Finished, not closed',
     );
   });
 
@@ -187,5 +189,30 @@ describe('ClaimedIdleSection', () => {
     expect(screen.getByTestId('claimed-idle-reason').textContent).toBe(
       'Never dispatched',
     );
+  });
+
+  it('says a claim was never dispatched when the orchestrator has no task for it', () => {
+    renderSection([makeItem({ number: 5 })], [], new Map());
+
+    expect(screen.getByTestId('claimed-idle-reason').textContent).toBe(
+      'Never dispatched',
+    );
+  });
+
+  it('renders no reason when the authoritative read for the task failed', () => {
+    renderSection(
+      [makeItem({ number: 5 })],
+      [],
+      new Map(),
+      new Set(['supersprinklesracing/sprinkles#5']),
+    );
+
+    expect(screen.queryByTestId('claimed-idle-reason')).toBeNull();
+  });
+
+  it('renders no reason when no authoritative state was fetched at all', () => {
+    renderSection([makeItem({ number: 5 })]);
+
+    expect(screen.queryByTestId('claimed-idle-reason')).toBeNull();
   });
 });

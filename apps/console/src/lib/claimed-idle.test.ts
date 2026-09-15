@@ -258,6 +258,10 @@ describe('claimedIdleReason', () => {
     expect(claimedIdleReason(undefined)).toBeUndefined();
   });
 
+  it('reads "never dispatched" off an absent task document', () => {
+    expect(claimedIdleReason('absent')?.kind).toBe('never-dispatched');
+  });
+
   it('reads "never dispatched" off an empty run history', () => {
     expect(claimedIdleReason({ runs: [] })).toEqual({
       kind: 'never-dispatched',
@@ -273,7 +277,7 @@ describe('claimedIdleReason', () => {
           run('finished', { ok: true }, '2026-07-19T00:00:00Z'),
         ],
       }),
-    ).toEqual({ kind: 'finished', label: 'Finished · awaiting close-out' });
+    ).toEqual({ kind: 'finished', label: 'Finished, not closed' });
   });
 
   it('distinguishes park, failure, loss, and cancellation', () => {
