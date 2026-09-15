@@ -189,6 +189,9 @@ async function IndexBody({
   const deployCards = queueView.waitingOnDeploy
     .filter((i) => matchesFilter(i.repo))
     .map((item) => toCard(item));
+  const blockedCards = queueView.blocked
+    .filter((i) => matchesFilter(i.repo))
+    .map((item) => toCard(item));
 
   // The right pane of the two-panel view (desktop ≥1024px). Resolved from the
   // `?sel=` key against the *same* records the left column actually renders -
@@ -202,6 +205,7 @@ async function IndexBody({
     recentRuns: filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT),
     cliSessions: filteredCliSessions.filter(isActiveCliSession),
     waitingOnDeploy: deployCards,
+    blocked: blockedCards,
     itemsByRunId,
     sessionsByRunId,
     multiRepo,
@@ -250,6 +254,7 @@ async function IndexBody({
 
           <BridgeSections
             waitingOnDeploy={deployCards}
+            blocked={blockedCards}
             repoFilterKey={repoFilterKey}
           />
         </div>

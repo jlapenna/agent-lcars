@@ -1,6 +1,11 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 
-import { type ActionItem, isDeployWaitOnly } from './action-items';
+import {
+  type ActionItem,
+  isBlockedWait,
+  isDeployWaitOnly,
+  isWaitOnly,
+} from './action-items';
 import type { AgentActivity, AgentRun } from './agent-activity';
 import { repoItemKey } from './github-client';
 import { deriveSilentErrorDiagnoses } from './run-classification';
@@ -9,6 +14,9 @@ export interface QueueView {
   items: ActionItem[];
   yourQueue: ActionItem[];
   waitingOnDeploy: ActionItem[];
+  /** Idle items whose only reasons are waits and one of them is
+   *  `status:blocked` - parked on something external, nothing to decide. */
+  blocked: ActionItem[];
   rest: ActionItem[];
   liveRunByItemKey: Map<string, AgentRun>;
 }
@@ -74,15 +82,17 @@ export function buildQueueView(
     (item) => !liveRunByItemKey.has(repoItemKey(item.repo, item.number)),
   );
   const yourQueue = idle.filter(
-    (item) => item.actionTypes.length > 0 && !isDeployWaitOnly(item),
+    (item) => item.actionTypes.length > 0 && !isWaitOnly(item),
   );
   const waitingOnDeploy = idle.filter(isDeployWaitOnly);
+  const blocked = idle.filter(isBlockedWait);
   const rest = idle.filter((item) => item.actionTypes.length === 0);
 
   return {
     items,
     yourQueue,
     waitingOnDeploy,
+    blocked,
     rest,
     liveRunByItemKey,
   };

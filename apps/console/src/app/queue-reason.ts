@@ -56,7 +56,22 @@ const QUEUE_REASONS: Record<ActionType, QueueReason> = {
     color: 'gray',
     rank: 6,
   },
+  blocked: {
+    type: 'blocked',
+    label: 'Blocked',
+    color: 'gray',
+    rank: 7,
+  },
 };
+
+/** Reasons that describe a wait rather than a decision. They rank last so an
+ *  item that is blocked *and* needs a human reads as the decision it is, and
+ *  the Inbox filter menu never offers them: wait-only work is the Bridge's,
+ *  never the Inbox's (`isWaitOnly` in action-items.ts). */
+const WAIT_REASONS: ReadonlySet<ActionType> = new Set([
+  'post-deploy-action',
+  'blocked',
+]);
 
 const HIDDEN_ROUTING_LABELS = new Set([
   'agent:claude',
@@ -71,11 +86,10 @@ export function actionTypeMeta(type: ActionType): QueueReason {
   return QUEUE_REASONS[type];
 }
 
-/** The Inbox filter menu's reasons, rank order - every type except
- * post-deploy-action, which the Deck's Waiting-on-Deploy section owns and
- * the Inbox never lists. */
+/** The Inbox filter menu's reasons, rank order - every decision type; the
+ * wait reasons belong to the Bridge's own sections. */
 export const INBOX_FILTER_REASONS: QueueReason[] = Object.values(QUEUE_REASONS)
-  .filter((reason) => reason.type !== 'post-deploy-action')
+  .filter((reason) => !WAIT_REASONS.has(reason.type))
   .sort((a, b) => a.rank - b.rank);
 
 export function queueReasonFor(item: ActionItem): QueueReason | undefined {

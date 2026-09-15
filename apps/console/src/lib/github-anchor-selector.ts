@@ -5,7 +5,17 @@ import { agentFleetLogin, maintainerLogin } from './deployment';
 import type { WatchedRepo } from './github-client';
 import { supportedAgentLabels } from './watched-repo';
 
-const BOARD_LABELS = ['status:needs-human', 'status:ready-for-agent'];
+/** Every `status:*` label in the label contract admits an anchor: each one
+ *  is durable workflow state the console renders somewhere (the Inbox, the
+ *  Bridge's Waiting-on-Deploy and Blocked sections). Admitting only two of
+ *  the four meant an item labeled only `status:blocked` or
+ *  `status:post-deploy-action` was invisible everywhere. */
+const BOARD_LABELS = [
+  'status:needs-human',
+  'status:ready-for-agent',
+  'status:blocked',
+  'status:post-deploy-action',
+];
 
 /**
  * The durable equivalent of the current GitHub queue predicate. It is pure

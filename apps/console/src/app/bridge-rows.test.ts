@@ -25,6 +25,7 @@ const base = {
   recentRuns: [run('recent1', 20)],
   cliSessions: [session('sess1')],
   waitingOnDeploy: [card(30)],
+  blocked: [card(40)],
 };
 
 describe('resolveBridgeDetail', () => {
@@ -80,6 +81,17 @@ describe('resolveBridgeDetail', () => {
       kind: 'item',
       multiRepo: true,
       card: { item: { number: 30 } },
+    });
+  });
+
+  it('resolves a blocked item the same way as a deploy-wait item', () => {
+    const detail = resolveBridgeDetail({
+      ...base,
+      selectedKey: 'item:jlapenna/agent-lcars#40',
+    });
+    expect(detail).toMatchObject({
+      kind: 'item',
+      card: { item: { number: 40 } },
     });
   });
 

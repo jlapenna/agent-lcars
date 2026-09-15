@@ -76,6 +76,25 @@ describe('buildQueueView', () => {
     expect(view.rest.map(({ number }) => number)).toEqual([3]);
   });
 
+  it('keeps blocked-only work out of the Inbox and in its own bucket', () => {
+    const view = buildQueueView(
+      [
+        item(1, ['blocked']),
+        item(2, ['blocked', 'needs-human']),
+        item(3, ['blocked', 'post-deploy-action']),
+      ],
+      activity(),
+      new Map(),
+    );
+
+    // Nothing for the maintainer to decide on a purely blocked item, so it
+    // is not a decision; a blocked item that also needs a human still is.
+    expect(view.yourQueue.map(({ number }) => number)).toEqual([2]);
+    expect(view.blocked.map(({ number }) => number)).toEqual([1, 3]);
+    expect(view.waitingOnDeploy).toEqual([]);
+    expect(view.rest).toEqual([]);
+  });
+
   it('removes items with a live agent run from every idle-work surface', () => {
     const view = buildQueueView(
       [item(1, ['needs-human'])],
@@ -86,6 +105,7 @@ describe('buildQueueView', () => {
     expect(view.liveRunByItemKey.size).toBe(1);
     expect(view.yourQueue).toEqual([]);
     expect(view.waitingOnDeploy).toEqual([]);
+    expect(view.blocked).toEqual([]);
     expect(view.rest).toEqual([]);
   });
 

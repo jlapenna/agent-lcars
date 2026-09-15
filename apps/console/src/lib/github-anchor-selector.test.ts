@@ -26,6 +26,8 @@ describe('isSelectedGithubAnchorProjection', () => {
     ['fleet-assigned anchor', { assigneeLogins: ['agent-lcars-bot'] }],
     ['maintainer-assigned anchor', { assigneeLogins: ['jlapenna'] }],
     ['status label', { labels: ['status:needs-human'] }],
+    ['blocked-only anchor', { labels: ['status:blocked'] }],
+    ['post-deploy-only anchor', { labels: ['status:post-deploy-action'] }],
     ['configured agent label', { labels: ['agent:codex'] }],
     ['agent-authored anchor', { author: 'agent-lcars[bot]' }],
     [

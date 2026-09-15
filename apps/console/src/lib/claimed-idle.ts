@@ -1,3 +1,5 @@
+import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
+
 import { type ActionItem } from './action-items';
 import type { CliSession } from './cli-sessions';
 import { agentFleetLogin } from './deployment';
@@ -54,12 +56,31 @@ export function mostRecentSessionForItem(
 }
 
 /**
+ * A fleet claim that is idle on purpose is not a stale claim, and this
+ * section exists to surface stale ones:
+ *
+ * - `status:blocked` says the item is parked on something external; the
+ *   Bridge's Blocked section owns it (label contract: "an external
+ *   dependency or prerequisite is preventing progress").
+ * - A Renovate-maintained item (`bot:renovate` - the Dependency Dashboard)
+ *   is a standing anchor the fleet keeps claimed so dependency work routes
+ *   to it. It will never have a run of its own and never goes idle.
+ */
+function isDeliberatelyIdle(item: ActionItem): boolean {
+  return (
+    item.actionTypes.includes('blocked') || item.labels.includes('bot:renovate')
+  );
+}
+
+/**
  * Open items the agent fleet has claimed (assignee `agent-lcars-bot`, #2783) but
  * which have no live CI run and no live/idle CLI session actually working
- * them - a stale claim per orchestration.md §4 ("agent-lcars-bot assigned but no
- * in-progress run named #N ⇒ claim is stale; any session may take over").
+ * them - a stale claim per the agent-lcars-dev skill's issue-ownership guardrail
+ * ("agent-lcars-bot assigned but no live run or session ⇒ the claim is
+ * stale; take over and say so").
  * Before the /agents page existed, these were only discoverable by noticing
- * silence on an issue.
+ * silence on an issue. Deliberately idle claims (see `isDeliberatelyIdle`)
+ * are not stale and stay out.
  */
 export function deriveClaimedIdle(
   items: ActionItem[],
@@ -69,9 +90,66 @@ export function deriveClaimedIdle(
   return items.filter(
     (item) =>
       item.assigneeLogins.includes(agentFleetLogin()) &&
+      !isDeliberatelyIdle(item) &&
       !hasLiveRun(item) &&
       !activeSessions.some((session) =>
         sessionReferencesItemNumber(session, item),
       ),
   );
+}
+
+export type ClaimedIdleReasonKind =
+  'never-dispatched' | 'finished' | 'parked' | 'failed' | 'lost' | 'canceled';
+
+export interface ClaimedIdleReason {
+  kind: ClaimedIdleReasonKind;
+  label: string;
+}
+
+const CLAIMED_IDLE_REASONS: Record<ClaimedIdleReasonKind, string> = {
+  'never-dispatched': 'Never dispatched',
+  finished: 'Finished · awaiting close-out',
+  parked: 'Parked',
+  failed: 'Last run failed',
+  lost: 'Last run lost',
+  canceled: 'Last run canceled',
+};
+
+/**
+ * Why a claimed item is idle, read off the orchestrator's own run history
+ * rather than guessed from GitHub. The section only knows an item is idle;
+ * the difference between "the fleet never started" and "the fleet finished
+ * and nobody closed the anchor" is the difference between redispatching
+ * and closing, and it was invisible. Mirrors `deriveItemState`'s reading of
+ * a run (`libs/work/src/derive.ts`): an explicit `park` summary is a human
+ * handoff, any other finished run is done or failed by `result.ok`.
+ *
+ * Undefined when there is no authoritative state to read, or while the
+ * orchestrator still holds a live run - that case is the section's own
+ * "locked" badge, and the two must not both render.
+ */
+export function claimedIdleReason(
+  state: { activeRunId?: string; runs: readonly OrchestratorRun[] } | undefined,
+): ClaimedIdleReason | undefined {
+  if (state === undefined || state.activeRunId !== undefined) return undefined;
+  const latest = [...state.runs].sort(
+    (a, b) =>
+      b.createdAt.localeCompare(a.createdAt) ||
+      b.runId.localeCompare(a.runId, undefined, { numeric: true }),
+  )[0];
+  const kind: ClaimedIdleReasonKind =
+    latest === undefined
+      ? 'never-dispatched'
+      : latest.state === 'finished'
+        ? latest.result?.summary === 'park'
+          ? 'parked'
+          : latest.result?.ok
+            ? 'finished'
+            : 'failed'
+        : latest.state === 'lost'
+          ? 'lost'
+          : latest.state === 'canceled'
+            ? 'canceled'
+            : 'never-dispatched';
+  return { kind, label: CLAIMED_IDLE_REASONS[kind] };
 }
