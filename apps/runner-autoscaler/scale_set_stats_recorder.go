@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/actions/scaleset"
+	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // The complete set of `field` label values scaleSetStatsGauge is ever set
@@ -42,6 +44,12 @@ const (
 // actually arrived -- the exact ambiguity ("a fresh session whose initial
 // statistics reported totalAssignedJobs=0, and no JobAvailable ever
 // arrived") that hid the incident behind a healthy-looking listener.
+//
+// The same per-session construction also publishes
+// github_runner_autoscaler_scale_set_session_info{scale_set,session_id}
+// (agent-lcars#1975): GitHub Support ticket #4758522 asked the fleet to
+// capture the listener session identifier active at the moment of a
+// stranded-job recurrence, and until this it appeared nowhere in metrics.
 type scaleSetStatsRecorder struct {
 	scaleSet string
 	logger   *slog.Logger
@@ -55,12 +63,34 @@ type scaleSetStatsRecorder struct {
 }
 
 // newScaleSetStatsRecorder constructs a recorder for one listener session
-// and immediately records the session-start timestamp. Callers construct a
-// fresh recorder per session (matching listener.New's own per-session
-// lifecycle) rather than reusing one across reconnects.
-func newScaleSetStatsRecorder(scaleSet string, logger *slog.Logger) *scaleSetStatsRecorder {
+// and immediately records the session-start timestamp and (agent-lcars#1975)
+// the session's identity, so a stranded-job recurrence names the exact
+// listener session GitHub Support should look up (ticket #4758522). Callers
+// construct a fresh recorder per session (matching listener.New's own
+// per-session lifecycle) rather than reusing one across reconnects, so this
+// constructor is also where a session recreation retires the previous
+// session's info series.
+//
+// sessionID is the zero value only when the caller could not determine the
+// listener session's own identity; a zero UUID publishes no session_info
+// series (a bogus all-zero session_id would misdirect the lookup this metric
+// exists to serve) but still records the session-started timestamp.
+func newScaleSetStatsRecorder(scaleSet string, sessionID uuid.UUID, logger *slog.Logger) *scaleSetStatsRecorder {
 	r := &scaleSetStatsRecorder{scaleSet: scaleSet, logger: logger, now: time.Now}
 	scaleSetSessionStartedTimestampGauge.WithLabelValues(scaleSet).Set(float64(r.now().Unix()))
+
+	logAttrs := []any{slog.String("scale_set", scaleSet), slog.String("session_id", sessionID.String())}
+	if sessionID == uuid.Nil {
+		logger.Info("GitHub listener session (re)created with no session ID available", logAttrs...)
+		return r
+	}
+	// A reconnect constructs a new recorder for the same scale set with a
+	// new session ID; delete the previous session's series first so exactly
+	// one session_info series survives per scale set rather than
+	// accumulating one per reconnect over the runner's lifetime.
+	scaleSetSessionInfoGauge.DeletePartialMatch(prometheus.Labels{"scale_set": scaleSet})
+	scaleSetSessionInfoGauge.WithLabelValues(scaleSet, sessionID.String()).Set(1)
+	logger.Info("GitHub listener session (re)created", logAttrs...)
 	return r
 }
 
