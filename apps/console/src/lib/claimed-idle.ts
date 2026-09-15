@@ -108,7 +108,7 @@ export interface ClaimedIdleReason {
 
 const CLAIMED_IDLE_REASONS: Record<ClaimedIdleReasonKind, string> = {
   'never-dispatched': 'Never dispatched',
-  finished: 'Finished · awaiting close-out',
+  finished: 'Finished, not closed',
   parked: 'Parked',
   failed: 'Last run failed',
   lost: 'Last run lost',
@@ -124,14 +124,29 @@ const CLAIMED_IDLE_REASONS: Record<ClaimedIdleReasonKind, string> = {
  * a run (`libs/work/src/derive.ts`): an explicit `park` summary is a human
  * handoff, any other finished run is done or failed by `result.ok`.
  *
- * Undefined when there is no authoritative state to read, or while the
+ * `'absent'` is the orchestrator having no task document for the anchor at
+ * all - the read succeeded and found nothing - which is the strongest form
+ * of "never dispatched": on the live console it was the common case (10 of
+ * 11 idle claims), and rendering nothing for it left the badge looking
+ * broken rather than informative. Undefined when there is no authoritative
+ * state to read (not fetched, or the read failed), or while the
  * orchestrator still holds a live run - that case is the section's own
  * "locked" badge, and the two must not both render.
  */
 export function claimedIdleReason(
-  state: { activeRunId?: string; runs: readonly OrchestratorRun[] } | undefined,
+  state:
+    | { activeRunId?: string; runs: readonly OrchestratorRun[] }
+    | 'absent'
+    | undefined,
 ): ClaimedIdleReason | undefined {
-  if (state === undefined || state.activeRunId !== undefined) return undefined;
+  if (state === undefined) return undefined;
+  if (state === 'absent') {
+    return {
+      kind: 'never-dispatched',
+      label: CLAIMED_IDLE_REASONS['never-dispatched'],
+    };
+  }
+  if (state.activeRunId !== undefined) return undefined;
   const latest = [...state.runs].sort(
     (a, b) =>
       b.createdAt.localeCompare(a.createdAt) ||

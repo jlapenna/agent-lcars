@@ -241,6 +241,7 @@ async function AgentsPageBody({
             items={filteredClaimedIdle}
             cliSessions={filteredCliSessions}
             authoritativeStates={authoritative.states}
+            unavailableTaskKeys={authoritative.unavailableTaskKeys}
           />
         ) : null
       }

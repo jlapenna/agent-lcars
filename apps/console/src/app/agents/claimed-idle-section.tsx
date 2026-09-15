@@ -43,6 +43,7 @@ export function ClaimedIdleSection({
   items,
   cliSessions = [],
   authoritativeStates,
+  unavailableTaskKeys,
 }: {
   items: ActionItem[];
   /** Every fetched CLI session, any liveness - joined per item (via
@@ -56,6 +57,10 @@ export function ClaimedIdleSection({
    * surfaces a "locked" badge when the orchestrator disagrees with this
    * section's own attempts/session-based idleness signal (#1015). */
   authoritativeStates?: Map<string, AuthoritativeTaskState>;
+  /** Task keys whose authoritative read failed, from the same fetch. Tells
+   * a missing `authoritativeStates` entry apart from a task the orchestrator
+   * genuinely has no record of (never dispatched). */
+  unavailableTaskKeys?: ReadonlySet<string>;
 }) {
   // This panel exists to surface a problem that needs intervention. An empty
   // "all clear" panel pushes the working set below the fold while adding no
@@ -73,11 +78,16 @@ export function ClaimedIdleSection({
       <Stack gap="xs">
         {items.map((item) => {
           const session = mostRecentSessionForItem(item, cliSessions);
-          const state = authoritativeStates?.get(
-            repoItemKey(item.repo, item.number),
-          );
+          const key = repoItemKey(item.repo, item.number);
+          const state = authoritativeStates?.get(key);
           const activeRun = activeOrchestratorRun(state);
-          const reason = claimedIdleReason(state);
+          const reason = claimedIdleReason(
+            state ??
+              (authoritativeStates === undefined ||
+              unavailableTaskKeys?.has(key)
+                ? undefined
+                : 'absent'),
+          );
           return (
             <Stack
               key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
@@ -108,6 +118,7 @@ export function ClaimedIdleSection({
                         color={reason.kind === 'finished' ? 'green' : 'gray'}
                         size="xs"
                         data-testid="claimed-idle-reason"
+                        title={reason.label}
                       >
                         {reason.label}
                       </Badge>
