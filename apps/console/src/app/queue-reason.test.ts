@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import {
+  INBOX_FILTER_REASONS,
   mergeBlockedReason,
   queueDisclosureLabels,
   queueReasonFor,
@@ -104,5 +105,26 @@ describe('queueDisclosureLabels', () => {
         }),
       ),
     ).toEqual(['type:bug', 'app:console', 'priority']);
+  });
+});
+
+describe('blocked reason', () => {
+  it('reads as Blocked but never outranks a real decision', () => {
+    expect(queueReasonFor(makeItem({ actionTypes: ['blocked'] }))?.label).toBe(
+      'Blocked',
+    );
+    expect(
+      queueReasonFor(makeItem({ actionTypes: ['blocked', 'needs-human'] }))
+        ?.type,
+    ).toBe('needs-human');
+  });
+
+  it('is not an Inbox filter - blocked-only work never lists there', () => {
+    expect(INBOX_FILTER_REASONS.map((reason) => reason.type)).not.toContain(
+      'blocked',
+    );
+    expect(INBOX_FILTER_REASONS.map((reason) => reason.type)).not.toContain(
+      'post-deploy-action',
+    );
   });
 });

@@ -148,4 +148,44 @@ describe('ClaimedIdleSection', () => {
     renderSection([makeItem({ number: 5 })]);
     expect(screen.queryByTestId('claimed-idle-active-run')).toBeNull();
   });
+
+  it('says why a claim is idle from the authoritative run history', () => {
+    const item = makeItem({ number: 5 });
+    renderSection(
+      [item],
+      [],
+      new Map([
+        [
+          'supersprinklesracing/sprinkles#5',
+          makeAuthoritativeState({
+            runs: [
+              {
+                runId: 'r1',
+                state: 'finished',
+                createdAt: '2026-07-18T00:00:00Z',
+                updatedAt: '2026-07-18T01:00:00Z',
+                result: { ok: true },
+              } as unknown as AuthoritativeTaskState['runs'][number],
+            ],
+          }),
+        ],
+      ]),
+    );
+
+    expect(screen.getByTestId('claimed-idle-reason').textContent).toBe(
+      'Finished · awaiting close-out',
+    );
+  });
+
+  it('says a claim was never dispatched when the orchestrator has no runs', () => {
+    renderSection(
+      [makeItem({ number: 5 })],
+      [],
+      new Map([['supersprinklesracing/sprinkles#5', makeAuthoritativeState()]]),
+    );
+
+    expect(screen.getByTestId('claimed-idle-reason').textContent).toBe(
+      'Never dispatched',
+    );
+  });
 });

@@ -2,7 +2,10 @@ import { Anchor, Badge, Group, Stack } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import type { AuthoritativeTaskState } from '../../lib/authoritative-task-state';
-import { mostRecentSessionForItem } from '../../lib/claimed-idle';
+import {
+  claimedIdleReason,
+  mostRecentSessionForItem,
+} from '../../lib/claimed-idle';
 import type { CliSession } from '../../lib/cli-sessions';
 import { repoItemKey, repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
@@ -31,8 +34,8 @@ function activeOrchestratorRun(state: AuthoritativeTaskState | undefined) {
  * "Claimed but Idle": open items the fleet has claimed (assignee
  * `agent-lcars-bot`) with no live run and no live/idle CLI session actually
  * working them - see deriveClaimedIdle in claimed-idle.ts. A stale claim
- * per orchestration.md §4 ("agent-lcars-bot assigned but no in-progress run
- * named #N ⇒ claim is stale; any session may take over"). Before this
+ * per the agent-lcars-dev skill's issue-ownership guardrail ("agent-lcars-bot
+ * assigned but no live run or session ⇒ the claim is stale; take over"). Before this
  * section existed these were only discoverable by noticing silence on an
  * issue.
  */
@@ -70,9 +73,11 @@ export function ClaimedIdleSection({
       <Stack gap="xs">
         {items.map((item) => {
           const session = mostRecentSessionForItem(item, cliSessions);
-          const activeRun = activeOrchestratorRun(
-            authoritativeStates?.get(repoItemKey(item.repo, item.number)),
+          const state = authoritativeStates?.get(
+            repoItemKey(item.repo, item.number),
           );
+          const activeRun = activeOrchestratorRun(state);
+          const reason = claimedIdleReason(state);
           return (
             <Stack
               key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
@@ -95,6 +100,16 @@ export function ClaimedIdleSection({
                         data-testid="claimed-idle-active-run"
                       >
                         locked · {activeRun.state}
+                      </Badge>
+                    )}
+                    {reason && (
+                      <Badge
+                        variant="light"
+                        color={reason.kind === 'finished' ? 'green' : 'gray'}
+                        size="xs"
+                        data-testid="claimed-idle-reason"
+                      >
+                        {reason.label}
                       </Badge>
                     )}
                     {session && (

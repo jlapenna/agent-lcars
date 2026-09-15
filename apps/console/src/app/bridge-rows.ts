@@ -49,6 +49,7 @@ export function resolveBridgeDetail({
   recentRuns,
   cliSessions,
   waitingOnDeploy,
+  blocked = [],
   itemsByRunId = {},
   sessionsByRunId = {},
   multiRepo = false,
@@ -58,6 +59,7 @@ export function resolveBridgeDetail({
   recentRuns: AgentRun[];
   cliSessions: CliSession[];
   waitingOnDeploy: BoardCard[];
+  blocked?: BoardCard[];
   itemsByRunId?: Record<string, RunItemRef>;
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   multiRepo?: boolean;
@@ -88,7 +90,7 @@ export function resolveBridgeDetail({
   );
   if (session) return { kind: 'session', session };
 
-  const card = waitingOnDeploy.find(
+  const card = [...waitingOnDeploy, ...blocked].find(
     (candidate) => itemKey(candidate.item) === selectedKey,
   );
   if (card) return { kind: 'item', card, multiRepo };

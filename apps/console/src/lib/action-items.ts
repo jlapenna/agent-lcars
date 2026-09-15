@@ -11,7 +11,12 @@ export type ActionType =
   | 'review-requested'
   | 'post-deploy-action'
   | 'merge-blocked'
-  | 'silent-error';
+  | 'silent-error'
+  /** `status:blocked` - waiting on an external dependency or prerequisite.
+   *  The label contract keeps it distinct from `needs-human`: nobody has a
+   *  decision to make here, so it is never by itself a reason to be in the
+   *  Inbox, and a fleet claim on it is deliberate parking, not staleness. */
+  | 'blocked';
 
 export type MergeableState =
   'clean' | 'dirty' | 'blocked' | 'unstable' | 'behind' | 'draft' | 'unknown';
@@ -64,12 +69,14 @@ const ACTION_PRIORITY: Record<ActionType, number> = {
   'run-failed': 1,
   'silent-error': 1,
   'post-deploy-action': 2,
+  blocked: 2,
 };
 
 const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
   'status:ready-for-agent',
   'status:needs-human',
   'status:post-deploy-action',
+  'status:blocked',
 ]);
 
 function repoFromAnchor(anchor: GithubAnchorProjection['anchor']): WatchedRepo {
@@ -92,6 +99,9 @@ export function actionItemFromGithubAnchorProjection(
   }
   if (projection.labels.includes('status:post-deploy-action')) {
     actionTypes.push('post-deploy-action');
+  }
+  if (projection.labels.includes('status:blocked')) {
+    actionTypes.push('blocked');
   }
   const reviewRequested =
     projection.kind === 'pr' &&
@@ -196,9 +206,29 @@ export function sortActionItems(items: ActionItem[]): ActionItem[] {
   });
 }
 
-export function isDeployWaitOnly(item: ActionItem): boolean {
+/** Action types that describe a wait, not a decision: the item is parked on
+ *  something outside the maintainer's hands, so it never lands in the Inbox
+ *  on their account alone. Each has its own Bridge section. */
+const WAIT_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
+  'post-deploy-action',
+  'blocked',
+]);
+
+export function isWaitOnly(item: ActionItem): boolean {
   return (
     item.actionTypes.length > 0 &&
-    item.actionTypes.every((type) => type === 'post-deploy-action')
+    item.actionTypes.every((type) => WAIT_ACTION_TYPES.has(type))
   );
+}
+
+/** Wait-only, and the wait is a deploy - the Bridge's Waiting-on-Deploy
+ *  section. An item that is also blocked belongs to Blocked instead: the
+ *  deploy alone would not unstick it. */
+export function isDeployWaitOnly(item: ActionItem): boolean {
+  return isWaitOnly(item) && !item.actionTypes.includes('blocked');
+}
+
+/** Wait-only with `status:blocked` on it - the Bridge's Blocked section. */
+export function isBlockedWait(item: ActionItem): boolean {
+  return isWaitOnly(item) && item.actionTypes.includes('blocked');
 }

@@ -67,6 +67,15 @@ admitted; the console does not offer a parallel reassignment path.
 - Assignees express ownership.
 - `status:needs-human` is cleared by the authorized hand-back path, not inferred
   from the newest comment author.
+- Every `status:*` label admits its anchor to the console, and each one has a
+  home there: `status:needs-human` and `status:ready-for-agent` are Decision
+  Inbox reasons; `status:post-deploy-action` and `status:blocked` are waits,
+  listed in the Bridge's Waiting-on-Deploy and Blocked sections and never in
+  the Inbox on their own (a blocked item that also needs a human is still a
+  decision, and reads as one with a Blocked badge). A fleet claim on a blocked
+  anchor is deliberate parking, so the Agents page does not report it as a
+  stale claim; the same holds for the Renovate-maintained Dependency
+  Dashboard, a standing anchor with no run of its own.
 - Agent LCARS Work Tasks/Runs express queued/running/completed execution
   state. GitHub Actions may report repository automation, but is not an agent
   lifecycle authority.

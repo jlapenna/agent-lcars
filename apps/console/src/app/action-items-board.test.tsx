@@ -54,10 +54,16 @@ function card(item: ActionItem): BoardCard {
   return { item };
 }
 
-function renderBoard(waitingOnDeploy: ActionItem[] = []) {
+function renderBoard(
+  waitingOnDeploy: ActionItem[] = [],
+  blocked: ActionItem[] = [],
+) {
   render(
     <MantineProvider>
-      <BridgeSections waitingOnDeploy={waitingOnDeploy.map(card)} />
+      <BridgeSections
+        waitingOnDeploy={waitingOnDeploy.map(card)}
+        blocked={blocked.map(card)}
+      />
     </MantineProvider>,
   );
 }
@@ -147,5 +153,34 @@ describe('Decision Inbox and Bridge surfaces', () => {
       'href',
       'https://github.com/o/r/pull/8',
     );
+  });
+
+  it('lists blocked work in its own section, apart from deploy waits', () => {
+    renderBoard(
+      [makeItem({ number: 2, actionTypes: ['post-deploy-action'] })],
+      [
+        makeItem({
+          number: 9,
+          title: 'Upgrade after upstream fix',
+          actionTypes: ['blocked'],
+        }),
+      ],
+    );
+
+    expect(screen.getByRole('heading', { name: 'Blocked' })).toBeTruthy();
+    expect(
+      screen.getByText(
+        '1 item · Waiting on an external dependency or prerequisite; nothing to decide yet.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByTestId('blocked-item-9')).toBeTruthy();
+    expect(screen.getByTestId('deploy-wait-item-2')).toBeTruthy();
+  });
+
+  it('renders the Blocked section alone when nothing waits on deploy', () => {
+    renderBoard([], [makeItem({ number: 9, actionTypes: ['blocked'] })]);
+
+    expect(screen.getByTestId('blocked-item-9')).toBeTruthy();
+    expect(screen.queryByTestId('waiting-on-deploy')).toBeNull();
   });
 });
