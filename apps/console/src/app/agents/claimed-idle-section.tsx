@@ -9,7 +9,7 @@ import {
 import type { CliSession } from '../../lib/cli-sessions';
 import { repoItemKey, repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
-import { ItemOverflowMenu } from '../item-overflow-menu';
+import { CloseIssueButton, ItemOverflowMenu } from '../item-overflow-menu';
 import { RelativeTime } from '../relative-time';
 import { AgentOperationsPanel } from './agent-operations-panel';
 
@@ -122,6 +122,9 @@ export function ClaimedIdleSection({
                       >
                         {reason.label}
                       </Badge>
+                    )}
+                    {reason?.kind === 'finished' && (
+                      <CloseIssueButton item={item} />
                     )}
                     {session && (
                       <Anchor

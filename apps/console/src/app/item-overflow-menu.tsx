@@ -51,6 +51,11 @@ export function useItemOverflowMenu(
   isPending: boolean;
   items: ReactNode;
   modal: ReactNode;
+  /** The menu's own "Close issue" confirm flow, exposed so a host can
+   * promote it to a visible control on a row where closing is the obvious
+   * next step (`CloseIssueButton` below). Undefined when the item cannot
+   * be closed from here (a PR). */
+  confirmClose?: () => void;
 } {
   const [isPending, startTransition] = useTransition();
   const [editOpened, setEditOpened] = useState(false);
@@ -342,7 +347,13 @@ export function useItemOverflowMenu(
     </Modal>
   );
 
-  return { hasActions: true, isPending, items, modal };
+  return {
+    hasActions: true,
+    isPending,
+    items,
+    modal,
+    ...(canClose ? { confirmClose } : {}),
+  };
 }
 
 /**
@@ -389,5 +400,29 @@ export function ItemOverflowMenu({
       </Menu>
       {modal}
     </>
+  );
+}
+
+/**
+ * "Close issue" promoted out of the overflow menu, for a row where the
+ * orchestrator says the fleet finished and nothing closed the anchor (the
+ * Agents page's "Finished, not closed" claims). Same confirm dialog and
+ * server action as the menu item, so there is one way to close, not two.
+ * Renders nothing when the item cannot be closed from here.
+ */
+export function CloseIssueButton({ item }: { item: ActionItem }) {
+  const { confirmClose, isPending } = useItemOverflowMenu(item);
+  if (!confirmClose) return null;
+  return (
+    <Button
+      size="compact-xs"
+      variant="default"
+      className="operations-primary-action"
+      onClick={confirmClose}
+      loading={isPending}
+      data-testid={`close-issue-${item.number}`}
+    >
+      Close issue
+    </Button>
   );
 }

@@ -177,6 +177,15 @@ describe('ClaimedIdleSection', () => {
     expect(screen.getByTestId('claimed-idle-reason').textContent).toBe(
       'Finished, not closed',
     );
+    // The obvious next step for a finished claim is closing the anchor, so
+    // it is a visible control here rather than only an overflow-menu item.
+    expect(screen.getByRole('button', { name: 'Close issue' })).toBeTruthy();
+  });
+
+  it('does not promote Close issue on a claim that was never dispatched', () => {
+    renderSection([makeItem({ number: 5 })], [], new Map());
+
+    expect(screen.queryByRole('button', { name: 'Close issue' })).toBeNull();
   });
 
   it('says a claim was never dispatched when the orchestrator has no runs', () => {
