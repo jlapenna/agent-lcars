@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentRun } from './agent-activity';
-import { deriveActivityMetrics, deriveLogicalWork } from './logical-work';
+import {
+  coarsenRunStates,
+  deriveActivityMetrics,
+  deriveLogicalWork,
+} from './logical-work';
 
 const repo = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const key = 'supersprinklesracing/sprinkles#42';
@@ -62,5 +66,22 @@ describe('deriveLogicalWork', () => {
       runningRuns: 2,
       queuedRuns: 0,
     });
+  });
+});
+
+describe('coarsenRunStates', () => {
+  it('ranks running over queued over any history over none', () => {
+    expect(coarsenRunStates({ running: true, queued: true, any: true })).toBe(
+      'active',
+    );
+    expect(coarsenRunStates({ running: false, queued: true, any: true })).toBe(
+      'dispatching',
+    );
+    expect(coarsenRunStates({ running: false, queued: false, any: true })).toBe(
+      'completed',
+    );
+    expect(
+      coarsenRunStates({ running: false, queued: false, any: false }),
+    ).toBe('unknown');
   });
 });

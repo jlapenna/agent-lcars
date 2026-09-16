@@ -343,6 +343,56 @@ describe('getTaskDetail', () => {
     expect(result.work.state).toBe('active');
   });
 
+  it('reads liveness off the run states, not activeRunId, so it agrees with /agents', async () => {
+    // A live run the task document has not caught up with (no activeRunId).
+    useAuthoritativeState([orchestratorRun({ state: 'running' })]);
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.work.state).toBe('active');
+  });
+
+  it('reads a pending run as dispatching even when activeRunId names nothing', async () => {
+    useAuthoritativeState([orchestratorRun({ state: 'pending' })], {
+      activeRunId: 'run-that-does-not-exist',
+    });
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.work.state).toBe('dispatching');
+  });
+
+  it('reads a fully terminal history as completed', async () => {
+    useAuthoritativeState([
+      orchestratorRun({ state: 'finished', result: { ok: true } }),
+    ]);
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.work.state).toBe('completed');
+  });
+
   it("exposes the task's own orchestrator run history verbatim as `runs`, for the native runs view (#1015)", async () => {
     const lostRun = orchestratorRun({
       runId: 'run-lost',
