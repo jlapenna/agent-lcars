@@ -1,3 +1,5 @@
+import type { WorkSummary } from '@agent-lcars/work/derive';
+
 import type { ActionItem } from '../lib/action-items';
 import type { AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
@@ -8,15 +10,16 @@ import { repoItemKey } from '../lib/watched-repo';
  * component state, exactly like the Inbox's `?item=` - so a shared link lands
  * on the same selected row and Back/Forward round-trips it. The key is a
  * kind-namespaced id, because the Bridge's left column is a *unified* list of
- * heterogeneous rows (live runs, recent outcomes, CLI sessions, and the
- * deploy-wait items), and a bare run id could otherwise collide with a session
- * id or an issue key.
+ * heterogeneous rows (live runs, recent outcomes, CLI sessions, parked work,
+ * and the deploy-wait items), and a bare run id could otherwise collide with
+ * a session id or an issue key.
  */
 export type BridgeSelectionKey = string;
 
 const RUN_PREFIX = 'run:';
 const SESSION_PREFIX = 'session:';
 const ITEM_PREFIX = 'item:';
+const PARKED_PREFIX = 'parked:';
 
 export const SEL_PARAM = 'sel';
 
@@ -30,6 +33,10 @@ export function sessionKey(session: CliSession): BridgeSelectionKey {
 
 export function itemKey(item: ActionItem): BridgeSelectionKey {
   return `${ITEM_PREFIX}${repoItemKey(item.repo, item.number)}`;
+}
+
+export function parkedWorkKey(item: WorkSummary): BridgeSelectionKey {
+  return `${PARKED_PREFIX}${item.id}`;
 }
 
 export function parseBridgeSelection(

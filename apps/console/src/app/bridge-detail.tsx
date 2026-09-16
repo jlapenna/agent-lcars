@@ -8,6 +8,8 @@ import {
 } from './agent-activity-panel';
 import type { BridgeDetail as BridgeDetailDescriptor } from './bridge-rows';
 import { bridgeSelectionHref } from './bridge-selection';
+import { ParkedWorkDetail } from './parked-work-detail';
+import type { WorkAction } from './work/work-actions';
 
 /**
  * The Bridge's right-hand detail pane. It renders whatever the `?sel=`-keyed
@@ -25,9 +27,16 @@ import { bridgeSelectionHref } from './bridge-selection';
 export function BridgeDetail({
   detail,
   repoFilterKey,
+  cancel = async () => [null, undefined] as const,
+  redispatch = async () => [null, undefined] as const,
 }: {
   detail: BridgeDetailDescriptor;
   repoFilterKey?: string;
+  /** Only ever invoked for the `parkedWork` kind; every other kind renders
+   *  without them, so tests exercising those kinds need not supply either -
+   *  the no-op defaults keep this pane's own contract self-sufficient. */
+  cancel?: WorkAction;
+  redispatch?: WorkAction;
 }) {
   if (detail.kind === 'none') {
     return (
@@ -51,7 +60,9 @@ export function BridgeDetail({
         ? 'In flight'
         : detail.kind === 'recentRun'
           ? 'Latest outcome'
-          : 'CLI session';
+          : detail.kind === 'parkedWork'
+            ? 'Stopped work'
+            : 'CLI session';
 
   return (
     <div className="bridge-detail" data-testid="bridge-detail">
@@ -95,6 +106,13 @@ export function BridgeDetail({
             )}
             {detail.kind === 'session' && (
               <CliSessionRow session={detail.session} variant="detail" />
+            )}
+            {detail.kind === 'parkedWork' && (
+              <ParkedWorkDetail
+                item={detail.item}
+                cancel={cancel}
+                redispatch={redispatch}
+              />
             )}
           </Stack>
         </Card>

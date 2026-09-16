@@ -6,6 +6,7 @@ import type { CliSession } from '../lib/cli-sessions';
 import {
   bridgeSelectionHref,
   itemKey,
+  parkedWorkKey,
   parseBridgeSelection,
   runKey,
   sessionKey,
@@ -31,6 +32,9 @@ describe('bridge selection keys', () => {
     expect(sessionKey(session('s1'))).toBe('session:s1');
     expect(itemKey(item(42))).toBe('item:jlapenna/agent-lcars#42');
     expect(runKey(run('s1'))).not.toBe(sessionKey(session('s1')));
+    expect(parkedWorkKey({ id: 'work:ulid1' } as never)).toBe(
+      'parked:work:ulid1',
+    );
   });
 });
 
