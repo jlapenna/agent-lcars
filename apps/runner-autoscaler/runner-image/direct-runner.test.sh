@@ -763,12 +763,25 @@ echo "scenario renewable-checkout-token: OK"
 # and an owner with no grant falls back to the anchor token exactly as an
 # unrecognized repo does today.
 grants_expiry="$(date -u -d '+3600 seconds' +%Y-%m-%dT%H:%M:%SZ)"
-export FAKE_CHECKOUT_GRANTS_JSON="[{\"owner\":\"jlapenna\",\"repositories\":[\"agent-lcars\",\"homelab\"],\"token\":\"fake-jlapenna-grant-token-def111\",\"expiresAt\":\"$grants_expiry\"},{\"owner\":\"supersprinklesracing\",\"repositories\":[\"sprinkles\",\"www\",\"girosf\"],\"token\":\"fake-ssr-grant-token-ghi222\",\"expiresAt\":\"$grants_expiry\"}]"
+# The third and fourth grants carry owner names that are valid character-wise
+# but are path components (`..`, `.`): a grant dir named `..` would land the
+# grant's files on top of the anchor token. Both must be skipped, and the
+# anchor token must be exactly what the checkout-token response said.
+export FAKE_CHECKOUT_GRANTS_JSON="[{\"owner\":\"jlapenna\",\"repositories\":[\"agent-lcars\",\"homelab\"],\"token\":\"fake-jlapenna-grant-token-def111\",\"expiresAt\":\"$grants_expiry\"},{\"owner\":\"supersprinklesracing\",\"repositories\":[\"sprinkles\",\"www\",\"girosf\"],\"token\":\"fake-ssr-grant-token-ghi222\",\"expiresAt\":\"$grants_expiry\"},{\"owner\":\"..\",\"repositories\":[\"x\"],\"token\":\"fake-traversal-token\",\"expiresAt\":\"$grants_expiry\"},{\"owner\":\".\",\"repositories\":[\"x\"],\"token\":\"fake-dot-token\",\"expiresAt\":\"$grants_expiry\"}]"
 run_scenario cross-repo-grants
 unset FAKE_CHECKOUT_GRANTS_JSON
 [ "$rc" -eq 0 ] || fail "cross-repo-grants: expected exit 0, got $rc ($(cat "$scenario_log"))"
 
 credential_bin="$RUNNER_TEMP/github-credentials/bin"
+
+[ "$(cat "$RUNNER_TEMP/github-credentials/token")" = "$FAKE_TOKEN" ] ||
+  fail "cross-repo-grants: a grant with a path-component owner name overwrote the anchor token"
+[ ! -e "$RUNNER_TEMP/github-credentials/owners/../repositories" ] ||
+  fail 'cross-repo-grants: a grant named `..` wrote files outside the owners directory'
+[ ! -e "$RUNNER_TEMP/github-credentials/owners/./token" ] ||
+  fail 'cross-repo-grants: a grant named `.` wrote files into the owners directory root'
+grep -q 'unsafe owner name' "$scenario_log" ||
+  fail 'cross-repo-grants: path-component owner names were not reported as unsafe'
 
 granted_credential="$(printf 'protocol=https\nhost=github.com\npath=jlapenna/agent-lcars\n\n' |
   "$credential_bin/git-credential-lcars" get | sed -n 's/^password=//p')"

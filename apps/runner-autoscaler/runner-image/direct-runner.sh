@@ -231,7 +231,7 @@ CURLCFG
   while IFS=$'\t' read -r grant_owner grant_token grant_expires_text grant_repos_csv; do
     [ -n "$grant_owner" ] || continue
     case "$grant_owner" in
-      *[!A-Za-z0-9._-]* | '')
+      '' | '.' | '..' | -* | .* | *[!A-Za-z0-9._-]*)
         echo "WARNING: checkout-token grant has an unsafe owner name; skipping" >&2
         continue
         ;;
@@ -249,7 +249,7 @@ CURLCFG
     IFS=',' read -ra grant_repo_list <<<"$grant_repos_csv"
     for grant_repo in "${grant_repo_list[@]}"; do
       case "$grant_repo" in
-        *[!A-Za-z0-9._-]* | '') continue ;;
+        '' | '.' | '..' | -* | .* | *[!A-Za-z0-9._-]*) continue ;;
       esac
       printf '%s\n' "$grant_repo" >> "$owner_repos_tmp"
     done
@@ -359,7 +359,7 @@ if [ -z "\$owner" ]; then
   done
 fi
 case "\$owner" in
-  *[!A-Za-z0-9._-]* | '') owner='' ;;
+  '' | '.' | '..' | -* | .* | *[!A-Za-z0-9._-]*) owner='' ;;
 esac
 token_file='$CHECKOUT_TOKEN_FILE'
 if [ -n "\$owner" ] && [ -f "$CHECKOUT_OWNERS_DIR/\$owner/token" ]; then
@@ -399,10 +399,10 @@ if [ "\${1:-}" = get ]; then
     owner="\${repo_path%%/*}"
     name="\${repo_path#*/}"
     case "\$owner" in
-      *[!A-Za-z0-9._-]* | '') owner='' ;;
+      '' | '.' | '..' | -* | .* | *[!A-Za-z0-9._-]*) owner='' ;;
     esac
     case "\$name" in
-      *[!A-Za-z0-9._-]* | '') name='' ;;
+      '' | '.' | '..' | -* | .* | *[!A-Za-z0-9._-]*) name='' ;;
     esac
     if [ -n "\$owner" ] && [ -n "\$name" ] &&
       [ -f "$CHECKOUT_OWNERS_DIR/\$owner/token" ] &&
