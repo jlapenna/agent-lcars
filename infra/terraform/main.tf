@@ -6,7 +6,8 @@ locals {
     "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com", "firebase.googleapis.com",
     "firestore.googleapis.com", "iam.googleapis.com",
-    "iamcredentials.googleapis.com", "run.googleapis.com",
+    "iamcredentials.googleapis.com", "monitoring.googleapis.com",
+    "run.googleapis.com",
     "secretmanager.googleapis.com", "serviceusage.googleapis.com",
     "storage.googleapis.com", "sts.googleapis.com",
   ])

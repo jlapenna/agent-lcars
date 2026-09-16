@@ -20,6 +20,7 @@ mock_provider "google-beta" {
 
 variables {
   billing_account = "000000-000000-000000"
+  alert_email     = "test@example.com"
 }
 
 run "renders_exact_repository_authorization" {

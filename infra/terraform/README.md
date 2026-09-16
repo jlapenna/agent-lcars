@@ -36,6 +36,22 @@ this state with a `removed` block (`github.tf`), so it was never
 recreated. Change branch protection in homelab — never here, never by
 hand through the GitHub UI or API.
 
+## Dispatch webhook queue backlog alert
+
+`monitoring.tf` defines a Cloud Monitoring alert policy, "Dispatch webhook
+queue backlog", that pages when the `dispatch-webhooks` Cloud Tasks queue
+either grows past 200 tasks or its non-`ok` task attempt rate stays above
+~15/5min for 30 minutes -- the two symptoms of the 2026-09-15/16 incident
+where one poisoned GitHub anchor's projection refresh 500'd forever and
+starved unrelated webhook deliveries for 40+ minutes with no alert
+(agent-lcars#1985, #1988). It notifies a single email channel backed by
+`var.alert_email`, which has no default and is supplied at apply time only
+(`-var alert_email=<address>` or `TF_VAR_alert_email`) -- the value is never
+committed. See the alert policy's own `documentation` block for first
+checks, and the homelab oncall runbook
+(`jlapenna/homelab` `docs/incidents.md` and `.agents/skills/oncall/SKILL.md`
+§1) for the full incident writeup.
+
 ## Custom domain DNS handoff
 
 Terraform owns the App Hosting association for `lcars.jlapenna.net`; the public
