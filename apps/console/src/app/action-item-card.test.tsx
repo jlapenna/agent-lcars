@@ -1,8 +1,9 @@
 import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
+import { localAgentCommand } from '../lib/local-agent-prompt';
 import type { PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard } from './action-item-card';
 import { replyToItem } from './actions';
@@ -576,6 +577,53 @@ describe('ActionItemCard', () => {
         screen.getByRole('button', { name: /Show full description/ }),
       ).toBeTruthy();
       expect(screen.queryByRole('button', { name: /Show less/ })).toBeNull();
+    });
+  });
+
+  describe('local-agent prompt', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+
+    beforeEach(() => {
+      writeText.mockClear();
+      Object.assign(navigator, { clipboard: { writeText } });
+    });
+
+    it('offers every supported pipeline and copies the chosen one’s prompt', async () => {
+      const item = makeItem();
+      renderCard(item);
+
+      const group = screen.getByTestId('local-agent-prompt');
+      expect(screen.getByText('Work locally:')).toBeTruthy();
+      for (const name of ['Claude', 'Codex', 'OpenCode']) {
+        expect(screen.getByRole('radio', { name })).toBeTruthy();
+      }
+      // Queried fresh each click, not saved from the first query: the
+      // copy button's own label flips to "Prompt copied" after a click, so a
+      // stale name-based query would miss it on the second round.
+      const copyButton = () =>
+        group.querySelector('button') as HTMLButtonElement;
+
+      fireEvent.click(copyButton());
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith(
+          localAgentCommand('claude', item),
+        ),
+      );
+
+      fireEvent.click(screen.getByRole('radio', { name: 'Codex' }));
+      fireEvent.click(copyButton());
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith(
+          localAgentCommand('codex', item),
+        ),
+      );
+    });
+
+    it('renders nothing for a repo with no agent integration', () => {
+      renderCard(
+        makeItem({ repo: { owner: 'org-a', name: 'repo-a', agents: false } }),
+      );
+      expect(screen.queryByTestId('local-agent-prompt')).toBeNull();
     });
   });
 });
