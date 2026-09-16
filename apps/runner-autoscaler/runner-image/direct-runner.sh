@@ -198,6 +198,13 @@ CHECKOUT_CREDENTIAL_DIR="$RUNNER_TEMP/github-credentials"
 mkdir -m 700 "$CHECKOUT_CREDENTIAL_DIR"
 CHECKOUT_TOKEN_FILE="$CHECKOUT_CREDENTIAL_DIR/token"
 CHECKOUT_EXPIRY_FILE="$CHECKOUT_CREDENTIAL_DIR/expires-at"
+# agent-option:cross-repo (#1993): one token per GitHub owner the fleet's App
+# installations reach, alongside the anchor's own single token above. Present
+# only when the checkout-token response carries a non-empty `grants` array,
+# which only happens for a run carrying that label -- every other run leaves
+# this directory empty and behaves exactly as before.
+CHECKOUT_OWNERS_DIR="$CHECKOUT_CREDENTIAL_DIR/owners"
+mkdir -m 700 "$CHECKOUT_OWNERS_DIR"
 
 refresh_checkout_token() {
   checkout_response="$CHECKOUT_CREDENTIAL_DIR/response.$$"
@@ -218,6 +225,38 @@ CURLCFG
   (umask 077; printf '%s' "$token" >"$token_tmp"; printf '%s' "$expires_at" >"$expiry_tmp")
   mv -f -- "$token_tmp" "$CHECKOUT_TOKEN_FILE"
   mv -f -- "$expiry_tmp" "$CHECKOUT_EXPIRY_FILE"
+
+  # `grants` is absent for every run without agent-option:cross-repo; `// []`
+  # keeps that case a silent no-op rather than a jq failure.
+  while IFS=$'\t' read -r grant_owner grant_token grant_expires_text grant_repos_csv; do
+    [ -n "$grant_owner" ] || continue
+    case "$grant_owner" in
+      *[!A-Za-z0-9._-]* | '')
+        echo "WARNING: checkout-token grant has an unsafe owner name; skipping" >&2
+        continue
+        ;;
+    esac
+    grant_expires_at="$(date -d "$grant_expires_text" +%s)" ||
+      { echo "WARNING: checkout-token grant for $grant_owner has an unparseable expiry; skipping" >&2; continue; }
+    owner_dir="$CHECKOUT_OWNERS_DIR/$grant_owner"
+    [ -d "$owner_dir" ] || mkdir -m 700 "$owner_dir"
+    owner_token_tmp="$owner_dir/token.$$"
+    owner_expiry_tmp="$owner_dir/expires-at.$$"
+    owner_repos_tmp="$owner_dir/repositories.$$"
+    (umask 077; printf '%s' "$grant_token" >"$owner_token_tmp"; printf '%s' "$grant_expires_at" >"$owner_expiry_tmp")
+    : > "$owner_repos_tmp"
+    chmod 600 "$owner_repos_tmp"
+    IFS=',' read -ra grant_repo_list <<<"$grant_repos_csv"
+    for grant_repo in "${grant_repo_list[@]}"; do
+      case "$grant_repo" in
+        *[!A-Za-z0-9._-]* | '') continue ;;
+      esac
+      printf '%s\n' "$grant_repo" >> "$owner_repos_tmp"
+    done
+    mv -f -- "$owner_token_tmp" "$owner_dir/token"
+    mv -f -- "$owner_expiry_tmp" "$owner_dir/expires-at"
+    mv -f -- "$owner_repos_tmp" "$owner_dir/repositories"
+  done < <(jq -r '.grants // [] | .[] | [.owner, .token, .expiresAt, (.repositories // [] | join(","))] | @tsv' "$checkout_response")
   rm -f -- "$checkout_response"
 }
 
@@ -283,7 +322,50 @@ mkdir -m 700 "$CREDENTIAL_BIN"
 cat >"$CREDENTIAL_BIN/gh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-token="\$(cat '$CHECKOUT_TOKEN_FILE')"
+# agent-option:cross-repo (#1993): select which token to hand \`gh\` by, in
+# priority order: an explicit -R/--repo owner/name argument; GH_REPO=owner/name;
+# \`gh api\` whose first repos/-shaped positional names an owner; otherwise the
+# anchor token, exactly as before this feature existed. A selected owner with
+# no grant on disk (no cross-repo label, or an owner outside the grant set)
+# falls back to the anchor token -- GitHub 403s/404s it same as today.
+owner=''
+prev=''
+for arg in "\$@"; do
+  case "\$prev" in
+    -R | --repo) owner="\${arg%%/*}" ;;
+  esac
+  case "\$arg" in
+    --repo=*) owner="\${arg#--repo=}"; owner="\${owner%%/*}" ;;
+  esac
+  prev="\$arg"
+done
+if [ -z "\$owner" ] && [ -n "\${GH_REPO:-}" ]; then
+  owner="\${GH_REPO%%/*}"
+fi
+if [ -z "\$owner" ]; then
+  is_api=0
+  for arg in "\$@"; do
+    if [ "\$is_api" = 0 ]; then
+      [ "\$arg" = api ] && is_api=1
+      continue
+    fi
+    case "\$arg" in
+      repos/*/*)
+        rest="\${arg#repos/}"
+        owner="\${rest%%/*}"
+        break
+        ;;
+    esac
+  done
+fi
+case "\$owner" in
+  *[!A-Za-z0-9._-]* | '') owner='' ;;
+esac
+token_file='$CHECKOUT_TOKEN_FILE'
+if [ -n "\$owner" ] && [ -f "$CHECKOUT_OWNERS_DIR/\$owner/token" ]; then
+  token_file="$CHECKOUT_OWNERS_DIR/\$owner/token"
+fi
+token="\$(cat "\$token_file")"
 unset GITHUB_TOKEN
 GH_TOKEN="\$token" exec '$REAL_GH_BIN' "\$@"
 EOF
@@ -304,6 +386,29 @@ if [ "\${1:-}" = get ]; then
   if [ "\$protocol" = https ] && [ "\$host" = github.com ] &&
     { [ "\$path" = '$TARGET_REPO' ] || [ "\$path" = '$TARGET_REPO.git' ]; }; then
     printf 'username=x-access-token\\npassword=%s\\n' "\$(cat '$CHECKOUT_TOKEN_FILE')"
+    exit 0
+  fi
+  # agent-option:cross-repo (#1993): fall back to a per-owner grant when the
+  # request names some other GitHub-hosted owner/repo this run was granted.
+  if [ "\$protocol" = https ] && [ "\$host" = github.com ]; then
+    repo_path="\${path%.git}"
+    case "\$repo_path" in
+      */*) ;;
+      *) repo_path='' ;;
+    esac
+    owner="\${repo_path%%/*}"
+    name="\${repo_path#*/}"
+    case "\$owner" in
+      *[!A-Za-z0-9._-]* | '') owner='' ;;
+    esac
+    case "\$name" in
+      *[!A-Za-z0-9._-]* | '') name='' ;;
+    esac
+    if [ -n "\$owner" ] && [ -n "\$name" ] &&
+      [ -f "$CHECKOUT_OWNERS_DIR/\$owner/token" ] &&
+      grep -Fxq -- "\$name" "$CHECKOUT_OWNERS_DIR/\$owner/repositories" 2>/dev/null; then
+      printf 'username=x-access-token\\npassword=%s\\n' "\$(cat "$CHECKOUT_OWNERS_DIR/\$owner/token")"
+    fi
   fi
 fi
 EOF
@@ -323,7 +428,16 @@ checkout_refresh_loop() {
   refresh_margin="${CHECKOUT_TOKEN_REFRESH_MARGIN_SECONDS:-240}"
   retry_seconds="${CHECKOUT_TOKEN_REFRESH_RETRY_SECONDS:-30}"
   while true; do
+    # One checkout-token call refreshes every file above (anchor token plus
+    # every per-owner grant); schedule off whichever expires soonest.
     expiry="$(cat "$CHECKOUT_EXPIRY_FILE")"
+    if [ -d "$CHECKOUT_OWNERS_DIR" ]; then
+      for owner_expiry_file in "$CHECKOUT_OWNERS_DIR"/*/expires-at; do
+        [ -f "$owner_expiry_file" ] || continue
+        owner_expiry="$(cat "$owner_expiry_file")"
+        [ "$owner_expiry" -lt "$expiry" ] && expiry="$owner_expiry"
+      done
+    fi
     now="$(date +%s)"
     delay=$((expiry - now - refresh_margin))
     [ "$delay" -gt 0 ] || delay=1

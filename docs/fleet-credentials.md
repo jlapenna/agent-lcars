@@ -125,6 +125,23 @@ repository in the lease and separately mints the short-lived checkout token
 for that exact repository. A direct container receives neither GCS credentials
 nor an arbitrary repository selector.
 
+That same short-lived checkout token — one call, shared by every pipeline, not
+just Codex — is where `agent-option:cross-repo` (#1993) adds one token per
+additional GitHub owner the fleet's App installations reach, present only when
+the run carries that label. The direct runner writes the anchor's own token to
+`$RUNNER_TEMP/github-credentials/token`/`expires-at` exactly as it always has,
+and each granted owner's token to
+`$RUNNER_TEMP/github-credentials/owners/<owner>/token` alongside a
+`repositories` file (one repo name per line) and its own `expires-at`. The
+generated `git-credential-lcars` helper and `gh` wrapper both try the anchor
+repository first; only for some other `owner/repo` — a git remote path, or a
+`gh` selector via `-R`/`--repo`, `GH_REPO`, or a `gh api repos/<owner>/...`
+path — do they consult that owner's grant, and only when `repositories` lists
+the exact name. An owner with no grant on disk falls back to the anchor token,
+so GitHub's own 403/404 is the only difference a caller sees. A run without
+the label never populates `owners/`, so single-repository behavior is
+unchanged.
+
 ### Shared Codex lease
 
 The shared `gs://agent-lcars-codex-auth/_leases/codex-subscription.json`

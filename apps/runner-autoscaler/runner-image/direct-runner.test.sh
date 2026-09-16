@@ -148,7 +148,15 @@ JSON
     checkout_token="$FAKE_TOKEN"
     [ "$token_attempt" -lt 2 ] || checkout_token="${FAKE_REFRESHED_TOKEN:-$FAKE_TOKEN}"
     expires_at="$(date -u -d "+${FAKE_CHECKOUT_TOKEN_TTL_SECONDS:-3600} seconds" +%Y-%m-%dT%H:%M:%SZ)"
-    echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\"}"
+    # agent-option:cross-repo (#1993): a scenario opts into the `grants`
+    # array by exporting FAKE_CHECKOUT_GRANTS_JSON as a literal JSON array;
+    # every other scenario leaves it unset, so `grants` is simply absent
+    # from the response, exactly like a run without the label.
+    if [ -n "${FAKE_CHECKOUT_GRANTS_JSON:-}" ]; then
+      echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\",\"grants\":$FAKE_CHECKOUT_GRANTS_JSON}"
+    else
+      echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\"}"
+    fi
     ;;
   */codex-auth)
     if printf '%s\n' "$config_body" | grep -qF 'request = "PUT"'; then
@@ -744,6 +752,70 @@ wrong_repo_credential="$(printf 'protocol=https\nhost=github.com\npath=octo/othe
   "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get)"
 [ -z "$wrong_repo_credential" ] || fail 'git credential helper disclosed a token to another repository'
 echo "scenario renewable-checkout-token: OK"
+
+# --- Scenario 1a2: agent-option:cross-repo per-owner grants (#1993) --------
+# The checkout-token response MAY additionally carry a `grants` array, one
+# entry per GitHub owner the fleet's App installations reach, only for a run
+# carrying the label. Prove: a granted owner/repo resolves through both the
+# git credential helper and the gh wrapper (by -R, by GH_REPO, and by a
+# `gh api repos/<owner>/...` path); a non-granted repo under a granted owner,
+# a non-granted owner entirely, and the other-host case all still refuse;
+# and an owner with no grant falls back to the anchor token exactly as an
+# unrecognized repo does today.
+grants_expiry="$(date -u -d '+3600 seconds' +%Y-%m-%dT%H:%M:%SZ)"
+export FAKE_CHECKOUT_GRANTS_JSON="[{\"owner\":\"jlapenna\",\"repositories\":[\"agent-lcars\",\"homelab\"],\"token\":\"fake-jlapenna-grant-token-def111\",\"expiresAt\":\"$grants_expiry\"},{\"owner\":\"supersprinklesracing\",\"repositories\":[\"sprinkles\",\"www\",\"girosf\"],\"token\":\"fake-ssr-grant-token-ghi222\",\"expiresAt\":\"$grants_expiry\"}]"
+run_scenario cross-repo-grants
+unset FAKE_CHECKOUT_GRANTS_JSON
+[ "$rc" -eq 0 ] || fail "cross-repo-grants: expected exit 0, got $rc ($(cat "$scenario_log"))"
+
+credential_bin="$RUNNER_TEMP/github-credentials/bin"
+
+granted_credential="$(printf 'protocol=https\nhost=github.com\npath=jlapenna/agent-lcars\n\n' |
+  "$credential_bin/git-credential-lcars" get | sed -n 's/^password=//p')"
+[ "$granted_credential" = 'fake-jlapenna-grant-token-def111' ] ||
+  fail "cross-repo-grants: git credential helper did not answer for a granted owner/repo (got '$granted_credential')"
+
+granted_credential_dotgit="$(printf 'protocol=https\nhost=github.com\npath=jlapenna/homelab.git\n\n' |
+  "$credential_bin/git-credential-lcars" get | sed -n 's/^password=//p')"
+[ "$granted_credential_dotgit" = 'fake-jlapenna-grant-token-def111' ] ||
+  fail "cross-repo-grants: git credential helper did not answer for a granted owner/repo.git (got '$granted_credential_dotgit')"
+
+non_granted_repo_credential="$(printf 'protocol=https\nhost=github.com\npath=jlapenna/not-granted\n\n' |
+  "$credential_bin/git-credential-lcars" get)"
+[ -z "$non_granted_repo_credential" ] ||
+  fail 'cross-repo-grants: git credential helper disclosed a token for a non-granted repo under a granted owner'
+
+non_granted_owner_credential="$(printf 'protocol=https\nhost=github.com\npath=someone-else/agent-lcars\n\n' |
+  "$credential_bin/git-credential-lcars" get)"
+[ -z "$non_granted_owner_credential" ] ||
+  fail 'cross-repo-grants: git credential helper disclosed a token for a non-granted owner'
+
+cross_repo_hostile_credential="$(printf 'protocol=https\nhost=github.com.attacker.example\npath=jlapenna/agent-lcars\n\n' |
+  "$credential_bin/git-credential-lcars" get)"
+[ -z "$cross_repo_hostile_credential" ] ||
+  fail 'cross-repo-grants: git credential helper disclosed a granted token to a non-GitHub host'
+
+"$credential_bin/gh" -R jlapenna/agent-lcars api some/path >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-jlapenna-grant-token-def111' ] ||
+  fail "gh wrapper: -R jlapenna/agent-lcars did not select the jlapenna grant (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+
+GH_REPO=supersprinklesracing/sprinkles "$credential_bin/gh" pr list >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-ssr-grant-token-ghi222' ] ||
+  fail "gh wrapper: GH_REPO=supersprinklesracing/sprinkles did not select the supersprinklesracing grant (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+
+"$credential_bin/gh" api repos/jlapenna/homelab/issues >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-jlapenna-grant-token-def111' ] ||
+  fail "gh wrapper: gh api repos/jlapenna/homelab/... did not select the jlapenna grant (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+
+"$credential_bin/gh" pr list >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = "$FAKE_TOKEN" ] ||
+  fail "gh wrapper: a call with no repo indicator did not fall back to the anchor token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+
+"$credential_bin/gh" -R someone-else/repo api some/path >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = "$FAKE_TOKEN" ] ||
+  fail "gh wrapper: an owner with no grant did not fall back to the anchor token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+
+echo "scenario cross-repo-grants: OK"
 
 # --- Scenario 1a: Codex provider dispatch, resume, and the auth broker ------
 # Codex must run without the Claude host-token mount, restore only through
