@@ -500,3 +500,10 @@ some hosts, or missing a newer subcommand: check once (`command -v lcars`),
 try it, and if it is missing or errors, carry on silently — never fail a
 task over telemetry, and never report a status you did not actually manage
 to set.
+
+## 13. Cross-repo credential (`agent-option:cross-repo`)
+
+**Situational** — moved to
+[`index.md`](index.md#13-cross-repo-credential-agent-optioncross-repo).
+Read it only when your dispatch brief reports `crossRepo: true`, or a task
+needs you to read a watched repository other than your anchor's own.

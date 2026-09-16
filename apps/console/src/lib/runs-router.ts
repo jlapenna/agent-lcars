@@ -30,6 +30,7 @@ import type {
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
+import { getWatchedRepos } from './watched-repos-config';
 import type { WorkPrincipal } from './work-auth';
 
 export interface RunsContext {
@@ -440,6 +441,11 @@ export const runsRouter = os.router({
       replyPrincipal: run.params?.['replyPrincipal'] ?? '',
       runbook: run.params?.['runbook'] ?? '',
       context: run.params?.['context'] ?? '',
+      // #1993's `agent-option:cross-repo` -- true iff admission captured
+      // that label on the anchor. `checkoutToken` (below) reads the same
+      // `run.params['crossRepo']` string independently; this is only the
+      // brief's own copy of the fact for the runner to act on.
+      crossRepo: run.params?.['crossRepo'] === 'true',
     };
     const generation = parseRunGeneration(run.runId);
     if (generation === undefined || generation < 1) {
@@ -580,11 +586,63 @@ export const runsRouter = os.router({
         ? (await context.store.readTask(run.task))?.task
         : undefined;
     const target = anchorTarget(run, task);
-    const token = await context.checkoutTokens.expiringTokenFor(target.repo);
+
+    if (run.params?.['crossRepo'] !== 'true') {
+      const token = await context.checkoutTokens.expiringTokenFor(target.repo);
+      return {
+        token: token.token,
+        repository: target.repo,
+        expiresAt: token.expiresAt,
+      };
+    }
+
+    // agent-option:cross-repo (#1993): the run's credential covers every
+    // watched repository, not just its own anchor's. One installation
+    // token can never span two GitHub owners (GitHub's own constraint --
+    // each App installation is per-account), so this mints one grant per
+    // distinct owner among `getWatchedRepos()`, each scoped to every
+    // watched repo name under that owner.
+    const namesByOwner = new Map<string, string[]>();
+    for (const repo of getWatchedRepos()) {
+      const names = namesByOwner.get(repo.owner);
+      if (names === undefined) namesByOwner.set(repo.owner, [repo.name]);
+      else names.push(repo.name);
+    }
+    const grants = await Promise.all(
+      [...namesByOwner.entries()].map(async ([owner, repositories]) => {
+        const token = await context.checkoutTokens.expiringTokenForRepositories(
+          owner,
+          repositories,
+        );
+        return {
+          owner,
+          repositories,
+          token: token.token,
+          expiresAt: token.expiresAt,
+        };
+      }),
+    );
+    const anchorOwner = target.repo.slice(0, target.repo.indexOf('/'));
+    const anchorGrant = grants.find((grant) => grant.owner === anchorOwner);
+    if (anchorGrant === undefined) {
+      // Invariant: the anchor's own repository is always among the fleet's
+      // watched repos (dispatch only ever admits a watched-repo anchor), so
+      // its owner always has a grant above. A run somehow reaching this
+      // without one has a corrupted anchor/watched-repos config, not a
+      // recoverable per-request condition.
+      throw new ORPCError('INTERNAL_SERVER_ERROR', {
+        message: `checkout token: anchor owner ${JSON.stringify(anchorOwner)} has no grant among watched repos`,
+      });
+    }
+    // The singular token/repository/expiresAt fields keep meaning exactly
+    // what they meant before this option existed -- the anchor repo's own
+    // credential -- by simply reusing its owner's grant token, so a runner
+    // that never reads `grants` keeps working unmodified.
     return {
-      token: token.token,
+      token: anchorGrant.token,
       repository: target.repo,
-      expiresAt: token.expiresAt,
+      expiresAt: anchorGrant.expiresAt,
+      grants,
     };
   }),
 

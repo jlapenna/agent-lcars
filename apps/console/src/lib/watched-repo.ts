@@ -58,6 +58,21 @@ export const DEFAULT_AGENT_INTEGRATIONS: Record<
   ]),
 ) as Record<AgentPipeline, AgentIntegration>;
 
+/** Fleet-wide `agent-option:*` label granting a dispatched run one GitHub
+ * token per fleet owner (via `getWatchedRepos()`) instead of only its
+ * anchor's own repository (#1993). Read from the anchor's labels at
+ * admission time, never inferred -- see `orchestrator-ingest.ts`'s
+ * `buildRequestDecision` and this file's `hasCrossRepoOption`. */
+export const CROSS_REPO_OPTION_LABEL = 'agent-option:cross-repo';
+
+/** True when `labels` (the anchor's current label names) carries the
+ * cross-repo credential option. Shared by the webhook admission path
+ * (`orchestrator-ingest.ts`) and the console-side dispatch paths
+ * (`backend-actions.ts`) so both read the same one label name. */
+export function hasCrossRepoOption(labels: readonly string[]): boolean {
+  return labels.includes(CROSS_REPO_OPTION_LABEL);
+}
+
 /** Canonical GitHub repository identity. Cosmetic configuration and agent
  * integration metadata never participate in identity. */
 export interface RepositoryRef {

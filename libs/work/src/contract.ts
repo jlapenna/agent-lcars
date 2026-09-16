@@ -649,6 +649,11 @@ const runBriefSharedSchema = {
       transcriptGcsUri: z.string(),
     })
     .optional(),
+  /** True iff `Run.params.crossRepo === 'true'` (#1993's
+   *  `agent-option:cross-repo`) -- the runner's `checkoutToken` grants then
+   *  cover every watched repository's owner, not just the anchor's own.
+   *  Never present as `false`; absent means the option was not requested. */
+  crossRepo: z.boolean().optional(),
 };
 
 /** Native Work preserves its existing top-level `id`/`spec` fields so an
@@ -792,9 +797,30 @@ export const runsContract = {
     .input(z.strictObject({ runId: runIdSchema }))
     .output(
       z.strictObject({
+        // The anchor repo's own credential -- unchanged meaning, present
+        // and unchanged whether or not `grants` is. When `grants` is
+        // present, `token`/`expiresAt` are simply that grant's own owner's
+        // token (see `runs-router.ts`'s `checkoutToken` handler).
         token: z.string(),
         expiresAt: z.string(),
         repository: z.string(),
+        /** Present iff the run's `agent-option:cross-repo` was requested
+         *  (`params.crossRepo === 'true'`, #1993): one entry per distinct
+         *  GitHub owner among the fleet's watched repositories, including
+         *  the anchor's own, each token scoped to every watched repo name
+         *  under that owner. A single installation token can never span
+         *  two owners. Absent entirely -- never an empty array -- when the
+         *  option was not requested. */
+        grants: z
+          .array(
+            z.strictObject({
+              owner: z.string(),
+              repositories: z.array(z.string()),
+              token: z.string(),
+              expiresAt: z.string(),
+            }),
+          )
+          .optional(),
       }),
     ),
   codexAuth: runBase

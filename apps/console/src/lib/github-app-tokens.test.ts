@@ -385,6 +385,95 @@ describe('AppInstallationTokenProvider', () => {
     });
   });
 
+  describe('expiringTokenForRepositories', () => {
+    it('mints one token scoped to every named repository, resolving the installation via the first', async () => {
+      const { fetchImpl, calls } = fakeAppFetch();
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      const token = await provider.expiringTokenForRepositories('octo', [
+        'example',
+        'other',
+      ]);
+
+      expect(token.token).toBe('ghs_minted-token');
+      // Installation lookup uses the first name -- any repo under the
+      // owner resolves the same (single, per-account) installation.
+      expect(calls[0]?.url).toBe(
+        'https://api.github.com/repos/octo/example/installation',
+      );
+      expect(calls[1]?.body).toEqual({
+        repositories: ['example', 'other'],
+        permissions: {
+          actions: 'write',
+          issues: 'write',
+          pull_requests: 'write',
+        },
+      });
+    });
+
+    it('caches by owner plus the sorted repository set: same set, any order, mints once', async () => {
+      const { fetchImpl, calls } = fakeAppFetch();
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      const first = await provider.expiringTokenForRepositories('octo', [
+        'example',
+        'other',
+      ]);
+      expect(calls).toHaveLength(2);
+
+      const second = await provider.expiringTokenForRepositories('octo', [
+        'other',
+        'example',
+      ]);
+      expect(second).toEqual(first);
+      expect(calls).toHaveLength(2); // no additional fetch calls
+    });
+
+    it('caches independently per owner+repository-set, and independently from the single-repo cache', async () => {
+      const { fetchImpl, calls } = fakeAppFetch();
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      await provider.expiringTokenForRepositories('octo', ['example']);
+      expect(calls).toHaveLength(2);
+
+      // Same owner, different repository set: a distinct cache entry.
+      await provider.expiringTokenForRepositories('octo', ['other']);
+      expect(calls).toHaveLength(4);
+
+      // The single-repo cache (`tokenFor`) is unaffected and vice versa.
+      await provider.tokenFor('octo/example');
+      expect(calls).toHaveLength(6);
+      await provider.expiringTokenForRepositories('octo', ['example']);
+      expect(calls).toHaveLength(6); // still cached from the first call above
+    });
+
+    it('rejects an empty repository list rather than minting an unscoped token', async () => {
+      const { fetchImpl, calls } = fakeAppFetch();
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      await expect(
+        provider.expiringTokenForRepositories('octo', []),
+      ).rejects.toThrow(/requires at least one repository name/);
+      expect(calls).toHaveLength(0);
+    });
+  });
+
   describe('error paths leak no secrets', () => {
     it('fails clearly when the installation lookup fails, without echoing the JWT or private key', async () => {
       const { fetchImpl } = fakeAppFetch({

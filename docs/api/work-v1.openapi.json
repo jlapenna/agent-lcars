@@ -3691,6 +3691,9 @@
                           },
                           "required": ["sessionId", "transcriptGcsUri"],
                           "additionalProperties": false
+                        },
+                        "crossRepo": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -3823,6 +3826,9 @@
                           },
                           "required": ["sessionId", "transcriptGcsUri"],
                           "additionalProperties": false
+                        },
+                        "crossRepo": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -4063,6 +4069,36 @@
                     },
                     "repository": {
                       "type": "string"
+                    },
+                    "grants": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "owner": {
+                            "type": "string"
+                          },
+                          "repositories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "token": {
+                            "type": "string"
+                          },
+                          "expiresAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "owner",
+                          "repositories",
+                          "token",
+                          "expiresAt"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": ["token", "expiresAt", "repository"],

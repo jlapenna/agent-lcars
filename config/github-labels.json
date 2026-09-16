@@ -73,6 +73,10 @@
       "color": "b60205",
       "description": "Use the extended agent turn and time budget"
     },
+    "agent-option:cross-repo": {
+      "color": "b60205",
+      "description": "Grant the run one GitHub token per fleet owner so it can read every watched repository"
+    },
     "intake:quick-task": {
       "color": "5319e7",
       "description": "Filed through the Agent LCARS quick-task intake"
@@ -163,6 +167,7 @@
         "review:codex",
         "review:opencode",
         "agent-option:long-run",
+        "agent-option:cross-repo",
         "intake:quick-task",
         "bot:renovate",
         "planning",
@@ -213,6 +218,7 @@
         "review:codex",
         "review:opencode",
         "agent-option:long-run",
+        "agent-option:cross-repo",
         "intake:quick-task",
         "bot:renovate",
         "automation:heal",
@@ -273,6 +279,7 @@
         "review:codex",
         "review:opencode",
         "agent-option:long-run",
+        "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
         "bot:renovate"
@@ -313,6 +320,7 @@
         "review:codex",
         "review:opencode",
         "agent-option:long-run",
+        "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
         "bot:renovate"
@@ -353,6 +361,7 @@
         "review:codex",
         "review:opencode",
         "agent-option:long-run",
+        "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
         "bot:renovate"
@@ -393,6 +402,7 @@
         "review:codex",
         "review:opencode",
         "agent-option:long-run",
+        "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
         "bot:renovate"
@@ -433,6 +443,7 @@
         "review:codex",
         "review:opencode",
         "agent-option:long-run",
+        "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
         "bot:renovate"

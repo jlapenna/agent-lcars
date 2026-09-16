@@ -6,8 +6,8 @@ the main file is mandatory pre-work reading on every single dispatch, on
 every provider, and a headless run that never touches CI reruns should not
 pay for the section about them (agent-lcars#1210).
 
-Section numbers match the main file exactly — cross-references to §8 and §10
-from any repo still resolve to these.
+Section numbers match the main file exactly — cross-references to §8, §10,
+and §13 from any repo still resolve to these.
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
@@ -69,3 +69,45 @@ gh api "repos/$GITHUB_REPOSITORY/issues/<N>/assignees" \
 
 `agent-lcars-bot` is the fixed tracking identity across every onboarded fleet
 repository.
+
+## 13. Cross-repo credential (`agent-option:cross-repo`)
+
+By default your run's GitHub credential (the `git` remote's own auth and
+`gh`) is scoped to your anchor's own repository only — a GitHub App
+installation token minted with `repositories: [<anchor-repo-name>]`. An
+anchor carrying `agent-option:cross-repo` at dispatch time changes that: the
+runner instead holds one token per fleet owner (every distinct GitHub
+account among the fleet's watched repositories, including your anchor's own
+owner), each scoped to every watched repository under that owner. A single
+GitHub App installation token can never span two GitHub owners — that is a
+platform constraint, not a design choice — so this is one token per owner,
+never one token for the whole fleet across owners.
+
+What this means in practice:
+
+- **`git`** works transparently against any watched repository, not just
+  your anchor's — clone, fetch, push (subject to the token's own
+  permissions) against `https://github.com/<owner>/<name>.git` for any
+  `<owner>/<name>` the fleet watches. The runner's credential helper
+  selects the right owner's token from the repository URL itself; you do
+  not need to do anything differently than you would for your own anchor
+  repo.
+- **`gh`** resolves its target repository from the current directory's git
+  remote by default, which only works inside a clone of that repository.
+  To reach a different watched repository's API directly (e.g. `gh issue
+view` or `gh api` against a repo you have not cloned), pass `-R
+owner/repo` explicitly (or set `GH_REPO=owner/repo` in the environment)
+  so the wrapper can select that owner's grant — without one of those, `gh`
+  has no way to know which of your several tokens applies.
+- **Without the option**, nothing about your credential changes: you still
+  get exactly the single anchor-repo-scoped token every run has always had,
+  and reaching any other repository fails the same way it always did before
+  this option existed (`agent-lcars#1993` has the background).
+
+**The label must be on the anchor at dispatch time**, not added afterward —
+admission reads it once, when your run is created, and never re-checks the
+anchor's current labels later. If a run needs cross-repo access and does not
+have it, adding the label after the fact does nothing for the run already in
+flight: either add `agent-option:cross-repo` to the anchor _before_ (or in
+the same GitHub operation as) the triggering `agent:*`/`review:*` label, or
+redispatch after adding it.
