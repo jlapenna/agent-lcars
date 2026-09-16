@@ -83,6 +83,13 @@ admitted; the console does not offer a parallel reassignment path.
   hand-back itself, and the Inbox's), no `status:blocked`, no `status:ledger`,
   and not the Renovate-maintained Dependency Dashboard (`bot:renovate`). A
   human never has to unassign the bot to make the console read correctly.
+- A `<!-- agent-lcars:observe-until <ISO-8601 UTC instant> -->` marker (e.g.
+  `<!-- agent-lcars:observe-until 2026-09-24T14:40:00Z -->`) in an anchor's
+  body or a comment says the anchor is legitimately idle while it waits on a
+  scheduled event - a systemd timer, a future check-in - rather than
+  because nobody has looked at it. While that instant is still in the
+  future, the Agents page reports the claim as "Observing until `<date>`"
+  instead of a stale reason.
 - Agent LCARS Work Tasks/Runs express queued/running/completed execution
   state. GitHub Actions may report repository automation, but is not an agent
   lifecycle authority.

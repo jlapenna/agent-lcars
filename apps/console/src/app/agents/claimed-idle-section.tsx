@@ -87,6 +87,7 @@ export function ClaimedIdleSection({
               unavailableTaskKeys?.has(key)
                 ? undefined
                 : 'absent'),
+            { observeUntil: item.observeUntil },
           );
           return (
             <Stack
@@ -115,10 +116,20 @@ export function ClaimedIdleSection({
                     {reason && (
                       <Badge
                         variant="light"
-                        color={reason.kind === 'finished' ? 'green' : 'gray'}
+                        color={
+                          reason.kind === 'finished'
+                            ? 'green'
+                            : reason.kind === 'observing'
+                              ? 'blue'
+                              : 'gray'
+                        }
                         size="xs"
                         data-testid="claimed-idle-reason"
-                        title={reason.label}
+                        title={
+                          reason.kind === 'observing' && item.observeUntil
+                            ? item.observeUntil
+                            : reason.label
+                        }
                       >
                         {reason.label}
                       </Badge>

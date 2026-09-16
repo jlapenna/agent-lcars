@@ -1,5 +1,6 @@
 import { parseTerminalQuickTaskBody } from '@agent-lcars/dispatch-contracts';
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
+import { z } from 'zod';
 
 import { maintainerLogin } from './deployment';
 import { type WatchedRepo } from './github-client';
@@ -55,6 +56,15 @@ export interface ActionItem {
   ciRunning?: boolean;
   unresolvedReviewThreadCount?: number;
   silentErrorDiagnosis?: string;
+  /** The later of the `<!-- agent-lcars:observe-until <ISO instant> -->`
+   *  marker found in the body and in the last comment, if either carries
+   *  one - see `parseObserveUntilMarker`. An agent or human leaves this
+   *  marker when the anchor is legitimately idle because it is waiting on
+   *  a scheduled event (a systemd timer, a future check-in) rather than
+   *  because nobody has looked at it since dispatch. `claimedIdleReason`
+   *  reads it to render "Observing until <date>" instead of "Never
+   *  dispatched". */
+  observeUntil?: string;
 }
 
 export interface ActionItemsResult {
@@ -84,6 +94,49 @@ function repoFromAnchor(anchor: GithubAnchorProjection['anchor']): WatchedRepo {
   // The orchestrator schema has already accepted the full name. This is a
   // shape conversion only; configuration admission happened at webhook time.
   return { owner: owner as string, name: name as string };
+}
+
+const OBSERVE_UNTIL_MARKER_RE =
+  /<!--\s*agent-lcars:observe-until\s+(\S+)\s*-->/;
+
+// Matches the orchestrator's own `isoUtc` convention
+// (`libs/orchestrator/src/model.ts`): a full-precision, `Z`-suffixed UTC
+// instant only, no numeric offsets. Keeping the marker's format that strict
+// (rather than the more permissive `Date.parse`) means it stays exactly
+// machine-parseable across every language the fleet's agents run in.
+const isoInstant = z.iso.datetime({ offset: false });
+
+/**
+ * Parses the `<!-- agent-lcars:observe-until <ISO instant> -->` marker (see
+ * docs/github-label-contract.md's "State boundaries" and the agent-protocol
+ * reference's Parking section) out of one piece of GitHub text - an issue
+ * or PR body, or a comment body. Returns undefined when the text carries no
+ * marker, or the captured value is not a valid ISO-8601 UTC instant:
+ * garbage in a marker should be silently ignored, not crash the read or
+ * invent a bogus date.
+ */
+export function parseObserveUntilMarker(
+  text: string | undefined,
+): string | undefined {
+  const match = text ? OBSERVE_UNTIL_MARKER_RE.exec(text) : null;
+  if (!match) return undefined;
+  const parsed = isoInstant.safeParse(match[1]);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** The later of two optional `observe-until` markers - a newer comment
+ *  extending or renewing the window should win over a stale value left in
+ *  the body. Compared numerically (not lexically) so mixed timestamp
+ *  precision (with/without fractional seconds) still orders correctly. */
+function latestObserveUntil(
+  bodyMarker: string | undefined,
+  commentMarker: string | undefined,
+): string | undefined {
+  if (bodyMarker === undefined) return commentMarker;
+  if (commentMarker === undefined) return bodyMarker;
+  return Date.parse(bodyMarker) >= Date.parse(commentMarker)
+    ? bodyMarker
+    : commentMarker;
 }
 
 export function actionItemFromGithubAnchorProjection(
@@ -125,6 +178,10 @@ export function actionItemFromGithubAnchorProjection(
   if (failingChecks.length > 0) {
     actionTypes.push('run-failed');
   }
+  const observeUntil = latestObserveUntil(
+    parseObserveUntilMarker(projection.body),
+    parseObserveUntilMarker(projection.lastComment?.body),
+  );
   return {
     kind: projection.kind,
     repo: repository ?? repoFromAnchor(projection.anchor),
@@ -185,6 +242,7 @@ export function actionItemFromGithubAnchorProjection(
       : {
           unresolvedReviewThreadCount: projection.unresolvedReviewThreadCount,
         }),
+    ...(observeUntil === undefined ? {} : { observeUntil }),
   };
 }
 

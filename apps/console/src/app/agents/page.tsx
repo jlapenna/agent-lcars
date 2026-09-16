@@ -124,10 +124,30 @@ async function AgentsPageBody({
       cliSession.liveness === 'live' || cliSession.liveness === 'idle',
   );
 
+  // Read before the repo filter below (over all `items` and every recent
+  // run, not just this page's filtered view) because `deriveClaimedIdle`'s
+  // `hasTaskRecord` needs it for every anchor the fleet might have claimed,
+  // not only the ones the current repo filter happens to show.
+  const authoritative = await readAuthoritativeTaskStates([
+    ...items.map((item) => ({
+      repository: item.repo,
+      issueNumber: item.number,
+    })),
+    ...activity.recentRuns.flatMap((run) =>
+      run.issueNumber === undefined
+        ? []
+        : [{ repository: run.repo, issueNumber: run.issueNumber }],
+    ),
+  ]);
+  const warnings = Array.from(
+    new Set([...baseWarnings, ...authoritative.warnings]),
+  );
+
   const claimedIdle = deriveClaimedIdle(
     items,
     (item) => Boolean(liveRunFor(item)),
     activeSessions,
+    (item) => authoritative.states.has(repoItemKey(item.repo, item.number)),
   );
 
   // Applied last, after every cross-repo join above already ran against the
@@ -149,21 +169,6 @@ async function AgentsPageBody({
     : activity;
   const filteredClaimedIdle = claimedIdle.filter((item) =>
     matchesFilter(item.repo),
-  );
-
-  const authoritative = await readAuthoritativeTaskStates([
-    ...filteredItems.map((item) => ({
-      repository: item.repo,
-      issueNumber: item.number,
-    })),
-    ...filteredActivity.recentRuns.flatMap((run) =>
-      run.issueNumber === undefined
-        ? []
-        : [{ repository: run.repo, issueNumber: run.issueNumber }],
-    ),
-  ]);
-  const warnings = Array.from(
-    new Set([...baseWarnings, ...authoritative.warnings]),
   );
 
   // Logical tasks, authoritative Run occupancy, and physical runner capacity

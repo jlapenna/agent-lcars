@@ -224,4 +224,71 @@ describe('ClaimedIdleSection', () => {
 
     expect(screen.queryByTestId('claimed-idle-reason')).toBeNull();
   });
+
+  it('renders an observing badge, in blue with the full instant as its title, while the window is open', () => {
+    renderSection([
+      makeItem({ number: 5, observeUntil: '2099-01-01T00:00:00Z' }),
+    ]);
+
+    const badge = screen.getByTestId('claimed-idle-reason');
+    expect(badge.textContent).toBe('Observing until Jan 1');
+    expect(badge).toHaveAttribute('title', '2099-01-01T00:00:00Z');
+    expect(badge.style.getPropertyValue('--badge-bg')).toContain('blue');
+  });
+
+  it('an open observation window wins over "never dispatched" even with a resolved absent task', () => {
+    renderSection(
+      [makeItem({ number: 5, observeUntil: '2099-01-01T00:00:00Z' })],
+      [],
+      new Map(),
+    );
+
+    expect(screen.getByTestId('claimed-idle-reason').textContent).toBe(
+      'Observing until Jan 1',
+    );
+  });
+
+  it('falls through to the run-history reason once the observation window has passed', () => {
+    renderSection(
+      [makeItem({ number: 5, observeUntil: '2000-01-01T00:00:00Z' })],
+      [],
+      new Map(),
+    );
+
+    expect(screen.getByTestId('claimed-idle-reason').textContent).toBe(
+      'Never dispatched',
+    );
+  });
+
+  it('still defers to the lock badge over an open observation window', () => {
+    const authoritativeStates = new Map([
+      [
+        'supersprinklesracing/sprinkles#5',
+        makeAuthoritativeState({
+          activeRunId: 'supersprinklesracing/sprinkles#5/r1',
+          runs: [
+            {
+              runId: 'supersprinklesracing/sprinkles#5/r1',
+              task: { repo: 'supersprinklesracing/sprinkles', issue: 5 },
+              state: 'running',
+              pipeline: 'claude',
+              requestId: 'req-1',
+              leaseExpiresAt: '2026-07-18T01:00:00Z',
+              events: [],
+              createdAt: '2026-07-18T00:00:00Z',
+              updatedAt: '2026-07-18T00:00:00Z',
+            },
+          ],
+        }),
+      ],
+    ]);
+    renderSection(
+      [makeItem({ number: 5, observeUntil: '2099-01-01T00:00:00Z' })],
+      [],
+      authoritativeStates,
+    );
+
+    expect(screen.getByTestId('claimed-idle-active-run')).toBeTruthy();
+    expect(screen.queryByTestId('claimed-idle-reason')).toBeNull();
+  });
 });
