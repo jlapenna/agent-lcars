@@ -75,3 +75,12 @@ variable "budget_notification_channels" {
   type    = list(string)
   default = []
 }
+
+# The maintainer address Cloud Monitoring alerts notify (currently only the
+# "Dispatch webhook queue backlog" policy in monitoring.tf). Supplied at
+# `terraform apply` time (`-var alert_email=<address>` or `TF_VAR_alert_email`)
+# and never committed -- no default on purpose.
+variable "alert_email" {
+  type      = string
+  sensitive = true
+}
