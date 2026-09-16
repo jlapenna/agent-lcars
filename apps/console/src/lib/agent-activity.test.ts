@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   agentRunFromOrchestrator,
+  duplicateLiveGroups,
   getAgentActivity,
   queueFromLiveRuns,
 } from './agent-activity';
@@ -240,5 +241,33 @@ describe('queueFromLiveRuns', () => {
         run({ runId: 'octo/example#42/r3', state: 'running' }),
       ]),
     ).toEqual({ queued: 1, claimed: 1, running: 1 });
+  });
+});
+
+describe('duplicateLiveGroups', () => {
+  it('groups by the caller-supplied pipeline key, keeping only groups with more than one live member', () => {
+    const items = [
+      { id: 'a', kind: 'x', live: true },
+      { id: 'b', kind: 'x', live: true },
+      { id: 'c', kind: 'y', live: true },
+      { id: 'd', kind: 'x', live: false },
+    ];
+    const groups = duplicateLiveGroups(items, {
+      isLive: (item) => item.live,
+      pipeline: (item) => item.kind,
+    });
+    expect(Array.from(groups.entries())).toEqual([['x', [items[0], items[1]]]]);
+  });
+
+  it('drops a pipeline entirely once filtering-by-liveness leaves it with a single member', () => {
+    const items = [
+      { id: 'a', kind: 'x', live: true },
+      { id: 'b', kind: 'x', live: false },
+    ];
+    const groups = duplicateLiveGroups(items, {
+      isLive: (item) => item.live,
+      pipeline: (item) => item.kind,
+    });
+    expect(groups.size).toBe(0);
   });
 });

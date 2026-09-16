@@ -92,12 +92,28 @@ function stateFromRuns(runs: readonly AgentRun[]): LogicalWorkState {
   });
 }
 
+/**
+ * The one message format for a duplicate-live-runs anomaly, shared by both
+ * run types that can produce one (`AgentRun` here, `OrchestratorRun` in
+ * `task-detail.ts`) so the wording can never drift between them again.
+ */
+export function duplicateRunAnomaly(
+  pipeline: string,
+  ids: string[],
+): LogicalWorkAnomaly {
+  return {
+    kind: 'duplicate-active-runs',
+    detail: `${ids.length} ${pipeline} runs are queued or running for the same task at once (${ids.join(', ')}).`,
+  };
+}
+
 function duplicateRunAnomalies(runs: AgentRun[]): LogicalWorkAnomaly[] {
   return Array.from(duplicateLivePipelineGroups(runs)).map(
-    ([pipeline, group]) => ({
-      kind: 'duplicate-active-runs',
-      detail: `${group.length} ${pipeline} runs are queued or running for the same task at once (${group.map((run) => run.id).join(', ')}).`,
-    }),
+    ([pipeline, group]) =>
+      duplicateRunAnomaly(
+        pipeline,
+        group.map((run) => run.id),
+      ),
   );
 }
 

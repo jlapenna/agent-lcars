@@ -13,7 +13,9 @@ import {
   TEST_HOME_REPOSITORY,
   TEST_SPRINKLES_REPOSITORY,
 } from '../test-support/watched-repos';
+import type { AgentRun } from './agent-activity';
 import { getGithubClient, getWatchedRepos } from './github-client';
+import { deriveLogicalWork } from './logical-work';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const { readGithubAnchorProjection } = vi.hoisted(() => ({
@@ -460,6 +462,43 @@ describe('getTaskDetail', () => {
           '2 claude runs are queued or running for the same task at once (run-1, run-2).',
       },
     ]);
+
+    // This page's `OrchestratorRun`-based adapter and the Agents page's
+    // `AgentRun`-based one (`logical-work.ts`'s `deriveLogicalWork`) both sit
+    // on top of the one `duplicateLiveGroups` rule (agent-activity.ts). Feed
+    // an equivalent AgentRun shape through the other adapter and confirm the
+    // two never drift apart on the same pipeline/run-id input.
+    const agentRun = (overrides: Partial<AgentRun>): AgentRun => ({
+      id: overrides.id ?? 'run-1',
+      repo: DEFAULT_REPO,
+      pipeline: 'claude',
+      status: 'running',
+      url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
+      displayTitle: '#42: Fix the thing',
+      issueNumber: 42,
+      createdAt: '2026-07-07T00:00:00Z',
+      updatedAt: '2026-07-07T00:00:00Z',
+      elapsedSeconds: 0,
+      ...overrides,
+    });
+    const { work } = deriveLogicalWork({
+      runs: [
+        agentRun({ id: 'run-1', status: 'running' }),
+        agentRun({ id: 'run-2', status: 'queued' }),
+      ],
+      taskMeta: new Map([
+        [
+          'supersprinklesracing/sprinkles#42',
+          {
+            repo: DEFAULT_REPO,
+            issueNumber: 42,
+            title: 'Fix the thing',
+            url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
+          },
+        ],
+      ]),
+    });
+    expect(work[0]?.anomalies).toEqual(result.work.anomalies);
   });
 
   it('exposes an empty `runs` array for a task with no authoritative state', async () => {
