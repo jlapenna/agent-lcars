@@ -77,6 +77,78 @@ describe('refreshGithubAnchorProjection', () => {
     );
   });
 
+  it('uses partial GraphQL data when GitHub forbids one check-run node (sprinkles#5628)', async () => {
+    const partial = {
+      repository: {
+        i42: {
+          body: 'PR body',
+          isDraft: false,
+          mergeStateStatus: 'BLOCKED',
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      totalCount: 2,
+                      nodes: [
+                        {
+                          name: 'Verify',
+                          status: 'COMPLETED',
+                          conclusion: 'FAILURE',
+                          detailsUrl:
+                            'https://github.com/jlapenna/agent-lcars/runs/1',
+                        },
+                        null,
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const graphql = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Resource not accessible by integration'), {
+        name: 'GraphqlResponseError',
+        data: partial,
+        errors: [
+          {
+            type: 'FORBIDDEN',
+            message: 'Resource not accessible by integration',
+          },
+        ],
+      }),
+    );
+
+    const [enriched] = await enrichGithubAnchorProjections(
+      anchor.repo,
+      [projection()],
+      { graphql },
+    );
+
+    expect(enriched).toMatchObject({
+      body: 'PR body',
+      mergeableState: 'blocked',
+      checkRuns: [{ name: 'Verify', conclusion: 'failure' }],
+    });
+  });
+
+  it('still throws when a GraphQL failure carries no repository data', async () => {
+    const graphql = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Could not resolve to a Repository'), {
+        data: { repository: null },
+        errors: [{ type: 'NOT_FOUND', message: 'Could not resolve' }],
+      }),
+    );
+
+    await expect(
+      enrichGithubAnchorProjections(anchor.repo, [projection()], { graphql }),
+    ).rejects.toThrow('Could not resolve to a Repository');
+  });
+
   it('turns a non-delete exact-load 404 into a fenced tombstone', async () => {
     const store = new MemoryStore();
     const generation = await store.beginGithubAnchorProjectionRefresh(anchor);

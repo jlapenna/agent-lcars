@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type {
   GithubAnchorProjection,
   OrchestratorStore,
@@ -57,6 +58,46 @@ function anchorAlias(number: number): string {
 /** An exact anchor read includes bounded presentation fields that a webhook
  * body can omit. This is invoked only by control-plane refreshes, never by a
  * console render. */
+/**
+ * GitHub answers a GraphQL query with partial data plus an `errors` array
+ * when one field is not readable by the caller, and Octokit turns any
+ * `errors` into a thrown `GraphqlResponseError` that still carries `.data`.
+ * The enrichment query walks a commit's `statusCheckRollup`, and a check
+ * run posted by an app outside this installation's permissions answers
+ * FORBIDDEN for that one node while everything else resolves. Treating
+ * that as total failure made every webhook touching such a PR 500 until its
+ * retry budget ran out, then hand itself a fresh budget -- forever
+ * (sprinkles#5628 held the queue for a day and starved every other
+ * delivery). Partial data is the answer GitHub gave; use it, say so, and
+ * let the unreadable node stay `null` like any other absent field.
+ */
+async function graphqlTolerantOfPartialErrors<T extends object>(
+  github: Pick<ReturnType<typeof getGithubClient>, 'graphql'>,
+  query: string,
+  variables: Record<string, string>,
+  repository: string,
+): Promise<T> {
+  try {
+    return await github.graphql<T>(query, variables);
+  } catch (error) {
+    const partial = (error as { data?: unknown; errors?: unknown[] }).data;
+    if (
+      partial === null ||
+      typeof partial !== 'object' ||
+      (partial as { repository?: unknown }).repository == null
+    ) {
+      throw error;
+    }
+    const errors = (error as { errors?: { message?: string }[] }).errors ?? [];
+    logger.warn(
+      `agent-lcars: using partial GitHub GraphQL data for ${repository} enrichment (${errors.length} field error${errors.length === 1 ? '' : 's'}: ${errors
+        .map((e) => e.message ?? 'unknown')
+        .join('; ')})`,
+    );
+    return partial as T;
+  }
+}
+
 export async function enrichGithubAnchorProjections(
   repository: string,
   projections: GithubAnchorProjection[],
@@ -88,11 +129,13 @@ export async function enrichGithubAnchorProjections(
       }`,
       )
       .join('\n');
-    const response = await github.graphql<{
+    const response = await graphqlTolerantOfPartialErrors<{
       repository?: Record<string, RawAnchorDetails>;
     }>(
+      github,
       `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${selection} } }`,
       { owner: owner as string, name: name as string },
+      repository,
     );
     for (const projection of batch) {
       const detail =
