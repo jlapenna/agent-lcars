@@ -91,23 +91,28 @@ function claimBelongsElsewhere(item: ActionItem): boolean {
 }
 
 /**
- * Open items the agent fleet has claimed (assignee `agent-lcars-bot`, #2783) but
- * which have no live CI run and no live/idle CLI session actually working
- * them - a stale claim per the agent-lcars-dev skill's issue-ownership guardrail
- * ("agent-lcars-bot assigned but no live run or session ⇒ the claim is
- * stale; take over and say so").
- * Before the /agents page existed, these were only discoverable by noticing
- * silence on an issue. A claim that belongs to someone or something else
- * (see `claimBelongsElsewhere`) is not stale and stays out.
+ * Open items the agent fleet has claimed but which have no live CI run and
+ * no live/idle CLI session actually working them - a stale claim per the
+ * agent-lcars-dev skill's issue-ownership guardrail ("agent-lcars-bot
+ * assigned but no live run or session ⇒ the claim is stale; take over and
+ * say so"). A claim is the fleet's assignee (`agent-lcars-bot`, #2783) *or*
+ * an orchestrator task record for the anchor (`hasTaskRecord`) - the
+ * orchestrator dispatched it, so it is the fleet's claim even if a human
+ * later removed the bot assignee without also closing the loop. Before the
+ * /agents page existed, these were only discoverable by noticing silence on
+ * an issue. A claim that belongs to someone or something else (see
+ * `claimBelongsElsewhere`) is not stale and stays out.
  */
 export function deriveClaimedIdle(
   items: ActionItem[],
   hasLiveRun: (item: ActionItem) => boolean,
   activeSessions: CliSession[],
+  hasTaskRecord: (item: ActionItem) => boolean,
 ): ActionItem[] {
   return items.filter(
     (item) =>
-      item.assigneeLogins.includes(agentFleetLogin()) &&
+      (item.assigneeLogins.includes(agentFleetLogin()) ||
+        hasTaskRecord(item)) &&
       !claimBelongsElsewhere(item) &&
       !hasLiveRun(item) &&
       !activeSessions.some((session) =>
@@ -117,14 +122,23 @@ export function deriveClaimedIdle(
 }
 
 export type ClaimedIdleReasonKind =
-  'never-dispatched' | 'finished' | 'parked' | 'failed' | 'lost' | 'canceled';
+  | 'never-dispatched'
+  | 'finished'
+  | 'parked'
+  | 'failed'
+  | 'lost'
+  | 'canceled'
+  | 'observing';
 
 export interface ClaimedIdleReason {
   kind: ClaimedIdleReasonKind;
   label: string;
 }
 
-const CLAIMED_IDLE_REASONS: Record<ClaimedIdleReasonKind, string> = {
+const CLAIMED_IDLE_REASONS: Record<
+  Exclude<ClaimedIdleReasonKind, 'observing'>,
+  string
+> = {
   'never-dispatched': 'Never dispatched',
   finished: 'Finished, not closed',
   parked: 'Parked',
@@ -132,6 +146,22 @@ const CLAIMED_IDLE_REASONS: Record<ClaimedIdleReasonKind, string> = {
   lost: 'Last run lost',
   canceled: 'Last run canceled',
 };
+
+// UTC, no year - a maintainer skimming this section cares which day the
+// window ends, not which timezone or year (an observation window is always
+// near-term).
+const OBSERVE_UNTIL_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  month: 'short',
+  day: 'numeric',
+});
+
+function observingReason(observeUntil: string): ClaimedIdleReason {
+  return {
+    kind: 'observing',
+    label: `Observing until ${OBSERVE_UNTIL_FORMATTER.format(new Date(observeUntil))}`,
+  };
+}
 
 /**
  * Why a claimed item is idle, read off the orchestrator's own run history
@@ -150,13 +180,39 @@ const CLAIMED_IDLE_REASONS: Record<ClaimedIdleReasonKind, string> = {
  * state to read (not fetched, or the read failed), or while the
  * orchestrator still holds a live run - that case is the section's own
  * "locked" badge, and the two must not both render.
+ *
+ * `observeUntil` (the `ActionItem`'s parsed `<!-- agent-lcars:observe-until
+ * ... -->` marker, see action-items.ts) is a second, independent idle
+ * reason: an anchor legitimately waiting on a scheduled event rather than
+ * one nobody has looked at. Precedence, checked in this order: a live
+ * orchestrator run still wins outright and returns undefined - the
+ * section's own "locked" badge owns that case, and it must not also read
+ * "observing". Otherwise, an `observeUntil` still in the future (relative
+ * to `now`) wins over every run-history reason, including "never
+ * dispatched" - the marker is the more specific, more recent statement of
+ * intent. Once it is in the past it is stale and is ignored, falling
+ * through to the run-history read below exactly as if it were absent.
  */
 export function claimedIdleReason(
   state:
     | { activeRunId?: string; runs: readonly OrchestratorRun[] }
     | 'absent'
     | undefined,
+  {
+    observeUntil,
+    now = new Date(),
+  }: { observeUntil?: string; now?: Date } = {},
 ): ClaimedIdleReason | undefined {
+  if (
+    state !== undefined &&
+    state !== 'absent' &&
+    state.activeRunId !== undefined
+  ) {
+    return undefined;
+  }
+  if (observeUntil !== undefined && Date.parse(observeUntil) > now.getTime()) {
+    return observingReason(observeUntil);
+  }
   if (state === undefined) return undefined;
   if (state === 'absent') {
     return {
@@ -164,13 +220,12 @@ export function claimedIdleReason(
       label: CLAIMED_IDLE_REASONS['never-dispatched'],
     };
   }
-  if (state.activeRunId !== undefined) return undefined;
   const latest = [...state.runs].sort(
     (a, b) =>
       b.createdAt.localeCompare(a.createdAt) ||
       b.runId.localeCompare(a.runId, undefined, { numeric: true }),
   )[0];
-  const kind: ClaimedIdleReasonKind =
+  const kind: Exclude<ClaimedIdleReasonKind, 'observing'> =
     latest === undefined
       ? 'never-dispatched'
       : latest.state === 'finished'

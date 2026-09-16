@@ -153,24 +153,27 @@ describe('mostRecentSessionForItem', () => {
 describe('deriveClaimedIdle', () => {
   const noLiveRun = () => false;
   const allLiveRun = () => true;
+  const noTaskRecord = () => false;
 
   it('includes an open agent-lcars-bot claim with no live run and no active session', () => {
     const items = [
       makeItem({ number: 1, assigneeLogins: ['agent-lcars-bot'] }),
     ];
-    expect(deriveClaimedIdle(items, noLiveRun, [])).toEqual(items);
+    expect(deriveClaimedIdle(items, noLiveRun, [], noTaskRecord)).toEqual(
+      items,
+    );
   });
 
-  it('excludes items not assigned to agent-lcars-bot', () => {
+  it('excludes items not assigned to agent-lcars-bot and with no task record', () => {
     const items = [makeItem({ number: 1, assigneeLogins: ['jlapenna'] })];
-    expect(deriveClaimedIdle(items, noLiveRun, [])).toEqual([]);
+    expect(deriveClaimedIdle(items, noLiveRun, [], noTaskRecord)).toEqual([]);
   });
 
   it('excludes items with a live run', () => {
     const items = [
       makeItem({ number: 1, assigneeLogins: ['agent-lcars-bot'] }),
     ];
-    expect(deriveClaimedIdle(items, allLiveRun, [])).toEqual([]);
+    expect(deriveClaimedIdle(items, allLiveRun, [], noTaskRecord)).toEqual([]);
   });
 
   it('excludes items an active CLI session is working', () => {
@@ -178,7 +181,9 @@ describe('deriveClaimedIdle', () => {
       makeItem({ number: 1, assigneeLogins: ['agent-lcars-bot'] }),
     ];
     const sessions = [makeSession({ pr: { number: 1, url: 'u' } })];
-    expect(deriveClaimedIdle(items, noLiveRun, sessions)).toEqual([]);
+    expect(deriveClaimedIdle(items, noLiveRun, sessions, noTaskRecord)).toEqual(
+      [],
+    );
   });
 
   it('does not let an unrelated active session mask a genuinely stale claim', () => {
@@ -186,7 +191,9 @@ describe('deriveClaimedIdle', () => {
       makeItem({ number: 1, assigneeLogins: ['agent-lcars-bot'] }),
     ];
     const sessions = [makeSession({ pr: { number: 999, url: 'u' } })];
-    expect(deriveClaimedIdle(items, noLiveRun, sessions)).toEqual(items);
+    expect(deriveClaimedIdle(items, noLiveRun, sessions, noTaskRecord)).toEqual(
+      items,
+    );
   });
 
   it('does not let a same-numbered session in a different repo mask a genuinely stale claim', () => {
@@ -198,24 +205,51 @@ describe('deriveClaimedIdle', () => {
     const sessions = [
       makeSession({ repo: repoB, pr: { number: 1, url: 'u' } }),
     ];
-    expect(deriveClaimedIdle(items, noLiveRun, sessions)).toEqual(items);
+    expect(deriveClaimedIdle(items, noLiveRun, sessions, noTaskRecord)).toEqual(
+      items,
+    );
+  });
+
+  it('counts an anchor with an orchestrator task record as claimed even without the bot assignee', () => {
+    const items = [makeItem({ number: 1, assigneeLogins: [] })];
+    expect(deriveClaimedIdle(items, noLiveRun, [], () => true)).toEqual(items);
+  });
+
+  it('excludes an anchor with neither the bot assignee nor a task record', () => {
+    const items = [makeItem({ number: 1, assigneeLogins: [] })];
+    expect(deriveClaimedIdle(items, noLiveRun, [], noTaskRecord)).toEqual([]);
+  });
+
+  it('still applies every other exclusion to a claim carried only by a task record', () => {
+    const items = [
+      makeItem({ number: 1, assigneeLogins: [], actionTypes: ['needs-human'] }),
+    ];
+    expect(deriveClaimedIdle(items, noLiveRun, [], () => true)).toEqual([]);
   });
 });
 
 describe('deriveClaimedIdle deliberate-idle exclusions', () => {
   const claimed = (overrides: Partial<ActionItem> = {}) =>
     makeItem({ assigneeLogins: ['agent-lcars-bot'], ...overrides });
+  const noTaskRecord = () => false;
 
   it('lists a fleet-claimed item with no live run and no active session', () => {
-    expect(deriveClaimedIdle([claimed()], () => false, [])).toHaveLength(1);
+    expect(
+      deriveClaimedIdle([claimed()], () => false, [], noTaskRecord),
+    ).toHaveLength(1);
   });
 
   it('excludes items with a live run or an active session on them', () => {
-    expect(deriveClaimedIdle([claimed()], () => true, [])).toEqual([]);
     expect(
-      deriveClaimedIdle([claimed({ number: 7 })], () => false, [
-        makeSession({ branch: 'fix-7' }),
-      ]),
+      deriveClaimedIdle([claimed()], () => true, [], noTaskRecord),
+    ).toEqual([]);
+    expect(
+      deriveClaimedIdle(
+        [claimed({ number: 7 })],
+        () => false,
+        [makeSession({ branch: 'fix-7' })],
+        noTaskRecord,
+      ),
     ).toEqual([]);
   });
 
@@ -225,6 +259,7 @@ describe('deriveClaimedIdle deliberate-idle exclusions', () => {
         [claimed({ assigneeLogins: ['jlapenna', 'agent-lcars-bot'] })],
         () => false,
         [],
+        noTaskRecord,
       ),
     ).toEqual([]);
   });
@@ -235,6 +270,7 @@ describe('deriveClaimedIdle deliberate-idle exclusions', () => {
         [claimed({ assigneeLogins: ['agent-lcars-bot', 'agent-lcars[bot]'] })],
         () => false,
         [],
+        noTaskRecord,
       ),
     ).toHaveLength(1);
   });
@@ -245,6 +281,7 @@ describe('deriveClaimedIdle deliberate-idle exclusions', () => {
         [claimed({ actionTypes: ['needs-human'] })],
         () => false,
         [],
+        noTaskRecord,
       ),
     ).toEqual([]);
   });
@@ -255,6 +292,7 @@ describe('deriveClaimedIdle deliberate-idle exclusions', () => {
         [claimed({ labels: ['status:ledger'] })],
         () => false,
         [],
+        noTaskRecord,
       ),
     ).toEqual([]);
   });
@@ -265,6 +303,7 @@ describe('deriveClaimedIdle deliberate-idle exclusions', () => {
         [claimed({ actionTypes: ['blocked'] })],
         () => false,
         [],
+        noTaskRecord,
       ),
     ).toEqual([]);
   });
@@ -275,6 +314,7 @@ describe('deriveClaimedIdle deliberate-idle exclusions', () => {
         [claimed({ title: 'Dependency Dashboard', labels: ['bot:renovate'] })],
         () => false,
         [],
+        noTaskRecord,
       ),
     ).toEqual([]);
   });
@@ -339,5 +379,58 @@ describe('claimedIdleReason', () => {
     expect(
       claimedIdleReason({ activeRunId: 'r', runs: [run('pending')] }),
     ).toBeUndefined();
+  });
+
+  describe('observing', () => {
+    const now = new Date('2026-09-15T00:00:00Z');
+    const observeUntil = '2026-09-24T14:40:00Z';
+
+    it('wins over "never dispatched" when the window is still open', () => {
+      expect(claimedIdleReason('absent', { observeUntil, now })).toEqual({
+        kind: 'observing',
+        label: 'Observing until Sep 24',
+      });
+    });
+
+    it('wins over a run-history reason (e.g. failed) when the window is still open', () => {
+      expect(
+        claimedIdleReason(
+          { runs: [run('finished', { ok: false })] },
+          { observeUntil, now },
+        )?.kind,
+      ).toBe('observing');
+    });
+
+    it('wins when there is no authoritative state at all', () => {
+      expect(claimedIdleReason(undefined, { observeUntil, now })).toEqual({
+        kind: 'observing',
+        label: 'Observing until Sep 24',
+      });
+    });
+
+    it('still defers to the lock badge over an open observation window', () => {
+      expect(
+        claimedIdleReason(
+          { activeRunId: 'r', runs: [run('pending')] },
+          { observeUntil, now },
+        ),
+      ).toBeUndefined();
+    });
+
+    it('falls through to the run-history reason once the window has passed', () => {
+      const past = '2026-09-01T00:00:00Z';
+      expect(
+        claimedIdleReason('absent', { observeUntil: past, now })?.kind,
+      ).toBe('never-dispatched');
+    });
+
+    it('falls through to undefined once the window has passed with no authoritative state', () => {
+      expect(
+        claimedIdleReason(undefined, {
+          observeUntil: '2026-09-01T00:00:00Z',
+          now,
+        }),
+      ).toBeUndefined();
+    });
   });
 });

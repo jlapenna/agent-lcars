@@ -188,6 +188,20 @@ anchor's comments carry newer information than its body" above. A
 label-triggered redispatch carries none of that context into your brief for
 you.
 
+When you leave an issue idle because it is waiting on an elapsed time
+window — a scheduled job, a systemd timer, some other event that will post
+its own result later — rather than on a human decision, that is not this
+section's blocker (do not PARK on a timeout alone; see above). Instead,
+leave this exact marker in the issue body or a comment so the console reads
+the anchor as an open observation window instead of a stale claim:
+
+```text
+<!-- agent-lcars:observe-until 2026-09-24T14:40:00Z -->
+```
+
+Use a full-precision, `Z`-suffixed ISO-8601 UTC instant. Nothing clears the
+marker for you — update or remove it once the window resolves.
+
 ## 5. Deliverable rule — silence is failure
 
 Unchanged for every anchor: a run that reasons to a conclusion and never
