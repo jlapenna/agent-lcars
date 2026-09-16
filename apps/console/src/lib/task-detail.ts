@@ -21,6 +21,7 @@ import {
   type WatchedRepo,
 } from './github-client';
 import {
+  coarsenRunStates,
   deriveLogicalWork,
   type LogicalWork,
   type LogicalWorkAnomaly,
@@ -192,22 +193,20 @@ function nativeRunAnomalies(
   );
 }
 
-/** A run's own state, coarsened onto `LogicalWorkState`: `pending` means
- * "decided, dispatch not yet confirmed" (dispatching in the old ledger's own
- * vocabulary); `running` is `active`; every terminal state (`finished`,
- * `canceled`, `lost`) means the task is not currently being worked, exactly
- * like the ledger's own `completed`/`dispatch-rejected` states did. */
+/** The run history's own states, coarsened onto `LogicalWorkState` by the
+ * same rule the Agents page uses (`coarsenRunStates`): `pending` is
+ * "decided, dispatch not yet confirmed", so dispatching; `running` is
+ * active; every terminal state (`finished`, `canceled`, `lost`) means the
+ * task is not currently being worked. Read off the runs themselves, never
+ * off `Task.activeRunId` - the two must agree in a consistent store, but
+ * when they do not, the run states are what the Agents page shows, and
+ * this page must not say "completed" about a run that page calls live. */
 function stateFromOrchestratorTask(
   state: AuthoritativeTaskState,
 ): LogicalWorkState {
-  const active =
-    state.activeRunId === undefined
-      ? undefined
-      : state.runs.find((run) => run.runId === state.activeRunId);
-  if (active) return active.state === 'pending' ? 'dispatching' : 'active';
-  const latest = state.runs
-    .slice()
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .at(0);
-  return latest ? 'completed' : 'unknown';
+  return coarsenRunStates({
+    running: state.runs.some((run) => run.state === 'running'),
+    queued: state.runs.some((run) => run.state === 'pending'),
+    any: state.runs.length > 0,
+  });
 }

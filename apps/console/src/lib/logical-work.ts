@@ -63,10 +63,33 @@ function logicalTaskUrl(task: LogicalTaskRef): string {
   return 'workId' in task ? `/work/${task.workId}` : taskRefUrl(task);
 }
 
+/**
+ * The one rule for "is this task being worked", shared by the Agents page
+ * (`stateFromRuns` below, over `AgentRun.status`) and the Task detail page
+ * (`task-detail.ts`, over the orchestrator's own `Run.state`). Any run that
+ * is running makes the task active; any run still queued/pending makes it
+ * dispatching; otherwise the task is completed if it has any history at
+ * all, and unknown if it has none. The two pages used to disagree because
+ * task-detail trusted `Task.activeRunId` instead of the run states, so a
+ * live run the task document had not caught up with read as "completed"
+ * there and "active" on /agents.
+ */
+export function coarsenRunStates(runs: {
+  running: boolean;
+  queued: boolean;
+  any: boolean;
+}): LogicalWorkState {
+  if (runs.running) return 'active';
+  if (runs.queued) return 'dispatching';
+  return runs.any ? 'completed' : 'unknown';
+}
+
 function stateFromRuns(runs: readonly AgentRun[]): LogicalWorkState {
-  if (runs.some((run) => run.status === 'running')) return 'active';
-  if (runs.some((run) => run.status === 'queued')) return 'dispatching';
-  return runs.length > 0 ? 'completed' : 'unknown';
+  return coarsenRunStates({
+    running: runs.some((run) => run.status === 'running'),
+    queued: runs.some((run) => run.status === 'queued'),
+    any: runs.length > 0,
+  });
 }
 
 function duplicateRunAnomalies(runs: AgentRun[]): LogicalWorkAnomaly[] {
