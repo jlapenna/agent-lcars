@@ -1009,6 +1009,48 @@ jobs:
             fi
           done
 
+          # Delete the merged PR's head branch ourselves.
+          #
+          # Same actor-identity gap as the linked-issue close above
+          # (agent-lcars#214): "Automatically delete head branches"
+          # (delete_branch_on_merge) is a platform side effect keyed to the
+          # merge actor, and it does not fire for a merge performed by the
+          # ephemeral, repo-scoped GITHUB_TOKEN this job merges with -
+          # only for a human or GitHub App identity. A/B evidence in
+          # jlapenna/homelab, same repo/day/mechanics (agent-lcars#1982):
+          # PR #1410 (merged_by github-actions[bot], the GITHUB_TOKEN
+          # actor) kept its branch; PR #1412 (merged_by the agent-lcars
+          # App identity) had its branch auto-deleted.
+          #
+          # So stop relying on the platform for this one too. Respect the
+          # repo's own setting (a repo that deliberately keeps branches
+          # should stay untouched), never delete a fork's branch, and
+          # treat "already gone" as success rather than a failure - the
+          # App-token path or Renovate's own deletion can easily have
+          # already removed it by the time this step runs.
+          DELETE_ON_MERGE=$(gh api "repos/$REPO" --jq '.delete_branch_on_merge')
+          if [ "$DELETE_ON_MERGE" != "true" ]; then
+            echo "delete_branch_on_merge is off for $REPO; leaving PR #$PR's head branch alone."
+          else
+            PR_REF_INFO=$(gh pr view "$PR" --repo "$REPO" \
+              --json headRefName,headRepositoryOwner,isCrossRepository)
+            IS_CROSS_REPO=$(jq -r '.isCrossRepository' <<<"$PR_REF_INFO")
+            HEAD_REF=$(jq -r '.headRefName' <<<"$PR_REF_INFO")
+            if [ "$IS_CROSS_REPO" = "true" ]; then
+              echo "PR #$PR's head branch $HEAD_REF lives in a fork; never deleting another repo's ref."
+            else
+              DELETE_ERR=$(mktemp)
+              if gh api -X DELETE "repos/$REPO/git/refs/heads/$HEAD_REF" >/dev/null 2>"$DELETE_ERR"; then
+                echo "Deleted head branch $HEAD_REF of merged PR #$PR."
+              elif grep -qE 'HTTP (422|404)' "$DELETE_ERR"; then
+                echo "Head branch $HEAD_REF of PR #$PR was already gone (HTTP 422/404); nothing to do."
+              else
+                echo "::warning::Could not delete head branch $HEAD_REF of merged PR #$PR: $(tr '\n' ' ' <"$DELETE_ERR")"
+              fi
+              rm -f "$DELETE_ERR"
+            fi
+          fi
+
           if [ -z "$CI_WORKFLOW" ]; then
             echo "No ci-workflow is configured; the restore chain is disabled."
             exit 0

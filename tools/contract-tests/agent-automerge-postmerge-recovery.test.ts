@@ -188,6 +188,10 @@ case "$args" in
     [ "$workflow" != deploy.yml ] || echo 'https://github.com/o/r/actions/runs/900'
     ;;
   "issue close "*) ;;
+  # Head-branch deletion (agent-lcars#1982) is exercised by its own
+  # dedicated contract test; here it only needs to be a no-op so it
+  # doesn't perturb the CI/deploy dispatch assertions this file makes.
+  *"--jq .delete_branch_on_merge"*) echo 'false' ;;
   *) echo "unhandled fake gh call: $args" >&2; exit 97 ;;
 esac
 `,
