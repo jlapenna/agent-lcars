@@ -9,6 +9,7 @@ import {
   type ActionItem,
   actionItemFromGithubAnchorProjection,
 } from './action-items';
+import { duplicateLiveGroups } from './agent-activity';
 import {
   type AuthoritativeTaskState,
   readAuthoritativeTaskStates,
@@ -23,6 +24,7 @@ import {
 import {
   coarsenRunStates,
   deriveLogicalWork,
+  duplicateRunAnomaly,
   type LogicalWork,
   type LogicalWorkAnomaly,
   type LogicalWorkState,
@@ -170,26 +172,23 @@ function applyOrchestratorTruth(
 /** A duplicate live Run is durable broker state, not a hosted-workflow
  * compatibility signal. Surface it on task detail just as the activity view
  * does, so operators never lose an unsafe concurrent execution behind a
- * single active-state badge. */
+ * single active-state badge. The `OrchestratorRun` adapter over
+ * `duplicateLiveGroups` (`agent-activity.ts`): live means
+ * `pending|running` - this run type's own vocabulary for "not yet terminal",
+ * distinct from `AgentRun`'s `queued|running` - pipeline is
+ * `OrchestratorRun.pipeline`. */
 function nativeRunAnomalies(
   runs: readonly OrchestratorRun[],
 ): LogicalWorkAnomaly[] {
-  const byPipeline = new Map<string, OrchestratorRun[]>();
-  for (const run of runs) {
-    if (run.state !== 'pending' && run.state !== 'running') continue;
-    const group = byPipeline.get(run.pipeline);
-    if (group) group.push(run);
-    else byPipeline.set(run.pipeline, [run]);
-  }
-  return Array.from(byPipeline).flatMap(([pipeline, group]) =>
-    group.length > 1
-      ? [
-          {
-            kind: 'duplicate-active-runs',
-            detail: `${group.length} ${pipeline} runs are queued or running for the same task at once (${group.map((run) => run.runId).join(', ')}).`,
-          },
-        ]
-      : [],
+  const duplicated = duplicateLiveGroups(runs, {
+    isLive: (run) => run.state === 'pending' || run.state === 'running',
+    pipeline: (run) => run.pipeline,
+  });
+  return Array.from(duplicated).map(([pipeline, group]) =>
+    duplicateRunAnomaly(
+      pipeline,
+      group.map((run) => run.runId),
+    ),
   );
 }
 

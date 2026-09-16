@@ -172,6 +172,10 @@ test.describe('text contrast @design-system', () => {
         // real state, but not the one under test, and one that reports
         // spectacular ratios like 1.05:1. If the failures never clear this
         // still fails, and prints exactly what did not.
+        // The default 5s poll timeout can be too short for hydration to
+        // finish on a loaded runner (observed once on the Agents dark-mode
+        // case, then passed on rerun); a real contrast failure still fails
+        // this assertion, just after the longer 15s window instead of 5s.
         await expect
           .poll(
             async () => {
@@ -186,7 +190,7 @@ test.describe('text contrast @design-system', () => {
                     )
                     .join('\n');
             },
-            { message: 'text contrast never settled' },
+            { message: 'text contrast never settled', timeout: 15_000 },
           )
           .toBe('all text clears AA');
       });

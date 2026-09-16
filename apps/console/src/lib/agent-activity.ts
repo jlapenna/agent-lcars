@@ -204,17 +204,44 @@ export function groupLiveRunsByIssue(liveRuns: AgentRun[]): LiveRunGroup[] {
 }
 
 /**
- * The shared "is this a duplicate dispatch" rule: among the live
- * (queued/running) items in `runs`, group by pipeline and keep only the
- * groups with more than one member. Two independent renderers build their
- * own formatting on top of this one counting rule rather than each
- * re-deriving it - the task-detail anomaly list
- * (`logical-work.ts`'s `duplicateAttemptAnomalies`, one anomaly line per
+ * The shared "is this a duplicate dispatch" rule, generic over any run
+ * shape: group the caller's own notion of "live" runs by the caller's own
+ * notion of "pipeline", and keep only the groups with more than one member.
+ * Two run types disagree on both notions - `AgentRun.status` is
+ * `queued|running` (this module), `OrchestratorRun.state` is
+ * `pending|running` (`task-detail.ts`) - so both live/pipeline selection is
+ * left to the caller rather than baked in once. `duplicateLivePipelineGroups`
+ * below and `task-detail.ts`'s `nativeRunAnomalies` are the two thin
+ * adapters over this one rule; a future change to the rule itself only has
+ * to happen here.
+ */
+export function duplicateLiveGroups<T, K extends string = string>(
+  runs: readonly T[],
+  options: { isLive: (run: T) => boolean; pipeline: (run: T) => K },
+): Map<K, T[]> {
+  const live = runs.filter(options.isLive);
+  const byPipeline = new Map<K, T[]>();
+  for (const run of live) {
+    const key = options.pipeline(run);
+    const group = byPipeline.get(key);
+    if (group) group.push(run);
+    else byPipeline.set(key, [run]);
+  }
+  for (const [key, group] of byPipeline) {
+    if (group.length <= 1) byPipeline.delete(key);
+  }
+  return byPipeline;
+}
+
+/**
+ * The `AgentRun` adapter over `duplicateLiveGroups`: live means
+ * `queued|running`, pipeline is `AgentRun.pipeline`. Two independent
+ * renderers build their own formatting on top of this one counting rule
+ * rather than each re-deriving it - the task/logical-work anomaly list
+ * (`logical-work.ts`'s `duplicateRunAnomalies`, one anomaly line per
  * duplicated pipeline with the run IDs named) and the home/agents page's "In
  * Flight" duplicate badge (`agent-activity-panel.tsx`'s
- * `duplicatePipelineSummary`, a short `"2 claude"`-style summary) - so a
- * future change to the rule itself (e.g. what counts as "live") only has to
- * happen once.
+ * `duplicatePipelineSummary`, a short `"2 claude"`-style summary).
  *
  * Generic over `T extends AgentRun` so a caller passing `ExecutionAttempt[]`
  * (logical-work.ts) gets groups of `ExecutionAttempt` back, not a narrowed
@@ -223,19 +250,10 @@ export function groupLiveRunsByIssue(liveRuns: AgentRun[]): LiveRunGroup[] {
 export function duplicateLivePipelineGroups<T extends AgentRun>(
   runs: T[],
 ): Map<AgentPipeline, T[]> {
-  const live = runs.filter(
-    (run) => run.status === 'queued' || run.status === 'running',
-  );
-  const byPipeline = new Map<AgentPipeline, T[]>();
-  for (const run of live) {
-    const group = byPipeline.get(run.pipeline);
-    if (group) group.push(run);
-    else byPipeline.set(run.pipeline, [run]);
-  }
-  for (const [pipeline, group] of byPipeline) {
-    if (group.length <= 1) byPipeline.delete(pipeline);
-  }
-  return byPipeline;
+  return duplicateLiveGroups<T, AgentPipeline>(runs, {
+    isLive: (run) => run.status === 'queued' || run.status === 'running',
+    pipeline: (run) => run.pipeline,
+  });
 }
 
 function repositoryFromTarget(targetRepo: string): WatchedRepo | undefined {
