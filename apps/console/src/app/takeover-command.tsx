@@ -11,7 +11,17 @@ import { IconCheck, IconCopy } from '@tabler/icons-react';
  * identically. Copy interactivity needs its own client boundary, same
  * pattern as `RefreshButton` elsewhere in this app.
  */
-export function TakeoverCommand({ command }: { command: string }) {
+export function TakeoverCommand({
+  command,
+  label = 'Copy takeover command',
+  copiedLabel = 'Takeover command copied',
+}: {
+  command: string;
+  /** Override the button's idle/copied wording for a non-takeover command
+   * (e.g. a local-agent prompt) sharing this same chip. */
+  label?: string;
+  copiedLabel?: string;
+}) {
   return (
     <CopyButton value={command} timeout={2_000}>
       {({ copied, copy }) => (
@@ -25,7 +35,7 @@ export function TakeoverCommand({ command }: { command: string }) {
           onClick={copy}
           className="takeover-command-button"
         >
-          {copied ? 'Takeover command copied' : 'Copy takeover command'}
+          {copied ? copiedLabel : label}
         </Button>
       )}
     </CopyButton>

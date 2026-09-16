@@ -18,6 +18,10 @@ import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import type { ActionItem, MergeableState } from '../lib/action-items';
+import {
+  localAgentCommand,
+  localAgentDisplayName,
+} from '../lib/local-agent-prompt';
 import { type Pipeline, type PrimaryAction } from '../lib/primary-action';
 import {
   agentIntegration,
@@ -41,6 +45,7 @@ import {
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { RetriggerButton } from './retrigger-button';
+import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
 
 // SegmentedControl needs a real value for "no agent" - it has no empty
@@ -222,6 +227,12 @@ export function ActionItemCard({
   const [chosenReplyTarget, setChosenReplyTarget] = useState<
     Pipeline | undefined
   >();
+  // Which local CLI a maintainer's copied prompt targets - independent of
+  // any fleet dispatch above, since taking work on locally never assigns an
+  // `agent:*` label or posts anything to GitHub.
+  const [localAgentPipeline, setLocalAgentPipeline] = useState<
+    Pipeline | undefined
+  >(supportedAgentPipelines(item.repo)[0]);
   const [isPending, startTransition] = useTransition();
 
   // The Inbox detail pane (variant="workspace") reuses one ActionItemCard
@@ -240,6 +251,7 @@ export function ActionItemCard({
     setDescriptionExpanded(false);
     setLabelsExpanded(false);
     setChosenReplyTarget(undefined);
+    setLocalAgentPipeline(supportedAgentPipelines(item.repo)[0]);
   }
 
   // No current canonical assignment means a plain human reply. This matters
@@ -264,6 +276,12 @@ export function ActionItemCard({
   // The effective target: an existing assignment always wins; otherwise
   // whatever the maintainer picked for this reply, defaulting to none.
   const replyPipeline = pipeline ?? chosenReplyTarget;
+  // Every pipeline the console understands, regardless of this item's
+  // existing assignment - a maintainer can take an already-assigned item on
+  // locally too, since doing so touches nothing on GitHub.
+  const localAgentPipelines = supportedAgentPipelines(item.repo);
+  const effectiveLocalAgentPipeline =
+    localAgentPipeline ?? localAgentPipelines[0];
 
   const handleReply = () => {
     if (!replyBody.trim()) return;
@@ -676,6 +694,29 @@ export function ActionItemCard({
               />
             )}
           </Stack>
+        )}
+
+        {localAgentPipelines.length > 0 && effectiveLocalAgentPipeline && (
+          <Group gap="xs" wrap="wrap" mt={4} data-testid="local-agent-prompt">
+            <Text size="xs" c="dimmed">
+              Work locally:
+            </Text>
+            <SegmentedControl
+              size="xs"
+              value={effectiveLocalAgentPipeline}
+              onChange={(value) => setLocalAgentPipeline(value as Pipeline)}
+              data={localAgentPipelines.map((target) => ({
+                value: target,
+                label: localAgentDisplayName(target),
+              }))}
+              aria-label={`Choose a local agent for #${item.number}`}
+            />
+            <TakeoverCommand
+              command={localAgentCommand(effectiveLocalAgentPipeline, item)}
+              label="Copy local-agent prompt"
+              copiedLabel="Prompt copied"
+            />
+          </Group>
         )}
 
         {error && (
