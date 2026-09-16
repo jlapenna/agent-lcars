@@ -100,4 +100,17 @@ describe('resolveBridgeDetail', () => {
       'none',
     );
   });
+
+  it('resolves a parked work item', () => {
+    const parkedWork = [{ id: 'work:ulid1' }] as never;
+    const detail = resolveBridgeDetail({
+      ...base,
+      parkedWork,
+      selectedKey: 'parked:work:ulid1',
+    });
+    expect(detail).toMatchObject({
+      kind: 'parkedWork',
+      item: { id: 'work:ulid1' },
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import { logger } from '@agent-lcars/logging';
+import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Box } from '@mantine/core';
 import { Suspense } from 'react';
 
@@ -59,21 +60,26 @@ function toCard(item: ActionItem): BoardCard {
 }
 
 /**
- * Bridge slot: reads a bounded page of the all-anchor work summary projection
- * from the orchestrator, rather than deriving parked state from a GitHub label
- * or limiting itself to native work ids. GitHub remains a detail enrichment
+ * Reads a bounded page of the all-anchor work summary projection from the
+ * orchestrator, rather than deriving parked state from a GitHub label or
+ * limiting itself to native work ids. GitHub remains a detail enrichment
  * surface; it is not the state authority for this panel. The existing Work
- * operator grant gates it before native controls can render. Lives here rather
- * than alongside the pure `ParkedWorkPanel` - importing the `'use server'`
- * `./work/actions` module into that file drags in `@orpc/next`'s Node-only
- * `next/navigation` resolution, which vitest's jsdom environment can't load
- * (see parked-work-panel.test.tsx, which only ever imports the pure
- * component).
+ * operator grant gates it before native controls can render.
+ *
+ * Fetched in `IndexBody`'s own `Promise.all` (rather than a separately
+ * Suspense-isolated slot) so the resolved items are also available to
+ * `resolveBridgeDetail` - a "Stopped work" row's `?sel=` must resolve to the
+ * *same* item the list renders, matching every other Bridge row kind.
  */
-async function ParkedWork() {
+async function getParkedWork(): Promise<{
+  items: WorkSummary[];
+  hasMoreTasks: boolean;
+}> {
   try {
     const work = await workContext();
-    if (!work.principal?.scopes.has('work.operator')) return null;
+    if (!work.principal?.scopes.has('work.operator')) {
+      return { items: [], hasMoreTasks: false };
+    }
     const page = await listWorkSummaries(work.runtime.store, {
       limit: 200,
     });
@@ -81,21 +87,14 @@ async function ParkedWork() {
       work.runtime.store,
       page.items,
     );
-    return (
-      <ParkedWorkPanel
-        items={items}
-        hasMoreTasks={page.nextCursor !== undefined}
-        cancel={cancelItem}
-        redispatch={redispatchItem}
-      />
-    );
+    return { items, hasMoreTasks: page.nextCursor !== undefined };
   } catch (error) {
     // The Bridge must never fall to error.tsx because this panel's fetch
     // failed - matches runner-sessions.ts's defensive contract (degrade to
     // nothing rendered, not a crashed page) rather than 500ing the whole
     // Bridge over an optional slot.
     logger.error('agent-lcars: parked work panel unavailable:', error);
-    return null;
+    return { items: [], hasMoreTasks: false };
   }
 }
 
@@ -122,11 +121,13 @@ async function IndexBody({
     { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
+    { items: parkedWorkItems, hasMoreTasks: hasMoreParkedTasks },
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
+    getParkedWork(),
   ]);
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
@@ -206,6 +207,7 @@ async function IndexBody({
     cliSessions: filteredCliSessions.filter(isActiveCliSession),
     waitingOnDeploy: deployCards,
     blocked: blockedCards,
+    parkedWork: parkedWorkItems,
     itemsByRunId,
     sessionsByRunId,
     multiRepo,
@@ -240,9 +242,13 @@ async function IndexBody({
             inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
           />
 
-          <Suspense fallback={null}>
-            <ParkedWork />
-          </Suspense>
+          <ParkedWorkPanel
+            items={parkedWorkItems}
+            hasMoreTasks={hasMoreParkedTasks}
+            cancel={cancelItem}
+            redispatch={redispatchItem}
+            repoFilterKey={repoFilterKey}
+          />
 
           <AgentActivityPanel
             activity={filteredActivity}
@@ -260,7 +266,12 @@ async function IndexBody({
         </div>
 
         <div className="bridge-workspace__detail">
-          <BridgeDetail detail={detail} repoFilterKey={repoFilterKey} />
+          <BridgeDetail
+            detail={detail}
+            repoFilterKey={repoFilterKey}
+            cancel={cancelItem}
+            redispatch={redispatchItem}
+          />
         </div>
       </section>
     </>

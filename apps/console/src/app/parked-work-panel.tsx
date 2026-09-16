@@ -1,10 +1,14 @@
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Card, Group, Stack, Text, Title } from '@mantine/core';
 
+import { bridgeSelectionHref, parkedWorkKey } from './bridge-selection';
 import { formatRelativeTime } from './format';
 import { type WorkAction, WorkActions } from './work/work-actions';
 
-function summaryHref(item: WorkSummary): string {
+/** The item's own full page - the conversation transcript and complete runs
+ *  table this panel's row, and the Bridge's detail pane, both stop short of.
+ *  Exported for `parked-work-detail.tsx`'s escape hatch off the Bridge. */
+export function summaryHref(item: WorkSummary): string {
   if ('workId' in item.anchor) return `/work/${item.anchor.workId}`;
   const [owner, repo] = item.anchor.repo.split('/');
   return `/task/${owner}/${repo}/${item.anchor.issue}`;
@@ -14,8 +18,12 @@ function summaryHref(item: WorkSummary): string {
  *  (see `workIdSchema`), so it never gets the native `WorkActions` button
  *  a native item does -- it can look, at a glance, like redispatch is
  *  broken for every row but the last (#1816). Point at the one recovery
- *  step that actually works for this anchor instead of rendering nothing. */
-function githubIssueHref(anchor: { repo: string; issue: number }): string {
+ *  step that actually works for this anchor instead of rendering nothing.
+ *  Exported for `parked-work-detail.tsx`, which repeats the same fallback. */
+export function githubIssueHref(anchor: {
+  repo: string;
+  issue: number;
+}): string {
   return `https://github.com/${anchor.repo}/issues/${anchor.issue}`;
 }
 
@@ -32,11 +40,16 @@ export function ParkedWorkPanel({
   hasMoreTasks,
   cancel,
   redispatch,
+  repoFilterKey,
 }: {
   items: WorkSummary[];
   hasMoreTasks: boolean;
   cancel: WorkAction;
   redispatch: WorkAction;
+  /** Threaded through to `bridgeSelectionHref` so a row's selection link
+   *  preserves the Bridge's active repo scope, matching every other
+   *  selectable row (`IdleItemsSection`, the operational rows). */
+  repoFilterKey?: string;
 }) {
   const parked = items
     .filter((item) => item.state === 'parked' || item.state === 'failed')
@@ -72,9 +85,21 @@ export function ParkedWorkPanel({
                 gap="sm"
               >
                 <Stack gap={2}>
-                  <Anchor href={summaryHref(item)} size="sm" fw={600}>
+                  <Text
+                    component="a"
+                    href={bridgeSelectionHref(
+                      parkedWorkKey(item),
+                      repoFilterKey,
+                    )}
+                    size="sm"
+                    fw={600}
+                    c="inherit"
+                    td="none"
+                    truncate
+                    className="bridge-row-select"
+                  >
                     {item.spec.title}
-                  </Anchor>
+                  </Text>
                   <Text size="xs" c="dimmed">
                     {item.spec.target.repo} ·{' '}
                     <span>{latest?.result?.summary ?? 'lost'}</span> ·{' '}

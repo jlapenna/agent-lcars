@@ -1,4 +1,5 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
+import type { WorkSummary } from '@agent-lcars/work/derive';
 
 import type { AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
@@ -6,6 +7,7 @@ import type { BoardCard } from './board-card';
 import {
   type BridgeSelectionKey,
   itemKey,
+  parkedWorkKey,
   runKey,
   sessionKey,
 } from './bridge-selection';
@@ -14,7 +16,7 @@ import {
  * The right-hand detail pane of the Bridge's desktop two-panel view. It is
  * resolved server-side from a `?sel=` key against the same records the left
  * column renders, so the detail is the *same* projection the row came from -
- * never a second source of truth. The kinds mirror the four row shapes the
+ * never a second source of truth. The kinds mirror the five row shapes the
  * Bridge's unified left column already shows.
  */
 export type BridgeDetail =
@@ -27,7 +29,8 @@ export type BridgeDetail =
       session?: IssueAgentSessionDoc;
     }
   | { kind: 'recentRun'; run: AgentRun; session?: IssueAgentSessionDoc }
-  | { kind: 'session'; session: CliSession };
+  | { kind: 'session'; session: CliSession }
+  | { kind: 'parkedWork'; item: WorkSummary };
 
 /** Imported here rather than from agent-activity-panel.tsx to keep this module
  * free of the panel's server-only `getWatchedRepos` transitive import. */
@@ -50,6 +53,7 @@ export function resolveBridgeDetail({
   cliSessions,
   waitingOnDeploy,
   blocked = [],
+  parkedWork = [],
   itemsByRunId = {},
   sessionsByRunId = {},
   multiRepo = false,
@@ -60,11 +64,17 @@ export function resolveBridgeDetail({
   cliSessions: CliSession[];
   waitingOnDeploy: BoardCard[];
   blocked?: BoardCard[];
+  parkedWork?: WorkSummary[];
   itemsByRunId?: Record<string, RunItemRef>;
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   multiRepo?: boolean;
 }): BridgeDetail {
   if (!selectedKey) return { kind: 'none' };
+
+  const parked = parkedWork.find(
+    (candidate) => parkedWorkKey(candidate) === selectedKey,
+  );
+  if (parked) return { kind: 'parkedWork', item: parked };
 
   const liveRun = liveRuns.find((run) => runKey(run) === selectedKey);
   if (liveRun) {

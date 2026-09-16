@@ -20,6 +20,11 @@ vi.mock('./agent-activity-panel', () => ({
   FinishedRunRow: () => <div data-testid="recent-run-detail" />,
   CliSessionRow: () => <div data-testid="session-detail" />,
 }));
+vi.mock('./parked-work-detail', () => ({
+  ParkedWorkDetail: ({ item }: { item: { id: string } }) => (
+    <div data-testid="parked-work-detail">{item.id}</div>
+  ),
+}));
 
 function renderItem(number: number): Descriptor {
   return {
@@ -70,5 +75,21 @@ describe('BridgeDetail', () => {
       </MantineProvider>,
     );
     expect(screen.getByTestId('live-run-detail')).toBeInTheDocument();
+  });
+
+  it('renders the parked-work detail variant for a stopped item', () => {
+    const detail: Descriptor = {
+      kind: 'parkedWork',
+      item: { id: 'work:ulid1' } as never,
+    };
+    render(
+      <MantineProvider>
+        <BridgeDetail detail={detail} />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('parked-work-detail')).toHaveTextContent(
+      'work:ulid1',
+    );
+    expect(screen.getByText('Stopped work')).toBeInTheDocument();
   });
 });
