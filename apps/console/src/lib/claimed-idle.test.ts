@@ -219,6 +219,46 @@ describe('deriveClaimedIdle deliberate-idle exclusions', () => {
     ).toEqual([]);
   });
 
+  it('excludes an item a human is assigned to - the human owns it', () => {
+    expect(
+      deriveClaimedIdle(
+        [claimed({ assigneeLogins: ['jlapenna', 'agent-lcars-bot'] })],
+        () => false,
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  it('does not count another agent bot login as a human owner', () => {
+    expect(
+      deriveClaimedIdle(
+        [claimed({ assigneeLogins: ['agent-lcars-bot', 'agent-lcars[bot]'] })],
+        () => false,
+        [],
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('excludes a handed-back item - needs-human is the Inbox, not a stale claim', () => {
+    expect(
+      deriveClaimedIdle(
+        [claimed({ actionTypes: ['needs-human'] })],
+        () => false,
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  it('excludes a durable ledger kept open on purpose (status:ledger)', () => {
+    expect(
+      deriveClaimedIdle(
+        [claimed({ labels: ['status:ledger'] })],
+        () => false,
+        [],
+      ),
+    ).toEqual([]);
+  });
+
   it('excludes an item that is deliberately blocked - it is parked, not stale', () => {
     expect(
       deriveClaimedIdle(

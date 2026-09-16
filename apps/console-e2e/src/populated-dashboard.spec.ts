@@ -184,17 +184,30 @@ test.describe('populated dashboard', () => {
     await expect(taskEditor.getByLabel('Body')).toHaveValue(updatedBody);
     await taskEditor.getByRole('button', { name: 'Cancel' }).click();
 
-    // Claimed-but-idle rows are the remaining ActionItem surface and now
-    // carry the shared overflow menu alongside their optional session link.
+    // Claimed-but-idle rows are the remaining ActionItem surface and carry
+    // the shared overflow menu alongside their optional session link. #9001
+    // is not one of them: it is human-assigned and handed back
+    // (status:needs-human), so the fleet is not its sole idle owner and the
+    // Agents page no longer reports it as a stale claim. #9005 is - fleet
+    // assignee only, no hand-back, no live run.
     await page.goto('/agents');
     const claimedIdle = page.getByTestId('claimed-idle-section');
+    await expect(
+      claimedIdle.getByRole('button', { name: 'More actions for #9001' }),
+    ).toHaveCount(0);
     await claimedIdle
-      .getByRole('button', { name: 'More actions for #9001' })
+      .getByRole('button', {
+        name: `More actions for #${E2E_ITEM_NUMBERS.silentError}`,
+      })
       .click();
     await page.getByRole('menuitem', { name: 'Edit issue' }).click();
-    const agentsEditor = page.getByRole('dialog', { name: 'Edit #9001' });
-    await expect(agentsEditor.getByLabel('Title')).toHaveValue(updatedTitle);
-    await expect(agentsEditor.getByLabel('Body')).toHaveValue(updatedBody);
+    const agentsEditor = page.getByRole('dialog', {
+      name: `Edit #${E2E_ITEM_NUMBERS.silentError}`,
+    });
+    await expect(agentsEditor.getByLabel('Title')).toHaveValue(
+      'chore(telemetry): prune expired session docs',
+    );
+    await agentsEditor.getByRole('button', { name: 'Cancel' }).click();
   });
 
   test('renders live and finished run rows across the status palette', async ({

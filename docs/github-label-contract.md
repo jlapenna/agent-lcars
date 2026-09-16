@@ -12,6 +12,9 @@ state remain their respective artifact facts.
 - `status:*` records durable workflow state. `status:needs-human` means a
   maintainer must take the next action; `status:blocked` means an external
   dependency or prerequisite is preventing progress. They are not aliases.
+  `status:ledger` marks an anchor kept open on purpose as a durable ledger or
+  dashboard (an E2E failure ledger, an observation log); it is never a work
+  item, so no surface counts it as pending or stale.
 - `agent:*` requests the canonical executor to take the anchor over -- on an
   issue, implement it and open a PR; on a pull request, take the PR over and
   keep pushing commits to its branch. Apply one of `agent:claude`,
@@ -72,10 +75,14 @@ admitted; the console does not offer a parallel reassignment path.
   Inbox reasons; `status:post-deploy-action` and `status:blocked` are waits,
   listed in the Bridge's Waiting-on-Deploy and Blocked sections and never in
   the Inbox on their own (a blocked item that also needs a human is still a
-  decision, and reads as one with a Blocked badge). A fleet claim on a blocked
-  anchor is deliberate parking, so the Agents page does not report it as a
-  stale claim; the same holds for the Renovate-maintained Dependency
-  Dashboard, a standing anchor with no run of its own.
+  decision, and reads as one with a Blocked badge).
+- The fleet's assignee (`agent-lcars-bot`) is a monotonic marker: dispatch adds
+  it and only a human removes it, so it outlives every hand-back. The Agents
+  page therefore reports a claim as stale only when the fleet is the _sole_
+  idle owner: no human assignee, no `status:needs-human` (that is the
+  hand-back itself, and the Inbox's), no `status:blocked`, no `status:ledger`,
+  and not the Renovate-maintained Dependency Dashboard (`bot:renovate`). A
+  human never has to unassign the bot to make the console read correctly.
 - Agent LCARS Work Tasks/Runs express queued/running/completed execution
   state. GitHub Actions may report repository automation, but is not an agent
   lifecycle authority.

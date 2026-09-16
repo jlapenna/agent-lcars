@@ -15,6 +15,9 @@ export interface GitHubWebhookEnvelope {
    * retry count, and travels as an internal task header so each successor can
    * allocate a distinct name after its own retry budget is exhausted. */
   repairGeneration?: number;
+  /** Earliest time the task may run. A repair successor uses it so a
+   *  poisoned anchor retries on a schedule instead of thrashing the queue. */
+  notBefore?: Date;
 }
 
 export interface WebhookTask {
@@ -105,6 +108,13 @@ export async function enqueueGitHubWebhook(
             }),
       },
       body: envelope.rawBody,
+      ...(envelope.notBefore === undefined
+        ? {}
+        : {
+            scheduleTime: {
+              seconds: Math.floor(envelope.notBefore.getTime() / 1000),
+            },
+          }),
     });
     return {
       deliveryId: envelope.deliveryId,
