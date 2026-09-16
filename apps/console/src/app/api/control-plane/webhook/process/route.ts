@@ -172,15 +172,19 @@ export async function POST(request: Request): Promise<NextResponse> {
         logger.error(
           `agent-lcars: handed projection-only webhook repair generation ${repairGeneration + 1} to a durable successor after ${attempt} attempts`,
           error,
+          error.cause,
         );
         return NextResponse.json(
           { outcome: 'projection_repair_requeued', attempt },
           { status: 200, headers: { 'Cache-Control': 'no-store' } },
         );
       }
+      // The wrapper's stack names the delivery; the cause names the fault.
+      // Without the cause a day of 500s read only as "refresh failed".
       logger.error(
         `agent-lcars: retaining projection-only webhook repair after ${attempt} attempts`,
         error,
+        error.cause,
       );
       return NextResponse.json(
         { error: 'Projection refresh pending repair', attempt },
