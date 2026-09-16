@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { deriveItemState } from '@agent-lcars/work/derive';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CodexAuthStoreError } from './codex-auth-store';
 import { drainOutbox } from './orchestrator-dispatch';
@@ -261,6 +261,10 @@ const context = {
   checkoutTokens: {
     tokenFor: async () => 'checkout-token',
     expiringTokenFor: async () => ({
+      token: 'checkout-token',
+      expiresAt: '2026-08-26T11:00:00.000Z',
+    }),
+    expiringTokenForRepositories: async () => ({
       token: 'checkout-token',
       expiresAt: '2026-08-26T11:00:00.000Z',
     }),
@@ -1775,6 +1779,12 @@ describe('checkoutToken', () => {
       token: `ghs_secret-for-${repo}`,
       expiresAt,
     }));
+    const expiringTokenForRepositories = vi.fn(
+      async (owner: string, names: string[]) => ({
+        token: `ghs_secret-for-${owner}:${names.join(',')}`,
+        expiresAt,
+      }),
+    );
     const r = await call(
       {
         store,
@@ -1784,6 +1794,7 @@ describe('checkoutToken', () => {
         checkoutTokens: {
           tokenFor: async (repo) => (await expiringTokenFor(repo)).token,
           expiringTokenFor,
+          expiringTokenForRepositories,
         },
         codexAuth: context.codexAuth,
         bearerToken: runToken,
@@ -1794,19 +1805,118 @@ describe('checkoutToken', () => {
     expect(r.status).toBe(200);
     expect(expiringTokenFor).toHaveBeenCalledWith('jlapenna/agent-lcars');
     expect(expiringTokenFor).toHaveBeenCalledTimes(1);
+    // No agent-option:cross-repo on this run: the multi-repo mint path is
+    // never reached at all.
+    expect(expiringTokenForRepositories).not.toHaveBeenCalled();
 
     const body = r.json as {
       token: string;
       expiresAt: string;
       repository: string;
+      grants?: unknown;
     };
     expect(body.repository).toBe('jlapenna/agent-lcars');
     expect(body.token).toBe('ghs_secret-for-jlapenna/agent-lcars');
     expect(body.expiresAt).toBe(expiresAt);
+    expect(body.grants).toBeUndefined();
     // The run's own bearer credential must never surface here -- a mix-up
     // would hand the caller the wrong secret entirely.
     expect(body.token).not.toBe(runToken);
     expect(JSON.stringify(body)).not.toContain(runToken);
+  });
+
+  // #1993: `agent-option:cross-repo` -- one grant per fleet owner among
+  // `getWatchedRepos()`, minted through `expiringTokenForRepositories`.
+  describe('agent-option:cross-repo (#1993)', () => {
+    afterEach(() => {
+      delete process.env['AGENT_LCARS_WATCHED_REPOS'];
+    });
+
+    it("mints one grant per owner, each scoped to that owner's watched repos, and reuses the anchor owner's grant as the singular token", async () => {
+      process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+        { owner: 'jlapenna', name: 'agent-lcars' },
+        { owner: 'jlapenna', name: 'homelab' },
+        { owner: 'supersprinklesracing', name: 'sprinkles' },
+      ]);
+      const { store, orchestrator, now } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid('work-cross-repo-checkout-token'),
+        now: NOW,
+        params: { mode: 'implement', crossRepo: 'true' },
+      });
+      const runToken = mintRunToken();
+      await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: NOW,
+        claimedBy: 'runner-1',
+        tokenHash: hashRunToken(runToken),
+      });
+      const expiresAt = '2026-08-26T10:53:21.000Z';
+      const expiringTokenFor = vi.fn(async () => ({
+        token: 'unused-single-repo-token',
+        expiresAt,
+      }));
+      const expiringTokenForRepositories = vi.fn(
+        async (owner: string, _names: string[]) => ({
+          token: `ghs_grant-for-${owner}`,
+          expiresAt,
+        }),
+      );
+
+      const r = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          tokens: context.tokens,
+          checkoutTokens: {
+            tokenFor: async (repo) => (await expiringTokenFor(repo)).token,
+            expiringTokenFor,
+            expiringTokenForRepositories,
+          },
+          codexAuth: context.codexAuth,
+          bearerToken: runToken,
+        },
+        'GET',
+        runPath(runId, '/checkout-token'),
+      );
+      expect(r.status).toBe(200);
+
+      // The single-repo path is never used once cross-repo grants apply.
+      expect(expiringTokenFor).not.toHaveBeenCalled();
+      expect(expiringTokenForRepositories).toHaveBeenCalledTimes(2);
+      expect(expiringTokenForRepositories).toHaveBeenCalledWith('jlapenna', [
+        'agent-lcars',
+        'homelab',
+      ]);
+      expect(expiringTokenForRepositories).toHaveBeenCalledWith(
+        'supersprinklesracing',
+        ['sprinkles'],
+      );
+
+      const body = r.json as {
+        token: string;
+        expiresAt: string;
+        repository: string;
+        grants: { owner: string; repositories: string[]; token: string }[];
+      };
+      expect(body.repository).toBe('jlapenna/agent-lcars');
+      // The singular token is simply the anchor owner's own grant.
+      expect(body.token).toBe('ghs_grant-for-jlapenna');
+      expect(body.grants).toHaveLength(2);
+      expect(body.grants).toContainEqual({
+        owner: 'jlapenna',
+        repositories: ['agent-lcars', 'homelab'],
+        token: 'ghs_grant-for-jlapenna',
+        expiresAt,
+      });
+      expect(body.grants).toContainEqual({
+        owner: 'supersprinklesracing',
+        repositories: ['sprinkles'],
+        token: 'ghs_grant-for-supersprinklesracing',
+        expiresAt,
+      });
+    });
   });
 });
 

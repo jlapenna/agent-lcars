@@ -726,6 +726,30 @@ describe('postComment (direct Work admission)', () => {
     );
   });
 
+  // #1993: the reply-dispatch branch re-reads the anchor's current labels
+  // for other reasons already (`selectedReplyPipeline`'s re-check above);
+  // `crossRepo` rides along on that same read.
+  it('sets params.crossRepo on a reply dispatch when the anchor carries agent-option:cross-repo', async () => {
+    mockOctokit(['agent:codex', 'agent-option:cross-repo']);
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-cross-repo-reply',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna', 'codex');
+
+    expect((await store.listRuns(taskId)).at(-1)).toMatchObject({
+      params: { mode: 'reply', crossRepo: 'true' },
+    });
+  });
+
   it('preserves the admitted reply when needs-human projection refresh fails', async () => {
     const { createComment } = mockOctokit();
     const { orchestrator } = fixtureOrchestratorRuntime();
@@ -1226,6 +1250,29 @@ describe('assignPipeline', () => {
     ).toMatchObject({
       origin: { principal: 'github:jlapenna', channel: 'github' },
     });
+  });
+
+  // #1993: `agent-option:cross-repo` is re-read at the same dispatch
+  // boundary as every other label-derived decision here.
+  it('sets params.crossRepo when the anchor carries agent-option:cross-repo', async () => {
+    const { store } = mockOctokit(['type:bug', 'agent-option:cross-repo']);
+
+    await assignPipeline(DEFAULT_REPO, 2709, 'claude', 'jlapenna');
+
+    const runs = await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 });
+    expect(runs[0]).toMatchObject({
+      pipeline: 'claude',
+      params: { mode: 'implement', crossRepo: 'true' },
+    });
+  });
+
+  it('leaves params.crossRepo unset without the label', async () => {
+    const { store } = mockOctokit(['type:bug']);
+
+    await assignPipeline(DEFAULT_REPO, 2709, 'claude', 'jlapenna');
+
+    const runs = await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 });
+    expect(runs[0]?.params).toEqual({ mode: 'implement' });
   });
 
   // The primary production path for this action: assigning straight from a

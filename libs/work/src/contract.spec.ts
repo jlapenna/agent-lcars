@@ -279,6 +279,93 @@ describe('runsContract.brief resume field', () => {
   });
 });
 
+describe('runsContract.brief crossRepo field', () => {
+  it('runBriefSchema accepts an optional crossRepo boolean', () => {
+    const withCrossRepo = runBriefSchema.parse({
+      anchor: {
+        type: 'github',
+        repo: 'octo/example',
+        issue: 42,
+        html_url: 'https://github.com/octo/example/issues/42',
+      },
+      work: {
+        spec: {
+          title: 'GitHub work',
+          description: 'Dispatch via Work API.',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+      pipeline: 'claude',
+      mode: 'implement',
+      reply: '',
+      replyChannel: '',
+      replyPrincipal: '',
+      runbook: '',
+      context: '',
+      attemptId: 'g1:octo/example#42/r1',
+      generation: 1,
+      intentId: 'octo/example#42/r1',
+      crossRepo: true,
+    });
+    expect(withCrossRepo.crossRepo).toBe(true);
+
+    // Omitting it entirely (every pre-#1993 caller) still parses -- it is
+    // additive, not a new requirement.
+    const { crossRepo: _crossRepo, ...withoutCrossRepo } = withCrossRepo;
+    expect(runBriefSchema.parse(withoutCrossRepo).crossRepo).toBeUndefined();
+  });
+});
+
+describe('runsContract.checkoutToken grants field', () => {
+  it('accepts output with a per-owner grants array, and without one', () => {
+    const [outputShape] =
+      runsContract.checkoutToken['~orpc'].outputSchemas ?? [];
+    const shape = outputShape as z.ZodTypeAny | undefined;
+
+    expect(
+      shape?.safeParse({
+        token: 't',
+        expiresAt: '2026-01-01T00:00:00.000Z',
+        repository: 'jlapenna/agent-lcars',
+      }).success,
+    ).toBe(true);
+
+    expect(
+      shape?.safeParse({
+        token: 't',
+        expiresAt: '2026-01-01T00:00:00.000Z',
+        repository: 'jlapenna/agent-lcars',
+        grants: [
+          {
+            owner: 'jlapenna',
+            repositories: ['agent-lcars', 'homelab'],
+            token: 't-jlapenna',
+            expiresAt: '2026-01-01T00:00:00.000Z',
+          },
+          {
+            owner: 'supersprinklesracing',
+            repositories: ['sprinkles'],
+            token: 't-ssr',
+            expiresAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      }).success,
+    ).toBe(true);
+
+    // A malformed grant (missing `repositories`) is rejected, not silently
+    // dropped.
+    expect(
+      shape?.safeParse({
+        token: 't',
+        expiresAt: '2026-01-01T00:00:00.000Z',
+        repository: 'jlapenna/agent-lcars',
+        grants: [{ owner: 'jlapenna', token: 't', expiresAt: 'x' }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('generateWorkOpenApi', () => {
   it('emits the items, dispatches, schedules, and runs REST routes with bearer and run-token security', async () => {
     const doc = (await generateWorkOpenApi()) as {

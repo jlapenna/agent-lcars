@@ -69,6 +69,20 @@ export interface ExpiringDispatchToken {
 
 export interface ExpiringDispatchTokenProvider extends DispatchTokenProvider {
   expiringTokenFor(repo: string): Promise<ExpiringDispatchToken>;
+  /** Mints one token covering several repositories under a single GitHub
+   *  App installation -- `owner`'s -- rather than one repo. A single
+   *  installation token can never span two owners (GitHub's own
+   *  constraint: each App installation is per-account), so this is only
+   *  ever called once per owner, never across owners. `checkoutToken`
+   *  (`runs-router.ts`) is the sole caller, for `agent-option:cross-repo`
+   *  (#1993): one grant per fleet owner among `getWatchedRepos()`. Resolves
+   *  the installation via `owner`'s first entry in `names` -- any repo the
+   *  installation covers resolves the same installation id -- then mints
+   *  with `repositories: names` so the token can read every named repo. */
+  expiringTokenForRepositories(
+    owner: string,
+    names: string[],
+  ): Promise<ExpiringDispatchToken>;
 }
 
 /** The permission set `AppInstallationTokenProvider` requests when minting
@@ -174,6 +188,12 @@ interface CachedInstallationToken {
  */
 export class AppInstallationTokenProvider implements ExpiringDispatchTokenProvider {
   private readonly cache = new Map<string, CachedInstallationToken>();
+  /** Separate from `cache`: a multi-repo grant is keyed by owner plus the
+   *  sorted repository list, never collides with a single-repo `tokenFor`
+   *  cache entry even when the list happens to name one repo, and a repeat
+   *  call with the same owner+list (same tick's per-owner grant loop, or a
+   *  retried `checkoutToken`) mints once. */
+  private readonly multiRepoCache = new Map<string, CachedInstallationToken>();
 
   constructor(private readonly options: AppInstallationTokenProviderOptions) {}
 
@@ -203,10 +223,60 @@ export class AppInstallationTokenProvider implements ExpiringDispatchTokenProvid
       fetchImpl,
       jwt,
       installationId,
+      [splitRepo(repo).name],
       repo,
       this.options.permissions ?? DEFAULT_PERMISSIONS,
     );
     this.cache.set(repo, minted);
+    return {
+      token: minted.token,
+      expiresAt: new Date(minted.expiresAtMs).toISOString(),
+    };
+  }
+
+  async expiringTokenForRepositories(
+    owner: string,
+    names: string[],
+  ): Promise<ExpiringDispatchToken> {
+    if (names.length === 0) {
+      throw new Error(
+        `expiringTokenForRepositories(${JSON.stringify(owner)}) requires at least one repository name`,
+      );
+    }
+    const cacheKey = multiRepoCacheKey(owner, names);
+    const cached = this.multiRepoCache.get(cacheKey);
+    if (
+      cached !== undefined &&
+      Date.now() < cached.expiresAtMs - TOKEN_REFRESH_BUFFER_MS
+    ) {
+      return {
+        token: cached.token,
+        expiresAt: new Date(cached.expiresAtMs).toISOString(),
+      };
+    }
+
+    const fetchImpl = this.options.fetchImpl ?? globalThis.fetch;
+    const jwt = await mintAppJwt(
+      this.options.clientId,
+      this.options.privateKeyPem,
+    );
+    // A GitHub App has exactly one installation per account, so any one of
+    // `owner`'s repositories -- the first name given -- resolves the same
+    // installation id the rest of `names` would.
+    const installationId = await resolveInstallationId(
+      fetchImpl,
+      jwt,
+      `${owner}/${names[0]}`,
+    );
+    const minted = await mintInstallationAccessToken(
+      fetchImpl,
+      jwt,
+      installationId,
+      names,
+      `${owner} (${names.length} ${names.length === 1 ? 'repository' : 'repositories'})`,
+      this.options.permissions ?? DEFAULT_PERMISSIONS,
+    );
+    this.multiRepoCache.set(cacheKey, minted);
     return {
       token: minted.token,
       expiresAt: new Date(minted.expiresAtMs).toISOString(),
@@ -301,6 +371,8 @@ export function lazyDispatchTokenProvider(
   return {
     tokenFor: (repo) => (provider ??= factory()).tokenFor(repo),
     expiringTokenFor: (repo) => (provider ??= factory()).expiringTokenFor(repo),
+    expiringTokenForRepositories: (owner, names) =>
+      (provider ??= factory()).expiringTokenForRepositories(owner, names),
   };
 }
 
@@ -366,6 +438,13 @@ function splitRepo(repo: string): { owner: string; name: string } {
     );
   }
   return { owner: repo.slice(0, slash), name: repo.slice(slash + 1) };
+}
+
+/** Cache key for `expiringTokenForRepositories`: owner plus its repository
+ * names in a stable (sorted) order, so two calls naming the same set in a
+ * different order still share one cached token. */
+function multiRepoCacheKey(owner: string, names: string[]): string {
+  return `${owner}:${[...names].sort().join(',')}`;
 }
 
 /** GitHub's own explanation for a non-OK App response, for the thrown
@@ -437,15 +516,20 @@ async function resolveInstallationId(
   return body.id;
 }
 
+/** Mints one installation access token scoped to `repositories` (bare repo
+ *  names, one owner implied by `installationId`). `logLabel` is what
+ *  appears in every thrown message -- the single-repo `owner/name` form for
+ *  `expiringTokenFor`'s one-name call, or an owner+count summary for
+ *  `expiringTokenForRepositories`'s multi-name call -- never the token or
+ *  the repositories list itself. */
 async function mintInstallationAccessToken(
   fetchImpl: typeof fetch,
   jwt: string,
   installationId: number,
-  repo: string,
+  repositories: string[],
+  logLabel: string,
   permissions: Record<string, string>,
 ): Promise<CachedInstallationToken> {
-  const { name } = splitRepo(repo);
-
   let response: Response;
   try {
     response = await fetchImpl(
@@ -454,21 +538,21 @@ async function mintInstallationAccessToken(
         method: 'POST',
         headers: appAuthHeaders(jwt),
         body: JSON.stringify({
-          repositories: [name],
+          repositories,
           permissions,
         }),
       },
     );
   } catch (error) {
     throw new Error(
-      `failed to mint GitHub App installation access token for ${repo}: ${errorMessage(error)}`,
+      `failed to mint GitHub App installation access token for ${logLabel}: ${errorMessage(error)}`,
       { cause: error },
     );
   }
   if (!response.ok) {
     const detail = await githubErrorDetail(response);
     throw new Error(
-      `failed to mint GitHub App installation access token for ${repo}: GitHub returned ${response.status}${detail === '' ? '' : `: ${detail}`}`,
+      `failed to mint GitHub App installation access token for ${logLabel}: GitHub returned ${response.status}${detail === '' ? '' : `: ${detail}`}`,
     );
   }
 
@@ -478,13 +562,13 @@ async function mintInstallationAccessToken(
   };
   if (typeof body.token !== 'string' || typeof body.expires_at !== 'string') {
     throw new Error(
-      `GitHub App installation access token response for ${repo} is missing token/expires_at`,
+      `GitHub App installation access token response for ${logLabel} is missing token/expires_at`,
     );
   }
   const expiresAtMs = Date.parse(body.expires_at);
   if (!Number.isFinite(expiresAtMs)) {
     throw new Error(
-      `GitHub App installation access token response for ${repo} has an unparseable expires_at`,
+      `GitHub App installation access token response for ${logLabel} has an unparseable expires_at`,
     );
   }
   return { token: body.token, expiresAtMs };

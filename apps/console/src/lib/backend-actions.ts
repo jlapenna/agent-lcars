@@ -17,6 +17,7 @@ import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { type Pipeline } from './primary-action';
 import {
   agentIntegration,
+  hasCrossRepoOption,
   matchingAgentPipelines,
   repoKey,
   selectedReplyPipeline,
@@ -26,6 +27,15 @@ import { workPayloadFromGithub } from './work-from-github';
 
 const sha256Hex = (input: string): string =>
   createHash('sha256').update(input).digest('hex');
+
+/** `params.crossRepo` is present, and `'true'`, iff the anchor's current
+ *  GitHub labels (re-read at the dispatch boundary, same as every other
+ *  label-derived decision in this file) carry `agent-option:cross-repo`.
+ *  Mirrors `orchestrator-ingest.ts`'s `crossRepoParams` for the console's
+ *  own dispatch paths. */
+function crossRepoParam(labels: string[]): Record<string, string> {
+  return hasCrossRepoOption(labels) ? { crossRepo: 'true' } : {};
+}
 
 export class ActionError extends Error {
   constructor(
@@ -248,7 +258,11 @@ export async function postComment(
         const outcome = await admitGithubWork(runtime, {
           anchor: taskId,
           requestId: `console-reply:${randomUUID()}`,
-          params: { mode: 'reply', reply: body },
+          params: {
+            mode: 'reply',
+            reply: body,
+            ...crossRepoParam(currentLabels),
+          },
           work,
         });
         if (outcome.kind === 'busy') {
@@ -679,6 +693,13 @@ export async function retriggerIssue(
     });
   }
 
+  // Deliberately does not re-read GitHub for `agent-option:cross-repo`
+  // (unlike `assignPipeline`/`postComment`, both of which already
+  // re-fetch labels for other reasons): retrigger's whole contract is
+  // reusing the task's already-admitted, durable Work verbatim without a
+  // GitHub round trip (see the "reuses the task's durable Work payload
+  // without re-reading GitHub" test below). `params.crossRepo` was fixed
+  // at the run's original admission and is not re-derived here.
   const outcome = await admitGithubWork(runtime, {
     anchor: taskId,
     requestId: `console-retry:${randomUUID()}`,
@@ -738,7 +759,7 @@ export async function assignPipeline(
   const outcome = await admitGithubWork(runtime, {
     anchor: taskId,
     requestId: `console-assign:${randomUUID()}`,
-    params: { mode: 'implement' },
+    params: { mode: 'implement', ...crossRepoParam(labels) },
     work: workPayloadFromGithub({
       title: issue.title,
       body: issue.body,

@@ -12,6 +12,7 @@ import { z } from 'zod';
 
 import { isControlPlaneRepository } from '@/lib/deployment';
 import { matchReplyTrigger } from '@/lib/reply-trigger';
+import { hasCrossRepoOption } from '@/lib/watched-repo';
 
 import { workPayloadFromGithub } from './work-from-github';
 
@@ -74,6 +75,13 @@ const issueBodySchema = z.object({
   number: z.number().int().positive(),
   title: z.string().min(1),
   body: z.string().nullable().optional(),
+  // GitHub always sends the anchor's full current label set on every
+  // `issues`/`pull_request`/`issue_comment` delivery, not just the one
+  // label that triggered this specific event (`label.name` below covers
+  // that). Optional/defaulted so a malformed or older-shaped payload still
+  // parses -- absent labels reads as "no agent-option present", never a
+  // parse failure. See `hasCrossRepoOption` (watched-repo.ts).
+  labels: z.array(labelSchema).optional().default([]),
 });
 
 // Label routing requires lifecycle evidence. Tagged-comment follow-ups have
@@ -159,6 +167,19 @@ function matchReplyCommand(body: string): Pipeline | undefined {
   return trigger ? REPLY_COMMANDS.get(trigger) : undefined;
 }
 
+/** `params.crossRepo` is present, and `'true'`, iff the anchor's labels
+ *  (as delivered on this exact webhook event) carry
+ *  `agent-option:cross-repo` -- never inferred later, and never from a
+ *  followup delivery. `runs-router.ts`'s `checkoutToken` reads this exact
+ *  string value back off `Run.params`. */
+function crossRepoParams(
+  labels: readonly { name: string }[],
+): Record<string, string> {
+  return hasCrossRepoOption(labels.map((label) => label.name))
+    ? { crossRepo: 'true' }
+    : {};
+}
+
 function checkRepository(fullName: string): IngestIgnore | undefined {
   return isControlPlaneRepository(fullName) ? undefined : ignore('wrong-repo');
 }
@@ -230,6 +251,7 @@ function interpretIssuesEvent(
     pipeline,
     {
       mode: 'implement',
+      ...crossRepoParams(issue.labels),
     },
     work,
     terminalQuickTaskBinding(issue.body),
@@ -270,7 +292,7 @@ function interpretPullRequestEvent(
       pullRequest.number,
       deliveryId,
       implementPipeline,
-      { mode: 'implement' },
+      { mode: 'implement', ...crossRepoParams(pullRequest.labels) },
       work,
     );
   }
@@ -289,7 +311,7 @@ function interpretPullRequestEvent(
       pullRequest.number,
       deliveryId,
       reviewPipeline,
-      { mode: 'review' },
+      { mode: 'review', ...crossRepoParams(pullRequest.labels) },
       work,
     );
   }
@@ -340,6 +362,7 @@ function interpretIssueCommentEvent(
     {
       mode: 'reply',
       reply: comment.body,
+      ...crossRepoParams(issue.labels),
     },
     work,
   );

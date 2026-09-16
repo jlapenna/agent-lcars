@@ -769,6 +769,125 @@ describe('interpretDelivery', () => {
     });
   });
 
+  // #1993: `agent-option:cross-repo` -- present on the anchor's full label
+  // set (not just the single triggering `label`) -> params.crossRepo.
+  describe('agent-option:cross-repo (#1993)', () => {
+    it('sets params.crossRepo on an issues labeled delivery when the anchor carries the option', () => {
+      const result = interpretDelivery({
+        event: 'issues',
+        deliveryId: DELIVERY_ID,
+        payload: issuesLabeledPayload({
+          label: { name: 'agent:claude' },
+          issue: {
+            state: 'open',
+            number: 42,
+            title: 'Issue title',
+            body: 'Issue body',
+            labels: [
+              { name: 'agent:claude' },
+              { name: 'agent-option:cross-repo' },
+            ],
+          },
+        }),
+      });
+      expect(result).toMatchObject({
+        kind: 'request',
+        params: { mode: 'implement', crossRepo: 'true' },
+      });
+    });
+
+    it('leaves params.crossRepo unset on an issues labeled delivery without the option', () => {
+      const result = interpretDelivery({
+        event: 'issues',
+        deliveryId: DELIVERY_ID,
+        payload: issuesLabeledPayload({
+          label: { name: 'agent:claude' },
+          issue: {
+            state: 'open',
+            number: 42,
+            title: 'Issue title',
+            body: 'Issue body',
+            labels: [{ name: 'agent:claude' }],
+          },
+        }),
+      });
+      expect(result.kind).toBe('request');
+      if (result.kind !== 'request') throw new Error('expected admission');
+      expect(result.params).toEqual({ mode: 'implement' });
+    });
+
+    it('sets params.crossRepo on a pull_request implement dispatch', () => {
+      const result = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: pullRequestLabeledPayload({
+          label: { name: 'agent:codex' },
+          pull_request: {
+            state: 'open',
+            number: 7,
+            title: 'Pull request title',
+            body: 'Pull request body',
+            labels: [
+              { name: 'agent:codex' },
+              { name: 'agent-option:cross-repo' },
+            ],
+          },
+        }),
+      });
+      expect(result).toMatchObject({
+        kind: 'request',
+        params: { mode: 'implement', crossRepo: 'true' },
+      });
+    });
+
+    it('sets params.crossRepo on a pull_request review dispatch', () => {
+      const result = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: pullRequestLabeledPayload({
+          label: { name: 'review:codex' },
+          pull_request: {
+            state: 'open',
+            number: 7,
+            title: 'Pull request title',
+            body: 'Pull request body',
+            labels: [
+              { name: 'review:codex' },
+              { name: 'agent-option:cross-repo' },
+            ],
+          },
+        }),
+      });
+      expect(result).toMatchObject({
+        kind: 'request',
+        params: { mode: 'review', crossRepo: 'true' },
+      });
+    });
+
+    it('sets params.crossRepo on a reply dispatch when the replied-to issue carries the option', () => {
+      const result = interpretDelivery({
+        event: 'issue_comment',
+        deliveryId: DELIVERY_ID,
+        payload: issueCommentPayload({
+          issue: {
+            state: 'open',
+            number: 9,
+            title: 'Issue title',
+            body: 'Issue body',
+            labels: [
+              { name: 'agent:claude' },
+              { name: 'agent-option:cross-repo' },
+            ],
+          },
+        }),
+      });
+      expect(result).toMatchObject({
+        kind: 'request',
+        params: { mode: 'reply', crossRepo: 'true' },
+      });
+    });
+  });
+
   it('never throws across the whole case table', () => {
     for (const { event, payload } of cases) {
       expect(() =>

@@ -28,6 +28,16 @@ state remain their respective artifact facts.
   `agent:*` label, a `review:*` label, both, or neither, and each drives
   its own dispatch mode when applied.
 - `agent-option:*` modifies an agent run without selecting the executor.
+  `agent-option:long-run` extends the agent turn and time budget.
+  `agent-option:cross-repo` (#1993) grants the run one GitHub token per
+  fleet owner (every owner among the watched-repositories configuration),
+  instead of only a token scoped to the anchor's own repository, so a run
+  can read any other watched repository through `git` or `gh` -- a single
+  GitHub App installation token can never span two owners, so this is one
+  token per owner, not one token for the whole fleet. The label must be on
+  the anchor at dispatch time: add it before (or together with) the
+  triggering `agent:*`/`review:*` label, or redispatch after adding it --
+  it is read once, at admission, never retroactively.
 - `intake:*` and `bot:*` record provenance, not execution state.
 - `automation:*` and `ci:*` are explicit workflow controls, and the one
   namespace an agent does not self-serve. They exist to make a run broader,
@@ -53,7 +63,7 @@ state remain their respective artifact facts.
 | `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy          | Ready, blocked, needs-human, post-deploy |
 | `agent:*`         | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | Claude, Codex, OpenCode                  |
 | `review:*`        | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | Claude, Codex, OpenCode                  |
-| `agent-option:*`  | Long run                                 | Long run                                          | Long run                                 |
+| `agent-option:*`  | Long run, cross-repo                     | Long run, cross-repo                              | Long run, cross-repo                     |
 | Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                              | Quick task, Renovate                     |
 | Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, E2E, snapshots | None                                     |
 | Apps              | Console, telemetry, runner autoscaler    | Sprinkles, OneCake, Primes                        | None                                     |
