@@ -1,3 +1,4 @@
+import { AGENT_BOT_LOGINS } from '@agent-lcars/dispatch-contracts';
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 
 import { type ActionItem } from './action-items';
@@ -56,19 +57,36 @@ export function mostRecentSessionForItem(
 }
 
 /**
- * A fleet claim that is idle on purpose is not a stale claim, and this
- * section exists to surface stale ones:
+ * The fleet's assignee is a monotonic marker: dispatch adds it, and by the
+ * ownership rule only a human ever removes it, so it outlives every
+ * hand-back. Reading it alone as "the fleet owns this and is doing nothing"
+ * therefore decays into noise - every parked, handed-back, blocked, or
+ * standing anchor the fleet ever touched. A stale claim is one where the
+ * fleet is the *sole* idle owner and nothing says otherwise:
  *
- * - `status:blocked` says the item is parked on something external; the
- *   Bridge's Blocked section owns it (label contract: "an external
- *   dependency or prerequisite is preventing progress").
- * - A Renovate-maintained item (`bot:renovate` - the Dependency Dashboard)
- *   is a standing anchor the fleet keeps claimed so dependency work routes
- *   to it. It will never have a run of its own and never goes idle.
+ * - A human assignee owns the item (agent-lcars-dev's ownership guardrail:
+ *   "a human assignee owns the issue"); the fleet's mark is subordinate.
+ * - `status:needs-human` is the hand-back itself: the ball is in the
+ *   maintainer's court and the Inbox already lists it. Listing it here too
+ *   read as "stale, take over", which is the opposite of what it means.
+ * - `status:blocked` parks the item on something external; the Bridge's
+ *   Blocked section owns it.
+ * - `status:ledger` marks an anchor kept open on purpose as a durable
+ *   ledger or dashboard, never a work item (e.g. sprinkles#4664).
+ * - `bot:renovate` (the Dependency Dashboard) is the same shape: a standing
+ *   anchor the fleet keeps claimed so dependency work routes to it.
  */
-function isDeliberatelyIdle(item: ActionItem): boolean {
+function claimBelongsElsewhere(item: ActionItem): boolean {
+  const fleet = agentFleetLogin();
+  const humanAssignee = item.assigneeLogins.some(
+    (login) => login !== fleet && !AGENT_BOT_LOGINS.includes(login),
+  );
   return (
-    item.actionTypes.includes('blocked') || item.labels.includes('bot:renovate')
+    humanAssignee ||
+    item.actionTypes.includes('needs-human') ||
+    item.actionTypes.includes('blocked') ||
+    item.labels.includes('status:ledger') ||
+    item.labels.includes('bot:renovate')
   );
 }
 
@@ -79,8 +97,8 @@ function isDeliberatelyIdle(item: ActionItem): boolean {
  * ("agent-lcars-bot assigned but no live run or session ⇒ the claim is
  * stale; take over and say so").
  * Before the /agents page existed, these were only discoverable by noticing
- * silence on an issue. Deliberately idle claims (see `isDeliberatelyIdle`)
- * are not stale and stay out.
+ * silence on an issue. A claim that belongs to someone or something else
+ * (see `claimBelongsElsewhere`) is not stale and stays out.
  */
 export function deriveClaimedIdle(
   items: ActionItem[],
@@ -90,7 +108,7 @@ export function deriveClaimedIdle(
   return items.filter(
     (item) =>
       item.assigneeLogins.includes(agentFleetLogin()) &&
-      !isDeliberatelyIdle(item) &&
+      !claimBelongsElsewhere(item) &&
       !hasLiveRun(item) &&
       !activeSessions.some((session) =>
         sessionReferencesItemNumber(session, item),

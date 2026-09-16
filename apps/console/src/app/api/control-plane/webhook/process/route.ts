@@ -48,6 +48,24 @@ function header(request: Request, name: string): string {
 // rebuilds any state the event carried from GitHub itself.
 const MAX_PROCESS_ATTEMPTS = 10;
 
+/**
+ * A projection-only refresh that keeps failing is retried across successor
+ * tasks (see below), but each successor now waits before its first attempt
+ * and the chain ends. Without both, one anchor GitHub would not fully answer
+ * for (sprinkles#5628, a check run from an app outside this installation's
+ * permissions) retried at full speed for a day, Cloud Tasks throttled the
+ * whole queue on the error rate, and every other delivery starved behind it.
+ * Generation n waits min(2^n, 24) hours: about six days of retries in ten
+ * generations, after which the delivery is dropped loudly; the anchor's next
+ * real event refreshes it.
+ */
+const MAX_REPAIR_GENERATIONS = 10;
+const HOUR_MS = 60 * 60 * 1000;
+
+function repairSuccessorDelayMs(generation: number): number {
+  return Math.min(2 ** generation, 24) * HOUR_MS;
+}
+
 function parseAttempt(retryCount: string | null): number {
   if (retryCount === null || !/^\d+$/u.test(retryCount)) return 1;
   const parsed = Number(retryCount);
@@ -158,16 +176,31 @@ export async function POST(request: Request): Promise<NextResponse> {
       // may be the only durable signal for a close/delete. Keep the queued
       // task retryable past the generic poison-delivery acknowledgement cap.
       if (attempt >= MAX_PROCESS_ATTEMPTS) {
+        if (repairGeneration >= MAX_REPAIR_GENERATIONS) {
+          logger.error(
+            `agent-lcars: dropping projection-only webhook repair after ${repairGeneration} generations; the anchor's next event will refresh it`,
+            error,
+            error.cause,
+          );
+          return NextResponse.json(
+            { outcome: 'projection_repair_dropped', attempt, repairGeneration },
+            { status: 200, headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
         // Cloud Tasks itself has a finite retry lifecycle. Before this task
         // can be retired, create a separately named durable successor with
         // the same authenticated envelope and a fresh queue retry budget.
         // If this enqueue fails, return 500 so the current task remains.
+        const nextGeneration = repairGeneration + 1;
         await enqueueGitHubWebhook({
           rawBody,
           deliveryId: deliveryId as string,
           eventName: eventName as string,
           signature: header(request, 'x-hub-signature-256'),
-          repairGeneration: repairGeneration + 1,
+          repairGeneration: nextGeneration,
+          notBefore: new Date(
+            Date.now() + repairSuccessorDelayMs(nextGeneration),
+          ),
         });
         logger.error(
           `agent-lcars: handed projection-only webhook repair generation ${repairGeneration + 1} to a durable successor after ${attempt} attempts`,

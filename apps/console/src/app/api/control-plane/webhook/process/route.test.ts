@@ -119,4 +119,39 @@ describe('POST /api/control-plane/webhook/process', () => {
       }),
     );
   });
+
+  it('schedules each repair successor after a growing delay so a poisoned anchor cannot thrash the queue', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-16T00:00:00Z'));
+    handleWebhookDelivery.mockRejectedValue(
+      new ProjectionRefreshError('GitHub exact refresh unavailable'),
+    );
+
+    await POST(request('9', '2'));
+
+    const envelope = enqueueGitHubWebhook.mock.calls[0]?.[0] as {
+      repairGeneration: number;
+      notBefore: Date;
+    };
+    expect(envelope.repairGeneration).toBe(3);
+    // generation 3 waits 2^3 = 8 hours
+    expect(envelope.notBefore.toISOString()).toBe('2026-09-16T08:00:00.000Z');
+    vi.useRealTimers();
+  });
+
+  it('drops the delivery loudly once the repair chain is exhausted instead of minting another successor', async () => {
+    handleWebhookDelivery.mockRejectedValue(
+      new ProjectionRefreshError('GitHub exact refresh unavailable'),
+    );
+
+    const response = await POST(request('9', '10'));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      outcome: 'projection_repair_dropped',
+      attempt: 10,
+      repairGeneration: 10,
+    });
+    expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
+  });
 });

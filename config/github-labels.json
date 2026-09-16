@@ -41,6 +41,10 @@
       "color": "fbca04",
       "description": "Awaiting a human or agent action after deployment"
     },
+    "status:ledger": {
+      "color": "bfd4f2",
+      "description": "Kept open on purpose as a durable ledger or dashboard; not a work item"
+    },
     "agent:claude": {
       "color": "d97757",
       "description": "Dispatch this item to the Claude agent"
@@ -151,6 +155,7 @@
         "status:blocked",
         "status:needs-human",
         "status:post-deploy-action",
+        "status:ledger",
         "agent:claude",
         "agent:codex",
         "agent:opencode",
@@ -200,6 +205,7 @@
         "status:blocked",
         "status:needs-human",
         "status:post-deploy-action",
+        "status:ledger",
         "agent:claude",
         "agent:codex",
         "agent:opencode",
@@ -259,6 +265,7 @@
         "status:blocked",
         "status:needs-human",
         "status:post-deploy-action",
+        "status:ledger",
         "agent:claude",
         "agent:codex",
         "agent:opencode",
@@ -298,6 +305,7 @@
         "status:blocked",
         "status:needs-human",
         "status:post-deploy-action",
+        "status:ledger",
         "agent:claude",
         "agent:codex",
         "agent:opencode",
@@ -337,6 +345,7 @@
         "status:blocked",
         "status:needs-human",
         "status:post-deploy-action",
+        "status:ledger",
         "agent:claude",
         "agent:codex",
         "agent:opencode",
@@ -376,6 +385,7 @@
         "status:blocked",
         "status:needs-human",
         "status:post-deploy-action",
+        "status:ledger",
         "agent:claude",
         "agent:codex",
         "agent:opencode",
@@ -415,6 +425,7 @@
         "status:blocked",
         "status:needs-human",
         "status:post-deploy-action",
+        "status:ledger",
         "agent:claude",
         "agent:codex",
         "agent:opencode",

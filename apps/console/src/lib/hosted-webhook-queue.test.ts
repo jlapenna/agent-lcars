@@ -68,6 +68,26 @@ describe('hosted GitHub webhook queue', () => {
     );
   });
 
+  it('turns a successor notBefore into a Cloud Tasks scheduleTime', async () => {
+    const enqueue = vi.fn().mockResolvedValue(undefined);
+    const queue: WebhookTaskQueue = { enqueue };
+
+    await enqueueGitHubWebhook(
+      {
+        ...envelope,
+        repairGeneration: 1,
+        notBefore: new Date('2026-09-16T08:00:00Z'),
+      },
+      queue,
+    );
+
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduleTime: { seconds: Date.UTC(2026, 8, 16, 8) / 1000 },
+      }),
+    );
+  });
+
   it('propagates failures that did not establish durable ownership', async () => {
     const error = Object.assign(new Error('unavailable'), { code: 14 });
     const queue: WebhookTaskQueue = {
