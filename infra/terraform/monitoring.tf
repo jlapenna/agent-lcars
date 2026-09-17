@@ -26,7 +26,7 @@ resource "google_monitoring_alert_policy" "dispatch_webhooks_queue_backlog" {
   conditions {
     display_name = "dispatch-webhooks queue depth > 200 for 30m"
     condition_threshold {
-      filter          = "metric.type=\"cloudtasks.googleapis.com/queue/depth\" AND resource.labels.queue_id=\"dispatch-webhooks\""
+      filter          = "metric.type=\"cloudtasks.googleapis.com/queue/depth\" AND resource.type=\"cloud_tasks_queue\" AND resource.label.queue_id=\"dispatch-webhooks\""
       comparison      = "COMPARISON_GT"
       threshold_value = 200
       duration        = "1800s"
@@ -50,7 +50,7 @@ resource "google_monitoring_alert_policy" "dispatch_webhooks_queue_backlog" {
     # 15 failing attempts per 5-minute alignment window.
     display_name = "dispatch-webhooks non-ok task attempts > 0.05/s for 30m"
     condition_threshold {
-      filter          = "metric.type=\"cloudtasks.googleapis.com/queue/task_attempt_count\" AND resource.labels.queue_id=\"dispatch-webhooks\" AND metric.labels.response_code!=\"ok\""
+      filter          = "metric.type=\"cloudtasks.googleapis.com/queue/task_attempt_count\" AND resource.type=\"cloud_tasks_queue\" AND resource.label.queue_id=\"dispatch-webhooks\" AND metric.label.response_code!=\"ok\""
       comparison      = "COMPARISON_GT"
       threshold_value = 0.05
       duration        = "1800s"
