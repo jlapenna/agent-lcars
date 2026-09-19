@@ -28,7 +28,6 @@ state remain their respective artifact facts.
   `agent:*` label, a `review:*` label, both, or neither, and each drives
   its own dispatch mode when applied.
 - `agent-option:*` modifies an agent run without selecting the executor.
-  `agent-option:long-run` extends the agent turn and time budget.
   `agent-option:cross-repo` (#1993) grants the run one GitHub token per
   fleet owner (every owner among the watched-repositories configuration),
   instead of only a token scoped to the anchor's own repository, so a run
@@ -63,7 +62,7 @@ state remain their respective artifact facts.
 | `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy          | Ready, blocked, needs-human, post-deploy |
 | `agent:*`         | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | Claude, Codex, OpenCode                  |
 | `review:*`        | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | Claude, Codex, OpenCode                  |
-| `agent-option:*`  | Long run, cross-repo                     | Long run, cross-repo                              | Long run, cross-repo                     |
+| `agent-option:*`  | Cross-repo                               | Cross-repo                                        | Cross-repo                               |
 | Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                              | Quick task, Renovate                     |
 | Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, E2E, snapshots | None                                     |
 | Apps              | Console, telemetry, runner autoscaler    | Sprinkles, OneCake, Primes                        | None                                     |

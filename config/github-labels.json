@@ -69,10 +69,6 @@
       "color": "3776ab",
       "description": "Have the OpenCode agent review this pull request's diff"
     },
-    "agent-option:long-run": {
-      "color": "b60205",
-      "description": "Use the extended agent turn and time budget"
-    },
     "agent-option:cross-repo": {
       "color": "b60205",
       "description": "Grant the run one GitHub token per fleet owner so it can read every watched repository"
@@ -166,7 +162,6 @@
         "review:claude",
         "review:codex",
         "review:opencode",
-        "agent-option:long-run",
         "agent-option:cross-repo",
         "intake:quick-task",
         "bot:renovate",
@@ -188,6 +183,7 @@
         "quick-task": ["intake:quick-task"]
       },
       "remove": [
+        "agent-option:long-run",
         "duplicate",
         "go",
         "good first issue",
@@ -217,7 +213,6 @@
         "review:claude",
         "review:codex",
         "review:opencode",
-        "agent-option:long-run",
         "agent-option:cross-repo",
         "intake:quick-task",
         "bot:renovate",
@@ -244,7 +239,6 @@
         "claude": ["agent:claude"],
         "codex": ["agent:codex"],
         "opencode": ["agent:opencode"],
-        "claude-long": ["agent-option:long-run"],
         "quick-task": ["intake:quick-task"],
         "heal": ["automation:heal"],
         "playbook-unstick-prs": ["automation:unstick-prs"],
@@ -257,7 +251,14 @@
         "onecake": ["app:onecake"],
         "primes": ["app:primes"]
       },
-      "remove": ["conflicting", "heal:1", "heal:2", "wontfix"]
+      "remove": [
+        "agent-option:long-run",
+        "claude-long",
+        "conflicting",
+        "heal:1",
+        "heal:2",
+        "wontfix"
+      ]
     },
     "jlapenna/homelab": {
       "labels": [
@@ -278,7 +279,6 @@
         "review:claude",
         "review:codex",
         "review:opencode",
-        "agent-option:long-run",
         "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
@@ -292,6 +292,7 @@
         "human-needed": ["status:needs-human"]
       },
       "remove": [
+        "agent-option:long-run",
         "duplicate",
         "good first issue",
         "help wanted",
@@ -319,7 +320,6 @@
         "review:claude",
         "review:codex",
         "review:opencode",
-        "agent-option:long-run",
         "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
@@ -333,6 +333,7 @@
         "human-needed": ["status:needs-human"]
       },
       "remove": [
+        "agent-option:long-run",
         "duplicate",
         "good first issue",
         "help wanted",
@@ -360,7 +361,6 @@
         "review:claude",
         "review:codex",
         "review:opencode",
-        "agent-option:long-run",
         "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
@@ -374,6 +374,7 @@
         "human-needed": ["status:needs-human"]
       },
       "remove": [
+        "agent-option:long-run",
         "duplicate",
         "good first issue",
         "help wanted",
@@ -401,7 +402,6 @@
         "review:claude",
         "review:codex",
         "review:opencode",
-        "agent-option:long-run",
         "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
@@ -415,6 +415,7 @@
         "human-needed": ["status:needs-human"]
       },
       "remove": [
+        "agent-option:long-run",
         "duplicate",
         "good first issue",
         "help wanted",
@@ -442,7 +443,6 @@
         "review:claude",
         "review:codex",
         "review:opencode",
-        "agent-option:long-run",
         "agent-option:cross-repo",
         "intake:quick-task",
         "planning",
@@ -456,6 +456,7 @@
         "human-needed": ["status:needs-human"]
       },
       "remove": [
+        "agent-option:long-run",
         "duplicate",
         "good first issue",
         "help wanted",
