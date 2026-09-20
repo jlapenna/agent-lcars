@@ -6,6 +6,7 @@ const {
   extractIssueNumbers,
   extractIssueReferences,
   projectNameFor,
+  resolveRepoForDirDefault,
   runHook,
 } = require('../bin/codex-issue-guardrail.cjs');
 
@@ -171,6 +172,177 @@ test('treats the same number in different repositories as distinct issues', () =
       { number: 761, repo: null, routing: false },
     ],
   );
+});
+
+// The Bash tool's cwd resets between commands, so the norm in this fleet is
+// `cd /other/repo && gh issue view N`, not a `-R` flag. #1084/#937 in
+// jlapenna/homelab (2026-09-19/20) false-positived exactly this way: the
+// bare number resolved against the hook's own repo instead of the one the
+// command actually `cd`ed into.
+test('resolves the repository from a preceding cd', () => {
+  assert.deepEqual(
+    extractIssueReferences(
+      'cd /home/jlapenna/p/homelab && gh issue view 1084',
+      {
+        cwd: '/home/jlapenna/p/agent-lcars',
+        resolveRepoForDir: (dir) =>
+          dir === '/home/jlapenna/p/homelab' ? 'jlapenna/homelab' : null,
+      },
+    ),
+    [{ number: 1084, repo: 'jlapenna/homelab', routing: false }],
+  );
+});
+
+test('resolves a cd through a relative path against the starting cwd', () => {
+  assert.deepEqual(
+    extractIssueReferences('cd ../homelab && gh issue edit 937 --add-label x', {
+      cwd: '/home/jlapenna/p/agent-lcars',
+      resolveRepoForDir: (dir) =>
+        dir === '/home/jlapenna/p/homelab' ? 'jlapenna/homelab' : null,
+    }),
+    [{ number: 937, repo: 'jlapenna/homelab', routing: true }],
+  );
+});
+
+test('an explicit -R wins over a preceding cd', () => {
+  assert.deepEqual(
+    extractIssueReferences(
+      'cd /home/jlapenna/p/homelab && gh issue view 1084 -R other/repo',
+      { resolveRepoForDir: () => 'jlapenna/homelab' },
+    ),
+    [{ number: 1084, repo: 'other/repo', routing: false }],
+  );
+});
+
+test('a GH_REPO= prefix carries the repository', () => {
+  assert.deepEqual(
+    extractIssueReferences('GH_REPO=jlapenna/homelab gh issue view 1084'),
+    [{ number: 1084, repo: 'jlapenna/homelab', routing: false }],
+  );
+});
+
+test('a GH_REPO= prefix wins over a preceding cd', () => {
+  assert.deepEqual(
+    extractIssueReferences(
+      'cd /home/jlapenna/p/homelab && GH_REPO=other/repo gh issue view 1084',
+      { resolveRepoForDir: () => 'jlapenna/homelab' },
+    ),
+    [{ number: 1084, repo: 'other/repo', routing: false }],
+  );
+});
+
+test('a plain command with no cd still resolves to the hook cwd', () => {
+  assert.deepEqual(extractIssueReferences('gh issue view 642'), [
+    { number: 642, repo: null, routing: false },
+  ]);
+});
+
+// Guessing which repository an unrecognized `cd` target belongs to is worse
+// than saying nothing: it could just as easily check the wrong issue as skip
+// the right one. Stay silent instead.
+test('stays silent when a preceding cd targets a directory it cannot resolve', () => {
+  assert.deepEqual(
+    extractIssueReferences('cd /tmp/not-a-repo && gh issue view 5', {
+      resolveRepoForDir: () => null,
+    }),
+    [],
+  );
+});
+
+test('runHook stays silent for a cd it cannot resolve, rather than checking the wrong repo', () => {
+  const output = runHook(
+    { tool_input: { command: 'cd /tmp/not-a-repo && gh issue edit 5' } },
+    {
+      resolveRepoForDir: () => null,
+      getIssue: () => {
+        throw new Error('must not check any repository for an unresolved cd');
+      },
+    },
+  );
+
+  assert.equal(output, null);
+});
+
+test('names the repository resolved from a cd in a cross-repo violation', () => {
+  const output = runHook(
+    {
+      tool_input: {
+        command: 'cd /home/jlapenna/p/homelab && gh issue view 1084',
+      },
+    },
+    {
+      getIssue: (_issueNumber, repo) => {
+        assert.equal(repo, 'jlapenna/homelab');
+        return { assignees: [] };
+      },
+      resolveRepoForDir: (dir) =>
+        dir === '/home/jlapenna/p/homelab' ? 'jlapenna/homelab' : null,
+    },
+  );
+
+  assert.match(
+    output.hookSpecificOutput.additionalContext,
+    /issue jlapenna\/homelab#1084 is not assigned to/,
+  );
+});
+
+// Regression for the exact reported command shape: a `cd` into another repo
+// followed by both a `view` and a routing `edit` against the same number,
+// where that repo's issue really is open and claimed. Before the fix this
+// still false-positived, because both bare numbers resolved against the
+// hook's own repository instead of jlapenna/homelab.
+test('regression: a cd-then-view-then-edit sequence against a properly claimed cross-repo issue reports nothing', () => {
+  const output = runHook(
+    {
+      tool_input: {
+        command:
+          'cd /home/jlapenna/p/homelab && gh issue view 1084 --json state,assignees && gh issue edit 1084 --add-assignee agent-lcars-bot',
+      },
+    },
+    {
+      resolveRepoForDir: (dir) =>
+        dir === '/home/jlapenna/p/homelab' ? 'jlapenna/homelab' : null,
+      getIssue: (issueNumber, repo) => {
+        assert.equal(issueNumber, 1084);
+        assert.equal(repo, 'jlapenna/homelab');
+        return {
+          assignees: ['agent-lcars-bot'],
+          state: 'open',
+          closedAt: null,
+        };
+      },
+    },
+  );
+
+  assert.equal(output, null);
+});
+
+// The resolver itself, exercised against a real (temp, isolated) git
+// checkout rather than mocked -- same pattern as projectNameFor's own test
+// below. No network access: `origin` is set by hand, never fetched.
+test('resolveRepoForDirDefault reads the owner/repo from a real origin remote', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrail-remote-'));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    execFileSync(
+      'git',
+      ['remote', 'add', 'origin', 'git@github.com:jlapenna/homelab.git'],
+      { cwd: dir },
+    );
+
+    assert.equal(resolveRepoForDirDefault(dir), 'jlapenna/homelab');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveRepoForDirDefault returns null outside a git checkout', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrail-noremote-'));
+  try {
+    assert.equal(resolveRepoForDirDefault(dir), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('asks gh for the named repository, not the working directory one', () => {
