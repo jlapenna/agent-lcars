@@ -76,12 +76,10 @@ see "Exactly one runner per repo" above.
 `renovate-self-hosted.yml`'s `workflow_dispatch` trigger takes two optional
 inputs:
 
-- `dry_run` (default `full`): Renovate's dry-run mode. `full` extracts,
-  looks up updates, and logs what it would branch/PR without pushing a
-  commit or opening anything. Leave it at the default for a safe manual
-  check; set it to an empty string to force a real run from a manual
-  dispatch (the weekly schedule trigger always runs for real regardless of
-  this input).
+- `mode` (default `dry-run`): `dry-run` extracts, looks up and logs what would be
+  branched or PRed without writing anything; `real` runs exactly as the weekly
+  schedule does. It is a choice input because GitHub replaces an empty input
+  value with the default, so an "empty string means real" convention cannot work.
 - `repositories`: an optional comma-separated subset of the four self-hosted
   full names (e.g. `jlapenna/repo-tools`) to scope a run to, for testing a
   single repo without touching the others. Leave empty to run the whole
@@ -90,7 +88,7 @@ inputs:
 ```bash
 gh workflow run renovate-self-hosted.yml
 # or, scoped to one repo, for real:
-gh workflow run renovate-self-hosted.yml -f dry_run= -f repositories=jlapenna/repo-tools
+gh workflow run renovate-self-hosted.yml -f mode=real -f repositories=jlapenna/repo-tools
 ```
 
 ## The draft-majors rule
