@@ -41,16 +41,20 @@ on:
     - cron: '0 20 * * 1'
   workflow_dispatch:
     inputs:
-      dry_run:
+      mode:
         description: >-
-          Renovate dry-run mode for this manual dispatch: 'full' (the
-          default) simulates the whole run -- extraction, lookups, and
-          logging what would be branched/PRed -- without pushing a commit or
-          opening a PR. Set to an empty string to run for real from a manual
-          dispatch. Ignored on the weekly schedule trigger, which always
-          runs for real.
-        type: string
-        default: full
+          'dry-run' (the default) simulates the whole run -- extraction,
+          lookups, and logging what would be branched/PRed -- without pushing
+          a commit, opening a PR, or touching an issue. 'real' runs exactly as
+          the weekly schedule does. This is a choice, not a free-text
+          dry_run string, because GitHub substitutes an input's default for
+          an empty value: `-f dry_run=` silently stayed a dry run
+          (run 35542057275).
+        type: choice
+        options:
+          - dry-run
+          - real
+        default: dry-run
       repositories:
         description: >-
           Optional comma-separated subset of the four self-hosted
@@ -165,7 +169,7 @@ jobs:
           # Renovate's env parser skips an empty-string env var entirely
           # (treated as unset), so this is a real run on schedule and
           # whatever the dispatch input says otherwise.
-          RENOVATE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || '' }}
+          RENOVATE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'real' && 'full' || '' }}
           LOG_LEVEL: info
         with:
           configurationFile: .github/renovate-self-hosted.json
