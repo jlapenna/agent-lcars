@@ -1,5 +1,4 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
     "Self-hosted Renovate global config (agent-lcars#2018) for the fleet",
     "repos the hosted Mend/Renovate app does not cover:",
@@ -25,8 +24,10 @@
     "overridden by a future repo-level packageRule, while one in the shared",
     "preset can't be outranked by anything that merely extends it. See",
     "renovate-preset.json's own major-update packageRule for the actual",
-    "rule and the auto-merge hazard it guards against."
+    "rule and the auto-merge hazard it guards against.",
+    "Renovate publishes its internal gates as commit statuses (POST /repos/:o/:r/statuses). The fleet App has no `statuses` permission, so that call returns 403 'Resource not accessible by integration' and Renovate aborts the whole repository with result=integration-unauthorized right after pushing the branch -- branches appeared with no PRs (run 35542549491, agent-lcars#2018). Setting each name to null skips publishing the status; the gates themselves still run, so the preset's npm minimumReleaseAge of 1 day is still enforced, it just is not shown as a check. The hosted-app repos are unaffected and keep their statuses, which is why this lives here and not in renovate-preset.json."
   ],
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "platform": "github",
   "repositories": [
     "supersprinklesracing/www",
@@ -37,5 +38,11 @@
   "onboarding": false,
   "requireConfig": "required",
   "dependencyDashboard": true,
-  "gitAuthor": "agent-lcars[bot] <agent-lcars[bot]@users.noreply.github.com>"
+  "gitAuthor": "agent-lcars[bot] <agent-lcars[bot]@users.noreply.github.com>",
+  "statusCheckNames": {
+    "artifactError": null,
+    "configValidation": null,
+    "mergeConfidence": null,
+    "minimumReleaseAge": null
+  }
 }

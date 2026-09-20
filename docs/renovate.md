@@ -142,3 +142,20 @@ alerts API, which needs a `vulnerability-alerts: read` App permission the
 `agent-lcars` App does not currently hold. Self-hosted runs are expected to
 skip or warn on vulnerability-alert lookups rather than fail outright; this
 is a known limitation, not something `renovate-self-hosted.yml` works around.
+
+### Commit statuses are off for the self-hosted repos
+
+Renovate normally publishes its internal gates (minimum release age, config
+validation, artifact errors, merge confidence) as commit statuses. That is
+`POST /repos/:owner/:repo/statuses`, which needs a `statuses` permission the
+fleet App does not have: the call returns 403 `Resource not accessible by
+integration`, and Renovate aborts the entire repository with
+`result: "integration-unauthorized"` immediately after pushing the branch --
+so branches appear with no pull requests (first seen in run 35542549491).
+
+`.github/renovate-self-hosted.json` therefore sets every entry of
+`statusCheckNames` to `null`. The gates still run; they are simply not
+published as checks, so the preset's one-day npm `minimumReleaseAge` is still
+enforced. The hosted-app repositories keep their statuses, which is why this
+setting lives in the self-hosted config and not in `renovate-preset.json`.
+If the App is ever granted `statuses: write`, delete the block.
