@@ -370,6 +370,13 @@ var (
 		},
 		[]string{"scale_set"},
 	)
+	scaleSetCPUReservationGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_scale_set_cpu_reservation_cores",
+			Help: "Per-runner CPU reservation, in cores, the scheduler charges against a host's budget when placing this scale set's runners; zero when the scale set is unbounded (agent-lcars#2004). Equal to the runner_cpus quota when runner_cpu_reservation is not declared.",
+		},
+		[]string{"scale_set"},
+	)
 	scaleSetLabelInfoGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_scale_set_label_info",
@@ -678,6 +685,7 @@ func registerMetrics() {
 			lanePermanentAdmissibleSlotsGauge,
 			scaleSetMemoryReservationGauge,
 			scaleSetMemoryLimitGauge,
+			scaleSetCPUReservationGauge,
 			scaleSetInfoGauge,
 			runnerJobInfoGauge,
 			scaleSetLabelInfoGauge,

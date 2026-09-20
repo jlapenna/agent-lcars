@@ -1226,6 +1226,45 @@ func TestOrchestratorConfigRejectsBadRunnerMemoryReservation(t *testing.T) {
 	}
 }
 
+// agent-lcars#2004: runner_cpu_reservation is the CPU analogue of
+// runner_memory_reservation, wired the same way.
+func TestOrchestratorConfigResolvesRunnerCPUReservation(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  - name: default\n    labels: [default]\n", "  - name: default\n    labels: [default]\n    runner_cpus: 6\n    runner_cpu_reservation: 2\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range resolved.ScaleSets {
+		if c.ScaleSetName == "default" {
+			if c.RunnerCPUs != 6 || c.RunnerCPUReservation != 2 {
+				t.Fatalf("default scale set CPU = (%v, %v), want (6, 2)", c.RunnerCPUs, c.RunnerCPUReservation)
+			}
+			return
+		}
+	}
+	t.Fatal("default scale set not resolved")
+}
+
+// Unlike runner_memory_reservation (a string, so "0" is a distinct explicit
+// value from omitted ""), runner_cpu_reservation is a bare float64: an
+// explicit 0 is indistinguishable from omitted, the same convention
+// runner_cpus itself already uses. So the "must be positive" case is
+// exercised with a negative value instead of zero.
+func TestOrchestratorConfigRejectsBadRunnerCPUReservation(t *testing.T) {
+	cases := map[string]string{
+		"exceeds quota": "    runner_cpus: 6\n    runner_cpu_reservation: 8\n",
+		"without quota": "    runner_cpu_reservation: 2\n",
+		"negative":      "    runner_cpus: 6\n    runner_cpu_reservation: -1\n",
+	}
+	for name, extra := range cases {
+		body := strings.Replace(validOrchestratorYAML, "  - name: default\n    labels: [default]\n", "  - name: default\n    labels: [default]\n"+extra, 1)
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "runner_cpu_reservation") {
+			t.Fatalf("%s: error = %v, want runner_cpu_reservation complaint", name, err)
+		}
+	}
+}
+
 // TestDegradationLadderConfigDefaults pins agent-lcars#1697's documented
 // defaults for an omitted fleet.placement.degradation_ladder block: off,
 // with the window/quantile/query/refresh_interval defaults that make an
