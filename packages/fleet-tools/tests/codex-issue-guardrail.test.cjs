@@ -189,7 +189,14 @@ test('resolves the repository from a preceding cd', () => {
           dir === '/home/jlapenna/p/homelab' ? 'jlapenna/homelab' : null,
       },
     ),
-    [{ number: 1084, repo: 'jlapenna/homelab', routing: false }],
+    [
+      {
+        number: 1084,
+        repo: 'jlapenna/homelab',
+        dir: '/home/jlapenna/p/homelab',
+        routing: false,
+      },
+    ],
   );
 });
 
@@ -200,7 +207,14 @@ test('resolves a cd through a relative path against the starting cwd', () => {
       resolveRepoForDir: (dir) =>
         dir === '/home/jlapenna/p/homelab' ? 'jlapenna/homelab' : null,
     }),
-    [{ number: 937, repo: 'jlapenna/homelab', routing: true }],
+    [
+      {
+        number: 937,
+        repo: 'jlapenna/homelab',
+        dir: '/home/jlapenna/p/homelab',
+        routing: true,
+      },
+    ],
   );
 });
 
@@ -497,4 +511,85 @@ test('falls back to the directory name outside a repository', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// `gh` on this fleet is a per-repository shim scoped by cwd: a lookup for
+// another repository has to run from that repository's checkout, or it fails
+// even with an explicit owner/name slug. The 2026-09-20 live check of the
+// cross-repo fix showed exactly that: the hook named jlapenna/homelab#1084
+// correctly, then "could not verify" it and told the session to claim it.
+test('a cd-resolved cross-repo issue is looked up from the directory it was resolved through', () => {
+  const seen = [];
+  const output = runHook(
+    {
+      tool_input: {
+        command: 'cd /home/jlapenna/p/homelab && gh issue view 1084',
+      },
+    },
+    {
+      getIssue: (issueNumber, repo, dir) => {
+        seen.push({ issueNumber, repo, dir });
+        return { assignees: ['agent-lcars-bot'], state: 'open' };
+      },
+      resolveRepoForDir: (dir) =>
+        dir === '/home/jlapenna/p/homelab' ? 'jlapenna/homelab' : null,
+    },
+  );
+
+  assert.deepEqual(seen, [
+    {
+      issueNumber: 1084,
+      repo: 'jlapenna/homelab',
+      dir: '/home/jlapenna/p/homelab',
+    },
+  ]);
+  assert.equal(output, null);
+});
+
+test('an explicit -R repository carries no lookup directory', () => {
+  const seen = [];
+  runHook(
+    { tool_input: { command: 'gh issue view 12 -R jlapenna/homelab' } },
+    {
+      getIssue: (issueNumber, repo, dir) => {
+        seen.push({ issueNumber, repo, dir });
+        return { assignees: ['agent-lcars-bot'], state: 'open' };
+      },
+    },
+  );
+  assert.deepEqual(seen, [
+    { issueNumber: 12, repo: 'jlapenna/homelab', dir: null },
+  ]);
+});
+
+test('a failed lookup for another repository stays silent instead of telling the session to claim it', () => {
+  const output = runHook(
+    {
+      tool_input: {
+        command: 'cd /home/jlapenna/p/homelab && gh issue view 1084',
+      },
+    },
+    {
+      getIssue: () => {
+        throw new Error('gh: Not Found (HTTP 404)');
+      },
+      resolveRepoForDir: () => 'jlapenna/homelab',
+    },
+  );
+  assert.equal(output, null);
+});
+
+test('a failed lookup for this repository is still reported', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue view 77' } },
+    {
+      getIssue: () => {
+        throw new Error('network');
+      },
+    },
+  );
+  assert.match(
+    output.hookSpecificOutput.additionalContext,
+    /could not verify the assignees for issue #77/,
+  );
 });
