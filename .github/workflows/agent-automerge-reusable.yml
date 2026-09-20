@@ -319,15 +319,20 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.monitor-pr == '')
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
-    # This job queries statusCheckRollup in the open-PR sweep below, and that
-    # GraphQL field needs `checks: read`. Without it the whole field fails
-    # with "Resource not accessible by integration" rather than returning a
-    # partial rollup, so the sweep exits non-zero and every scheduled run of
-    # this workflow fails. A caller granting it cannot compensate: a reusable
-    # workflow's job-level block sets the token scope, it does not inherit or
-    # widen from the caller. Matches the post-merge job below, which queries
-    # the same field and has always declared it.
+    # The open-PR sweep below calls `gh pr view --json statusCheckRollup`, and
+    # gh expands that into a GraphQL query spanning three resources:
+    # the rollup's CheckRun nodes (`checks: read`), each context's
+    # `checkSuite.workflowRun` (`actions: read`), and the PR itself
+    # (`pull-requests`). GitHub fails the *whole* field when any one of them
+    # is missing -- it does not return a partial rollup -- so the sweep exits
+    # non-zero and every run of this workflow fails. Granting only part of the
+    # set just moves the error one level deeper into the same query.
+    #
+    # A caller cannot compensate: a reusable workflow's job-level block sets
+    # the token scope, it does not inherit or widen from the caller. The
+    # post-merge job below queries the same field and declares both.
     permissions:
+      actions: read
       checks: read
       contents: write
       pull-requests: write
