@@ -195,6 +195,17 @@
                 "google.subject": "assertion.sub"
               },
               "attributeCondition": "assertion.repository=='supersprinklesracing/sprinkles' && (assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/ci.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/e2e.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-rules-and-indexes.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-qbp-appsscript.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/config-reconcile.yml@'))"
+            },
+            "www-github": {
+              "state": "ACTIVE",
+              "issuerUri": "https://token.actions.githubusercontent.com",
+              "attributeMapping": {
+                "attribute.job_workflow_ref": "assertion.job_workflow_ref",
+                "attribute.repository": "assertion.repository",
+                "google.subject": "assertion.sub"
+              },
+              "attributeCondition": "assertion.repository=='supersprinklesracing/www' && assertion.job_workflow_ref.startsWith('supersprinklesracing/www/.github/workflows/site.yml@') && assertion.ref=='refs/heads/main' && assertion.ref_type=='branch'",
+              "_note": "The www site-deploy provider. Created outside Terraform and undeclared until this check caught it (homelab#1497); homelab#1511 then declared it in terraform/gcp_sprinkles_wif.tf and imported it (2 imported, 0 added, 0 changed). Modelled here only because it is now managed -- adding it while it was still hand-made would have silenced a true positive rather than fixing what the check found. Deliberately narrower than claude-agent-github: one repo, one workflow file, main only, and no workflow_class mapping because nothing keys off a class."
             }
           }
         }
