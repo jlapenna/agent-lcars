@@ -177,6 +177,10 @@ function extractIssueReferences(command, dependencies = {}) {
       const reference = {
         number: Number(numberMatch[1]),
         repo: resolvedRepo,
+        // Where the lookup has to run from: `gh` here is a per-repository
+        // shim scoped by cwd, so asking about another repository from this
+        // hook's own cwd fails even with an explicit owner/name slug.
+        ...(!flagMatch && !envMatch && resolvedRepo ? { dir: currentDir } : {}),
         routing: routing || Boolean(references.get(key)?.routing),
       };
       references.set(key, reference);
@@ -223,7 +227,7 @@ function defaultDependencies(cwd) {
     projectName: projectNameFor(cwd),
     cwd,
     resolveRepoForDir: resolveRepoForDirDefault,
-    getIssue(issueNumber, repo = null) {
+    getIssue(issueNumber, repo = null, dir = null) {
       // `{owner}/{repo}` is gh's placeholder for the cwd's repository; use it
       // only when the command did not name one.
       const slug = repo ?? '{owner}/{repo}';
@@ -231,7 +235,7 @@ function defaultDependencies(cwd) {
         'gh',
         ['api', `repos/${slug}/issues/${issueNumber}`],
         {
-          cwd,
+          cwd: dir ?? cwd,
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'ignore'],
         },
@@ -254,12 +258,13 @@ function evaluateIssue(reference, dependencies) {
   const {
     number: issueNumber,
     repo = null,
+    dir = null,
     routing = false,
   } = typeof reference === 'number' ? { number: reference } : reference;
   const label = formatIssue({ number: issueNumber, repo });
   const violations = [];
   try {
-    const issue = dependencies.getIssue(issueNumber, repo);
+    const issue = dependencies.getIssue(issueNumber, repo, dir);
     if (!issue.assignees.includes(CLAIM_ASSIGNEE)) {
       violations.push({
         kind: 'unclaimed',
@@ -278,10 +283,19 @@ function evaluateIssue(reference, dependencies) {
       });
     }
   } catch {
-    violations.push({
-      kind: 'unclaimed',
-      text: `could not verify the assignees for issue ${label}`,
-    });
+    // A lookup that cannot be made is not evidence the issue is unclaimed.
+    // For this repository's own issues the hook still says so, because it
+    // normally can look and a failure is worth seeing. For another
+    // repository it stays silent: the message ends in "claim the issue",
+    // and a headless run told that about an issue it could merely not read
+    // (jlapenna/homelab#1084 on 2026-09-20, already claimed) may go and
+    // claim or comment on it.
+    if (!repo) {
+      violations.push({
+        kind: 'unclaimed',
+        text: `could not verify the assignees for issue ${label}`,
+      });
+    }
   }
   return violations;
 }
