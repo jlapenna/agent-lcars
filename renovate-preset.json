@@ -2,11 +2,16 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
     "Fleet-shared Renovate baseline (agent-lcars#1340 C2), consumed as",
-    "`github>jlapenna/agent-lcars//renovate-preset` by this repo, homelab,",
-    "sprinkles, and sync-padd. Carries only the common core; genuinely",
-    "repo-local policy stays in each consumer's renovate.json.",
-    "nx-cache-server keeps its deliberately stricter pin-digests config and",
-    "www/girosf have no Renovate — both stay off this preset on purpose.",
+    "`github>jlapenna/agent-lcars//renovate-preset` by every fleet repo that",
+    "runs Renovate at all -- hosted (this repo, homelab, sprinkles,",
+    "sync-padd) or self-hosted (supersprinklesracing/www,",
+    "supersprinklesracing/girosf, jlapenna/nx-cache-server,",
+    "jlapenna/repo-tools, run by .github/workflows/renovate-self-hosted.yml",
+    "since neither hosted app can be extended to them -- agent-lcars#2018).",
+    "See docs/renovate.md for the current, authoritative split; do not infer",
+    "it from this list, which is prose, not a contract. Carries only the",
+    "common core; genuinely repo-local policy stays in each consumer's own",
+    "renovate.json.",
     "toolSettings.nodeMaxMemory (integer MiB, npm manager only) caps the Node",
     "child processes Renovate spawns (pnpm lockfile/artifact updates), not",
     "Renovate's own process. sprinkles' hosted job on 2026-09-15 used 3.0 GB",
@@ -33,6 +38,13 @@
       "groupSlug": "all-minor-patch",
       "automerge": true,
       "automergeType": "pr"
+    },
+    {
+      "description": "Major updates always get a human look before merge, regardless of which bot authors the PR. This matters most for the self-hosted repos (agent-lcars#2018): their Renovate runs authenticate as agent-lcars[bot], which every member repo's agent-automerge-reusable.yml treats as an auto-mergeable bot login the moment a non-draft PR is opened -- labels added after PR creation are racy, but draft status set at creation is not, so draftPR is the actual guard and addLabels is a convenience for triage. This rule lives here, in the shared preset, rather than in renovate-self-hosted.json's global config: Renovate resolves a repository's own config (including everything it pulls in via `extends`, i.e. this preset) after global config and lets the later match win field-by-field, so only a preset-level (or repo-level) rule is guaranteed to survive -- a rule placed solely in the self-hosted global config could be silently overridden by a future repo-level packageRule. Putting it here means every consumer, hosted or self-hosted, gets it.",
+      "matchUpdateTypes": ["major"],
+      "draftPR": true,
+      "automerge": false,
+      "addLabels": ["status:needs-human"]
     },
     {
       "description": "TypeScript 7 breaks Nx project-graph construction today. Hold only the 7.x line fleet-wide until Nx compatibility is proven, while leaving a later major available for its own review.",
