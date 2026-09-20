@@ -592,6 +592,23 @@ func cpuReservedRunner(id string, cpus float64) container.Summary {
 	}
 }
 
+// memoryAndCPUReservedRunner builds an already-running "heavy" runner
+// declaring both a memory and a CPU reservation, for tests exercising the
+// degradation ladder (memory-bound) alongside a CPU-bound quota
+// (agent-lcars#2004): unlike cpuReservedRunner, callers here need a nonzero
+// memory label (to feed the ladder's own accounting) and a scale-set name
+// other than "default".
+func memoryAndCPUReservedRunner(id string, memory, cpu int64) container.Summary {
+	return container.Summary{
+		ID: id,
+		Labels: map[string]string{
+			runnerScaleSetLabelKey: "heavy",
+			runnerMemoryLabelKey:   strconv.FormatInt(memory, 10),
+			runnerCPULabelKey:      strconv.FormatInt(cpu, 10),
+		},
+	}
+}
+
 func cpuBoundScaler(t *testing.T, candidateCPUs float64, containers []container.Summary) *Scaler {
 	t.Helper()
 	fake := newFakeDockerServer(t)
@@ -633,6 +650,78 @@ func TestPickHostChargesInFlightCPUReservations(t *testing.T) {
 	scaler.coordinator().reservedCPU["laforge"] = 6_000_000_000
 	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
 		t.Fatalf("pickHost() = (%q, %v), want in-flight CPU reservation to block placement", host, err)
+	}
+}
+
+// agent-lcars#2004: the scheduler charges runner_cpu_reservation, not the
+// runner_cpus quota, against a host's aggregate CPU budget. A 6-CPU-quota
+// candidate charged at its quota cannot fit beside an already-running 6-CPU
+// candidate (12 > 10.8-CPU budget); declaring a 2-CPU reservation admits it
+// (6 + 2 = 8 under budget).
+func TestPickHostChargesCPUReservationNotQuota(t *testing.T) {
+	scaler := cpuBoundScaler(t, 6, []container.Summary{cpuReservedRunner("first", 6)})
+	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() with reservation == quota = (%q, %v), want capacity failure", host, err)
+	}
+	scaler.runnerCPUReservation = 2_000_000_000
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() with 2-CPU reservation error = %v", err)
+	}
+	if host != "laforge" {
+		t.Fatalf("pickHost() = %q, want laforge", host)
+	}
+}
+
+// TestPickHostAdmitsUpToCPUReservationBasedLimit pins the acceptance
+// criterion from agent-lcars#2004: a host whose CPU budget fits N quotas
+// (here N=1: floor(10.8/6)=1) admits more than N runners when charged at the
+// declared reservation instead (floor(10.8/2)=5), and refuses beyond that
+// reservation-based limit.
+func TestPickHostAdmitsUpToCPUReservationBasedLimit(t *testing.T) {
+	running := func(n int) []container.Summary {
+		rs := make([]container.Summary, n)
+		for i := range rs {
+			rs[i] = cpuReservedRunner(fmt.Sprintf("r%d", i), 2)
+		}
+		return rs
+	}
+	admits := cpuBoundScaler(t, 6, running(4))
+	admits.runnerCPUReservation = 2_000_000_000
+	if host, err := admits.pickHost(context.Background()); host != "laforge" || err != nil {
+		t.Fatalf("pickHost() with 4 running 2-CPU reservations (4*2+2=10 <= 10.8) = (%q, %v), want admission", host, err)
+	}
+
+	refuses := cpuBoundScaler(t, 6, running(5))
+	refuses.runnerCPUReservation = 2_000_000_000
+	if host, err := refuses.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() with 5 running 2-CPU reservations (5*2+2=12 > 10.8) = (%q, %v), want capacity refusal", host, err)
+	}
+}
+
+func TestCPUReservationDefaultsToQuota(t *testing.T) {
+	scaler := &Scaler{runnerNanoCPUs: 6_000_000_000}
+	if got := scaler.cpuReservation(); got != 6_000_000_000 {
+		t.Fatalf("cpuReservation() = %d, want the 6-CPU quota when no reservation is declared", got)
+	}
+	scaler.runnerCPUReservation = 2_000_000_000
+	if got := scaler.cpuReservation(); got != 2_000_000_000 {
+		t.Fatalf("cpuReservation() = %d, want the declared 2-CPU reservation", got)
+	}
+}
+
+// TestLaneAdmissibleSlotsReflectsCPUReservation pins that
+// lane_admissible_slots divides the CPU budget by the declared reservation,
+// not the quota (agent-lcars#2004): a 10.8-CPU budget / 2-CPU reservation is
+// 5 slots, where the 6-CPU quota alone would only ever report 1.
+func TestLaneAdmissibleSlotsReflectsCPUReservation(t *testing.T) {
+	scaler := cpuBoundScaler(t, 6, nil)
+	scaler.runnerCPUReservation = 2_000_000_000
+	if _, err := scaler.pickHost(context.Background()); err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("default")); got != 5 {
+		t.Fatalf("lane_admissible_slots = %v, want 5 (10.8-CPU budget / 2-CPU reservation, not the 6-CPU quota)", got)
 	}
 }
 
@@ -2438,6 +2527,17 @@ func TestRunnerLabelsIncludeExactMemoryReservation(t *testing.T) {
 	}
 }
 
+// agent-lcars#2004: the container label recounted for running-CPU inventory
+// must carry the declared CPU RESERVATION, not the quota, so a host's
+// running-reservation sum (declaredRunnerCPU) matches what admission
+// actually charged.
+func TestRunnerLabelsIncludeExactCPUReservation(t *testing.T) {
+	labels := runnerLabels("default", "primary", 0, 2_000_000_000)
+	if got := labels[runnerCPULabelKey]; got != "2000000000" {
+		t.Fatalf("CPU reservation label = %q, want exact NanoCPUs value", got)
+	}
+}
+
 // TestEnsureRunnerImageRejectsStreamedPullError is the other half of #139's
 // fix. Docker reports registry/auth/manifest failures INSIDE the pull
 // progress stream, with ImagePull itself returning nil. Since a refreshed
@@ -2867,6 +2967,27 @@ func TestFleetReservationChargesAndReleasesCPU(t *testing.T) {
 	}
 }
 
+// agent-lcars#2004: the same in-flight bookkeeping FleetCoordinator.reserve
+// applies to memory must charge the declared CPU reservation, not the
+// runner_cpus quota, closing the same list/create race for CPU that
+// TestFleetReservationChargesDeclaredReservation pins for memory.
+func TestFleetReservationChargesDeclaredCPUReservation(t *testing.T) {
+	scaler := cpuBoundScaler(t, 6, nil)
+	scaler.runnerCPUReservation = 2_000_000_000
+	fleet := scaler.coordinator()
+	reservation, err := fleet.reserve(context.Background(), scaler, "test-runner-1")
+	if err != nil {
+		t.Fatalf("reserve() error = %v", err)
+	}
+	if got := fleet.reservedCPU["laforge"]; got != 2_000_000_000 {
+		t.Fatalf("in-flight reservedCPU = %d, want the declared 2-CPU reservation, not the 6-CPU quota", got)
+	}
+	reservation.release("default")
+	if got := fleet.reservedCPU["laforge"]; got != 0 {
+		t.Fatalf("reservedCPU after release = %d, want 0", got)
+	}
+}
+
 // TestMemoryAvailableSampleStale pins agent-lcars#1742's staleness rule in
 // isolation: never probed at all (the zero Time -- host metrics unconfigured
 // or the first probe has not completed) or older than 2*hostSampleInterval
@@ -3262,7 +3383,7 @@ func TestPublishScaleSetInfoExportsEveryDeclaredLabel(t *testing.T) {
 		ScaleSetName: "ci-heavy", RegistrationName: "primary", RegistrationURL: "https://github.com/acme/widgets",
 		Labels: []string{"ci-heavy", "homelab-autoscale-ci-heavy"},
 	}
-	publishScaleSetInfo(cfg, 8*gibibyte, 14*gibibyte)
+	publishScaleSetInfo(cfg, 8*gibibyte, 14*gibibyte, 2)
 	for _, label := range cfg.Labels {
 		if got := testutil.ToFloat64(scaleSetLabelInfoGauge.WithLabelValues("ci-heavy", label)); got != 1 {
 			t.Fatalf("scale_set_label_info{scale_set=ci-heavy,label=%s} = %v, want 1", label, got)
@@ -3277,6 +3398,12 @@ func TestPublishScaleSetInfoExportsEveryDeclaredLabel(t *testing.T) {
 	if got := testutil.ToFloat64(scaleSetMemoryReservationGauge.WithLabelValues("ci-heavy")); got != float64(8*gibibyte) {
 		t.Fatalf("reservation gauge = %v, want 8 GiB", got)
 	}
+	// agent-lcars#2004: published unconditionally alongside the memory
+	// reservation gauge above, so it is exported for a lane regardless of
+	// whether it has ever won a placement (mind agent-lcars#1973/#1974).
+	if got := testutil.ToFloat64(scaleSetCPUReservationGauge.WithLabelValues("ci-heavy")); got != 2 {
+		t.Fatalf("cpu reservation gauge = %v, want 2 cores", got)
+	}
 }
 
 // runner_cpus becomes the container's CFS quota (agent-lcars#1835): one
@@ -3289,6 +3416,22 @@ func TestRunnerHostConfigAppliesCPUQuota(t *testing.T) {
 	}
 	if hc := runnerHostConfig(nil, 0, 0, 0, 0, ""); hc.Resources.NanoCPUs != 0 {
 		t.Fatalf("zero runner_cpus must leave NanoCPUs unset, got %d", hc.Resources.NanoCPUs)
+	}
+}
+
+// agent-lcars#2004: runner_cpu_reservation changes what admission CHARGES,
+// never the Docker CFS ceiling -- startRunner builds the container's
+// HostConfig from a.runnerNanoCPUs (the quota), not a.cpuReservation(). Pin
+// that the two can diverge and that runnerHostConfig only ever sees the
+// quota.
+func TestRunnerHostConfigCeilingIgnoresCPUReservation(t *testing.T) {
+	scaler := &Scaler{runnerNanoCPUs: 6_000_000_000, runnerCPUReservation: 2_000_000_000}
+	if got := scaler.cpuReservation(); got != 2_000_000_000 {
+		t.Fatalf("cpuReservation() = %d, want the declared 2-CPU reservation", got)
+	}
+	hc := runnerHostConfig(nil, 0, 0, 0, scaler.runnerNanoCPUs, "")
+	if hc.Resources.NanoCPUs != 6_000_000_000 {
+		t.Fatalf("container NanoCPUs = %d, want the 6-CPU quota (runner_cpus), not the reservation", hc.Resources.NanoCPUs)
 	}
 }
 

@@ -85,6 +85,40 @@ func TestDegradationLadderAdmitsAtObservedP95WhenDeclaredFails(t *testing.T) {
 	}
 }
 
+// TestDegradationLadderChargesCPUReservationNotQuota pins agent-lcars#2004's
+// requirement that a degraded (ladder-rung) placement's in-flight CPU charge
+// still uses cpuReservation(), not the runner_cpus quota -- the ladder only
+// relaxes the MEMORY side of admission; CPU accounting must stay identical
+// to the ordinary (rung-1) path. Same rung-2 fixture as
+// TestDegradationLadderAdmitsAtObservedP95WhenDeclaredFails, plus a 6-CPU
+// quota / 2-CPU reservation and an already-running runner declaring that
+// same 2-CPU reservation (well under the 10.8-CPU budget, so the CPU gate
+// itself never binds and the ladder fires purely on memory).
+func TestDegradationLadderChargesCPUReservationNotQuota(t *testing.T) {
+	scaler := memoryBoundScaler(t, "heavy", 16*gibibyte, 8*gibibyte, []container.Summary{
+		memoryAndCPUReservedRunner("first", 10*gibibyte, 2_000_000_000),
+	})
+	scaler.degradationLadderEnabled = true
+	scaler.runnerNanoCPUs = 6_000_000_000
+	scaler.runnerCPUReservation = 2_000_000_000
+	fleet := scaler.coordinator()
+	fleet.observedMemoryMaxAge = time.Hour
+	fleet.setObservedMemory("heavy", 2*float64(gibibyte), time.Now())
+	seedHostLoad(fleet, "janeway", hostLoad{memoryAvailable: 1, memoryPressure: 0})
+
+	reservation, err := fleet.reserve(context.Background(), scaler, "test-runner-1")
+	if err != nil {
+		t.Fatalf("reserve() error = %v, want rung 2 to admit at the observed p95", err)
+	}
+	if reservation.host != "janeway" {
+		t.Fatalf("reserve() host = %q, want janeway", reservation.host)
+	}
+	if got := fleet.reservedCPU["janeway"]; got != 2_000_000_000 {
+		t.Fatalf("in-flight reservedCPU after a degraded (rung 2) placement = %d, want the 2-CPU reservation, not the 6-CPU quota", got)
+	}
+	reservation.release("heavy")
+}
+
 // TestDegradationLadderRung2RespectsSoftPressure pins rung 2's "not
 // soft-pressured" gate: an observed p95 that would otherwise fit the free
 // budget must still be refused (falling through to rung 3, or refusal) on a

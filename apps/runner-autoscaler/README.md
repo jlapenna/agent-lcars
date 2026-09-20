@@ -652,7 +652,8 @@ scale_sets:
   - name: default
     runner_memory: 14g
     runner_memory_reservation: 8g
-    runner_cpus: 6 # half of a 12-core host; a second tenant is still admissible
+    runner_cpus: 6 # CFS ceiling: protects co-tenants
+    runner_cpu_reservation: 2 # what placement charges against the host
 fleet:
   placement:
     cpu_safety_margin: 0.10 # default: keep ten percent for the host
@@ -681,6 +682,33 @@ Do not deploy `runner_cpus` with an autoscaler version that predates CPU
 reservation and throttle-aware pressure (the original #1837 implementation).
 That quota-only version can manufacture load/PSI hard-overload and make shared
 hosts less available than leaving runners uncapped.
+
+### Aggregate reserved-CPU admission
+
+`runner_cpu_reservation` (agent-lcars#2004) separates the CFS ceiling from the
+scheduler's reservation the same way `runner_memory_reservation` (above)
+separates the cgroup limit from the memory reservation: `runner_cpus` alone
+was both, so charging its full quota per placement left hosts idle whenever a
+lane's typical job used only a fraction of the cores it declared as a ceiling
+for the rare pathological one. It requires `runner_cpus`, must be greater
+than zero and at most `runner_cpus`, and defaults to it when omitted -- so an
+existing config with `runner_cpus` set and no reservation behaves exactly as
+before. Admission, in-flight accounting, `lane_admissible_slots`, the
+degradation ladder's in-flight CPU charge, and the
+`autoscaler.runner-cpu-nanocpus` container label all use the reservation; the
+container's `--cpus` (Docker's `NanoCPUs`) keeps the ceiling unchanged. The
+per-lane value is exported as
+`github_runner_autoscaler_scale_set_cpu_reservation_cores`, next to
+`github_runner_autoscaler_scale_set_memory_reservation_bytes`, published for
+every declared scale set regardless of whether it has ever won a placement.
+
+Unlike memory (agent-lcars#1694), CPU admission does not charge a running
+runner's OBSERVED usage: Docker's per-container CPU stat is a cumulative
+counter, not a point-in-time sample like memory's RSS figure, so computing a
+rate needs two samples spaced over a known interval rather than the existing
+one-shot probe. That is new probing machinery, not a small mirror of the
+memory code, so it is left out of this change; the declared reservation alone
+is the measured win.
 
 ### Host-level runner slice
 
@@ -1093,8 +1121,10 @@ physical_memory) / memoryReservation())` -- the same "Real-free-memory
   really admit -- and capped again by that host's remaining `runner_limit`
   headroom.
 - A CPU-bounded lane (`runner_cpus` set) is capped by
-  `floor((nproc × (1 - cpu_safety_margin) - reserved CPU) / runner_cpus)`.
-  Running and in-flight reservations use the same accounting as placement.
+  `floor((nproc × (1 - cpu_safety_margin) - reserved CPU) / cpuReservation())`,
+  where `cpuReservation()` is `runner_cpu_reservation` when declared, else
+  `runner_cpus` (agent-lcars#2004). Running and in-flight reservations use the
+  same accounting as placement.
 - A lane unbounded in both memory and CPU contributes only the host's
   remaining `runner_limit` headroom. A host with none of those bounds
   configured cannot contribute a finite number and is left out of the sum

@@ -89,6 +89,12 @@ type Config struct {
 	// straight into the hard CPU/PSI pressure gate and a cooldown that then
 	// refuses every OTHER lane, while the host sits with gigabytes free.
 	RunnerCPUs float64
+	// RunnerCPUReservation is a homelab addition (agent-lcars#2004): the
+	// scheduler's per-runner CPU reservation charged against a host's
+	// aggregate CPU budget, distinct from the RunnerCPUs CFS quota. Zero
+	// means "reserve the full quota" (the pre-#2004 behavior). Requires
+	// RunnerCPUs and must not exceed it.
+	RunnerCPUReservation float64
 	// CPUSafetyMargin is the fraction of Docker-reported host CPUs kept
 	// outside aggregate runner CPU reservations. Zero selects the default.
 	CPUSafetyMargin float64

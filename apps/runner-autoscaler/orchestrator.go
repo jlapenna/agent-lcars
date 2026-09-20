@@ -638,11 +638,16 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 }
 
 // publishScaleSetInfo exports the static description of a declared scale set:
-// its memory reservation and ceiling, the registration and repository it
-// serves, and one series per runs-on label (agent-lcars#1683, #1699).
-func publishScaleSetInfo(c Config, reservation, memory int64) {
-	scaleSetMemoryReservationGauge.WithLabelValues(c.ScaleSetName).Set(float64(reservation))
-	scaleSetMemoryLimitGauge.WithLabelValues(c.ScaleSetName).Set(float64(memory))
+// its memory reservation and ceiling, its CPU reservation, the registration
+// and repository it serves, and one series per runs-on label
+// (agent-lcars#1683, #1699, #2004). Called once per scale set at build/reload
+// time, independent of any placement attempt, so every declared lane's
+// gauges are set regardless of whether it ever wins a placement (mind
+// agent-lcars#1973/#1974).
+func publishScaleSetInfo(c Config, memoryReservation, memoryLimit int64, cpuReservationCores float64) {
+	scaleSetMemoryReservationGauge.WithLabelValues(c.ScaleSetName).Set(float64(memoryReservation))
+	scaleSetMemoryLimitGauge.WithLabelValues(c.ScaleSetName).Set(float64(memoryLimit))
+	scaleSetCPUReservationGauge.WithLabelValues(c.ScaleSetName).Set(cpuReservationCores)
 	owner, repository := registrationTarget(c.RegistrationURL)
 	scaleSetInfoGauge.WithLabelValues(c.ScaleSetName, c.RegistrationName, owner, repository).Set(1)
 	for _, label := range c.Labels {
@@ -673,7 +678,14 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 			return nil, fmt.Errorf("scale set %q runner_memory_reservation %q must be positive and at most runner_memory %q", c.ScaleSetName, c.RunnerMemoryReservation, c.RunnerMemory)
 		}
 	}
-	publishScaleSetInfo(c, reservation, memory)
+	cpuReservationCores := c.RunnerCPUs
+	if c.RunnerCPUReservation != 0 {
+		cpuReservationCores = c.RunnerCPUReservation
+		if c.RunnerCPUs <= 0 || cpuReservationCores <= 0 || cpuReservationCores > c.RunnerCPUs {
+			return nil, fmt.Errorf("scale set %q runner_cpu_reservation %v must be positive and at most runner_cpus %v", c.ScaleSetName, c.RunnerCPUReservation, c.RunnerCPUs)
+		}
+	}
+	publishScaleSetInfo(c, reservation, memory, cpuReservationCores)
 	shmSize := int64(0)
 	if c.RunnerShmSize != "" {
 		shmSize, err = units.RAMInBytes(c.RunnerShmSize)
@@ -686,9 +698,10 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage:  c.RunnerImage,
 		runnerMemory: memory, runnerMemoryReservation: reservation, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
-		runnerNanoCPUs:     int64(math.Round(c.RunnerCPUs * 1e9)),
-		runnerCgroupParent: c.RunnerCgroupParent,
-		minRunners:         c.MinRunners, maxRunners: c.MaxRunners,
+		runnerNanoCPUs:       int64(math.Round(c.RunnerCPUs * 1e9)),
+		runnerCPUReservation: int64(math.Round(cpuReservationCores * 1e9)),
+		runnerCgroupParent:   c.RunnerCgroupParent,
+		minRunners:           c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
 		inferenceMetricsURLs: c.InferenceMetricsURLs, inferenceIdleWatts: c.InferenceIdleWatts,
 		hostMetricsURLTemplate:     c.HostMetricsURLTemplate,

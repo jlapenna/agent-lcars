@@ -69,6 +69,11 @@ type Scaler struct {
 	// runnerNanoCPUs: Config.RunnerCPUs in Docker's NanoCPUs unit (1e9 per
 	// CPU). Zero means no quota (agent-lcars#1835).
 	runnerNanoCPUs int64
+	// runnerCPUReservation is what the scheduler charges against a host's
+	// aggregate CPU budget for one of this scale set's runners. It is at
+	// most runnerNanoCPUs (the CFS quota); zero means "same as the quota".
+	// See cpuReservation and agent-lcars#2004.
+	runnerCPUReservation int64
 	// cpuSafetyMargin is the fraction of host CPUs kept outside aggregate
 	// runner quota reservations.
 	cpuSafetyMargin float64
@@ -1664,6 +1669,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 	// reservations, mirroring memory admission and closing the list/create
 	// race through FleetCoordinator.reservedCPU.
 	if a.runnerNanoCPUs > 0 {
+		candidateCPU := a.cpuReservation()
 		var withinCPUBudget []DockerHost
 		var blockedDetails []string
 		var blockedHosts []string
@@ -1676,8 +1682,8 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 			total := probe.hostCPUNano[h.Name]
 			budget := int64(float64(total) * (1 - a.resolvedCPUSafetyMargin()))
 			reserved := probe.hostRunningReservedCPU[h.Name] + fleet.reservedCPU[h.Name]
-			if reserved+a.runnerNanoCPUs > budget {
-				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: reserved=%d candidate=%d budget=%d", h.Name, reserved, a.runnerNanoCPUs, budget))
+			if reserved+candidateCPU > budget {
+				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: reserved=%d candidate=%d budget=%d", h.Name, reserved, candidateCPU, budget))
 				blockedHosts = append(blockedHosts, h.Name)
 				continue
 			}
@@ -1687,7 +1693,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 			for _, name := range blockedHosts {
 				placementBlocked.WithLabelValues(scaleSet, name, placementReasonCPUReservation).Inc()
 			}
-			return placementPick{}, fmt.Errorf("no reachable docker host can admit candidate CPU reservation %d NanoCPUs (%s): %w", a.runnerNanoCPUs, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
+			return placementPick{}, fmt.Errorf("no reachable docker host can admit candidate CPU reservation %d NanoCPUs (%s): %w", candidateCPU, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
 		}
 		withinHostLimits = withinCPUBudget
 	}
@@ -1878,14 +1884,14 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 				a.logger.Info("Degraded placement: admitting at the lane's observed p95 instead of its declared reservation",
 					slog.String("scale_set", scaleSet), slog.String("host", host), slog.String("rung", degradationRungObservedP95),
 					slog.Int64("reserved_bytes", reserved))
-				return placementPick{host: host, reservedMemory: reserved, reservedCPU: a.runnerNanoCPUs, rung: degradationRungObservedP95}, nil
+				return placementPick{host: host, reservedMemory: reserved, reservedCPU: a.cpuReservation(), rung: degradationRungObservedP95}, nil
 			}
 			if host, available, ok := a.degradationLadderFreeMemoryFloor(probe, withinHostLimits, effectiveCount); ok {
 				placementDegradedTotal.WithLabelValues(scaleSet, degradationRungFreeMemoryFloor).Inc()
 				a.logger.Info("Degraded placement: admitting one runner on an idle host whose free memory exceeds the lane's ceiling",
 					slog.String("scale_set", scaleSet), slog.String("host", host), slog.String("rung", degradationRungFreeMemoryFloor),
 					slog.Int64("reserved_bytes", a.runnerMemory), slog.Int64("host_available_bytes", available))
-				return placementPick{host: host, reservedMemory: a.runnerMemory, reservedCPU: a.runnerNanoCPUs, rung: degradationRungFreeMemoryFloor}, nil
+				return placementPick{host: host, reservedMemory: a.runnerMemory, reservedCPU: a.cpuReservation(), rung: degradationRungFreeMemoryFloor}, nil
 			}
 			placementDegradedTotal.WithLabelValues(scaleSet, degradationRungRefused).Inc()
 			a.logger.Info("Degraded placement refused: no host admits the declared reservation, the observed p95, or the free-memory floor",
@@ -1949,7 +1955,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 	fleet.placementCursor++
 	fleet.placementMu.Unlock()
 	placementDecisions.WithLabelValues(scaleSet, best).Inc()
-	return placementPick{host: best, reservedMemory: a.memoryReservation(), reservedCPU: a.runnerNanoCPUs, rung: ""}, nil
+	return placementPick{host: best, reservedMemory: a.memoryReservation(), reservedCPU: a.cpuReservation(), rung: ""}, nil
 }
 
 // placementPick is pickHostLocked's decision: which host, how much of that
@@ -2528,7 +2534,7 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 			}
 			budget := int64(float64(probe.hostCPUNano[name]) * (1 - a.resolvedCPUSafetyMargin()))
 			reserved := probe.hostRunningReservedCPU[name] + fleet.reservedCPU[name]
-			cpuSlots = int((budget - reserved) / a.runnerNanoCPUs)
+			cpuSlots = int((budget - reserved) / a.cpuReservation())
 			if cpuSlots < 0 {
 				cpuSlots = 0
 			}
@@ -2908,6 +2914,18 @@ func (a *Scaler) memoryReservation() int64 {
 		return a.runnerMemoryReservation
 	}
 	return a.runnerMemory
+}
+
+// cpuReservation is the per-runner amount (in NanoCPUs) charged against a
+// host's aggregate CPU budget: runner_cpu_reservation when declared, else the
+// runner_cpus CFS quota (agent-lcars#2004). Zero when the scale set is
+// unbounded. Never used for the container's own CFS ceiling -- see
+// runnerHostConfig, which always applies runnerNanoCPUs directly.
+func (a *Scaler) cpuReservation() int64 {
+	if a.runnerCPUReservation > 0 {
+		return a.runnerCPUReservation
+	}
+	return a.runnerNanoCPUs
 }
 
 // registrationTarget splits a registration URL into the GitHub owner and,
@@ -3332,7 +3350,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			Image:  preparedImage,
 			User:   "runner",
 			Cmd:    []string{"/home/runner/run.sh"},
-			Labels: runnerLabels(a.scaleSetName, a.registrationName, a.memoryReservation(), a.runnerNanoCPUs),
+			Labels: runnerLabels(a.scaleSetName, a.registrationName, a.memoryReservation(), a.cpuReservation()),
 			Env:    runnerEnvironment(jit.EncodedJITConfig, host),
 		},
 		hostConfig,
