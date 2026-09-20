@@ -42,9 +42,17 @@ type FleetCoordinator struct {
 	// like every other field a placement decision reads.
 	scalers map[string]*Scaler
 
-	hostSampleMu    sync.Mutex
-	hostSamples     map[string]hostSample
-	hostLoadCache   map[string]hostLoad
+	hostSampleMu  sync.Mutex
+	hostSamples   map[string]hostSample
+	hostLoadCache map[string]hostLoad
+	// hostProbeLocks serializes concurrent real-metrics probes for the same
+	// host across lanes and the background sampler (agent-lcars#2012), so a
+	// cache miss/expiry observed by more than one caller within the same
+	// instant collapses into one real scrape rather than a thundering herd.
+	// See currentHostLoad. Mirrors Scaler.hostImageLocks' per-key mutex
+	// idiom; zero value is ready to use, so newFleetCoordinator need not
+	// initialize it.
+	hostProbeLocks  sync.Map // map[string]*sync.Mutex
 	overloadMu      sync.Mutex
 	overloadedUntil map[string]time.Time
 	placementMu     sync.Mutex

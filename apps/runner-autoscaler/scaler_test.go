@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -448,8 +449,9 @@ func TestHostMetricsUsesPerHostTimeout(t *testing.T) {
 // deterministically -- without a real metrics endpoint or the multi-sample,
 // multi-second real-time deltas probeHostLoad needs to derive CPU/PSI/swap
 // rates. currentHostLoad treats any cache entry younger than
-// 2*hostSampleInterval as authoritative, so this value flows straight
-// through to pickHostLocked exactly as a real probe's result would.
+// hostSampleReuseWindow as authoritative, and this helper always seeds
+// observedAt as "now", so this value flows straight through to
+// pickHostLocked exactly as a real probe's result would.
 //
 // Production caches raw telemetry so each lane can score the same sample
 // against its own quota policy. Tests use this helper for the same shape;
@@ -1518,7 +1520,7 @@ func TestPickHostOverloadCooldownGatesUntilExpiry(t *testing.T) {
 // That function cannot tell "a fresh raw breach" apart from "an echo of my
 // own prior cooldown-forcing" -- any overloaded=true input re-arms
 // overloadedUntil to now+cooldown. Since currentHostLoad's cache stays
-// authoritative for up to 2*hostSampleInterval (30s), and a retried scale-up
+// authoritative for up to hostSampleReuseWindow (15s), and a retried scale-up
 // loop calls pickHost far more often than that, a host whose RAW signal had
 // already recovered but was still cooling down got its cooldown re-armed by
 // every placement attempt within the cache window and could never actually
@@ -2990,8 +2992,10 @@ func TestFleetReservationChargesDeclaredCPUReservation(t *testing.T) {
 
 // TestMemoryAvailableSampleStale pins agent-lcars#1742's staleness rule in
 // isolation: never probed at all (the zero Time -- host metrics unconfigured
-// or the first probe has not completed) or older than 2*hostSampleInterval
-// both count as unknown; anything fresher does not.
+// or the first probe has not completed) or older than hostSampleStaleAfter
+// both count as unknown; anything fresher does not. hostSampleStaleAfter
+// stays 2*hostSampleInterval (30s) -- agent-lcars#2012 narrowed the reuse
+// window, not this one; see TestHostSampleReuseWindowNarrowerThanStaleAfter.
 func TestMemoryAvailableSampleStale(t *testing.T) {
 	now := time.Now()
 	tests := map[string]struct {
@@ -3000,11 +3004,11 @@ func TestMemoryAvailableSampleStale(t *testing.T) {
 	}{
 		"zero observedAt": {hostLoad{}, true},
 		"just probed":     {hostLoad{observedAt: now}, false},
-		"within 2x hostSampleInterval": {
-			hostLoad{observedAt: now.Add(-2*hostSampleInterval + time.Second)}, false,
+		"within hostSampleStaleAfter": {
+			hostLoad{observedAt: now.Add(-hostSampleStaleAfter + time.Second)}, false,
 		},
-		"older than 2x hostSampleInterval": {
-			hostLoad{observedAt: now.Add(-2*hostSampleInterval - time.Second)}, true,
+		"older than hostSampleStaleAfter": {
+			hostLoad{observedAt: now.Add(-hostSampleStaleAfter - time.Second)}, true,
 		},
 	}
 	for name, tt := range tests {
@@ -3539,5 +3543,169 @@ func TestMarginBytesForHonorsPerHostOverride(t *testing.T) {
 	}
 	if got := s.marginBytesFor("janeway", 128<<30); got != 6<<30 {
 		t.Fatalf("janeway-sized-128GiB (fleet fraction, above cap) = %d, want 6 GiB cap", got)
+	}
+}
+
+// healthyNodeExporterMetrics writes a minimal, healthy node_exporter scrape
+// (four idle CPUs, plenty of free memory) to w -- the shared fixture every
+// #2012 test below points hostMetricsURLTemplate at.
+func healthyNodeExporterMetrics(w http.ResponseWriter, memAvailable, memTotal int64) {
+	fmt.Fprint(w, "node_load1 1\n")
+	for cpu := range 4 {
+		fmt.Fprintf(w, "node_cpu_seconds_total{cpu=\"%d\",mode=\"idle\"} 1\n", cpu)
+	}
+	fmt.Fprintf(w, "node_memory_MemAvailable_bytes %d\n", memAvailable)
+	fmt.Fprintf(w, "node_memory_MemTotal_bytes %d\n", memTotal)
+}
+
+// TestCurrentHostLoadReprobesBeforeStaleWindowElapses pins agent-lcars#2012's
+// core fix: currentHostLoad must stop trusting a cached sample well before
+// memoryAvailableSampleStale would call it stale, so a sample accepted from
+// cache cannot expire before the same probe cycle gets around to evaluating
+// it. A sample aged hostSampleStaleAfter-3s (27s -- comfortably inside the
+// OLD 30s reuse window, and exactly the kind of near-boundary read the
+// 2026-09-20 idle-fleet measurement caught turning stale moments later) must
+// trigger a fresh probe rather than being served from cache.
+//
+// Before the fix: 27s < 30s (hostSampleStaleAfter, the old reuse threshold
+// too) -> cache hit, zero fresh probes, observedAt stays 27s old. After the
+// fix: 27s > 15s (hostSampleReuseWindow) -> cache miss, one fresh probe,
+// observedAt resets to now.
+func TestCurrentHostLoadReprobesBeforeStaleWindowElapses(t *testing.T) {
+	var probes atomic.Int32
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probes.Add(1)
+		healthyNodeExporterMetrics(w, 20*gibibyte, 32*gibibyte)
+	}))
+	defer metrics.Close()
+
+	scaler := &Scaler{
+		scaleSetName:           "reuse-window",
+		hostMetricsURLTemplate: metrics.URL + "/%s",
+		logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	aged := hostSampleStaleAfter - 3*time.Second
+	fleet.hostLoadCache["pike"] = hostLoad{
+		observedAt: time.Now().Add(-aged), memoryAvailableBytes: float64(20 * gibibyte),
+		memoryAvailable: 20.0 / 32.0, rawTelemetry: true,
+	}
+
+	load, err := scaler.currentHostLoad(context.Background(), "pike", false)
+	if err != nil {
+		t.Fatalf("currentHostLoad() error = %v", err)
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("metrics probes = %d, want 1: a %s-old cache entry must trigger a fresh probe instead of being reused (agent-lcars#2012)", got, aged)
+	}
+	if age := time.Since(load.observedAt); age > time.Second {
+		t.Fatalf("currentHostLoad returned observedAt aged %s, want a just-refreshed sample", age)
+	}
+}
+
+// TestCurrentHostLoadSingleFlightsConcurrentProbes pins agent-lcars#2012's
+// step-3 interaction check: two callers (e.g. two lanes' placement probes,
+// or a lane racing the background sampler) that both observe a cache
+// miss/expiry for the same host within the same instant must collapse into
+// one real scrape, not two. The metrics handler sleeps briefly so both
+// concurrent currentHostLoad calls are certain to read the empty cache
+// before either finishes probing.
+func TestCurrentHostLoadSingleFlightsConcurrentProbes(t *testing.T) {
+	var probes atomic.Int32
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probes.Add(1)
+		time.Sleep(100 * time.Millisecond)
+		healthyNodeExporterMetrics(w, 20*gibibyte, 32*gibibyte)
+	}))
+	defer metrics.Close()
+
+	scaler := &Scaler{
+		scaleSetName:           "single-flight",
+		hostMetricsURLTemplate: metrics.URL + "/%s",
+		logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := scaler.currentHostLoad(context.Background(), "pike", false); err != nil {
+				t.Errorf("currentHostLoad() error = %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := probes.Load(); got != 1 {
+		t.Errorf("metrics probes = %d, want 1: two callers racing an empty cache within the same instant must collapse into a single real scrape (agent-lcars#2012)", got)
+	}
+}
+
+// TestLaneAdmissibleSlotsSurvivesSlowProbeCycle reproduces agent-lcars#2012's
+// measured symptom end to end: on an idle fleet, github_runner_autoscaler_lane_admissible_slots
+// sawtoothed to 0-3 every few minutes because a cached sample accepted as
+// current early in a probeFleetHosts cycle was judged stale by the time the
+// same cycle's slower host (a Docker ping/inventory straggler) let the cycle
+// finish. "fast" carries a cache entry seeded 27s old -- comfortably fresh
+// under the old 30s reuse window, so probeFleetHosts's per-host goroutine
+// for "fast" (which has nothing slow to wait on) accepts it from cache
+// almost immediately. "slow" has no cache at all and stalls its own
+// ContainerList for 4s, so the WHOLE probeFleetHosts call -- and the
+// evaluation that follows once it returns -- lands roughly 4s after "fast"'s
+// own read: 27s+4s=31s, past the 30s staleness threshold.
+//
+// Before the fix, "fast" is wrongly judged stale (not the only eligible
+// host, so the "only reachable host" escape hatch does not rescue it) and
+// contributes 0 slots; "slow" is always freshly probed (no cache) and
+// contributes its real 2. After the fix, "fast"'s cache is too old to reuse
+// (27s > the new 15s reuse window) so probeFleetHosts re-probes it early in
+// the cycle instead, well within budget by the time the cycle's evaluation
+// runs 4s later -- both hosts contribute their real 2, for a 4-slot total.
+func TestLaneAdmissibleSlotsSurvivesSlowProbeCycle(t *testing.T) {
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		healthyNodeExporterMetrics(w, 20*gibibyte, 32*gibibyte)
+	}))
+	defer metrics.Close()
+
+	fastDocker := newFakeDockerServer(t)
+	fastDocker.setMemoryTotal(32 * gibibyte)
+	slowDocker := newFakeDockerServer(t)
+	slowDocker.setMemoryTotal(32 * gibibyte)
+	slowDocker.setListDelay(4 * time.Second)
+
+	scaler := &Scaler{
+		scaleSetName:           "reuse-race",
+		runnerMemory:           8 * gibibyte,
+		hostMetricsURLTemplate: metrics.URL + "/%s",
+		dockerHosts: []DockerHost{
+			{Name: "fast", Client: fastDocker.client(t)},
+			{Name: "slow", Client: slowDocker.client(t)},
+		},
+		runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	aged := hostSampleStaleAfter - 3*time.Second
+	fleet.hostLoadCache["fast"] = hostLoad{
+		observedAt: time.Now().Add(-aged), memoryAvailableBytes: float64(20 * gibibyte),
+		memoryAvailable: 20.0 / 32.0, rawTelemetry: true,
+	}
+
+	probe := scaler.probeFleetHosts(context.Background(), fleet)
+	got := scaler.laneAdmissibleSlots(fleet, probe)
+	if got != 4 {
+		t.Fatalf("laneAdmissibleSlots() = %d, want 4 (2 from each host): a cached sample accepted as current early in the cycle must not go stale before the cycle's own evaluation runs (agent-lcars#2012)", got)
+	}
+}
+
+// TestHostSampleReuseWindowNarrowerThanStaleAfter pins agent-lcars#2012's
+// load-bearing invariant directly: currentHostLoad's reuse window must stay
+// strictly shorter than memoryAvailableSampleStale's staleness window, so a
+// sample accepted from cache cannot expire before the same probeFleetHosts
+// cycle gets around to evaluating it (see the const block's doc comment).
+func TestHostSampleReuseWindowNarrowerThanStaleAfter(t *testing.T) {
+	if hostSampleReuseWindow >= hostSampleStaleAfter {
+		t.Fatalf("hostSampleReuseWindow (%s) must be strictly less than hostSampleStaleAfter (%s): a sample accepted from cache must not be able to expire before the same cycle evaluates it (agent-lcars#2012)", hostSampleReuseWindow, hostSampleStaleAfter)
 	}
 }
