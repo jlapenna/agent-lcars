@@ -273,12 +273,12 @@ jobs:
           CGO_ENABLED: '1'
         run: ./tools/nx run-many -t test typecheck build test-race --all --parallel=2
 
-      # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
+      # The trusted JIT runner image bakes OpenJDK 25 for the Firestore
       # emulator; ubuntu-latest (the fork-PR carve-out above) still
       # defaults to Java 17. setup-java consults its own tool cache, not
       # PATH, so it re-downloads Temurin every run regardless -- detect
       # first and only fall back to install when the baked runtime isn't
-      # already 21.
+      # already >= 21 (firebase-tools' actual floor).
       - name: Detect Java 21 runtime
         id: emulator-java-runtime
         shell: bash
@@ -302,7 +302,7 @@ jobs:
         if: steps.emulator-java-runtime.outputs.ready != 'true'
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - name: Store contract against the Firestore emulator
         run: ./tools/nx run @agent-lcars/orchestrator:test-firestore
@@ -528,7 +528,7 @@ jobs:
           url: ${{ vars.NX_CACHE_URL }}
           write-token: ${{ secrets.NX_CACHE_TOKEN }}
 
-      # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
+      # The trusted JIT runner image bakes OpenJDK 25 for the Firestore
       # emulator. Fork PRs use GitHub-hosted runners, where Java 17 remains
       # the default, so retain setup-java only as that fallback. Kept
       # unconditional (not narrowed to the fork branch) because it already
@@ -558,7 +558,7 @@ jobs:
         if: steps.e2e-scope.outputs.run == 'true' && steps.java-runtime.outputs.ready != 'true'
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       # The trusted E2E path runs on the lcars-e2e sandbox lineage (FROM
       # mcr.microsoft.com/playwright), which preinstalls browsers at

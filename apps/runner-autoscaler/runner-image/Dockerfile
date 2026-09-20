@@ -282,12 +282,16 @@ RUN set -eux; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
-    # The Firestore emulator requires Java 21+. Baking the JRE makes trusted
-    # E2E runners ready without downloading a Temurin distribution per job. \
+    # The Firestore emulator requires Java 21+ (firebase-tools v15 dropped
+    # support for older runtimes). Baking the JRE makes trusted E2E runners
+    # ready without downloading a Temurin distribution per job. Currently 25
+    # (the current LTS, verified locally against this exact apt package and
+    # the repo's pinned firebase-tools' bundled Firestore emulator jar --
+    # agent-lcars#3, renovate/java-jdk-25.x). \
     # python3-yaml: GitHub-hosted ubuntu-latest ships PyYAML, and consumer
     # workflows (sprinkles deploy.py) assume it; with PEP 668 a job cannot
     # pip-install it at run time without --break-system-packages. \
-    apt-get install -y --no-install-recommends nodejs git-lfs gh jq python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
+    apt-get install -y --no-install-recommends nodejs git-lfs gh jq python3-pip python3-yaml openjdk-25-jre-headless $EXTRA_APT_PACKAGES; \
     node --version; \
     # NodeSource's nodejs package bundles the `corepack` binary but never
     # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
