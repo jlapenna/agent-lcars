@@ -150,3 +150,5 @@ their `workflow_call` surfaces as public API.
 | Credential and variable boundary | [Deployment boundary](deployment-boundary.md)                                        |
 | Fleet protocol                   | [Agent protocol](../agents/shared/skills/agent-protocol/reference/agent-protocol.md) |
 | Workstation agent tools          | `packages/fleet-tools/`                                                              |
+
+<!-- throwaway: proving cancel-parked-automerge (#2005); this PR must never merge -->
