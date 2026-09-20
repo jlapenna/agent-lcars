@@ -302,7 +302,7 @@ export async function handleWebhookDelivery(
       }
       // `requestReply` declined -- no task yet (`NOT_FOUND`, the
       // start-work-by-comment case that must keep working), a closed
-      // task, or the fleet's live-run cap. Fall through to the same
+      // task, or a busy task. Fall through to the same
       // admission every other trigger uses; a still-running anchor
       // refuses `task-busy` there too (`decide.ts`'s own concurrency
       // guard), so no second run is ever created.
