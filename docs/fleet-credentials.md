@@ -82,7 +82,7 @@ declared nowhere, and stayed invisible until the contract check compared the
 live pool against the model (homelab#1497). They were then declared in
 homelab's `terraform/gcp_sprinkles_wif.tf` and adopted by import — `2 imported,
 0 added, 0 changed` — so the boundary above is now source-owned rather than
-hand-made. Note what did *not* fix it: adding the provider to the model while
+hand-made. Note what did _not_ fix it: adding the provider to the model while
 it was still unmanaged would have stopped the alert without closing the gap it
 found.
 
