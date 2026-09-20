@@ -98,6 +98,42 @@ const nextConfig = {
     // 1 MiB; leave room for the multipart envelope and validated JSON intent.
     serverActions: { bodySizeLimit: '11mb' },
   },
+  // lcars.jlapenna.net is internet-facing and its login page is a credential
+  // entry point, but Firebase App Hosting adds no response hardening of its
+  // own -- the origin's headers are what reach the browser (homelab#1496).
+  //
+  // Scoped deliberately to the four headers that are safe to apply blind:
+  //
+  // - HSTS without includeSubDomains/preload. This app owns one name, not
+  //   the jlapenna.net tree, and preload is effectively irreversible. The
+  //   value here closes the SSL-strip window on this host and claims nothing
+  //   about siblings it does not serve.
+  // - X-Frame-Options DENY: an operator console is never legitimately framed.
+  // - nosniff and a referrer policy: no behavioural risk.
+  //
+  // Content-Security-Policy is NOT set here on purpose. A correct CSP for
+  // this app needs per-route nonces and a measured report-only rollout; a
+  // guessed one silently breaks the console instead of hardening it. That is
+  // a separate change with its own verification.
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=31536000',
+          },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          {
+            key: 'Referrer-Policy',
+            value: 'strict-origin-when-cross-origin',
+          },
+        ],
+      },
+    ];
+  },
 };
 
 const plugins = [withNx];
