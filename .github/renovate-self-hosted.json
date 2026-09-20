@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Self-hosted Renovate global config (agent-lcars#2018) for the fleet",
+    "repos the hosted Mend/Renovate app does not cover:",
+    "`.github/workflows/renovate-self-hosted.yml` runs",
+    "renovatebot/github-action against exactly the repos listed below,",
+    "authenticating per owner as the `agent-lcars` GitHub App instead of the",
+    "hosted app (which would need an `admin:org` credential nobody on this",
+    "fleet holds). See docs/renovate.md for the full hosted-vs-self-hosted",
+    "split, and for how to add or remove a repo here -- this `repositories`",
+    "array is the single source of truth the workflow's matrix is computed",
+    "from.",
+    "",
+    "Every repo below already carries its own merged renovate.json extending",
+    "`github>jlapenna/agent-lcars//renovate-preset` (requireConfig enforces",
+    "that rather than silently onboarding a repo with none).",
+    "",
+    "Deliberately does not repeat platformAutomerge or a major-update",
+    "packageRule here: every repo below already inherits both from the",
+    "shared preset via its own `extends`, and Renovate resolves a",
+    "repository's own config (including everything it pulls in via",
+    "`extends`) after this global config and lets the later match win",
+    "field-by-field -- so a rule placed only here could be silently",
+    "overridden by a future repo-level packageRule, while one in the shared",
+    "preset can't be outranked by anything that merely extends it. See",
+    "renovate-preset.json's own major-update packageRule for the actual",
+    "rule and the auto-merge hazard it guards against."
+  ],
+  "platform": "github",
+  "repositories": [
+    "supersprinklesracing/www",
+    "supersprinklesracing/girosf",
+    "jlapenna/nx-cache-server",
+    "jlapenna/repo-tools"
+  ],
+  "onboarding": false,
+  "requireConfig": "required",
+  "dependencyDashboard": true,
+  "gitAuthor": "agent-lcars[bot] <agent-lcars[bot]@users.noreply.github.com>"
+}
