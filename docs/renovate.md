@@ -104,11 +104,13 @@ A major version bump landing on green CI with no human review is not
 acceptable.
 
 `renovate-preset.json` carries a `packageRules` entry matching
-`matchUpdateTypes: ["major"]` that sets `draftPR: true`, `automerge: false`,
-and `addLabels: ["status:needs-human"]`. Draft status is set atomically at
-PR creation, so a major update is never briefly visible as an armable
-non-draft PR; `status:needs-human` is added after creation (racy against the
-auto-merge listener) and exists for human triage, not as the actual guard.
+`matchUpdateTypes: ["major"]` that sets `draftPR: true` and `automerge: false`.
+Draft status is set atomically at PR creation, so a major update is never
+briefly visible as an armable non-draft PR, and the auto-merge workflow
+deliberately leaves drafts alone. The rule adds no `status:needs-human` label
+on purpose: that label means the maintainer must act, and a major upgrade is
+agent work -- an agent session reads the upstream notes, does the migration on
+the Renovate branch, and marks the PR ready.
 
 This rule lives in the **shared preset**, not in
 `.github/renovate-self-hosted.json`'s global config, on purpose: Renovate

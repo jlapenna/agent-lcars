@@ -75,9 +75,14 @@ describe('self-hosted Renovate contract', () => {
         matchUpdateTypes: ['major'],
         draftPR: true,
         automerge: false,
-        addLabels: ['status:needs-human'],
       }),
     );
+    // Draft is the guard. status:needs-human would route every major upgrade
+    // in the fleet to the maintainer; a major is agent work.
+    const majorRule = preset.packageRules?.find(
+      (rule) => rule.draftPR === true,
+    );
+    expect(majorRule?.addLabels ?? []).not.toContain('status:needs-human');
   });
 
   it('pins every third-party action in the workflow by commit SHA', async () => {

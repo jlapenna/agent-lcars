@@ -40,11 +40,10 @@
       "automergeType": "pr"
     },
     {
-      "description": "Major updates always get a human look before merge, regardless of which bot authors the PR. This matters most for the self-hosted repos (agent-lcars#2018): their Renovate runs authenticate as agent-lcars[bot], which every member repo's agent-automerge-reusable.yml treats as an auto-mergeable bot login the moment a non-draft PR is opened -- labels added after PR creation are racy, but draft status set at creation is not, so draftPR is the actual guard and addLabels is a convenience for triage. This rule lives here, in the shared preset, rather than in renovate-self-hosted.json's global config: Renovate resolves a repository's own config (including everything it pulls in via `extends`, i.e. this preset) after global config and lets the later match win field-by-field, so only a preset-level (or repo-level) rule is guaranteed to survive -- a rule placed solely in the self-hosted global config could be silently overridden by a future repo-level packageRule. Putting it here means every consumer, hosted or self-hosted, gets it.",
+      "description": "Major updates are never merged unattended, whichever bot authors the PR: they open as DRAFT pull requests with auto-merge off. This matters most for the self-hosted repos (agent-lcars#2018): their Renovate runs authenticate as agent-lcars[bot], which every member repo's agent-automerge-reusable.yml treats as an auto-mergeable bot login the moment a non-draft PR is opened. Draft status is set atomically at creation and that workflow deliberately leaves drafts alone (draft is the fleet's parked state), so draftPR is the guard. Deliberately no `status:needs-human` label: that label means the maintainer must act, and a major upgrade is agent work -- an agent session reads the upstream notes, does the migration, and marks the PR ready. The rule lives in the shared preset rather than in renovate-self-hosted.json's global config because Renovate resolves a repository's own config (including everything it pulls in via `extends`) after global config and lets the later match win, so only a preset-level or repo-level rule is guaranteed to apply to every consumer, hosted or self-hosted.",
       "matchUpdateTypes": ["major"],
       "draftPR": true,
-      "automerge": false,
-      "addLabels": ["status:needs-human"]
+      "automerge": false
     },
     {
       "description": "TypeScript 7 breaks Nx project-graph construction today. Hold only the 7.x line fleet-wide until Nx compatibility is proven, while leaving a later major available for its own review.",
