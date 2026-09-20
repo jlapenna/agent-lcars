@@ -324,6 +324,24 @@ func (a *Scaler) coordinator() *FleetCoordinator {
 const (
 	hostMetricsTimeout = time.Second
 	hostSampleInterval = 15 * time.Second
+	// hostSampleReuseWindow and hostSampleStaleAfter partition a host
+	// sample's age into "cache it" and "refuse to admit on it" (agent-lcars#2012).
+	// currentHostLoad may serve a cached sample only while it is younger
+	// than hostSampleReuseWindow; memoryAvailableSampleStale refuses to
+	// trust one once it is older than hostSampleStaleAfter. The invariant
+	// hostSampleReuseWindow < hostSampleStaleAfter is load-bearing: a sample
+	// accepted from cache must not be able to cross the stale threshold
+	// before the SAME probeFleetHosts cycle gets around to evaluating it.
+	// Before this fix both windows were 2*hostSampleInterval (30s): a sample
+	// accepted from cache at, say, 27s old was still 27s old when
+	// laneAdmissibleSlotsOverHosts/pickHostLocked evaluated it moments
+	// later -- except probeFleetHosts's own per-host Docker pings (5s
+	// timeout) routinely made "moments later" arrive after the 30s line,
+	// so a sample the cache had just called current was simultaneously
+	// judged stale, zeroing admissible slots and refusing placements on an
+	// otherwise idle fleet. See TestHostSampleReuseWindowNarrowerThanStaleAfter.
+	hostSampleReuseWindow = hostSampleInterval
+	hostSampleStaleAfter  = 2 * hostSampleInterval
 )
 
 type hostLoad struct {
@@ -589,16 +607,82 @@ func (a *Scaler) recordHostLoadMetrics(host string, load hostLoad, available boo
 	}
 }
 
-func (a *Scaler) currentHostLoad(ctx context.Context, host string, throttleBounded bool, throttlePossible ...bool) (hostLoad, error) {
-	fleet := a.coordinator()
+// cachedHostLoadWithin returns fleet's cached load for host, scored for this
+// caller's quota, if it is younger than window. See currentHostLoad's two
+// uses: hostSampleReuseWindow for "trust this without even trying a real
+// probe", hostSampleStaleAfter for "a failed probe may still fall back to
+// this."
+func (a *Scaler) cachedHostLoadWithin(fleet *FleetCoordinator, host string, window time.Duration, throttleBounded bool, throttlePossible ...bool) (hostLoad, bool) {
 	fleet.hostSampleMu.Lock()
 	cached, ok := fleet.hostLoadCache[host]
 	fleet.hostSampleMu.Unlock()
-	if ok && time.Since(cached.observedAt) < 2*hostSampleInterval {
-		load := a.scoreHostLoadForQuota(host, cached, throttleBounded, throttlePossible...)
-		return a.observeOverloadCooldown(host, load, time.Now()), nil
+	if !ok || time.Since(cached.observedAt) >= window {
+		return hostLoad{}, false
 	}
-	return a.probeHostLoad(ctx, host, throttleBounded, throttlePossible...)
+	load := a.scoreHostLoadForQuota(host, cached, throttleBounded, throttlePossible...)
+	return a.observeOverloadCooldown(host, load, time.Now()), true
+}
+
+// freshCachedHostLoad returns fleet's cached load for host, scored for this
+// caller's quota, if it is younger than hostSampleReuseWindow -- see
+// currentHostLoad and the invariant comment on hostSampleReuseWindow.
+func (a *Scaler) freshCachedHostLoad(fleet *FleetCoordinator, host string, throttleBounded bool, throttlePossible ...bool) (hostLoad, bool) {
+	return a.cachedHostLoadWithin(fleet, host, hostSampleReuseWindow, throttleBounded, throttlePossible...)
+}
+
+func (a *Scaler) currentHostLoad(ctx context.Context, host string, throttleBounded bool, throttlePossible ...bool) (hostLoad, error) {
+	fleet := a.coordinator()
+	if load, ok := a.freshCachedHostLoad(fleet, host, throttleBounded, throttlePossible...); ok {
+		return load, nil
+	}
+
+	// A cache miss/expiry can be observed by more than one lane's placement
+	// probe -- or the 15s background sampler -- within the same instant:
+	// without a per-host guard, each would independently scrape the same
+	// host (agent-lcars#2012's narrower reuse window makes misses somewhat
+	// more frequent, not less). Take a per-host lock before the real probe
+	// and re-check the cache once it is held: whichever goroutine loses the
+	// race for the lock finds the winner's fresh sample already cached and
+	// returns it instead of scraping again. Mirrors hostImageLocks' per-key
+	// mutex idiom (see prepareRunnerImage).
+	lockValue, _ := fleet.hostProbeLocks.LoadOrStore(host, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	if !lockMutexContext(ctx, lock) {
+		return hostLoad{}, fmt.Errorf("waiting to probe host %q: %w", host, ctx.Err())
+	}
+	defer lock.Unlock()
+
+	if load, ok := a.freshCachedHostLoad(fleet, host, throttleBounded, throttlePossible...); ok {
+		return load, nil
+	}
+	load, err := a.probeHostLoad(ctx, host, throttleBounded, throttlePossible...)
+	if err == nil {
+		return load, nil
+	}
+
+	// A single failed scrape must not fail the host closed while a still-
+	// trustworthy cached sample exists (agent-lcars#2012 follow-up): the
+	// narrower hostSampleReuseWindow means a real probe attempt --
+	// hostMetricsTimeout is 1s -- now happens far more often than the old
+	// 30s cache alone did, so a transient failure at sample age
+	// hostSampleReuseWindow..hostSampleStaleAfter must not discard a
+	// reading that is, in fact, still inside the trust window. Fall back to
+	// it -- scored for this caller exactly as a cache hit would be, so its
+	// observedAt stays the CACHED time rather than resetting to now -- and
+	// return a nil error: probeFleetHosts joins a non-nil error into
+	// loadErr, which marks the host's telemetry unavailable and applies an
+	// uncertainty penalty (see probeFleetHosts' hostPingResult handling);
+	// neither is warranted for a reading that is still good, so the
+	// fallback is reported here at Warn instead, with the sample's age, and
+	// the caller sees an ordinary successful read. A sample already past
+	// hostSampleStaleAfter (or no sample at all) has nothing to fall back
+	// to and fails exactly as before: hostLoad{} and the probe error.
+	if cached, ok := a.cachedHostLoadWithin(fleet, host, hostSampleStaleAfter, throttleBounded, throttlePossible...); ok {
+		a.logger.Warn("Host metrics scrape failed; serving cached sample still inside the trust window",
+			slog.String("host", host), slog.Duration("sample_age", time.Since(cached.observedAt)), slog.String("error", err.Error()))
+		return cached, nil
+	}
+	return hostLoad{}, err
 }
 
 func (a *Scaler) RunHostSampler(ctx context.Context) {
@@ -1469,17 +1553,19 @@ func (a *Scaler) effectiveMemoryOvercommit(host string, probe fleetHostProbe) fl
 // reading is too old to trust for the real-free-memory admission gate
 // (agent-lcars#1742): never successfully probed at all (observedAt is the
 // zero Time -- host metrics unconfigured for this host, or the first probe
-// has not completed yet) or older than 2*hostSampleInterval, the same
-// staleness window currentHostLoad itself already trusts a cached read
-// within. Unlike scoreHostLoad's pressure gates -- which fail OPEN on
-// missing telemetry because a monitoring outage must never read as a fleet
-// outage -- this gate fails CLOSED: the whole reason it exists is that
-// budget-minus-reservations bookkeeping can say a host is free while reality
-// disagrees, so an unknown reality is not a reason to trust the bookkeeping
-// either. See pickHostLocked and laneAdmissibleSlotsOverHosts for the
-// "unless it is the only reachable host" escape hatch.
+// has not completed yet) or older than hostSampleStaleAfter -- a strictly
+// WIDER window than the hostSampleReuseWindow currentHostLoad trusts a
+// cached read within (agent-lcars#2012), so a sample accepted from cache
+// cannot cross this threshold before the same probeFleetHosts cycle gets
+// around to evaluating it. Unlike scoreHostLoad's pressure gates -- which
+// fail OPEN on missing telemetry because a monitoring outage must never read
+// as a fleet outage -- this gate fails CLOSED: the whole reason it exists is
+// that budget-minus-reservations bookkeeping can say a host is free while
+// reality disagrees, so an unknown reality is not a reason to trust the
+// bookkeeping either. See pickHostLocked and laneAdmissibleSlotsOverHosts
+// for the "unless it is the only reachable host" escape hatch.
 func memoryAvailableSampleStale(load hostLoad, now time.Time) bool {
-	return load.observedAt.IsZero() || now.Sub(load.observedAt) > 2*hostSampleInterval
+	return load.observedAt.IsZero() || now.Sub(load.observedAt) > hostSampleStaleAfter
 }
 
 // hostMetricsConfigured reports whether host has a node-exporter pipeline
@@ -2401,7 +2487,7 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			} else {
 				// Read-only re-check against wall-clock time, NOT
 				// applyOverloadCooldown: res.load may be a cache read up to
-				// 2*hostSampleInterval stale, and its .overloaded bit may
+				// hostSampleReuseWindow stale, and its .overloaded bit may
 				// already be cooldown-derived rather than a fresh raw
 				// reading. Feeding that back into applyOverloadCooldown
 				// would re-arm the cooldown from an echo of itself every
