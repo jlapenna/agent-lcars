@@ -67,14 +67,3 @@ export function grantForPrincipal(
 ): WorkGrant | undefined {
   return grants.find((g) => g.principal === principal);
 }
-
-export function workMaxLiveRuns(): number {
-  const raw = process.env['AGENT_LCARS_WORK_MAX_LIVE_RUNS'];
-  if (raw === undefined || raw === '') return 4;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1)
-    throw new Error(
-      'AGENT_LCARS_WORK_MAX_LIVE_RUNS must be a positive integer',
-    );
-  return n;
-}

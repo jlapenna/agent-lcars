@@ -101,11 +101,16 @@ regardless of how it authenticated. A GitHub Actions caller's signed
 repository maps generically to `github-actions:<owner/repo>`; it is neither a
 Sprinkles-specific branch nor a provider-routing selector.
 
-| Value                    | Env var                          | This deployment                                                                                                                           |
-| ------------------------ | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`        | operators, allowed `github-actions:<owner/repo>` automation, and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
-| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                                                                       |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                                                                        |
+| Value                    | Env var                     | This deployment                                                                                                                           |
+| ------------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                        |
+
+Authorized native Work creation, redispatch, replies, and due schedule slots
+enter the durable queue even when the fleet is full. QueueExecutor reserves
+host capacity before claiming a run; queued capacity waits do not expire or
+consume execution retries. The former `AGENT_LCARS_WORK_MAX_LIVE_RUNS` intake
+cap is retired. Execution capacity remains controlled by the autoscaler.
 
 Unlike `deployment.ts`, these have no fallback identity or scope baked into
 source — an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody

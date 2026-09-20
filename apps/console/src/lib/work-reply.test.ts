@@ -170,7 +170,6 @@ function fixture(over: Partial<WorkContext> = {}) {
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
     sessionDocsForRuns: async () => [],
-    maxLiveRuns: 4,
     scheduleStore: new MemoryScheduleStore(),
     grants: () => [],
     now: () => new Date(NOW),
@@ -260,7 +259,6 @@ describe('requestReply', () => {
   it('switches an explicitly selected provider while queued and preserves the specification', async () => {
     const { store, orchestrator, context } = fixture({
       principal: { ...operator, pipelines: ['claude', 'opencode'] },
-      maxLiveRuns: 0,
       sessionDocsForRuns: async () => {
         throw new Error('a provider switch must not resume another CLI');
       },

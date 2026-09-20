@@ -1,12 +1,6 @@
 import { MantineProvider } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { QuickTaskButton } from './quick-task-button';
@@ -71,35 +65,6 @@ describe('New work creation', () => {
     await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
     expect((createItem as Mock).mock.calls[0][0].spec.description).toContain(
       'Console route: `/agents`',
-    );
-  });
-
-  it('automatically retries the same work id after the live-run cap', async () => {
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
-    (createItem as Mock)
-      .mockResolvedValueOnce([
-        {
-          code: 'TOO_MANY_REQUESTS',
-          message: 'At cap',
-          data: { retryAfterSeconds: 1 },
-        },
-        undefined,
-      ])
-      .mockResolvedValueOnce([undefined, { id: 'created' }]);
-    renderButton();
-    await submit();
-    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
-    const scheduledIndex = setTimeoutSpy.mock.calls.findLastIndex(
-      ([, delay]) => delay === 1000,
-    );
-    expect(scheduledIndex).toBeGreaterThanOrEqual(0);
-    const [retry] = setTimeoutSpy.mock.calls[scheduledIndex];
-    clearTimeout(setTimeoutSpy.mock.results[scheduledIndex].value);
-    setTimeoutSpy.mockRestore();
-    await act(async () => (retry as () => void)());
-    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(2));
-    expect((createItem as Mock).mock.calls[1][0].id).toBe(
-      (createItem as Mock).mock.calls[0][0].id,
     );
   });
 

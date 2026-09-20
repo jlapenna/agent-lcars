@@ -9,7 +9,7 @@ import {
   authenticateWorkRequest,
   googleIdTokenVerifier,
 } from '@/lib/work-auth';
-import { workGrants, workMaxLiveRuns } from '@/lib/work-grants';
+import { workGrants } from '@/lib/work-grants';
 import type { WorkContext } from '@/lib/work-mint';
 import {
   sessionDocsForRuns,
@@ -53,7 +53,6 @@ export async function context(): Promise<WorkContext> {
     sessionsFor: sessionsForRuns,
     getSessionDoc: sessionForResume,
     sessionDocsForRuns,
-    maxLiveRuns: workMaxLiveRuns(),
     scheduleStore: createScheduleStore(),
     grants: workGrants,
     now: () => new Date(),

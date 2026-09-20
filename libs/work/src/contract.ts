@@ -142,10 +142,6 @@ export const itemsContract = {
     )
     .errors({
       FORBIDDEN: { message: 'Principal may not request this pipeline' },
-      TOO_MANY_REQUESTS: {
-        message: 'Fleet is at its live-run cap',
-        data: z.object({ retryAfterSeconds: z.number() }),
-      },
       CONFLICT: { message: 'Item exists with a different spec' },
     })
     .input(
@@ -253,10 +249,6 @@ export const itemsContract = {
         message:
           'Only a parked or failed item can be redispatched, or the named session has no archived transcript',
       },
-      TOO_MANY_REQUESTS: {
-        message: 'Fleet is at its live-run cap',
-        data: z.object({ retryAfterSeconds: z.number() }),
-      },
       // Sub-project 6: `resumeSessionId` names a session that either
       // doesn't exist, doesn't belong to a run of this item, or isn't a
       // claude-code session -- a malformed request, not a state conflict.
@@ -293,10 +285,6 @@ export const itemsContract = {
       // rather than inventing a second one at this boundary.
       CONFLICT: {
         message: 'The item cannot take a reply in its current state',
-      },
-      TOO_MANY_REQUESTS: {
-        message: 'Fleet is at its live-run cap',
-        data: z.object({ retryAfterSeconds: z.number() }),
       },
     })
     .input(
@@ -597,11 +585,12 @@ export const schedulesContract = {
         minted: z.array(
           z.strictObject({ scheduleId: workIdSchema, itemId: workIdSchema }),
         ),
+        // Compatibility field: intake always queues, so this is empty.
         skippedCap: z.array(workIdSchema),
         disabled: z.array(workIdSchema),
         // One schedule's unexpected failure (a `mintItem` or store-write
-        // rejection -- anything not already handled by `disabled` or
-        // `skippedCap`) never aborts the rest of the tick; it lands here
+        // rejection -- anything not already handled by `disabled`)
+        // never aborts the rest of the tick; it lands here
         // instead so the caller (and its logs) can see which schedule and
         // why without the whole route failing closed.
         errors: z.array(

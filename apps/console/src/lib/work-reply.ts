@@ -10,11 +10,7 @@ import type { SessionDoc } from '@agent-lcars/telemetry';
 import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
 import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
-import {
-  forbiddenReason,
-  liveNativeRunCount,
-  type WorkContext,
-} from './work-mint';
+import { forbiddenReason, type WorkContext } from './work-mint';
 
 /** The pipelines whose CLI session can be restored. Values are
  *  `SessionAgent` members (`libs/telemetry/src/lib/types.ts`), matching
@@ -52,7 +48,7 @@ export type ReplyOutcome =
   | { ok: true; runId: string; resumed: boolean }
   | {
       ok: false;
-      code: 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN' | 'TOO_MANY_REQUESTS';
+      code: 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN';
       message: string;
     };
 
@@ -175,17 +171,6 @@ export async function requestReply(
         resumeTranscriptGcsUri: resumeUri,
       };
     }
-  }
-
-  if (
-    replaceQueuedRunId === undefined &&
-    (await liveNativeRunCount(context)) >= context.maxLiveRuns
-  ) {
-    return {
-      ok: false,
-      code: 'TOO_MANY_REQUESTS',
-      message: 'fleet is at its live-run cap',
-    };
   }
 
   const outcome = await context.runtime.orchestrator.request({

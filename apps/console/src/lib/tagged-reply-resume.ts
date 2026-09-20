@@ -6,7 +6,6 @@ import { PIPELINES } from '@agent-lcars/work';
 import { issueCommentEventSchema, type Pipeline } from './orchestrator-ingest';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal, WorkScope } from './work-auth';
-import { workMaxLiveRuns } from './work-grants';
 import type { WorkContext } from './work-mint';
 import { requestReply } from './work-reply';
 import {
@@ -62,7 +61,6 @@ function taggedReplyContext(runtime: OrchestratorRouteDeps): WorkContext {
     sessionsFor: sessionsForRuns,
     getSessionDoc: sessionForResume,
     sessionDocsForRuns,
-    maxLiveRuns: workMaxLiveRuns(),
     scheduleStore: unreachableScheduleStore,
     grants: () => [],
     now: () => new Date(),
