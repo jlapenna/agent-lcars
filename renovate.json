@@ -22,6 +22,16 @@
       ]
     },
     {
+      "description": "Exception to the rule above: the fixtures' `packageManager` pin must keep moving with the root one. pnpm-store-seed.test.sh (required on root package.json changes) asserts every seed and regression manifest carries the root pnpm version (and the pnpm10 variants their own 10.x line), so a root pnpm bump that left these behind would fail CI. Non-major only; pnpm majors stay disabled repo-wide.",
+      "enabled": true,
+      "matchFileNames": [
+        "apps/runner-autoscaler/runner-image/pnpm-seed/**",
+        "apps/runner-autoscaler/runner-image/pnpm-seed-regression/**"
+      ],
+      "matchDepNames": ["pnpm"],
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
       "description": "CI's JDK deliberately tracks a floating Temurin major line ('21'), like node '24' and actions/setup-java v6. The java-version datasource can only offer exact builds (re-bumped every quarter) or a new major (25), and the JVM here only runs the Firestore emulator: the runner image installs openjdk-21-jre-headless and the E2E sandbox image Ubuntu Noble's default-jre-headless (Java 21), so moving setup-java alone would split the fleet across two JVMs for no benefit. Same rule and reasoning as sprinkles. Revisit when the sandbox base image's default JRE moves (#2001).",
       "enabled": false,
       "matchDatasources": ["java-version"],
