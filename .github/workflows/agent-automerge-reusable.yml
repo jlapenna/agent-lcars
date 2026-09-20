@@ -196,6 +196,11 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     permissions:
+      # disablePullRequestAutoMerge needs the same scope that arming it does
+      # (the `automerge` job below). With pull-requests: write alone GitHub
+      # answers "Resource not accessible by integration", so a PR parked
+      # after it was armed still merged: #2003, run 35492121036.
+      contents: write
       pull-requests: write
     steps:
       - name: Disable auto-merge for the parked agent PR
