@@ -47,8 +47,6 @@ export interface EnvVars {
   AGENT_LCARS_WORK_AUDIENCE?: string;
   /** JSON grant list: [{ principal, subjects[], pipelines[], scopes[] }]. */
   AGENT_LCARS_WORK_GRANTS?: string;
-  /** Global live-run cap for native work items (default 4). */
-  AGENT_LCARS_WORK_MAX_LIVE_RUNS?: string;
   /** This console deployment's own public base URL, embedded in a native
    *  work item's `brief.anchor.html_url` for a direct-mode agent to read
    *  back (`runs-router.ts`'s `brief` handler), and the default `--origin`

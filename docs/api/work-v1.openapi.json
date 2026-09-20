@@ -62,35 +62,6 @@
         },
         "required": ["defined", "code", "status", "message"]
       },
-      "TooManyRequests": {
-        "title": "TOO_MANY_REQUESTS",
-        "type": "object",
-        "properties": {
-          "defined": {
-            "const": true
-          },
-          "code": {
-            "const": "TOO_MANY_REQUESTS"
-          },
-          "status": {
-            "const": 429
-          },
-          "message": {
-            "type": "string"
-          },
-          "data": {
-            "type": "object",
-            "properties": {
-              "retryAfterSeconds": {
-                "type": "number"
-              }
-            },
-            "required": ["retryAfterSeconds"],
-            "additionalProperties": false
-          }
-        },
-        "required": ["defined", "code", "status", "message", "data"]
-      },
       "Conflict": {
         "title": "CONFLICT",
         "type": "object",
@@ -629,23 +600,6 @@
                   "oneOf": [
                     {
                       "$ref": "#/components/schemas/Conflict"
-                    },
-                    {
-                      "$ref": "#/components/schemas/UndefinedError"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Fleet is at its live-run cap",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/TooManyRequests"
                     },
                     {
                       "$ref": "#/components/schemas/UndefinedError"
@@ -1861,23 +1815,6 @@
                 }
               }
             }
-          },
-          "429": {
-            "description": "Fleet is at its live-run cap",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/TooManyRequests"
-                    },
-                    {
-                      "$ref": "#/components/schemas/UndefinedError"
-                    }
-                  ]
-                }
-              }
-            }
           }
         },
         "security": [
@@ -2200,23 +2137,6 @@
                   "oneOf": [
                     {
                       "$ref": "#/components/schemas/Conflict"
-                    },
-                    {
-                      "$ref": "#/components/schemas/UndefinedError"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Fleet is at its live-run cap",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/TooManyRequests"
                     },
                     {
                       "$ref": "#/components/schemas/UndefinedError"

@@ -15,8 +15,8 @@ operational instructions.
 - Create the item with the `work-create.yml` workflow (or a signed-in console
   session). Do not mint personal service-account tokens or add IAM bindings
   for a smoke.
-- One item at a time: `AGENT_LCARS_WORK_MAX_LIVE_RUNS` is `2` in production
-  and this smoke should never need the second slot.
+- Submit one smoke item at a time. Intake accepts work into the durable queue;
+  QueueExecutor reserves fleet capacity before claiming a run.
 - Cancel through `POST /api/work/v1/items/{id}/cancel`, which is what the
   console's own Cancel button calls (`work-actions.tsx` -> `workRouter.cancel`).
   The separate runs-view cancel path that could not settle a native run is

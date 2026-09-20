@@ -4,7 +4,7 @@ import {
   MemoryStore,
   Orchestrator,
 } from '@agent-lcars/orchestrator';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import { attemptTaggedReplyResume } from './tagged-reply-resume';
@@ -12,7 +12,6 @@ import { attemptTaggedReplyResume } from './tagged-reply-resume';
 const REPO = 'jlapenna/agent-lcars';
 const NOW = '2026-09-06T00:00:00.000Z';
 const ISSUE = 42;
-const MAX_LIVE_RUNS_VAR = 'AGENT_LCARS_WORK_MAX_LIVE_RUNS';
 
 const spec = {
   title: 'Investigate the flaky test',
@@ -20,10 +19,6 @@ const spec = {
   pipeline: 'claude',
   target: { repo: REPO },
 };
-
-afterEach(() => {
-  delete process.env[MAX_LIVE_RUNS_VAR];
-});
 
 function fixture() {
   const store = new MemoryStore();
@@ -169,25 +164,24 @@ describe('attemptTaggedReplyResume', () => {
     expect(await attemptTaggedReplyResume(deps, delivery({}))).toBeUndefined();
   });
 
-  it('falls through (undefined) when the fleet is at its live-run cap -- TOO_MANY_REQUESTS', async () => {
+  it('resumes a tagged reply despite a backlog of native work', async () => {
     const { orchestrator, deps } = fixture();
     await parkTask(orchestrator);
-    process.env[MAX_LIVE_RUNS_VAR] = '1';
-    // Fills the one native (workId-anchored) slot the cap counts --
-    // `liveNativeRunCount` only counts native work, never a GitHub anchor
-    // like `ISSUE` above, so this is the only way to reach the cap here.
-    const filling = await orchestrator.request({
-      taskId: { workId: 'w1' },
-      requestId: 'fill-cap',
-      pipeline: 'claude',
-      work: {
-        origin: { principal: 'user:jlapenna', channel: 'console' },
-        spec,
-      },
+    for (let i = 0; i < 5; i++) {
+      const filling = await orchestrator.request({
+        taskId: { workId: `w${i}` },
+        requestId: `backlog-${i}`,
+        pipeline: 'claude',
+        work: {
+          origin: { principal: 'user:jlapenna', channel: 'console' },
+          spec,
+        },
+      });
+      expect(isRefusal(filling)).toBe(false);
+    }
+    expect(await attemptTaggedReplyResume(deps, delivery({}))).toMatchObject({
+      status: 200,
     });
-    if (isRefusal(filling)) throw new Error('unexpected refusal in fixture');
-
-    expect(await attemptTaggedReplyResume(deps, delivery({}))).toBeUndefined();
   });
 
   it('falls through (undefined) for a non-issue_comment event', async () => {

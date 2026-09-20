@@ -116,16 +116,6 @@ export function QuickTaskButton({
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
   const submitInFlightRef = useRef(false);
-  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
-
-  useEffect(
-    () => () => {
-      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
-    },
-    [],
-  );
 
   // The server-rendered trigger is visible before this client component's
   // click handler is attached. Keep it disabled for that brief window so a
@@ -208,7 +198,7 @@ export function QuickTaskButton({
 
   const pendingNotification = (request: QuickTaskSubmission) => ({
     id: submissionNotificationId(request),
-    message: 'Creating and dispatching work item…',
+    message: 'Creating work item…',
     loading: true,
     autoClose: false as const,
     withCloseButton: false,
@@ -273,26 +263,6 @@ export function QuickTaskButton({
               },
             });
           })();
-      if (error?.code === 'TOO_MANY_REQUESTS') {
-        const errorData = 'data' in error ? error.data : undefined;
-        const retryAfterSeconds =
-          typeof errorData === 'object' &&
-          errorData !== null &&
-          typeof (errorData as { retryAfterSeconds?: unknown })
-            .retryAfterSeconds === 'number'
-            ? (errorData as { retryAfterSeconds: number }).retryAfterSeconds
-            : 60;
-        notifications.update({
-          ...pendingNotification(request),
-          message:
-            'The fleet is at its live-run cap. This work item is queued and will be created automatically.',
-        });
-        retryTimeoutRef.current = setTimeout(() => {
-          retryTimeoutRef.current = undefined;
-          launchSubmission(request);
-        }, retryAfterSeconds * 1000);
-        return;
-      }
       if (error) throw new Error(error.message);
       notifications.update({
         id: submissionNotificationId(request),

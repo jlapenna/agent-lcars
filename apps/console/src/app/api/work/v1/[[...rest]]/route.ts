@@ -26,7 +26,7 @@ import {
   googleIdTokenVerifier,
   rawBearerToken,
 } from '@/lib/work-auth';
-import { workGrants, workMaxLiveRuns } from '@/lib/work-grants';
+import { workGrants } from '@/lib/work-grants';
 import { createWorkHandler } from '@/lib/work-router';
 import {
   sessionDocsForRuns,
@@ -138,7 +138,6 @@ async function handle(request: Request): Promise<Response> {
       sessionsFor: sessionsForRuns,
       getSessionDoc: sessionForResume,
       sessionDocsForRuns,
-      maxLiveRuns: workMaxLiveRuns(),
       scheduleStore: createScheduleStore(),
       grants: workGrants,
       now: () => new Date(),

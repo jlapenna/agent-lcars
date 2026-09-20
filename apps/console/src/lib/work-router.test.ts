@@ -10,6 +10,7 @@ import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
 import { describe, expect, it, vi } from 'vitest';
 
 import { controlPlaneRepository } from './deployment';
+import { drainOutbox } from './orchestrator-dispatch';
 import { createWorkHandler, type WorkContext } from './work-router';
 
 const ID = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
@@ -72,7 +73,6 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
     sessionDocsForRuns: async () => [],
-    maxLiveRuns: 4,
     scheduleStore: new MemoryScheduleStore(),
     grants: () => [],
     now: () => new Date('2026-08-26T10:00:00.000Z'),
@@ -394,15 +394,93 @@ describe('items routes', () => {
     }
   });
 
-  it('enforces the global live-run cap with 429', async () => {
-    const ctx = context({ maxLiveRuns: 1 });
-    await call(ctx, 'PUT', `/items/${ID}`, { spec });
-    const r = await call(ctx, 'PUT', `/items/${OTHER_ID}`, { spec });
-    expect(r.status).toBe(429);
-    expect(r.json).toMatchObject({ data: { retryAfterSeconds: 60 } });
-    // The same fact in the header generic HTTP clients already honour.
-    expect(r.headers?.get('retry-after')).toBe('60');
+  it('accepts a Slack backlog, replays idempotently, and claims it after a long capacity wait', async () => {
+    const ctx = context({ principal: { ...operator, channel: 'slack' } });
+    const { store, orchestrator } = ctx.runtime;
+    ctx.runtime.drain = () =>
+      drainOutbox({
+        store,
+        orchestrator,
+        now: () => '2026-08-26T10:00:00.000Z',
+        tokens: {
+          tokenFor: async () => {
+            throw new Error('native intake needs no GitHub token');
+          },
+        },
+      });
+    // Exceed both the old production cap (2) and default cap (4). The
+    // executor is full and does not claim until capacity becomes available.
+    const ids = Array.from({ length: 6 }, (_, i) => ID.slice(0, -1) + i);
+    for (const id of ids) {
+      const result = await call(ctx, 'PUT', `/items/${id}`, {
+        spec,
+        thread: 'T1/C1/1789934929.792609',
+      });
+      expect(result.status).toBe(201);
+      expect(result.json.origin).toMatchObject({
+        channel: 'slack',
+        thread: 'T1/C1/1789934929.792609',
+      });
+    }
+    expect(await store.listQueuedRuns()).toHaveLength(6);
+    expect((await call(ctx, 'PUT', `/items/${ids[0]}`, { spec })).status).toBe(
+      201,
+    );
+    expect(await store.listRuns({ workId: ids[0]! })).toHaveLength(1);
+    const later = '2026-08-26T14:00:00.000Z';
+    expect(await store.listExpiredRuns(later)).toEqual([]);
+    const claimedIds: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const claimed = await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: later,
+        claimedBy: 'available-runner',
+        tokenHash: 'a'.repeat(64),
+      });
+      expect(claimed).toBeDefined();
+      claimedIds.push(claimed!.runId);
+      expect(claimed?.leaseExpiresAt).toBe('2026-08-26T16:00:00.000Z');
+      await orchestrator.report(claimed!.runId, { ok: true, summary: 'done' });
+    }
+    expect(new Set(claimedIds)).toEqual(
+      new Set(ids.map((id) => `work:${id}/r1`)),
+    );
+    expect(await store.listQueuedRuns()).toEqual([]);
+    for (const id of ids) {
+      expect(await store.readTask({ workId: id })).toMatchObject({
+        task: { runCount: 1, consecutiveLost: 0 },
+      });
+    }
   });
+
+  it.each(['redispatch', 'reply'])(
+    'accepts %s while other native work is live',
+    async (operation) => {
+      const ctx = context();
+      await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      await ctx.runtime.orchestrator.report(`work:${ID}/r1`, {
+        ok: true,
+        summary: 'park',
+      });
+      for (let i = 0; i < 5; i++) {
+        expect(
+          (
+            await call(ctx, 'PUT', `/items/${OTHER_ID.slice(0, -1) + i}`, {
+              spec,
+            })
+          ).status,
+        ).toBe(201);
+      }
+      const result = await call(
+        ctx,
+        'POST',
+        `/items/${ID}/${operation}`,
+        operation === 'reply' ? { text: 'Continue' } : undefined,
+      );
+      expect(result.status).toBe(200);
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
+    },
+  );
 
   it('answers 404 for an unknown item', async () => {
     expect((await call(context(), 'GET', `/items/${ID}`)).status).toBe(404);

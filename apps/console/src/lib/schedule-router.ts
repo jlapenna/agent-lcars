@@ -227,6 +227,7 @@ export const scheduleRouter = os.router({
     const schedules = await context.scheduleStore.listEnabledSchedules();
     const now = context.now();
     const minted: { scheduleId: string; itemId: string }[] = [];
+    // Retained in the response for existing clients; intake no longer caps.
     const skippedCap: string[] = [];
     const disabled: string[] = [];
     const tickErrors: { scheduleId: string; message: string }[] = [];
@@ -323,10 +324,6 @@ export const scheduleRouter = os.router({
             updatedAt: now.toISOString(),
           });
           disabled.push(schedule.scheduleId);
-          continue;
-        }
-        if (result.kind === 'cap') {
-          skippedCap.push(schedule.scheduleId);
           continue;
         }
         // `result.kind === 'conflict'` is reachable here for exactly one

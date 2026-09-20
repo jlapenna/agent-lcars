@@ -75,7 +75,7 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
       drain: async () => ({ dispatched: [], failed: [] }),
     } as unknown as WorkContext['runtime'],
     sessionsFor: async () => [],
-    maxLiveRuns: 4,
+
     scheduleStore: new MemoryScheduleStore(),
     grants: () => GRANTS,
     now: () => NOW,
@@ -567,30 +567,6 @@ describe('tick', () => {
     });
   });
 
-  it('skips a schedule at the live-run cap and does not advance lastSlotAt', async () => {
-    const ctx = context({ maxLiveRuns: 0 });
-    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
-      cron: '* * * * *',
-      spec,
-    });
-    const r = await call(
-      withPrincipal(ctx, cronTick),
-      'POST',
-      '/schedules/tick',
-      {},
-    );
-    expect(r.json).toMatchObject({
-      minted: [],
-      skippedCap: [ID],
-      disabled: [],
-    });
-    // Unmoved from its create-time seed (Task 2), not undefined: the cap
-    // skip must not advance the watermark past where creation left it.
-    expect((await call(ctx, 'GET', `/schedules/${ID}`)).json.lastSlotAt).toBe(
-      CREATE_NOW.toISOString(),
-    );
-  });
-
   it("disables a schedule whose creator's grant no longer covers its pipeline", async () => {
     const ctx = context();
     await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
@@ -609,41 +585,42 @@ describe('tick', () => {
     });
   });
 
-  it('mints the same deterministic slot id on a later tick once under the live-run cap', async () => {
+  it('mints a due slot despite a native backlog and does not duplicate it on another tick', async () => {
+    const ctx = context();
+    for (let i = 0; i < 5; i++) {
+      expect(
+        (await call(ctx, 'PUT', `/items/${ID.slice(0, -1) + i}`, { spec }))
+          .status,
+      ).toBe(201);
+    }
     const cronExpr = '* * * * *';
     const slot = latestDueSlot(parseCron(cronExpr), NOW);
-    if (slot === undefined) throw new Error('expected a due slot at NOW');
-    const expectedItemId = await slotItemId(ID, slot);
-
-    const capped = context({ maxLiveRuns: 0 });
-    await call(withNow(capped, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+    if (slot === undefined) throw new Error('expected a due slot');
+    const itemId = await slotItemId(ID, slot);
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
       cron: cronExpr,
       spec,
     });
     const first = await call(
-      withPrincipal(capped, cronTick),
+      withPrincipal(ctx, cronTick),
       'POST',
       '/schedules/tick',
       {},
     );
-    expect(first.json).toMatchObject({ minted: [], skippedCap: [ID] });
-
-    // Same clock and store, but no longer at the live-run cap: the
-    // schedule's `lastSlotAt` never advanced while skipped, so
-    // `latestDueSlot` still resolves to the identical slot, and
-    // `slotItemId` is deterministic per (scheduleId, slot) -- the retried
-    // tick mints the exact same item id the capped tick could not.
-    const uncapped = { ...capped, maxLiveRuns: 4 };
+    expect(first.json).toMatchObject({
+      minted: [{ scheduleId: ID, itemId }],
+      skippedCap: [],
+    });
     const second = await call(
-      withPrincipal(uncapped, cronTick),
+      withPrincipal(ctx, cronTick),
       'POST',
       '/schedules/tick',
       {},
     );
-    expect(second.json.minted).toEqual([
-      { scheduleId: ID, itemId: expectedItemId },
-    ]);
-    expect(second.json.skippedCap).toEqual([]);
+    expect(second.json).toMatchObject({ minted: [], skippedCap: [] });
+    expect((await call(ctx, 'GET', `/items/${itemId}`)).json.runs).toHaveLength(
+      1,
+    );
   });
 
   it('disables a schedule whose stored spec no longer parses (invalid) and a healthy schedule still mints in the same tick', async () => {

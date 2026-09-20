@@ -17,9 +17,7 @@ import { scheduleRouter } from './schedule-router';
 import {
   forbiddenReason,
   isWorkOperatorPrincipal,
-  liveNativeRunCount,
   mintItem,
-  RETRY_AFTER_SECONDS,
   view,
   type WorkContext,
 } from './work-mint';
@@ -123,11 +121,6 @@ export const workRouter = os.router({
     }
     if (result.kind === 'conflict') {
       throw errors.CONFLICT({ message: result.message });
-    }
-    if (result.kind === 'cap') {
-      throw errors.TOO_MANY_REQUESTS({
-        data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
-      });
     }
     return view(context, input.id, result.task);
   }),
@@ -290,12 +283,6 @@ export const workRouter = os.router({
         };
       }
 
-      if ((await liveNativeRunCount(context)) >= context.maxLiveRuns) {
-        throw errors.TOO_MANY_REQUESTS({
-          data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
-        });
-      }
-
       const outcome = await context.runtime.orchestrator.request({
         taskId: { workId: input.id },
         requestId: `${input.id}:${task.task.runCount + 1}`,
@@ -328,10 +315,6 @@ export const workRouter = os.router({
       if (outcome.code === 'NOT_FOUND') throw errors.NOT_FOUND();
       if (outcome.code === 'FORBIDDEN')
         throw errors.FORBIDDEN({ message: outcome.message });
-      if (outcome.code === 'TOO_MANY_REQUESTS')
-        throw errors.TOO_MANY_REQUESTS({
-          data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
-        });
       throw errors.CONFLICT({ message: outcome.message });
     }
     // `requestReply`'s outcome carries only the minted run id, not a fresh
@@ -353,33 +336,13 @@ export const workRouter = os.router({
  * so nesting them
  * under organizational keys here is not a URL prefix. Error codes map to
  * HTTP status through oRPC's own `COMMON_ERROR_STATUS_MAP` (`UNAUTHORIZED`
- * 401, `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409,
- * `TOO_MANY_REQUESTS` 429), which is exactly what this API wants -- so no
- * `errorStatusMap` override.
+ * 401, `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409), so no
+ * `errorStatusMap` override is needed.
  */
 export function createWorkHandler(): OpenAPIHandler<WorkContext> {
-  return new OpenAPIHandler(
-    {
-      items: workRouter,
-      schedules: scheduleRouter,
-      dispatches: githubDispatchRouter,
-    },
-    {
-      routingInterceptors: [
-        // `Retry-After` is the standard way to say what the 429 body's
-        // `retryAfterSeconds` says, and generic HTTP clients honour it.
-        // A routing interceptor is the only hook that sees the *encoded*
-        // error response: `interceptors` run inside the try block, before
-        // the codec turns a thrown ORPCError into a status and body.
-        async (options) => {
-          const result = await options.next();
-          if (result.matched && result.response.status === 429) {
-            result.response.headers['retry-after'] =
-              String(RETRY_AFTER_SECONDS);
-          }
-          return result;
-        },
-      ],
-    },
-  );
+  return new OpenAPIHandler({
+    items: workRouter,
+    schedules: scheduleRouter,
+    dispatches: githubDispatchRouter,
+  });
 }

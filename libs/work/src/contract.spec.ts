@@ -451,12 +451,12 @@ describe('generateWorkOpenApi', () => {
     expect(statuses).toEqual({
       // 201 always, replay included -- see the create meta's
       // successDescription.
-      'PUT /items/{id}': ['201', '403', '409', '429'],
+      'PUT /items/{id}': ['201', '403', '409'],
       'GET /items/{id}': ['200', '404'],
       'GET /items': ['200'],
       'POST /items/{id}/cancel': ['200', '404', '409'],
-      'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409', '429'],
-      'POST /items/{id}/reply': ['200', '403', '404', '409', '429'],
+      'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
+      'POST /items/{id}/reply': ['200', '403', '404', '409'],
       'POST /maintenance/tick': ['200'],
       'POST /dispatches/github': ['200', '400', '403', '409'],
       'POST /dispatches/github/redispatch': ['200', '403', '404', '409'],
@@ -489,6 +489,6 @@ describe('generateWorkOpenApi resume additions', () => {
       Object.keys(
         doc.paths['/items/{id}/redispatch']?.['post']?.responses ?? {},
       ).sort(),
-    ).toEqual(['200', '400', '403', '404', '409', '429']);
+    ).toEqual(['200', '400', '403', '404', '409']);
   });
 });
