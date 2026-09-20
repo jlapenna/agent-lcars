@@ -67,6 +67,25 @@ source-owned by homelab Terraform and mirrored in the IAM contract model here
 so live drift detection covers both accidental widening and a stale declared
 boundary (#1620).
 
+The same pool carries a second provider, `www-github`, for the `www` site
+deploy. It is narrower than its sibling on every axis: one repository
+(`supersprinklesracing/www`), one workflow file (`.github/workflows/site.yml`),
+and `refs/heads/main` only — a tag or a non-main branch cannot match. It also
+declares no `workflow_class` mapping, because it admits a single workflow and
+nothing keys off a class. Admission reaches exactly one identity,
+`www-deploy@`, which holds `firebasehosting.admin` and `firebase.viewer` — a
+static-site deploy and nothing more.
+
+Its history is the reason this file and the model are kept in step. The
+provider and its impersonation binding were created outside Terraform and
+declared nowhere, and stayed invisible until the contract check compared the
+live pool against the model (homelab#1497). They were then declared in
+homelab's `terraform/gcp_sprinkles_wif.tf` and adopted by import — `2 imported,
+0 added, 0 changed` — so the boundary above is now source-owned rather than
+hand-made. Note what did *not* fix it: adding the provider to the model while
+it was still unmanaged would have stopped the alert without closing the gap it
+found.
+
 ## `CLAUDE_CODE_OAUTH_TOKEN` (QueueExecutor)
 
 A long-lived OAuth token for the maintainer's Claude subscription. It does
