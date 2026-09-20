@@ -3709,3 +3709,184 @@ func TestHostSampleReuseWindowNarrowerThanStaleAfter(t *testing.T) {
 		t.Fatalf("hostSampleReuseWindow (%s) must be strictly less than hostSampleStaleAfter (%s): a sample accepted from cache must not be able to expire before the same cycle evaluates it (agent-lcars#2012)", hostSampleReuseWindow, hostSampleStaleAfter)
 	}
 }
+
+// failingMetricsServer always answers 503, standing in for a transient
+// node_exporter scrape failure (hostMetrics turns any non-200 status into an
+// error) -- the #2012 follow-up fixture: the narrower hostSampleReuseWindow
+// means currentHostLoad now attempts a real probe far more often than the
+// old 30s cache alone did, so a single failed scrape like this must not by
+// itself discard a still-trustworthy cached sample.
+func failingMetricsServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestCurrentHostLoadFallsBackToCachedSampleWhenProbeFails pins the
+// agent-lcars#2012 follow-up fix directly: a failed re-probe must fall back
+// to a cached sample that is still inside hostSampleStaleAfter's trust
+// window (20s, well under the 30s line) rather than propagating the probe's
+// zero-value hostLoad{} -- which would read as "never probed" to
+// memoryAvailableSampleStale and fail the host closed despite good cached
+// data. observedAt must stay the CACHED sample's own timestamp (not reset to
+// "now"), and the error must not surface to the caller, since the fallback
+// reading is not degraded -- see currentHostLoad's doc comment for why a
+// nil error avoids misreporting telemetry as unavailable for a reading that
+// is, in fact, still good.
+func TestCurrentHostLoadFallsBackToCachedSampleWhenProbeFails(t *testing.T) {
+	metrics := failingMetricsServer(t)
+
+	scaler := &Scaler{
+		scaleSetName:           "probe-fail-fallback",
+		hostMetricsURLTemplate: metrics.URL + "/%s",
+		logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	cachedAt := time.Now().Add(-20 * time.Second)
+	fleet.hostLoadCache["pike"] = hostLoad{
+		observedAt: cachedAt, memoryAvailableBytes: float64(20 * gibibyte),
+		memoryAvailable: 20.0 / 32.0, rawTelemetry: true,
+	}
+
+	load, err := scaler.currentHostLoad(context.Background(), "pike", false)
+	if err != nil {
+		t.Fatalf("currentHostLoad() error = %v, want nil: a 20s-old cached sample is still inside the trust window and must mask a single failed scrape (agent-lcars#2012)", err)
+	}
+	if !load.observedAt.Equal(cachedAt) {
+		t.Fatalf("currentHostLoad() observedAt = %v, want the cached sample's own %v (age must not reset to now)", load.observedAt, cachedAt)
+	}
+	if load.memoryAvailableBytes != float64(20*gibibyte) {
+		t.Fatalf("currentHostLoad() memoryAvailableBytes = %v, want the cached sample's own 20 GiB reading", load.memoryAvailableBytes)
+	}
+}
+
+// TestCurrentHostLoadFailsClosedWhenCachedSampleTooOldDespiteFailedProbe
+// pins the other half of the invariant: a cached sample already past
+// hostSampleStaleAfter (31s) must NOT be used as a fallback -- the fallback
+// must never extend the trust window itself, only shield reads that fall
+// inside it. A failed probe with only a too-old sample to fall back on must
+// fail exactly as it did before this change: hostLoad{} and the probe error.
+func TestCurrentHostLoadFailsClosedWhenCachedSampleTooOldDespiteFailedProbe(t *testing.T) {
+	metrics := failingMetricsServer(t)
+
+	scaler := &Scaler{
+		scaleSetName:           "probe-fail-too-old",
+		hostMetricsURLTemplate: metrics.URL + "/%s",
+		logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.hostLoadCache["pike"] = hostLoad{
+		observedAt: time.Now().Add(-31 * time.Second), memoryAvailableBytes: float64(20 * gibibyte),
+		memoryAvailable: 20.0 / 32.0, rawTelemetry: true,
+	}
+
+	load, err := scaler.currentHostLoad(context.Background(), "pike", false)
+	if err == nil {
+		t.Fatalf("currentHostLoad() error = nil, want the probe error: a 31s-old sample is past hostSampleStaleAfter and must not be used as a fallback (agent-lcars#2012)")
+	}
+	if !load.observedAt.IsZero() {
+		t.Fatalf("currentHostLoad() observedAt = %v, want zero: a too-old cached sample must not be returned as if it were current", load.observedAt)
+	}
+}
+
+// TestCurrentHostLoadFailsClosedWhenProbeFailsWithNoCachedSample pins the
+// third leg: no cached sample at all plus a failed probe must fail exactly
+// as before -- there is nothing to fall back to.
+func TestCurrentHostLoadFailsClosedWhenProbeFailsWithNoCachedSample(t *testing.T) {
+	metrics := failingMetricsServer(t)
+
+	scaler := &Scaler{
+		scaleSetName:           "probe-fail-no-cache",
+		hostMetricsURLTemplate: metrics.URL + "/%s",
+		logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	load, err := scaler.currentHostLoad(context.Background(), "pike", false)
+	if err == nil {
+		t.Fatalf("currentHostLoad() error = nil, want the probe error: no cached sample exists to fall back to")
+	}
+	if !load.observedAt.IsZero() {
+		t.Fatalf("currentHostLoad() observedAt = %v, want zero", load.observedAt)
+	}
+}
+
+// TestLaneAdmissibleSlotsSurvivesSingleFailedScrape is the end-to-end
+// counterpart of TestCurrentHostLoadFallsBackToCachedSampleWhenProbeFails:
+// "pike" carries a 20s-old cached sample and its live scrape fails outright;
+// "steady" is seeded fresh (via seedHostLoad, so it never touches the
+// network at all) purely so the fleet has a second eligible host and the
+// "only reachable host" escape hatch cannot rescue "pike" and mask a
+// regression. Both hosts must contribute their real 2 slots each -- "pike"'s
+// admissible capacity must survive its scrape failing this cycle exactly as
+// it would if the scrape had succeeded.
+func TestLaneAdmissibleSlotsSurvivesSingleFailedScrape(t *testing.T) {
+	metrics := failingMetricsServer(t)
+
+	pikeDocker := newFakeDockerServer(t)
+	pikeDocker.setMemoryTotal(32 * gibibyte)
+	steadyDocker := newFakeDockerServer(t)
+	steadyDocker.setMemoryTotal(32 * gibibyte)
+
+	scaler := &Scaler{
+		scaleSetName:           "probe-fail-slots-survive",
+		runnerMemory:           8 * gibibyte,
+		hostMetricsURLTemplate: metrics.URL + "/%s",
+		dockerHosts: []DockerHost{
+			{Name: "pike", Client: pikeDocker.client(t)},
+			{Name: "steady", Client: steadyDocker.client(t)},
+		},
+		runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.hostLoadCache["pike"] = hostLoad{
+		observedAt: time.Now().Add(-20 * time.Second), memoryAvailableBytes: float64(20 * gibibyte),
+		memoryAvailable: 20.0 / 32.0, rawTelemetry: true,
+	}
+	seedHostLoad(fleet, "steady", hostLoad{memoryAvailableBytes: float64(20 * gibibyte), memoryAvailable: 20.0 / 32.0})
+
+	probe := scaler.probeFleetHosts(context.Background(), fleet)
+	if got := scaler.laneAdmissibleSlots(fleet, probe); got != 4 {
+		t.Fatalf("laneAdmissibleSlots() = %d, want 4 (2 from each host): a single failed scrape must not discard pike's still-trustworthy 20s-old cached sample (agent-lcars#2012)", got)
+	}
+}
+
+// TestLaneAdmissibleSlotsFailsClosedWhenCachedSampleTooOldDespiteFailedScrape
+// mirrors the above with "pike"'s cache aged 31s instead of 20s: past
+// hostSampleStaleAfter, so the failed scrape must still zero "pike"'s
+// contribution -- "steady" (fresh, second eligible host, escape hatch not
+// triggered) is the only contributor.
+func TestLaneAdmissibleSlotsFailsClosedWhenCachedSampleTooOldDespiteFailedScrape(t *testing.T) {
+	metrics := failingMetricsServer(t)
+
+	pikeDocker := newFakeDockerServer(t)
+	pikeDocker.setMemoryTotal(32 * gibibyte)
+	steadyDocker := newFakeDockerServer(t)
+	steadyDocker.setMemoryTotal(32 * gibibyte)
+
+	scaler := &Scaler{
+		scaleSetName:           "probe-fail-slots-stale",
+		runnerMemory:           8 * gibibyte,
+		hostMetricsURLTemplate: metrics.URL + "/%s",
+		dockerHosts: []DockerHost{
+			{Name: "pike", Client: pikeDocker.client(t)},
+			{Name: "steady", Client: steadyDocker.client(t)},
+		},
+		runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fleet := scaler.coordinator()
+	fleet.hostLoadCache["pike"] = hostLoad{
+		observedAt: time.Now().Add(-31 * time.Second), memoryAvailableBytes: float64(20 * gibibyte),
+		memoryAvailable: 20.0 / 32.0, rawTelemetry: true,
+	}
+	seedHostLoad(fleet, "steady", hostLoad{memoryAvailableBytes: float64(20 * gibibyte), memoryAvailable: 20.0 / 32.0})
+
+	probe := scaler.probeFleetHosts(context.Background(), fleet)
+	if got := scaler.laneAdmissibleSlots(fleet, probe); got != 2 {
+		t.Fatalf("laneAdmissibleSlots() = %d, want 2 (steady only): pike's 31s-old sample is past hostSampleStaleAfter and a failed scrape must fail it closed (agent-lcars#2012)", got)
+	}
+}

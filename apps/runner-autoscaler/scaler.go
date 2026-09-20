@@ -607,18 +607,27 @@ func (a *Scaler) recordHostLoadMetrics(host string, load hostLoad, available boo
 	}
 }
 
-// freshCachedHostLoad returns fleet's cached load for host, scored for this
-// caller's quota, if it is younger than hostSampleReuseWindow -- see
-// currentHostLoad and the invariant comment on hostSampleReuseWindow.
-func (a *Scaler) freshCachedHostLoad(fleet *FleetCoordinator, host string, throttleBounded bool, throttlePossible ...bool) (hostLoad, bool) {
+// cachedHostLoadWithin returns fleet's cached load for host, scored for this
+// caller's quota, if it is younger than window. See currentHostLoad's two
+// uses: hostSampleReuseWindow for "trust this without even trying a real
+// probe", hostSampleStaleAfter for "a failed probe may still fall back to
+// this."
+func (a *Scaler) cachedHostLoadWithin(fleet *FleetCoordinator, host string, window time.Duration, throttleBounded bool, throttlePossible ...bool) (hostLoad, bool) {
 	fleet.hostSampleMu.Lock()
 	cached, ok := fleet.hostLoadCache[host]
 	fleet.hostSampleMu.Unlock()
-	if !ok || time.Since(cached.observedAt) >= hostSampleReuseWindow {
+	if !ok || time.Since(cached.observedAt) >= window {
 		return hostLoad{}, false
 	}
 	load := a.scoreHostLoadForQuota(host, cached, throttleBounded, throttlePossible...)
 	return a.observeOverloadCooldown(host, load, time.Now()), true
+}
+
+// freshCachedHostLoad returns fleet's cached load for host, scored for this
+// caller's quota, if it is younger than hostSampleReuseWindow -- see
+// currentHostLoad and the invariant comment on hostSampleReuseWindow.
+func (a *Scaler) freshCachedHostLoad(fleet *FleetCoordinator, host string, throttleBounded bool, throttlePossible ...bool) (hostLoad, bool) {
+	return a.cachedHostLoadWithin(fleet, host, hostSampleReuseWindow, throttleBounded, throttlePossible...)
 }
 
 func (a *Scaler) currentHostLoad(ctx context.Context, host string, throttleBounded bool, throttlePossible ...bool) (hostLoad, error) {
@@ -646,7 +655,34 @@ func (a *Scaler) currentHostLoad(ctx context.Context, host string, throttleBound
 	if load, ok := a.freshCachedHostLoad(fleet, host, throttleBounded, throttlePossible...); ok {
 		return load, nil
 	}
-	return a.probeHostLoad(ctx, host, throttleBounded, throttlePossible...)
+	load, err := a.probeHostLoad(ctx, host, throttleBounded, throttlePossible...)
+	if err == nil {
+		return load, nil
+	}
+
+	// A single failed scrape must not fail the host closed while a still-
+	// trustworthy cached sample exists (agent-lcars#2012 follow-up): the
+	// narrower hostSampleReuseWindow means a real probe attempt --
+	// hostMetricsTimeout is 1s -- now happens far more often than the old
+	// 30s cache alone did, so a transient failure at sample age
+	// hostSampleReuseWindow..hostSampleStaleAfter must not discard a
+	// reading that is, in fact, still inside the trust window. Fall back to
+	// it -- scored for this caller exactly as a cache hit would be, so its
+	// observedAt stays the CACHED time rather than resetting to now -- and
+	// return a nil error: probeFleetHosts joins a non-nil error into
+	// loadErr, which marks the host's telemetry unavailable and applies an
+	// uncertainty penalty (see probeFleetHosts' hostPingResult handling);
+	// neither is warranted for a reading that is still good, so the
+	// fallback is reported here at Warn instead, with the sample's age, and
+	// the caller sees an ordinary successful read. A sample already past
+	// hostSampleStaleAfter (or no sample at all) has nothing to fall back
+	// to and fails exactly as before: hostLoad{} and the probe error.
+	if cached, ok := a.cachedHostLoadWithin(fleet, host, hostSampleStaleAfter, throttleBounded, throttlePossible...); ok {
+		a.logger.Warn("Host metrics scrape failed; serving cached sample still inside the trust window",
+			slog.String("host", host), slog.Duration("sample_age", time.Since(cached.observedAt)), slog.String("error", err.Error()))
+		return cached, nil
+	}
+	return hostLoad{}, err
 }
 
 func (a *Scaler) RunHostSampler(ctx context.Context) {
