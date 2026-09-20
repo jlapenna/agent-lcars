@@ -1,3 +1,5 @@
+import { WORK_ID_PATTERN } from '@agent-lcars/work';
+
 import {
   type QuickTaskEvidenceId,
   quickTaskEvidenceMarkdown,
@@ -36,12 +38,18 @@ export function deriveQuickTaskTitle(description: string): string {
 }
 
 function knownConsolePath(pathname: string): boolean {
-  return (
+  if (
     pathname === '/' ||
-    /^\/(?:agents|costs|inbox|sessions)$/u.test(pathname) ||
+    /^\/(?:agents|costs|inbox|sessions|shuttlebay|work|work\/schedules)$/u.test(
+      pathname,
+    ) ||
     /^\/sessions\/[A-Za-z0-9._:-]{1,200}$/u.test(pathname) ||
     /^\/task\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/[1-9][0-9]*$/u.test(pathname)
-  );
+  ) {
+    return true;
+  }
+  const workIdMatch = /^\/work\/([^/]+)$/u.exec(pathname);
+  return workIdMatch !== null && WORK_ID_PATTERN.test(workIdMatch[1]);
 }
 
 const REPOSITORY_VALUE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;

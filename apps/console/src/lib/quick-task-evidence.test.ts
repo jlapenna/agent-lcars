@@ -56,6 +56,25 @@ describe('sanitizeQuickTaskSourceRoute', () => {
       '/sessions?view=by-issue',
     );
   });
+
+  // A Quick Task filed from a Work or Shuttlebay page used to lose its
+  // "Console route" evidence entirely (the line is omitted, not blanked,
+  // when sanitization can't place the route) - these routes existed before
+  // this allowlist was last touched but were never added to it.
+  it('preserves the native Work and Shuttlebay routes', () => {
+    expect(sanitizeQuickTaskSourceRoute('/work')).toBe('/work');
+    expect(sanitizeQuickTaskSourceRoute('/work/schedules')).toBe(
+      '/work/schedules',
+    );
+    expect(sanitizeQuickTaskSourceRoute('/shuttlebay')).toBe('/shuttlebay');
+    expect(
+      sanitizeQuickTaskSourceRoute('/work/01M306R7236QGPNCFR81PK08F4'),
+    ).toBe('/work/01M306R7236QGPNCFR81PK08F4');
+  });
+
+  it('rejects a work path whose id is not a valid ULID', () => {
+    expect(sanitizeQuickTaskSourceRoute('/work/not-a-ulid')).toBe('');
+  });
 });
 
 describe('Quick Task evidence composition', () => {
