@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 import sqlite3
@@ -16,6 +18,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import requests
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from prometheus_client import CollectorRegistry, Counter, Gauge, start_http_server
 from prometheus_client.core import (
     CounterMetricFamily,
@@ -56,6 +60,12 @@ PAGE_SIZE = 100
 RUN_SEARCH_LIMIT = 1000
 ONE_SECOND = timedelta(seconds=1)
 OPTIONAL_METADATA_RETRY_SECONDS = 300
+# A GitHub App installation token lives one hour. Re-mint with enough margin
+# that a token cannot expire between the check and the request that uses it,
+# including a slow paginated sweep.
+APP_TOKEN_REFRESH_MARGIN_SECONDS = 600
+# GitHub rejects an App JWT whose `exp` is more than 10 minutes out.
+APP_JWT_LIFETIME_SECONDS = 540
 
 
 def environment_text(name: str, default: str = "") -> str:
@@ -175,9 +185,160 @@ def job_execution(job: dict[str, Any]) -> str:
     return "unknown"
 
 
+def owner_of(path: str) -> str:
+    """Return the account a `/repos/{owner}/{repo}/...` path belongs to.
+
+    Every endpoint this exporter calls is repository-scoped, so the owner is
+    always the third path segment. Anything else is a programming error rather
+    than a runtime condition, and saying so here beats silently authenticating
+    as the wrong account.
+    """
+    parts = path.split("/")
+    if len(parts) < 4 or parts[1] != "repos":
+        raise ValueError(f"cannot determine repository owner from path: {path}")
+    return parts[2]
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+class Credentials:
+    """Supplies the Authorization header value for a repository's owner.
+
+    Per-owner rather than global because the two credential kinds differ on
+    exactly that axis: one PAT is scoped to a single account, while one App
+    can be installed on several. Resolving by owner is what lets this exporter
+    watch `jlapenna/*` and `supersprinklesracing/*` in one process.
+    """
+
+    def authorization(self, owner: str) -> str:
+        raise NotImplementedError
+
+
+class StaticCredentials(Credentials):
+    """A single personal access token, used for every owner."""
+
+    def __init__(self, token: str) -> None:
+        self._header = f"Bearer {token}"
+
+    def authorization(self, owner: str) -> str:
+        return self._header
+
+
+class AppCredentials(Credentials):
+    """GitHub App installation tokens, minted per owner and refreshed in place.
+
+    Installation tokens expire after an hour, so they are deliberately never
+    persisted: each is held in memory only until it nears expiry. Discovery is
+    by owner (`GET /orgs|users/{owner}/installation`), so adding a repository
+    under an already-installed account needs no configuration change here.
+    """
+
+    def __init__(self, client_id: str, private_key_pem: bytes, api_url: str) -> None:
+        self._client_id = client_id
+        self._key = serialization.load_pem_private_key(private_key_pem, password=None)
+        self._api_url = api_url
+        self._lock = threading.Lock()
+        self._tokens: dict[str, tuple[str, float]] = {}
+        self._installations: dict[str, int] = {}
+
+    def _jwt(self) -> str:
+        now = int(time.time())
+        header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+        # `iat` is backdated by a minute so a small clock skew between this
+        # host and GitHub cannot reject an otherwise valid assertion.
+        payload = _b64url(
+            json.dumps(
+                {
+                    "iat": now - 60,
+                    "exp": now + APP_JWT_LIFETIME_SECONDS,
+                    "iss": self._client_id,
+                }
+            ).encode()
+        )
+        signing_input = f"{header}.{payload}".encode()
+        signature = self._key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        return f"{header}.{payload}.{_b64url(signature)}"
+
+    def _request(self, method: str, path: str, bearer: str) -> dict[str, Any]:
+        response = requests.request(
+            method,
+            f"{self._api_url}{path}",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {bearer}",
+                "User-Agent": "homelab-github-actions-exporter/1.0",
+            },
+            timeout=(5, 30),
+        )
+        try:
+            response.raise_for_status()
+            payload = response.json()
+        finally:
+            response.close()
+        if not isinstance(payload, dict):
+            raise GitHubPayloadError(f"GitHub {path} response was not an object")
+        return payload
+
+    def _installation_id(self, owner: str, jwt: str) -> int:
+        cached = self._installations.get(owner)
+        if cached is not None:
+            return cached
+        # An owner is a user or an organization and the caller does not know
+        # which, so try both rather than requiring that to be configured.
+        last_error: Exception | None = None
+        for scope in ("orgs", "users"):
+            try:
+                payload = self._request("GET", f"/{scope}/{owner}/installation", jwt)
+            except requests.HTTPError as exc:
+                last_error = exc
+                continue
+            installation_id = payload.get("id")
+            if not isinstance(installation_id, int):
+                raise GitHubPayloadError(
+                    f"installation lookup for {owner} returned no id"
+                )
+            self._installations[owner] = installation_id
+            return installation_id
+        raise RuntimeError(
+            f"no GitHub App installation found for {owner}"
+        ) from last_error
+
+    def authorization(self, owner: str) -> str:
+        key = owner.casefold()
+        now = time.time()
+        with self._lock:
+            cached = self._tokens.get(key)
+            if (
+                cached is not None
+                and cached[1] - now > APP_TOKEN_REFRESH_MARGIN_SECONDS
+            ):
+                return f"Bearer {cached[0]}"
+            jwt = self._jwt()
+            installation_id = self._installation_id(key, jwt)
+            payload = self._request(
+                "POST", f"/app/installations/{installation_id}/access_tokens", jwt
+            )
+            token = payload.get("token")
+            expires_at = payload.get("expires_at")
+            if not isinstance(token, str) or not isinstance(expires_at, str):
+                raise GitHubPayloadError(
+                    f"installation token for {owner} was malformed"
+                )
+            expiry = datetime.fromisoformat(expires_at).timestamp()
+            self._tokens[key] = (token, expiry)
+            LOGGER.info(
+                "minted GitHub App installation token for %s (expires %s)",
+                owner,
+                expires_at,
+            )
+            return f"Bearer {token}"
+
+
 @dataclass(frozen=True)
 class Config:
-    token: str
+    credentials: Credentials
     repositories: tuple[str, ...]
     api_url: str = "https://api.github.com"
     api_version: str = "2022-11-28"
@@ -187,9 +348,30 @@ class Config:
     database_path: str = "/var/lib/github-actions-exporter/actions.db"
     port: int = 9102
 
+    @staticmethod
+    def _credentials_from_environment(api_url: str) -> Credentials:
+        """Prefer a GitHub App; fall back to a personal access token.
+
+        The App is preferred because a fine-grained PAT is scoped to one
+        account, so no single PAT can cover repositories under two different
+        owners -- which is the state this exporter is normally in. App
+        installation tokens also refresh themselves, so the collector does not
+        go stale the day a human's token expires.
+        """
+        private_key_file = os.environ.get("GITHUB_APP_PRIVATE_KEY_FILE", "").strip()
+        client_id = os.environ.get("GITHUB_APP_CLIENT_ID", "").strip()
+        if private_key_file or client_id:
+            if not (private_key_file and client_id):
+                raise ValueError(
+                    "GITHUB_APP_CLIENT_ID and GITHUB_APP_PRIVATE_KEY_FILE must be "
+                    "set together"
+                )
+            private_key_pem = Path(private_key_file).read_bytes()
+            return AppCredentials(client_id, private_key_pem, api_url)
+        return StaticCredentials(environment_text("GITHUB_TOKEN"))
+
     @classmethod
     def from_environment(cls) -> Config:
-        token = environment_text("GITHUB_TOKEN")
 
         repositories_by_key: dict[str, str] = {}
         for item in os.environ.get("GITHUB_REPOSITORIES", "").split(","):
@@ -229,7 +411,7 @@ class Config:
             raise ValueError("GITHUB_API_VERSION must use YYYY-MM-DD") from None
 
         return cls(
-            token=token,
+            credentials=cls._credentials_from_environment(api_url),
             repositories=repositories,
             api_url=api_url,
             api_version=api_version,
@@ -345,11 +527,14 @@ class GitHubAPI:
     def __init__(self, config: Config, state: ExporterState) -> None:
         self.api_url = config.api_url
         self.state = state
+        self.credentials = config.credentials
         self.session = requests.Session()
+        # Authorization is deliberately NOT a session header: it is resolved
+        # per request from the repository's owner, because one App can hold a
+        # different installation token for each owner this exporter watches.
         self.session.headers.update(
             {
                 "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {config.token}",
                 "User-Agent": "homelab-github-actions-exporter/1.0",
                 "X-GitHub-Api-Version": config.api_version,
             }
@@ -362,7 +547,10 @@ class GitHubAPI:
         self, path: str, *, endpoint: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         response = self.session.get(
-            f"{self.api_url}{path}", params=params, timeout=(5, 30)
+            f"{self.api_url}{path}",
+            params=params,
+            timeout=(5, 30),
+            headers={"Authorization": self.credentials.authorization(owner_of(path))},
         )
         try:
             self.state.record_response(endpoint, response)

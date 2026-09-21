@@ -53,17 +53,37 @@ and dashboard.
 
 ## Configuration
 
-| Environment variable    | Default                                       | Purpose                                                             |
-| ----------------------- | --------------------------------------------- | ------------------------------------------------------------------- |
-| `GITHUB_TOKEN`          | required                                      | Token used for GitHub REST requests. `Actions: read` is sufficient. |
-| `GITHUB_REPOSITORIES`   | required                                      | Comma-separated `owner/repository` list.                            |
-| `GITHUB_API_URL`        | `https://api.github.com`                      | GitHub API root.                                                    |
-| `GITHUB_API_VERSION`    | `2022-11-28`                                  | Version sent in `X-GitHub-Api-Version`.                             |
-| `POLL_INTERVAL_SECONDS` | `60`                                          | Minimum delay between collection cycles.                            |
-| `BACKFILL_HOURS`        | `1`                                           | History imported when a repository is first seen.                   |
-| `OVERLAP_MINUTES`       | `15`                                          | Recent-run overlap used after initial backfill.                     |
-| `DATABASE_PATH`         | `/var/lib/github-actions-exporter/actions.db` | Durable SQLite database.                                            |
-| `PORT`                  | `9102`                                        | Prometheus HTTP port.                                               |
+| Environment variable          | Default                                       | Purpose                                                        |
+| ----------------------------- | --------------------------------------------- | -------------------------------------------------------------- |
+| `GITHUB_APP_CLIENT_ID`        | preferred                                     | GitHub App client id. Set together with the private key below. |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | preferred                                     | Path to the App's PEM private key, mounted read-only.          |
+| `GITHUB_TOKEN`                | fallback                                      | Personal access token. Used only when no App is configured.    |
+| `GITHUB_REPOSITORIES`         | required                                      | Comma-separated `owner/repository` list.                       |
+| `GITHUB_API_URL`              | `https://api.github.com`                      | GitHub API root.                                               |
+| `GITHUB_API_VERSION`          | `2022-11-28`                                  | Version sent in `X-GitHub-Api-Version`.                        |
+| `POLL_INTERVAL_SECONDS`       | `60`                                          | Minimum delay between collection cycles.                       |
+| `BACKFILL_HOURS`              | `1`                                           | History imported when a repository is first seen.              |
+| `OVERLAP_MINUTES`             | `15`                                          | Recent-run overlap used after initial backfill.                |
+| `DATABASE_PATH`               | `/var/lib/github-actions-exporter/actions.db` | Durable SQLite database.                                       |
+| `PORT`                        | `9102`                                        | Prometheus HTTP port.                                          |
+
+### Authentication
+
+Configure a GitHub App wherever the watched repositories span more than one
+account. A fine-grained personal access token is scoped to a single resource
+owner, so one token cannot reach both `jlapenna/*` and `supersprinklesracing/*`
+— the repositories outside its owner return `404`, which reads as "repository
+missing" rather than "not authorized" and is easy to misdiagnose.
+
+An App is installed per account, so this exporter mints one installation token
+per owner and refreshes each in place. Installation tokens last an hour and are
+held in memory only. The App needs `Actions: Read-only` and an installation on
+every account in `GITHUB_REPOSITORIES`; owners are discovered at runtime, so
+adding a repository under an already-installed account needs no change here.
+
+Setting only one of the two App variables is an error rather than a silent
+fallback to `GITHUB_TOKEN`: a half-finished rollout that looks configured is
+the failure this is meant to end.
 
 ## HTTP endpoints
 

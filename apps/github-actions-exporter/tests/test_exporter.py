@@ -3,6 +3,7 @@ import os
 import socket
 import sys
 import tempfile
+import time
 import unittest
 import urllib.request
 from datetime import UTC, datetime, timedelta
@@ -406,7 +407,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         run = workflow_run()
         api = FakeAPI(run, [workflow_job()])
         config = exporter.Config(
-            token="test",
+            credentials=exporter.StaticCredentials("test"),
             repositories=("jlapenna/homelab",),
             database_path=str(Path(self.temporary_directory.name) / "actions.db"),
         )
@@ -597,7 +598,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_runs.return_value = []
         api.get_run_attempt.return_value = earlier
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -748,7 +752,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api = FakeAPI(run, [workflow_job()])
         api.list_runs = Mock(return_value=[])
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -930,7 +937,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_jobs.return_value = []
         api.list_concurrency_groups.return_value = []
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -994,7 +1004,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         state = FakeState()
         state.poll_errors = Mock()
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             state,
@@ -1057,7 +1070,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         state = FakeState()
         state.poll_errors = Mock()
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             state,
@@ -1079,7 +1095,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_jobs.return_value = [workflow_job()]
         api.list_concurrency_groups.side_effect = RuntimeError("programming bug")
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -1096,7 +1115,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
                 raise RuntimeError("temporary GitHub failure")
 
         run = workflow_run()
-        config = exporter.Config(token="test", repositories=("jlapenna/homelab",))
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
         state = FakeState()
         poller = exporter.Poller(config, self.database, FailingAPI(run, []), state)
 
@@ -1119,7 +1141,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_runs.return_value = []
         api.get_run.side_effect = exporter.GitHubRequestError("run", response)
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -1191,7 +1216,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_runs.return_value = []
         api.get_run.side_effect = exporter.GitHubRequestError("run", response)
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -1213,7 +1241,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
         api = FakeAPI(workflow_run(), [workflow_job()])
         config = exporter.Config(
-            token="test",
+            credentials=exporter.StaticCredentials("test"),
             repositories=(repository,),
             overlap_minutes=15,
         )
@@ -1230,7 +1258,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         state = FakeState()
 
         exporter.Poller(
-            exporter.Config(token="test", repositories=("jlapenna/homelab",)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=("jlapenna/homelab",),
+            ),
             self.database,
             FakeAPI(workflow_run(), []),
             state,
@@ -1313,7 +1344,10 @@ class ConfigTests(unittest.TestCase):
 class GitHubAPITests(unittest.TestCase):
     def setUp(self):
         self.api = exporter.GitHubAPI(
-            exporter.Config(token="test", repositories=("jlapenna/homelab",)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=("jlapenna/homelab",),
+            ),
             FakeState(),
         )
         self.addCleanup(self.api.close)
@@ -1433,7 +1467,9 @@ class GitHubAPITests(unittest.TestCase):
         self.api.state = Mock()
         self.api.session.get = Mock(return_value=response)
 
-        self.assertEqual(self.api.get("/test", endpoint="test"), {"ok": True})
+        self.assertEqual(
+            self.api.get("/repos/jlapenna/homelab/test", endpoint="test"), {"ok": True}
+        )
 
         response.close.assert_called_once_with()
 
@@ -1444,7 +1480,7 @@ class GitHubAPITests(unittest.TestCase):
         self.api.session.get = Mock(return_value=response)
 
         with self.assertRaises(exporter.GitHubRequestError) as raised:
-            self.api.get("/test", endpoint="test")
+            self.api.get("/repos/jlapenna/homelab/test", endpoint="test")
 
         self.assertEqual(raised.exception.status_code, 500)
         response.close.assert_called_once_with()
@@ -1522,7 +1558,10 @@ class MainTests(unittest.TestCase):
         database = Mock()
         database.last_success_at.return_value = None
         api = Mock()
-        config = exporter.Config(token="test", repositories=("jlapenna/homelab",))
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
 
         with (
             patch.object(exporter.Config, "from_environment", return_value=config),
@@ -1544,7 +1583,10 @@ class MainTests(unittest.TestCase):
         poller.run_forever.side_effect = RuntimeError("polling stopped")
         http_server = Mock()
         http_thread = Mock()
-        config = exporter.Config(token="test", repositories=("jlapenna/homelab",))
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
 
         with (
             patch.object(exporter.Config, "from_environment", return_value=config),
@@ -1629,7 +1671,9 @@ class HealthEndpointServingTests(unittest.TestCase):
     def test_main_serves_health_and_metrics_on_the_real_server(self):
         port = self.free_port()
         config = exporter.Config(
-            token="test", repositories=("jlapenna/homelab",), port=port
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+            port=port,
         )
         # main() registers DatabaseMetrics, which the /metrics request below
         # actually collects -- so this needs a real (empty) database, not a
@@ -1685,3 +1729,175 @@ class HealthEndpointServingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def requests_error(status_code):
+    """An HTTPError shaped like the ones the App endpoints actually raise."""
+    import requests as _requests
+
+    response = Mock(status_code=status_code)
+    return _requests.HTTPError(f"{status_code}", response=response)
+
+
+def _test_private_key_pem() -> bytes:
+    from cryptography.hazmat.primitives import serialization as _serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        encoding=_serialization.Encoding.PEM,
+        format=_serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=_serialization.NoEncryption(),
+    )
+
+
+class OwnerOfTests(unittest.TestCase):
+    def test_owner_is_the_account_segment(self):
+        self.assertEqual(
+            exporter.owner_of("/repos/supersprinklesracing/www/actions/runs"),
+            "supersprinklesracing",
+        )
+
+    def test_non_repository_path_is_rejected(self):
+        # Guessing here would authenticate as whichever installation happened
+        # to be cached, so the wrong-account failure must be loud.
+        for path in ("/test", "/rate_limit", "/orgs/jlapenna/installation"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                exporter.owner_of(path)
+
+
+class AppCredentialsTests(unittest.TestCase):
+    def setUp(self):
+        self.pem = _test_private_key_pem()
+
+    def credentials(self):
+        return exporter.AppCredentials("Iv23test", self.pem, "https://api.github.com")
+
+    @staticmethod
+    def expiry(seconds_ahead):
+        moment = datetime.now(UTC) + timedelta(seconds=seconds_ahead)
+        return moment.isoformat().replace("+00:00", "Z")
+
+    def test_each_owner_gets_its_own_installation_token(self):
+        credentials = self.credentials()
+        responses = {
+            ("GET", "/orgs/jlapenna/installation"): requests_error(404),
+            ("GET", "/users/jlapenna/installation"): {"id": 1},
+            ("GET", "/orgs/supersprinklesracing/installation"): {"id": 2},
+            ("POST", "/app/installations/1/access_tokens"): {
+                "token": "personal",
+                "expires_at": self.expiry(3600),
+            },
+            ("POST", "/app/installations/2/access_tokens"): {
+                "token": "organization",
+                "expires_at": self.expiry(3600),
+            },
+        }
+
+        def request(method, path, bearer):
+            result = responses[(method, path)]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        with patch.object(credentials, "_request", side_effect=request):
+            personal = credentials.authorization("jlapenna")
+            organization = credentials.authorization("supersprinklesracing")
+
+        # The whole point of the App over a PAT: one process, two accounts.
+        self.assertEqual(personal, "Bearer personal")
+        self.assertEqual(organization, "Bearer organization")
+
+    def test_live_token_is_reused_and_a_near_expiry_one_is_replaced(self):
+        credentials = self.credentials()
+        minted = []
+
+        def request(method, path, bearer):
+            if method == "GET":
+                return {"id": 1}
+            minted.append(path)
+            return {"token": f"token-{len(minted)}", "expires_at": self.expiry(3600)}
+
+        with patch.object(credentials, "_request", side_effect=request):
+            first = credentials.authorization("jlapenna")
+            second = credentials.authorization("jlapenna")
+            self.assertEqual(first, second)
+            self.assertEqual(len(minted), 1)
+
+            # Age the cached token to inside the refresh margin: it must be
+            # replaced before it can expire mid-sweep, not after it 401s.
+            token, _ = credentials._tokens["jlapenna"]
+            credentials._tokens["jlapenna"] = (
+                token,
+                time.time() + exporter.APP_TOKEN_REFRESH_MARGIN_SECONDS - 1,
+            )
+            third = credentials.authorization("jlapenna")
+
+        self.assertEqual(third, "Bearer token-2")
+        self.assertEqual(len(minted), 2)
+
+    def test_owner_with_no_installation_is_reported(self):
+        credentials = self.credentials()
+        with (
+            patch.object(credentials, "_request", side_effect=requests_error(404)),
+            self.assertRaises(RuntimeError),
+        ):
+            credentials.authorization("someone-else")
+
+
+class CredentialSelectionTests(unittest.TestCase):
+    def environment(self, **values):
+        base = {"GITHUB_REPOSITORIES": "jlapenna/homelab"}
+        base.update(values)
+        return patch.dict(os.environ, base, clear=True)
+
+    def test_personal_access_token_is_the_fallback(self):
+        with self.environment(GITHUB_TOKEN="test"):
+            config = exporter.Config.from_environment()
+        self.assertIsInstance(config.credentials, exporter.StaticCredentials)
+        self.assertEqual(config.credentials.authorization("jlapenna"), "Bearer test")
+
+    def test_app_is_preferred_over_a_token_when_both_are_present(self):
+        with tempfile.NamedTemporaryFile(suffix=".pem") as key_file:
+            key_file.write(_test_private_key_pem())
+            key_file.flush()
+            with self.environment(
+                GITHUB_TOKEN="test",
+                GITHUB_APP_CLIENT_ID="Iv23test",
+                GITHUB_APP_PRIVATE_KEY_FILE=key_file.name,
+            ):
+                config = exporter.Config.from_environment()
+        self.assertIsInstance(config.credentials, exporter.AppCredentials)
+
+    def test_half_configured_app_is_rejected_rather_than_ignored(self):
+        # Silently falling back to the PAT here would reproduce the exact
+        # outage this replaces: a partial rollout that looks configured.
+        with (
+            self.environment(GITHUB_TOKEN="test", GITHUB_APP_CLIENT_ID="Iv23test"),
+            self.assertRaises(ValueError),
+        ):
+            exporter.Config.from_environment()
+
+
+class PerRequestAuthorizationTests(unittest.TestCase):
+    def test_request_carries_the_owning_account_token(self):
+        credentials = Mock()
+        credentials.authorization.return_value = "Bearer scoped"
+        config = exporter.Config(
+            credentials=credentials, repositories=("supersprinklesracing/www",)
+        )
+        api = exporter.GitHubAPI(config, Mock())
+        response = Mock(status_code=200, headers={})
+        response.json.return_value = {"ok": True}
+        api.session.get = Mock(return_value=response)
+
+        api.get("/repos/supersprinklesracing/www/actions/runs", endpoint="runs")
+
+        credentials.authorization.assert_called_once_with("supersprinklesracing")
+        self.assertEqual(
+            api.session.get.call_args.kwargs["headers"],
+            {"Authorization": "Bearer scoped"},
+        )
+        # A stale session-level header would silently win over the per-request
+        # one for some owners, so it must not exist at all.
+        self.assertNotIn("Authorization", api.session.headers)
