@@ -3,7 +3,8 @@
 Status: implementation foundation, **not enabled in dispatch**. No provider
 has graduated. The offline readiness evaluator, native-hook boundary probes
 for all three providers, and a Claude/Codex failure-to-denial bridge are
-implemented. Setup integration, policy handlers, bounded recovery/completion
+implemented. Idempotent Claude/Codex command registration is exercised by the
+native probes. Runner setup integration, policy handlers, bounded recovery/completion
 and full acceptance canaries remain to be built and verified.
 
 ## Scope and decisions
@@ -216,3 +217,17 @@ not yet support tool-input rewriting. Setup must register an outer hook timeout
 longer than the bridge timeout. Handler paths come from setup, not task content.
 The bridge is not yet installed in worker launch configuration, and it does not
 implement ownership, worktree, marker, or review-hold policy itself.
+
+`worker-hook-setup.cjs` installs the command registration into a caller-selected
+worker JSON configuration (Claude settings or Codex hooks). It checks readable,
+syntactically valid handler modules before writing, preserves unrelated
+settings/hooks, rejects malformed or symlinked configuration, updates only its
+managed registration, and makes identical repeat setup a no-op. Replacement
+uses a temporary file and rename, with readback verification. The registration
+also maps bridge process failure to native exit-code-2 denial.
+
+The native command-hook probes now call this setup implementation for their
+bridge cases, including a no-op repeat, before starting the actual CLI. Setup
+registration alone does not prove execution: the caller must still complete
+its native execution smoke before launching task work. This helper is not yet
+wired into the runner and does not mutate interactive workstation configuration.

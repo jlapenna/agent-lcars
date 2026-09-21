@@ -6,7 +6,8 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 
 const [provider, binary, expectedVersion] = process.argv.slice(2);
 if (
@@ -20,12 +21,6 @@ if (
   );
 }
 const root = mkdtempSync(join(tmpdir(), `lcars-${provider}-hook-probe-`));
-const bridge = fileURLToPath(
-  new URL(
-    '../../packages/fleet-tools/bin/worker-hook-bridge.cjs',
-    import.meta.url,
-  ),
-);
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
 function execute(args, cwd, env, timeout = 60000) {
@@ -94,7 +89,7 @@ ${mode === 'bridge-allow' ? 'console.log(JSON.stringify({hookSpecificOutput:{hoo
 `,
   );
   const hookConfig =
-    mode === 'missing'
+    mode === 'missing' || mode.startsWith('bridge-')
       ? {}
       : {
           hooks: {
@@ -104,7 +99,7 @@ ${mode === 'bridge-allow' ? 'console.log(JSON.stringify({hookSpecificOutput:{hoo
                 hooks: [
                   {
                     type: 'command',
-                    command: `${quote(process.execPath)} ${mode.startsWith('bridge-') ? `${quote(bridge)} ` : ''}${quote(hook)}`,
+                    command: `${quote(process.execPath)} ${quote(hook)}`,
                     timeout: 10,
                   },
                 ],
@@ -117,6 +112,15 @@ ${mode === 'bridge-allow' ? 'console.log(JSON.stringify({hookSpecificOutput:{hoo
     join(home, '.claude', 'settings.json'),
     JSON.stringify(hookConfig),
   );
+  if (mode.startsWith('bridge-')) {
+    const configPath =
+      provider === 'codex'
+        ? join(home, '.codex', 'hooks.json')
+        : join(home, '.claude', 'settings.json');
+    setup.installRegistration(configPath, hook);
+    if (setup.installRegistration(configPath, hook).changed)
+      throw new Error('Setup was not idempotent');
+  }
   let issued = false,
     returnedToolResult = false,
     requests = 0;
