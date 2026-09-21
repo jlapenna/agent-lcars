@@ -6,16 +6,6 @@
     "monorepo:nextjs",
     "monorepo:react"
   ],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "Track the exact renovatebot/renovate image version pinned as renovate-self-hosted.yml's `renovate-version` input, the same way this repo pins every other third-party tool (agent-lcars#2018) -- so hosted Renovate on this repo keeps that pin fresh instead of it going stale by hand.",
-      "managerFilePatterns": [".github/workflows/renovate-self-hosted.yml"],
-      "matchStrings": [
-        "renovate-version:\\s*'(?<currentValue>[^']+)'\\s*#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)"
-      ]
-    }
-  ],
   "packageRules": [
     {
       "description": "pnpm majors change install/lockfile semantics for the whole workspace at once (packageManager pins the exact version, currently 11.x); hold them for a deliberate toolchain upgrade rather than a bot PR",
