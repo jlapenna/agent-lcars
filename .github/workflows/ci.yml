@@ -63,6 +63,10 @@ jobs:
           terraform -chdir=infra/terraform fmt -check -recursive
           terraform -chdir=infra/terraform validate
           terraform -chdir=infra/terraform test
+          terraform -chdir=infra/github-ruleset init -backend=false -input=false
+          terraform -chdir=infra/github-ruleset fmt -check -recursive
+          terraform -chdir=infra/github-ruleset validate
+          ./tools/contract-tests/github-ruleset-root.test.sh
 
       # This job runs the whole `test typecheck build --all` gate on an
       # ephemeral autoscaled runner, so its local cache starts cold every
