@@ -85,6 +85,14 @@ Setting only one of the two App variables is an error rather than a silent
 fallback to `GITHUB_TOKEN`: a half-finished rollout that looks configured is
 the failure this is meant to end.
 
+Two consequences of per-owner tokens are worth knowing. GitHub meters each
+installation against its own core quota, so the
+`github_actions_exporter_api_rate_limit_*` gauges carry an `owner` label —
+they are several independent windows, not one. And reinstalling the App on an
+account issues a new installation id, so a cached id that stops working is
+looked up once more before the error propagates; a long-running exporter
+therefore survives a reinstall without a restart.
+
 ## HTTP endpoints
 
 | Path       | Cost                 | Purpose                                     |

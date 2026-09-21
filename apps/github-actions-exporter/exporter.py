@@ -281,9 +281,9 @@ class AppCredentials(Credentials):
             raise GitHubPayloadError(f"GitHub {path} response was not an object")
         return payload
 
-    def _installation_id(self, owner: str, jwt: str) -> int:
+    def _installation_id(self, owner: str, jwt: str, *, refresh: bool = False) -> int:
         cached = self._installations.get(owner)
-        if cached is not None:
+        if cached is not None and not refresh:
             return cached
         # An owner is a user or an organization and the caller does not know
         # which, so try both rather than requiring that to be configured.
@@ -317,9 +317,22 @@ class AppCredentials(Credentials):
                 return f"Bearer {cached[0]}"
             jwt = self._jwt()
             installation_id = self._installation_id(key, jwt)
-            payload = self._request(
-                "POST", f"/app/installations/{installation_id}/access_tokens", jwt
-            )
+            try:
+                payload = self._request(
+                    "POST", f"/app/installations/{installation_id}/access_tokens", jwt
+                )
+            except requests.HTTPError:
+                # Reinstalling the App on an account issues a NEW installation
+                # id, and this process can outlive that. Without the re-lookup
+                # the cached id is wrong forever: every later refresh posts to
+                # an installation that no longer exists, and the exporter goes
+                # dark on that owner until someone restarts it. Look it up once
+                # more before giving up, and let a second failure propagate so
+                # a genuinely broken App is not retried in a tight loop.
+                installation_id = self._installation_id(key, jwt, refresh=True)
+                payload = self._request(
+                    "POST", f"/app/installations/{installation_id}/access_tokens", jwt
+                )
             token = payload.get("token")
             expires_at = payload.get("expires_at")
             if not isinstance(token, str) or not isinstance(expires_at, str):
@@ -452,21 +465,31 @@ class ExporterState:
         self.api_rate_remaining = Gauge(
             "github_actions_exporter_api_rate_limit_remaining",
             "Requests remaining in GitHub's current core API rate window.",
+            # Labelled by owner: GitHub meters each App installation against
+            # its OWN core quota, so with one token per account these are
+            # several independent windows. Unlabelled, whichever repository
+            # happened to be polled last overwrote the rest, and the quota
+            # panels and GitHubActionsApiQuotaProjectedExhaustion then read a
+            # single arbitrary account's budget as if it were the whole.
+            ("owner",),
             registry=registry,
         )
         self.api_rate_limit = Gauge(
             "github_actions_exporter_api_rate_limit_limit",
             "Maximum requests in GitHub's current core API rate window.",
+            ("owner",),
             registry=registry,
         )
         self.api_rate_used = Gauge(
             "github_actions_exporter_api_rate_limit_used",
             "Requests used in GitHub's current core API rate window.",
+            ("owner",),
             registry=registry,
         )
         self.api_rate_reset_timestamp = Gauge(
             "github_actions_exporter_api_rate_limit_reset_timestamp_seconds",
             "Unix timestamp when GitHub's current core API rate window resets.",
+            ("owner",),
             registry=registry,
         )
         self.backfill_in_progress = Gauge(
@@ -476,7 +499,9 @@ class ExporterState:
             registry=registry,
         )
 
-    def record_response(self, endpoint: str, response: requests.Response) -> None:
+    def record_response(
+        self, endpoint: str, response: requests.Response, owner: str = ""
+    ) -> None:
         self.api_requests.labels(endpoint, str(response.status_code)).inc()
         for header, metric in (
             ("x-ratelimit-remaining", self.api_rate_remaining),
@@ -499,7 +524,7 @@ class ExporterState:
                         "GitHub returned an invalid rate-limit header: %s", header
                     )
                 else:
-                    metric.set(count)
+                    metric.labels(owner).set(count)
 
 
 class GitHubRequestError(RuntimeError):
@@ -546,14 +571,15 @@ class GitHubAPI:
     def get(
         self, path: str, *, endpoint: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        owner = owner_of(path)
         response = self.session.get(
             f"{self.api_url}{path}",
             params=params,
             timeout=(5, 30),
-            headers={"Authorization": self.credentials.authorization(owner_of(path))},
+            headers={"Authorization": self.credentials.authorization(owner)},
         )
         try:
-            self.state.record_response(endpoint, response)
+            self.state.record_response(endpoint, response, owner)
             try:
                 response.raise_for_status()
             except requests.HTTPError as exc:

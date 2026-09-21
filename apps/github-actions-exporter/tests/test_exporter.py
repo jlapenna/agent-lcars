@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
+import requests
 from prometheus_client import CollectorRegistry, generate_latest
 
 MODULE_PATH = Path(__file__).parents[1] / "exporter.py"
@@ -66,11 +67,18 @@ def recent(hours_ago: float) -> str:
     )
 
 
-def exported_metric_value(metrics: str, name: str) -> float:
+def exported_metric_value(metrics: str, name: str, labels: str = "") -> float:
+    """The value of one exported sample, with or without labels.
+
+    `labels` is the rendered label set, e.g. '{owner="jlapenna"}'. Matching the
+    bare name alone would silently pick the wrong series once a metric grows a
+    label, so the two forms are distinguished here rather than by prefix luck.
+    """
+    wanted = f"{name}{labels} "
     for line in metrics.splitlines():
-        if line.startswith(f"{name} "):
+        if line.startswith(wanted):
             return float(line.split()[-1])
-    raise AssertionError(f"missing metric: {name}")
+    raise AssertionError(f"missing metric: {name}{labels}")
 
 
 class FakeState:
@@ -1366,23 +1374,25 @@ class GitHubAPITests(unittest.TestCase):
                     "x-ratelimit-reset": "1786500000",
                 },
             ),
+            "jlapenna",
         )
         metrics = generate_latest(registry).decode()
+        owner = '{owner="jlapenna"}'
         self.assertEqual(
             exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_remaining"
+                metrics, "github_actions_exporter_api_rate_limit_remaining", owner
             ),
             42,
         )
         self.assertEqual(
             exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_limit"
+                metrics, "github_actions_exporter_api_rate_limit_limit", owner
             ),
             5000,
         )
         self.assertEqual(
             exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_used"
+                metrics, "github_actions_exporter_api_rate_limit_used", owner
             ),
             4958,
         )
@@ -1390,6 +1400,7 @@ class GitHubAPITests(unittest.TestCase):
             exported_metric_value(
                 metrics,
                 "github_actions_exporter_api_rate_limit_reset_timestamp_seconds",
+                owner,
             ),
             1786500000,
         )
@@ -1413,18 +1424,22 @@ class GitHubAPITests(unittest.TestCase):
                 status_code=200,
                 headers={header: value[0] for header, value in headers.items()},
             ),
+            "jlapenna",
         )
 
         for header, (_valid, suffix, expected) in headers.items():
             for value in ("nan", "inf", "1.5", "-1"):
                 with self.subTest(header=header, value=value):
                     state.record_response(
-                        "test", Mock(status_code=200, headers={header: value})
+                        "test",
+                        Mock(status_code=200, headers={header: value}),
+                        "jlapenna",
                     )
                     self.assertEqual(
                         exported_metric_value(
                             generate_latest(registry).decode(),
                             f"github_actions_exporter_{suffix}",
+                            '{owner="jlapenna"}',
                         ),
                         expected,
                     )
@@ -1901,3 +1916,89 @@ class PerRequestAuthorizationTests(unittest.TestCase):
         # A stale session-level header would silently win over the per-request
         # one for some owners, so it must not exist at all.
         self.assertNotIn("Authorization", api.session.headers)
+
+
+class PerOwnerQuotaTests(unittest.TestCase):
+    def test_one_owners_quota_does_not_overwrite_anothers(self):
+        # GitHub meters each installation against its own core quota. A single
+        # unlabelled gauge meant whichever repository was polled last decided
+        # what the quota panels and the exhaustion alert saw.
+        registry = CollectorRegistry()
+        state = exporter.ExporterState(registry)
+        for owner, remaining in (("jlapenna", "4200"), ("supersprinklesracing", "17")):
+            state.record_response(
+                "runs",
+                Mock(status_code=200, headers={"x-ratelimit-remaining": remaining}),
+                owner,
+            )
+
+        metrics = generate_latest(registry).decode()
+        name = "github_actions_exporter_api_rate_limit_remaining"
+        self.assertEqual(
+            exported_metric_value(metrics, name, '{owner="jlapenna"}'), 4200
+        )
+        self.assertEqual(
+            exported_metric_value(metrics, name, '{owner="supersprinklesracing"}'), 17
+        )
+
+
+class InstallationReinstallTests(unittest.TestCase):
+    """A reinstall issues a new installation id; the process can outlive it."""
+
+    def setUp(self):
+        self.pem = _test_private_key_pem()
+
+    def credentials(self):
+        return exporter.AppCredentials("Iv23test", self.pem, "https://api.github.com")
+
+    @staticmethod
+    def expiry(seconds_ahead):
+        moment = datetime.now(UTC) + timedelta(seconds=seconds_ahead)
+        return moment.isoformat().replace("+00:00", "Z")
+
+    def test_a_stale_installation_id_is_looked_up_again(self):
+        credentials = self.credentials()
+        installation_ids = [1, 2]
+        posts = []
+
+        def request(method, path, bearer):
+            if method == "GET":
+                return {"id": installation_ids[0]}
+            posts.append(path)
+            if path == "/app/installations/1/access_tokens":
+                raise requests_error(404)
+            return {"token": "fresh", "expires_at": self.expiry(3600)}
+
+        with patch.object(credentials, "_request", side_effect=request):
+            credentials._installations["jlapenna"] = 1
+            installation_ids[0] = 2
+            header = credentials.authorization("jlapenna")
+
+        self.assertEqual(header, "Bearer fresh")
+        self.assertEqual(
+            posts,
+            [
+                "/app/installations/1/access_tokens",
+                "/app/installations/2/access_tokens",
+            ],
+        )
+
+    def test_a_genuinely_broken_app_is_not_retried_forever(self):
+        # One re-lookup, then the error propagates: a tight retry loop against
+        # a dead App would burn quota and hide the real failure.
+        credentials = self.credentials()
+        attempts = []
+
+        def request(method, path, bearer):
+            if method == "GET":
+                return {"id": 1}
+            attempts.append(path)
+            raise requests_error(404)
+
+        with (
+            patch.object(credentials, "_request", side_effect=request),
+            self.assertRaises(requests.HTTPError),
+        ):
+            credentials.authorization("jlapenna")
+
+        self.assertEqual(len(attempts), 2)
