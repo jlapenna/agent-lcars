@@ -97,28 +97,32 @@ These override any default behavior:
     recognized reply trigger IS that handoff).
   - **`agent-lcars-bot` assigned** means the agent fleet has claimed it. Before
     touching such an issue, check for a live QueueExecutor run or recent
-    agent-session evidence; if neither exists the claim is stale — take over
-    and say so in an issue comment.
-  - **Claim before you start**: when beginning work on an issue from an
-    interactive session, run `gh issue edit <N> --add-assignee agent-lcars-bot`
-    AND post a session takeover comment on the issue (name the resume
-    command if your CLI supports one, mirroring the format the
-    [lcars](../lcars/SKILL.md) skill's headless delta uses) — the claim
-    says _the fleet_ has it; the comment says _which session_ owns the
-    claim. Never `--add-assignee @me`: interactively that assigns the
-    maintainer (you act under their login), and in CI the bot app
-    identity is not assignable — GitHub silently drops it.
-  - **Blocked on the maintainer?** Add them alongside the label:
-    `gh issue edit <N> --add-label status:needs-human --add-assignee jlapenna`.
-  - **Filing an issue yourself** carries the same duty as claiming one. An
+    agent-session evidence; if neither exists the claim may be stale. Reconcile
+    recent PRs and comments before taking over; assignment alone is not
+    evidence that another session is still working.
+  - **Interactive maintainer sessions** act on the user's request. Reading,
+    triaging, or implementing explicitly requested work does not require a
+    fleet assignment or takeover comment. A direct request from the owning
+    maintainer is a handoff; do not ask them to repeat it through labels or
+    assignees. Check live ownership before implementation to avoid collisions,
+    but do not claim issues merely because you read them. This is an explicit
+    exception to the personal github-issue-workflow claim/comment defaults.
+  - **Headless LCARS dispatches** follow **agent-protocol**. The console owns
+    the anchor claim and takeover; workers do not post a second takeover.
+    The issue-workflow hook only runs when `LCARS_RUN_ID` or
+    `AGENT_DISPATCH_CONTEXT` is nonempty. Generic `CI`, a non-TTY, and provider
+    session IDs do not establish a fleet dispatch.
+  - **Blocked on the maintainer?** In an interactive session, ask in the
+    conversation. Headless workers use the agent-protocol parking contract.
+  - **Filing an issue yourself** requires session attribution. An
     interactive session runs `gh` under the maintainer's login, so an issue
     it invents is authored by `jlapenna` with no label, no marker, and no
     comment distinguishing it from one he wrote by hand -- unlike a headless
     run (authored by `agent-lcars[bot]`) or a Quick Task (`intake:quick-task`
     plus the hidden request marker in
     [docs/quick-task-identity.md](../../../docs/quick-task-identity.md)).
-    Name the session and its resume command in the body, exactly as the
-    takeover comment does above. Skipping it is how a maintainer finds work
+    Name the session and its resume command in the body when the CLI supports
+    one. Skipping it is how a maintainer finds work
     he never asked for under his own name: reconstructing who filed
     `supersprinklesracing/sprinkles#5267` took `/proc` ancestry, two agent
     rollout transcripts, and the timeline API to recover one line the body

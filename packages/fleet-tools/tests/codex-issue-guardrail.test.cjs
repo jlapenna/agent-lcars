@@ -7,8 +7,13 @@ const {
   extractIssueReferences,
   projectNameFor,
   resolveRepoForDirDefault,
-  runHook,
+  runHook: runHookWithEnvironment,
 } = require('../bin/codex-issue-guardrail.cjs');
+
+// Existing cases exercise the dispatched policy explicitly, independent of
+// the environment running the test suite.
+const runHook = (input, dependencies) =>
+  runHookWithEnvironment(input, dependencies, { LCARS_RUN_ID: 'test-run' });
 
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -62,7 +67,7 @@ test('reports an unclaimed issue', () => {
   );
 });
 
-test('includes the session takeover reminder in violations', () => {
+test('defers claim recovery to the dispatch protocol', () => {
   const output = runHook(
     { tool_input: { command: 'gh issue view 642' } },
     dependencies({ assignees: [] }),
@@ -70,7 +75,7 @@ test('includes the session takeover reminder in violations', () => {
 
   assert.match(
     output.hookSpecificOutput.additionalContext,
-    /post a session takeover comment/,
+    /console owns the anchor claim and takeover/,
   );
   assert.equal('systemMessage' in output, false);
 });
@@ -445,7 +450,7 @@ test('leads with the closed guidance when an issue is both closed and unclaimed'
   const context = output.hookSpecificOutput.additionalContext;
   assert.ok(
     context.indexOf('already shipped') <
-      context.indexOf('post a session takeover comment'),
+      context.indexOf('Check the dispatch brief'),
     'closed guidance must precede the claim reminder',
   );
 });
@@ -592,4 +597,51 @@ test('a failed lookup for this repository is still reported', () => {
     output.hookSpecificOutput.additionalContext,
     /could not verify the assignees for issue #77/,
   );
+});
+
+for (const env of [
+  {},
+  { CI: 'true', GITHUB_ACTIONS: 'true' },
+  { CODEX_THREAD_ID: 'interactive', CLAUDE_CODE_SESSION_ID: 'interactive' },
+  { LCARS_RUN_ID: ' ', AGENT_DISPATCH_CONTEXT: '' },
+]) {
+  test(`maintainer session does not inspect issues: ${JSON.stringify(env)}`, () => {
+    const output = runHookWithEnvironment(
+      {
+        tool_input: {
+          command: 'gh issue view 642 && gh issue edit 643 --add-label bug',
+        },
+      },
+      {
+        getIssue: () => {
+          throw new Error('must not query GitHub');
+        },
+      },
+      env,
+    );
+    assert.equal(output, null);
+  });
+}
+
+for (const marker of ['LCARS_RUN_ID', 'AGENT_DISPATCH_CONTEXT']) {
+  test(`${marker} enables dispatched ownership enforcement`, () => {
+    const output = runHookWithEnvironment(
+      { tool_input: { command: 'gh issue edit 642 --add-label bug' } },
+      dependencies({ assignees: [] }),
+      { [marker]: 'dispatch-context' },
+    );
+    assert.match(output.hookSpecificOutput.additionalContext, /not assigned/);
+  });
+}
+
+test('interactive CLI silently ignores even malformed hook input', () => {
+  const env = { ...process.env };
+  delete env.LCARS_RUN_ID;
+  delete env.AGENT_DISPATCH_CONTEXT;
+  const output = execFileSync(
+    process.execPath,
+    [path.resolve(__dirname, '../bin/codex-issue-guardrail.cjs')],
+    { env, input: 'not JSON', encoding: 'utf8' },
+  );
+  assert.equal(output, '');
 });

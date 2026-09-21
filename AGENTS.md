@@ -10,10 +10,11 @@ this file. Headless-CI-dispatch behavior is defined completely by
 documentation for developers changing dispatch or reconciliation machinery.
 
 Skills are auto-discovered per-runtime from `.agents/skills/` — don't skip
-checking for one just because a task looks generic. A `PostToolUse` hook
-runs after Bash commands and blocks premature `gh issue view`/`gh issue
-edit` calls; see the github-issue-workflow skill for the claim/ownership
-flow it enforces.
+checking for one just because a task looks generic. The fleet `PostToolUse`
+hook provides issue-ownership reminders only in
+LCARS-dispatched sessions. Interactive maintainer sessions follow the direct
+request and the development skill's collision checks, without automatic fleet
+claims or takeover comments for issue lookups.
 
 The general `worktree-hygiene` skill is supplied by the installed public
 `repo-tools` plugin. Do not mirror its body in this repository; local skills
