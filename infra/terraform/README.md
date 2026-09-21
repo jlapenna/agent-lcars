@@ -26,14 +26,18 @@ with the normal backend and credentials.
 
 ## GitHub ruleset (`Protect main`)
 
-Branch protection for this repo is now managed in the **homelab** repo's
+Branch protection for this repo is currently managed in the **homelab** repo's
 terraform root (homelab#523, unified fleet governance 2026-08-11):
 `homelab/terraform/github_rulesets.tf` instantiates one `protect-main`
 module for homelab, agent-lcars, and supersprinklesracing/sprinkles, and
 homelab's scheduled drift check reports hand edits. The live ruleset
 (id 19524095) was imported there with a 0-diff plan and removed from
 this state with a `removed` block (`github.tf`), so it was never
-recreated. Change branch protection in homelab — never here, never by
+recreated. The repository-owned successor is
+[`../github-ruleset`](../github-ruleset/): it holds Agent LCARS's
+check-context configuration while Homelab retains credentials, state, and
+execution. Until the reviewed state handoff completes, the Homelab module
+remains live; never change branch protection through this retired root or by
 hand through the GitHub UI or API.
 
 ## Dispatch webhook queue backlog alert
