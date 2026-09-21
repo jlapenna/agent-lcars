@@ -23,11 +23,54 @@ provider "github" {
   owner = "jlapenna"
 }
 
-module "protect_main" {
-  // The policy implementation remains shared and centrally versioned; this
-  // repository owns only the values that genuinely vary per repository.
-  source = "git::https://github.com/jlapenna/homelab.git//terraform/modules/protect-main?ref=31654d207a88e1048d859db2dc2a1c08fa1892bc"
+resource "github_repository_ruleset" "protect_main" {
+  name        = "Protect main"
+  repository  = "agent-lcars"
+  target      = "branch"
+  enforcement = "active"
 
-  repository      = "agent-lcars"
-  required_checks = ["E2E", "Verify", "Runner image pnpm-store seed"]
+  conditions {
+    ref_name {
+      include = ["~DEFAULT_BRANCH"]
+      exclude = []
+    }
+  }
+
+  # Repository administrators retain the emergency escape hatch needed to
+  # repair the ruleset that gates its own pull requests.
+  bypass_actors {
+    actor_id    = 5
+    actor_type  = "RepositoryRole"
+    bypass_mode = "always"
+  }
+
+  rules {
+    deletion                = true
+    non_fast_forward        = true
+    required_linear_history = true
+
+    pull_request {
+      required_approving_review_count   = 0
+      dismiss_stale_reviews_on_push     = true
+      require_code_owner_review         = false
+      require_last_push_approval        = false
+      required_review_thread_resolution = true
+      allowed_merge_methods             = ["merge", "squash", "rebase"]
+    }
+
+    required_status_checks {
+      strict_required_status_checks_policy = false
+      do_not_enforce_on_create             = false
+
+      required_check {
+        context = "E2E"
+      }
+      required_check {
+        context = "Verify"
+      }
+      required_check {
+        context = "Runner image pnpm-store seed"
+      }
+    }
+  }
 }
