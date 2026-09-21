@@ -354,11 +354,13 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /tmp/fleet-
 COPY externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
 RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 
-# Cheap runtime toolchain probes consumed by entrypoint.sh before the runner
-# registers with GitHub. Kept separate from the entrypoint so the predicates
-# can be exercised without starting a real JIT runner (#468).
+# Toolchain predicates (#468) plus the build-time gate that runs them once,
+# as the job user, at the end of this Dockerfile (#2033). Kept as separate
+# files so the predicates can be exercised without building the image.
 COPY toolchain-health.sh /usr/local/lib/agent-lcars/toolchain-health.sh
-RUN chmod +r /usr/local/lib/agent-lcars/toolchain-health.sh
+COPY verify-image-invariants.sh /usr/local/lib/agent-lcars/verify-image-invariants.sh
+RUN chmod +r /usr/local/lib/agent-lcars/toolchain-health.sh \
+    /usr/local/lib/agent-lcars/verify-image-invariants.sh
 
 # agent-lcars#30: baked-in telemetry sidecar/finalize tool (built above).
 # Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
@@ -579,6 +581,17 @@ RUN claude plugin marketplace add /opt/repo-tools && \
 # copied manifest resolves the exact repo-pinned version, and deliberately
 # leaves the cache under /home/runner for offline job startup.
 RUN pnpm --version
+
+# Layer-1 skills (#1269) are image content: install them into the job user's
+# own skills directory once, failing the build if the list names a skill the
+# image does not carry, instead of copying them on every dispatch (#2033).
+RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh \
+    /usr/local/lib/agent-lcars/agents/shared/skills /home/runner/.claude/skills
+
+# The single gate for every image-owned invariant (#2033). It replaces the
+# per-boot entrypoint preflight and the per-dispatch OpenCode probes: an image
+# that fails here is never published, so no container ever starts from it.
+RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh
 
 # Keep each curated seed in a dedicated final-image layer. The runner owns its
 # normal pnpm store, so overlayfs shares these immutable lower-layer files on

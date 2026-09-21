@@ -42,9 +42,21 @@ if grep -Fq 'https://opencode.ai/install' "$dockerfile"; then
   echo "runner image must not run OpenCode's mutable installer as root" >&2
   exit 1
 fi
-if ! grep -Fqx 'if ! trusted_opencode_runs /usr/local/bin/opencode; then' "$entrypoint" ||
-  ! grep -Fqx 'if ! trusted_opencode_supports_auto /usr/local/bin/opencode; then' "$entrypoint"; then
-  echo "runner entrypoint must preflight the exact trusted OpenCode executable" >&2
+# #2033: the image build, not every boot, proves the toolchain. The gate must
+# run as the job user after the last per-user warm-up, and boot must not
+# quietly grow the retired per-container probes back.
+runner_user_line="$(grep -n '^USER runner$' "$dockerfile" | cut -d: -f1)"
+pnpm_warm_line="$(grep -n '^RUN pnpm --version$' "$dockerfile" | tail -n1 | cut -d: -f1 || true)"
+skills_line="$(grep -n '^RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh ' "$dockerfile" | cut -d: -f1 || true)"
+invariants_line="$(grep -n '^RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh$' "$dockerfile" | cut -d: -f1 || true)"
+if [[ -z "$runner_user_line" || -z "$pnpm_warm_line" || -z "$skills_line" || -z "$invariants_line" ||
+  "$skills_line" -le "$runner_user_line" || "$invariants_line" -le "$skills_line" ||
+  "$invariants_line" -le "$pnpm_warm_line" ]]; then
+  echo "runner image must install layer-1 skills and then run verify-image-invariants.sh as runner after the pnpm warm-up" >&2
+  exit 1
+fi
+if grep -Eq 'trusted_opencode|pnpm_runs|java_21_runs|required_node_runtimes_run' "$entrypoint"; then
+  echo "runner entrypoint must not re-run build-proven toolchain probes on every boot (#2033)" >&2
   exit 1
 fi
 # The repo-tools install is pinned to its exact `(cd ... && pnpm install)`

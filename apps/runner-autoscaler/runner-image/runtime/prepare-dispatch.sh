@@ -70,14 +70,20 @@ if [ ! -f "$protocol_path" ]; then
   exit 1
 fi
 
-# Install the layer-1 skill surface into the agent's own skills directory
-# (#1269). HOME, not WORKSPACE: the runner's home has no skills of
-# its own, the agent auto-discovers them there exactly as a workstation
-# session does, and it cannot collide with a consumer repo's .claude/skills
-# -- which in agent-lcars is a symlink into the checkout.
+# The layer-1 skill surface lives in the agent's own skills directory
+# (#1269). HOME, not WORKSPACE: the agent auto-discovers skills there exactly
+# as a workstation session does, and it cannot collide with a consumer repo's
+# .claude/skills -- which in agent-lcars is a symlink into the checkout. The
+# image build installs and verifies it (#2033); a dispatch only records the
+# digest of what the agent actually received.
 skills_dest="${HOME:-/root}/.claude/skills"
-skills_digest="$(bash "$RUNTIME_HELPERS_DIR/install-skills.sh" \
-  "$RUNTIME_HELPERS_DIR/../agents/shared/skills" "$skills_dest" || true)"
+skills_digest="$(
+  find "$skills_dest" -type f -print0 2>/dev/null |
+    sort -z |
+    xargs -0 -r sha256sum 2>/dev/null |
+    sha256sum |
+    cut -d' ' -f1
+)" || true
 
 mkdir -p "$dispatch_dir"
 

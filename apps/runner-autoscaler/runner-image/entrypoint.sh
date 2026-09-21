@@ -3,61 +3,21 @@ set -e
 
 # agent-lcars (native-work-items sub-project 4): a container the
 # runner-autoscaler launched directly for one claimed queue-executor run,
-# not a registered GitHub Actions runner at all. Checked first so a
-# preflight failure in the GitHub-runner path below never gates it.
+# not a registered GitHub Actions runner at all.
 if [ "${RUNNER_MODE:-}" = "direct" ]; then
   exec /usr/local/lib/agent-lcars/direct-runner.sh
 fi
 
-# Invoke each required Actions Node runtime rather than merely checking that
-# its binary exists.
-# shellcheck source=externals-health.sh
-source /usr/local/lib/agent-lcars/externals-health.sh
-# shellcheck source=toolchain-health.sh
-source /usr/local/lib/agent-lcars/toolchain-health.sh
-
-# Preflight: fail the boot loudly if a required runtime does not run, rather than
-# silently proceeding to run.sh, which registers with GitHub and can accept
-# a real job doomed to fail before checkout even starts. A container that
-# exits here without registering is swept by the scaler's existing
-# crash-loop/orphan cleanup (see deregisterRunner), the same path already
-# used for a dead host or a crash-looping image.
-if ! required_node_runtimes_run; then
-  echo "FATAL: required Actions runtimes node20/node24 failed a preflight invocation" >&2
-  exit 1
-fi
-
-# Corepack/pnpm is smoke-checked and warmed for this user while the image is
-# built, but runner registration is the last safe point to catch a damaged or
-# missing shim in the filesystem that actually reached a host (#468). Keep the
-# probe to a version invocation: it exercises shim resolution and the cached
-# package-manager binary without performing an install or touching a repo.
-if ! pnpm_runs; then
-  echo "FATAL: pnpm/corepack failed a preflight invocation" >&2
-  exit 1
-fi
-
-if ! java_21_runs; then
-  echo "FATAL: Java 21+ failed a preflight invocation" >&2
-  exit 1
-fi
-
-if ! trusted_opencode_runs /usr/local/bin/opencode; then
-  echo "FATAL: trusted OpenCode CLI failed a preflight invocation" >&2
-  exit 1
-fi
-if ! trusted_opencode_supports_auto /usr/local/bin/opencode; then
-  echo "FATAL: trusted OpenCode CLI does not support QueueExecutor's --auto mode" >&2
-  exit 1
-fi
+# The image-owned toolchain (Actions Node runtimes, Corepack pnpm, Java 21+,
+# the trusted OpenCode CLI and its --auto contract, the action-archive cache)
+# is proven once by verify-image-invariants.sh while the image is built
+# (#2033). Every container starts from that verified, content-addressed
+# filesystem and nothing mounts over those paths, so boot no longer re-runs
+# the same probes before registering (#468's preflight moved to the build).
 
 # agent-lcars#1330: point the runner at the baked action-archive cache so
 # `uses:` tarballs resolve locally instead of from codeload (outage
-# resilience). Every supported image has this baked contract.
-if [ ! -d /opt/actions-archive-cache ]; then
-  echo "FATAL: current runner image requires /opt/actions-archive-cache" >&2
-  exit 1
-fi
+# resilience).
 export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache
 
 # Execute the runner's standard run script with passed arguments

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Sourced by runner entrypoints to verify the Actions Node runtimes baked into
-# each isolated runner image.
+# Sourced by verify-image-invariants.sh at image build to prove the Actions
+# Node runtimes baked into each isolated runner image (#2033).
 
 node_runtime_runs() {
   "${AGENT_LCARS_EXTERNALS_DIR:-/home/runner/externals}/$1/bin/node" \
@@ -18,7 +18,7 @@ node24_runs() {
 # These are the non-Alpine runtimes proven reachable from actions used by the
 # fleet: current first-party actions use node24, while OpenCode's pinned
 # composite still calls actions/cache@v4, which declares node20 (#395). Do not
-# probe every backup entry on every boot; add another runtime here only when a
+# probe every backup entry; add another runtime here only when a
 # dispatched action demonstrates that dependency.
 required_node_runtimes_run() {
   node20_runs && node24_runs
