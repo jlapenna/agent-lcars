@@ -4,9 +4,10 @@
 # agent-lcars, AND supersprinklesracing/sprinkles, with scheduled drift
 # checking. The live ruleset (id 19524095) was imported into homelab's
 # state with a 0-diff plan, so this root hands it over WITHOUT
-# destroying it. Change branch protection in
-# homelab/terraform/github_rulesets.tf from now on — never here, never
-# by hand (agent-lcars-dev/references/pr.md).
+# destroying it. Homelab remains live until the reviewed state handoff is
+# complete. Afterwards use ../github-ruleset/ through its centralized
+# executor — never this retired root, and never by hand
+# (agent-lcars-dev/references/pr.md).
 removed {
   from = github_repository_ruleset.protect_main
 

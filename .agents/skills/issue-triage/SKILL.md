@@ -13,7 +13,7 @@ Use the repository's existing skills rather than copying their procedures:
 
 - [agent-lcars-dev](../agent-lcars-dev/SKILL.md) for ownership, repository
   guardrails, verification, and deployment boundaries.
-- `github-issue-workflow` for issue claims and collision-safe worktrees.
+- `github-issue-workflow` for mode-aware ownership checks and collision-safe worktrees.
 - `repo-tools:land-pr` and `repo-tools:github-ci-monitor` for protected
   delivery and canonical CI observation.
 - `repo-tools:renovate-maintenance` for dependency dashboards and Renovate
@@ -33,8 +33,9 @@ permanent repository-wide model rule.
 Before changing an issue, reconcile its current body, acceptance criteria,
 assignees, labels, linked pull requests, recent comments, and active agent
 session or workflow evidence. A bot assignment alone does not prove that an
-agent is still active. Claim or take over work through the canonical issue
-workflow, with session provenance, only after checking for a live owner.
+agent is still active. Interactive sessions proceed on the user's request
+after this collision check, without mandatory fleet claims or takeover
+comments. Autonomous LCARS workers follow agent-protocol for ownership.
 
 ## Build an evidence ledger
 

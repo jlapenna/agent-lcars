@@ -14,6 +14,12 @@ fleet identities is fixed because the console and automation consume the
 GitHub state agents produce. Control-plane implementation details belong in
 Agent LCARS's situational `lcars` skill, not in every worker's prompt.
 
+This protocol applies to headless LCARS dispatches, not interactive sessions
+working directly with the maintainer. The shared issue hook recognizes a
+nonempty `LCARS_RUN_ID` or `AGENT_DISPATCH_CONTEXT`; generic CI flags, piped
+stdin, and provider session IDs alone do not activate fleet enforcement.
+Repository safety and explicit operation approvals still apply in both modes.
+
 ## 0. Instruction order and dispatch context
 
 Read instructions in this order: the repository's `AGENTS.md`, this shared
