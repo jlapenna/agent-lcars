@@ -501,11 +501,11 @@ for #1247`, `blocked on review`, `rerunning after a flake`), and clear it
   tells them not to bother you; "reading daemon.ts" does not.
 
 These write to local session state, never the repo, so a read-only
-checkout is not a reason to skip them. The `lcars` command may be absent on
-some hosts, or missing a newer subcommand: check once (`command -v lcars`),
-try it, and if it is missing or errors, carry on silently — never fail a
-task over telemetry, and never report a status you did not actually manage
-to set.
+checkout is not a reason to skip them. The runner image installs and
+verifies `lcars` when it is built, so do not probe for it first; just run
+it. If a call errors (an older CLI missing a newer subcommand, say), carry
+on silently — never fail a task over telemetry, and never report a status
+you did not actually manage to set.
 
 ## 13. Cross-repo credential (`agent-option:cross-repo`)
 

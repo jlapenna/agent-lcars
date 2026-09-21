@@ -19,10 +19,12 @@ fi
 # runs this script) silently loses the remote cache.
 
 echo "==> Installing dependencies"
-HUSKY=0 pnpm install --frozen-lockfile
+pnpm install --frozen-lockfile
 
-# HUSKY=0 skips the prepare hook, and every worktree has its own ignored
-# .husky/_ bootstrap directory. Regenerate it here so commit/push guards work.
+# Every worktree has its own ignored .husky/_ bootstrap directory. The install
+# above only runs `prepare` (which generates it) when it changed something; an
+# "Already up to date" rerun skips lifecycle scripts. Regenerating explicitly
+# keeps a repeated setup a safe, idempotent repair (#2033).
 echo "==> Regenerating git hooks"
 ./tools/setup-git-hooks.sh
 
