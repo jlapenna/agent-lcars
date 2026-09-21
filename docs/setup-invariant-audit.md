@@ -100,6 +100,17 @@ the values. A contract case validates the values committed in
 `apps/console/apphosting.yaml`, so a malformed edit fails CI before a
 rollout. Invalidation: a new revision re-runs `register()`.
 
+What "fails the boot" means here was observed on the real standalone bundle.
+With mismatched repository variables, Next.js logs `Failed to prepare
+server ... AGENT_LCARS_CONTROL_PLANE_REPOSITORIES must exactly match
+AGENT_LCARS_WATCHED_REPOS` and serves HTTP 500 on every route. The process
+does not exit; this is the same mode as the existing #1731 identity check.
+`deploy-console.yml`'s post-deploy verification sees a broken revision
+immediately, instead of only a later webhook or outcome drain. The
+pre-push standalone smoke (`tools/console-standalone-smoke.sh`) hit exactly
+this failure until its env declared the two repository variables, and now
+declares them.
+
 ### Worktree setup and agent protocol
 
 - `tools/setup-worktree.sh` no longer sets the ineffective `HUSKY=0`, and
