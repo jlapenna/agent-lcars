@@ -23,7 +23,7 @@
     "pnpm": "11.27.0"
   },
   "dependencies": {
-    "@google-cloud/firestore": "9.1.0",
+    "@google-cloud/firestore": "9.2.0",
     "@google-cloud/storage": "^8.0.0",
     "@google-cloud/tasks": "^7.0.0",
     "@jlapenna/fleet-runtime": "github:jlapenna/fleet-runtime#main",
@@ -56,7 +56,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@eslint-react/eslint-plugin": "5.19.0",
+    "@eslint-react/eslint-plugin": "5.20.0",
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.1",
     "@jlapenna/repo-tools": "github:jlapenna/repo-tools#main",
@@ -78,7 +78,7 @@
     "@testing-library/dom": "10.4.2",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "16.3.3",
-    "@types/node": "24.13.4",
+    "@types/node": "24.13.6",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitest/coverage-v8": "~5.0.0",

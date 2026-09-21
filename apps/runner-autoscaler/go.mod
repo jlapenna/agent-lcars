@@ -4,9 +4,9 @@ go 1.26.5
 
 require (
 	cloud.google.com/go/firestore v1.25.0
-	github.com/actions/scaleset v0.4.1-0.20260911130003-21ecccd60efb
+	github.com/actions/scaleset v0.4.1-0.20260916214619-e6daac702355
 	github.com/containerd/errdefs v1.0.0
-	github.com/docker/cli v29.8.0+incompatible
+	github.com/docker/cli v29.8.1+incompatible
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-units v0.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
