@@ -6,6 +6,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { fleetLogin } = require('./fleet-identity.cjs');
 const { isDispatch } = require('./worker-hook-bridge.cjs');
+const review = require('./worker-review.cjs');
 
 const decision = (permissionDecision, permissionDecisionReason) => ({
   hookSpecificOutput: {
@@ -235,9 +236,18 @@ function operations(input) {
     if (executable === 'gh') {
       const [resource, verb] = words;
       if (resource === 'pr' && ['create', 'ready', 'merge'].includes(verb)) {
+        if (
+          (verb === 'ready' && words.includes('--undo')) ||
+          (verb === 'merge' &&
+            words.includes('--disable-auto') &&
+            !words.includes('--auto') &&
+            !words.includes('-a'))
+        )
+          continue;
         result.push({
           kind: verb === 'create' ? 'publication' : 'ready',
           cwd: directory,
+          args: words.slice(2),
         });
       }
       if (
@@ -483,6 +493,32 @@ function evaluate(input, context, dependencies = {}) {
     }
   }
   const allowed = decision('allow');
+  for (const op of ops.filter((operation) => operation.kind === 'ready')) {
+    // Explicit targets keep readiness evidence bound to the actual operation.
+    // Branch/default selection must first be resolved by the worker.
+    let target;
+    try {
+      target = review.target(op.args, context.repository);
+    } catch {
+      return decision(
+        'deny',
+        'Use an explicit PR number and --repo for the dispatch repository, without --admin, so readiness can be checked against the correct PR.',
+      );
+    }
+    try {
+      const snapshot = (dependencies.readReviewSnapshot ?? review.readSnapshot)(
+        target.repository,
+        target.number,
+      );
+      const reason = review.rejection(snapshot);
+      if (reason) return decision('deny', reason);
+    } catch {
+      return decision(
+        'deny',
+        'Current review and hold evidence could not be fully read. Retry the lookup after recovery; do not mark ready or arm merge on incomplete feedback.',
+      );
+    }
+  }
   if (repaired) allowed.hookSpecificOutput.updatedInput = repaired;
   return allowed;
 }

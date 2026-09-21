@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -6,7 +7,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { afterEach, expect, it } from 'vitest';
 
@@ -81,4 +83,92 @@ it('updates only the managed command on an installed handler-path change', () =>
   const groups = JSON.parse(readFileSync(config, 'utf8')).hooks.PreToolUse;
   expect(groups).toHaveLength(1);
   expect(groups[0].hooks[0].command).toContain(next);
+});
+
+it('installs OpenCode without dropping existing plugins and repeats without duplication', () => {
+  const { config } = fixture();
+  writeFileSync(
+    config,
+    JSON.stringify({ plugin: ['./existing.mjs'], permission: { bash: 'ask' } }),
+  );
+  expect(setup.installOpenCode(config).changed).toBe(true);
+  const installed = JSON.parse(readFileSync(config, 'utf8'));
+  expect(installed.plugin).toEqual([
+    './existing.mjs',
+    pathToFileURL(
+      resolve('packages/fleet-tools/bin/worker-opencode-plugin.mjs'),
+    ).href,
+  ]);
+  expect(installed.permission.bash).toBe('ask');
+  expect(setup.installOpenCode(config).changed).toBe(false);
+});
+
+it.each(['claude', 'codex', 'opencode'])(
+  'binds %s once and refuses identity replacement',
+  (provider) => {
+    const { config } = fixture();
+    const contextPath = config + '.context';
+    const briefPath = config + '.brief';
+    writeFileSync(
+      briefPath,
+      JSON.stringify({
+        repository: 'octo/example',
+        mode: 'implement',
+        anchor: { type: 'issue', number: 42 },
+      }),
+    );
+    const options = {
+      provider,
+      configPath: config,
+      contextPath,
+      briefPath,
+      runId: 'octo/example#42/r1',
+      attemptId: 'g1:octo/example#42/r1',
+    };
+    expect(setup.prepareWorker(options)).toMatchObject({
+      changed: true,
+      executionSmokeRequired: true,
+    });
+    const binding = readFileSync(contextPath, 'utf8');
+    expect(JSON.parse(binding)).toMatchObject({
+      provider,
+      attemptId: options.attemptId,
+      mode: 'implement',
+    });
+    expect(setup.prepareWorker(options).changed).toBe(false);
+    expect(() =>
+      setup.prepareWorker({
+        ...options,
+        runId: 'octo/example#42/r2',
+        attemptId: 'g2:octo/example#42/r2',
+      }),
+    ).toThrow();
+    expect(readFileSync(contextPath, 'utf8')).toBe(binding);
+  },
+);
+
+it('invalid identity fails before setup writes any state', () => {
+  const { config } = fixture();
+  const contextPath = config + '.context';
+  const briefPath = config + '.brief';
+  writeFileSync(
+    briefPath,
+    JSON.stringify({
+      repository: 'octo/example',
+      mode: 'implement',
+      anchor: { type: 'issue', number: 42 },
+    }),
+  );
+  expect(() =>
+    setup.prepareWorker({
+      provider: 'codex',
+      configPath: config,
+      contextPath,
+      briefPath,
+      runId: 'octo/example#42/r1',
+      attemptId: 'wrong',
+    }),
+  ).toThrow();
+  expect(existsSync(config)).toBe(false);
+  expect(existsSync(contextPath)).toBe(false);
 });

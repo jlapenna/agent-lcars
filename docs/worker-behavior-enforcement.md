@@ -8,7 +8,10 @@ native probes. The initial shared policy handles literal Git/PR mutations and
 native file-edit tools with mode, worktree and fresh GitHub ownership decisions.
 It repairs omitted attempt markers on supported new PR/comment/review commands;
 native probes check that the repaired body reaches the local transport.
-An OpenCode adapter translates tool events into the same shared policy.
+An OpenCode adapter translates tool events into the same shared policy, and
+setup installs its registration. Setup binds validated dispatch context once.
+Fresh readiness checks cover review threads, requested changes, blocking labels,
+and acknowledgments of external draft/auto-merge holds.
 Runner setup integration, remaining policy controls, bounded recovery/completion
 and full acceptance canaries remain to be built and verified.
 
@@ -50,8 +53,7 @@ invented issue claim. Read-only operations do not trigger those reads.
 
 This is partial coverage: scripts, shell expansion, pipelines/redirection,
 indirect command wrappers, arbitrary HTTP/MCP writes, patch target extraction,
-and review-hold evaluation are not implemented by this handler.
-In particular, recognizing `ready/merge` does not yet enforce review holds.
+and arbitrary human-condition verification are not implemented by this handler.
 The focused policy tests feed the required Verify contract lane; they do not
 qualify a provider or authorize enabling the incomplete handler in dispatch.
 
@@ -63,6 +65,24 @@ stamped. Body files remain unchanged; the replacement command receives the
 original text plus the exact marker. Ambiguous flags, streaming bodies and
 foreign attempt claims are rejected with correction instructions. Compound
 shell publication commands and arbitrary API writes are not covered yet.
+
+`worker-review.cjs` reads current PR state with paginated review threads and
+hold/comment timeline events before supported `gh pr ready/merge` operations.
+These calls require an explicit PR number and `--repo`, preventing evidence
+for one repository from allowing a write to another. Incomplete lookups,
+changing heads, unresolved threads, requested changes and blocked/parked labels
+reject readiness. Explicit undo/disarm actions remain available.
+
+An external draft conversion or auto-merge disable requires either a matching
+release by its actor, or a later response authored by the current authenticated
+worker and bound to that event and current PR head:
+`<!-- lcars-hold-response:<event-id>:<head-oid> -->`. The response must explain
+how the stated gate was satisfied; the handler never writes it automatically.
+It cannot override unresolved reviews or blocked labels. This is an explicit
+acknowledgment contract, **not proof of arbitrary human-condition satisfaction**.
+Interpreting narrative feedback, reviewing anchor comments, and recognizing
+narrowed closing references still require the retained protocol and additional
+acceptance coverage before qualification.
 
 ## Setup ownership and runtime behavior
 
@@ -191,8 +211,9 @@ mandatory LCARS canary suite passed. This probe deliberately reports
 readiness report. It does not yet test completion, recovery, timeout handling,
 or the installed runner image as a whole. OpenCode argument repair must mutate
 the existing `output.args` object: a native probe caught that replacing the
-object left the original command unchanged. The policy adapter is not yet
-registered by runner setup.
+object left the original command unchanged. Policy probe cases now use the
+OpenCode setup installer and verify an identical repeat is a no-op. The
+installer is not yet connected to runner launch.
 
 The hook API comes from the [OpenCode plugin reference](https://opencode.ai/docs/plugins/).
 The missing-hook behavior must be prevented by setup installation and its
@@ -275,3 +296,12 @@ bridge cases, including a no-op repeat, before starting the actual CLI. Setup
 registration alone does not prove execution: the caller must still complete
 its native execution smoke before launching task work. This helper is not yet
 wired into the runner and does not mutate interactive workstation configuration.
+
+The setup module also exposes `prepareWorker` (CLI: `--worker <provider>
+<config> <context> <brief> <run-id> <attempt-id>`). Paths must be absolute and
+distinct. It validates the trusted brief/attempt binding, writes a per-attempt
+context, and installs the provider registration. Reusing that context for a
+different dispatch is rejected; repeating the same setup is a no-op. The result
+still reports `executionSmokeRequired: true`: registration and identity binding
+alone are not permission to launch. OpenCode plugin installation preserves
+unrelated entries and uses the stable package/image file URL across upgrades.

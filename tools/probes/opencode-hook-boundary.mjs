@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
 
 const [binary, expectedVersion] = process.argv.slice(2);
@@ -201,7 +202,7 @@ export default async (context) => {
   writeFileSync(
     join(workspace, 'opencode.json'),
     JSON.stringify({
-      plugin: mode === 'missing' ? [] : [plugin],
+      plugin: mode === 'missing' || usesPolicy ? [] : [plugin],
       permission: { bash: 'allow' },
       provider: {
         probe: {
@@ -218,6 +219,11 @@ export default async (context) => {
       },
     }),
   );
+  if (usesPolicy) {
+    setup.installOpenCode(join(workspace, 'opencode.json'), plugin);
+    if (setup.installOpenCode(join(workspace, 'opencode.json'), plugin).changed)
+      throw new Error('Setup was not idempotent');
+  }
   writeFileSync(join(dir, 'models.json'), '{}');
   let execution;
   try {
