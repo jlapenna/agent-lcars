@@ -74,6 +74,37 @@ export function outcomeWebhookFor(
   return isOutcomeWebhookTarget(entry) ? entry : undefined;
 }
 
+/**
+ * Startup counterpart of {@link outcomeWebhookFor} (#2033). The drain stays
+ * tolerant so a bad config can never break settlement, but that tolerance
+ * also made a typo'd map silently disable every outcome delivery. Checking
+ * the whole map once at boot turns that into a visible deploy failure; an
+ * absent or empty value is still a valid "no outbound targets" deployment.
+ */
+export function validateOutcomeWebhooks(): void {
+  const raw = optional('AGENT_LCARS_OUTCOME_WEBHOOKS');
+  if (raw === undefined || raw.trim() === '') return;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('AGENT_LCARS_OUTCOME_WEBHOOKS is not valid JSON');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      'AGENT_LCARS_OUTCOME_WEBHOOKS must be a JSON object keyed by origin channel',
+    );
+  }
+  for (const [channel, entry] of Object.entries(parsed)) {
+    if (!isOutcomeWebhookTarget(entry)) {
+      throw new Error(
+        `AGENT_LCARS_OUTCOME_WEBHOOKS entry ${JSON.stringify(channel)} must have a non-empty url and audience`,
+      );
+    }
+  }
+}
+
 let cachedAuth: GoogleAuth | undefined;
 function runtimeAuth(): GoogleAuth {
   return (cachedAuth ??= new GoogleAuth());
