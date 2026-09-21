@@ -23,24 +23,36 @@ const (
 	statsFieldIdleRunners       = "idle_runners"
 )
 
-// scaleSetStatsRecorder implements listener.MetricsRecorder for one scale
-// set's listener session (agent-lcars#1716). It exports the full
-// RunnerScaleSetStatistic that the library's own discard recorder throws
-// away: the incident that motivated this file had a scale set's listener
-// healthy and polling on schedule while GitHub silently stopped routing it
-// queued jobs. Every dashboard read "no demand" because only
-// TotalAssignedJobs ever left the listener (into HandleDesiredRunnerCount),
-// and TotalAssignedJobs is necessarily 0 for a job GitHub never assigned --
-// TotalAvailableJobs was the field that would have shown the truth.
+// scaleSetStatsRecorder records statistics for one scale set's listener
+// session (agent-lcars#1716). It exports the full RunnerScaleSetStatistic
+// that the scaleset library itself throws away: the incident that motivated
+// this file had a scale set's listener healthy and polling on schedule
+// while GitHub silently stopped routing it queued jobs. Every dashboard
+// read "no demand" because only TotalAssignedJobs ever left the listener
+// (into HandleDesiredRunnerCount), and TotalAssignedJobs is necessarily 0
+// for a job GitHub never assigned -- TotalAvailableJobs was the field that
+// would have shown the truth.
+//
+// Through scaleset v0.4.1-0.20260911130003-21ecccd60efb this recorder
+// implemented listener.MetricsRecorder and was wired in via
+// listener.WithMetricsRecorder, which called RecordStatistics/
+// RecordJobStarted/RecordJobCompleted/RecordDesiredRunners from inside
+// Listener.Run itself. Release v0.4.1-0.20260916214619 deleted
+// MetricsRecorder, Option, and WithMetricsRecorder along with the rest of
+// Listener's internal message handling (see Scaler.Scale's doc comment in
+// scaler.go). This type's methods are unchanged; only the caller moved --
+// Scaler.Scale now calls them directly, via the statsRecorder field wired
+// per session by runListenerSupervisor.
 //
 // One recorder is constructed per listener session (see
 // runListenerSupervisor in orchestrator.go), so sawInitialStatistics
-// naturally starts false on every reconnect: listener.Listener.Run calls
-// RecordStatistics exactly once with the freshly (re)created session's own
-// statistics before it ever enters its poll loop, and every call after that
-// corresponds to a real polled message. That distinction is what keeps
-// github_runner_autoscaler_scale_set_last_message_timestamp_seconds from
-// jumping to "now" immediately after a restart before any message has
+// naturally starts false on every reconnect: Scale calls RecordStatistics
+// exactly once with the freshly (re)created session's own initial
+// statistics (the synthetic message listener.Listener.Run passes before
+// polling starts) before it ever sees a polled message, and every call
+// after that corresponds to a real polled message. That distinction is what
+// keeps github_runner_autoscaler_scale_set_last_message_timestamp_seconds
+// from jumping to "now" immediately after a restart before any message has
 // actually arrived -- the exact ambiguity ("a fresh session whose initial
 // statistics reported totalAssignedJobs=0, and no JobAvailable ever
 // arrived") that hid the incident behind a healthy-looking listener.
@@ -94,9 +106,8 @@ func newScaleSetStatsRecorder(scaleSet string, sessionID uuid.UUID, logger *slog
 	return r
 }
 
-// RecordStatistics implements listener.MetricsRecorder. It is called once
-// with the initial session's own statistics and then once per subsequent
-// polled message (listener.Listener.handleStatistics).
+// RecordStatistics is called by Scaler.Scale once with the initial
+// session's own statistics and then once per subsequent polled message.
 func (r *scaleSetStatsRecorder) RecordStatistics(statistics *scaleset.RunnerScaleSetStatistic) {
 	if statistics == nil {
 		return
@@ -127,14 +138,14 @@ func (r *scaleSetStatsRecorder) RecordStatistics(statistics *scaleset.RunnerScal
 	r.checkStrandedQueueSignal(statistics, desiredRunners)
 }
 
-// RecordJobStarted and RecordJobCompleted implement listener.MetricsRecorder.
-// Both fire only from within handleMessage (never for the initial session),
-// so -- independent of the RecordStatistics initial/message distinction
-// above -- they are an unambiguous second signal that a message was
-// processed. In practice they land on the same message RecordStatistics
-// already timestamped; recording it again here is a harmless idempotent
-// overwrite with the same wall-clock second, not a competing source of
-// truth.
+// RecordJobStarted and RecordJobCompleted are called by Scaler.Scale for a
+// real polled message's JobStarted/JobCompleted entries (never for the
+// initial session), so -- independent of the RecordStatistics
+// initial/message distinction above -- they are an unambiguous second
+// signal that a message was processed. In practice they land on the same
+// message RecordStatistics already timestamped; recording it again here is
+// a harmless idempotent overwrite with the same wall-clock second, not a
+// competing source of truth.
 func (r *scaleSetStatsRecorder) RecordJobStarted(*scaleset.JobStarted) {
 	r.markMessageProcessed()
 }
@@ -147,8 +158,9 @@ func (r *scaleSetStatsRecorder) markMessageProcessed() {
 	scaleSetLastMessageTimestampGauge.WithLabelValues(r.scaleSet).Set(float64(r.now().Unix()))
 }
 
-// RecordDesiredRunners implements listener.MetricsRecorder. It deliberately
-// does NOT set github_runner_autoscaler_desired_runners: Scaler.HandleDesiredRunnerCount
+// RecordDesiredRunners is called by Scaler.Scale after each
+// HandleDesiredRunnerCount call. It deliberately does NOT set
+// github_runner_autoscaler_desired_runners: Scaler.HandleDesiredRunnerCount
 // (scaler.go) already sets that gauge from its own target-runner-count
 // computation (min(maxRunners, minRunners+count)), which is not always
 // bit-identical to the count this hook receives (e.g. a partially failed

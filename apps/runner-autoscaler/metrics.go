@@ -493,7 +493,7 @@ var (
 	}, []string{"scale_set"})
 	scaleSetStatsGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_scale_set_stats",
-		Help: "Latest RunnerScaleSetStatistic reported by the GitHub listener session, by field: available_jobs, acquired_jobs, assigned_jobs, running_jobs, registered_runners, busy_runners, idle_runners. Updated from every listener.MetricsRecorder.RecordStatistics call (the initial session and every subsequent message). See README's stranded-queue signature and agent-lcars#1716.",
+		Help: "Latest RunnerScaleSetStatistic reported by the GitHub listener session, by field: available_jobs, acquired_jobs, assigned_jobs, running_jobs, registered_runners, busy_runners, idle_runners. Updated from every scaleSetStatsRecorder.RecordStatistics call (the initial session and every subsequent message). See README's stranded-queue signature and agent-lcars#1716.",
 	}, []string{"scale_set", "field"})
 	scaleSetLastMessageTimestampGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_scale_set_last_message_timestamp_seconds",
