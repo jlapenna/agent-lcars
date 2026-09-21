@@ -177,4 +177,4 @@ jobs:
           # Kept as an exact pin, tracked by the customManager in this
           # repo's own renovate.json (hosted Renovate keeps it fresh, same
           # as any other third-party pin in this repo).
-          renovate-version: '44.104.0' # renovate: datasource=docker depName=ghcr.io/renovatebot/renovate
+          renovate-version: '44.104.1' # renovate: datasource=docker depName=ghcr.io/renovatebot/renovate

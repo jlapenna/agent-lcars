@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/actions/scaleset"
+	"github.com/actions/scaleset/listener"
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -3363,6 +3365,160 @@ func TestHandleJobStartedUntrackedRunnerStillWarns(t *testing.T) {
 	logged := logBuf.String()
 	if !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "Received job started for untracked runner") {
 		t.Fatalf("expected the existing WARN \"Received job started for untracked runner\" log, got: %s", logged)
+	}
+}
+
+// fakeMessageSessionClient stands in for the *scaleset.MessageSessionClient
+// that runListenerSupervisor wires onto Scaler.messageSessionClient. Only
+// AcquireJobs is exercised by these tests; the rest exist to satisfy
+// listener.Client.
+type fakeMessageSessionClient struct {
+	acquireCalls [][]int64
+	acquireErr   error
+}
+
+func (f *fakeMessageSessionClient) GetMessage(context.Context, int, int) (*scaleset.RunnerScaleSetMessage, error) {
+	return nil, nil
+}
+func (f *fakeMessageSessionClient) DeleteMessage(context.Context, int) error { return nil }
+func (f *fakeMessageSessionClient) AcquireJobs(_ context.Context, requestIDs []int64) ([]int64, error) {
+	f.acquireCalls = append(f.acquireCalls, requestIDs)
+	if f.acquireErr != nil {
+		return nil, f.acquireErr
+	}
+	return requestIDs, nil
+}
+func (f *fakeMessageSessionClient) Session() scaleset.RunnerScaleSetSession {
+	return scaleset.RunnerScaleSetSession{}
+}
+
+var _ listener.Client = (*fakeMessageSessionClient)(nil)
+
+// TestScaleNilMessageReconvergesFromCachedQueuedJobs covers Scale's
+// replacement for the old Listener.Run's nil-message branch (removed in
+// scaleset v0.4.1-0.20260916214619): an idle long poll must still drive
+// HandleDesiredRunnerCount using the last-seen assigned-job count, now
+// read back from queuedJobs instead of the listener's own deleted
+// latestStatistics field. draining=true lets HandleDesiredRunnerCount
+// short-circuit before touching a real Docker host or scalesetClient.
+func TestScaleNilMessageReconvergesFromCachedQueuedJobs(t *testing.T) {
+	scaler := &Scaler{
+		scaleSetName: "nil-message",
+		maxRunners:   5,
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	scaler.draining.Store(true)
+	scaler.queuedJobs.Store(3) // simulates the value the last real message cached.
+
+	before := testutil.ToFloat64(placementsRefusedDrainingTotal.WithLabelValues("nil-message"))
+	if err := scaler.Scale(context.Background(), nil); err != nil {
+		t.Fatalf("Scale(nil) error = %v", err)
+	}
+	if got := testutil.ToFloat64(placementsRefusedDrainingTotal.WithLabelValues("nil-message")) - before; got != 1 {
+		t.Fatalf("placementsRefusedDrainingTotal delta = %v, want 1 (Scale(nil) must still call HandleDesiredRunnerCount)", got)
+	}
+	if got := testutil.ToFloat64(desiredRunnersGauge.WithLabelValues("nil-message")); got != 3 {
+		t.Fatalf("desiredRunnersGauge = %v, want 3 (min(maxRunners, minRunners+cached queuedJobs))", got)
+	}
+}
+
+// TestScaleHandlesFullMessage exercises Scale's happy path end to end: it
+// must acquire every available job through messageSessionClient (the
+// library's own Listener.acquireAvailableJobs, removed in scaleset
+// v0.4.1-0.20260916214619), forward statistics to statsRecorder (the
+// removed listener.MetricsRecorder hook's replacement), and still run the
+// existing HandleJobStarted/HandleJobCompleted/HandleDesiredRunnerCount
+// bodies unchanged. draining=true again avoids needing a real Docker host.
+func TestScaleHandlesFullMessage(t *testing.T) {
+	var logBuf bytes.Buffer
+	fakeSession := &fakeMessageSessionClient{}
+	statsRecorder := newScaleSetStatsRecorder("scale-full", uuid.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	scaler := &Scaler{
+		scaleSetName:         "scale-full",
+		maxRunners:           5,
+		runners:              runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:               slog.New(slog.NewTextHandler(&logBuf, nil)),
+		messageSessionClient: fakeSession,
+		statsRecorder:        statsRecorder,
+	}
+	scaler.draining.Store(true)
+
+	message := &scaleset.RunnerScaleSetMessage{
+		MessageID: 5,
+		Statistics: &scaleset.RunnerScaleSetStatistic{
+			TotalAvailableJobs: 2,
+			TotalAssignedJobs:  1,
+		},
+		JobAvailableMessages: []*scaleset.JobAvailable{
+			{JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 101}},
+			{JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 102}},
+		},
+		JobStartedMessages: []*scaleset.JobStarted{
+			{JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 201, JobID: "job-started"}},
+		},
+		JobCompletedMessages: []*scaleset.JobCompleted{
+			{JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 202, JobID: "job-completed"}},
+		},
+	}
+
+	if err := scaler.Scale(context.Background(), message); err != nil {
+		t.Fatalf("Scale() error = %v", err)
+	}
+
+	if len(fakeSession.acquireCalls) != 1 || !slices.Equal(fakeSession.acquireCalls[0], []int64{101, 102}) {
+		t.Fatalf("AcquireJobs calls = %v, want a single call with [101 102]", fakeSession.acquireCalls)
+	}
+
+	if got := testutil.ToFloat64(scaleSetStatsGauge.WithLabelValues("scale-full", statsFieldAvailableJobs)); got != 2 {
+		t.Errorf("scale_set_stats{available_jobs} = %v, want 2 (Scale must forward Statistics to statsRecorder)", got)
+	}
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "Job started without an assigned runner") {
+		t.Errorf("expected HandleJobStarted to run via Scale, got log: %s", logged)
+	}
+	if !strings.Contains(logged, "Job completed without an assigned runner") {
+		t.Errorf("expected HandleJobCompleted to run via Scale, got log: %s", logged)
+	}
+
+	if got := testutil.ToFloat64(placementsRefusedDrainingTotal.WithLabelValues("scale-full")); got != 1 {
+		t.Fatalf("placementsRefusedDrainingTotal = %v, want 1 (Scale must still call HandleDesiredRunnerCount from message.Statistics)", got)
+	}
+}
+
+// TestScaleAcquireJobsFailureAbortsBeforeJobHandling covers the error path:
+// a failed AcquireJobs must stop Scale before it touches
+// JobStarted/JobCompleted/HandleDesiredRunnerCount, mirroring the old
+// Listener.acquireAvailableJobs's own early return.
+func TestScaleAcquireJobsFailureAbortsBeforeJobHandling(t *testing.T) {
+	fakeSession := &fakeMessageSessionClient{acquireErr: errors.New("acquire failed")}
+	scaler := &Scaler{
+		scaleSetName:         "scale-acquire-fail",
+		runners:              runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		messageSessionClient: fakeSession,
+	}
+
+	message := &scaleset.RunnerScaleSetMessage{
+		MessageID:  6,
+		Statistics: &scaleset.RunnerScaleSetStatistic{TotalAssignedJobs: 1},
+		JobAvailableMessages: []*scaleset.JobAvailable{
+			{JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 301}},
+		},
+		JobStartedMessages: []*scaleset.JobStarted{
+			{JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 302, JobID: "job-should-not-run"}},
+		},
+	}
+
+	if err := scaler.Scale(context.Background(), message); err == nil {
+		t.Fatal("Scale() error = nil, want an error from the failed AcquireJobs call")
+	}
+
+	before := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("scale-acquire-fail"))
+	if before != 0 {
+		t.Fatalf("jobs_completed_unassigned_total{scale-acquire-fail} = %v, want 0 (HandleJobStarted must not run after AcquireJobs fails)", before)
 	}
 }
 

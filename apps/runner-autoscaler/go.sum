@@ -18,6 +18,8 @@ github.com/actions/scaleset v0.4.1-0.20260721134647-cb0405b2d874 h1:Lcss8PBqiq0T
 github.com/actions/scaleset v0.4.1-0.20260721134647-cb0405b2d874/go.mod h1:+Ylz7IYPnOTJd8dZmMziJ7J9HEfZhdoH7iliEWSb/Ms=
 github.com/actions/scaleset v0.4.1-0.20260911130003-21ecccd60efb h1:Aw3A3kjeweLN7LL9Xn3abp56eor45VKIUq2ISsydfNI=
 github.com/actions/scaleset v0.4.1-0.20260911130003-21ecccd60efb/go.mod h1:KOtL2Kh81PYbw/3/UYYU3BfCfVYx+/Q4vSJLK4Vu1aY=
+github.com/actions/scaleset v0.4.1-0.20260916214619-e6daac702355 h1:+DtFsbhUIxDt1vJL+xMPCPTZzE7nw+K4KTqqwUOFqIc=
+github.com/actions/scaleset v0.4.1-0.20260916214619-e6daac702355/go.mod h1:KOtL2Kh81PYbw/3/UYYU3BfCfVYx+/Q4vSJLK4Vu1aY=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=
@@ -41,6 +43,8 @@ github.com/docker/cli v29.7.2+incompatible h1:dlkwallR8XqfeVnA2ELEhdwvb4lsSwuB4I
 github.com/docker/cli v29.7.2+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
 github.com/docker/cli v29.8.0+incompatible h1:ih0c2jq/nN7QfES8zIfwSzIhRScjs4ehER+kZ60aeSk=
 github.com/docker/cli v29.8.0+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
+github.com/docker/cli v29.8.1+incompatible h1:qYL1bCp6cRw2SB1xmLlIOPyV171dilw9W2Jew38vy9c=
+github.com/docker/cli v29.8.1+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
 github.com/docker/docker v28.5.2+incompatible h1:DBX0Y0zAjZbSrm1uzOkdr1onVghKaftjlSWt4AFexzM=
 github.com/docker/docker v28.5.2+incompatible/go.mod h1:eEKB0N0r5NX/I1kEveEz05bcu8tLC/8azJZsviup8Sk=
 github.com/docker/go-connections v0.7.0 h1:6SsRfJddP22WMrCkj19x9WKjEDTB+ahsdiGYf0mN39c=

@@ -824,8 +824,19 @@ func runListenerSupervisor(ctx context.Context, runtime *scaleSetRuntime, logger
 					ScaleSetID: runtime.scaler.scaleSetID,
 					MaxRunners: runtime.config.MaxRunners,
 					Logger:     runtime.scaler.logger.With("component", "listener"),
-				}, listener.WithMetricsRecorder(statsRecorder))
+				})
 				if listenerErr == nil {
+					// scaleset v0.4.1-0.20260916214619 removed
+					// listener.WithMetricsRecorder (and the Option/MetricsRecorder
+					// types) along with the rest of Listener's internal message
+					// handling -- see Scaler.Scale's doc comment in scaler.go. Wire
+					// this session's message client and stats recorder directly onto
+					// the Scaler instead of through a constructor option; Run only
+					// ever calls back into Scale synchronously from this same
+					// goroutine, so plain field assignment (no mutex) is safe here,
+					// same as scaleSetID/scalesetClient above.
+					runtime.scaler.messageSessionClient = session
+					runtime.scaler.statsRecorder = statsRecorder
 					listenerUpGauge.WithLabelValues(runtime.config.ScaleSetName).Set(1)
 					orchestratorListenerStates.Store(runtime.config.ScaleSetName, true)
 					listenerErr = setListener.Run(ctx, runtime.scaler)

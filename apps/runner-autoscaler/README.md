@@ -136,8 +136,9 @@ outside this change's App-permission constraint.
 
 ## Scale-set listener statistics
 
-Each scale set's listener session implements `listener.MetricsRecorder`
-(`scale_set_stats_recorder.go`) and exports the full
+Each scale set's listener session records its own statistics via
+`scaleSetStatsRecorder` (`scale_set_stats_recorder.go`), invoked directly
+from `Scaler.Scale` (`scaler.go`), and exports the full
 `RunnerScaleSetStatistic` GitHub sends it, rather than discarding everything
 but the assigned-job count the scaler already consumes:
 

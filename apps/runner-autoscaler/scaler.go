@@ -95,8 +95,25 @@ type Scaler struct {
 	// cordons it immediately so no new work can land there.
 	placementHosts []DockerHost
 	scalesetClient *scaleset.Client
-	minRunners     int
-	maxRunners     int
+	// messageSessionClient is the current listener session's own client,
+	// wired by runListenerSupervisor immediately before each listener.Run
+	// call. Before scaleset v0.4.1-0.20260916214619, Listener.Run acquired
+	// available jobs itself via this same client; that method was removed
+	// along with the rest of its internal message handling, so Scale (below)
+	// now calls AcquireJobs directly. Like statsRecorder below, it is read
+	// only from within Scale, which Run calls synchronously from the same
+	// goroutine that assigns this field -- no mutex needed.
+	messageSessionClient listener.Client
+	// statsRecorder is the current listener session's statistics recorder
+	// (scale_set_stats_recorder.go), wired the same way and for the same
+	// reason as messageSessionClient: scaleset v0.4.1-0.20260916214619
+	// removed listener.WithMetricsRecorder and the MetricsRecorder/Option
+	// types it configured, so Scale forwards to it directly instead. Nil is
+	// tolerated (Scale no-ops the forwarding calls) so tests can exercise
+	// Scale without constructing a recorder.
+	statsRecorder *scaleSetStatsRecorder
+	minRunners    int
+	maxRunners    int
 	// queuedJobs is GitHub's latest desired-count signal: jobs waiting for
 	// this scale set, before minRunners' warm capacity is added.
 	queuedJobs atomic.Int64
@@ -824,6 +841,115 @@ func (a *Scaler) runnersChanged() {
 	a.updateRunnerMetrics()
 	a.updateSchedulerDemand(time.Now())
 	a.checkpoint()
+}
+
+// Scale implements listener.Scaler
+// (github.com/actions/scaleset@v0.4.1-0.20260916214619-e6daac702355/listener/listener.go:121-123).
+//
+// Before that scaleset release, listener.Listener.Run/handleMessage did all
+// of this internally: it tracked the latest RunnerScaleSetStatistic itself,
+// called Client.AcquireJobs for any JobAvailable messages, dispatched
+// JobStarted/JobCompleted messages to a 3-method listener.Scaler
+// (HandleJobStarted/HandleJobCompleted/HandleDesiredRunnerCount), and pushed
+// the same events to an optional listener.MetricsRecorder configured via
+// listener.WithMetricsRecorder. That release deleted MetricsRecorder,
+// Option, WithMetricsRecorder, and Listener.acquireAvailableJobs/
+// handleStatistics/handleMessage outright (see the module diff at
+// listener.go:53-182 across v0.4.1-0.20260911130003-21ecccd60efb ->
+// v0.4.1-0.20260916214619-e6daac702355) and collapsed the Scaler interface
+// to this single method, handed the raw *scaleset.RunnerScaleSetMessage (or
+// nil on an idle long poll) once per poll -- see the new interface's own doc
+// comment (listener.go:101-120).
+//
+// Scale reproduces the removed logic here so behaviour is unchanged: the
+// three Handle* methods below are kept as plain methods (not required by
+// any interface anymore) with their existing bodies and existing test
+// coverage untouched, and statsRecorder takes the place of the removed
+// MetricsRecorder hook -- see messageSessionClient/statsRecorder's doc
+// comments on the Scaler struct for how those get wired per listener
+// session.
+//
+// One behavioural change is inherent to the new API and not something this
+// method can paper over: the old Listener called DeleteMessage BEFORE
+// invoking any handler, so a crash mid-processing could never redeliver a
+// message. The new Listener.Run only acks (DeleteMessage) AFTER Scale
+// returns nil, so an error here now leaves the message queued for
+// redelivery -- at-least-once instead of at-most-once. HandleJobStarted and
+// HandleJobCompleted already tolerate a duplicate/replayed message (see
+// their own "already-busy runner" / "unassigned runner" branches, hit
+// routinely today by GitHub's own cancel/re-dispatch replays per
+// agent-lcars#1687), so this is a safety improvement, not a new hazard.
+func (a *Scaler) Scale(ctx context.Context, message *scaleset.RunnerScaleSetMessage) error {
+	if message == nil {
+		// A long poll that timed out with no activity. The new listener no
+		// longer tracks the last-seen statistics itself (the old
+		// latestStatistics field and handleStatistics method are both gone);
+		// queuedJobs already caches the same TotalAssignedJobs value
+		// HandleDesiredRunnerCount was last called with, so reuse it here to
+		// keep converging on an idle scale set exactly like the old
+		// Listener.Run's nil-message branch did.
+		if _, err := a.HandleDesiredRunnerCount(ctx, int(a.queuedJobs.Load())); err != nil {
+			return fmt.Errorf("handling nil message failed: %w", err)
+		}
+		return nil
+	}
+
+	if a.statsRecorder != nil {
+		a.statsRecorder.RecordStatistics(message.Statistics)
+	}
+
+	if len(message.JobAvailableMessages) > 0 {
+		if err := a.acquireAvailableJobs(ctx, message.JobAvailableMessages); err != nil {
+			return fmt.Errorf("failed to acquire available jobs: %w", err)
+		}
+	}
+
+	for _, jobStarted := range message.JobStartedMessages {
+		if a.statsRecorder != nil {
+			a.statsRecorder.RecordJobStarted(jobStarted)
+		}
+		if err := a.HandleJobStarted(ctx, jobStarted); err != nil {
+			return fmt.Errorf("failed to handle job started: %w", err)
+		}
+	}
+	for _, jobCompleted := range message.JobCompletedMessages {
+		if a.statsRecorder != nil {
+			a.statsRecorder.RecordJobCompleted(jobCompleted)
+		}
+		if err := a.HandleJobCompleted(ctx, jobCompleted); err != nil {
+			return fmt.Errorf("failed to handle job completed: %w", err)
+		}
+	}
+
+	desiredCount, err := a.HandleDesiredRunnerCount(ctx, message.Statistics.TotalAssignedJobs)
+	if err != nil {
+		return fmt.Errorf("failed to handle desired runner count: %w", err)
+	}
+	if a.statsRecorder != nil {
+		a.statsRecorder.RecordDesiredRunners(desiredCount)
+	}
+	return nil
+}
+
+// acquireAvailableJobs reproduces the old Listener.acquireAvailableJobs,
+// removed in scaleset v0.4.1-0.20260916214619 (see Scale's doc comment
+// above): tell GitHub this scale set wants every job it has offered, or
+// those jobs stay unassigned forever. messageSessionClient is this
+// listener session's own client (the same one the library used to call
+// internally), wired by runListenerSupervisor before Run starts.
+func (a *Scaler) acquireAvailableJobs(ctx context.Context, jobsAvailable []*scaleset.JobAvailable) error {
+	ids := make([]int64, 0, len(jobsAvailable))
+	for _, job := range jobsAvailable {
+		ids = append(ids, job.RunnerRequestID)
+	}
+
+	a.logger.Info("Acquiring jobs", slog.Int("count", len(ids)))
+	acquired, err := a.messageSessionClient.AcquireJobs(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("acquiring jobs: %w", err)
+	}
+	a.logger.Info("Jobs acquired", slog.Int("count", len(acquired)))
+	return nil
 }
 
 func (a *Scaler) updateSchedulerDemand(now time.Time) {
