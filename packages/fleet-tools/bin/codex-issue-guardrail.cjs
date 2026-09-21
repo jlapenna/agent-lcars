@@ -300,7 +300,16 @@ function evaluateIssue(reference, dependencies) {
   return violations;
 }
 
-function runHook(input, dependencies) {
+// Dispatch identity is explicit. A non-TTY, CI=true, or a provider session
+// identifier also occurs in maintainer sessions and is not fleet authority.
+function isFleetDispatch(env = process.env) {
+  return [env.LCARS_RUN_ID, env.AGENT_DISPATCH_CONTEXT].some(
+    (value) => typeof value === 'string' && value.trim().length > 0,
+  );
+}
+
+function runHook(input, dependencies, env = process.env) {
+  if (!isFleetDispatch(env)) return null;
   const references = extractIssueReferences(
     input?.tool_input?.command,
     dependencies,
@@ -324,7 +333,7 @@ function runHook(input, dependencies) {
   }
   if (kinds.has('unclaimed')) {
     guidance.push(
-      'Before continuing hands-on work, claim the issue and post a session takeover comment.',
+      'Check the dispatch brief before continuing hands-on work. The console owns the anchor claim and takeover; follow agent-protocol and do not claim unrelated issues merely because you inspected them.',
     );
   }
   return {
@@ -340,6 +349,7 @@ function runHook(input, dependencies) {
 }
 
 function main() {
+  if (!isFleetDispatch()) return;
   const chunks = [];
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk) => chunks.push(chunk));
@@ -369,6 +379,7 @@ if (require.main === module) main();
 
 module.exports = {
   evaluateIssue,
+  isFleetDispatch,
   extractIssueNumbers,
   extractIssueReferences,
   runHook,
