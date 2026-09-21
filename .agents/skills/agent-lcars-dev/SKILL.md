@@ -18,6 +18,15 @@ monorepo, Node 24, pnpm 11).
 
 These override any default behavior:
 
+- **Execution mode is a hard boundary.** Interactive maintainer sessions follow
+  the user's request and use the conversation for progress and decisions.
+  Autonomous-only claim, takeover, dispatch-marker, parking, provider-handoff,
+  and status-cadence requirements must not be imposed on them, even when
+  another skill links to the headless protocol. Only explicitly dispatched
+  LCARS workers follow `agent-protocol`. Working in this repository, generic
+  CI flags, and piped tool input do not establish a dispatch. Shared checkout,
+  secret, verification, and operation-approval rules below apply in both modes.
+
 - **Checkout safety — worktrees are mandatory, not optional**: the primary
   checkout is shared state and reserved for a clean `main`. Before editing
   files or running a git-mutating command (`branch`, `commit`, `push`,
@@ -131,7 +140,7 @@ These override any default behavior:
     A claim records your intent; it does not stop anyone else. #1686 lost a
     seven-task implementation that way: the issue was closed by someone else's
     PR hours before, and the collision only surfaced when a rebase hit a
-    content conflict at the very end. The guardrail hook now flags routing an
+    content conflict at the very end. The dispatched guardrail hook flags routing an
     already-closed issue, but it only sees `gh` commands -- a long
     implementation that does not touch `gh` for hours is invisible to it. So
     on any run of that length, re-read the issue before opening the PR:
