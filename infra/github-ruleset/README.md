@@ -9,9 +9,11 @@ The ruleset is intentionally self-contained. That keeps the repository's
 policy reviewable here and lets fork PRs initialize and validate it without a
 credential for another private fleet repository.
 
-Do not run an unconfigured local apply. The migration runbook will first move
-the live ruleset state from Homelab without destroying the ruleset, then run a
-reviewed, zero-diff plan through the central executor.
+The live ruleset (id 19524095) was imported into this root's isolated state
+prefix and removed from Homelab's former shared module state without changing
+or recreating the GitHub resource. Do not run an unconfigured local apply.
+Plans, approved applies, and scheduled drift checks use the trusted Homelab
+executor so credentials and backend authority remain centralized.
 
 Repository CI initializes, formats, validates, and checks this root's local
 contract. Only the centralized executor receives backend and state access.

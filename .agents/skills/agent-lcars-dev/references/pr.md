@@ -38,11 +38,12 @@
    practice, and a violation names the rule without saying which system
    raised it, so the failure reads like a broken flag rather than policy.
 
-   The ruleset itself is codified in the **homelab** repo's terraform
-   root (`homelab/terraform/github_rulesets.tf`'s `protect-main` module —
-   unified fleet governance, homelab#523; issue #900 has the history) —
-   change branch protection there and go through a reviewed
-   `plan`/`apply`, not by hand through the GitHub UI or API. See
+   The ruleset itself is codified in this repository's
+   [`infra/github-ruleset`](../../../../infra/github-ruleset/) root. Homelab
+   supplies the trusted credentials, isolated backend configuration, reviewed
+   operator pathway, and scheduled drift check; it does not own this repo's
+   policy declaration. Change branch protection here and use that centralized
+   `plan`/approved-apply path, not the GitHub UI or API. See
    [`infra/terraform/README.md`](../../../../infra/terraform/README.md#github-ruleset-protect-main)
    for the hand-over record and the admin-bypass hazard.
 
