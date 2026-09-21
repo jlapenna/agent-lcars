@@ -6,6 +6,9 @@ for all three providers, and a Claude/Codex failure-to-denial bridge are
 implemented. Idempotent Claude/Codex command registration is exercised by the
 native probes. The initial shared policy handles literal Git/PR mutations and
 native file-edit tools with mode, worktree and fresh GitHub ownership decisions.
+It repairs omitted attempt markers on supported new PR/comment/review commands;
+native probes check that the repaired body reaches the local transport.
+An OpenCode adapter translates tool events into the same shared policy.
 Runner setup integration, remaining policy controls, bounded recovery/completion
 and full acceptance canaries remain to be built and verified.
 
@@ -47,10 +50,19 @@ invented issue claim. Read-only operations do not trigger those reads.
 
 This is partial coverage: scripts, shell expansion, pipelines/redirection,
 indirect command wrappers, arbitrary HTTP/MCP writes, patch target extraction,
-review-hold evaluation and marker repair are not implemented by this handler.
+and review-hold evaluation are not implemented by this handler.
 In particular, recognizing `ready/merge` does not yet enforce review holds.
 The focused policy tests feed the required Verify contract lane; they do not
 qualify a provider or authorize enabling the incomplete handler in dispatch.
+
+Marker repair currently covers a single literal `gh pr create`, `gh issue
+comment`, `gh pr comment` or `gh pr review` command with one explicit body or
+regular body file. It resolves the repository and requires an exact anchor for
+comments/reviews. Other repositories/anchors and existing-object edits are not
+stamped. Body files remain unchanged; the replacement command receives the
+original text plus the exact marker. Ambiguous flags, streaming bodies and
+foreign attempt claims are rejected with correction instructions. Compound
+shell publication commands and arbitrary API writes are not covered yet.
 
 ## Setup ownership and runtime behavior
 
@@ -167,12 +179,20 @@ independently checks tool-result delivery, hook invocation and the actual file:
 - Deny: hook runs and the sentinel does not exist.
 - Dependency failure: a thrown hook error prevents the sentinel write.
 - Missing hook: the sentinel exists, exposing the need for LCARS admission.
+- Shared policy marker: the local GitHub-transport fixture receives the exact
+  repaired comment body through `worker-opencode-plugin.mjs`.
+- Shared policy ownership loss: the fixture reports a closed anchor and no
+  publication occurs.
+- Shared policy lookup failure: a failed ownership read prevents publication.
 
 Exit zero means these native behaviors were observed, **not** that the
 mandatory LCARS canary suite passed. This probe deliberately reports
 `qualification: "not-evaluated"`; it must not be converted to a passing
-readiness report. It does not yet test completion, ownership, marker repair,
-recovery, timeout handling, or the installed runner image as a whole.
+readiness report. It does not yet test completion, recovery, timeout handling,
+or the installed runner image as a whole. OpenCode argument repair must mutate
+the existing `output.args` object: a native probe caught that replacing the
+object left the original command unchanged. The policy adapter is not yet
+registered by runner setup.
 
 The hook API comes from the [OpenCode plugin reference](https://opencode.ai/docs/plugins/).
 The missing-hook behavior must be prevented by setup installation and its
@@ -218,20 +238,26 @@ node tools/probes/command-hook-boundary.mjs claude /absolute/path/to/claude '2.1
 Like the OpenCode probe, this uses isolated homes, a deterministic localhost
 model, explicit version matching and an independently observed sentinel write.
 The raw-hook cases measure allow, deny, exception and omission. The bridge
-cases measure allowed execution, handler exception and a handler that hangs.
+cases measure allowed execution, handler exception, a handler that hangs,
+command rewriting, and the real policy's marker repair before a local
+GitHub-transport fixture receives a comment body.
 
 On the tested Codex 0.155.1 and Claude Code 2.1.278, raw command-hook exceptions
 allowed the requested action. The shared `worker-hook-bridge.cjs` instead
 converted exceptions and its five-second handler timeout into explicit native
 PreToolUse denials; the actual CLI then prevented both sentinel writes. The
-allowed case still executed. These seven observations passed on each CLI.
+allowed case still executed. All nine observations passed on each CLI,
+including an exact repaired marker in the independently captured comment body.
 Runner image qualification must record the versions actually baked into that
 image; the image currently installs current Claude/Codex releases at build.
 
 The bridge is silent outside explicit LCARS context and does not read stdin or
 invoke its handler for an interactive session. It validates a narrow allow/deny
-output schema, suppresses potentially sensitive handler diagnostics, and does
-not yet support tool-input rewriting. Setup must register an outer hook timeout
+output schema and suppresses potentially sensitive handler diagnostics. It
+accepts only the native Bash `updatedInput.command` rewrite proven by these
+probes; malformed or unsupported rewrites become denials. This follows the
+[Codex PreToolUse contract](https://learn.chatgpt.com/docs/hooks#pretooluse).
+Setup must register an outer hook timeout
 longer than the bridge timeout. Handler paths come from setup, not task content.
 The bridge is not yet installed in worker launch configuration, and it does not
 implement ownership, worktree, marker, or review-hold policy itself.

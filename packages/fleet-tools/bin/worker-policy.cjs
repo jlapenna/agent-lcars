@@ -240,6 +240,11 @@ function operations(input) {
           cwd: directory,
         });
       }
+      if (
+        (['pr', 'issue'].includes(resource) && verb === 'comment') ||
+        (resource === 'pr' && verb === 'review')
+      )
+        result.push({ kind: 'artifact', cwd: directory });
     }
   }
   return result;
@@ -278,10 +283,164 @@ function readOwnership(context) {
   );
 }
 
+// Repair only newly created, explicitly scoped deliverables. Never stamp an
+// existing object, infer a target from a branch, or edit a worker's body file.
+function repairArtifact(input, context, dependencies = {}) {
+  if (input.tool_name !== 'Bash') return null;
+  const commands = literalCommands(input.tool_input?.command);
+  if (!commands || commands.length !== 1) return null;
+  const words = commands[0];
+  if (path.basename(words[0] ?? '') !== 'gh') return null;
+  const [resource, verb] = words.slice(1);
+  if (!(
+    (resource === 'pr' && ['create', 'comment', 'review'].includes(verb)) ||
+    (resource === 'issue' && verb === 'comment')
+  ))
+    return null;
+  const args = words.slice(3);
+  const positional = [];
+  const flags = new Map();
+  const switches = new Set(
+    verb === 'review'
+      ? ['--approve', '-a', '--request-changes', '-r', '--comment', '-c']
+      : ['--draft', '-d'],
+  );
+  const values = new Set([
+    '--repo',
+    '-R',
+    '--body',
+    '-b',
+    '--body-file',
+    '-F',
+    '--title',
+    '-t',
+    '--base',
+    '-B',
+    '--head',
+    '-H',
+    '--label',
+    '-l',
+    '--assignee',
+    '--reviewer',
+    '--milestone',
+    '--project',
+    ...(verb === 'create' ? ['-a', '-r'] : []),
+  ]);
+  const retained = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (switches.has(arg)) {
+      retained.push(arg);
+      continue;
+    }
+    const equal = arg.indexOf('=');
+    const flag = equal > 0 ? arg.slice(0, equal) : arg;
+    if (values.has(flag)) {
+      const value = equal > 0 ? arg.slice(equal + 1) : args[++i];
+      if (value === undefined || flags.has(flag))
+        throw new Error('Ambiguous artifact arguments');
+      flags.set(flag, value);
+      if (!['--body', '-b', '--body-file', '-F'].includes(flag))
+        retained.push(flag, value);
+    } else if (arg.startsWith('-')) {
+      // Includes edit-last/delete-last, fill/editor, web and inherited flags
+      // whose publication semantics have not been qualified.
+      throw new Error('Unsupported artifact flag');
+    } else {
+      positional.push(arg);
+      retained.push(arg);
+    }
+  }
+  const repositories = ['--repo', '-R'].filter((flag) => flags.has(flag));
+  if (repositories.length > 1) throw new Error('Ambiguous repository');
+  const repository = repositories.length
+    ? flags.get(repositories[0])
+    : (
+        dependencies.readRepository ??
+        ((cwd) =>
+          execFileSync(
+            'gh',
+            [
+              'repo',
+              'view',
+              '--json',
+              'nameWithOwner',
+              '--jq',
+              '.nameWithOwner',
+            ],
+            {
+              cwd,
+              timeout: 2000,
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore'],
+            },
+          ).trim())
+      )(input.cwd ?? process.cwd());
+  if (repository.toLowerCase() !== context.repository.toLowerCase())
+    return null;
+  if (verb === 'create') {
+    if (context.mode === 'review' || positional.length)
+      throw new Error('Invalid PR creation for dispatch');
+  } else {
+    if (
+      context.anchor.type === 'work' ||
+      positional.length !== 1 ||
+      positional[0] !== String(context.anchor.number)
+    )
+      return null;
+    if (resource === 'issue' && context.anchor.type !== 'issue') return null;
+    if (resource === 'pr' && context.anchor.type !== 'pull-request')
+      return null;
+  }
+  const bodies = ['--body', '-b', '--body-file', '-F'].filter((flag) =>
+    flags.has(flag),
+  );
+  if (bodies.length !== 1) throw new Error('Use one explicit artifact body');
+  const bodyFlag = bodies[0];
+  let body = flags.get(bodyFlag);
+  if (['--body-file', '-F'].includes(bodyFlag)) {
+    if (body === '-')
+      throw new Error('Streaming artifact bodies require an explicit file');
+    const file = path.resolve(input.cwd ?? process.cwd(), body);
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size > 65536)
+      throw new Error('Invalid artifact body file');
+    body = fs.readFileSync(file, 'utf8');
+  }
+  const marker = `<!-- attempt-claim:${context.attemptId} -->`;
+  // Foreign claims require explicit reconciliation, not relabeling authorship.
+  const claims = body.match(/<!--\s*attempt-claim:[\s\S]*?-->/g) ?? [];
+  if (claims.some((claim) => claim !== marker))
+    throw new Error('Foreign attempt marker');
+  if (body.includes(marker)) return null;
+  const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+  return {
+    command: [
+      words[0],
+      resource,
+      verb,
+      ...retained,
+      '--body',
+      `${body}\n\n${marker}`,
+    ]
+      .map(quote)
+      .join(' '),
+  };
+}
+
 function evaluate(input, context, dependencies = {}) {
   const ops = operations(input);
-  if (!ops.length) return decision('allow');
-  if (context.mode === 'review')
+  let repaired;
+  try {
+    repaired = repairArtifact(input, context, dependencies);
+  } catch {
+    return decision(
+      'deny',
+      'Deliverable marker repair needs one explicit body and an unambiguous dispatch target. Preserve the content, use --body or a regular --body-file, and reconcile foreign attempt markers before retrying.',
+    );
+  }
+  if (!ops.length && !repaired) return decision('allow');
+  if (context.mode === 'review' && ops.some((op) => op.kind !== 'artifact'))
     return decision(
       'deny',
       'This dispatch requests review, not implementation or publication. Submit the review without modifying or pushing code.',
@@ -292,7 +451,9 @@ function evaluate(input, context, dependencies = {}) {
       'Do not bypass Git hooks or use an unleased force push.',
     );
   try {
-    for (const directory of new Set(ops.map((op) => op.cwd)))
+    for (const directory of new Set(
+      ops.filter((op) => op.kind !== 'artifact').map((op) => op.cwd),
+    ))
       (dependencies.assertWorktree ?? assertWorktree)(directory);
   } catch {
     return decision(
@@ -321,7 +482,9 @@ function evaluate(input, context, dependencies = {}) {
       );
     }
   }
-  return decision('allow');
+  const allowed = decision('allow');
+  if (repaired) allowed.hookSpecificOutput.updatedInput = repaired;
+  return allowed;
 }
 
 if (require.main === module && isDispatch(process.env)) {
@@ -332,4 +495,10 @@ if (require.main === module && isDispatch(process.env)) {
   process.stdout.write(`${JSON.stringify(evaluate(input, context))}\n`);
 }
 
-module.exports = { prepareContext, literalCommands, operations, evaluate };
+module.exports = {
+  prepareContext,
+  literalCommands,
+  operations,
+  repairArtifact,
+  evaluate,
+};

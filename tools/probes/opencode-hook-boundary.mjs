@@ -12,6 +12,9 @@ import {
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
 
 const [binary, expectedVersion] = process.argv.slice(2);
 if (!binary || !expectedVersion) {
@@ -79,6 +82,36 @@ async function probe(mode) {
   const sentinel = join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
+  const usesPolicy = mode.startsWith('policy-');
+  const context = policy.prepareContext(
+    {
+      repository: 'octo/example',
+      mode: 'reply',
+      anchor: { type: 'issue', number: 42 },
+    },
+    {
+      provider: 'opencode',
+      runId: 'octo/example#42/r1',
+      attemptId: 'g1:octo/example#42/r1',
+    },
+  );
+  const contextPath = join(dir, 'worker-context.json');
+  writeFileSync(contextPath, JSON.stringify(context));
+  const fakeBin = join(dir, 'bin');
+  mkdirSync(fakeBin);
+  writeFileSync(
+    join(fakeBin, 'gh'),
+    `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'api') {
+  ${mode === 'policy-failure' ? 'process.exit(1);' : ''}
+  console.log(JSON.stringify({state:${JSON.stringify(mode === 'policy-deny' ? 'closed' : 'open')},assignees:[{login:'agent-lcars-bot'}]}));
+} else if (args[0] === 'issue' && args[1] === 'comment') {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture publication');}
+else process.exitCode = 1;
+`,
+    { mode: 0o700 },
+  );
   writeFileSync(
     plugin,
     `import { appendFileSync } from 'node:fs';
@@ -92,6 +125,20 @@ export default async () => ({
 });
 `,
   );
+  if (usesPolicy)
+    writeFileSync(
+      plugin,
+      `import {appendFileSync} from 'node:fs';
+import workerPolicy from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-opencode-plugin.mjs')).href)};
+export default async (context) => {
+  const hooks = await workerPolicy(context);
+  return {'tool.execute.before': async (input, output) => {
+    appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
+    await hooks['tool.execute.before'](input, output);
+  }};
+};
+`,
+    );
   let issued = false;
   let requests = 0;
   let returnedToolResult = false;
@@ -119,7 +166,9 @@ export default async () => ({
                 function: {
                   name: 'bash',
                   arguments: JSON.stringify({
-                    command: `touch '${sentinel}'`,
+                    command: usesPolicy
+                      ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+                      : `touch '${sentinel}'`,
                     description: 'Create harmless probe sentinel',
                   }),
                 },
@@ -184,7 +233,10 @@ export default async () => ({
       ],
       workspace,
       {
-        PATH: process.env.PATH,
+        PATH: usesPolicy ? `${fakeBin}:${process.env.PATH}` : process.env.PATH,
+        ...(usesPolicy
+          ? { LCARS_RUN_ID: context.runId, LCARS_WORKER_CONTEXT: contextPath }
+          : {}),
         HOME: home,
         XDG_CONFIG_HOME: join(home, '.config'),
         XDG_DATA_HOME: join(dir, 'data'),
@@ -205,6 +257,13 @@ export default async () => ({
   const hookInvoked =
     existsSync(receipt) && readFileSync(receipt, 'utf8').trim().length > 0;
   const effect = existsSync(sentinel);
+  let markerRepaired = false;
+  if (usesPolicy && effect) {
+    const published = JSON.parse(readFileSync(sentinel, 'utf8'));
+    markerRepaired =
+      published[published.indexOf('--body') + 1] ===
+      `Fixture deliverable\n\n<!-- attempt-claim:${context.attemptId} -->`;
+  }
   const exercised =
     execution.code === 0 && !execution.timedOut && issued && returnedToolResult;
   return {
@@ -214,20 +273,31 @@ export default async () => ({
     returnedToolResult,
     hookInvoked,
     effect,
+    markerRepaired,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
     // Missing-hook case intentionally exposes lack of native admission.
     observedExpectedPrimitive:
       exercised &&
-      (mode === 'missing'
-        ? !hookInvoked && effect
-        : hookInvoked && effect === (mode === 'allow')),
+      (mode === 'policy-marker'
+        ? hookInvoked && effect && markerRepaired
+        : mode === 'missing'
+          ? !hookInvoked && effect
+          : hookInvoked && effect === (mode === 'allow')),
   };
 }
 
 const observations = [];
-for (const mode of ['allow', 'deny', 'failure', 'missing'])
+for (const mode of [
+  'allow',
+  'deny',
+  'failure',
+  'missing',
+  'policy-marker',
+  'policy-deny',
+  'policy-failure',
+])
   observations.push(await probe(mode));
 const report = {
   provider: 'opencode',

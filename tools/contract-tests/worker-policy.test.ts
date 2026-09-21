@@ -22,6 +22,7 @@ const shell = (command: string) => ({
   cwd: '/tmp/worker',
 });
 const dependencies = () => ({
+  readRepository: vi.fn(() => 'octo/example'),
   assertWorktree: vi.fn(),
   readOwnership: vi.fn(() => ({
     state: 'open',

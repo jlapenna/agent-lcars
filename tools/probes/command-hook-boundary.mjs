@@ -2,12 +2,19 @@
 // Claude/Codex native command hooks against a deterministic localhost model.
 // No real credentials, repository writes, or full-policy qualification.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
+import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
 
 const [provider, binary, expectedVersion] = process.argv.slice(2);
 if (
@@ -77,6 +84,34 @@ async function probe(mode) {
   mkdirSync(join(home, '.claude'), { recursive: true });
   const sentinel = join(workspace, 'effect'),
     receipt = join(dir, 'receipt.json');
+  const rewrittenSentinel = join(workspace, 'rewritten-effect');
+  const policyMarker = mode === 'bridge-marker';
+  const context = policy.prepareContext(
+    {
+      repository: 'octo/example',
+      mode: 'reply',
+      anchor: { type: 'issue', number: 42 },
+    },
+    {
+      provider,
+      runId: 'octo/example#42/r1',
+      attemptId: 'g1:octo/example#42/r1',
+    },
+  );
+  const fakeBin = join(dir, 'bin');
+  mkdirSync(fakeBin);
+  // Isolated transport fixture only. No credentials or external GitHub writes.
+  writeFileSync(
+    join(fakeBin, 'gh'),
+    `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'api') console.log(JSON.stringify({state:'open',assignees:[{login:'agent-lcars-bot'}]}));
+else if (args[0] === 'issue' && args[1] === 'comment') {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture publication');}
+else process.exitCode = 1;
+`,
+    { mode: 0o700 },
+  );
   const hook = join(dir, 'hook.cjs');
   writeFileSync(
     hook,
@@ -86,6 +121,8 @@ ${mode === 'deny' ? "process.stderr.write('LCARS_PROBE_DENY'); process.exitCode 
 ${mode === 'failure' || mode === 'bridge-failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
 ${mode === 'bridge-timeout' ? 'setInterval(() => {}, 1000);' : ''}
 ${mode === 'bridge-allow' ? 'console.log(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow"}}));' : ''}
+${mode === 'bridge-rewrite' ? `console.log(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",updatedInput:{command:${JSON.stringify(`touch ${quote(rewrittenSentinel)}`)}}}}));` : ''}
+${policyMarker ? `const policy = require(${JSON.stringify(resolve('packages/fleet-tools/bin/worker-policy.cjs'))}); console.log(JSON.stringify(policy.evaluate(JSON.parse(fs.readFileSync(${JSON.stringify(receipt)}, 'utf8')), ${JSON.stringify(context)})));` : ''}
 `,
   );
   const hookConfig =
@@ -144,7 +181,9 @@ ${mode === 'bridge-allow' ? 'console.log(JSON.stringify({hookSpecificOutput:{hoo
       const toolName = provider === 'codex' ? 'exec_command' : 'Bash';
       const callTool = !issued && tools.some((tool) => tool.name === toolName);
       if (callTool) issued = true;
-      const command = `touch ${quote(sentinel)}`;
+      const command = policyMarker
+        ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+        : `touch ${quote(sentinel)}`;
       const args =
         provider === 'codex'
           ? { cmd: command, yield_time_ms: 1000 }
@@ -243,12 +282,12 @@ ${mode === 'bridge-allow' ? 'console.log(JSON.stringify({hookSpecificOutput:{hoo
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   const base = `http://127.0.0.1:${server.address().port}`;
   const env = {
-    PATH: process.env.PATH,
+    PATH: policyMarker ? `${fakeBin}:${process.env.PATH}` : process.env.PATH,
     HOME: home,
     XDG_CONFIG_HOME: join(home, '.config'),
     XDG_DATA_HOME: join(dir, 'data'),
     XDG_CACHE_HOME: join(dir, 'cache'),
-    LCARS_RUN_ID: 'work:local-boundary-probe/r1',
+    LCARS_RUN_ID: policyMarker ? context.runId : 'work:local-boundary-probe/r1',
     CODEX_HOME: join(home, '.codex'),
     CLAUDE_CONFIG_DIR: join(home, '.claude'),
     ANTHROPIC_BASE_URL: base,
@@ -306,6 +345,14 @@ code_mode = false
   writeFileSync(join(dir, 'requests.json'), JSON.stringify(observations));
   const effect = existsSync(sentinel),
     hookInvoked = existsSync(receipt);
+  const rewrittenEffect = existsSync(rewrittenSentinel);
+  let markerRepaired = false;
+  if (policyMarker && effect) {
+    const published = JSON.parse(readFileSync(sentinel, 'utf8'));
+    markerRepaired =
+      published[published.indexOf('--body') + 1] ===
+      `Fixture deliverable\n\n<!-- attempt-claim:${context.attemptId} -->`;
+  }
   const exercised =
     execution.code === 0 && !execution.timedOut && issued && returnedToolResult;
   return {
@@ -315,16 +362,22 @@ code_mode = false
     returnedToolResult,
     hookInvoked,
     effect,
+    rewrittenEffect,
+    markerRepaired,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
     observedExpectedPrimitive:
       exercised &&
-      (mode === 'missing'
-        ? !hookInvoked && effect
-        : hookInvoked &&
-          (mode === 'failure' ||
-            effect === (mode === 'allow' || mode === 'bridge-allow'))),
+      (policyMarker
+        ? hookInvoked && effect && markerRepaired
+        : mode === 'bridge-rewrite'
+          ? hookInvoked && !effect && rewrittenEffect
+          : mode === 'missing'
+            ? !hookInvoked && effect
+            : hookInvoked &&
+              (mode === 'failure' ||
+                effect === (mode === 'allow' || mode === 'bridge-allow'))),
   };
 }
 
@@ -337,6 +390,8 @@ for (const mode of [
   'bridge-allow',
   'bridge-failure',
   'bridge-timeout',
+  'bridge-rewrite',
+  'bridge-marker',
 ])
   observations.push(await probe(mode));
 const report = {

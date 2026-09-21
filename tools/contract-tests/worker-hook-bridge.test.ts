@@ -23,6 +23,43 @@ const decision = (value: unknown) =>
   `console.log(${JSON.stringify(JSON.stringify(value))});`;
 
 describe('worker hook failure transport', () => {
+  it('forwards only qualified native Bash rewrites', () => {
+    const output = {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        updatedInput: { command: 'echo repaired' },
+      },
+    };
+    expect(
+      bridge.invoke(
+        handler(decision(output)),
+        JSON.stringify({ tool_name: 'Bash' }),
+      ),
+    ).toEqual(output);
+    expect(
+      bridge.invoke(
+        handler(decision(output)),
+        JSON.stringify({ tool_name: 'mcp_unknown' }),
+      ).hookSpecificOutput.permissionDecision,
+    ).toBe('deny');
+    for (const updatedInput of [
+      null,
+      [],
+      { command: 42 },
+      { command: 'echo repaired', unknown: true },
+    ]) {
+      const invalid = {
+        hookSpecificOutput: { ...output.hookSpecificOutput, updatedInput },
+      };
+      expect(
+        bridge.invoke(
+          handler(decision(invalid)),
+          JSON.stringify({ tool_name: 'Bash' }),
+        ).hookSpecificOutput.permissionDecision,
+      ).toBe('deny');
+    }
+  });
   it.each(['allow', 'deny'])(
     'preserves explicit %s decisions',
     (permissionDecision) => {

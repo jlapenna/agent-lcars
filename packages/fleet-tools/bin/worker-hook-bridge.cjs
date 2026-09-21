@@ -49,12 +49,29 @@ function invoke(handler, input, options = {}) {
             'hookEventName',
             'permissionDecision',
             'permissionDecisionReason',
+            'updatedInput',
           ].includes(key),
       ) ||
       (decision.permissionDecisionReason !== undefined &&
         typeof decision.permissionDecisionReason !== 'string')
     ) {
       return deny();
+    }
+    if (decision.updatedInput !== undefined) {
+      const original = JSON.parse(input);
+      const updated = decision.updatedInput;
+      // Only the native Bash command rewrite is qualified by our CLI probes.
+      // Never forward a malformed rewrite: provider errors may fail open.
+      if (
+        decision.permissionDecision !== 'allow' ||
+        original.tool_name !== 'Bash' ||
+        !updated ||
+        typeof updated !== 'object' ||
+        Array.isArray(updated) ||
+        typeof updated.command !== 'string' ||
+        Object.keys(updated).some((key) => key !== 'command')
+      )
+        return deny();
     }
     return output;
   } catch {
