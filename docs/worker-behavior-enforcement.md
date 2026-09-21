@@ -1,8 +1,9 @@
 # Dispatched-worker behavior enforcement
 
 Status: implementation foundation, **not enabled in dispatch**. No provider
-has graduated. The offline readiness evaluator is implemented; real-provider
-probe drivers, adapters and runtime admission integration remain to be built.
+has graduated. The offline readiness evaluator and an OpenCode native-hook
+boundary probe are implemented; the other provider probes, policy adapters
+and runtime admission integration remain to be built.
 
 ## Scope and decisions
 
@@ -116,3 +117,37 @@ evidence refuses qualification. Contract tests run in the existing required
    control stays unqualified; report its exact gap rather than weaken the rule.
 5. Enable graduated providers, observe false rejections and recovery outcomes,
    then remove superseded prose. Interactive sessions remain a later phase.
+
+## Native OpenCode boundary probe
+
+Run the real executable against a deterministic localhost model:
+
+```sh
+node tools/probes/opencode-hook-boundary.mjs /absolute/path/to/opencode 1.18.25
+```
+
+The version must match exactly. The runner's pin is in
+`apps/runner-autoscaler/runner-image/opencode-version`; local results from
+another version are diagnostic only. The probe creates isolated temporary
+homes/workspaces and uses an allowlisted environment without real credentials.
+It retains stdout, stderr, hook receipts and observations under the printed
+temporary directory. It never publishes GitHub artifacts or changes global
+provider configuration. The CLI has a 60-second deadline per case.
+
+The localhost model requests one harmless shell sentinel write. The probe
+independently checks tool-result delivery, hook invocation and the actual file:
+
+- Allow: hook runs and the sentinel exists.
+- Deny: hook runs and the sentinel does not exist.
+- Dependency failure: a thrown hook error prevents the sentinel write.
+- Missing hook: the sentinel exists, exposing the need for LCARS admission.
+
+Exit zero means these native behaviors were observed, **not** that the
+mandatory LCARS canary suite passed. This probe deliberately reports
+`qualification: "not-evaluated"`; it must not be converted to a passing
+readiness report. It does not yet test completion, ownership, marker repair,
+recovery, timeout handling, or the installed runner image as a whole.
+
+The hook API comes from the [OpenCode plugin reference](https://opencode.ai/docs/plugins/).
+The missing-hook behavior needs a separate runtime admission check regardless
+of the native interception mechanism.
