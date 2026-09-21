@@ -89,4 +89,52 @@ describe('worker canary readiness evidence', () => {
       expect(evaluate(input, expected, now).ready).toBe(false);
     }
   });
+
+  it.each([
+    null,
+    false,
+    42,
+    [],
+    {},
+    { scenario: 'renamed', status: 'passed' },
+    { scenario: 'extra', status: 'failed' },
+    { scenario: 'extra', status: 'skipped' },
+  ])('rejects an unrecognized extra result: %j', (extra) => {
+    const input = report();
+    expect(
+      evaluate({ ...input, results: [...input.results, extra] }, expected, now)
+        .ready,
+    ).toBe(false);
+  });
+
+  it.each([
+    'September 20, 2026 11:00:00 GMT',
+    '2026-02-30T11:00:00Z',
+    '2026-09-20T24:00:00Z',
+    '2026-09-20',
+    '2026-09-20T11:00:00',
+    '2026-09-20T11:00:00+00:00',
+    0,
+    null,
+  ])('rejects noncanonical or impossible timestamps: %j', (value) => {
+    for (const key of ['startedAt', 'expiresAt']) {
+      expect(evaluate({ ...report(), [key]: value }, expected, now).ready).toBe(
+        false,
+      );
+    }
+  });
+
+  it('accepts canonical millisecond timestamps and a real leap day', () => {
+    expect(
+      evaluate(
+        {
+          ...report(),
+          startedAt: '2024-02-29T11:00:00.001Z',
+          expiresAt: '2026-09-20T13:00:00.000Z',
+        },
+        expected,
+        now,
+      ).ready,
+    ).toBe(true);
+  });
 });

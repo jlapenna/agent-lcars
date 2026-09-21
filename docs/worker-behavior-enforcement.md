@@ -93,7 +93,8 @@ The trusted canary runner supplies both files, never the worker under test.
 Expected identity has `provider` (`claude`, `codex`, `opencode`),
 `providerVersion`, `imageDigest`, `policyDigest` and `adapterDigest` strings.
 The report includes those same fields plus `schemaVersion: 1`, ISO timestamps
-`startedAt` and `expiresAt`, and `results`. Each result has `scenario`,
+`startedAt` and `expiresAt` (UTC `YYYY-MM-DDTHH:mm:ssZ`, optionally with
+exactly three fractional-second digits), and `results`. Each result has `scenario`,
 `status: "passed"`, `evidenceKind: "runtime"` and a nonempty `evidenceRef`
 pointing to retained probe evidence. The runner owns retention, authenticity
 and expiry policy; expiration must be short enough for its rollout window.

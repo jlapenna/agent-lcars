@@ -22,6 +22,20 @@ const scenarios = [
   'authorized-exception',
 ];
 
+function evidenceTime(value) {
+  // Canonical UTC seconds or milliseconds only. Round-trip validation rejects
+  // calendar normalization such as February 30 as well as permissive parsing.
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
+  )
+    return NaN;
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return NaN;
+  const canonical = value.includes('.') ? value : value.replace('Z', '.000Z');
+  return new Date(time).toISOString() === canonical ? time : NaN;
+}
+
 function evaluate(report, expected, now = Date.now()) {
   const failures = [];
   const fail = (reason) => failures.push(reason);
@@ -48,8 +62,8 @@ function evaluate(report, expected, now = Date.now()) {
       fail(`identity-mismatch:${key}`);
     }
   }
-  const started = Date.parse(report.startedAt);
-  const expires = Date.parse(report.expiresAt);
+  const started = evidenceTime(report.startedAt);
+  const expires = evidenceTime(report.expiresAt);
   if (
     !Number.isFinite(now) ||
     !Number.isFinite(started) ||
@@ -61,6 +75,17 @@ function evaluate(report, expected, now = Date.now()) {
     fail('invalid-evidence-window');
   }
   const results = Array.isArray(report.results) ? report.results : [];
+  if (
+    results.some(
+      (result) =>
+        !result ||
+        typeof result !== 'object' ||
+        Array.isArray(result) ||
+        !scenarios.includes(result.scenario),
+    )
+  ) {
+    fail('unrecognized-result');
+  }
   for (const scenario of scenarios) {
     const matches = results.filter((result) => result?.scenario === scenario);
     if (matches.length !== 1) {
