@@ -3,12 +3,14 @@ import os
 import socket
 import sys
 import tempfile
+import time
 import unittest
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
+import requests
 from prometheus_client import CollectorRegistry, generate_latest
 
 MODULE_PATH = Path(__file__).parents[1] / "exporter.py"
@@ -65,11 +67,18 @@ def recent(hours_ago: float) -> str:
     )
 
 
-def exported_metric_value(metrics: str, name: str) -> float:
+def exported_metric_value(metrics: str, name: str, labels: str = "") -> float:
+    """The value of one exported sample, with or without labels.
+
+    `labels` is the rendered label set, e.g. '{owner="jlapenna"}'. Matching the
+    bare name alone would silently pick the wrong series once a metric grows a
+    label, so the two forms are distinguished here rather than by prefix luck.
+    """
+    wanted = f"{name}{labels} "
     for line in metrics.splitlines():
-        if line.startswith(f"{name} "):
+        if line.startswith(wanted):
             return float(line.split()[-1])
-    raise AssertionError(f"missing metric: {name}")
+    raise AssertionError(f"missing metric: {name}{labels}")
 
 
 class FakeState:
@@ -406,7 +415,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         run = workflow_run()
         api = FakeAPI(run, [workflow_job()])
         config = exporter.Config(
-            token="test",
+            credentials=exporter.StaticCredentials("test"),
             repositories=("jlapenna/homelab",),
             database_path=str(Path(self.temporary_directory.name) / "actions.db"),
         )
@@ -597,7 +606,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_runs.return_value = []
         api.get_run_attempt.return_value = earlier
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -748,7 +760,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api = FakeAPI(run, [workflow_job()])
         api.list_runs = Mock(return_value=[])
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -930,7 +945,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_jobs.return_value = []
         api.list_concurrency_groups.return_value = []
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -994,7 +1012,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         state = FakeState()
         state.poll_errors = Mock()
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             state,
@@ -1057,7 +1078,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         state = FakeState()
         state.poll_errors = Mock()
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             state,
@@ -1079,7 +1103,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_jobs.return_value = [workflow_job()]
         api.list_concurrency_groups.side_effect = RuntimeError("programming bug")
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -1096,7 +1123,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
                 raise RuntimeError("temporary GitHub failure")
 
         run = workflow_run()
-        config = exporter.Config(token="test", repositories=("jlapenna/homelab",))
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
         state = FakeState()
         poller = exporter.Poller(config, self.database, FailingAPI(run, []), state)
 
@@ -1119,7 +1149,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_runs.return_value = []
         api.get_run.side_effect = exporter.GitHubRequestError("run", response)
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -1191,7 +1224,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         api.list_runs.return_value = []
         api.get_run.side_effect = exporter.GitHubRequestError("run", response)
         poller = exporter.Poller(
-            exporter.Config(token="test", repositories=(repository,)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
             self.database,
             api,
             FakeState(),
@@ -1213,7 +1249,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
         api = FakeAPI(workflow_run(), [workflow_job()])
         config = exporter.Config(
-            token="test",
+            credentials=exporter.StaticCredentials("test"),
             repositories=(repository,),
             overlap_minutes=15,
         )
@@ -1230,7 +1266,10 @@ class GitHubActionsExporterTests(unittest.TestCase):
         state = FakeState()
 
         exporter.Poller(
-            exporter.Config(token="test", repositories=("jlapenna/homelab",)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=("jlapenna/homelab",),
+            ),
             self.database,
             FakeAPI(workflow_run(), []),
             state,
@@ -1313,7 +1352,10 @@ class ConfigTests(unittest.TestCase):
 class GitHubAPITests(unittest.TestCase):
     def setUp(self):
         self.api = exporter.GitHubAPI(
-            exporter.Config(token="test", repositories=("jlapenna/homelab",)),
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=("jlapenna/homelab",),
+            ),
             FakeState(),
         )
         self.addCleanup(self.api.close)
@@ -1332,23 +1374,25 @@ class GitHubAPITests(unittest.TestCase):
                     "x-ratelimit-reset": "1786500000",
                 },
             ),
+            "jlapenna",
         )
         metrics = generate_latest(registry).decode()
+        owner = '{owner="jlapenna"}'
         self.assertEqual(
             exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_remaining"
+                metrics, "github_actions_exporter_api_rate_limit_remaining", owner
             ),
             42,
         )
         self.assertEqual(
             exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_limit"
+                metrics, "github_actions_exporter_api_rate_limit_limit", owner
             ),
             5000,
         )
         self.assertEqual(
             exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_used"
+                metrics, "github_actions_exporter_api_rate_limit_used", owner
             ),
             4958,
         )
@@ -1356,6 +1400,7 @@ class GitHubAPITests(unittest.TestCase):
             exported_metric_value(
                 metrics,
                 "github_actions_exporter_api_rate_limit_reset_timestamp_seconds",
+                owner,
             ),
             1786500000,
         )
@@ -1379,18 +1424,22 @@ class GitHubAPITests(unittest.TestCase):
                 status_code=200,
                 headers={header: value[0] for header, value in headers.items()},
             ),
+            "jlapenna",
         )
 
         for header, (_valid, suffix, expected) in headers.items():
             for value in ("nan", "inf", "1.5", "-1"):
                 with self.subTest(header=header, value=value):
                     state.record_response(
-                        "test", Mock(status_code=200, headers={header: value})
+                        "test",
+                        Mock(status_code=200, headers={header: value}),
+                        "jlapenna",
                     )
                     self.assertEqual(
                         exported_metric_value(
                             generate_latest(registry).decode(),
                             f"github_actions_exporter_{suffix}",
+                            '{owner="jlapenna"}',
                         ),
                         expected,
                     )
@@ -1433,7 +1482,9 @@ class GitHubAPITests(unittest.TestCase):
         self.api.state = Mock()
         self.api.session.get = Mock(return_value=response)
 
-        self.assertEqual(self.api.get("/test", endpoint="test"), {"ok": True})
+        self.assertEqual(
+            self.api.get("/repos/jlapenna/homelab/test", endpoint="test"), {"ok": True}
+        )
 
         response.close.assert_called_once_with()
 
@@ -1444,7 +1495,7 @@ class GitHubAPITests(unittest.TestCase):
         self.api.session.get = Mock(return_value=response)
 
         with self.assertRaises(exporter.GitHubRequestError) as raised:
-            self.api.get("/test", endpoint="test")
+            self.api.get("/repos/jlapenna/homelab/test", endpoint="test")
 
         self.assertEqual(raised.exception.status_code, 500)
         response.close.assert_called_once_with()
@@ -1522,7 +1573,10 @@ class MainTests(unittest.TestCase):
         database = Mock()
         database.last_success_at.return_value = None
         api = Mock()
-        config = exporter.Config(token="test", repositories=("jlapenna/homelab",))
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
 
         with (
             patch.object(exporter.Config, "from_environment", return_value=config),
@@ -1544,7 +1598,10 @@ class MainTests(unittest.TestCase):
         poller.run_forever.side_effect = RuntimeError("polling stopped")
         http_server = Mock()
         http_thread = Mock()
-        config = exporter.Config(token="test", repositories=("jlapenna/homelab",))
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
 
         with (
             patch.object(exporter.Config, "from_environment", return_value=config),
@@ -1629,7 +1686,9 @@ class HealthEndpointServingTests(unittest.TestCase):
     def test_main_serves_health_and_metrics_on_the_real_server(self):
         port = self.free_port()
         config = exporter.Config(
-            token="test", repositories=("jlapenna/homelab",), port=port
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+            port=port,
         )
         # main() registers DatabaseMetrics, which the /metrics request below
         # actually collects -- so this needs a real (empty) database, not a
@@ -1685,3 +1744,261 @@ class HealthEndpointServingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def requests_error(status_code):
+    """An HTTPError shaped like the ones the App endpoints actually raise."""
+    import requests as _requests
+
+    response = Mock(status_code=status_code)
+    return _requests.HTTPError(f"{status_code}", response=response)
+
+
+def _test_private_key_pem() -> bytes:
+    from cryptography.hazmat.primitives import serialization as _serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        encoding=_serialization.Encoding.PEM,
+        format=_serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=_serialization.NoEncryption(),
+    )
+
+
+class OwnerOfTests(unittest.TestCase):
+    def test_owner_is_the_account_segment(self):
+        self.assertEqual(
+            exporter.owner_of("/repos/supersprinklesracing/www/actions/runs"),
+            "supersprinklesracing",
+        )
+
+    def test_non_repository_path_is_rejected(self):
+        # Guessing here would authenticate as whichever installation happened
+        # to be cached, so the wrong-account failure must be loud.
+        for path in ("/test", "/rate_limit", "/orgs/jlapenna/installation"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                exporter.owner_of(path)
+
+
+class AppCredentialsTests(unittest.TestCase):
+    def setUp(self):
+        self.pem = _test_private_key_pem()
+
+    def credentials(self):
+        return exporter.AppCredentials("Iv23test", self.pem, "https://api.github.com")
+
+    @staticmethod
+    def expiry(seconds_ahead):
+        moment = datetime.now(UTC) + timedelta(seconds=seconds_ahead)
+        return moment.isoformat().replace("+00:00", "Z")
+
+    def test_each_owner_gets_its_own_installation_token(self):
+        credentials = self.credentials()
+        responses = {
+            ("GET", "/orgs/jlapenna/installation"): requests_error(404),
+            ("GET", "/users/jlapenna/installation"): {"id": 1},
+            ("GET", "/orgs/supersprinklesracing/installation"): {"id": 2},
+            ("POST", "/app/installations/1/access_tokens"): {
+                "token": "personal",
+                "expires_at": self.expiry(3600),
+            },
+            ("POST", "/app/installations/2/access_tokens"): {
+                "token": "organization",
+                "expires_at": self.expiry(3600),
+            },
+        }
+
+        def request(method, path, bearer):
+            result = responses[(method, path)]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        with patch.object(credentials, "_request", side_effect=request):
+            personal = credentials.authorization("jlapenna")
+            organization = credentials.authorization("supersprinklesracing")
+
+        # The whole point of the App over a PAT: one process, two accounts.
+        self.assertEqual(personal, "Bearer personal")
+        self.assertEqual(organization, "Bearer organization")
+
+    def test_live_token_is_reused_and_a_near_expiry_one_is_replaced(self):
+        credentials = self.credentials()
+        minted = []
+
+        def request(method, path, bearer):
+            if method == "GET":
+                return {"id": 1}
+            minted.append(path)
+            return {"token": f"token-{len(minted)}", "expires_at": self.expiry(3600)}
+
+        with patch.object(credentials, "_request", side_effect=request):
+            first = credentials.authorization("jlapenna")
+            second = credentials.authorization("jlapenna")
+            self.assertEqual(first, second)
+            self.assertEqual(len(minted), 1)
+
+            # Age the cached token to inside the refresh margin: it must be
+            # replaced before it can expire mid-sweep, not after it 401s.
+            token, _ = credentials._tokens["jlapenna"]
+            credentials._tokens["jlapenna"] = (
+                token,
+                time.time() + exporter.APP_TOKEN_REFRESH_MARGIN_SECONDS - 1,
+            )
+            third = credentials.authorization("jlapenna")
+
+        self.assertEqual(third, "Bearer token-2")
+        self.assertEqual(len(minted), 2)
+
+    def test_owner_with_no_installation_is_reported(self):
+        credentials = self.credentials()
+        with (
+            patch.object(credentials, "_request", side_effect=requests_error(404)),
+            self.assertRaises(RuntimeError),
+        ):
+            credentials.authorization("someone-else")
+
+
+class CredentialSelectionTests(unittest.TestCase):
+    def environment(self, **values):
+        base = {"GITHUB_REPOSITORIES": "jlapenna/homelab"}
+        base.update(values)
+        return patch.dict(os.environ, base, clear=True)
+
+    def test_personal_access_token_is_the_fallback(self):
+        with self.environment(GITHUB_TOKEN="test"):
+            config = exporter.Config.from_environment()
+        self.assertIsInstance(config.credentials, exporter.StaticCredentials)
+        self.assertEqual(config.credentials.authorization("jlapenna"), "Bearer test")
+
+    def test_app_is_preferred_over_a_token_when_both_are_present(self):
+        with tempfile.NamedTemporaryFile(suffix=".pem") as key_file:
+            key_file.write(_test_private_key_pem())
+            key_file.flush()
+            with self.environment(
+                GITHUB_TOKEN="test",
+                GITHUB_APP_CLIENT_ID="Iv23test",
+                GITHUB_APP_PRIVATE_KEY_FILE=key_file.name,
+            ):
+                config = exporter.Config.from_environment()
+        self.assertIsInstance(config.credentials, exporter.AppCredentials)
+
+    def test_half_configured_app_is_rejected_rather_than_ignored(self):
+        # Silently falling back to the PAT here would reproduce the exact
+        # outage this replaces: a partial rollout that looks configured.
+        with (
+            self.environment(GITHUB_TOKEN="test", GITHUB_APP_CLIENT_ID="Iv23test"),
+            self.assertRaises(ValueError),
+        ):
+            exporter.Config.from_environment()
+
+
+class PerRequestAuthorizationTests(unittest.TestCase):
+    def test_request_carries_the_owning_account_token(self):
+        credentials = Mock()
+        credentials.authorization.return_value = "Bearer scoped"
+        config = exporter.Config(
+            credentials=credentials, repositories=("supersprinklesracing/www",)
+        )
+        api = exporter.GitHubAPI(config, Mock())
+        response = Mock(status_code=200, headers={})
+        response.json.return_value = {"ok": True}
+        api.session.get = Mock(return_value=response)
+
+        api.get("/repos/supersprinklesracing/www/actions/runs", endpoint="runs")
+
+        credentials.authorization.assert_called_once_with("supersprinklesracing")
+        self.assertEqual(
+            api.session.get.call_args.kwargs["headers"],
+            {"Authorization": "Bearer scoped"},
+        )
+        # A stale session-level header would silently win over the per-request
+        # one for some owners, so it must not exist at all.
+        self.assertNotIn("Authorization", api.session.headers)
+
+
+class PerOwnerQuotaTests(unittest.TestCase):
+    def test_one_owners_quota_does_not_overwrite_anothers(self):
+        # GitHub meters each installation against its own core quota. A single
+        # unlabelled gauge meant whichever repository was polled last decided
+        # what the quota panels and the exhaustion alert saw.
+        registry = CollectorRegistry()
+        state = exporter.ExporterState(registry)
+        for owner, remaining in (("jlapenna", "4200"), ("supersprinklesracing", "17")):
+            state.record_response(
+                "runs",
+                Mock(status_code=200, headers={"x-ratelimit-remaining": remaining}),
+                owner,
+            )
+
+        metrics = generate_latest(registry).decode()
+        name = "github_actions_exporter_api_rate_limit_remaining"
+        self.assertEqual(
+            exported_metric_value(metrics, name, '{owner="jlapenna"}'), 4200
+        )
+        self.assertEqual(
+            exported_metric_value(metrics, name, '{owner="supersprinklesracing"}'), 17
+        )
+
+
+class InstallationReinstallTests(unittest.TestCase):
+    """A reinstall issues a new installation id; the process can outlive it."""
+
+    def setUp(self):
+        self.pem = _test_private_key_pem()
+
+    def credentials(self):
+        return exporter.AppCredentials("Iv23test", self.pem, "https://api.github.com")
+
+    @staticmethod
+    def expiry(seconds_ahead):
+        moment = datetime.now(UTC) + timedelta(seconds=seconds_ahead)
+        return moment.isoformat().replace("+00:00", "Z")
+
+    def test_a_stale_installation_id_is_looked_up_again(self):
+        credentials = self.credentials()
+        installation_ids = [1, 2]
+        posts = []
+
+        def request(method, path, bearer):
+            if method == "GET":
+                return {"id": installation_ids[0]}
+            posts.append(path)
+            if path == "/app/installations/1/access_tokens":
+                raise requests_error(404)
+            return {"token": "fresh", "expires_at": self.expiry(3600)}
+
+        with patch.object(credentials, "_request", side_effect=request):
+            credentials._installations["jlapenna"] = 1
+            installation_ids[0] = 2
+            header = credentials.authorization("jlapenna")
+
+        self.assertEqual(header, "Bearer fresh")
+        self.assertEqual(
+            posts,
+            [
+                "/app/installations/1/access_tokens",
+                "/app/installations/2/access_tokens",
+            ],
+        )
+
+    def test_a_genuinely_broken_app_is_not_retried_forever(self):
+        # One re-lookup, then the error propagates: a tight retry loop against
+        # a dead App would burn quota and hide the real failure.
+        credentials = self.credentials()
+        attempts = []
+
+        def request(method, path, bearer):
+            if method == "GET":
+                return {"id": 1}
+            attempts.append(path)
+            raise requests_error(404)
+
+        with (
+            patch.object(credentials, "_request", side_effect=request),
+            self.assertRaises(requests.HTTPError),
+        ):
+            credentials.authorization("jlapenna")
+
+        self.assertEqual(len(attempts), 2)
