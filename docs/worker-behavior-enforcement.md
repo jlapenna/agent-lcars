@@ -4,7 +4,9 @@ Status: implementation foundation, **not enabled in dispatch**. No provider
 has graduated. The offline readiness evaluator, native-hook boundary probes
 for all three providers, and a Claude/Codex failure-to-denial bridge are
 implemented. Idempotent Claude/Codex command registration is exercised by the
-native probes. Runner setup integration, policy handlers, bounded recovery/completion
+native probes. The initial shared policy handles literal Git/PR mutations and
+native file-edit tools with mode, worktree and fresh GitHub ownership decisions.
+Runner setup integration, remaining policy controls, bounded recovery/completion
 and full acceptance canaries remain to be built and verified.
 
 ## Scope and decisions
@@ -33,6 +35,22 @@ replacement has passed runtime canaries.
 context. It is advisory, not pre-action rejection. A passing configuration
 check or successful hook invocation does not demonstrate enforcement.
 Titles and progress remain non-blocking observability.
+
+### Initial policy coverage (not enabled)
+
+`worker-policy.cjs` validates the setup-owned attempt/run/anchor binding and
+evaluates native file edits plus literal Git mutations and `gh pr
+create/ready/merge` commands. It delegates checkout protection to the installed
+`repo-require-worktree` guard and reads current GitHub anchor ownership for
+each supported mutation. Native Work uses the orchestrator's mutex, not an
+invented issue claim. Read-only operations do not trigger those reads.
+
+This is partial coverage: scripts, shell expansion, pipelines/redirection,
+indirect command wrappers, arbitrary HTTP/MCP writes, patch target extraction,
+review-hold evaluation and marker repair are not implemented by this handler.
+In particular, recognizing `ready/merge` does not yet enforce review holds.
+The focused policy tests feed the required Verify contract lane; they do not
+qualify a provider or authorize enabling the incomplete handler in dispatch.
 
 ## Setup ownership and runtime behavior
 
