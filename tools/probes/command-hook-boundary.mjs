@@ -89,6 +89,7 @@ async function probe(mode) {
   const resumedSentinel = join(workspace, 'resumed-effect');
   let round = 1;
   const bootstrap = mode === 'bootstrap-marker';
+  const recovery = mode.startsWith('bridge-recovery-');
   const policyMarker = mode === 'bridge-marker' || bootstrap;
   const context = policy.prepareContext(
     {
@@ -124,6 +125,21 @@ fs.writeFileSync(${JSON.stringify(receipt)}, fs.readFileSync(0));
 ${mode === 'deny' ? "process.stderr.write('LCARS_PROBE_DENY'); process.exitCode = 2;" : ''}
 ${mode === 'failure' || mode === 'bridge-failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
 ${mode === 'bridge-timeout' ? 'setInterval(() => {}, 1000);' : ''}
+${
+  recovery
+    ? `
+const calls = ${JSON.stringify(join(dir, 'recovery-calls'))};
+const first = !fs.existsSync(calls);
+const input = JSON.parse(fs.readFileSync(${JSON.stringify(receipt)}, 'utf8'));
+fs.appendFileSync(calls, input.tool_input.command + '\\n');
+if (first) throw new Error('LCARS_TRANSIENT_CONTROL_FAILURE');
+const policy = require(${JSON.stringify(resolve('packages/fleet-tools/bin/worker-policy.cjs'))});
+const result = policy.evaluate(input, ${JSON.stringify(context)});
+${mode === 'bridge-recovery-failure' ? "result.hookSpecificOutput.permissionDecision = 'allow';" : ''}
+console.log(JSON.stringify(result));
+`
+    : ''
+}
 ${mode === 'bridge-allow' ? 'console.log(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow"}}));' : ''}
 ${mode === 'bridge-rewrite' ? `console.log(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",updatedInput:{command:${JSON.stringify(`touch ${quote(rewrittenSentinel)}`)}}}}));` : ''}
 ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve('packages/fleet-tools/bin/worker-policy.cjs'))}); console.log(JSON.stringify(policy.evaluate(JSON.parse(fs.readFileSync(${JSON.stringify(receipt)}, 'utf8')), ${JSON.stringify(context)})));` : ''}
@@ -163,6 +179,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
       throw new Error('Setup was not idempotent');
   }
   const contextPath = join(dir, 'worker-context.json');
+  if (recovery) writeFileSync(contextPath, JSON.stringify(context));
   if (bootstrap) {
     const briefPath = join(dir, 'brief.json');
     writeFileSync(
@@ -317,8 +334,9 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
     XDG_CONFIG_HOME: join(home, '.config'),
     XDG_DATA_HOME: join(dir, 'data'),
     XDG_CACHE_HOME: join(dir, 'cache'),
-    LCARS_RUN_ID: policyMarker ? context.runId : 'work:local-boundary-probe/r1',
-    ...(bootstrap ? { LCARS_WORKER_CONTEXT: contextPath } : {}),
+    LCARS_RUN_ID:
+      policyMarker || recovery ? context.runId : 'work:local-boundary-probe/r1',
+    ...(bootstrap || recovery ? { LCARS_WORKER_CONTEXT: contextPath } : {}),
     CODEX_HOME: join(home, '.codex'),
     CLAUDE_CONFIG_DIR: join(home, '.claude'),
     ANTHROPIC_BASE_URL: base,
@@ -431,6 +449,11 @@ code_mode = false
   }
   const exercised =
     execution.code === 0 && !execution.timedOut && issued && returnedToolResult;
+  const recoveryVerified =
+    recovery &&
+    existsSync(`${contextPath}.recovery-used`) &&
+    readFileSync(join(dir, 'recovery-calls'), 'utf8').trim().split('\n')
+      .length === (mode === 'bridge-recovery-success' ? 4 : 3);
   return {
     mode,
     requests,
@@ -441,22 +464,27 @@ code_mode = false
     rewrittenEffect,
     markerRepaired,
     resumedSameSession,
+    recoveryVerified,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
     observedExpectedPrimitive:
       exercised &&
-      (mode === 'resume'
-        ? hookInvoked && effect && resumedSameSession
-        : policyMarker
-          ? hookInvoked && effect && markerRepaired
-          : mode === 'bridge-rewrite'
-            ? hookInvoked && !effect && rewrittenEffect
-            : mode === 'missing'
-              ? !hookInvoked && effect
-              : hookInvoked &&
-                (mode === 'failure' ||
-                  effect === (mode === 'allow' || mode === 'bridge-allow'))),
+      (recovery
+        ? hookInvoked &&
+          recoveryVerified &&
+          effect === (mode === 'bridge-recovery-success')
+        : mode === 'resume'
+          ? hookInvoked && effect && resumedSameSession
+          : policyMarker
+            ? hookInvoked && effect && markerRepaired
+            : mode === 'bridge-rewrite'
+              ? hookInvoked && !effect && rewrittenEffect
+              : mode === 'missing'
+                ? !hookInvoked && effect
+                : hookInvoked &&
+                  (mode === 'failure' ||
+                    effect === (mode === 'allow' || mode === 'bridge-allow'))),
   };
 }
 
@@ -473,6 +501,8 @@ for (const mode of [
   'bridge-marker',
   'resume',
   'bootstrap-marker',
+  'bridge-recovery-success',
+  'bridge-recovery-failure',
 ])
   observations.push(await probe(mode));
 const report = {

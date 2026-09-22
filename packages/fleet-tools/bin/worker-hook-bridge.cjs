@@ -4,6 +4,7 @@
 // PreToolUse transport for providers whose native hook errors fail open.
 // Registration/setup supplies the trusted handler path; workers do not select it.
 const fs = require('node:fs');
+const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 function isDispatch(env) {
@@ -18,13 +19,16 @@ function deny() {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
       permissionDecisionReason:
-        'LCARS control execution failed. The action was not run; preserve work and recover the control before retrying.',
+        'LCARS control execution failed and automatic recovery is unavailable or exhausted. The action was not run. Preserve work and report an infrastructure failure; do not fabricate a human blocker or PARK.',
     },
   };
 }
 
-function invoke(handler, input, options = {}) {
-  const result = spawnSync(process.execPath, [handler], {
+function invokeOnce(handler, input, options = {}) {
+  // OpenCode embeds Bun: process.execPath there is the OpenCode CLI, not a
+  // JavaScript interpreter. The runner image provisions Node on its PATH.
+  const executable = process.versions.bun ? 'node' : process.execPath;
+  const result = spawnSync(executable, [handler], {
     input,
     encoding: 'utf8',
     timeout: options.timeout ?? 5000,
@@ -32,7 +36,7 @@ function invoke(handler, input, options = {}) {
     env: options.env ?? process.env,
   });
   // Never expose handler stderr: an exception may include task content/secrets.
-  if (result.error || result.status !== 0) return deny();
+  if (result.error || result.status !== 0) return null;
   try {
     const output = JSON.parse(result.stdout);
     const decision = output?.hookSpecificOutput;
@@ -55,7 +59,7 @@ function invoke(handler, input, options = {}) {
       (decision.permissionDecisionReason !== undefined &&
         typeof decision.permissionDecisionReason !== 'string')
     ) {
-      return deny();
+      return null;
     }
     if (decision.updatedInput !== undefined) {
       const original = JSON.parse(input);
@@ -71,12 +75,73 @@ function invoke(handler, input, options = {}) {
         typeof updated.command !== 'string' ||
         Object.keys(updated).some((key) => key !== 'command')
       )
-        return deny();
+        return null;
     }
     return output;
   } catch {
+    return null;
+  }
+}
+
+// Only entered after a control execution failure. Never executes the proposed
+// tool: restarting the evaluator cannot replay a publication or code mutation.
+// Atomic creation shares one recovery allowance across hooks and resumed rounds.
+function recover(handler, input, options = {}) {
+  const env = options.env ?? process.env;
+  try {
+    const contextPath = env.LCARS_WORKER_CONTEXT;
+    if (!isDispatch(env) || !contextPath || !path.isAbsolute(contextPath))
+      return deny();
+    const context = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
+    if (
+      context.policyVersion !== 1 ||
+      !['claude', 'codex', 'opencode'].includes(context.provider) ||
+      context.runId !== env.LCARS_RUN_ID ||
+      typeof context.attemptId !== 'string' ||
+      context.attemptId !==
+        `g${context.runId?.match(/\/r([1-9][0-9]*)$/)?.[1]}:${context.runId}`
+    )
+      return deny();
+    fs.writeFileSync(`${contextPath}.recovery-used`, context.attemptId, {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    // The outer provider process remains under its existing runner deadline.
+    // This additional bound fits inside the native hook timeout, without a new
+    // task budget. A crash consumes the allowance rather than resetting it.
+    const deadline = Date.now() + 4000;
+    const run = (payload) => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return null;
+      return invokeOnce(handler, payload, {
+        ...options,
+        timeout: Math.min(remaining, options.timeout ?? 2000),
+      });
+    };
+    for (const [command, expected] of [
+      ['echo LCARS_RECOVERY_READ_PROBE', 'allow'],
+      ['git commit --no-verify', 'deny'],
+    ]) {
+      const result = run(
+        JSON.stringify({
+          tool_name: 'Bash',
+          tool_input: { command },
+          cwd: process.cwd(),
+        }),
+      );
+      if (result?.hookSpecificOutput.permissionDecision !== expected)
+        return deny();
+    }
+    return run(input) ?? deny();
+  } catch {
     return deny();
   }
+}
+
+function invoke(handler, input, options = {}) {
+  return (
+    invokeOnce(handler, input, options) ?? recover(handler, input, options)
+  );
 }
 
 if (require.main === module && isDispatch(process.env)) {
@@ -91,4 +156,4 @@ if (require.main === module && isDispatch(process.env)) {
   process.stdout.write(`${JSON.stringify(output)}\n`);
 }
 
-module.exports = { invoke, isDispatch };
+module.exports = { invoke, recover, isDispatch };

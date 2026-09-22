@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import bridge from './worker-hook-bridge.cjs';
 import policy from './worker-policy.cjs';
@@ -13,21 +14,21 @@ export default async function workerPolicy({ directory }) {
   return {
     'tool.execute.before': async (input, output) => {
       let result;
+      const event = {
+        tool_name: input.tool === 'bash' ? 'Bash' : input.tool,
+        tool_input: output.args,
+        cwd: directory,
+      };
       try {
-        result = policy.evaluate(
-          {
-            tool_name: input.tool === 'bash' ? 'Bash' : input.tool,
-            tool_input: output.args,
-            cwd: directory,
-          },
-          context,
-        ).hookSpecificOutput;
+        result = policy.evaluate(event, context).hookSpecificOutput;
       } catch {
-        // Native OpenCode throws prevent execution (verified by CLI probes).
-        // Do not expose exception contents, which can contain task data.
-        throw new Error(
-          'LCARS control execution failed; preserve work and recover before retrying.',
-        );
+        // Restart only the failed evaluator in a fresh process. Shared recovery
+        // consumes one attempt-bound allowance and proves allow/deny before
+        // evaluating this still-unexecuted tool again.
+        result = bridge.recover(
+          fileURLToPath(new URL('./worker-policy.cjs', import.meta.url)),
+          JSON.stringify(event),
+        ).hookSpecificOutput;
       }
       if (result.permissionDecision === 'deny')
         throw new Error(result.permissionDecisionReason);

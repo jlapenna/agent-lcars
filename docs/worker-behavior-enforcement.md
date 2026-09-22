@@ -15,8 +15,9 @@ and acknowledgments of external draft/auto-merge holds.
 The direct runner now shares one bounded completion-correction rule across all
 three providers, verified by its executable runner harness. Hook setup is
 connected to all three launch paths behind provider-specific qualification.
-Remaining policy controls, bounded control recovery,
-and full acceptance canaries remain to be built and verified.
+Bounded evaluator restart recovery is implemented; remaining policy coverage,
+terminal infrastructure-failure classification, and full acceptance canaries
+remain to be built and verified.
 
 ## Scope and decisions
 
@@ -106,6 +107,20 @@ actual execution failure, not repeated installation discovery. Exhausted repair 
 a fabricated human blocker. Set retry/time limits within the existing run
 budget, not as a fresh budget. Avoid replaying a possibly completed external
 write: read back its result before retrying.
+
+The current automatic repair is a fresh evaluator process, not package updates
+or registration discovery. On an actual evaluator exception, timeout, or malformed
+result, the adapter atomically consumes one attempt-bound allowance beside the
+setup context (`.recovery-used`). It runs passive allow/deny execution probes,
+then reevaluates the still-unexecuted action. Recovery has a four-second total
+deadline inside the existing provider task deadline; command hooks allow fifteen
+seconds for initial evaluation plus recovery and process overhead. A failed
+probe, exhausted allowance, or mismatched context keeps the action denied with
+an infrastructure-failure instruction, never a fabricated PARK. Genuine policy
+denials do not consume recovery. No task command or publication is replayed by
+the evaluator. The allowance persists across hooks and same-attempt resumed
+rounds; setup does not clear it. This does not repair broken packages, and the
+runner's terminal infrastructure classification still needs acceptance coverage.
 
 Mechanically repair omitted attempt markers on supported deliverables; never
 invent identity or stamp unrelated artifacts. Ownership, authorization and
@@ -222,11 +237,13 @@ independently checks tool-result delivery, hook invocation and the actual file:
 - Shared policy lookup failure: a failed ownership read prevents publication.
 - Bootstrap marker: the actual runner bootstrap installs and verifies the
   policy; the native loader executes it and the fixture receives the repaired body.
+- Evaluator recovery: an injected in-process adapter failure is recovered by a
+  fresh shared-policy process; a pre-consumed allowance prevents publication.
 
 Exit zero means these native behaviors were observed, **not** that the
 mandatory LCARS canary suite passed. This probe deliberately reports
 `qualification: "not-evaluated"`; it must not be converted to a passing
-readiness report. It does not yet test completion, recovery, timeout handling,
+readiness report. It does not yet test completion, all recovery faults, timeout handling,
 or the installed runner image as a whole. OpenCode argument repair must mutate
 the existing `output.args` object: a native probe caught that replacing the
 object left the original command unchanged. Policy probe cases now use the
@@ -285,7 +302,7 @@ On the tested Codex 0.155.1 and Claude Code 2.1.278, raw command-hook exceptions
 allowed the requested action. The shared `worker-hook-bridge.cjs` instead
 converted exceptions and its five-second handler timeout into explicit native
 PreToolUse denials; the actual CLI then prevented both sentinel writes. The
-allowed case still executed. All eleven observations passed on each CLI,
+allowed case still executed. All thirteen observations passed on each CLI,
 including an exact repaired marker in the independently captured comment body.
 The tenth observation executes a second round within the same probe deadline:
 Claude retains its preallocated UUID; Codex resumes the first hook's native
@@ -293,6 +310,8 @@ session ID. Both produce a separate second-round sentinel with unchanged
 session identity. This tests native resumption, not the full completion gate.
 The bootstrap-marker observation uses the actual runner setup entrypoint and
 independently verifies that the native loader executes its installed policy.
+Two recovery observations inject an evaluator crash: successful allow/deny
+smokes permit the original action, while a broken deny smoke prevents it.
 Runner image qualification must record the versions actually baked into that
 image; the image currently installs current Claude/Codex releases at build.
 

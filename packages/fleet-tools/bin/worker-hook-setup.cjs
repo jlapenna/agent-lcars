@@ -99,7 +99,7 @@ function installRegistration(configPath, handlerPath) {
         ...retained,
         {
           matcher: '.*',
-          hooks: [{ type: 'command', command, timeout: 10 }],
+          hooks: [{ type: 'command', command, timeout: 15 }],
         },
       ],
     };

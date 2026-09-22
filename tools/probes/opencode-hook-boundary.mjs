@@ -84,6 +84,7 @@ async function probe(mode) {
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
   const bootstrap = mode === 'bootstrap-marker';
+  const recovery = mode.startsWith('policy-recovery-');
   const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
     {
@@ -99,6 +100,8 @@ async function probe(mode) {
   );
   const contextPath = join(dir, 'worker-context.json');
   writeFileSync(contextPath, JSON.stringify(context));
+  if (mode === 'policy-recovery-exhausted')
+    writeFileSync(`${contextPath}.recovery-used`, context.attemptId);
   const fakeBin = join(dir, 'bin');
   mkdirSync(fakeBin);
   writeFileSync(
@@ -132,11 +135,21 @@ export default async () => ({
       plugin,
       `import {appendFileSync} from 'node:fs';
 import workerPolicy from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-opencode-plugin.mjs')).href)};
+import policy from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-policy.cjs')).href)};
 export default async (context) => {
   const hooks = await workerPolicy(context);
   return {'tool.execute.before': async (input, output) => {
     appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
-    await hooks['tool.execute.before'](input, output);
+    ${
+      recovery
+        ? `
+    const original = policy.evaluate;
+    policy.evaluate = () => { throw new Error('LCARS_INJECTED_CONTROL_CRASH'); };
+    try { await hooks['tool.execute.before'](input, output); }
+    finally { policy.evaluate = original; }
+    `
+        : "await hooks['tool.execute.before'](input, output);"
+    }
   }};
 };
 `,
@@ -302,13 +315,17 @@ export default async (context) => {
     hookInvoked,
     effect,
     markerRepaired,
+    recoveryUsed: recovery && existsSync(`${contextPath}.recovery-used`),
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
     // Missing-hook case intentionally exposes lack of native admission.
     observedExpectedPrimitive:
       exercised &&
-      (mode === 'policy-marker' || bootstrap
+      (!recovery || existsSync(`${contextPath}.recovery-used`)) &&
+      (mode === 'policy-marker' ||
+      bootstrap ||
+      mode === 'policy-recovery-success'
         ? hookInvoked && effect && markerRepaired
         : mode === 'missing'
           ? !hookInvoked && effect
@@ -326,6 +343,8 @@ for (const mode of [
   'policy-deny',
   'policy-failure',
   'bootstrap-marker',
+  'policy-recovery-success',
+  'policy-recovery-exhausted',
 ])
   observations.push(await probe(mode));
 const report = {
