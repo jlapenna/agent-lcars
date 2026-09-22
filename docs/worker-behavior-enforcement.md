@@ -203,7 +203,7 @@ image-bound scenario. No row grants provider graduation on its own.
 | `primary-worktree`     | Real Git linked/primary fixtures and installed repo-tools guard; native direct and symlink-to-primary edits denied                                      | Candidate-image Git mutation/publication coverage                                              |
 | `missing-marker`       | Native command repair reaches the local publication transport; unit tests cover foreign bodies and idempotence                                          | Native foreign-artifact/idempotence negative cases and full supported-deliverable coverage     |
 | `premature-completion` | All-provider runner harness; native Claude/Codex same-session resumption                                                                                | Combined native completion correction and exhausted-budget canaries, including OpenCode        |
-| `review-hold`          | Shared fresh/paginated review gate, focused contract tests, and a real read-only GraphQL snapshot                                                       | Native held/released readiness and merge-arm scenarios                                         |
+| `review-hold`          | Native held/released readiness and merge-arm actions on all three CLIs; unresolved threads still block after holder release                             | Candidate-image evidence and remaining supported hold-satisfaction paths                       |
 | `missing-hook`         | Native bootstrap installs omitted registration; runner harness refuses launch after setup failure                                                       | Combined candidate-image negative setup scenario                                               |
 | `hook-failure`         | Native thrown failures deny; Claude/Codex native timeout denies                                                                                         | OpenCode timeout coverage and preserved-work proof in candidate image                          |
 | `recovery-success`     | Native evaluator restart and control smoke allow the still-unexecuted action                                                                            | Candidate-image recovery with retained session/work and original deadline                      |
@@ -215,6 +215,16 @@ attempts, the successful first file, the absent second file, and the policy
 denial delivered back to the model. Review-mode and absent/unreadable-ownership
 probes also require the specific policy reason; an unrelated provider refusal
 or a tool that never reaches the hook cannot satisfy them.
+
+The review-hold probes use the actual shared GraphQL reader against a local
+transport fixture. Each requires a fresh review read and the native hook;
+held actions must return the specific rejection to the model without reaching
+the publication transport. Holder-released actions must reach that transport.
+A separate released-draft case retains an unresolved thread and must still
+reject readiness. This does not claim proof of arbitrary narrative conditions.
+The complete local suites pass 27 observations each on Codex 0.155.1 and
+Claude Code 2.1.278, and 24 on OpenCode 1.18.25; their reports remain
+`qualification: not-evaluated`, not candidate-image graduation evidence.
 
 ### Native session binding
 

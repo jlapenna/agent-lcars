@@ -16,6 +16,11 @@ import { pathToFileURL } from 'node:url';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import {
+  reviewCommand,
+  reviewDenial,
+  reviewFixture,
+} from './review-fixture.mjs';
 import { expectedFileDenial, fileProbeFixture } from './worktree-fixture.mjs';
 
 const [binary, expectedVersion] = process.argv.slice(2);
@@ -82,15 +87,18 @@ async function probe(mode) {
   mkdirSync(workspace, { recursive: true });
   mkdirSync(home, { recursive: true });
   const fileProbe = mode.startsWith('bootstrap-file-');
+  const holdProbe = mode.startsWith('bootstrap-hold-');
+  const reviewReads = join(dir, 'review-reads');
   const ownershipChanged = mode === 'bootstrap-file-ownership-changed';
   const ownershipState = join(dir, 'ownership-changed');
   const ownershipReads = join(dir, 'ownership-reads');
   const secondSentinel = join(workspace, 'second-effect');
-  const files = fileProbe ? fileProbeFixture(dir, home, mode) : null;
+  const files =
+    fileProbe || holdProbe ? fileProbeFixture(dir, home, mode) : null;
   const sentinel = files?.sentinel ?? join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
-  const bootstrap = mode === 'bootstrap-marker' || fileProbe;
+  const bootstrap = mode === 'bootstrap-marker' || fileProbe || holdProbe;
   const recovery = mode.startsWith('policy-recovery-');
   const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
@@ -99,7 +107,7 @@ async function probe(mode) {
       mode:
         mode === 'bootstrap-file-review'
           ? 'review'
-          : fileProbe
+          : fileProbe || holdProbe
             ? 'implement'
             : 'reply',
       anchor: {
@@ -127,12 +135,16 @@ async function probe(mode) {
     `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-if (args[0] === 'api') {
+if (args[0] === 'api' && args[1] === 'graphql') {
+  fs.appendFileSync(${JSON.stringify(reviewReads)}, 'read\\n');
+  console.log(${JSON.stringify(JSON.stringify(reviewFixture(mode)))});
+} else if (args[0] === 'api') {
   fs.appendFileSync(${JSON.stringify(ownershipReads)}, 'read\\n');
   ${['policy-failure', 'bootstrap-file-ownership-unreadable'].includes(mode) ? 'process.exit(1);' : ''}
   const lost = ${['policy-deny', 'bootstrap-file-ownership-absent'].includes(mode)} || fs.existsSync(${JSON.stringify(ownershipState)});
   console.log(JSON.stringify({state:'open',assignees:lost ? [] : [{login:'agent-lcars-bot'}]}));
 } else if (args[0] === 'issue' && args[1] === 'comment') {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture publication');}
+else if (args[0] === 'pr' && ['ready','merge'].includes(args[1])) {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture readiness');}
 else process.exitCode = 1;
 `,
     { mode: 0o700 },
@@ -221,9 +233,11 @@ export default async (context) => {
                           content: 'LCARS_FILE_PROBE\n',
                         }
                       : {
-                          command: usesPolicy
-                            ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
-                            : `touch '${sentinel}'`,
+                          command: holdProbe
+                            ? reviewCommand(mode)
+                            : usesPolicy
+                              ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+                              : `touch '${sentinel}'`,
                           description: 'Create harmless probe sentinel',
                         },
                   ),
@@ -355,7 +369,7 @@ export default async (context) => {
     existsSync(sentinel) &&
     (!fileProbe || readFileSync(sentinel, 'utf8') === 'LCARS_FILE_PROBE\n');
   let markerRepaired = false;
-  if (usesPolicy && !fileProbe && effect) {
+  if (usesPolicy && !fileProbe && !holdProbe && effect) {
     const published = JSON.parse(readFileSync(sentinel, 'utf8'));
     markerRepaired =
       published[published.indexOf('--body') + 1] ===
@@ -384,7 +398,14 @@ export default async (context) => {
     secondIssued &&
     !existsSync(secondSentinel) &&
     ownershipReadCount === 2;
-  const expectedDenial = fileProbe ? expectedFileDenial(mode) : '';
+  const expectedDenial = holdProbe
+    ? reviewDenial(mode)
+    : fileProbe
+      ? expectedFileDenial(mode)
+      : '';
+  const reviewReadCount = existsSync(reviewReads)
+    ? readFileSync(reviewReads, 'utf8').trim().split('\n').length
+    : 0;
   const denialReasonObserved =
     !expectedDenial || toolFeedback.includes(expectedDenial);
   const recoveryVerified =
@@ -407,6 +428,7 @@ export default async (context) => {
     ownershipChangeVerified,
     denialReasonObserved,
     sessionBindingVerified,
+    reviewReadCount,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
@@ -416,17 +438,21 @@ export default async (context) => {
       denialReasonObserved &&
       sessionBindingVerified &&
       (!recovery || recoveryVerified) &&
-      (ownershipChanged
-        ? hookInvoked && ownershipChangeVerified
-        : fileProbe
-          ? hookInvoked && effect === mode.endsWith('-allow')
-          : mode === 'policy-marker' ||
-              bootstrap ||
-              mode === 'policy-recovery-success'
-            ? hookInvoked && effect && markerRepaired
-            : mode === 'missing'
-              ? !hookInvoked && effect
-              : hookInvoked && effect === (mode === 'allow')),
+      (holdProbe
+        ? hookInvoked &&
+          reviewReadCount === 1 &&
+          effect === mode.endsWith('-released')
+        : ownershipChanged
+          ? hookInvoked && ownershipChangeVerified
+          : fileProbe
+            ? hookInvoked && effect === mode.endsWith('-allow')
+            : mode === 'policy-marker' ||
+                bootstrap ||
+                mode === 'policy-recovery-success'
+              ? hookInvoked && effect && markerRepaired
+              : mode === 'missing'
+                ? !hookInvoked && effect
+                : hookInvoked && effect === (mode === 'allow')),
   };
 }
 
@@ -451,6 +477,11 @@ for (const mode of [
   'bootstrap-file-ownership-changed',
   'bootstrap-file-session-expected-mismatch',
   'bootstrap-file-session-bound-mismatch',
+  'bootstrap-hold-draft-blocked',
+  'bootstrap-hold-draft-released',
+  'bootstrap-hold-merge-blocked',
+  'bootstrap-hold-merge-released',
+  'bootstrap-hold-draft-threads',
 ])
   observations.push(await probe(mode));
 const report = {
