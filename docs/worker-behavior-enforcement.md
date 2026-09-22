@@ -206,6 +206,12 @@ before native task execution. Its worker hashes matched and its job UID was 1001
 installing repo-tools' dependencies did not install its own package binaries.
 This is failed setup evidence, not provider qualification. Repair belongs in
 image installation with a build-time executable check, not a per-tool gate.
+The installation now links the package's declared binaries directly from the
+pinned repo-tools checkout. The final image gate verifies every link and
+executes the installed worktree guard against disposable real primary and
+linked Git checkouts as the job user. Regression tests reject missing commands,
+non-executable targets, and guards that always allow or always deny. A rebuilt
+candidate must still pass the native probes; the failed image is not qualified.
 
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.

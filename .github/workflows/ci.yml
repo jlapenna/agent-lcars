@@ -174,7 +174,9 @@ jobs:
         run: bash apps/runner-autoscaler/runner-image/toolchain-health.test.sh
 
       - name: Test runner-image build-time invariant gate (#2033)
-        run: bash apps/runner-autoscaler/runner-image/verify-image-invariants.test.sh
+        run: |
+          node --test apps/runner-autoscaler/runner-image/repo-tools-bins.test.mjs
+          bash apps/runner-autoscaler/runner-image/verify-image-invariants.test.sh
 
       - name: Test reviewed OpenCode release installation
         run: bash apps/runner-autoscaler/runner-image/install-opencode-release.test.sh
