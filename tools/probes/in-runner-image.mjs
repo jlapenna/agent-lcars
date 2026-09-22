@@ -53,6 +53,13 @@ for (const name of readdirSync(join(source, 'packages/fleet-tools/bin')).filter(
 if (!moduleHashes['worker-policy.cjs'])
   throw new Error('Worker modules missing');
 const runtimeHashes = {};
+const bakedRunner = '/usr/local/lib/agent-lcars/direct-runner.sh';
+const runnerHash = sha256(bakedRunner);
+if (
+  runnerHash !==
+  sha256(join(source, 'apps/runner-autoscaler/runner-image/direct-runner.sh'))
+)
+  throw new Error('Image direct runner source mismatch');
 for (const helper of [
   'worker-policy-bootstrap.sh',
   'verify-outcome.sh',
@@ -79,6 +86,10 @@ mkdirSync(join(workspace, 'apps/runner-autoscaler/runner-image'), {
 symlinkSync(
   runtime,
   join(workspace, 'apps/runner-autoscaler/runner-image/runtime'),
+);
+symlinkSync(
+  bakedRunner,
+  join(workspace, 'apps/runner-autoscaler/runner-image/direct-runner.sh'),
 );
 if (realpathSync(join(workspace, 'packages/fleet-tools')) !== baked)
   throw new Error('Probe does not resolve image-baked handlers');
@@ -134,6 +145,7 @@ const report = {
   probeHashes,
   bootstrapHelperHash: runtimeHashes['worker-policy-bootstrap.sh'],
   runtimeHashes,
+  runnerHash,
   passed,
   qualification: 'not-evaluated',
   nativeReport,

@@ -740,7 +740,7 @@ if [ "$PIPELINE" = "claude" ]; then
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
       claude --dangerously-skip-permissions \
       --allowedTools "Bash,Edit,Write,MultiEdit" \
-      --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task" \
+      --disallowedTools "ScheduleWakeup,SendMessage,Monitor" \
       "$@" --print "$prompt" | tee "$LAST_MESSAGE_FILE"
     return "${PIPESTATUS[0]}"
   }

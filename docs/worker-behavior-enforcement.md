@@ -199,6 +199,9 @@ worker module directory, and the individual `worker-policy-bootstrap.sh` and
 home, credentials, the complete checkout, or the Docker socket. Record the
 immutable ID returned by `docker image inspect` and run that same ID with
 `--network none`. Reports retain diagnostics and never claim graduation.
+Also mount the source `direct-runner.sh` read-only: the wrapper checks it against
+the baked runner and records its hash. Claude delegation probes read the actual
+runner's literal allow/deny tool flags instead of maintaining a separate policy.
 
 The first local candidate, source `ade85a89`, image
 `sha256:4148f3409e9c30ae328ee7cf6fb976c200313d6b9bddbf7ed5979438d6c4bcfb`,
@@ -347,6 +350,30 @@ unpublished work. Reports and native diagnostics were copied to the host at
 identity policy was relaxed to permit delegation. Claude/OpenCode delegated
 tool execution and the remaining acceptance gates below are still outstanding;
 no image was published or activated and no provider is graduated.
+
+Source-level Claude and OpenCode native child allow/deny canaries now pass too.
+Claude correlates the child's native hook `agent_id` with SubagentStart/Stop;
+OpenCode correlates real task-before/task-after receipts and the native session
+API's child `parentID` with the unchanged root binding. Both preserve unrelated
+work and deny child edits in review mode with the expected policy reason.
+Adding the runner's actual Claude flags exposed a real launch-policy mismatch:
+its legacy `Task` prohibition hides the current CLI's `Agent` tool. The failed
+canary at `/tmp/lcars-claude-hook-probe-lILZeH` starts no child; removing that
+blanket prohibition passes at `/tmp/lcars-claude-hook-probe-QgWLYE`. Scheduling,
+monitoring, and SendMessage remain disabled; the protocol still requires
+synchronous work. OpenCode source evidence is retained at
+`/tmp/lcars-opencode-hook-probe-Vs2sf0` and
+`/tmp/lcars-opencode-hook-probe-G7HFxI`. A rebuilt image must verify the new
+runner launch policy; the prior candidate was removed externally before these
+new image runs started. Earlier image receipts remain retained, not superseded
+by a claim of unexecuted coverage.
+
+CI run `35685589316` failed the same deadline assertion for Claude, recording
+`5, 5` seconds. A full local runner-harness reproduction passed and recorded
+`5, 4` for each provider. This is not a resolved CI failure. The harness now
+retains numeric worker start/end timestamps and requested sleep on failure,
+without printing prompts or credentials; the shrinking-budget assertion remains
+unchanged. No failed job was rerun.
 
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.

@@ -16,7 +16,10 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
-import { delegationFixture } from './delegation-fixture.mjs';
+import {
+  claudeRunnerToolArgs,
+  delegationFixture,
+} from './delegation-fixture.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
 import { publicationCommand } from './publication-fixture.mjs';
 import {
@@ -98,7 +101,7 @@ async function probe(mode) {
   mkdirSync(join(home, '.codex'), { recursive: true });
   mkdirSync(join(home, '.claude'), { recursive: true });
   const delegation = mode.startsWith('bootstrap-delegated-')
-    ? delegationFixture(dir, home, mode)
+    ? delegationFixture(dir, home, mode, provider)
     : null;
   const workflow = mode.startsWith('bootstrap-workflow')
     ? workflowFixture(dir, home, mode)
@@ -616,10 +619,12 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
           '--model',
           'claude-sonnet-4-6',
           '--dangerously-skip-permissions',
+          ...(delegation ? claudeRunnerToolArgs() : []),
           '--tools',
           'Bash',
           'Write',
           'Read',
+          ...(delegation ? ['Agent'] : []),
           '--strict-mcp-config',
           '--mcp-config',
           '{"mcpServers":{}}',
@@ -856,9 +861,8 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
 
 const observations = [];
 const modes = [
-  ...(provider === 'codex'
-    ? ['bootstrap-delegated-allow', 'bootstrap-delegated-review']
-    : []),
+  'bootstrap-delegated-allow',
+  'bootstrap-delegated-review',
   'bootstrap-workflow',
   'bootstrap-workflow-correction',
   'bootstrap-workflow-exhausted',

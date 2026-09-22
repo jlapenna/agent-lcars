@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import { delegationFixture } from './delegation-fixture.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
 import { publicationCommand } from './publication-fixture.mjs';
 import {
@@ -106,11 +107,15 @@ async function probe(mode) {
       );
   }
   const outcomeProbe = mode.startsWith('bootstrap-outcome-');
+  const delegation = mode.startsWith('bootstrap-delegated-')
+    ? delegationFixture(dir, home, mode, 'opencode')
+    : null;
   const workflow = mode.startsWith('bootstrap-workflow')
     ? workflowFixture(dir, home, mode)
     : null;
   const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
-  const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
+  const fileProbe =
+    mode.startsWith('bootstrap-file-') || outcomeProbe || !!delegation;
   const resumeProbe = mode === 'bootstrap-file-resume';
   let round = 1;
   const holdProbe = mode.startsWith('bootstrap-hold-');
@@ -125,6 +130,7 @@ async function probe(mode) {
   const secondSentinel =
     push?.secondSentinel ?? join(workspace, 'second-effect');
   const files =
+    delegation ??
     workflow ??
     push ??
     outcome ??
@@ -212,13 +218,27 @@ else process.exitCode = 1;
 ${lineageProbe ? `import { probeLineage, probeLineageRecovery } from ${JSON.stringify(pathToFileURL(resolve('tools/probes/opencode-lineage-fixture.mjs')).href)};` : ''}
 export default async (native) => ({
   'tool.execute.before': async (input) => {
-    if (${workflow ? "!['write', 'bash'].includes(input.tool)" : `input.tool !== ${JSON.stringify(fileProbe ? 'write' : 'bash')}`}) return;
+    if (${delegation ? "!['write', 'task'].includes(input.tool)" : workflow ? "!['write', 'bash'].includes(input.tool)" : `input.tool !== ${JSON.stringify(fileProbe ? 'write' : 'bash')}`}) return;
     appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
+    ${
+      delegation
+        ? `const session = await native.client.session.get({ path: { id: input.sessionID } });
+    if (session.error || session.data?.id !== input.sessionID) throw new Error('Native child session lookup failed');
+    appendFileSync(${JSON.stringify(delegation.events)}, JSON.stringify({...input, phase:'before', parentID:session.data.parentID}) + '\\n');`
+        : ''
+    }
     ${workflow ? `appendFileSync(${JSON.stringify(workflow.eventsPath)}, JSON.stringify(input) + '\\n');` : ''}
     ${lineageProbe ? `writeFileSync(${JSON.stringify(lineageReceipt)}, JSON.stringify(await ${lineageRecovery ? `probeLineageRecovery(native, input.sessionID, ${lineageExhausted})` : 'probeLineage(native, input.sessionID)'}));` : ''}
     ${lineageExhausted ? "throw new Error('LCARS control execution failed; preserve work and report an infrastructure failure; do not fabricate a human blocker or PARK.');" : ''}
     ${mode === 'deny' ? "throw new Error('LCARS_PROBE_DENY');" : ''}
     ${mode === 'failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
+  },
+  ${
+    delegation
+      ? `'tool.execute.after': async (input) => {
+    if (input.tool === 'task') appendFileSync(${JSON.stringify(delegation.events)}, JSON.stringify({...input, phase:'after'}) + '\\n');
+  },`
+      : ''
   }
 });
 `,
@@ -282,8 +302,14 @@ export default async (context) => {
         input.messages?.some((message) => message.role === 'tool') ?? false;
       // Auxiliary title requests are text-only and must not consume the tool call.
       const workflowStep = workflow?.next(input.messages ?? []);
-      const fileAction = fileProbe || workflowStep?.kind === 'write';
-      const toolName = fileAction ? 'write' : 'bash';
+      const delegatedStep = delegation?.next(
+        input.messages ?? [],
+        input.tools ?? [],
+      );
+      const fileAction = delegation
+        ? delegatedStep?.write === true
+        : fileProbe || workflowStep?.kind === 'write';
+      const toolName = delegatedStep?.tool ?? (fileAction ? 'write' : 'bash');
       const second =
         ownershipChanged && issued && !secondIssued && returnedToolResult;
       if (second)
@@ -292,7 +318,11 @@ export default async (context) => {
           'ownership changed after first tool result',
         );
       const tool =
-        (workflow ? !!workflowStep : !issued || second) &&
+        (delegation
+          ? !!delegatedStep
+          : workflow
+            ? !!workflowStep
+            : !issued || second) &&
         input.tools?.some((entry) => entry.function?.name === toolName);
       if (tool) {
         if (workflow) {
@@ -312,28 +342,29 @@ export default async (context) => {
                 function: {
                   name: toolName,
                   arguments: JSON.stringify(
-                    fileAction
-                      ? {
-                          filePath:
-                            second || round === 2
-                              ? secondSentinel
-                              : files.target,
-                          content: fileContent,
-                        }
-                      : {
-                          command: workflow
-                            ? workflowStep?.command
-                            : push
-                              ? push.command(second)
-                              : publicationProbe
-                                ? publicationCommand(mode, context)
-                                : holdProbe
-                                  ? reviewCommand(mode)
-                                  : usesPolicy
-                                    ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
-                                    : `touch '${sentinel}'`,
-                          description: 'Create harmless probe sentinel',
-                        },
+                    delegatedStep?.args ??
+                      (fileAction
+                        ? {
+                            filePath:
+                              second || round === 2
+                                ? secondSentinel
+                                : files.target,
+                            content: fileContent,
+                          }
+                        : {
+                            command: workflow
+                              ? workflowStep?.command
+                              : push
+                                ? push.command(second)
+                                : publicationProbe
+                                  ? publicationCommand(mode, context)
+                                  : holdProbe
+                                    ? reviewCommand(mode)
+                                    : usesPolicy
+                                      ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+                                      : `touch '${sentinel}'`,
+                            description: 'Create harmless probe sentinel',
+                          }),
                   ),
                 },
               },
@@ -559,6 +590,7 @@ export default async (context) => {
     : 0;
   const completionAfter = workflow?.completion(context, env, 'after');
   const workflowResult = workflow?.verify(context, nativeBinding?.sessionId);
+  const delegatedResult = delegation?.verify(context, nativeBinding);
   const ownershipChangeVerified =
     ownershipChanged &&
     effect &&
@@ -638,6 +670,7 @@ export default async (context) => {
     pushVerified: push?.verify() ?? false,
     outcomeTargetsPreserved: outcome?.verify() ?? true,
     workflow: workflowResult,
+    delegation: delegatedResult,
     completionBefore,
     completionAfter,
     code: execution.code,
@@ -648,6 +681,7 @@ export default async (context) => {
       exercised &&
       denialReasonObserved &&
       sessionBindingVerified &&
+      (!delegation || delegatedResult.passed) &&
       (!outcomeProbe || (ownershipReadCount === 0 && outcome.verify())) &&
       (!push ||
         (hookInvoked &&
@@ -710,6 +744,8 @@ export default async (context) => {
 
 const observations = [];
 const modes = [
+  'bootstrap-delegated-allow',
+  'bootstrap-delegated-review',
   'bootstrap-workflow',
   'bootstrap-workflow-correction',
   'bootstrap-workflow-exhausted',

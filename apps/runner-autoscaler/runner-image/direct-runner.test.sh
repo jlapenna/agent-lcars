@@ -355,7 +355,11 @@ printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
-if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then sleep "$FAKE_WORKER_SLEEP"; fi
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
+  printf '%s start %s sleep=%s\n' "$run_count" "$EPOCHREALTIME" "$FAKE_WORKER_SLEEP" >> "$WORKER_TIME_LOG"
+  sleep "$FAKE_WORKER_SLEEP"
+  printf '%s end %s\n' "$run_count" "$EPOCHREALTIME" >> "$WORKER_TIME_LOG"
+fi
 if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
   printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
     "$FAKE_NATIVE_OUTCOME" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
@@ -387,7 +391,11 @@ printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
-if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then sleep "$FAKE_WORKER_SLEEP"; fi
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
+  printf '%s start %s sleep=%s\n' "$run_count" "$EPOCHREALTIME" "$FAKE_WORKER_SLEEP" >> "$WORKER_TIME_LOG"
+  sleep "$FAKE_WORKER_SLEEP"
+  printf '%s end %s\n' "$run_count" "$EPOCHREALTIME" >> "$WORKER_TIME_LOG"
+fi
 if [ "${FAKE_WORKER_NO_THREAD:-}" != 1 ]; then echo '{"type":"thread.started","thread_id":"thread-codex-fixture"}'; fi
 if [ "${FAKE_WORKER_ERROR_EVENT:-}" = 1 ]; then echo '{"type":"error","message":"provider execution failed"}'; fi
 printf '%s' "${ACTIONS_RERUN_TOKEN:-}" > "$CODEX_ENV_LOG"
@@ -629,6 +637,7 @@ run_scenario() {
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
   export CODEX_ARGS_LOG="$dir/codex-args.log"
   export WORKER_RUN_COUNT_FILE="$dir/worker-run-count"
+  export WORKER_TIME_LOG="$dir/worker-times.log"
   export WORKER_CONTEXT_LOG="$dir/worker-context.log"
   export CODEX_ENV_LOG="$dir/codex-env.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
@@ -1762,7 +1771,10 @@ for provider in claude codex; do
     grep -Fq -- 'exec resume thread-codex-fixture' "$CODEX_ARGS_LOG" || fail "Codex correction changed thread"
   fi
   mapfile -t round_timeouts < <(grep -E "[0-9]+s $provider " "$TIMEOUT_ARGS_LOG" | sed -nE "s/.* ([0-9]+)s $provider .*/\\1/p")
-  [ "${#round_timeouts[@]}" -eq 2 ] && [ "${round_timeouts[1]}" -lt "${round_timeouts[0]}" ] || fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
+  if [ "${#round_timeouts[@]}" -ne 2 ] || [ "${round_timeouts[1]}" -ge "${round_timeouts[0]}" ]; then
+    cat "$WORKER_TIME_LOG" >&2
+    fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
+  fi
 
   for refusal in heartbeat lookup native exit deadline; do
     export FAKE_GH_NO_MATCH=1
