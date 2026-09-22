@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import { outcomeFixture } from './outcome-fixture.mjs';
 import {
   reviewCommand,
   reviewDenial,
@@ -86,7 +87,9 @@ async function probe(mode) {
   const home = join(dir, 'home');
   mkdirSync(workspace, { recursive: true });
   mkdirSync(home, { recursive: true });
-  const fileProbe = mode.startsWith('bootstrap-file-');
+  const outcomeProbe = mode.startsWith('bootstrap-outcome-');
+  const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
+  const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
   const holdProbe = mode.startsWith('bootstrap-hold-');
   const reviewReads = join(dir, 'review-reads');
   const ownershipChanged = mode === 'bootstrap-file-ownership-changed';
@@ -94,7 +97,9 @@ async function probe(mode) {
   const ownershipReads = join(dir, 'ownership-reads');
   const secondSentinel = join(workspace, 'second-effect');
   const files =
-    fileProbe || holdProbe ? fileProbeFixture(dir, home, mode) : null;
+    outcome ??
+    (fileProbe || holdProbe ? fileProbeFixture(dir, home, mode) : null);
+  const fileContent = outcome?.content ?? 'LCARS_FILE_PROBE\n';
   const sentinel = files?.sentinel ?? join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
@@ -102,7 +107,7 @@ async function probe(mode) {
   const recovery = mode.startsWith('policy-recovery-');
   const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
-    {
+    outcome?.brief ?? {
       repository: 'octo/example',
       mode:
         mode === 'bootstrap-file-review'
@@ -122,6 +127,7 @@ async function probe(mode) {
       ...(mode === 'bootstrap-file-session-expected-mismatch'
         ? { nativeSessionId: 'unexpected-native-session' }
         : {}),
+      ...outcome?.identity,
     },
   );
   const contextPath = join(dir, 'worker-context.json');
@@ -230,7 +236,7 @@ export default async (context) => {
                     fileProbe
                       ? {
                           filePath: second ? secondSentinel : files.target,
-                          content: 'LCARS_FILE_PROBE\n',
+                          content: fileContent,
                         }
                       : {
                           command: holdProbe
@@ -306,6 +312,7 @@ export default async (context) => {
       runId: context.runId,
       attemptId: context.attemptId,
       nativeSessionId: context.nativeSessionId,
+      nativeOutcomePath: context.nativeOutcomePath,
     };
     await setup.bootstrapWorker(options);
     if ((await setup.bootstrapWorker(options)).changed)
@@ -367,7 +374,7 @@ export default async (context) => {
     existsSync(receipt) && readFileSync(receipt, 'utf8').trim().length > 0;
   const effect =
     existsSync(sentinel) &&
-    (!fileProbe || readFileSync(sentinel, 'utf8') === 'LCARS_FILE_PROBE\n');
+    (!fileProbe || readFileSync(sentinel, 'utf8') === fileContent);
   let markerRepaired = false;
   if (usesPolicy && !fileProbe && !holdProbe && effect) {
     const published = JSON.parse(readFileSync(sentinel, 'utf8'));
@@ -398,11 +405,13 @@ export default async (context) => {
     secondIssued &&
     !existsSync(secondSentinel) &&
     ownershipReadCount === 2;
-  const expectedDenial = holdProbe
-    ? reviewDenial(mode)
-    : fileProbe
-      ? expectedFileDenial(mode)
-      : '';
+  const expectedDenial = outcome
+    ? outcome.denial
+    : holdProbe
+      ? reviewDenial(mode)
+      : fileProbe
+        ? expectedFileDenial(mode)
+        : '';
   const reviewReadCount = existsSync(reviewReads)
     ? readFileSync(reviewReads, 'utf8').trim().split('\n').length
     : 0;
@@ -437,6 +446,7 @@ export default async (context) => {
       exercised &&
       denialReasonObserved &&
       sessionBindingVerified &&
+      (!outcomeProbe || ownershipReadCount === 0) &&
       (!recovery || recoveryVerified) &&
       (holdProbe
         ? hookInvoked &&
@@ -482,6 +492,10 @@ for (const mode of [
   'bootstrap-hold-merge-blocked',
   'bootstrap-hold-merge-released',
   'bootstrap-hold-draft-threads',
+  'bootstrap-outcome-park-allow',
+  'bootstrap-outcome-no-op-allow',
+  'bootstrap-outcome-foreign',
+  'bootstrap-outcome-unrelated',
 ])
   observations.push(await probe(mode));
 const report = {

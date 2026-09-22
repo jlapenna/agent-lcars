@@ -189,6 +189,77 @@ describe('dispatched worker policy', () => {
     ).toBe('deny');
     expect(deps.assertWorktree).not.toHaveBeenCalled();
   });
+  it('limits native patch result exceptions to one exact result and safe destination', () => {
+    const root = mkdtempSync(join(tmpdir(), 'worker-result-patch-'));
+    const outcome = join(root, 'outcome');
+    const native = policy.prepareContext(
+      {
+        repository: 'octo/example',
+        mode: 'reply',
+        anchor: { type: 'work', id: 'item' },
+      },
+      {
+        provider: 'codex',
+        runId: 'work:item/r1',
+        attemptId: 'g1:work:item/r1',
+        nativeOutcomePath: outcome,
+      },
+    );
+    const deps = dependencies();
+    deps.assertWorktree.mockImplementation(() => {
+      throw new Error('not a code worktree');
+    });
+    const record = (kind: string) =>
+      `+<!-- agent-result:v1:${kind}:${native.attemptId} -->\n+<!-- attempt-claim:${native.attemptId} -->`;
+    const patch = (body: string) => ({
+      tool_name: 'apply_patch',
+      cwd: root,
+      tool_input: { command: `*** Begin Patch\n${body}\n*** End Patch` },
+    });
+    try {
+      for (const kind of ['park', 'no-op']) {
+        expect(
+          verdict(
+            patch(`*** Add File: outcome\n${record(kind)}`),
+            native,
+            deps,
+          ),
+        ).toBe('allow');
+      }
+      expect(deps.assertWorktree).not.toHaveBeenCalled();
+      for (const body of [
+        `*** Add File: outcome\n${record('no-op')}\n*** Add File: extra\n+unrelated`,
+        `*** Add File: outcome\n${record('no-op').replaceAll(native.attemptId, 'foreign')}`,
+        `*** Add File: outcome\n${record('no-op')}\n+extra`,
+        `*** Update File: outcome\n@@\n${record('no-op')}`,
+        '*** Delete File: outcome',
+        `*** Add File: extra\n${record('no-op')}`,
+      ])
+        expect(verdict(patch(body), native, deps)).toBe('deny');
+      const valid = patch(`*** Add File: outcome\n${record('no-op')}`);
+      writeFileSync(join(root, 'other'), 'preserve');
+      symlinkSync(join(root, 'other'), outcome);
+      expect(verdict(valid, native, deps)).toBe('deny');
+      rmSync(outcome);
+      mkdirSync(outcome);
+      expect(verdict(valid, native, deps)).toBe('deny');
+      const missing = {
+        ...native,
+        nativeOutcomePath: join(root, 'missing', 'outcome'),
+      };
+      expect(
+        verdict(
+          patch(
+            `*** Add File: ${missing.nativeOutcomePath}\n${record('no-op')}`,
+          ),
+          missing,
+          deps,
+        ),
+      ).toBe('deny');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it('preserves closed-anchor reply dispatches without permitting code changes', () => {
     const deps = dependencies();
     deps.readOwnership.mockReturnValue({

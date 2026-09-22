@@ -526,35 +526,75 @@ function repairArtifact(input, context, dependencies = {}) {
   };
 }
 
-function evaluate(input, context, dependencies = {}) {
-  const file = input.tool_input?.file_path ?? input.tool_input?.filePath;
+function nativeOutcomeDecision(input, context) {
+  if (context.anchor.type !== 'work' || !context.nativeOutcomePath) return null;
+  const args = input.tool_input ?? {};
+  const cwd = input.cwd ?? process.cwd();
+  let file = args.file_path ?? args.filePath;
+  let content = args.content;
+  if (input.tool_name === 'apply_patch') {
+    const patch =
+      typeof args === 'string'
+        ? args
+        : (args.patchText ?? args.patch ?? args.input ?? args.command);
+    try {
+      const files = patchPaths(patch);
+      if (
+        !files.some(
+          (target) => path.resolve(cwd, target) === context.nativeOutcomePath,
+        )
+      )
+        return null;
+      file = context.nativeOutcomePath;
+      const lines = patch.trim().split(/\r?\n/);
+      // Only one complete Add File operation can use the exception. Never
+      // exempt another patch target, a deletion, move, or partial update.
+      content =
+        files.length === 1 &&
+        lines[1] === `*** Add File: ${files[0]}` &&
+        lines.slice(2, -1).every((line) => line.startsWith('+'))
+          ? lines
+              .slice(2, -1)
+              .map((line) => line.slice(1))
+              .join('\n') + '\n'
+          : null;
+    } catch {
+      return null;
+    }
+  } else if (!['Write', 'write'].includes(input.tool_name)) return null;
   if (
-    context.anchor.type === 'work' &&
-    context.nativeOutcomePath &&
-    ['Write', 'write'].includes(input.tool_name) &&
     typeof file === 'string' &&
-    path.resolve(input.cwd ?? process.cwd(), file) === context.nativeOutcomePath
+    path.resolve(cwd, file) === context.nativeOutcomePath
   ) {
     const claim = `<!-- attempt-claim:${context.attemptId} -->`;
     const valid = ['park', 'no-op'].some(
       (kind) =>
-        input.tool_input.content ===
+        content ===
         `<!-- agent-result:v1:${kind}:${context.attemptId} -->\n${claim}\n`,
     );
     const parent = path.dirname(context.nativeOutcomePath);
-    if (
-      !valid ||
-      fs
-        .lstatSync(context.nativeOutcomePath, { throwIfNoEntry: false })
-        ?.isSymbolicLink() ||
-      fs.realpathSync(parent) !== parent
-    )
+    let safePath = false;
+    try {
+      const stat = fs.lstatSync(context.nativeOutcomePath, {
+        throwIfNoEntry: false,
+      });
+      safePath = (!stat || stat.isFile()) && fs.realpathSync(parent) === parent;
+    } catch {
+      /* A missing or unreadable parent is not an authorized path. */
+    }
+    if (!valid || !safePath)
       return decision(
         'deny',
         'Write only the exact two-line native Work result for this attempt to the setup-bound outcome file; do not redirect it through symlinks.',
       );
     return decision('allow');
   }
+  return null;
+}
+
+function evaluate(input, context, dependencies = {}) {
+  const nativeOutcome = nativeOutcomeDecision(input, context);
+  if (nativeOutcome) return nativeOutcome;
   const ops = operations(input);
   if (ops.some((op) => op.invalidPath))
     return decision(

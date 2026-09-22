@@ -16,6 +16,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import { outcomeFixture } from './outcome-fixture.mjs';
 import {
   reviewCommand,
   reviewDenial,
@@ -89,7 +90,9 @@ async function probe(mode) {
   mkdirSync(workspace, { recursive: true });
   mkdirSync(join(home, '.codex'), { recursive: true });
   mkdirSync(join(home, '.claude'), { recursive: true });
-  const fileProbe = mode.startsWith('bootstrap-file-');
+  const outcomeProbe = mode.startsWith('bootstrap-outcome-');
+  const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
+  const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
   const holdProbe = mode.startsWith('bootstrap-hold-');
   const reviewReads = join(dir, 'review-reads');
   const ownershipChanged = mode === 'bootstrap-file-ownership-changed';
@@ -97,7 +100,9 @@ async function probe(mode) {
   const ownershipReads = join(dir, 'ownership-reads');
   const secondSentinel = join(workspace, 'second-effect');
   const files =
-    fileProbe || holdProbe ? fileProbeFixture(dir, home, mode) : null;
+    outcome ??
+    (fileProbe || holdProbe ? fileProbeFixture(dir, home, mode) : null);
+  const fileContent = outcome?.content ?? 'LCARS_FILE_PROBE\n';
   const sentinel = files?.sentinel ?? join(workspace, 'effect'),
     receipt = join(dir, 'receipt.json');
   const rewrittenSentinel = join(workspace, 'rewritten-effect');
@@ -107,7 +112,7 @@ async function probe(mode) {
   const recovery = mode.startsWith('bridge-recovery-');
   const policyMarker = mode === 'bridge-marker' || mode === 'bootstrap-marker';
   const context = policy.prepareContext(
-    {
+    outcome?.brief ?? {
       repository: 'octo/example',
       mode:
         mode === 'bootstrap-file-review'
@@ -127,6 +132,7 @@ async function probe(mode) {
       ...(mode === 'bootstrap-file-session-expected-mismatch'
         ? { nativeSessionId: 'unexpected-native-session' }
         : {}),
+      ...outcome?.identity,
     },
   );
   const fakeBin = join(dir, 'bin');
@@ -236,6 +242,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
       runId: context.runId,
       attemptId: context.attemptId,
       nativeSessionId: context.nativeSessionId,
+      nativeOutcomePath: context.nativeOutcomePath,
     };
     await setup.bootstrapWorker(options);
     if ((await setup.bootstrapWorker(options)).changed)
@@ -314,7 +321,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
       const args = preRead
         ? { file_path: fileTarget }
         : fileProbe
-          ? { file_path: fileTarget, content: 'LCARS_FILE_PROBE\n' }
+          ? { file_path: fileTarget, content: fileContent }
           : provider === 'codex'
             ? { cmd: command, yield_time_ms: 1000 }
             : { command, description: 'Harmless probe sentinel' };
@@ -329,7 +336,11 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
                 id: `ctc_probe_${requests}`,
                 call_id: `call_probe_${requests}`,
                 name: toolName,
-                input: `*** Begin Patch\n*** Add File: ${fileTarget}\n+LCARS_FILE_PROBE\n*** End Patch`,
+                input: `*** Begin Patch\n*** Add File: ${fileTarget}\n${fileContent
+                  .trimEnd()
+                  .split('\n')
+                  .map((line) => '+' + line)
+                  .join('\n')}\n*** End Patch`,
                 status: 'completed',
               }
             : {
@@ -543,7 +554,7 @@ code_mode = false
   writeFileSync(join(dir, 'requests.json'), JSON.stringify(observations));
   const effect =
       existsSync(sentinel) &&
-      (!fileProbe || readFileSync(sentinel, 'utf8') === 'LCARS_FILE_PROBE\n'),
+      (!fileProbe || readFileSync(sentinel, 'utf8') === fileContent),
     hookInvoked =
       existsSync(receipt) &&
       (!fileProbe ||
@@ -579,11 +590,13 @@ code_mode = false
     secondIssued &&
     !existsSync(secondSentinel) &&
     ownershipReadCount === 2;
-  const expectedDenial = holdProbe
-    ? reviewDenial(mode)
-    : fileProbe
-      ? expectedFileDenial(mode)
-      : '';
+  const expectedDenial = outcome
+    ? outcome.denial
+    : holdProbe
+      ? reviewDenial(mode)
+      : fileProbe
+        ? expectedFileDenial(mode)
+        : '';
   const reviewReadCount = existsSync(reviewReads)
     ? readFileSync(reviewReads, 'utf8').trim().split('\n').length
     : 0;
@@ -621,6 +634,7 @@ code_mode = false
       exercised &&
       denialReasonObserved &&
       sessionBindingVerified &&
+      (!outcomeProbe || ownershipReadCount === 0) &&
       (holdProbe
         ? hookInvoked &&
           reviewReadCount === 1 &&
@@ -677,6 +691,10 @@ for (const mode of [
   'bootstrap-hold-merge-blocked',
   'bootstrap-hold-merge-released',
   'bootstrap-hold-draft-threads',
+  'bootstrap-outcome-park-allow',
+  'bootstrap-outcome-no-op-allow',
+  'bootstrap-outcome-foreign',
+  'bootstrap-outcome-unrelated',
 ])
   observations.push(await probe(mode));
 const report = {

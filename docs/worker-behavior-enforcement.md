@@ -208,7 +208,7 @@ image-bound scenario. No row grants provider graduation on its own.
 | `hook-failure`         | Native thrown failures deny; Claude/Codex native timeout denies                                                                                         | OpenCode timeout coverage and preserved-work proof in candidate image                          |
 | `recovery-success`     | Native evaluator restart and control smoke allow the still-unexecuted action                                                                            | Candidate-image recovery with retained session/work and original deadline                      |
 | `recovery-exhausted`   | Native failure/exhaustion receipts; all-provider runner outcomes and Work API failed-item proof                                                         | Combined native-to-control-plane failure, with no human assignment                             |
-| `authorized-exception` | Exact setup-bound native Work terminal-file policy contract                                                                                             | Native allowed/denied exception cases without relaxing other protections                       |
+| `authorized-exception` | Native park/no-op records allowed at the setup-bound path on all three CLIs; foreign markers and unrelated writes denied without GitHub ownership reads | Candidate-image evidence, including unsafe-destination and multi-target patch cases            |
 
 The ownership-change probe captures two ownership reads, two native edit
 attempts, the successful first file, the absent second file, and the policy
@@ -222,8 +222,8 @@ held actions must return the specific rejection to the model without reaching
 the publication transport. Holder-released actions must reach that transport.
 A separate released-draft case retains an unresolved thread and must still
 reject readiness. This does not claim proof of arbitrary narrative conditions.
-The complete local suites pass 27 observations each on Codex 0.155.1 and
-Claude Code 2.1.278, and 24 on OpenCode 1.18.25; their reports remain
+The complete local suites pass 31 observations each on Codex 0.155.1 and
+Claude Code 2.1.278, and 28 on OpenCode 1.18.25; their reports remain
 `qualification: not-evaluated`, not candidate-image graduation evidence.
 
 ### Native session binding
@@ -468,6 +468,9 @@ successful binding and failed-setup/no-launch behavior for all three providers.
 There is no per-tool installation-presence check.
 
 Native Work reply dispatches remain valid. Setup can bind the runner-owned
-terminal outcome path; native Write tools may write only the exact two-line
-park/no-op record for that attempt there, without requiring a code worktree.
-The exception neither accepts arbitrary contents nor follows symlink redirects.
+terminal outcome path; native Write tools and a single complete Codex
+`apply_patch` Add File operation may write only the exact two-line park/no-op
+record for that attempt there, without requiring a code worktree. Patch updates,
+deletions, moves, additional targets, and extra content cannot use the exception.
+The exception neither accepts arbitrary contents nor follows symlink redirects;
+missing/unreadable parents and non-file destinations receive corrective denial.
