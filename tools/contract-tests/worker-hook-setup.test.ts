@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { afterEach, expect, it } from 'vitest';
 
@@ -123,13 +123,10 @@ it.each([
     'bash',
     [
       '-c',
-      'source "$1"; worker_control_failed',
-      '--',
-      resolve(
-        'apps/runner-autoscaler/runner-image/runtime/worker-policy-bootstrap.sh',
-      ),
+      'source ./apps/runner-autoscaler/runner-image/runtime/worker-policy-bootstrap.sh; worker_control_failed',
     ],
     {
+      cwd: fileURLToPath(new URL('../../', import.meta.url)),
       env: {
         PATH: process.env.PATH,
         RUNNER_TEMP: root,
