@@ -712,6 +712,12 @@ HEARTBEAT_PID=$!
 
 AGENT_EXIT=1
 if [ "$PIPELINE" = "claude" ]; then
+  CLAUDE_WORKER_SESSION="$RESUME_SESSION_ID"
+  if [ "${#RESUME_FLAG[@]}" -eq 0 ]; then
+    CLAUDE_WORKER_SESSION="$(cat /proc/sys/kernel/random/uuid)"
+    RESUME_FLAG=(--session-id "$CLAUDE_WORKER_SESSION")
+  fi
+  export LCARS_WORKER_SESSION_ID="$CLAUDE_WORKER_SESSION"
   worker_policy_bootstrap "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   # The Claude CLI reads its long-lived subscription credential straight
   # from its own process environment. The autoscaler bind-mounts the value
@@ -731,11 +737,6 @@ if [ "$PIPELINE" = "claude" ]; then
   fi
   LAST_MESSAGE_FILE="$RUNNER_TEMP/last-message.txt"
   CLAUDE_DEADLINE=$((SECONDS + CLAUDE_TIMEOUT_SECONDS))
-  CLAUDE_WORKER_SESSION="$RESUME_SESSION_ID"
-  if [ "${#RESUME_FLAG[@]}" -eq 0 ]; then
-    CLAUDE_WORKER_SESSION="$(cat /proc/sys/kernel/random/uuid)"
-    RESUME_FLAG=(--session-id "$CLAUDE_WORKER_SESSION")
-  fi
   run_claude_round() {
     local prompt="$1" remaining
     shift

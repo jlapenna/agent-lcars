@@ -141,6 +141,7 @@ function prepareWorker({
   runId,
   attemptId,
   nativeOutcomePath,
+  nativeSessionId,
 }) {
   if (
     ![configPath, contextPath, briefPath].every(
@@ -153,7 +154,7 @@ function prepareWorker({
     throw new Error('Setup paths must be absolute and distinct');
   const context = policy.prepareContext(
     JSON.parse(fs.readFileSync(briefPath, 'utf8')),
-    { provider, runId, attemptId, nativeOutcomePath },
+    { provider, runId, attemptId, nativeOutcomePath, nativeSessionId },
   );
   // Each attempt gets its own path. Repeat setup is a no-op; reuse by another
   // dispatch is an error rather than changing the identity of a live session.
@@ -180,16 +181,36 @@ function prepareWorker({
 }
 
 async function verifyControl(provider, configPath, contextPath) {
+  const temporary = fs.mkdtempSync(
+    path.join(path.dirname(contextPath), '.worker-control-smoke-'),
+  );
+  try {
+    const smokeContextPath = path.join(temporary, 'context.json');
+    const context = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
+    fs.writeFileSync(
+      smokeContextPath,
+      JSON.stringify({ ...context, nativeSessionId: 'lcars-control-smoke' }),
+      { mode: 0o600 },
+    );
+    await executeControl(provider, configPath, smokeContextPath);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
+async function executeControl(provider, configPath, contextPath) {
   const context = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   const inputs = [
     {
       tool_name: 'Bash',
+      session_id: 'lcars-control-smoke',
       tool_input: { command: 'echo LCARS_SETUP_READ_PROBE' },
       cwd: process.cwd(),
     },
     {
       tool_name: 'Bash',
+      session_id: 'lcars-control-smoke',
       tool_input: { command: 'git commit --no-verify' },
       cwd: process.cwd(),
     },
@@ -201,17 +222,19 @@ async function verifyControl(provider, configPath, contextPath) {
     if (!config.plugin?.includes(plugin))
       throw new Error('Missing installed OpenCode registration');
     const previousRun = process.env.LCARS_RUN_ID,
-      previousContext = process.env.LCARS_WORKER_CONTEXT;
+      previousContext = process.env.LCARS_WORKER_CONTEXT,
+      previousAttempt = process.env.ATTEMPT_ID;
     try {
       process.env.LCARS_RUN_ID = context.runId;
       process.env.LCARS_WORKER_CONTEXT = contextPath;
+      process.env.ATTEMPT_ID = context.attemptId;
       const factory = (await import(plugin)).default;
       const hooks = await factory({ directory: process.cwd() });
       for (let i = 0; i < inputs.length; i++) {
         let denied = false;
         try {
           await hooks['tool.execute.before'](
-            { tool: 'bash' },
+            { tool: 'bash', sessionID: 'lcars-control-smoke' },
             { args: inputs[i].tool_input },
           );
         } catch {
@@ -226,6 +249,8 @@ async function verifyControl(provider, configPath, contextPath) {
       if (previousContext === undefined)
         delete process.env.LCARS_WORKER_CONTEXT;
       else process.env.LCARS_WORKER_CONTEXT = previousContext;
+      if (previousAttempt === undefined) delete process.env.ATTEMPT_ID;
+      else process.env.ATTEMPT_ID = previousAttempt;
     }
   } else {
     const installed = config.hooks?.PreToolUse?.flatMap(
@@ -246,6 +271,7 @@ async function verifyControl(provider, configPath, contextPath) {
           ...process.env,
           LCARS_RUN_ID: context.runId,
           LCARS_WORKER_CONTEXT: contextPath,
+          ATTEMPT_ID: context.attemptId,
         },
       });
       if (
@@ -298,6 +324,7 @@ if (require.main === module) {
           runId,
           attemptId,
           nativeOutcomePath: process.env.NATIVE_WORK_OUTCOME_FILE,
+          nativeSessionId: process.env.LCARS_WORKER_SESSION_ID,
         };
         result =
           args[0] === '--bootstrap'

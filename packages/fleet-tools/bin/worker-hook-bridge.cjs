@@ -137,6 +137,7 @@ function recover(handler, input, options = {}) {
       const result = run(
         JSON.stringify({
           tool_name: 'Bash',
+          session_id: JSON.parse(input).session_id,
           tool_input: { command },
           cwd: process.cwd(),
         }),

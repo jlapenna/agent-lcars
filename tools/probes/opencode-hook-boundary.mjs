@@ -111,6 +111,9 @@ async function probe(mode) {
       provider: 'opencode',
       runId: 'octo/example#42/r1',
       attemptId: 'g1:octo/example#42/r1',
+      ...(mode === 'bootstrap-file-session-expected-mismatch'
+        ? { nativeSessionId: 'unexpected-native-session' }
+        : {}),
     },
   );
   const contextPath = join(dir, 'worker-context.json');
@@ -288,10 +291,23 @@ export default async (context) => {
       briefPath,
       runId: context.runId,
       attemptId: context.attemptId,
+      nativeSessionId: context.nativeSessionId,
     };
     await setup.bootstrapWorker(options);
     if ((await setup.bootstrapWorker(options)).changed)
       throw new Error('Bootstrap was not idempotent');
+    if (existsSync(`${contextPath}.session.json`))
+      throw new Error('Setup smoke consumed native worker binding');
+    if (mode === 'bootstrap-file-session-bound-mismatch')
+      writeFileSync(
+        `${contextPath}.session.json`,
+        JSON.stringify({
+          provider: 'opencode',
+          runId: context.runId,
+          attemptId: context.attemptId,
+          sessionId: 'another-native-session',
+        }),
+      );
   } else if (usesPolicy) {
     setup.installOpenCode(join(workspace, 'opencode.json'), plugin);
     if (setup.installOpenCode(join(workspace, 'opencode.json'), plugin).changed)
@@ -347,6 +363,18 @@ export default async (context) => {
   }
   const exercised =
     execution.code === 0 && !execution.timedOut && issued && returnedToolResult;
+  const nativeBinding = existsSync(`${contextPath}.session.json`)
+    ? JSON.parse(readFileSync(`${contextPath}.session.json`, 'utf8'))
+    : null;
+  const sessionBindingVerified =
+    !usesPolicy ||
+    (mode === 'bootstrap-file-session-expected-mismatch'
+      ? nativeBinding === null
+      : nativeBinding?.sessionId ===
+        (mode === 'bootstrap-file-session-bound-mismatch'
+          ? 'another-native-session'
+          : JSON.parse(readFileSync(receipt, 'utf8').trim().split('\n')[0])
+              .sessionID));
   const ownershipReadCount = existsSync(ownershipReads)
     ? readFileSync(ownershipReads, 'utf8').trim().split('\n').length
     : 0;
@@ -378,6 +406,7 @@ export default async (context) => {
     ownershipReadCount,
     ownershipChangeVerified,
     denialReasonObserved,
+    sessionBindingVerified,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
@@ -385,6 +414,7 @@ export default async (context) => {
     observedExpectedPrimitive:
       exercised &&
       denialReasonObserved &&
+      sessionBindingVerified &&
       (!recovery || recoveryVerified) &&
       (ownershipChanged
         ? hookInvoked && ownershipChangeVerified
@@ -419,6 +449,8 @@ for (const mode of [
   'bootstrap-file-ownership-absent',
   'bootstrap-file-ownership-unreadable',
   'bootstrap-file-ownership-changed',
+  'bootstrap-file-session-expected-mismatch',
+  'bootstrap-file-session-bound-mismatch',
 ])
   observations.push(await probe(mode));
 const report = {

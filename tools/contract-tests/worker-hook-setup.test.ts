@@ -311,7 +311,15 @@ it.each(['claude', 'codex', 'opencode'])(
       controlSmokePassed: true,
       executionSmokeRequired: false,
     });
+    expect(existsSync(options.contextPath + '.session.json')).toBe(false);
+    writeFileSync(
+      options.contextPath + '.session.json',
+      'existing native binding',
+    );
     expect((await setup.bootstrapWorker(options)).changed).toBe(false);
+    expect(readFileSync(options.contextPath + '.session.json', 'utf8')).toBe(
+      'existing native binding',
+    );
     writeFileSync(config, '{}');
     await expect(
       setup.verifyControl(provider, config, options.contextPath),

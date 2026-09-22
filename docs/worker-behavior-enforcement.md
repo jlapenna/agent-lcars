@@ -12,6 +12,8 @@ An OpenCode adapter translates tool events into the same shared policy, and
 setup installs its registration. Setup binds validated dispatch context once.
 Fresh readiness checks cover review threads, requested changes, blocking labels,
 and acknowledgments of external draft/auto-merge holds.
+Native session metadata is bound to the setup-owned attempt before tool actions;
+known Claude runner session IDs are also bound before launch.
 The direct runner now shares one bounded completion-correction rule across all
 three providers, verified by its executable runner harness. Hook setup is
 connected to all three launch paths behind provider-specific qualification.
@@ -192,27 +194,52 @@ PR or issue should be modified by multiple canaries.
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
 
-| Scenario               | Current evidence                                                                                                                        | Still required for full qualification                                                      |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `valid-work`           | Native feature edit and marker-repaired fixture comment succeed on all three CLIs                                                       | Combined authorized implementation/publication/completion in the candidate runner image    |
-| `invalid-identity`     | Setup rejects mismatched attempt/run/anchor; runner harness prevents task launch after setup failure                                    | Provider session-to-attempt binding and native negative launch proof                       |
-| `mode-violation`       | Native review-mode file edits are rejected with the expected policy reason                                                              | Native publication/push rejection in review mode                                           |
-| `ownership-lost`       | Native absent/unreadable ownership blocks edits; a two-tool session allows the first edit and blocks the second after ownership changes | Matching publication scenarios and candidate-image evidence                                |
-| `primary-worktree`     | Real Git linked/primary fixtures and installed repo-tools guard; native direct and symlink-to-primary edits denied                      | Candidate-image Git mutation/publication coverage                                          |
-| `missing-marker`       | Native command repair reaches the local publication transport; unit tests cover foreign bodies and idempotence                          | Native foreign-artifact/idempotence negative cases and full supported-deliverable coverage |
-| `premature-completion` | All-provider runner harness; native Claude/Codex same-session resumption                                                                | Combined native completion correction and exhausted-budget canaries, including OpenCode    |
-| `review-hold`          | Shared fresh/paginated review gate, focused contract tests, and a real read-only GraphQL snapshot                                       | Native held/released readiness and merge-arm scenarios                                     |
-| `missing-hook`         | Native bootstrap installs omitted registration; runner harness refuses launch after setup failure                                       | Combined candidate-image negative setup scenario                                           |
-| `hook-failure`         | Native thrown failures deny; Claude/Codex native timeout denies                                                                         | OpenCode timeout coverage and preserved-work proof in candidate image                      |
-| `recovery-success`     | Native evaluator restart and control smoke allow the still-unexecuted action                                                            | Candidate-image recovery with retained session/work and original deadline                  |
-| `recovery-exhausted`   | Native failure/exhaustion receipts; all-provider runner outcomes and Work API failed-item proof                                         | Combined native-to-control-plane failure, with no human assignment                         |
-| `authorized-exception` | Exact setup-bound native Work terminal-file policy contract                                                                             | Native allowed/denied exception cases without relaxing other protections                   |
+| Scenario               | Current evidence                                                                                                                                        | Still required for full qualification                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `valid-work`           | Native feature edit and marker-repaired fixture comment succeed on all three CLIs                                                                       | Combined authorized implementation/publication/completion in the candidate runner image        |
+| `invalid-identity`     | Setup rejects mismatched attempt/run/anchor; native mismatched expected or existing session bindings deny actions; runner harness rejects setup failure | Candidate-image binding, combined native resume, and authorized child-session lineage coverage |
+| `mode-violation`       | Native review-mode file edits are rejected with the expected policy reason                                                                              | Native publication/push rejection in review mode                                               |
+| `ownership-lost`       | Native absent/unreadable ownership blocks edits; a two-tool session allows the first edit and blocks the second after ownership changes                 | Matching publication scenarios and candidate-image evidence                                    |
+| `primary-worktree`     | Real Git linked/primary fixtures and installed repo-tools guard; native direct and symlink-to-primary edits denied                                      | Candidate-image Git mutation/publication coverage                                              |
+| `missing-marker`       | Native command repair reaches the local publication transport; unit tests cover foreign bodies and idempotence                                          | Native foreign-artifact/idempotence negative cases and full supported-deliverable coverage     |
+| `premature-completion` | All-provider runner harness; native Claude/Codex same-session resumption                                                                                | Combined native completion correction and exhausted-budget canaries, including OpenCode        |
+| `review-hold`          | Shared fresh/paginated review gate, focused contract tests, and a real read-only GraphQL snapshot                                                       | Native held/released readiness and merge-arm scenarios                                         |
+| `missing-hook`         | Native bootstrap installs omitted registration; runner harness refuses launch after setup failure                                                       | Combined candidate-image negative setup scenario                                               |
+| `hook-failure`         | Native thrown failures deny; Claude/Codex native timeout denies                                                                                         | OpenCode timeout coverage and preserved-work proof in candidate image                          |
+| `recovery-success`     | Native evaluator restart and control smoke allow the still-unexecuted action                                                                            | Candidate-image recovery with retained session/work and original deadline                      |
+| `recovery-exhausted`   | Native failure/exhaustion receipts; all-provider runner outcomes and Work API failed-item proof                                                         | Combined native-to-control-plane failure, with no human assignment                             |
+| `authorized-exception` | Exact setup-bound native Work terminal-file policy contract                                                                                             | Native allowed/denied exception cases without relaxing other protections                       |
 
 The ownership-change probe captures two ownership reads, two native edit
 attempts, the successful first file, the absent second file, and the policy
 denial delivered back to the model. Review-mode and absent/unreadable-ownership
 probes also require the specific policy reason; an unrelated provider refusal
 or a tool that never reaches the hook cannot satisfy them.
+
+### Native session binding
+
+`worker-session.cjs` consumes provider-native `session_id` metadata (OpenCode
+`sessionID` is translated by its adapter), not task text. The first tool event
+atomically publishes a complete `.session.json` record beside the setup context,
+bound to provider/run/attempt/session. Later events must match that immutable
+record. Concurrent hooks from the same session are permitted; another session
+cannot replace the winner. Missing or malformed metadata, foreign attempt
+environment, symlinked records, and mismatches are rejected before policy or
+tool execution. This is dynamic identity enforcement, not an installation check.
+
+Claude allocates or restores its session ID before bootstrap and supplies it
+as the expected session. For runtimes that allocate an ID during startup, the
+first native tool event is the binding boundary before task action. Setup
+execution smokes run against an isolated temporary context/binding and never
+reserve or replace the real session record. Recovery probes carry the original
+native session ID. Native CLI cases verify both expected-ID mismatch and an
+already-bound foreign session, including unchanged binding and absent file effects.
+
+This currently models one native session per attempt. Authorized delegation
+that gives child sessions distinct IDs requires provider-specific lineage proof
+before rollout; do not treat child sessions as arbitrary foreign sessions or
+disable legitimate delegation to manufacture qualification. Combined native
+resume/continuation and child-session coverage remain explicit acceptance gates.
 
 Probe drivers must invoke the actual pinned provider runtime and observe
 side effects independently (for example a sentinel file or captured local
@@ -355,7 +382,7 @@ On the tested Codex 0.155.1 and Claude Code 2.1.278, raw command-hook exceptions
 allowed the requested action. The shared `worker-hook-bridge.cjs` instead
 converted exceptions and its five-second handler timeout into explicit native
 PreToolUse denials; the actual CLI then prevented both sentinel writes. The
-allowed case still executed. All twenty observations passed on each CLI,
+allowed case still executed. All twenty-two observations passed on each CLI,
 including an exact repaired marker in the independently captured comment body.
 The tenth observation executes a second round within the same probe deadline:
 Claude retains its preallocated UUID; Codex resumes the first hook's native

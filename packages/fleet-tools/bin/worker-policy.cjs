@@ -7,6 +7,7 @@ const { execFileSync } = require('node:child_process');
 const { fleetLogin } = require('./fleet-identity.cjs');
 const { isDispatch } = require('./worker-hook-bridge.cjs');
 const review = require('./worker-review.cjs');
+const session = require('./worker-session.cjs');
 
 const decision = (permissionDecision, permissionDecisionReason) => ({
   hookSpecificOutput: {
@@ -68,6 +69,12 @@ function prepareContext(brief, identity) {
       !path.isAbsolute(identity.nativeOutcomePath))
   )
     throw new Error('Invalid native outcome binding');
+  if (
+    identity.nativeSessionId !== undefined &&
+    (typeof identity.nativeSessionId !== 'string' ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(identity.nativeSessionId))
+  )
+    throw new Error('Invalid native session binding');
   return {
     policyVersion: 1,
     runId,
@@ -75,6 +82,9 @@ function prepareContext(brief, identity) {
     provider,
     repository: brief.repository,
     mode: brief.mode,
+    ...(identity.nativeSessionId
+      ? { nativeSessionId: identity.nativeSessionId }
+      : {}),
     ...(identity.nativeOutcomePath
       ? { nativeOutcomePath: identity.nativeOutcomePath }
       : {}),
@@ -643,7 +653,10 @@ if (require.main === module && isDispatch(process.env)) {
   const context = JSON.parse(
     fs.readFileSync(process.env.LCARS_WORKER_CONTEXT, 'utf8'),
   );
-  process.stdout.write(`${JSON.stringify(evaluate(input, context))}\n`);
+  const rejected = session.rejection(input, context);
+  process.stdout.write(
+    `${JSON.stringify(rejected ? decision('deny', rejected) : evaluate(input, context))}\n`,
+  );
 }
 
 module.exports = {
