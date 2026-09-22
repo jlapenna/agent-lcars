@@ -163,7 +163,8 @@ const PIPELINE_LABELS: Record<AgentPipeline, string> = {
 const PIPELINE_COLORS: Record<AgentPipeline, string> = {
   claude: 'blue',
   codex: 'teal',
-  opencode: 'violet',
+  // The default violet outline shade fails AA on the dark ground.
+  opencode: 'var(--lcars-periwinkle)',
 };
 
 /**
@@ -203,7 +204,7 @@ const AGENT_COLORS: Record<SessionAgent, string> = {
   codex: 'teal',
   gemini: 'blue',
   antigravity: 'grape',
-  opencode: 'violet',
+  opencode: 'var(--lcars-periwinkle)',
 };
 
 /**
