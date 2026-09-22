@@ -34,6 +34,13 @@ const baked = '/opt/agent-tools';
 const runtime = '/usr/local/lib/agent-lcars/runtime';
 const sha256 = (path) =>
   createHash('sha256').update(readFileSync(path)).digest('hex');
+// The test harness may advance independently of an unchanged baked policy.
+// Record exactly which read-only harness files measured this image.
+const probeHashes = Object.fromEntries(
+  readdirSync(join(source, 'tools/probes'))
+    .filter((name) => name.endsWith('.mjs'))
+    .map((name) => [name, sha256(join(source, 'tools/probes', name))]),
+);
 const moduleHashes = {};
 for (const name of readdirSync(join(source, 'packages/fleet-tools/bin')).filter(
   (name) => /^(worker-|fleet-identity).*\.(cjs|mjs)$/.test(name),
@@ -107,6 +114,7 @@ const report = {
   provider,
   jobUid: process.getuid(),
   moduleHashes,
+  probeHashes,
   bootstrapHelperHash: helperHash,
   passed,
   qualification: 'not-evaluated',

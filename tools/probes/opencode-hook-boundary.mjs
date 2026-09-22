@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
+import { publicationCommand } from './publication-fixture.mjs';
 import {
   reviewCommand,
   reviewDenial,
@@ -272,7 +273,7 @@ export default async (context) => {
                           command: push
                             ? push.command(second)
                             : publicationProbe
-                              ? 'gh pr create --repo octo/example --title "Fixture PR" --body "Fixture deliverable"'
+                              ? publicationCommand(mode, context)
                               : holdProbe
                                 ? reviewCommand(mode)
                                 : usesPolicy
@@ -566,7 +567,11 @@ export default async (context) => {
       (!publicationProbe ||
         (hookInvoked &&
           ownershipReadCount ===
-            (mode.endsWith('-review') ? 0 : ownershipChanged ? 2 : 1) &&
+            (mode.endsWith('-review') || mode.endsWith('-marker-foreign')
+              ? 0
+              : ownershipChanged
+                ? 2
+                : 1) &&
           effect === (mode.endsWith('-allow') || ownershipChanged) &&
           (!effect || markerRepaired))) &&
       (!lineageProbe || providerApiLineageVerified) &&
@@ -635,6 +640,8 @@ const modes = [
   'bootstrap-publication-ownership-absent',
   'bootstrap-publication-ownership-unreadable',
   'bootstrap-publication-ownership-changed',
+  'bootstrap-publication-marker-idempotent-allow',
+  'bootstrap-publication-marker-foreign',
   'bootstrap-push-allow',
   'bootstrap-push-review',
   'bootstrap-push-primary',

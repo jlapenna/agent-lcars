@@ -216,21 +216,21 @@ candidate must still pass the native probes; the failed image is not qualified.
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
 
-| Scenario               | Current evidence                                                                                                                                                                 | Still required for full qualification                                                      |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `valid-work`           | Native feature edit and marker-repaired fixture comment succeed on all three CLIs                                                                                                | Combined authorized implementation/publication/completion in the candidate runner image    |
-| `invalid-identity`     | Setup rejects mismatches; native session-binding denials; pinned OpenCode session API verifies descendant mapping without replacing the root                                     | Candidate-image binding and actual delegated tool execution across providers               |
-| `mode-violation`       | Native review-mode file edits, PR creation, and actual Git pushes are rejected with the expected corrective policy reason                                                        | Candidate-image evidence                                                                   |
-| `ownership-lost`       | Native absent/unreadable ownership blocks edits, PR creation, and Git pushes; two-tool sessions preserve the first edit/publication and block the second after ownership changes | Candidate-image evidence                                                                   |
-| `primary-worktree`     | Real Git linked/primary fixtures and installed repo-tools guard; native direct and symlink-to-primary edits denied; real Git push allowed only from the linked worktree          | Candidate-image Git mutation/publication coverage                                          |
-| `missing-marker`       | Native command repair reaches the local publication transport; unit tests cover foreign bodies and idempotence                                                                   | Native foreign-artifact/idempotence negative cases and full supported-deliverable coverage |
-| `premature-completion` | All-provider runner harness; native same-session resumption on all three CLIs, with setup-bound OpenCode file edits before/after restart                                         | Combined native completion correction and exhausted-budget canaries                        |
-| `review-hold`          | Native held/released readiness and merge-arm actions on all three CLIs; unresolved threads still block after holder release                                                      | Candidate-image evidence and remaining supported hold-satisfaction paths                   |
-| `missing-hook`         | Native bootstrap installs omitted registration; runner harness refuses launch after setup failure                                                                                | Combined candidate-image negative setup scenario                                           |
-| `hook-failure`         | Native thrown failures deny; Claude/Codex native timeout denies                                                                                                                  | OpenCode timeout coverage and preserved-work proof in candidate image                      |
-| `recovery-success`     | Native evaluator restart and control smoke allow the still-unexecuted action                                                                                                     | Candidate-image recovery with retained session/work and original deadline                  |
-| `recovery-exhausted`   | Native failure/exhaustion receipts; all-provider runner outcomes and Work API failed-item proof                                                                                  | Combined native-to-control-plane failure, with no human assignment                         |
-| `authorized-exception` | Native park/no-op records allowed at the setup-bound path on all three CLIs; foreign markers and unrelated writes denied without GitHub ownership reads                          | Candidate-image evidence, including unsafe-destination and multi-target patch cases        |
+| Scenario               | Current evidence                                                                                                                                                                 | Still required for full qualification                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `valid-work`           | Native feature edit and marker-repaired fixture comment succeed on all three CLIs                                                                                                | Combined authorized implementation/publication/completion in the candidate runner image |
+| `invalid-identity`     | Setup rejects mismatches; native session-binding denials; pinned OpenCode session API verifies descendant mapping without replacing the root                                     | Candidate-image binding and actual delegated tool execution across providers            |
+| `mode-violation`       | Native review-mode file edits, PR creation, and actual Git pushes are rejected with the expected corrective policy reason                                                        | Candidate-image evidence                                                                |
+| `ownership-lost`       | Native absent/unreadable ownership blocks edits, PR creation, and Git pushes; two-tool sessions preserve the first edit/publication and block the second after ownership changes | Candidate-image evidence                                                                |
+| `primary-worktree`     | Real Git linked/primary fixtures and installed repo-tools guard; native direct and symlink-to-primary edits denied; real Git push allowed only from the linked worktree          | Candidate-image Git mutation/publication coverage                                       |
+| `missing-marker`       | Native command repair reaches the local publication transport; all three CLIs preserve an existing exact marker once and reject foreign claims without publishing                | Candidate-image evidence and full supported-deliverable coverage                        |
+| `premature-completion` | All-provider runner harness; native same-session resumption on all three CLIs, with setup-bound OpenCode file edits before/after restart                                         | Combined native completion correction and exhausted-budget canaries                     |
+| `review-hold`          | Native held/released readiness and merge-arm actions on all three CLIs; unresolved threads still block after holder release                                                      | Candidate-image evidence and remaining supported hold-satisfaction paths                |
+| `missing-hook`         | Native bootstrap installs omitted registration; runner harness refuses launch after setup failure                                                                                | Combined candidate-image negative setup scenario                                        |
+| `hook-failure`         | Native thrown failures deny; Claude/Codex native timeout denies                                                                                                                  | OpenCode timeout coverage and preserved-work proof in candidate image                   |
+| `recovery-success`     | Native evaluator restart and control smoke allow the still-unexecuted action                                                                                                     | Candidate-image recovery with retained session/work and original deadline               |
+| `recovery-exhausted`   | Native failure/exhaustion receipts; all-provider runner outcomes and Work API failed-item proof                                                                                  | Combined native-to-control-plane failure, with no human assignment                      |
+| `authorized-exception` | Native park/no-op records allowed at the setup-bound path on all three CLIs; foreign markers and unrelated writes denied without GitHub ownership reads                          | Candidate-image evidence, including unsafe-destination and multi-target patch cases     |
 
 The ownership-change probe captures two ownership reads, two native edit
 attempts, the successful first file, the absent second file, and the policy
@@ -265,9 +265,14 @@ held actions must return the specific rejection to the model without reaching
 the publication transport. Holder-released actions must reach that transport.
 A separate released-draft case retains an unresolved thread and must still
 reject readiness. This does not claim proof of arbitrary narrative conditions.
-The complete local suites pass 42 observations each on Codex 0.155.1 and
+The baseline complete local suites pass 42 observations each on Codex 0.155.1 and
 Claude Code 2.1.278, and 43 on OpenCode 1.18.25; their reports remain
 `qualification: not-evaluated`, not candidate-image graduation evidence.
+Two additional focused native publication cases pass on each version: an
+already-correct marker remains byte-for-byte unchanged and occurs only once;
+a foreign claim gets corrective rejection, no publication, and no ownership
+lookup. Image reports also record the mounted probe-file hashes, since the
+test harness may advance independently of unchanged baked worker handlers.
 
 ### Native session binding
 

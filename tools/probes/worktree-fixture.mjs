@@ -46,6 +46,8 @@ export function fileProbeFixture(directory, home, mode) {
 }
 
 export function expectedFileDenial(mode) {
+  if (mode.endsWith('-marker-foreign'))
+    return 'reconcile foreign attempt markers';
   if (mode.includes('-session-'))
     return 'Native session identity does not match';
   if (mode.endsWith('-review')) return 'This dispatch requests review';
