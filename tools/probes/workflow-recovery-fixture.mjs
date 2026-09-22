@@ -6,7 +6,13 @@ import { pathToFileURL } from 'node:url';
 
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
-export function workflowRecoveryFixture(directory, target, preserved, content) {
+export function workflowRecoveryFixture(
+  directory,
+  target,
+  preserved,
+  content,
+  exhausted = false,
+) {
   const handler = join(directory, 'workflow-fault.cjs');
   const trace = join(directory, 'workflow-recovery.jsonl');
   const policy = realpathSync(
@@ -20,7 +26,7 @@ const payload = fs.readFileSync(0, 'utf8');
 const input = JSON.parse(payload);
 const command = input.tool_input?.command ?? null;
 const marker = __filename + '.crashed';
-const crash = command?.endsWith(' add -- implementation.txt') && !fs.existsSync(marker);
+const crash = (command?.endsWith(' add -- implementation.txt') && !fs.existsSync(marker)) || (${exhausted} && command === 'git commit --no-verify');
 fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({command,sessionId:input.session_id,crash:!!crash,
   implementationPresent:fs.existsSync(${JSON.stringify(target)}) && fs.readFileSync(${JSON.stringify(target)},'utf8') === ${JSON.stringify(content)},
   unpublishedWorkPresent:fs.readFileSync(${JSON.stringify(preserved)},'utf8') === 'retain unrelated unpublished work\\n'
@@ -88,13 +94,16 @@ export default async (context) => {
           .split('\n')
           .map(JSON.parse);
         const crashIndex = events.findIndex((event) => event.crash);
-        const recovery = events.slice(crashIndex, crashIndex + 4);
+        const expectedCalls = exhausted ? 3 : 4;
+        const recovery = events.slice(crashIndex, crashIndex + expectedCalls);
         const receipt = (suffix) =>
           readFileSync(`${contextPath}.${suffix}`, 'utf8') === attemptId;
         return {
-          oneCrash: events.filter((event) => event.crash).length === 1,
+          expectedFailures:
+            events.filter((event) => event.crash).length ===
+            (exhausted ? 2 : 1),
           usefulWorkRetained:
-            recovery.length === 4 &&
+            recovery.length === expectedCalls &&
             recovery.every(
               (event) =>
                 event.implementationPresent && event.unpublishedWorkPresent,
@@ -102,15 +111,21 @@ export default async (context) => {
           sameNativeSession:
             !!sessionId &&
             events.every((event) => event.sessionId === sessionId),
-          allowDenyThenRetry:
-            recovery.length === 4 &&
+          boundedRecoverySequence:
+            recovery.length === expectedCalls &&
             recovery[1].command === 'echo LCARS_RECOVERY_READ_PROBE' &&
             recovery[2].command === 'git commit --no-verify' &&
-            recovery[3].command === recovery[0].command &&
-            !recovery[3].crash,
-          recoverySucceeded:
-            receipt('recovery-used') && receipt('recovery-succeeded'),
-          noTerminalFailure: !existsSync(`${contextPath}.control-failed`),
+            (exhausted
+              ? recovery[2].crash && events.length === crashIndex + 3
+              : recovery[3].command === recovery[0].command &&
+                !recovery[3].crash),
+          attemptBoundReceipts:
+            receipt('recovery-used') &&
+            (exhausted
+              ? !existsSync(`${contextPath}.recovery-succeeded`) &&
+                receipt('control-failed')
+              : receipt('recovery-succeeded') &&
+                !existsSync(`${contextPath}.control-failed`)),
           originalDeadlineRetained:
             Number.isFinite(deadline) && Date.now() < deadline,
         };

@@ -615,8 +615,9 @@ export default async (context) => {
     secondIssued &&
     !existsSync(secondSentinel) &&
     ownershipReadCount === 2;
-  const expectedDenial =
-    lineageExhausted || recoveryExhausted
+  const expectedDenial = workflow
+    ? workflow.denial
+    : lineageExhausted || recoveryExhausted
       ? 'infrastructure failure'
       : outcome
         ? outcome.denial
@@ -738,7 +739,7 @@ export default async (context) => {
           completionAfter.code === (workflow.expectPublication ? 0 : 1) &&
           completionAfter.missing === !workflow.expectPublication &&
           markerRepaired === workflow.expectPublication &&
-          ownershipReadCount === (workflow.expectPublication ? 5 : 4)
+          ownershipReadCount === workflow.expectedOwnershipReads
         : lineageExhausted
           ? hookInvoked && !effect
           : holdProbe
@@ -768,6 +769,7 @@ const modes = [
   'bootstrap-delegated-review',
   'bootstrap-workflow',
   'bootstrap-workflow-recovery',
+  'bootstrap-workflow-recovery-exhausted',
   'bootstrap-workflow-correction',
   'bootstrap-workflow-exhausted',
   'allow',

@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { finalizeNativeFailure } from './runner-failure-fixture.mjs';
 import { workflowRecoveryFixture } from './workflow-recovery-fixture.mjs';
 import { fileProbeFixture } from './worktree-fixture.mjs';
 
@@ -22,10 +23,12 @@ function resultIds(value, into = new Set()) {
 }
 
 export function workflowFixture(directory, home, mode) {
+  const recoveryExhausted = mode === 'bootstrap-workflow-recovery-exhausted';
   const exhausted = mode === 'bootstrap-workflow-exhausted';
   const correction = mode === 'bootstrap-workflow-correction' || exhausted;
   let correcting = false;
   let correctionEvidence;
+  let finalizationEvidence;
   fileProbeFixture(directory, home, 'bootstrap-workflow');
   const workspace = join(directory, 'workspace');
   const target = join(workspace, 'implementation.txt');
@@ -54,8 +57,14 @@ export function workflowFixture(directory, home, mode) {
   const originalHead = git(['rev-parse', 'HEAD']);
   writeFileSync(preserved, 'retain unrelated unpublished work\n');
   const recovery =
-    mode === 'bootstrap-workflow-recovery'
-      ? workflowRecoveryFixture(directory, target, preserved, content)
+    mode === 'bootstrap-workflow-recovery' || recoveryExhausted
+      ? workflowRecoveryFixture(
+          directory,
+          target,
+          preserved,
+          content,
+          recoveryExhausted,
+        )
       : undefined;
   const steps = [
     { name: 'edit', kind: 'write' },
@@ -88,7 +97,9 @@ export function workflowFixture(directory, home, mode) {
     env,
     installRecovery: (provider, configPath) =>
       recovery?.install(provider, configPath),
-    expectPublication: !exhausted,
+    expectPublication: !exhausted && !recoveryExhausted,
+    expectedOwnershipReads: recoveryExhausted ? 1 : exhausted ? 4 : 5,
+    denial: recoveryExhausted ? 'infrastructure failure' : '',
     budgetMs: exhausted ? 30000 : 60000,
     next(input) {
       if (pending && resultIds(input).has(pending.id)) {
@@ -96,7 +107,9 @@ export function workflowFixture(directory, home, mode) {
         pending = undefined;
         cursor++;
       }
-      return pending || (correction && cursor === 4 && !correcting)
+      return pending ||
+        (recoveryExhausted && cursor === 2) ||
+        (correction && cursor === 4 && !correcting)
         ? null
         : steps[cursor];
     },
@@ -106,6 +119,15 @@ export function workflowFixture(directory, home, mode) {
       pending = { name: steps[cursor].name, id };
     },
     async correct(context, runtimeEnv, execution, deadline, resume) {
+      if (recoveryExhausted) {
+        finalizationEvidence = await finalizeNativeFailure(
+          directory,
+          context,
+          runtimeEnv,
+          deadline,
+        );
+        return;
+      }
       if (!correction) return;
       const before = this.completion(context, runtimeEnv, 'premature');
       // Let the original wall-clock budget actually expire. Do not substitute
@@ -275,27 +297,49 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
           steps: completed.map(({ name }) => name),
           sameNativeSession:
             !!sessionId &&
-            events.length >= (exhausted ? 4 : steps.length) &&
+            events.length >=
+              (recoveryExhausted ? 2 : exhausted ? 4 : steps.length) &&
             events.every((e) => (e.session_id ?? e.sessionID) === sessionId),
-          implementationCommitted:
-            head !== originalHead &&
-            git(['show', 'HEAD:implementation.txt']) === content.trimEnd(),
-          exactRemoteCommit:
-            git(['--git-dir', remote, 'rev-parse', 'refs/heads/workflow']) ===
-            head,
-          exactRemoteTree:
-            git([
-              '--git-dir',
-              remote,
-              'ls-tree',
-              '-r',
-              '--name-only',
-              'refs/heads/workflow',
-            ]) === 'implementation.txt',
+          ...(recoveryExhausted
+            ? {
+                implementationRetained:
+                  readFileSync(target, 'utf8') === content,
+                stagingBlocked: git(['diff', '--cached', '--name-only']) === '',
+                commitAbsent: head === originalHead,
+                pushAbsent:
+                  git([
+                    '--git-dir',
+                    remote,
+                    'for-each-ref',
+                    '--format=%(refname)',
+                  ]) === '',
+              }
+            : {
+                implementationCommitted:
+                  head !== originalHead &&
+                  git(['show', 'HEAD:implementation.txt']) ===
+                    content.trimEnd(),
+                exactRemoteCommit:
+                  git([
+                    '--git-dir',
+                    remote,
+                    'rev-parse',
+                    'refs/heads/workflow',
+                  ]) === head,
+                exactRemoteTree:
+                  git([
+                    '--git-dir',
+                    remote,
+                    'ls-tree',
+                    '-r',
+                    '--name-only',
+                    'refs/heads/workflow',
+                  ]) === 'implementation.txt',
+              }),
           preservedWork:
             readFileSync(preserved, 'utf8') ===
             'retain unrelated unpublished work\n',
-          ...(exhausted
+          ...(exhausted || recoveryExhausted
             ? { publicationAbsent: published === null }
             : {
                 exactMarkerOnce:
@@ -316,20 +360,23 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
           (exhausted || correctionEvidence.resumedCode === 0) &&
           correctionEvidence.originalDeadlineRetained);
       const passed =
+        (!recoveryExhausted || finalizationEvidence?.passed === true) &&
         (!recovery ||
           Object.values(recoveryEvidence).every((value) => value === true)) &&
         correctionPassed &&
         !pending &&
-        cursor === (exhausted ? 4 : steps.length) &&
+        cursor === (recoveryExhausted ? 2 : exhausted ? 4 : steps.length) &&
         Object.entries(details).every(([key, value]) =>
           key === 'steps'
-            ? value.length === (exhausted ? 4 : steps.length)
+            ? value.length ===
+              (recoveryExhausted ? 2 : exhausted ? 4 : steps.length)
             : value === true,
         );
       return {
         passed,
         ...details,
         ...(recovery ? { recovery: recoveryEvidence } : {}),
+        ...(recoveryExhausted ? { finalization: finalizationEvidence } : {}),
         ...(correction ? { correction: correctionEvidence } : {}),
       };
     },

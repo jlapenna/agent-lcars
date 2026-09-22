@@ -767,13 +767,15 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
     secondIssued &&
     !existsSync(secondSentinel) &&
     ownershipReadCount === 2;
-  const expectedDenial = outcome
-    ? outcome.denial
-    : holdProbe
-      ? reviewDenial(mode)
-      : fileProbe || publicationProbe || push
-        ? expectedFileDenial(mode)
-        : '';
+  const expectedDenial = workflow
+    ? workflow.denial
+    : outcome
+      ? outcome.denial
+      : holdProbe
+        ? reviewDenial(mode)
+        : fileProbe || publicationProbe || push
+          ? expectedFileDenial(mode)
+          : '';
   const reviewReadCount = existsSync(reviewReads)
     ? readFileSync(reviewReads, 'utf8').trim().split('\n').length
     : 0;
@@ -849,7 +851,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
           completionAfter.code === (workflow.expectPublication ? 0 : 1) &&
           completionAfter.missing === !workflow.expectPublication &&
           markerRepaired === workflow.expectPublication &&
-          ownershipReadCount === (workflow.expectPublication ? 5 : 4)
+          ownershipReadCount === workflow.expectedOwnershipReads
         : holdProbe
           ? hookInvoked &&
             reviewReadCount === 1 &&
@@ -885,6 +887,7 @@ const modes = [
   'bootstrap-delegated-review',
   'bootstrap-workflow',
   'bootstrap-workflow-recovery',
+  'bootstrap-workflow-recovery-exhausted',
   'bootstrap-workflow-correction',
   'bootstrap-workflow-exhausted',
   'allow',

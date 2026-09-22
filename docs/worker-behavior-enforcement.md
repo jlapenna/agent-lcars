@@ -456,26 +456,63 @@ reports and native evidence are retained at `/tmp/lcars-image-probe-vXnbCQ`
 (Codex), `/tmp/lcars-image-probe-C3waPQ` (Claude), and
 `/tmp/lcars-image-probe-Mhe3uZ` (OpenCode). Each report hashes the expanded
 harness separately. Recovery exhaustion through the control plane and the
-separate live-acceptance gates remain unproven.
+separate live-acceptance gates remain unproven at this checkpoint.
+
+The follow-on `bootstrap-workflow-recovery-exhausted` scenario passed for all
+three image-baked providers. The evaluator crashes after the useful edit, then
+fails its one recovery smoke. Native staging is denied with an infrastructure
+reason; the index and original commit remain unchanged, no push or publication
+occurs, and both implementation and unrelated work survive. The scenario then
+executes the actual baked runner's finalization section (not a reimplemented
+classification function) against these same attempt-bound receipts. It captures
+one `/complete` POST with `worker-control-failed`, no artifact reference, and no
+human decision request, followed by runner exit 1. A misleading PARK final
+message is replaced by the infrastructure explanation. All steps retain the
+original deadline. Reports: `/tmp/lcars-image-probe-BPyvQ8` (Codex),
+`/tmp/lcars-image-probe-RIZ4HD` (Claude), and `/tmp/lcars-image-probe-eiJccf`
+(OpenCode), with native evidence copied out of each container.
+
+An explicit release-qualification consumer then feeds those exact captured
+payloads through the production Work API route, orchestrator, and outbox
+handling. It checks current source against the reports' baked module, runtime,
+and runner hashes and requires all three providers from one image. The same
+GitHub anchor/run identity is admitted and claimed in memory; completion must
+settle as failed, release the Codex credential lease where applicable, deliver
+failure feedback through the local GitHub transport, and perform no assignee or
+`status:needs-human` writes. All three passed. The initial consumer fixture was
+missing the required credential-store release dependency and returned 500 for
+Codex; supplying that local dependency corrected the fixture without a
+production change. Invocation (use the current candidate's retained reports):
+
+```bash
+LCARS_NATIVE_FAILURE_REPORTS='["/tmp/lcars-image-probe-BPyvQ8/image-observations.json","/tmp/lcars-image-probe-RIZ4HD/image-observations.json","/tmp/lcars-image-probe-eiJccf/image-observations.json"]' \
+  pnpm exec vitest run --config tools/probes/failure-qualification.config.mts
+```
+
+This closes the local artifact-bound recovery-exhaustion chain, not the separate
+normal-dispatch acceptance: persistence is in memory, GitHub is a local transport,
+and the native provider responses are deterministic fixtures. It does not claim
+production deployment or provider graduation. The explicit consumer fails when
+reports are absent; it is not a silently skipped default CI test.
 
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
 
-| Scenario               | Current evidence                                                                                                                                                                                       | Still required for full qualification                                                |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `valid-work`           | All three image-baked CLIs complete a single-session edit, real commit/push, marker-repaired local publication, and actual completion verification while preserving unrelated work                     | Separate live-dispatch acceptance; no provider graduation from this scenario alone   |
-| `invalid-identity`     | Image-bound native binding denials; all three actual native child edit/denial cases retain the root binding and useful work                                                                            | Separate live-dispatch acceptance                                                    |
-| `mode-violation`       | Image-bound review-mode file edits, PR creation, and actual Git pushes reject with corrective reason                                                                                                   | Separate live-dispatch acceptance                                                    |
-| `ownership-lost`       | Image-bound absent/unreadable ownership denies; two-tool sessions preserve the first edit/publication and deny the second after ownership changes                                                      | Separate live-dispatch acceptance                                                    |
-| `primary-worktree`     | Image-installed guard and native direct/symlink-to-primary edits deny; real Git push succeeds only from linked checkout                                                                                | Separate live-dispatch acceptance                                                    |
-| `missing-marker`       | Image-bound PR creation, issue/PR comments, and reviews; inline/body-file repair, exact-marker idempotence, foreign-marker denial, and unchanged source body files                                     | Separate live-dispatch acceptance                                                    |
-| `premature-completion` | All-provider image-bound workflow correction resumes the same session within its original deadline; exhaustion preserves work without resuming                                                         | Production control-plane dispatch acceptance                                         |
-| `review-hold`          | Image-bound held/released actions plus all-provider current-head acknowledgments, invalid acknowledgment denials, independent review gates, and self-release rejection                                 | Separate live-dispatch acceptance; arbitrary human conditions are not machine-proven |
-| `missing-hook`         | Native bootstrap installs omitted registration; all nine image-bound negative setup cases refuse launch and preserve configuration/work                                                                | Fresh workstation/member-repository convergence gates                                |
-| `hook-failure`         | Image-bound thrown failures and native timeouts deny; OpenCode ignores SIGTERM, is killed within the bound, and preserves work                                                                         | Combined native-to-control-plane infrastructure outcome                              |
-| `recovery-success`     | All-provider image-bound edit, evaluator crash, recovery smoke, action retry, real commit/push, publication, and completion verification retain the native session, useful work, and original deadline | Separate live-dispatch acceptance                                                    |
-| `recovery-exhausted`   | Image-bound failure/exhaustion receipts; separate all-provider runner outcomes and Work API failed-item proof                                                                                          | Combined native-to-control-plane failure, with no human assignment                   |
-| `authorized-exception` | Image-bound park/no-op records allowed only at setup-bound path; foreign/unrelated, unsafe destination, and Codex multi-target writes denied without ownership reads                                   | Separate live-dispatch acceptance                                                    |
+| Scenario               | Current evidence                                                                                                                                                                                              | Still required for full qualification                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `valid-work`           | All three image-baked CLIs complete a single-session edit, real commit/push, marker-repaired local publication, and actual completion verification while preserving unrelated work                            | Separate live-dispatch acceptance; no provider graduation from this scenario alone   |
+| `invalid-identity`     | Image-bound native binding denials; all three actual native child edit/denial cases retain the root binding and useful work                                                                                   | Separate live-dispatch acceptance                                                    |
+| `mode-violation`       | Image-bound review-mode file edits, PR creation, and actual Git pushes reject with corrective reason                                                                                                          | Separate live-dispatch acceptance                                                    |
+| `ownership-lost`       | Image-bound absent/unreadable ownership denies; two-tool sessions preserve the first edit/publication and deny the second after ownership changes                                                             | Separate live-dispatch acceptance                                                    |
+| `primary-worktree`     | Image-installed guard and native direct/symlink-to-primary edits deny; real Git push succeeds only from linked checkout                                                                                       | Separate live-dispatch acceptance                                                    |
+| `missing-marker`       | Image-bound PR creation, issue/PR comments, and reviews; inline/body-file repair, exact-marker idempotence, foreign-marker denial, and unchanged source body files                                            | Separate live-dispatch acceptance                                                    |
+| `premature-completion` | All-provider image-bound workflow correction resumes the same session within its original deadline; exhaustion preserves work without resuming                                                                | Production control-plane dispatch acceptance                                         |
+| `review-hold`          | Image-bound held/released actions plus all-provider current-head acknowledgments, invalid acknowledgment denials, independent review gates, and self-release rejection                                        | Separate live-dispatch acceptance; arbitrary human conditions are not machine-proven |
+| `missing-hook`         | Native bootstrap installs omitted registration; all nine image-bound negative setup cases refuse launch and preserve configuration/work                                                                       | Fresh workstation/member-repository convergence gates                                |
+| `hook-failure`         | Image-bound thrown failures and native timeouts deny; OpenCode ignores SIGTERM, is killed within the bound, and preserves work                                                                                | Combined native-to-control-plane infrastructure outcome                              |
+| `recovery-success`     | All-provider image-bound edit, evaluator crash, recovery smoke, action retry, real commit/push, publication, and completion verification retain the native session, useful work, and original deadline        | Separate live-dispatch acceptance                                                    |
+| `recovery-exhausted`   | All-provider image-bound native denial and retained work, actual runner infrastructure completion, and exact captured payloads through the Work API/outbox prove failed state without human-assignment writes | Separate live-dispatch acceptance                                                    |
+| `authorized-exception` | Image-bound park/no-op records allowed only at setup-bound path; foreign/unrelated, unsafe destination, and Codex multi-target writes denied without ownership reads                                          | Separate live-dispatch acceptance                                                    |
 
 The ownership-change probe captures two ownership reads, two native edit
 attempts, the successful first file, the absent second file, and the policy
