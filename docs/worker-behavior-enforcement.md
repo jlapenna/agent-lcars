@@ -191,6 +191,22 @@ PR or issue should be modified by multiple canaries.
 
 ### Current evidence and remaining qualification work
 
+`tools/probes/in-runner-image.mjs` runs the native probes as the image job
+user against baked handlers and the baked bootstrap helper, verifying their
+hashes against the candidate source first. Mount only the probe directory,
+worker module directory, and bootstrap helper read-only; do not mount a user
+home, credentials, the complete checkout, or the Docker socket. Record the
+immutable ID returned by `docker image inspect` and run that same ID with
+`--network none`. Reports retain diagnostics and never claim graduation.
+
+The first local candidate, source `ade85a89`, image
+`sha256:4148f3409e9c30ae328ee7cf6fb976c200313d6b9bddbf7ed5979438d6c4bcfb`,
+built successfully but failed the fixture's installed-worktree-guard control
+before native task execution. Its worker hashes matched and its job UID was 1001. The image contained a literal dangling `/usr/local/bin/repo-*` symlink:
+installing repo-tools' dependencies did not install its own package binaries.
+This is failed setup evidence, not provider qualification. Repair belongs in
+image installation with a build-time executable check, not a per-tool gate.
+
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
 
