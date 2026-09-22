@@ -14,13 +14,13 @@ succeeds. Never echo a secret value into terminal output, chat, or shell
 history — move values with pipes, `read -rs`, or files created under
 `umask 077`, and delete temporaries when done.
 
-| Credential                | Consumed by                              | Canonical home                                                                           | Mintable by                        |
-| ------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Console QueueExecutor (run time)         | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                         | maintainer only (browser OAuth)    |
-| Codex `auth.json` lineage | Console QueueExecutor (run time)         | GCS `gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json`, one LCARS-owned object | maintainer only (`codex login`)    |
-| `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)         | age store + repo Actions secret                                                          | anyone with the LiteLLM master key |
-| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console     | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
-| Autoscaler App key        | runner registration (homelab autoscaler) | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
+| Credential                | Consumed by                                                                 | Canonical home                                                                           | Mintable by                        |
+| ------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Console QueueExecutor (run time)                                            | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                         | maintainer only (browser OAuth)    |
+| Codex `auth.json` lineage | Console QueueExecutor (run time)                                            | GCS `gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json`, one LCARS-owned object | maintainer only (`codex login`)    |
+| `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)                                            | age store + repo Actions secret                                                          | anyone with the LiteLLM master key |
+| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console                                        | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
+| Autoscaler App key        | runner registration (homelab autoscaler); github-actions-exporter (homelab) | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
 
 Two GitHub Apps exist and are easy to confuse:
 
@@ -30,7 +30,9 @@ Two GitHub Apps exist and are easy to confuse:
   [jlapenna 150568943](https://github.com/settings/installations/150568943),
   [supersprinklesracing 150568991](https://github.com/organizations/supersprinklesracing/settings/installations/150568991).
 - **Autoscaler App** (`agent-lcars-autoscaler`, client `Iv23lir3t9e2k4RAkWxw`):
-  what runner scale-set listeners register with (Administration R/W). Its
+  what runner scale-set listeners register with (Administration R/W, plus
+  Actions R/O — that read belongs to the github-actions-exporter, which shares
+  this App; see "Autoscaler App key" below). Its
   scope is **asymmetric and measured, not assumed**: the jlapenna installation
   is "Only select repositories" (5), the supersprinklesracing one is still
   "All repositories" (6, three of them non-fleet). Narrowing the second is
@@ -296,6 +298,17 @@ deployed to the controller as `/secrets/lcars-app-private-key.pem` by
 settings, updating the vault value, and redeploying — see homelab's
 `github-runner-autoscaler/README.md` ("GitHub App setup") for the
 provisioning walkthrough and installation IDs.
+
+The github-actions-exporter deployed on homelab shares this App: since #2024
+it authenticates as client `Iv23lir3t9e2k4RAkWxw` with a copy of this key
+mounted from homelab's `observability/github-actions-exporter-app-key.pem`
+and mints per-owner installation tokens to scrape `/actions/runs` metrics for
+repositories a fine-grained PAT could never reach. That scrape is why the App
+carries `actions: read` (App settings UI, 2026-09-20), modelled in
+`tools/iam-contract/model.json`. Rotation consequence: this key now backs the
+runner listeners **and** the exporter, so a rotation must update the vault
+value, the controller mount, and the exporter's copy in homelab's checkout in
+the same redeploy — or the exporter goes dark on Actions metrics.
 
 ## Repo vars that ride along
 

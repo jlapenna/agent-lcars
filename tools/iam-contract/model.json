@@ -108,10 +108,11 @@
         }
       ],
       "permissions": {
+        "actions": "read",
         "administration": "write",
         "metadata": "read"
       },
-      "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong.",
+      "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. It also carries actions:read (App settings UI, 2026-09-20) for the github-actions-exporter deployed on homelab: since jlapenna/agent-lcars#2024 the exporter authenticates as this App with a copy of the same key and reads /repos/{owner}/{repo}/actions/runs, which needs Actions read. Prose: docs/fleet-credentials.md ('Autoscaler App key').",
       "_scopeNote": "This App holds administration:write, so an installation's scope is authority over every repository it covers. Scope is asymmetric today: jlapenna is 'selected' (5), supersprinklesracing is still 'all' (6). Recorded as observed, not endorsed - #1381 is the execution record for narrowing both to the fleet repos. The full repository lists are modelled deliberately even though an 'all' installation's list churns: for an administration:write App, a new repository silently gaining an admin-capable installation is exactly the change worth being told about."
     }
   ],
