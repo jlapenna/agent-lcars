@@ -305,6 +305,18 @@ session contracts passed (90 tests). These new runtime changes require a new
 candidate build and image-bound native qualification; the previous candidate
 was removed by external cleanup, not changed or promoted.
 
+`setup-boundary.mjs` adds a `setup-negative` image-wrapper scenario. For each
+provider it invokes the actual bootstrap helper against malformed configuration,
+a symlinked configuration, and a missing setup executable. Each must return
+the explicit no-launch failure, leave the post-bootstrap launch branch
+unreached, and preserve configuration and useful work. All nine source-level
+checks passed with the pinned CLIs; candidate-image execution remains required.
+Native Work exception probes now also reject an outcome beneath a symlinked
+parent on all three providers, and reject Codex's multi-target patch combining
+the outcome with an unrelated file. All four source-level native checks passed
+with zero ownership lookups and independent readback of unchanged targets.
+No broader write is exempted merely because a patch includes a Work result.
+
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
 
@@ -507,8 +519,8 @@ independently checks tool-result delivery, hook invocation and the actual file:
 Exit zero means these native behaviors were observed, **not** that the
 mandatory LCARS canary suite passed. This probe deliberately reports
 `qualification: "not-evaluated"`; it must not be converted to a passing
-readiness report. It does not yet test completion, all recovery faults, timeout handling,
-or the installed runner image as a whole. OpenCode argument repair must mutate
+readiness report. It now covers combined completion and bounded evaluator
+timeouts, but not all recovery faults or a full production dispatch. OpenCode argument repair must mutate
 the existing `output.args` object: a native probe caught that replacing the
 object left the original command unchanged. Policy probe cases now use the
 OpenCode setup installer and verify an identical repeat is a no-op. The

@@ -636,6 +636,7 @@ export default async (context) => {
       : resumedSameSession,
     reviewReadCount,
     pushVerified: push?.verify() ?? false,
+    outcomeTargetsPreserved: outcome?.verify() ?? true,
     workflow: workflowResult,
     completionBefore,
     completionAfter,
@@ -647,7 +648,7 @@ export default async (context) => {
       exercised &&
       denialReasonObserved &&
       sessionBindingVerified &&
-      (!outcomeProbe || ownershipReadCount === 0) &&
+      (!outcomeProbe || (ownershipReadCount === 0 && outcome.verify())) &&
       (!push ||
         (hookInvoked &&
           push.verify() &&
@@ -742,6 +743,7 @@ const modes = [
   'bootstrap-outcome-no-op-allow',
   'bootstrap-outcome-foreign',
   'bootstrap-outcome-unrelated',
+  'bootstrap-outcome-parent-symlink',
   'bootstrap-lineage',
   'bootstrap-file-resume',
   'bootstrap-lineage-recovery-success',

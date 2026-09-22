@@ -1,7 +1,24 @@
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 export function outcomeFixture(mode, directory) {
-  const outcome = join(directory, 'native-result');
+  const unsafeParent = mode.endsWith('-parent-symlink');
+  const multiTarget = mode.endsWith('-multi-target');
+  const realParent = join(directory, 'protected-parent');
+  const alias = join(directory, 'parent-alias');
+  if (unsafeParent) {
+    mkdirSync(realParent);
+    writeFileSync(join(realParent, 'retained'), 'protected work\n');
+    symlinkSync(realParent, alias);
+  }
+  const outcome = join(unsafeParent ? alias : directory, 'native-result');
+  const extraTarget = join(directory, 'unrelated-patch-target');
   const target = mode.endsWith('-unrelated')
     ? join(directory, 'unrelated')
     : outcome;
@@ -12,6 +29,15 @@ export function outcomeFixture(mode, directory) {
     target,
     sentinel: target,
     content,
+    additionalPatch: multiTarget
+      ? `\n*** Add File: ${extraTarget}\n+unrelated change`
+      : '',
+    verify: () =>
+      (!unsafeParent ||
+        (!existsSync(outcome) &&
+          readFileSync(join(realParent, 'retained'), 'utf8') ===
+            'protected work\n')) &&
+      (!multiTarget || (!existsSync(outcome) && !existsSync(extraTarget))),
     brief: {
       repository: 'octo/example',
       mode: 'reply',

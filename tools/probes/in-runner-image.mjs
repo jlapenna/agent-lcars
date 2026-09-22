@@ -84,12 +84,16 @@ if (realpathSync(join(workspace, 'packages/fleet-tools')) !== baked)
   throw new Error('Probe does not resolve image-baked handlers');
 
 const driver =
-  provider === 'opencode'
-    ? 'opencode-hook-boundary.mjs'
-    : 'command-hook-boundary.mjs';
+  scenario === 'setup-negative'
+    ? 'setup-boundary.mjs'
+    : provider === 'opencode'
+      ? 'opencode-hook-boundary.mjs'
+      : 'command-hook-boundary.mjs';
 const args = [
   join(workspace, 'tools/probes', driver),
-  ...(provider === 'opencode' ? [] : [provider]),
+  ...(provider === 'opencode' && scenario !== 'setup-negative'
+    ? []
+    : [provider]),
   binary,
   expectedVersion,
   ...(scenario ? [scenario] : []),

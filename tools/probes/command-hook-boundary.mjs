@@ -384,7 +384,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
                   .trimEnd()
                   .split('\n')
                   .map((line) => '+' + line)
-                  .join('\n')}\n*** End Patch`,
+                  .join('\n')}${outcome?.additionalPatch ?? ''}\n*** End Patch`,
                 status: 'completed',
               }
             : {
@@ -710,6 +710,7 @@ code_mode = false
     sessionBindingVerified,
     reviewReadCount,
     pushVerified: push?.verify() ?? false,
+    outcomeTargetsPreserved: outcome?.verify() ?? true,
     workflow: workflowResult,
     completionBefore,
     completionAfter,
@@ -720,7 +721,7 @@ code_mode = false
       exercised &&
       denialReasonObserved &&
       sessionBindingVerified &&
-      (!outcomeProbe || ownershipReadCount === 0) &&
+      (!outcomeProbe || (ownershipReadCount === 0 && outcome.verify())) &&
       (!push ||
         (hookInvoked &&
           push.verify() &&
@@ -813,6 +814,8 @@ const modes = [
   'bootstrap-outcome-no-op-allow',
   'bootstrap-outcome-foreign',
   'bootstrap-outcome-unrelated',
+  'bootstrap-outcome-parent-symlink',
+  ...(provider === 'codex' ? ['bootstrap-outcome-multi-target'] : []),
   'bootstrap-publication-allow',
   'bootstrap-publication-review',
   'bootstrap-publication-ownership-absent',
