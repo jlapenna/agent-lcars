@@ -228,9 +228,20 @@ the image build, matching the reviewed CLI version. The runner's existing
 configuration copy carries it into attempt configuration. The native framework
 smoke must run with `--network=none` using only the prepared dependencies;
 isolated image probes likewise copy only SDK manifests/modules, never user
-configuration or credentials. A rebuilt image and OpenCode canaries remain
-required. Missing native receipts now yield failed observations instead of
+configuration or credentials. Missing native receipts now yield failed observations instead of
 hiding startup diagnostics behind an attempted receipt read.
+
+The SDK-prepared candidate from runtime source `8d4b5d43`, image
+`sha256:1519bffa1e07e688b6686f57ca32bf8859c88f51d5d1607abf1c49c565754305`,
+passed the real OpenCode compaction/continuation smoke without network access,
+all image invariants, and the complete native primitive suites as UID 1001:
+Codex 0.155.1: 44 observations; Claude Code 2.1.278: 44; OpenCode 1.18.25: 45.
+The three suites ran concurrently with `--network none`, two CPUs, 2 GiB memory,
+and 256 PIDs per container. Reports record matching baked worker/bootstrap
+hashes and mounted harness hashes. Diagnostics were copied out of the disposable
+containers. CI run `35681223251` passed full verification and full E2E for this
+source. No provider is graduated; the combined workflows and separate
+interactive/member-repository acceptance gates remain outstanding.
 
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
@@ -510,6 +521,40 @@ deploy-command input produces only the canonical-checkout reminder. No actual
 deployment command was run. This narrows the local hook audit; it does not
 establish fresh interactive-session behavior, all-account convergence, or
 installation on another workstation.
+
+### Interactive account checkpoint (2026-09-21)
+
+Homegit inventory at Homelab revision `db2132d24fb03940199839842a3babb2e25858b9`
+declares the following accounts. The canonical read-only account inspector ran
+over SSH as each declared user. All were reachable, with clean `main`, matching
+credential-free origin, inactive legacy writers, and `auto_apply: true`.
+All five source checkouts matched current Homegit `main`,
+`633abeba85a2116b6a6d540c39a9326492cc952e`. Relevant destination checks found zero
+global Codex ownership-hook commands and the identical corrected shared workflow
+skill SHA-256 `49a5a0aba443caa72ed355cf33f6926c8f6af85cf8e108ef6251cc6118a45edf`.
+
+| Account            | Inventory reachability class   | Fleet-tools inspection                                 |
+| ------------------ | ------------------------------ | ------------------------------------------------------ |
+| `laptop/jlapenna`  | Transient, currently reachable | Not found in checked standard package/bin locations    |
+| `pike/jlapenna`    | Permanent                      | Installed guard matches the verified source hash above |
+| `homelab/homelab`  | Permanent                      | Not found in checked standard package/bin locations    |
+| `laforge/jlapenna` | Permanent                      | Not found in checked standard package/bin locations    |
+| `janeway/jlapenna` | Permanent                      | Not found in checked standard package/bin locations    |
+
+Pike's installed module passed 14 focused open/closed-issue and dispatch-marker
+checks with injected lookups: interactive/generic-CI/provider-ID contexts made
+zero lookup calls; each explicit dispatch marker retained ownership/routing
+feedback. The installed CLI silently ignored malformed input without dispatch
+context. No real GitHub query or write was made by these probes. This is
+installed-module/CLI evidence, not a fresh full agent session. No account was
+changed, no reconciliation gate was enabled, and no agent was restarted.
+Alternate installation locations and fresh harness behavior remain unverified;
+Homegit #82 and LCARS #2032 are not closed by this checkpoint.
+
+The Sprinkles instruction correction is separately committed locally as
+`e37dd9e960063575a6525279a7c6b8c15d5083c3` in its dedicated worktree. Publication
+was blocked by an unrelated pnpm/sandbox version mismatch; approval to alter
+that pin has not been received. It is not published or counted as delivered.
 
 ## Native Claude/Codex command-hook boundary
 
