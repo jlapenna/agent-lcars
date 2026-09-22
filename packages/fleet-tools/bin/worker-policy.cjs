@@ -481,8 +481,12 @@ function evaluate(input, context, dependencies = {}) {
         'Current anchor ownership could not be verified. Retry the read after recovery; do not publish on uncertain ownership.',
       );
     }
+    const closedReply =
+      issue.state === 'closed' &&
+      ['review', 'reply'].includes(context.mode) &&
+      ops.every((op) => op.kind === 'artifact');
     if (
-      issue.state !== 'open' ||
+      (issue.state !== 'open' && !closedReply) ||
       !Array.isArray(issue.assignees) ||
       !issue.assignees.some((assignee) => assignee.login === fleetLogin())
     ) {

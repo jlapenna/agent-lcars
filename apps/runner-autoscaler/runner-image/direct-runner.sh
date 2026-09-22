@@ -38,6 +38,9 @@ export RUNTIME_HELPERS_DIR="${RUNTIME_HELPERS_DIR:-/usr/local/lib/agent-lcars/ru
 PREPARE_DISPATCH="${PREPARE_DISPATCH:-$RUNTIME_HELPERS_DIR/prepare-dispatch.sh}"
 VERIFY_OUTCOME="${VERIFY_OUTCOME:-$RUNTIME_HELPERS_DIR/verify-outcome.sh}"
 SIDECAR_LIFECYCLE="${SIDECAR_LIFECYCLE:-/usr/local/lib/agent-lcars/sidecar-lifecycle.sh}"
+# shellcheck source=runtime/worker-completion.sh
+# shellcheck source-path=SCRIPTDIR
+source "${WORKER_COMPLETION_HELPER:-$RUNTIME_HELPERS_DIR/worker-completion.sh}"
 
 # The native dispatch helper requires RUNNER_TEMP in its child environment. A
 # direct-mode container is not a GitHub Actions runner, so it does not supply
@@ -722,20 +725,38 @@ if [ "$PIPELINE" = "claude" ]; then
     exit 1
   fi
   LAST_MESSAGE_FILE="$RUNNER_TEMP/last-message.txt"
+  CLAUDE_DEADLINE=$((SECONDS + CLAUDE_TIMEOUT_SECONDS))
+  CLAUDE_WORKER_SESSION="$RESUME_SESSION_ID"
+  if [ "${#RESUME_FLAG[@]}" -eq 0 ]; then
+    CLAUDE_WORKER_SESSION="$(cat /proc/sys/kernel/random/uuid)"
+    RESUME_FLAG=(--session-id "$CLAUDE_WORKER_SESSION")
+  fi
+  run_claude_round() {
+    local prompt="$1" remaining
+    shift
+    remaining=$((CLAUDE_DEADLINE - SECONDS))
+    [ "$remaining" -gt 0 ] || return 124
+    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+      claude --dangerously-skip-permissions \
+      --allowedTools "Bash,Edit,Write,MultiEdit" \
+      --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task" \
+      "$@" --print "$prompt" | tee "$LAST_MESSAGE_FILE"
+    return "${PIPESTATUS[0]}"
+  }
   set +e
   # `--print` with the default text format writes exactly the agent's final
   # response to stdout, so `tee` both preserves the live log and captures
   # the message. The exit code must come from PIPESTATUS, not $?, which
   # after a pipe is tee's status.
-  timeout --signal=TERM --kill-after=30s "${CLAUDE_TIMEOUT_SECONDS}s" \
-    claude \
-    --dangerously-skip-permissions \
-    --allowedTools "Bash,Edit,Write,MultiEdit" \
-    --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task" \
-    "${RESUME_FLAG[@]}" \
-    --print "$AGENT_PROMPT" | tee "$LAST_MESSAGE_FILE"
-  AGENT_EXIT=${PIPESTATUS[0]}
+  run_claude_round "$AGENT_PROMPT" "${RESUME_FLAG[@]}"
+  AGENT_EXIT=$?
   set -e
+  if worker_completion_needed "$AGENT_EXIT" "$CLAUDE_DEADLINE" && worker_authorize_correction; then
+    set +e
+    run_claude_round "$WORKER_COMPLETION_PROMPT" --resume "$CLAUDE_WORKER_SESSION"
+    AGENT_EXIT=$?
+    set -e
+  fi
 elif [ "$PIPELINE" = "codex" ]; then
   # The broker exposes the centrally owned lineage only to this live run
   # token. The target repository is independently bound to that token; the
@@ -870,8 +891,6 @@ CURLCFG
     echo "FATAL: CODEX_TIMEOUT_SECONDS must be a positive integer" >&2
     exit 1
   fi
-  tee "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
-  CODEX_STDERR_TEE_PID=$!
   # Deviation from the plan: NOT under $CODEX_RUNTIME_DIR. That whole
   # directory is rm -rf'd by cleanup_codex_material once finalize runs,
   # which happens before the completion payload below reads
@@ -879,33 +898,57 @@ CURLCFG
   # $RUNNER_TEMP lives for the whole script, exactly where Claude's own
   # LAST_MESSAGE_FILE already lives.
   CODEX_LAST_MESSAGE_FILE="$RUNNER_TEMP/codex-last-message.txt"
+  CODEX_DEADLINE=$((SECONDS + CODEX_TIMEOUT_SECONDS))
+  CODEX_THREAD_FILE="$CODEX_RUNTIME_DIR/thread-id"
+  run_codex_round() {
+    local prompt="$1" remaining round_exit
+    shift
+    remaining=$((CODEX_DEADLINE - SECONDS))
+    [ "$remaining" -gt 0 ] || return 124
+    tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
+    CODEX_STDERR_TEE_PID=$!
+    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+      codex exec "$@" --json --dangerously-bypass-approvals-and-sandbox \
+      --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
+      "$prompt" 2> "$CODEX_STDERR_PIPE" |
+      while IFS= read -r codex_event; do
+        printf '%s\n' "$codex_event"
+        # Bind continuation only to the CLI's top-level thread event, never
+        # an id quoted in tool output or assistant text.
+        jq -er 'select(.type == "thread.started") | .thread_id | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' \
+          <<<"$codex_event" >> "$CODEX_THREAD_FILE" 2>/dev/null || true
+        jq -r '
+          if .type == "error" and (.message | type) == "string" then .message
+          elif .type == "turn.failed" and (.error.message | type) == "string" then .error.message
+          else empty
+          end
+        ' <<<"$codex_event" >> "$CODEX_FAILURE_MESSAGES" 2>/dev/null || true
+      done
+    round_exit=${PIPESTATUS[0]}
+    wait "$CODEX_STDERR_TEE_PID" || true
+    CODEX_STDERR_TEE_PID=''
+    return "$round_exit"
+  }
   set +e
-  timeout --signal=TERM --kill-after=30s "${CODEX_TIMEOUT_SECONDS}s" \
-    codex exec "${CODEX_RESUME_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
-    --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
-    "$AGENT_PROMPT" 2> "$CODEX_STDERR_PIPE" |
-    while IFS= read -r codex_event; do
-      printf '%s\n' "$codex_event"
-      # Only the CLI's top-level fatal `error.message` and
-      # `turn.failed.error.message` fields are trusted failure diagnostics.
-      # Agent messages, command output, and task text are item payloads and
-      # can contain attacker-chosen signature text; they are never selected.
-      jq -r '
-        if .type == "error" and (.message | type) == "string" then .message
-        elif .type == "turn.failed" and (.error.message | type) == "string" then .error.message
-        else empty
-        end
-      ' <<<"$codex_event" >> "$CODEX_FAILURE_MESSAGES" 2>/dev/null || true
-    done
-  AGENT_EXIT=${PIPESTATUS[0]}
+  run_codex_round "$AGENT_PROMPT" "${CODEX_RESUME_ARGS[@]}"
+  AGENT_EXIT=$?
   set -e
+  CODEX_CONTINUATION_SESSION=''
+  if [ -f "$CODEX_THREAD_FILE" ]; then
+    mapfile -t codex_threads < <(sort -u "$CODEX_THREAD_FILE")
+    if [ "${#codex_threads[@]}" -eq 1 ]; then CODEX_CONTINUATION_SESSION="${codex_threads[0]}"; fi
+  fi
+  if [ -n "$CODEX_CONTINUATION_SESSION" ] && [ ! -s "$CODEX_FAILURE_MESSAGES" ] && worker_completion_needed "$AGENT_EXIT" "$CODEX_DEADLINE" && worker_authorize_correction; then
+    set +e
+    run_codex_round "$WORKER_COMPLETION_PROMPT" resume "$CODEX_CONTINUATION_SESSION"
+    AGENT_EXIT=$?
+    set -e
+  fi
   # Same shared completion payload build plan 1 added for Claude
   # (`$LAST_MESSAGE_FILE`, read near the end of this script) -- Codex's
   # final message lands in its own `-o`/`--output-last-message` file
   # instead of stdout, so point the shared variable at it here.
   LAST_MESSAGE_FILE="$CODEX_LAST_MESSAGE_FILE"
-  wait "$CODEX_STDERR_TEE_PID" || true
-  CODEX_STDERR_TEE_PID=''
   rm -f -- "$CODEX_STDERR_PIPE"
 
   # #1192: derive only the three known refresh-failure signatures, then let
@@ -1070,79 +1113,34 @@ else
   # lookup failures, non-zero provider exits, exact native park/no-op records,
   # ambiguous fresh-session discovery, and exhausted time never retry.
   OPENCODE_CONTINUATION_SESSION=''
-  native_terminal_recorded=false
-  if [ "$ANCHOR_TYPE" = "work" ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ]; then
-    native_claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
-    native_park_marker="<!-- agent-result:v1:park:${ATTEMPT_ID} -->"
-    native_no_op_marker="<!-- agent-result:v1:no-op:${ATTEMPT_ID} -->"
-    if printf '%s\n%s\n' "$native_park_marker" "$native_claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE" ||
-      printf '%s\n%s\n' "$native_no_op_marker" "$native_claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
-      native_terminal_recorded=true
-    fi
-  fi
-  OPENCODE_VERIFY_PROBE="$RUNNER_TEMP/opencode-first-round-verify.txt"
-  OPENCODE_VERIFY_ENV="$RUNNER_TEMP/opencode-first-round-verify.env"
-  : > "$OPENCODE_VERIFY_ENV"
-  if [ "$AGENT_EXIT" -eq 0 ] && ! $native_terminal_recorded; then
-    set +e
-    AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" RUNTIME_ENV="$OPENCODE_VERIFY_ENV" \
-      bash "$VERIFY_OUTCOME" > "$OPENCODE_VERIFY_PROBE" 2>&1
-    probe_exit=$?
-    set -e
-    if [ "$probe_exit" -ne 0 ] && grep -Fxq 'NO_DELIVERABLE=1' "$OPENCODE_VERIFY_ENV"; then
-      if [ -n "$RESUME_SESSION_ID" ]; then
-        OPENCODE_CONTINUATION_SESSION="$RESUME_SESSION_ID"
-      else
-        opencode_after_json="$RUNNER_TEMP/opencode-after-first-round.json"
-        opencode_after_sessions="$RUNNER_TEMP/opencode-after-first-round.txt"
-        if env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
-          timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
-          "$OPENCODE_BIN" --pure session list --format json > "$opencode_after_json" &&
-          jq -e 'type == "array"' "$opencode_after_json" >/dev/null 2>&1; then
-          jq -r --arg directory "$PWD" '
-              .[]
-              | select((.id | type) == "string")
-              | select(.id | test("^[A-Za-z0-9._:-]+$"))
-              | select(.directory == $directory)
-              | .id
-            ' "$opencode_after_json" | sort -u > "$opencode_after_sessions"
-          mapfile -t new_opencode_sessions < <(comm -13 "$OPENCODE_BASELINE_SESSIONS" "$opencode_after_sessions")
-          if [ "${#new_opencode_sessions[@]}" -eq 1 ]; then
-            OPENCODE_CONTINUATION_SESSION="${new_opencode_sessions[0]}"
-          fi
+  if worker_completion_needed "$AGENT_EXIT" "$OPENCODE_DEADLINE"; then
+    if [ -n "$RESUME_SESSION_ID" ]; then
+      OPENCODE_CONTINUATION_SESSION="$RESUME_SESSION_ID"
+    else
+      opencode_after_json="$RUNNER_TEMP/opencode-after-first-round.json"
+      opencode_after_sessions="$RUNNER_TEMP/opencode-after-first-round.txt"
+      if env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
+        timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
+        "$OPENCODE_BIN" --pure session list --format json > "$opencode_after_json" &&
+        jq -e 'type == "array"' "$opencode_after_json" >/dev/null 2>&1; then
+        jq -r --arg directory "$PWD" '
+            .[]
+            | select((.id | type) == "string")
+            | select(.id | test("^[A-Za-z0-9._:-]+$"))
+            | select(.directory == $directory)
+            | .id
+          ' "$opencode_after_json" | sort -u > "$opencode_after_sessions"
+        mapfile -t new_opencode_sessions < <(comm -13 "$OPENCODE_BASELINE_SESSIONS" "$opencode_after_sessions")
+        if [ "${#new_opencode_sessions[@]}" -eq 1 ]; then
+          OPENCODE_CONTINUATION_SESSION="${new_opencode_sessions[0]}"
         fi
       fi
     fi
   fi
 
-  continuation_authorized=false
-  if [ -n "$OPENCODE_CONTINUATION_SESSION" ]; then
-    # The first turn may outlive its authorization (for example, an operator
-    # can cancel the run while OpenCode is working). Revalidate the live lease
-    # immediately before granting the newly-added continuation round. A
-    # refusal or transport failure leaves the first result to finalization.
-    if curl -sf --config - >/dev/null 2>&1 <<CURLCFG
-url = "$RUNS_API/heartbeat"
-request = "POST"
-header = "$AUTH_HEADER"
-$CURL_TIMEOUT_CONFIG
-CURLCFG
-    then
-      continuation_authorized=true
-    fi
-  fi
-  if $continuation_authorized && [ $((OPENCODE_DEADLINE - SECONDS)) -gt 0 ]; then
-    OPENCODE_CONTINUATION_PROMPT="$(cat <<PROMPT
-Continue the same authorized task in this existing session. Complete the next
-concrete steps autonomously when they are routine. If a required human decision
-or external blocker prevents completion, preserve any useful work and publish
-the protocol's structured PARK handoff. Otherwise publish the requested exact-
-marker deliverable before stopping. This is the only continuation round and it
-shares the original provider time budget.
-PROMPT
-)"
+  if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((OPENCODE_DEADLINE - SECONDS)) -gt 0 ]; then
     set +e
-    run_opencode_round "$OPENCODE_CONTINUATION_PROMPT" --session "$OPENCODE_CONTINUATION_SESSION"
+    run_opencode_round "$WORKER_COMPLETION_PROMPT" --session "$OPENCODE_CONTINUATION_SESSION"
     AGENT_EXIT=$?
     set -e
   fi

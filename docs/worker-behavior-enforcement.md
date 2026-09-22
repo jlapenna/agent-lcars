@@ -12,7 +12,9 @@ An OpenCode adapter translates tool events into the same shared policy, and
 setup installs its registration. Setup binds validated dispatch context once.
 Fresh readiness checks cover review threads, requested changes, blocking labels,
 and acknowledgments of external draft/auto-merge holds.
-Runner setup integration, remaining policy controls, bounded recovery/completion
+The direct runner now shares one bounded completion-correction rule across all
+three providers, verified by its executable runner harness. Runner setup
+integration, remaining policy controls, bounded control recovery,
 and full acceptance canaries remain to be built and verified.
 
 ## Scope and decisions
@@ -110,6 +112,19 @@ review holds require rejection with actionable feedback, not automatic repair.
 For premature normal completion, return missing deliverable requirements to
 the same session while budget remains. Otherwise retain an incomplete outcome
 and work. Preserve the existing finalizer's verification after abnormal exits.
+
+`runtime/worker-completion.sh` now owns the common completion decision in
+`direct-runner.sh`: only an exit-zero round followed by a completed exact-marker
+lookup reporting no deliverable can receive one correction. Claude gets a
+preallocated session UUID (or its restored session); Codex uses the CLI's
+top-level `thread.started` event, never text-scraped identity; OpenCode retains
+its unambiguous session discovery. All recheck the live lease and share the
+original deadline. Native Work terminal records, lookup failure, missing session
+identity, provider errors and expired budgets do not trigger correction.
+The runner harness exercises each branch and finalizes failures normally.
+Native Claude/Codex probes verify that the runner's session-id/resume flags
+retain the same session and execute a second command. The combined native
+completion canaries and live dispatch proof are still required.
 
 ## Concurrent canaries and independent graduation
 
@@ -267,8 +282,12 @@ On the tested Codex 0.155.1 and Claude Code 2.1.278, raw command-hook exceptions
 allowed the requested action. The shared `worker-hook-bridge.cjs` instead
 converted exceptions and its five-second handler timeout into explicit native
 PreToolUse denials; the actual CLI then prevented both sentinel writes. The
-allowed case still executed. All nine observations passed on each CLI,
+allowed case still executed. All ten observations passed on each CLI,
 including an exact repaired marker in the independently captured comment body.
+The tenth observation executes a second round within the same probe deadline:
+Claude retains its preallocated UUID; Codex resumes the first hook's native
+session ID. Both produce a separate second-round sentinel with unchanged
+session identity. This tests native resumption, not the full completion gate.
 Runner image qualification must record the versions actually baked into that
 image; the image currently installs current Claude/Codex releases at build.
 

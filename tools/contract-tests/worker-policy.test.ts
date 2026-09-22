@@ -33,6 +33,26 @@ const verdict = (input: unknown, ctx = context, deps = dependencies()) =>
   policy.evaluate(input, ctx, deps).hookSpecificOutput.permissionDecision;
 
 describe('dispatched worker policy', () => {
+  it('preserves closed-anchor reply dispatches without permitting code changes', () => {
+    const deps = dependencies();
+    deps.readOwnership.mockReturnValue({
+      state: 'closed',
+      assignees: [
+        { login: process.env.AGENT_FLEET_LOGIN || 'agent-lcars-bot' },
+      ],
+    });
+    const reply = { ...context, mode: 'reply' };
+    expect(
+      verdict(
+        shell(
+          'gh issue comment 42 --body "Reply to the requested clarification"',
+        ),
+        reply,
+        deps,
+      ),
+    ).toBe('allow');
+    expect(verdict(shell('git commit -m change'), reply, deps)).toBe('deny');
+  });
   it.each([
     { ...identity, attemptId: 'g2:octo/example#42/r1' },
     { ...identity, runId: 'octo/example#43/r1' },

@@ -2,6 +2,7 @@
 // Claude/Codex native command hooks against a deterministic localhost model.
 // No real credentials, repository writes, or full-policy qualification.
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -85,6 +86,8 @@ async function probe(mode) {
   const sentinel = join(workspace, 'effect'),
     receipt = join(dir, 'receipt.json');
   const rewrittenSentinel = join(workspace, 'rewritten-effect');
+  const resumedSentinel = join(workspace, 'resumed-effect');
+  let round = 1;
   const policyMarker = mode === 'bridge-marker';
   const context = policy.prepareContext(
     {
@@ -183,7 +186,7 @@ ${policyMarker ? `const policy = require(${JSON.stringify(resolve('packages/flee
       if (callTool) issued = true;
       const command = policyMarker
         ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
-        : `touch ${quote(sentinel)}`;
+        : `touch ${quote(round === 1 ? sentinel : resumedSentinel)}`;
       const args =
         provider === 'codex'
           ? { cmd: command, yield_time_ms: 1000 }
@@ -333,9 +336,54 @@ code_mode = false
           '--',
           'Run the supplied probe command, then finish.',
         ];
-  let execution;
+  let execution,
+    resumedSameSession = false;
+  const allocatedSession = randomUUID();
+  const initialArgs =
+    mode === 'resume' && provider === 'claude'
+      ? ['--session-id', allocatedSession, ...args]
+      : args;
+  const deadline = Date.now() + 60000;
   try {
-    execution = await execute(args, workspace, env);
+    execution = await execute(
+      initialArgs,
+      workspace,
+      env,
+      Math.max(1, deadline - Date.now()),
+    );
+    if (mode === 'resume' && execution.code === 0 && existsSync(receipt)) {
+      const firstReceipt = JSON.parse(readFileSync(receipt, 'utf8'));
+      writeFileSync(
+        join(dir, 'first-receipt.json'),
+        JSON.stringify(firstReceipt),
+      );
+      const sessionId = firstReceipt.session_id;
+      if (
+        !sessionId ||
+        (provider === 'claude' && sessionId !== allocatedSession)
+      )
+        throw new Error('Native session identity was not bound');
+      const resumeArgs =
+        provider === 'codex'
+          ? ['exec', 'resume', sessionId, ...args.slice(1)]
+          : ['--resume', sessionId, ...args];
+      round = 2;
+      issued = false;
+      returnedToolResult = false;
+      const resumed = await execute(
+        resumeArgs,
+        workspace,
+        env,
+        Math.max(1, deadline - Date.now()),
+      );
+      writeFileSync(join(dir, 'resume-stdout.txt'), resumed.stdout);
+      writeFileSync(join(dir, 'resume-stderr.txt'), resumed.stderr);
+      resumedSameSession =
+        resumed.code === 0 &&
+        !resumed.timedOut &&
+        existsSync(resumedSentinel) &&
+        JSON.parse(readFileSync(receipt, 'utf8')).session_id === sessionId;
+    }
   } finally {
     server.closeAllConnections();
     await new Promise((done) => server.close(done));
@@ -364,20 +412,23 @@ code_mode = false
     effect,
     rewrittenEffect,
     markerRepaired,
+    resumedSameSession,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
     observedExpectedPrimitive:
       exercised &&
-      (policyMarker
-        ? hookInvoked && effect && markerRepaired
-        : mode === 'bridge-rewrite'
-          ? hookInvoked && !effect && rewrittenEffect
-          : mode === 'missing'
-            ? !hookInvoked && effect
-            : hookInvoked &&
-              (mode === 'failure' ||
-                effect === (mode === 'allow' || mode === 'bridge-allow'))),
+      (mode === 'resume'
+        ? hookInvoked && effect && resumedSameSession
+        : policyMarker
+          ? hookInvoked && effect && markerRepaired
+          : mode === 'bridge-rewrite'
+            ? hookInvoked && !effect && rewrittenEffect
+            : mode === 'missing'
+              ? !hookInvoked && effect
+              : hookInvoked &&
+                (mode === 'failure' ||
+                  effect === (mode === 'allow' || mode === 'bridge-allow'))),
   };
 }
 
@@ -392,6 +443,7 @@ for (const mode of [
   'bridge-timeout',
   'bridge-rewrite',
   'bridge-marker',
+  'resume',
 ])
   observations.push(await probe(mode));
 const report = {
