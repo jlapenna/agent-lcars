@@ -83,7 +83,8 @@ async function probe(mode) {
   const sentinel = join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
-  const usesPolicy = mode.startsWith('policy-');
+  const bootstrap = mode === 'bootstrap-marker';
+  const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
     {
       repository: 'octo/example',
@@ -107,7 +108,7 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 if (args[0] === 'api') {
   ${mode === 'policy-failure' ? 'process.exit(1);' : ''}
-  console.log(JSON.stringify({state:${JSON.stringify(mode === 'policy-deny' ? 'closed' : 'open')},assignees:[{login:'agent-lcars-bot'}]}));
+  console.log(JSON.stringify({state:'open',assignees:${JSON.stringify(mode === 'policy-deny' ? [] : [{ login: 'agent-lcars-bot' }])}}));
 } else if (args[0] === 'issue' && args[1] === 'comment') {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture publication');}
 else process.exitCode = 1;
 `,
@@ -126,7 +127,7 @@ export default async () => ({
 });
 `,
   );
-  if (usesPolicy)
+  if (usesPolicy && !bootstrap)
     writeFileSync(
       plugin,
       `import {appendFileSync} from 'node:fs';
@@ -202,7 +203,7 @@ export default async (context) => {
   writeFileSync(
     join(workspace, 'opencode.json'),
     JSON.stringify({
-      plugin: mode === 'missing' || usesPolicy ? [] : [plugin],
+      plugin: mode === 'missing' || (usesPolicy && !bootstrap) ? [] : [plugin],
       permission: { bash: 'allow' },
       provider: {
         probe: {
@@ -219,7 +220,28 @@ export default async (context) => {
       },
     }),
   );
-  if (usesPolicy) {
+  if (bootstrap) {
+    const briefPath = join(dir, 'brief.json');
+    writeFileSync(
+      briefPath,
+      JSON.stringify({
+        repository: context.repository,
+        mode: context.mode,
+        anchor: context.anchor,
+      }),
+    );
+    const options = {
+      provider: 'opencode',
+      configPath: join(workspace, 'opencode.json'),
+      contextPath,
+      briefPath,
+      runId: context.runId,
+      attemptId: context.attemptId,
+    };
+    await setup.bootstrapWorker(options);
+    if ((await setup.bootstrapWorker(options)).changed)
+      throw new Error('Bootstrap was not idempotent');
+  } else if (usesPolicy) {
     setup.installOpenCode(join(workspace, 'opencode.json'), plugin);
     if (setup.installOpenCode(join(workspace, 'opencode.json'), plugin).changed)
       throw new Error('Setup was not idempotent');
@@ -286,7 +308,7 @@ export default async (context) => {
     // Missing-hook case intentionally exposes lack of native admission.
     observedExpectedPrimitive:
       exercised &&
-      (mode === 'policy-marker'
+      (mode === 'policy-marker' || bootstrap
         ? hookInvoked && effect && markerRepaired
         : mode === 'missing'
           ? !hookInvoked && effect
@@ -303,6 +325,7 @@ for (const mode of [
   'policy-marker',
   'policy-deny',
   'policy-failure',
+  'bootstrap-marker',
 ])
   observations.push(await probe(mode));
 const report = {

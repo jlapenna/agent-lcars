@@ -33,6 +33,45 @@ const verdict = (input: unknown, ctx = context, deps = dependencies()) =>
   policy.evaluate(input, ctx, deps).hookSpecificOutput.permissionDecision;
 
 describe('dispatched worker policy', () => {
+  it('permits only the exact setup-bound native terminal record outside a code worktree', () => {
+    const native = policy.prepareContext(
+      {
+        repository: 'octo/example',
+        mode: 'reply',
+        anchor: { type: 'work', id: 'item' },
+      },
+      {
+        provider: 'claude',
+        runId: 'work:item/r1',
+        attemptId: 'g1:work:item/r1',
+        nativeOutcomePath: '/tmp/lcars-policy-fixture-outcome',
+      },
+    );
+    const input = {
+      tool_name: 'Write',
+      tool_input: {
+        file_path: native.nativeOutcomePath,
+        content:
+          '<!-- agent-result:v1:no-op:g1:work:item/r1 -->\n<!-- attempt-claim:g1:work:item/r1 -->\n',
+      },
+    };
+    const deps = dependencies();
+    deps.assertWorktree.mockImplementation(() => {
+      throw new Error('not a code worktree');
+    });
+    expect(verdict(input, native, deps)).toBe('allow');
+    expect(
+      verdict(
+        {
+          ...input,
+          tool_input: { ...input.tool_input, content: 'unbound result' },
+        },
+        native,
+        deps,
+      ),
+    ).toBe('deny');
+    expect(deps.assertWorktree).not.toHaveBeenCalled();
+  });
   it('preserves closed-anchor reply dispatches without permitting code changes', () => {
     const deps = dependencies();
     deps.readOwnership.mockReturnValue({

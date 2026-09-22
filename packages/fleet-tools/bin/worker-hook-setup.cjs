@@ -140,6 +140,7 @@ function prepareWorker({
   briefPath,
   runId,
   attemptId,
+  nativeOutcomePath,
 }) {
   if (
     ![configPath, contextPath, briefPath].every(
@@ -152,7 +153,7 @@ function prepareWorker({
     throw new Error('Setup paths must be absolute and distinct');
   const context = policy.prepareContext(
     JSON.parse(fs.readFileSync(briefPath, 'utf8')),
-    { provider, runId, attemptId },
+    { provider, runId, attemptId, nativeOutcomePath },
   );
   // Each attempt gets its own path. Repeat setup is a no-op; reuse by another
   // dispatch is an error rather than changing the identity of a live session.
@@ -178,40 +179,157 @@ function prepareWorker({
   };
 }
 
-if (require.main === module) {
-  try {
-    const args = process.argv.slice(2);
-    let result;
-    if (args[0] === '--worker' && args.length === 7) {
-      const [, provider, configPath, contextPath, briefPath, runId, attemptId] =
-        args;
-      result = prepareWorker({
-        provider,
-        configPath,
-        contextPath,
-        briefPath,
-        runId,
-        attemptId,
-      });
-    } else {
-      const [configPath, handlerPath, ...extra] = args;
-      if (extra.length || !configPath || !handlerPath)
-        throw new Error('Expected configuration and handler paths');
-      result = installRegistration(configPath, handlerPath);
+async function verifyControl(provider, configPath, contextPath) {
+  const context = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const inputs = [
+    {
+      tool_name: 'Bash',
+      tool_input: { command: 'echo LCARS_SETUP_READ_PROBE' },
+      cwd: process.cwd(),
+    },
+    {
+      tool_name: 'Bash',
+      tool_input: { command: 'git commit --no-verify' },
+      cwd: process.cwd(),
+    },
+  ];
+  if (provider === 'opencode') {
+    const plugin = pathToFileURL(
+      path.join(__dirname, 'worker-opencode-plugin.mjs'),
+    ).href;
+    if (!config.plugin?.includes(plugin))
+      throw new Error('Missing installed OpenCode registration');
+    const previousRun = process.env.LCARS_RUN_ID,
+      previousContext = process.env.LCARS_WORKER_CONTEXT;
+    try {
+      process.env.LCARS_RUN_ID = context.runId;
+      process.env.LCARS_WORKER_CONTEXT = contextPath;
+      const factory = (await import(plugin)).default;
+      const hooks = await factory({ directory: process.cwd() });
+      for (let i = 0; i < inputs.length; i++) {
+        let denied = false;
+        try {
+          await hooks['tool.execute.before'](
+            { tool: 'bash' },
+            { args: inputs[i].tool_input },
+          );
+        } catch {
+          denied = true;
+        }
+        if (denied !== (i === 1))
+          throw new Error('OpenCode control execution smoke failed');
+      }
+    } finally {
+      if (previousRun === undefined) delete process.env.LCARS_RUN_ID;
+      else process.env.LCARS_RUN_ID = previousRun;
+      if (previousContext === undefined)
+        delete process.env.LCARS_WORKER_CONTEXT;
+      else process.env.LCARS_WORKER_CONTEXT = previousContext;
     }
-    process.stdout.write(
-      JSON.stringify({
-        changed: result.changed,
-        contextPath: result.contextPath,
-        executionSmokeRequired: true,
-      }) + '\n',
+  } else {
+    const installed = config.hooks?.PreToolUse?.flatMap(
+      (group) => group.hooks ?? [],
+    ).filter(
+      (hook) =>
+        typeof hook.command === 'string' && hook.command.endsWith(marker),
     );
-  } catch {
-    process.stderr.write(
-      'LCARS worker hook setup failed; worker launch must not proceed.\n',
-    );
-    process.exitCode = 1;
+    if (installed?.length !== 1)
+      throw new Error('Missing or ambiguous installed command registration');
+    for (let i = 0; i < inputs.length; i++) {
+      const result = spawnSync('/bin/sh', ['-c', installed[0].command], {
+        input: JSON.stringify(inputs[i]),
+        encoding: 'utf8',
+        timeout: 8000,
+        maxBuffer: 1024 * 1024,
+        env: {
+          ...process.env,
+          LCARS_RUN_ID: context.runId,
+          LCARS_WORKER_CONTEXT: contextPath,
+        },
+      });
+      if (
+        result.error ||
+        result.status !== 0 ||
+        JSON.parse(result.stdout).hookSpecificOutput?.permissionDecision !==
+          (i === 0 ? 'allow' : 'deny')
+      )
+        throw new Error('Command control execution smoke failed');
+    }
   }
 }
 
-module.exports = { installRegistration, installOpenCode, prepareWorker };
+async function bootstrapWorker(options) {
+  const prepared = prepareWorker(options);
+  await verifyControl(
+    options.provider,
+    options.configPath,
+    options.contextPath,
+  );
+  // This proves installed control execution, not the provider's native loader.
+  // Native qualification is the release prerequisite for selecting a provider.
+  return {
+    ...prepared,
+    executionSmokeRequired: false,
+    controlSmokePassed: true,
+  };
+}
+
+if (require.main === module) {
+  (async () => {
+    try {
+      const args = process.argv.slice(2);
+      let result;
+      if (['--worker', '--bootstrap'].includes(args[0]) && args.length === 7) {
+        const [
+          ,
+          provider,
+          configPath,
+          contextPath,
+          briefPath,
+          runId,
+          attemptId,
+        ] = args;
+        const options = {
+          provider,
+          configPath,
+          contextPath,
+          briefPath,
+          runId,
+          attemptId,
+          nativeOutcomePath: process.env.NATIVE_WORK_OUTCOME_FILE,
+        };
+        result =
+          args[0] === '--bootstrap'
+            ? await bootstrapWorker(options)
+            : prepareWorker(options);
+      } else {
+        const [configPath, handlerPath, ...extra] = args;
+        if (extra.length || !configPath || !handlerPath)
+          throw new Error('Expected configuration and handler paths');
+        result = installRegistration(configPath, handlerPath);
+      }
+      process.stdout.write(
+        JSON.stringify({
+          changed: result.changed,
+          contextPath: result.contextPath,
+          executionSmokeRequired: result.executionSmokeRequired ?? true,
+          controlSmokePassed: result.controlSmokePassed ?? false,
+        }) + '\n',
+      );
+    } catch {
+      process.stderr.write(
+        'LCARS worker hook setup failed; worker launch must not proceed.\n',
+      );
+      process.exitCode = 1;
+    }
+  })();
+}
+
+module.exports = {
+  installRegistration,
+  installOpenCode,
+  prepareWorker,
+  verifyControl,
+  bootstrapWorker,
+};

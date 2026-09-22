@@ -88,7 +88,8 @@ async function probe(mode) {
   const rewrittenSentinel = join(workspace, 'rewritten-effect');
   const resumedSentinel = join(workspace, 'resumed-effect');
   let round = 1;
-  const policyMarker = mode === 'bridge-marker';
+  const bootstrap = mode === 'bootstrap-marker';
+  const policyMarker = mode === 'bridge-marker' || bootstrap;
   const context = policy.prepareContext(
     {
       repository: 'octo/example',
@@ -125,7 +126,7 @@ ${mode === 'failure' || mode === 'bridge-failure' ? "throw new Error('LCARS_PROB
 ${mode === 'bridge-timeout' ? 'setInterval(() => {}, 1000);' : ''}
 ${mode === 'bridge-allow' ? 'console.log(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow"}}));' : ''}
 ${mode === 'bridge-rewrite' ? `console.log(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",updatedInput:{command:${JSON.stringify(`touch ${quote(rewrittenSentinel)}`)}}}}));` : ''}
-${policyMarker ? `const policy = require(${JSON.stringify(resolve('packages/fleet-tools/bin/worker-policy.cjs'))}); console.log(JSON.stringify(policy.evaluate(JSON.parse(fs.readFileSync(${JSON.stringify(receipt)}, 'utf8')), ${JSON.stringify(context)})));` : ''}
+${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve('packages/fleet-tools/bin/worker-policy.cjs'))}); console.log(JSON.stringify(policy.evaluate(JSON.parse(fs.readFileSync(${JSON.stringify(receipt)}, 'utf8')), ${JSON.stringify(context)})));` : ''}
 `,
   );
   const hookConfig =
@@ -160,6 +161,32 @@ ${policyMarker ? `const policy = require(${JSON.stringify(resolve('packages/flee
     setup.installRegistration(configPath, hook);
     if (setup.installRegistration(configPath, hook).changed)
       throw new Error('Setup was not idempotent');
+  }
+  const contextPath = join(dir, 'worker-context.json');
+  if (bootstrap) {
+    const briefPath = join(dir, 'brief.json');
+    writeFileSync(
+      briefPath,
+      JSON.stringify({
+        repository: context.repository,
+        mode: context.mode,
+        anchor: context.anchor,
+      }),
+    );
+    const options = {
+      provider,
+      configPath:
+        provider === 'codex'
+          ? join(home, '.codex', 'hooks.json')
+          : join(home, '.claude', 'settings.json'),
+      contextPath,
+      briefPath,
+      runId: context.runId,
+      attemptId: context.attemptId,
+    };
+    await setup.bootstrapWorker(options);
+    if ((await setup.bootstrapWorker(options)).changed)
+      throw new Error('Bootstrap was not idempotent');
   }
   let issued = false,
     returnedToolResult = false,
@@ -291,6 +318,7 @@ ${policyMarker ? `const policy = require(${JSON.stringify(resolve('packages/flee
     XDG_DATA_HOME: join(dir, 'data'),
     XDG_CACHE_HOME: join(dir, 'cache'),
     LCARS_RUN_ID: policyMarker ? context.runId : 'work:local-boundary-probe/r1',
+    ...(bootstrap ? { LCARS_WORKER_CONTEXT: contextPath } : {}),
     CODEX_HOME: join(home, '.codex'),
     CLAUDE_CONFIG_DIR: join(home, '.claude'),
     ANTHROPIC_BASE_URL: base,
@@ -444,6 +472,7 @@ for (const mode of [
   'bridge-rewrite',
   'bridge-marker',
   'resume',
+  'bootstrap-marker',
 ])
   observations.push(await probe(mode));
 const report = {

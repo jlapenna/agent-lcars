@@ -1,6 +1,6 @@
 # Dispatched-worker behavior enforcement
 
-Status: implementation foundation, **not enabled in dispatch**. No provider
+Status: implementation in progress, **not enabled in production dispatch**. No provider
 has graduated. The offline readiness evaluator, native-hook boundary probes
 for all three providers, and a Claude/Codex failure-to-denial bridge are
 implemented. Idempotent Claude/Codex command registration is exercised by the
@@ -13,8 +13,9 @@ setup installs its registration. Setup binds validated dispatch context once.
 Fresh readiness checks cover review threads, requested changes, blocking labels,
 and acknowledgments of external draft/auto-merge holds.
 The direct runner now shares one bounded completion-correction rule across all
-three providers, verified by its executable runner harness. Runner setup
-integration, remaining policy controls, bounded control recovery,
+three providers, verified by its executable runner harness. Hook setup is
+connected to all three launch paths behind provider-specific qualification.
+Remaining policy controls, bounded control recovery,
 and full acceptance canaries remain to be built and verified.
 
 ## Scope and decisions
@@ -216,9 +217,11 @@ independently checks tool-result delivery, hook invocation and the actual file:
 - Missing hook: the sentinel exists, exposing the need for LCARS admission.
 - Shared policy marker: the local GitHub-transport fixture receives the exact
   repaired comment body through `worker-opencode-plugin.mjs`.
-- Shared policy ownership loss: the fixture reports a closed anchor and no
+- Shared policy ownership loss: the fixture reports no fleet assignee and no
   publication occurs.
 - Shared policy lookup failure: a failed ownership read prevents publication.
+- Bootstrap marker: the actual runner bootstrap installs and verifies the
+  policy; the native loader executes it and the fixture receives the repaired body.
 
 Exit zero means these native behaviors were observed, **not** that the
 mandatory LCARS canary suite passed. This probe deliberately reports
@@ -228,7 +231,7 @@ or the installed runner image as a whole. OpenCode argument repair must mutate
 the existing `output.args` object: a native probe caught that replacing the
 object left the original command unchanged. Policy probe cases now use the
 OpenCode setup installer and verify an identical repeat is a no-op. The
-installer is not yet connected to runner launch.
+installer is connected to the selected provider's runner bootstrap.
 
 The hook API comes from the [OpenCode plugin reference](https://opencode.ai/docs/plugins/).
 The missing-hook behavior must be prevented by setup installation and its
@@ -282,12 +285,14 @@ On the tested Codex 0.155.1 and Claude Code 2.1.278, raw command-hook exceptions
 allowed the requested action. The shared `worker-hook-bridge.cjs` instead
 converted exceptions and its five-second handler timeout into explicit native
 PreToolUse denials; the actual CLI then prevented both sentinel writes. The
-allowed case still executed. All ten observations passed on each CLI,
+allowed case still executed. All eleven observations passed on each CLI,
 including an exact repaired marker in the independently captured comment body.
 The tenth observation executes a second round within the same probe deadline:
 Claude retains its preallocated UUID; Codex resumes the first hook's native
 session ID. Both produce a separate second-round sentinel with unchanged
 session identity. This tests native resumption, not the full completion gate.
+The bootstrap-marker observation uses the actual runner setup entrypoint and
+independently verifies that the native loader executes its installed policy.
 Runner image qualification must record the versions actually baked into that
 image; the image currently installs current Claude/Codex releases at build.
 
@@ -299,7 +304,7 @@ probes; malformed or unsupported rewrites become denials. This follows the
 [Codex PreToolUse contract](https://learn.chatgpt.com/docs/hooks#pretooluse).
 Setup must register an outer hook timeout
 longer than the bridge timeout. Handler paths come from setup, not task content.
-The bridge is not yet installed in worker launch configuration, and it does not
+Bootstrap installs the bridge in selected worker launch configurations; it does not
 implement ownership, worktree, marker, or review-hold policy itself.
 
 `worker-hook-setup.cjs` installs the command registration into a caller-selected
@@ -313,8 +318,8 @@ also maps bridge process failure to native exit-code-2 denial.
 The native command-hook probes now call this setup implementation for their
 bridge cases, including a no-op repeat, before starting the actual CLI. Setup
 registration alone does not prove execution: the caller must still complete
-its native execution smoke before launching task work. This helper is not yet
-wired into the runner and does not mutate interactive workstation configuration.
+its execution verification before launching task work. The runner integration
+does not mutate interactive workstation configuration.
 
 The setup module also exposes `prepareWorker` (CLI: `--worker <provider>
 <config> <context> <brief> <run-id> <attempt-id>`). Paths must be absolute and
@@ -324,3 +329,27 @@ different dispatch is rejected; repeating the same setup is a no-op. The result
 still reports `executionSmokeRequired: true`: registration and identity binding
 alone are not permission to launch. OpenCode plugin installation preserves
 unrelated entries and uses the stable package/image file URL across upgrades.
+
+The `--bootstrap` entrypoint adds an installed-control execution smoke: invoke
+the registered command or OpenCode callback with a harmless read and a known
+prohibited Git action, requiring allow and deny respectively. The proposed tool
+commands themselves are never executed by this smoke. A successful result
+reports `controlSmokePassed: true` and `executionSmokeRequired: false`.
+This proves control execution; native-loader qualification remains a separate
+release prerequisite, not something these booleans certify.
+
+`runtime/worker-policy-bootstrap.sh` is called before each selected provider's
+task launch, after its effective configuration has been created. The trusted
+deployment selector `LCARS_WORKER_POLICY_PROVIDERS` is a comma-separated list
+of graduated providers; its default is empty (restore by unsetting it). No
+provider may be added before its artifact-matched acceptance suite passes.
+Selected Codex runs enable hooks and use the native trust-bypass flag exercised
+by the isolated runtime probes. Setup failures or missing control-smoke proof
+abort launch and retain the infrastructure diagnosis. The runner harness tests
+successful binding and failed-setup/no-launch behavior for all three providers.
+There is no per-tool installation-presence check.
+
+Native Work reply dispatches remain valid. Setup can bind the runner-owned
+terminal outcome path; native Write tools may write only the exact two-line
+park/no-op record for that attempt there, without requiring a code worktree.
+The exception neither accepts arbitrary contents nor follows symlink redirects.

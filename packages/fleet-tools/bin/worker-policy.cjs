@@ -49,7 +49,7 @@ function prepareContext(brief, identity) {
       typeof anchor.id !== 'string' ||
       !anchor.id ||
       runId !== `work:${anchor.id}/r${generation}` ||
-      brief.mode !== 'implement'
+      brief.mode === 'review'
     ) {
       throw new Error('Invalid native Work binding');
     }
@@ -61,6 +61,13 @@ function prepareContext(brief, identity) {
   ) {
     throw new Error('Invalid GitHub anchor binding');
   }
+  if (
+    identity.nativeOutcomePath !== undefined &&
+    (anchor.type !== 'work' ||
+      typeof identity.nativeOutcomePath !== 'string' ||
+      !path.isAbsolute(identity.nativeOutcomePath))
+  )
+    throw new Error('Invalid native outcome binding');
   return {
     policyVersion: 1,
     runId,
@@ -68,6 +75,9 @@ function prepareContext(brief, identity) {
     provider,
     repository: brief.repository,
     mode: brief.mode,
+    ...(identity.nativeOutcomePath
+      ? { nativeOutcomePath: identity.nativeOutcomePath }
+      : {}),
     anchor: {
       type: anchor.type,
       number: anchor.number ?? null,
@@ -439,6 +449,34 @@ function repairArtifact(input, context, dependencies = {}) {
 }
 
 function evaluate(input, context, dependencies = {}) {
+  const file = input.tool_input?.file_path ?? input.tool_input?.filePath;
+  if (
+    context.anchor.type === 'work' &&
+    context.nativeOutcomePath &&
+    ['Write', 'write'].includes(input.tool_name) &&
+    typeof file === 'string' &&
+    path.resolve(input.cwd ?? process.cwd(), file) === context.nativeOutcomePath
+  ) {
+    const claim = `<!-- attempt-claim:${context.attemptId} -->`;
+    const valid = ['park', 'no-op'].some(
+      (kind) =>
+        input.tool_input.content ===
+        `<!-- agent-result:v1:${kind}:${context.attemptId} -->\n${claim}\n`,
+    );
+    const parent = path.dirname(context.nativeOutcomePath);
+    if (
+      !valid ||
+      fs
+        .lstatSync(context.nativeOutcomePath, { throwIfNoEntry: false })
+        ?.isSymbolicLink() ||
+      fs.realpathSync(parent) !== parent
+    )
+      return decision(
+        'deny',
+        'Write only the exact two-line native Work result for this attempt to the setup-bound outcome file; do not redirect it through symlinks.',
+      );
+    return decision('allow');
+  }
   const ops = operations(input);
   let repaired;
   try {

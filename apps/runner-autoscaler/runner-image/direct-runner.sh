@@ -41,6 +41,9 @@ SIDECAR_LIFECYCLE="${SIDECAR_LIFECYCLE:-/usr/local/lib/agent-lcars/sidecar-lifec
 # shellcheck source=runtime/worker-completion.sh
 # shellcheck source-path=SCRIPTDIR
 source "${WORKER_COMPLETION_HELPER:-$RUNTIME_HELPERS_DIR/worker-completion.sh}"
+# shellcheck source=runtime/worker-policy-bootstrap.sh
+source "${WORKER_POLICY_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/worker-policy-bootstrap.sh}"
+CODEX_HOOK_ARGS=()
 
 # The native dispatch helper requires RUNNER_TEMP in its child environment. A
 # direct-mode container is not a GitHub Actions runner, so it does not supply
@@ -665,6 +668,7 @@ if [ "$PIPELINE" = "codex" ]; then
   if [ -d "$HOME/.codex" ]; then
     cp -a "$HOME/.codex/." "$CODEX_HOME/"
   fi
+  worker_policy_bootstrap "$CODEX_HOME/hooks.json"
 fi
 
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
@@ -708,6 +712,7 @@ HEARTBEAT_PID=$!
 
 AGENT_EXIT=1
 if [ "$PIPELINE" = "claude" ]; then
+  worker_policy_bootstrap "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   # The Claude CLI reads its long-lived subscription credential straight
   # from its own process environment. The autoscaler bind-mounts the value
   # as a file only for Claude runs, keeping it out of docker inspect.
@@ -908,7 +913,7 @@ CURLCFG
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
-      codex exec "$@" --json --dangerously-bypass-approvals-and-sandbox \
+      codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
       --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
       "$prompt" 2> "$CODEX_STDERR_PIPE" |
       while IFS= read -r codex_event; do
@@ -1060,6 +1065,7 @@ else
     "$OPENCODE_CONFIG_DIR/opencode.json" > "$opencode_proxy_config"
   mv "$opencode_proxy_config" "$OPENCODE_CONFIG_DIR/opencode.json"
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
+  worker_policy_bootstrap "$OPENCODE_CONFIG"
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
   # leave the surrounding direct runner alive to finalize telemetry and

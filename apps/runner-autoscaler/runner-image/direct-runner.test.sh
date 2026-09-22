@@ -42,6 +42,9 @@ BAKED_PREPARE_DISPATCH="$baked/runtime/prepare-dispatch.sh"
 BAKED_VERIFY_OUTCOME="$baked/runtime/verify-outcome.sh"
 # Sourced helpers do not pass through the fake external bash path mapper.
 export WORKER_COMPLETION_HELPER="$baked/runtime/worker-completion.sh"
+export WORKER_POLICY_BOOTSTRAP_HELPER="$baked/runtime/worker-policy-bootstrap.sh"
+export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
+export WORKER_POLICY_NODE="$real_node"
 # sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
 # delegates to the fake `node` below. Keep it separate from the source tree:
 # the real runner image contains the compiled bundle, while this shell harness
@@ -327,6 +330,7 @@ FAKE
   cat > "$bindir/claude" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$CLAUDE_ARGS_LOG"
+printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
@@ -357,6 +361,7 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
   exit 0
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
+printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
@@ -424,6 +429,7 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
   exit 0
 fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
+printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
 echo run >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
 run_count=1
@@ -600,6 +606,7 @@ run_scenario() {
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
   export CODEX_ARGS_LOG="$dir/codex-args.log"
   export WORKER_RUN_COUNT_FILE="$dir/worker-run-count"
+  export WORKER_CONTEXT_LOG="$dir/worker-context.log"
   export CODEX_ENV_LOG="$dir/codex-env.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
@@ -1776,5 +1783,23 @@ export FAKE_WORKER_ERROR_EVENT=1 FAKE_GH_NO_MATCH=1
 run_scenario codex-error-event-no-correction codex
 unset FAKE_WORKER_ERROR_EVENT FAKE_GH_NO_MATCH
 [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "Codex retried a provider error as missing work"
+
+for provider in claude codex opencode; do
+  export LCARS_WORKER_POLICY_PROVIDERS="$provider"
+  run_scenario "$provider-policy-bootstrap" "$provider"
+  [ "$rc" -eq 0 ] || fail "$provider policy bootstrap failed ($(tail -n 4 "$scenario_log"))"
+  context_file="$(cat "$WORKER_CONTEXT_LOG")"
+  [ "$context_file" = "$scenario_runner_temp/worker-policy-context.json" ] || fail "$provider launched without bound policy context"
+  jq -e --arg provider "$provider" '.provider == $provider and .attemptId == "g1:work:01DIRECTRUNNERTESTFIXTURE1/r1"' "$context_file" >/dev/null || fail "$provider context mismatch"
+  jq -e '.controlSmokePassed == true and .executionSmokeRequired == false' "$scenario_runner_temp/worker-policy-setup.json" >/dev/null || fail "$provider launched without execution smoke"
+
+  export WORKER_POLICY_SETUP="$tmp/missing-worker-policy.cjs"
+  run_scenario "$provider-policy-setup-failed" "$provider"
+  [ "$rc" -ne 0 ] || fail "$provider launched after failed setup"
+  [ ! -f "$WORKER_CONTEXT_LOG" ] || fail "$provider task process started despite setup failure"
+  export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
+  unset LCARS_WORKER_POLICY_PROVIDERS
+  echo "scenario $provider-policy-bootstrap: OK"
+done
 
 echo "direct-runner.sh: OK"

@@ -172,3 +172,36 @@ it('invalid identity fails before setup writes any state', () => {
   expect(existsSync(config)).toBe(false);
   expect(existsSync(contextPath)).toBe(false);
 });
+
+it.each(['claude', 'codex', 'opencode'])(
+  'executes installed %s allow/deny controls during bootstrap',
+  async (provider) => {
+    const { config } = fixture();
+    const briefPath = config + '.brief';
+    writeFileSync(
+      briefPath,
+      JSON.stringify({
+        repository: 'octo/example',
+        mode: 'reply',
+        anchor: { type: 'work', id: 'item' },
+      }),
+    );
+    const options = {
+      provider,
+      configPath: config,
+      contextPath: config + '.context',
+      briefPath,
+      runId: 'work:item/r1',
+      attemptId: 'g1:work:item/r1',
+    };
+    expect(await setup.bootstrapWorker(options)).toMatchObject({
+      controlSmokePassed: true,
+      executionSmokeRequired: false,
+    });
+    expect((await setup.bootstrapWorker(options)).changed).toBe(false);
+    writeFileSync(config, '{}');
+    await expect(
+      setup.verifyControl(provider, config, options.contextPath),
+    ).rejects.toThrow();
+  },
+);
