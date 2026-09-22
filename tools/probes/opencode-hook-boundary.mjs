@@ -93,14 +93,17 @@ async function probe(mode) {
   const resumeProbe = mode === 'bootstrap-file-resume';
   let round = 1;
   const holdProbe = mode.startsWith('bootstrap-hold-');
+  const publicationProbe = mode.startsWith('bootstrap-publication-');
   const reviewReads = join(dir, 'review-reads');
-  const ownershipChanged = mode === 'bootstrap-file-ownership-changed';
+  const ownershipChanged = mode.endsWith('-ownership-changed');
   const ownershipState = join(dir, 'ownership-changed');
   const ownershipReads = join(dir, 'ownership-reads');
   const secondSentinel = join(workspace, 'second-effect');
   const files =
     outcome ??
-    (fileProbe || holdProbe ? fileProbeFixture(dir, home, mode) : null);
+    (fileProbe || holdProbe || publicationProbe
+      ? fileProbeFixture(dir, home, mode)
+      : null);
   const fileContent = outcome?.content ?? 'LCARS_FILE_PROBE\n';
   const sentinel = files?.sentinel ?? join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
@@ -110,20 +113,23 @@ async function probe(mode) {
   const lineageExhausted = mode === 'bootstrap-lineage-recovery-exhausted';
   const lineageReceipt = join(dir, 'lineage.json');
   const bootstrap =
-    mode === 'bootstrap-marker' || lineageProbe || fileProbe || holdProbe;
+    mode === 'bootstrap-marker' ||
+    lineageProbe ||
+    fileProbe ||
+    holdProbe ||
+    publicationProbe;
   const recovery = mode.startsWith('policy-recovery-');
   const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
     outcome?.brief ?? {
       repository: 'octo/example',
-      mode:
-        mode === 'bootstrap-file-review'
-          ? 'review'
-          : fileProbe || holdProbe
-            ? 'implement'
-            : 'reply',
+      mode: mode.endsWith('-review')
+        ? 'review'
+        : fileProbe || holdProbe || publicationProbe
+          ? 'implement'
+          : 'reply',
       anchor: {
-        type: mode === 'bootstrap-file-review' ? 'pull-request' : 'issue',
+        type: mode.endsWith('-review') ? 'pull-request' : 'issue',
         number: 42,
       },
     },
@@ -153,11 +159,12 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   console.log(${JSON.stringify(JSON.stringify(reviewFixture(mode)))});
 } else if (args[0] === 'api') {
   fs.appendFileSync(${JSON.stringify(ownershipReads)}, 'read\\n');
-  ${['policy-failure', 'bootstrap-file-ownership-unreadable'].includes(mode) ? 'process.exit(1);' : ''}
-  const lost = ${['policy-deny', 'bootstrap-file-ownership-absent'].includes(mode)} || fs.existsSync(${JSON.stringify(ownershipState)});
+  ${mode === 'policy-failure' || mode.endsWith('-ownership-unreadable') ? 'process.exit(1);' : ''}
+  const lost = ${mode === 'policy-deny' || mode.endsWith('-ownership-absent')} || fs.existsSync(${JSON.stringify(ownershipState)});
   console.log(JSON.stringify({state:'open',assignees:lost ? [] : [{login:'agent-lcars-bot'}]}));
 } else if (args[0] === 'issue' && args[1] === 'comment') {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture publication');}
 else if (args[0] === 'pr' && ['ready','merge'].includes(args[1])) {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture readiness');}
+else if (args[0] === 'pr' && args[1] === 'create') {fs.writeFileSync(fs.existsSync(${JSON.stringify(ownershipState)}) ? ${JSON.stringify(secondSentinel)} : ${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture PR');}
 else process.exitCode = 1;
 `,
     { mode: 0o700 },
@@ -252,11 +259,13 @@ export default async (context) => {
                           content: fileContent,
                         }
                       : {
-                          command: holdProbe
-                            ? reviewCommand(mode)
-                            : usesPolicy
-                              ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
-                              : `touch '${sentinel}'`,
+                          command: publicationProbe
+                            ? 'gh pr create --repo octo/example --title "Fixture PR" --body "Fixture deliverable"'
+                            : holdProbe
+                              ? reviewCommand(mode)
+                              : usesPolicy
+                                ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+                                : `touch '${sentinel}'`,
                           description: 'Create harmless probe sentinel',
                         },
                   ),
@@ -469,7 +478,7 @@ export default async (context) => {
       ? outcome.denial
       : holdProbe
         ? reviewDenial(mode)
-        : fileProbe
+        : fileProbe || publicationProbe
           ? expectedFileDenial(mode)
           : '';
   const reviewReadCount = existsSync(reviewReads)
@@ -532,6 +541,12 @@ export default async (context) => {
       denialReasonObserved &&
       sessionBindingVerified &&
       (!outcomeProbe || ownershipReadCount === 0) &&
+      (!publicationProbe ||
+        (hookInvoked &&
+          ownershipReadCount ===
+            (mode.endsWith('-review') ? 0 : ownershipChanged ? 2 : 1) &&
+          effect === (mode.endsWith('-allow') || ownershipChanged) &&
+          (!effect || markerRepaired))) &&
       (!lineageProbe || providerApiLineageVerified) &&
       (!lineageRecovery || runnerFailureRecognized === lineageExhausted) &&
       (!resumeProbe || resumedSameSession) &&
@@ -544,16 +559,18 @@ export default async (context) => {
             effect === mode.endsWith('-released')
           : ownershipChanged
             ? hookInvoked && ownershipChangeVerified
-            : fileProbe
-              ? hookInvoked &&
-                effect === (mode.endsWith('-allow') || resumeProbe)
-              : mode === 'policy-marker' ||
-                  bootstrap ||
-                  mode === 'policy-recovery-success'
-                ? hookInvoked && effect && markerRepaired
-                : mode === 'missing'
-                  ? !hookInvoked && effect
-                  : hookInvoked && effect === (mode === 'allow')),
+            : publicationProbe
+              ? hookInvoked
+              : fileProbe
+                ? hookInvoked &&
+                  effect === (mode.endsWith('-allow') || resumeProbe)
+                : mode === 'policy-marker' ||
+                    bootstrap ||
+                    mode === 'policy-recovery-success'
+                  ? hookInvoked && effect && markerRepaired
+                  : mode === 'missing'
+                    ? !hookInvoked && effect
+                    : hookInvoked && effect === (mode === 'allow')),
   };
 }
 
@@ -591,6 +608,11 @@ const modes = [
   'bootstrap-file-resume',
   'bootstrap-lineage-recovery-success',
   'bootstrap-lineage-recovery-exhausted',
+  'bootstrap-publication-allow',
+  'bootstrap-publication-review',
+  'bootstrap-publication-ownership-absent',
+  'bootstrap-publication-ownership-unreadable',
+  'bootstrap-publication-ownership-changed',
 ];
 if (scenario && !modes.includes(scenario))
   throw new Error(`Unknown scenario: ${scenario}`);

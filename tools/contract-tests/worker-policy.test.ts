@@ -41,6 +41,26 @@ const verdict = (input: unknown, ctx = context, deps = dependencies()) =>
   policy.evaluate(input, ctx, deps).hookSpecificOutput.permissionDecision;
 
 describe('dispatched worker policy', () => {
+  it('corrects review-mode PR creation without suggesting marker repair', () => {
+    const deps = dependencies();
+    const result = policy.evaluate(
+      shell(
+        'gh pr create --repo octo/example --title Fixture --body Deliverable',
+      ),
+      {
+        ...context,
+        mode: 'review',
+        anchor: { type: 'pull-request', number: 42 },
+      },
+      deps,
+    ).hookSpecificOutput;
+    expect(result.permissionDecision).toBe('deny');
+    expect(result.permissionDecisionReason).toContain(
+      'This dispatch requests review',
+    );
+    expect(result.updatedInput).toBeUndefined();
+    expect(deps.readOwnership).not.toHaveBeenCalled();
+  });
   it.each(['patchText', 'patch', 'input', 'command', 'raw'])(
     'checks every patch target, including move destinations (%s)',
     (field) => {

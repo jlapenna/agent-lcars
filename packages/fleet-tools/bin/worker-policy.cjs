@@ -601,6 +601,11 @@ function evaluate(input, context, dependencies = {}) {
       'deny',
       'The edit target could not be resolved safely. Use explicit file paths or a standard Begin Patch/End Patch envelope; repair dangling symlinks before retrying.',
     );
+  if (context.mode === 'review' && ops.some((op) => op.kind !== 'artifact'))
+    return decision(
+      'deny',
+      'This dispatch requests review, not implementation or publication. Submit the review without modifying or pushing code.',
+    );
   let repaired;
   try {
     repaired = repairArtifact(input, context, dependencies);
@@ -611,11 +616,6 @@ function evaluate(input, context, dependencies = {}) {
     );
   }
   if (!ops.length && !repaired) return decision('allow');
-  if (context.mode === 'review' && ops.some((op) => op.kind !== 'artifact'))
-    return decision(
-      'deny',
-      'This dispatch requests review, not implementation or publication. Submit the review without modifying or pushing code.',
-    );
   if (ops.some((op) => op.unsafe))
     return decision(
       'deny',
