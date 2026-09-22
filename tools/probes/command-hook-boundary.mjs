@@ -21,7 +21,12 @@ import {
   delegationFixture,
 } from './delegation-fixture.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
-import { publicationCommand } from './publication-fixture.mjs';
+import {
+  publicationBrief,
+  publicationCaptureSource,
+  publicationDeliveryModes,
+  publicationFixture,
+} from './publication-fixture.mjs';
 import {
   reviewAcknowledgmentModes,
   reviewAllowed,
@@ -148,18 +153,19 @@ async function probe(mode) {
   const recovery = mode.startsWith('bridge-recovery-');
   const policyMarker = mode === 'bridge-marker' || mode === 'bootstrap-marker';
   const context = policy.prepareContext(
-    outcome?.brief ?? {
-      repository: 'octo/example',
-      mode: mode.endsWith('-review')
-        ? 'review'
-        : fileProbe || holdProbe || publicationProbe || push || workflow
-          ? 'implement'
-          : 'reply',
-      anchor: {
-        type: mode.endsWith('-review') ? 'pull-request' : 'issue',
-        number: 42,
+    outcome?.brief ??
+      publicationBrief(mode) ?? {
+        repository: 'octo/example',
+        mode: mode.endsWith('-review')
+          ? 'review'
+          : fileProbe || holdProbe || publicationProbe || push || workflow
+            ? 'implement'
+            : 'reply',
+        anchor: {
+          type: mode.endsWith('-review') ? 'pull-request' : 'issue',
+          number: 42,
+        },
       },
-    },
     {
       provider,
       runId: 'octo/example#42/r1',
@@ -170,6 +176,9 @@ async function probe(mode) {
       ...outcome?.identity,
     },
   );
+  const publication = publicationProbe
+    ? publicationFixture(mode, context, workspace)
+    : null;
   const fakeBin = join(dir, 'bin');
   mkdirSync(fakeBin);
   // Isolated transport fixture only. No credentials or external GitHub writes.
@@ -188,6 +197,7 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   const lost = ${mode.endsWith('-ownership-absent')} || fs.existsSync(${JSON.stringify(ownershipState)});
   console.log(JSON.stringify({state:'open',assignees:lost ? [] : [{login:'agent-lcars-bot'}]}));
 }
+else if (${publicationProbe} && ((args[0] === 'issue' && args[1] === 'comment') || (args[0] === 'pr' && ['create','comment','review'].includes(args[1])))) {${publicationCaptureSource(sentinel, secondSentinel, ownershipState)}}
 else if (args[0] === 'issue' && args[1] === 'comment') {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture publication');}
 else if (args[0] === 'pr' && ['ready','merge'].includes(args[1])) {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture readiness');}
 else if (args[0] === 'pr' && args[1] === 'create') {fs.writeFileSync(fs.existsSync(${JSON.stringify(ownershipState)}) ? ${JSON.stringify(secondSentinel)} : ${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture PR');}
@@ -413,7 +423,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
         : push
           ? push.command(second)
           : publicationProbe
-            ? publicationCommand(mode, context)
+            ? publication.command
             : holdProbe
               ? reviewCommand(mode)
               : policyMarker
@@ -721,9 +731,10 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
   let markerRepaired = false;
   if ((policyMarker || publicationProbe || workflow) && effect) {
     const published = JSON.parse(readFileSync(sentinel, 'utf8'));
-    markerRepaired =
-      published[published.indexOf('--body') + 1] ===
-      `Fixture deliverable\n\n<!-- attempt-claim:${context.attemptId} -->`;
+    markerRepaired = publication
+      ? readFileSync(`${sentinel}.body`, 'utf8') === publication.expectedBody
+      : published[published.indexOf('--body') + 1] ===
+        `Fixture deliverable\n\n<!-- attempt-claim:${context.attemptId} -->`;
   }
   const exercised =
     execution.code === 0 && !execution.timedOut && issued && returnedToolResult;
@@ -781,6 +792,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
     effect,
     rewrittenEffect,
     markerRepaired,
+    publicationBodyFilePreserved: publication?.verify() ?? true,
     resumedSameSession: workflowResult?.correction?.resumed
       ? workflowResult.sameNativeSession
       : resumedSameSession,
@@ -803,6 +815,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
       exercised &&
       denialReasonObserved &&
       sessionBindingVerified &&
+      (!publication || publication.verify()) &&
       (!delegation || delegatedResult.passed) &&
       (!outcomeProbe || (ownershipReadCount === 0 && outcome.verify())) &&
       (!push ||
@@ -902,6 +915,7 @@ const modes = [
   'bootstrap-outcome-unrelated',
   'bootstrap-outcome-parent-symlink',
   ...(provider === 'codex' ? ['bootstrap-outcome-multi-target'] : []),
+  ...publicationDeliveryModes,
   'bootstrap-publication-allow',
   'bootstrap-publication-review',
   'bootstrap-publication-ownership-absent',
@@ -919,15 +933,18 @@ const modes = [
 if (
   scenario &&
   scenario !== 'review-acknowledgments' &&
+  scenario !== 'publication-deliverables' &&
   !modes.includes(scenario)
 )
   throw new Error(`Unknown scenario: ${scenario}`);
 const selectedModes =
   scenario === 'review-acknowledgments'
     ? reviewAcknowledgmentModes
-    : scenario
-      ? [scenario]
-      : modes;
+    : scenario === 'publication-deliverables'
+      ? modes.filter((mode) => mode.startsWith('bootstrap-publication-'))
+      : scenario
+        ? [scenario]
+        : modes;
 for (const mode of selectedModes) observations.push(await probe(mode));
 const report = {
   provider,

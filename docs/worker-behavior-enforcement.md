@@ -403,6 +403,19 @@ hash this expanded harness. This proves the supported acknowledgment contract,
 not arbitrary human-condition satisfaction or bypass-proof enforcement.
 No candidate image was published or activated; no provider is graduated.
 
+The `publication-deliverables` suite now exercises PR creation, issue comments,
+PR comments, and review submissions with their correct dispatch mode and anchor.
+It adds inline comment/review bodies plus ordinary body-file repair, exact-marker
+idempotence, and foreign-marker rejection for all four artifact kinds. The
+transport captures the body at actual publication time, including unchanged
+`--body-file` commands; source body files must remain byte-for-byte unchanged.
+All 22 publication checks passed on each pinned local CLI (66 observations),
+including the seven existing ownership/mode/marker controls. Evidence:
+`/tmp/lcars-codex-hook-probe-wGm75t`, `/tmp/lcars-claude-hook-probe-pcjolj`, and
+`/tmp/lcars-opencode-hook-probe-RUZqbK`. The prior candidate is no longer present
+locally; a replacement runtime-source `32531a5d` build is in progress for these
+expanded image-bound checks. Local passes are not image qualification.
+
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
 

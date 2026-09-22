@@ -19,7 +19,12 @@ import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
 import { delegationFixture } from './delegation-fixture.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
-import { publicationCommand } from './publication-fixture.mjs';
+import {
+  publicationBrief,
+  publicationCaptureSource,
+  publicationDeliveryModes,
+  publicationFixture,
+} from './publication-fixture.mjs';
 import {
   reviewAcknowledgmentModes,
   reviewAllowed,
@@ -165,18 +170,19 @@ async function probe(mode) {
     writeFileSync(retainedControlWork, 'retain work after control failure\n');
   const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
-    outcome?.brief ?? {
-      repository: 'octo/example',
-      mode: mode.endsWith('-review')
-        ? 'review'
-        : fileProbe || holdProbe || publicationProbe || push || workflow
-          ? 'implement'
-          : 'reply',
-      anchor: {
-        type: mode.endsWith('-review') ? 'pull-request' : 'issue',
-        number: 42,
+    outcome?.brief ??
+      publicationBrief(mode) ?? {
+        repository: 'octo/example',
+        mode: mode.endsWith('-review')
+          ? 'review'
+          : fileProbe || holdProbe || publicationProbe || push || workflow
+            ? 'implement'
+            : 'reply',
+        anchor: {
+          type: mode.endsWith('-review') ? 'pull-request' : 'issue',
+          number: 42,
+        },
       },
-    },
     {
       provider: 'opencode',
       runId: 'octo/example#42/r1',
@@ -191,6 +197,9 @@ async function probe(mode) {
   writeFileSync(contextPath, JSON.stringify(context));
   if (recoveryExhausted)
     writeFileSync(`${contextPath}.recovery-used`, context.attemptId);
+  const publication = publicationProbe
+    ? publicationFixture(mode, context, workspace)
+    : null;
   const fakeBin = join(dir, 'bin');
   mkdirSync(fakeBin);
   writeFileSync(
@@ -207,7 +216,8 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   ${mode === 'policy-failure' || mode.endsWith('-ownership-unreadable') ? 'process.exit(1);' : ''}
   const lost = ${mode === 'policy-deny' || mode.endsWith('-ownership-absent')} || fs.existsSync(${JSON.stringify(ownershipState)});
   console.log(JSON.stringify({state:'open',assignees:lost ? [] : [{login:'agent-lcars-bot'}]}));
-} else if (args[0] === 'issue' && args[1] === 'comment') {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture publication');}
+} else if (${publicationProbe} && ((args[0] === 'issue' && args[1] === 'comment') || (args[0] === 'pr' && ['create','comment','review'].includes(args[1])))) {${publicationCaptureSource(sentinel, secondSentinel, ownershipState)}}
+else if (args[0] === 'issue' && args[1] === 'comment') {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture publication');}
 else if (args[0] === 'pr' && ['ready','merge'].includes(args[1])) {fs.writeFileSync(${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture readiness');}
 else if (args[0] === 'pr' && args[1] === 'create') {fs.writeFileSync(fs.existsSync(${JSON.stringify(ownershipState)}) ? ${JSON.stringify(secondSentinel)} : ${JSON.stringify(sentinel)}, JSON.stringify(args)); console.log('fixture PR');}
 else process.exitCode = 1;
@@ -359,7 +369,7 @@ export default async (context) => {
                               : push
                                 ? push.command(second)
                                 : publicationProbe
-                                  ? publicationCommand(mode, context)
+                                  ? publication.command
                                   : holdProbe
                                     ? reviewCommand(mode)
                                     : usesPolicy
@@ -568,9 +578,10 @@ export default async (context) => {
   let markerRepaired = false;
   if (usesPolicy && !fileProbe && !holdProbe && !push && effect) {
     const published = JSON.parse(readFileSync(sentinel, 'utf8'));
-    markerRepaired =
-      published[published.indexOf('--body') + 1] ===
-      `Fixture deliverable\n\n<!-- attempt-claim:${context.attemptId} -->`;
+    markerRepaired = publication
+      ? readFileSync(`${sentinel}.body`, 'utf8') === publication.expectedBody
+      : published[published.indexOf('--body') + 1] ===
+        `Fixture deliverable\n\n<!-- attempt-claim:${context.attemptId} -->`;
   }
   const exercised =
     execution.code === 0 && !execution.timedOut && issued && returnedToolResult;
@@ -656,6 +667,7 @@ export default async (context) => {
     hookInvoked,
     effect,
     markerRepaired,
+    publicationBodyFilePreserved: publication?.verify() ?? true,
     recoveryVerified,
     retainedWorkVerified,
     controlElapsedMs,
@@ -683,6 +695,7 @@ export default async (context) => {
       exercised &&
       denialReasonObserved &&
       sessionBindingVerified &&
+      (!publication || publication.verify()) &&
       (!delegation || delegatedResult.passed) &&
       (!outcomeProbe || (ownershipReadCount === 0 && outcome.verify())) &&
       (!push ||
@@ -787,6 +800,7 @@ const modes = [
   'bootstrap-file-resume',
   'bootstrap-lineage-recovery-success',
   'bootstrap-lineage-recovery-exhausted',
+  ...publicationDeliveryModes,
   'bootstrap-publication-allow',
   'bootstrap-publication-review',
   'bootstrap-publication-ownership-absent',
@@ -804,15 +818,18 @@ const modes = [
 if (
   scenario &&
   scenario !== 'review-acknowledgments' &&
+  scenario !== 'publication-deliverables' &&
   !modes.includes(scenario)
 )
   throw new Error(`Unknown scenario: ${scenario}`);
 const selectedModes =
   scenario === 'review-acknowledgments'
     ? reviewAcknowledgmentModes
-    : scenario
-      ? [scenario]
-      : modes;
+    : scenario === 'publication-deliverables'
+      ? modes.filter((mode) => mode.startsWith('bootstrap-publication-'))
+      : scenario
+        ? [scenario]
+        : modes;
 for (const mode of selectedModes) observations.push(await probe(mode));
 const report = {
   provider: 'opencode',
