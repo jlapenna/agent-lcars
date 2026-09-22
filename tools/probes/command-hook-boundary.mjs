@@ -16,6 +16,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import { delegationFixture } from './delegation-fixture.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
 import { publicationCommand } from './publication-fixture.mjs';
 import {
@@ -96,12 +97,16 @@ async function probe(mode) {
   mkdirSync(workspace, { recursive: true });
   mkdirSync(join(home, '.codex'), { recursive: true });
   mkdirSync(join(home, '.claude'), { recursive: true });
+  const delegation = mode.startsWith('bootstrap-delegated-')
+    ? delegationFixture(dir, home, mode)
+    : null;
   const workflow = mode.startsWith('bootstrap-workflow')
     ? workflowFixture(dir, home, mode)
     : null;
   const outcomeProbe = mode.startsWith('bootstrap-outcome-');
   const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
-  const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
+  const fileProbe =
+    mode.startsWith('bootstrap-file-') || outcomeProbe || !!delegation;
   const holdProbe = mode.startsWith('bootstrap-hold-');
   const publicationProbe = mode.startsWith('bootstrap-publication-');
   const push = mode.startsWith('bootstrap-push-')
@@ -114,6 +119,7 @@ async function probe(mode) {
   const secondSentinel =
     push?.secondSentinel ?? join(workspace, 'second-effect');
   const files =
+    delegation ??
     workflow ??
     push ??
     outcome ??
@@ -189,6 +195,7 @@ else process.exitCode = 1;
     hook,
     `const fs = require('node:fs');
 fs.writeFileSync(${JSON.stringify(receipt)}, fs.readFileSync(0));
+${delegation ? `fs.appendFileSync(${JSON.stringify(delegation.events)}, JSON.stringify(JSON.parse(fs.readFileSync(${JSON.stringify(receipt)}, 'utf8'))) + '\\n');` : ''}
 ${workflow ? `fs.appendFileSync(${JSON.stringify(workflow.eventsPath)}, JSON.stringify(JSON.parse(fs.readFileSync(${JSON.stringify(receipt)}, 'utf8'))) + '\\n');` : ''}
 ${mode === 'deny' ? "process.stderr.write('LCARS_PROBE_DENY'); process.exitCode = 2;" : ''}
 ${mode === 'failure' || mode === 'bridge-failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
@@ -232,6 +239,26 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
             ],
           },
         };
+  if (delegation) {
+    const lifecycleHook = join(dir, 'lifecycle.cjs');
+    writeFileSync(
+      lifecycleHook,
+      `const fs = require('node:fs'); fs.appendFileSync(${JSON.stringify(delegation.lifecycle)}, JSON.stringify(JSON.parse(fs.readFileSync(0, 'utf8'))) + '\\n');`,
+    );
+    for (const event of ['SubagentStart', 'SubagentStop'])
+      hookConfig.hooks[event] = [
+        {
+          matcher: '.*',
+          hooks: [
+            {
+              type: 'command',
+              command: `${quote(process.execPath)} ${quote(lifecycleHook)}`,
+              timeout: 10,
+            },
+          ],
+        },
+      ];
+  }
   writeFileSync(join(home, '.codex', 'hooks.json'), JSON.stringify(hookConfig));
   writeFileSync(
     join(home, '.claude', 'settings.json'),
@@ -303,13 +330,29 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
     try {
       const body = JSON.parse(raw);
       requests++;
-      const tools = body.tools ?? [];
+      const content =
+        provider === 'codex' ? (body.input ?? []) : (body.messages ?? []);
+      const flattenTools = (definitions) =>
+        definitions.flatMap((tool) =>
+          tool.type === 'namespace'
+            ? tool.tools.map((child) => ({ ...child, namespace: tool.name }))
+            : [tool],
+        );
+      const tools = flattenTools([
+        ...(body.tools ?? []),
+        ...content
+          .filter(
+            (item) =>
+              item.type === 'tool_search_output' ||
+              item.type === 'additional_tools',
+          )
+          .flatMap((item) => item.tools ?? []),
+      ]);
       observations.push({
         path: req.url,
         tools: tools.map((tool) => tool.name ?? tool.type),
+        ...(delegation ? { toolDefinitions: tools } : {}),
       });
-      const content =
-        provider === 'codex' ? (body.input ?? []) : (body.messages ?? []);
       toolFeedback += JSON.stringify(content);
       returnedToolResult ||=
         JSON.stringify(content).includes(
@@ -320,16 +363,21 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
         mode === 'bootstrap-file-symlink' &&
         !readIssued;
       const workflowStep = workflow?.next(content);
-      const fileAction = fileProbe || workflowStep?.kind === 'write';
-      const toolName = preRead
-        ? 'Read'
-        : fileAction
-          ? provider === 'codex'
-            ? 'apply_patch'
-            : 'Write'
-          : provider === 'codex'
-            ? 'exec_command'
-            : 'Bash';
+      const delegatedStep = delegation?.next(content, tools);
+      const fileAction = delegation
+        ? delegatedStep?.write === true
+        : fileProbe || workflowStep?.kind === 'write';
+      const toolName =
+        delegatedStep?.tool ??
+        (preRead
+          ? 'Read'
+          : fileAction
+            ? provider === 'codex'
+              ? 'apply_patch'
+              : 'Write'
+            : provider === 'codex'
+              ? 'exec_command'
+              : 'Bash');
       const second =
         ownershipChanged && issued && !secondIssued && returnedToolResult;
       if (second)
@@ -339,8 +387,12 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
         );
       const fileTarget = second ? secondSentinel : files?.target;
       const callTool =
-        (workflow ? !!workflowStep : !issued || second) &&
-        tools.some((tool) => tool.name === toolName);
+        (delegation
+          ? !!delegatedStep
+          : workflow
+            ? !!workflowStep
+            : !issued || second) &&
+        tools.some((tool) => (tool.name ?? tool.type) === toolName);
       if (callTool) {
         if (workflow) {
           workflow.issued(
@@ -362,39 +414,58 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
               : policyMarker
                 ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
                 : `touch ${quote(round === 1 ? sentinel : resumedSentinel)}`;
-      const args = preRead
-        ? { file_path: fileTarget }
-        : fileAction
-          ? { file_path: fileTarget, content: fileContent }
-          : provider === 'codex'
-            ? { cmd: command, yield_time_ms: 1000 }
-            : { command, description: 'Harmless probe sentinel' };
+      const args =
+        delegatedStep?.args ??
+        (preRead
+          ? { file_path: fileTarget }
+          : fileAction
+            ? { file_path: fileTarget, content: fileContent }
+            : provider === 'codex'
+              ? { cmd: command, yield_time_ms: 1000 }
+              : { command, description: 'Harmless probe sentinel' });
       const send = (event, data) =>
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       if (provider === 'codex') {
         const item = callTool
-          ? fileAction
+          ? toolName === 'tool_search'
             ? {
-                type: 'custom_tool_call',
-                id: `ctc_probe_${requests}`,
+                type: 'tool_search_call',
+                id: `ts_probe_${requests}`,
                 call_id: `call_probe_${requests}`,
-                name: toolName,
-                input: `*** Begin Patch\n*** Add File: ${fileTarget}\n${fileContent
-                  .trimEnd()
-                  .split('\n')
-                  .map((line) => '+' + line)
-                  .join('\n')}${outcome?.additionalPatch ?? ''}\n*** End Patch`,
+                execution: 'client',
+                arguments: args,
                 status: 'completed',
               }
-            : {
-                type: 'function_call',
-                id: `fc_probe_${requests}`,
-                call_id: `call_probe_${requests}`,
-                name: toolName,
-                arguments: JSON.stringify(args),
-                status: 'completed',
-              }
+            : fileAction
+              ? {
+                  type: 'custom_tool_call',
+                  id: `ctc_probe_${requests}`,
+                  call_id: `call_probe_${requests}`,
+                  name: toolName,
+                  input: `*** Begin Patch\n*** Add File: ${fileTarget}\n${fileContent
+                    .trimEnd()
+                    .split('\n')
+                    .map((line) => '+' + line)
+                    .join(
+                      '\n',
+                    )}${outcome?.additionalPatch ?? ''}\n*** End Patch`,
+                  status: 'completed',
+                }
+              : {
+                  type: 'function_call',
+                  id: `fc_probe_${requests}`,
+                  call_id: `call_probe_${requests}`,
+                  name: toolName,
+                  arguments: JSON.stringify(args),
+                  ...(tools.find((tool) => tool.name === toolName)?.namespace
+                    ? {
+                        namespace: tools.find((tool) => tool.name === toolName)
+                          .namespace,
+                      }
+                    : {}),
+                  status: 'completed',
+                }
           : {
               type: 'message',
               id: 'msg_probe',
@@ -526,6 +597,7 @@ requires_openai_auth = false
 [features]
 hooks = true
 code_mode = false
+${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1' : ''}
 `,
   );
   const args =
@@ -635,6 +707,7 @@ code_mode = false
     hookInvoked =
       existsSync(receipt) &&
       (!fileProbe ||
+        !!delegation ||
         JSON.parse(readFileSync(receipt, 'utf8')).tool_name ===
           (provider === 'codex' ? 'apply_patch' : 'Write'));
   const rewrittenEffect = existsSync(rewrittenSentinel);
@@ -661,6 +734,7 @@ code_mode = false
             : JSON.parse(readFileSync(receipt, 'utf8')).session_id));
   const completionAfter = workflow?.completion(context, env, 'after');
   const workflowResult = workflow?.verify(context, nativeBinding?.sessionId);
+  const delegatedResult = delegation?.verify(context, nativeBinding);
   const ownershipReadCount = existsSync(ownershipReads)
     ? readFileSync(ownershipReads, 'utf8').trim().split('\n').length
     : 0;
@@ -712,6 +786,7 @@ code_mode = false
     pushVerified: push?.verify() ?? false,
     outcomeTargetsPreserved: outcome?.verify() ?? true,
     workflow: workflowResult,
+    delegation: delegatedResult,
     completionBefore,
     completionAfter,
     code: execution.code,
@@ -721,6 +796,7 @@ code_mode = false
       exercised &&
       denialReasonObserved &&
       sessionBindingVerified &&
+      (!delegation || delegatedResult.passed) &&
       (!outcomeProbe || (ownershipReadCount === 0 && outcome.verify())) &&
       (!push ||
         (hookInvoked &&
@@ -780,6 +856,9 @@ code_mode = false
 
 const observations = [];
 const modes = [
+  ...(provider === 'codex'
+    ? ['bootstrap-delegated-allow', 'bootstrap-delegated-review']
+    : []),
   'bootstrap-workflow',
   'bootstrap-workflow-correction',
   'bootstrap-workflow-exhausted',
