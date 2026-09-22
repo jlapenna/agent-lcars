@@ -450,6 +450,7 @@ export default async (context) => {
       throw new Error('Bootstrap was not idempotent');
     if (existsSync(`${contextPath}.session.json`))
       throw new Error('Setup smoke consumed native worker binding');
+    workflow?.installRecovery('opencode', options.configPath);
     if (mode === 'bootstrap-file-session-bound-mismatch')
       writeFileSync(
         `${contextPath}.session.json`,
@@ -602,7 +603,11 @@ export default async (context) => {
     ? readFileSync(ownershipReads, 'utf8').trim().split('\n').length
     : 0;
   const completionAfter = workflow?.completion(context, env, 'after');
-  const workflowResult = workflow?.verify(context, nativeBinding?.sessionId);
+  const workflowResult = workflow?.verify(
+    context,
+    nativeBinding?.sessionId,
+    deadline,
+  );
   const delegatedResult = delegation?.verify(context, nativeBinding);
   const ownershipChangeVerified =
     ownershipChanged &&
@@ -762,6 +767,7 @@ const modes = [
   'bootstrap-delegated-allow',
   'bootstrap-delegated-review',
   'bootstrap-workflow',
+  'bootstrap-workflow-recovery',
   'bootstrap-workflow-correction',
   'bootstrap-workflow-exhausted',
   'allow',

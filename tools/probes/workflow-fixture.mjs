@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { workflowRecoveryFixture } from './workflow-recovery-fixture.mjs';
 import { fileProbeFixture } from './worktree-fixture.mjs';
 
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -52,6 +53,10 @@ export function workflowFixture(directory, home, mode) {
   git(['init', '--bare', remote]);
   const originalHead = git(['rev-parse', 'HEAD']);
   writeFileSync(preserved, 'retain unrelated unpublished work\n');
+  const recovery =
+    mode === 'bootstrap-workflow-recovery'
+      ? workflowRecoveryFixture(directory, target, preserved, content)
+      : undefined;
   const steps = [
     { name: 'edit', kind: 'write' },
     {
@@ -81,6 +86,8 @@ export function workflowFixture(directory, home, mode) {
     sentinel,
     eventsPath,
     env,
+    installRecovery: (provider, configPath) =>
+      recovery?.install(provider, configPath),
     expectPublication: !exhausted,
     budgetMs: exhausted ? 30000 : 60000,
     next(input) {
@@ -247,7 +254,13 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
       );
       return observed;
     },
-    verify(context, sessionId) {
+    verify(context, sessionId, deadline) {
+      const recoveryEvidence = recovery?.verify(
+        join(directory, 'worker-policy-context.json'),
+        context.attemptId,
+        sessionId,
+        deadline,
+      );
       let details;
       try {
         const head = git(['rev-parse', 'HEAD']);
@@ -303,6 +316,8 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
           (exhausted || correctionEvidence.resumedCode === 0) &&
           correctionEvidence.originalDeadlineRetained);
       const passed =
+        (!recovery ||
+          Object.values(recoveryEvidence).every((value) => value === true)) &&
         correctionPassed &&
         !pending &&
         cursor === (exhausted ? 4 : steps.length) &&
@@ -314,6 +329,7 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
       return {
         passed,
         ...details,
+        ...(recovery ? { recovery: recoveryEvidence } : {}),
         ...(correction ? { correction: correctionEvidence } : {}),
       };
     },
