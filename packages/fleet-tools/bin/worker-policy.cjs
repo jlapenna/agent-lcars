@@ -163,31 +163,99 @@ function literalCommands(source) {
   return commands;
 }
 
+function patchPaths(patch) {
+  if (typeof patch !== 'string') throw new Error('Missing patch text');
+  const lines = patch.trim().split(/\r?\n/);
+  if (lines.shift() !== '*** Begin Patch' || lines.pop() !== '*** End Patch')
+    throw new Error('Unsupported patch envelope');
+  const files = [];
+  let current = '',
+    moved = false;
+  for (const line of lines) {
+    const header = line.match(
+      /^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/,
+    );
+    if (header) {
+      if (header[1] === 'Move to') {
+        if (current !== 'Update File' || moved) throw new Error('Invalid move');
+        moved = true;
+      } else {
+        current = header[1];
+        moved = false;
+      }
+      files.push(header[2]);
+    } else if (line.startsWith('***') && line !== '*** End of File') {
+      throw new Error('Unsupported patch header');
+    }
+  }
+  if (!files.length) throw new Error('Empty patch');
+  return files;
+}
+
+function fileOperations(files, cwd) {
+  try {
+    if (!files.length) throw new Error('Missing file targets');
+    const directories = new Set();
+    for (const file of files) {
+      if (typeof file !== 'string' || !file.trim() || file.includes('\0'))
+        throw new Error('Invalid file target');
+      const target = path.resolve(cwd, file);
+      directories.add(path.dirname(target));
+      // Check both the named path and its resolved destination. In particular,
+      // a file symlink in a feature worktree must not write into primary.
+      let existing = target;
+      while (!fs.lstatSync(existing, { throwIfNoEntry: false })) {
+        const parent = path.dirname(existing);
+        if (existing === parent) throw new Error('No existing ancestor');
+        existing = parent;
+      }
+      const real = fs.realpathSync(existing);
+      if (real !== existing)
+        directories.add(
+          existing === target
+            ? path.dirname(real)
+            : path.resolve(real, path.relative(existing, path.dirname(target))),
+        );
+    }
+    return [...directories].map((directory) => ({
+      kind: 'implementation',
+      cwd: directory,
+    }));
+  } catch {
+    return [{ kind: 'implementation', cwd, invalidPath: true }];
+  }
+}
+
 function operations(input) {
   const name = input.tool_name;
   const args = input.tool_input ?? {};
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  if (name === 'apply_patch') {
+    try {
+      return fileOperations(
+        patchPaths(
+          typeof args === 'string'
+            ? args
+            : (args.patchText ?? args.patch ?? args.input ?? args.command),
+        ),
+        cwd,
+      );
+    } catch {
+      return [{ kind: 'implementation', cwd, invalidPath: true }];
+    }
+  }
   if (
-    [
-      'Edit',
-      'Write',
-      'MultiEdit',
-      'apply_patch',
-      'edit',
-      'write',
-      'multiedit',
-    ].includes(name)
+    ['Edit', 'Write', 'MultiEdit', 'edit', 'write', 'multiedit'].includes(name)
   ) {
+    const files = [];
     const file = args.file_path ?? args.filePath;
-    return [
-      {
-        kind: 'implementation',
-        cwd:
-          typeof file === 'string'
-            ? path.dirname(path.resolve(cwd, file))
-            : cwd,
-      },
-    ];
+    if (file !== undefined) files.push(file);
+    if (['MultiEdit', 'multiedit'].includes(name) && Array.isArray(args.edits))
+      for (const edit of args.edits) {
+        const target = edit?.file_path ?? edit?.filePath;
+        if (target !== undefined || file === undefined) files.push(target);
+      }
+    return fileOperations(files, cwd);
   }
   if (!['Bash', 'exec_command', 'shell_command', 'bash'].includes(name))
     return [];
@@ -478,6 +546,11 @@ function evaluate(input, context, dependencies = {}) {
     return decision('allow');
   }
   const ops = operations(input);
+  if (ops.some((op) => op.invalidPath))
+    return decision(
+      'deny',
+      'The edit target could not be resolved safely. Use explicit file paths or a standard Begin Patch/End Patch envelope; repair dangling symlinks before retrying.',
+    );
   let repaired;
   try {
     repaired = repairArtifact(input, context, dependencies);

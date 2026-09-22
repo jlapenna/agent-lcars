@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -33,6 +41,115 @@ const verdict = (input: unknown, ctx = context, deps = dependencies()) =>
   policy.evaluate(input, ctx, deps).hookSpecificOutput.permissionDecision;
 
 describe('dispatched worker policy', () => {
+  it.each(['patchText', 'patch', 'input', 'command', 'raw'])(
+    'checks every patch target, including move destinations (%s)',
+    (field) => {
+      const patch =
+        '*** Begin Patch\n*** Add File: src/new.ts\n+new\n*** Update File: src/old.ts\n*** Move to: ../primary/moved.ts\n@@\n-old\n+new\n*** Delete File: ../primary/deleted.ts\n*** End Patch';
+      const deps = dependencies();
+      const input = {
+        tool_name: 'apply_patch',
+        cwd: '/task/feature',
+        tool_input: field === 'raw' ? patch : { [field]: patch },
+      };
+      expect(verdict(input, context, deps)).toBe('allow');
+      expect(
+        deps.assertWorktree.mock.calls.map(([directory]) => directory),
+      ).toEqual(['/task/feature/src', '/task/primary']);
+      deps.assertWorktree.mockImplementation((directory?: string) => {
+        if (directory === '/task/primary') throw new Error('primary');
+      });
+      expect(verdict(input, context, deps)).toBe('deny');
+      expect(verdict(input, { ...context, mode: 'review' })).toBe('deny');
+    },
+  );
+  it.each([
+    '',
+    'not a patch',
+    '*** Begin Patch\n*** End Patch',
+    '*** Begin Patch\n*** Move to: other\n*** End Patch',
+    '*** Begin Patch\n*** Add File: \n*** End Patch',
+  ])('rejects unresolved patch targets: %s', (patchText) => {
+    const deps = dependencies();
+    expect(
+      verdict(
+        { tool_name: 'apply_patch', tool_input: { patchText } },
+        context,
+        deps,
+      ),
+    ).toBe('deny');
+    expect(deps.readOwnership).not.toHaveBeenCalled();
+  });
+  it('checks every explicit file in a multi-edit and rejects missing targets', () => {
+    const deps = dependencies();
+    const input = {
+      tool_name: 'multiedit',
+      cwd: '/task/feature',
+      tool_input: {
+        edits: [
+          { filePath: 'src/first.ts' },
+          { filePath: '../primary/second.ts' },
+        ],
+      },
+    };
+    expect(verdict(input, context, deps)).toBe('allow');
+    expect(
+      deps.assertWorktree.mock.calls.map(([directory]) => directory),
+    ).toEqual(['/task/feature/src', '/task/primary']);
+    expect(verdict({ tool_name: 'Write', tool_input: {} })).toBe('deny');
+  });
+  it('checks actual file and ancestor symlink destinations, including patch moves', () => {
+    const root = mkdtempSync(join(tmpdir(), 'lcars-edit-paths-'));
+    try {
+      const feature = join(root, 'feature'),
+        primary = join(root, 'primary');
+      mkdirSync(feature);
+      mkdirSync(primary);
+      writeFileSync(join(primary, 'existing.ts'), 'untouched');
+      symlinkSync(join(primary, 'existing.ts'), join(feature, 'linked.ts'));
+      symlinkSync(primary, join(feature, 'linked-dir'));
+      const deps = dependencies();
+      deps.assertWorktree.mockImplementation((directory?: string) => {
+        if (directory?.startsWith(primary)) throw new Error('primary');
+      });
+      for (const filePath of ['linked.ts', 'linked-dir/new/nested.ts']) {
+        expect(
+          verdict(
+            { tool_name: 'Write', cwd: feature, tool_input: { filePath } },
+            context,
+            deps,
+          ),
+        ).toBe('deny');
+        expect(
+          verdict(
+            {
+              tool_name: 'apply_patch',
+              cwd: feature,
+              tool_input: {
+                patchText: `*** Begin Patch\n*** Add File: ${filePath}\n+test\n*** End Patch`,
+              },
+            },
+            context,
+            deps,
+          ),
+        ).toBe('deny');
+      }
+      symlinkSync(join(primary, 'missing'), join(feature, 'dangling'));
+      expect(
+        verdict(
+          {
+            tool_name: 'Write',
+            cwd: feature,
+            tool_input: { filePath: 'dangling' },
+          },
+          context,
+          deps,
+        ),
+      ).toBe('deny');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it('permits only the exact setup-bound native terminal record outside a code worktree', () => {
     const native = policy.prepareContext(
       {

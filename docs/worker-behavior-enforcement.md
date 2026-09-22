@@ -56,10 +56,19 @@ each supported mutation. Native Work uses the orchestrator's mutex, not an
 invented issue claim. Read-only operations do not trigger those reads.
 
 This is partial coverage: scripts, shell expansion, pipelines/redirection,
-indirect command wrappers, arbitrary HTTP/MCP writes, patch target extraction,
+indirect command wrappers, arbitrary HTTP/MCP writes,
 and arbitrary human-condition verification are not implemented by this handler.
 The focused policy tests feed the required Verify contract lane; they do not
 qualify a provider or authorize enabling the incomplete handler in dispatch.
+
+Native edits now resolve explicit file targets, including multi-edit entries
+and standard `apply_patch` add/update/delete/move headers. Both named paths and
+resolved symlink destinations are checked; malformed patches and dangling links
+receive corrective denials rather than falling back to the current directory.
+The native Codex patch hook supplies its patch in `tool_input.command`; the
+adapter accepts that observed shape as well as the supported patch text forms.
+This is pre-action workflow protection, not an atomic filesystem sandbox against
+another process replacing a symlink after the check.
 
 Marker repair currently covers a single literal `gh pr create`, `gh issue
 comment`, `gh pr comment` or `gh pr review` command with one explicit body or
@@ -252,6 +261,8 @@ independently checks tool-result delivery, hook invocation and the actual file:
   policy; the native loader executes it and the fixture receives the repaired body.
 - Evaluator recovery: an injected in-process adapter failure is recovered by a
   fresh shared-policy process; a pre-consumed allowance prevents publication.
+- Native file writes: a real linked-worktree edit succeeds; primary-checkout
+  and symlink-to-primary edits are denied with independently unchanged targets.
 
 Exit zero means these native behaviors were observed, **not** that the
 mandatory LCARS canary suite passed. This probe deliberately reports
@@ -315,7 +326,7 @@ On the tested Codex 0.155.1 and Claude Code 2.1.278, raw command-hook exceptions
 allowed the requested action. The shared `worker-hook-bridge.cjs` instead
 converted exceptions and its five-second handler timeout into explicit native
 PreToolUse denials; the actual CLI then prevented both sentinel writes. The
-allowed case still executed. All thirteen observations passed on each CLI,
+allowed case still executed. All sixteen observations passed on each CLI,
 including an exact repaired marker in the independently captured comment body.
 The tenth observation executes a second round within the same probe deadline:
 Claude retains its preallocated UUID; Codex resumes the first hook's native
@@ -325,6 +336,15 @@ The bootstrap-marker observation uses the actual runner setup entrypoint and
 independently verifies that the native loader executes its installed policy.
 Two recovery observations inject an evaluator crash: successful allow/deny
 smokes permit the original action, while a broken deny smoke prevents it.
+Three native file observations use disposable local Git repositories and the
+installed `repo-require-worktree` guard: feature writes succeed, while direct
+primary and symlink-to-primary writes are intercepted. Codex uses its native
+freeform `apply_patch` tool (the localhost provider selects the `gpt-5.4` tool
+profile); Claude uses `Write`. Claude first reads the existing symlink target
+so its own read-before-write rule does not masquerade as hook enforcement.
+OpenCode runs the same three cases through its native `write` tool. These
+fixtures have no remotes or user Git configuration; actual repository content
+and credential state remain untouched.
 Runner image qualification must record the versions actually baked into that
 image; the image currently installs current Claude/Codex releases at build.
 

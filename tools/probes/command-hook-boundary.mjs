@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Claude/Codex native command hooks against a deterministic localhost model.
-// No real credentials, repository writes, or full-policy qualification.
+// No real credentials, remote repository writes, or full-policy qualification.
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
@@ -16,6 +16,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import { fileProbeFixture } from './worktree-fixture.mjs';
 
 const [provider, binary, expectedVersion] = process.argv.slice(2);
 if (
@@ -83,14 +84,16 @@ async function probe(mode) {
   mkdirSync(workspace, { recursive: true });
   mkdirSync(join(home, '.codex'), { recursive: true });
   mkdirSync(join(home, '.claude'), { recursive: true });
-  const sentinel = join(workspace, 'effect'),
+  const fileProbe = mode.startsWith('bootstrap-file-');
+  const files = fileProbe ? fileProbeFixture(dir, home, mode) : null;
+  const sentinel = files?.sentinel ?? join(workspace, 'effect'),
     receipt = join(dir, 'receipt.json');
   const rewrittenSentinel = join(workspace, 'rewritten-effect');
   const resumedSentinel = join(workspace, 'resumed-effect');
   let round = 1;
-  const bootstrap = mode === 'bootstrap-marker';
+  const bootstrap = mode === 'bootstrap-marker' || fileProbe;
   const recovery = mode.startsWith('bridge-recovery-');
-  const policyMarker = mode === 'bridge-marker' || bootstrap;
+  const policyMarker = mode === 'bridge-marker' || mode === 'bootstrap-marker';
   const context = policy.prepareContext(
     {
       repository: 'octo/example',
@@ -152,7 +155,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
           hooks: {
             PreToolUse: [
               {
-                matcher: 'Bash',
+                matcher: '.*',
                 hooks: [
                   {
                     type: 'command',
@@ -206,6 +209,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
       throw new Error('Bootstrap was not idempotent');
   }
   let issued = false,
+    readIssued = false,
     returnedToolResult = false,
     requests = 0;
   const observations = [];
@@ -222,32 +226,60 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
       });
       const content =
         provider === 'codex' ? (body.input ?? []) : (body.messages ?? []);
-      returnedToolResult ||= JSON.stringify(content).includes(
-        provider === 'codex' ? 'function_call_output' : 'tool_result',
-      );
-      const toolName = provider === 'codex' ? 'exec_command' : 'Bash';
+      returnedToolResult ||=
+        JSON.stringify(content).includes(
+          provider === 'codex' ? 'function_call_output' : 'tool_result',
+        ) || JSON.stringify(content).includes('custom_tool_call_output');
+      const preRead =
+        provider === 'claude' &&
+        mode === 'bootstrap-file-symlink' &&
+        !readIssued;
+      const toolName = preRead
+        ? 'Read'
+        : fileProbe
+          ? provider === 'codex'
+            ? 'apply_patch'
+            : 'Write'
+          : provider === 'codex'
+            ? 'exec_command'
+            : 'Bash';
       const callTool = !issued && tools.some((tool) => tool.name === toolName);
-      if (callTool) issued = true;
+      if (callTool) {
+        if (preRead) readIssued = true;
+        else issued = true;
+      }
       const command = policyMarker
         ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
         : `touch ${quote(round === 1 ? sentinel : resumedSentinel)}`;
-      const args =
-        provider === 'codex'
-          ? { cmd: command, yield_time_ms: 1000 }
-          : { command, description: 'Harmless probe sentinel' };
+      const args = preRead
+        ? { file_path: files.target }
+        : fileProbe
+          ? { file_path: files.target, content: 'LCARS_FILE_PROBE\n' }
+          : provider === 'codex'
+            ? { cmd: command, yield_time_ms: 1000 }
+            : { command, description: 'Harmless probe sentinel' };
       const send = (event, data) =>
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       if (provider === 'codex') {
         const item = callTool
-          ? {
-              type: 'function_call',
-              id: 'fc_probe',
-              call_id: 'call_probe',
-              name: toolName,
-              arguments: JSON.stringify(args),
-              status: 'completed',
-            }
+          ? fileProbe
+            ? {
+                type: 'custom_tool_call',
+                id: 'ctc_probe',
+                call_id: 'call_probe',
+                name: toolName,
+                input: `*** Begin Patch\n*** Add File: ${files.target}\n+LCARS_FILE_PROBE\n*** End Patch`,
+                status: 'completed',
+              }
+            : {
+                type: 'function_call',
+                id: 'fc_probe',
+                call_id: 'call_probe',
+                name: toolName,
+                arguments: JSON.stringify(args),
+                status: 'completed',
+              }
           : {
               type: 'message',
               id: 'msg_probe',
@@ -300,7 +332,12 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
           type: 'content_block_start',
           index: 0,
           content_block: callTool
-            ? { type: 'tool_use', id: 'tool_probe', name: toolName, input: {} }
+            ? {
+                type: 'tool_use',
+                id: `tool_probe_${requests}`,
+                name: toolName,
+                input: {},
+              }
             : { type: 'text', text: '' },
         });
         send('content_block_delta', {
@@ -329,13 +366,18 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   const base = `http://127.0.0.1:${server.address().port}`;
   const env = {
-    PATH: policyMarker ? `${fakeBin}:${process.env.PATH}` : process.env.PATH,
+    PATH:
+      policyMarker || fileProbe
+        ? `${fakeBin}:${process.env.PATH}`
+        : process.env.PATH,
     HOME: home,
     XDG_CONFIG_HOME: join(home, '.config'),
     XDG_DATA_HOME: join(dir, 'data'),
     XDG_CACHE_HOME: join(dir, 'cache'),
     LCARS_RUN_ID:
-      policyMarker || recovery ? context.runId : 'work:local-boundary-probe/r1',
+      policyMarker || recovery || fileProbe
+        ? context.runId
+        : 'work:local-boundary-probe/r1',
     ...(bootstrap || recovery ? { LCARS_WORKER_CONTEXT: contextPath } : {}),
     CODEX_HOME: join(home, '.codex'),
     CLAUDE_CONFIG_DIR: join(home, '.claude'),
@@ -346,7 +388,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
   };
   writeFileSync(
     join(home, '.codex', 'config.toml'),
-    `model = "probe"
+    `model = "${fileProbe ? 'gpt-5.4' : 'probe'}"
 model_provider = "probe"
 [model_providers.probe]
 name = "Local deterministic probe"
@@ -376,6 +418,8 @@ code_mode = false
           '--dangerously-skip-permissions',
           '--tools',
           'Bash',
+          'Write',
+          'Read',
           '--strict-mcp-config',
           '--mcp-config',
           '{"mcpServers":{}}',
@@ -437,8 +481,14 @@ code_mode = false
   writeFileSync(join(dir, 'stdout.txt'), execution.stdout);
   writeFileSync(join(dir, 'stderr.txt'), execution.stderr);
   writeFileSync(join(dir, 'requests.json'), JSON.stringify(observations));
-  const effect = existsSync(sentinel),
-    hookInvoked = existsSync(receipt);
+  const effect =
+      existsSync(sentinel) &&
+      (!fileProbe || readFileSync(sentinel, 'utf8') === 'LCARS_FILE_PROBE\n'),
+    hookInvoked =
+      existsSync(receipt) &&
+      (!fileProbe ||
+        JSON.parse(readFileSync(receipt, 'utf8')).tool_name ===
+          (provider === 'codex' ? 'apply_patch' : 'Write'));
   const rewrittenEffect = existsSync(rewrittenSentinel);
   let markerRepaired = false;
   if (policyMarker && effect) {
@@ -474,21 +524,24 @@ code_mode = false
     exercised,
     observedExpectedPrimitive:
       exercised &&
-      (recovery
-        ? hookInvoked &&
-          recoveryVerified &&
-          effect === (mode === 'bridge-recovery-success')
-        : mode === 'resume'
-          ? hookInvoked && effect && resumedSameSession
-          : policyMarker
-            ? hookInvoked && effect && markerRepaired
-            : mode === 'bridge-rewrite'
-              ? hookInvoked && !effect && rewrittenEffect
-              : mode === 'missing'
-                ? !hookInvoked && effect
-                : hookInvoked &&
-                  (mode === 'failure' ||
-                    effect === (mode === 'allow' || mode === 'bridge-allow'))),
+      (fileProbe
+        ? hookInvoked && effect === mode.endsWith('-allow')
+        : recovery
+          ? hookInvoked &&
+            recoveryVerified &&
+            effect === (mode === 'bridge-recovery-success')
+          : mode === 'resume'
+            ? hookInvoked && effect && resumedSameSession
+            : policyMarker
+              ? hookInvoked && effect && markerRepaired
+              : mode === 'bridge-rewrite'
+                ? hookInvoked && !effect && rewrittenEffect
+                : mode === 'missing'
+                  ? !hookInvoked && effect
+                  : hookInvoked &&
+                    (mode === 'failure' ||
+                      effect ===
+                        (mode === 'allow' || mode === 'bridge-allow'))),
   };
 }
 
@@ -507,6 +560,9 @@ for (const mode of [
   'bootstrap-marker',
   'bridge-recovery-success',
   'bridge-recovery-failure',
+  'bootstrap-file-allow',
+  'bootstrap-file-primary',
+  'bootstrap-file-symlink',
 ])
   observations.push(await probe(mode));
 const report = {

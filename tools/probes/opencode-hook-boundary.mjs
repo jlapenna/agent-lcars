@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import { fileProbeFixture } from './worktree-fixture.mjs';
 
 const [binary, expectedVersion] = process.argv.slice(2);
 if (!binary || !expectedVersion) {
@@ -80,10 +81,12 @@ async function probe(mode) {
   const home = join(dir, 'home');
   mkdirSync(workspace, { recursive: true });
   mkdirSync(home, { recursive: true });
-  const sentinel = join(workspace, 'effect');
+  const fileProbe = mode.startsWith('bootstrap-file-');
+  const files = fileProbe ? fileProbeFixture(dir, home, mode) : null;
+  const sentinel = files?.sentinel ?? join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
-  const bootstrap = mode === 'bootstrap-marker';
+  const bootstrap = mode === 'bootstrap-marker' || fileProbe;
   const recovery = mode.startsWith('policy-recovery-');
   const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
@@ -122,7 +125,7 @@ else process.exitCode = 1;
     `import { appendFileSync } from 'node:fs';
 export default async () => ({
   'tool.execute.before': async (input) => {
-    if (input.tool !== 'bash') return;
+    if (input.tool !== ${JSON.stringify(fileProbe ? 'write' : 'bash')}) return;
     appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
     ${mode === 'deny' ? "throw new Error('LCARS_PROBE_DENY');" : ''}
     ${mode === 'failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
@@ -166,9 +169,10 @@ export default async (context) => {
       returnedToolResult ||=
         input.messages?.some((message) => message.role === 'tool') ?? false;
       // Auxiliary title requests are text-only and must not consume the tool call.
+      const toolName = fileProbe ? 'write' : 'bash';
       const tool =
         !issued &&
-        input.tools?.some((entry) => entry.function?.name === 'bash');
+        input.tools?.some((entry) => entry.function?.name === toolName);
       if (tool) issued = true;
       const delta = tool
         ? {
@@ -179,13 +183,20 @@ export default async (context) => {
                 id: 'probe-call',
                 type: 'function',
                 function: {
-                  name: 'bash',
-                  arguments: JSON.stringify({
-                    command: usesPolicy
-                      ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
-                      : `touch '${sentinel}'`,
-                    description: 'Create harmless probe sentinel',
-                  }),
+                  name: toolName,
+                  arguments: JSON.stringify(
+                    fileProbe
+                      ? {
+                          filePath: files.target,
+                          content: 'LCARS_FILE_PROBE\n',
+                        }
+                      : {
+                          command: usesPolicy
+                            ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+                            : `touch '${sentinel}'`,
+                          description: 'Create harmless probe sentinel',
+                        },
+                  ),
                 },
               },
             ],
@@ -217,7 +228,7 @@ export default async (context) => {
     join(workspace, 'opencode.json'),
     JSON.stringify({
       plugin: mode === 'missing' || (usesPolicy && !bootstrap) ? [] : [plugin],
-      permission: { bash: 'allow' },
+      permission: { '*': 'allow' },
       provider: {
         probe: {
           npm: '@ai-sdk/openai-compatible',
@@ -297,9 +308,11 @@ export default async (context) => {
   writeFileSync(join(dir, 'stderr.txt'), execution.stderr);
   const hookInvoked =
     existsSync(receipt) && readFileSync(receipt, 'utf8').trim().length > 0;
-  const effect = existsSync(sentinel);
+  const effect =
+    existsSync(sentinel) &&
+    (!fileProbe || readFileSync(sentinel, 'utf8') === 'LCARS_FILE_PROBE\n');
   let markerRepaired = false;
-  if (usesPolicy && effect) {
+  if (usesPolicy && !fileProbe && effect) {
     const published = JSON.parse(readFileSync(sentinel, 'utf8'));
     markerRepaired =
       published[published.indexOf('--body') + 1] ===
@@ -330,13 +343,15 @@ export default async (context) => {
     observedExpectedPrimitive:
       exercised &&
       (!recovery || recoveryVerified) &&
-      (mode === 'policy-marker' ||
-      bootstrap ||
-      mode === 'policy-recovery-success'
-        ? hookInvoked && effect && markerRepaired
-        : mode === 'missing'
-          ? !hookInvoked && effect
-          : hookInvoked && effect === (mode === 'allow')),
+      (fileProbe
+        ? hookInvoked && effect === mode.endsWith('-allow')
+        : mode === 'policy-marker' ||
+            bootstrap ||
+            mode === 'policy-recovery-success'
+          ? hookInvoked && effect && markerRepaired
+          : mode === 'missing'
+            ? !hookInvoked && effect
+            : hookInvoked && effect === (mode === 'allow')),
   };
 }
 
@@ -352,6 +367,9 @@ for (const mode of [
   'bootstrap-marker',
   'policy-recovery-success',
   'policy-recovery-exhausted',
+  'bootstrap-file-allow',
+  'bootstrap-file-primary',
+  'bootstrap-file-symlink',
 ])
   observations.push(await probe(mode));
 const report = {
