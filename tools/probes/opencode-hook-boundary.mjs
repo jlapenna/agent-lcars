@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real CLI, deterministic localhost model, no credentials or GitHub writes.
 // This measures interception primitives, NOT full LCARS policy qualification.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -105,7 +105,9 @@ async function probe(mode) {
   const sentinel = files?.sentinel ?? join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
-  const lineageProbe = mode === 'bootstrap-lineage';
+  const lineageProbe = mode.startsWith('bootstrap-lineage');
+  const lineageRecovery = mode.startsWith('bootstrap-lineage-recovery-');
+  const lineageExhausted = mode === 'bootstrap-lineage-recovery-exhausted';
   const lineageReceipt = join(dir, 'lineage.json');
   const bootstrap =
     mode === 'bootstrap-marker' || lineageProbe || fileProbe || holdProbe;
@@ -135,7 +137,7 @@ async function probe(mode) {
       ...outcome?.identity,
     },
   );
-  const contextPath = join(dir, 'worker-context.json');
+  const contextPath = join(dir, 'worker-policy-context.json');
   writeFileSync(contextPath, JSON.stringify(context));
   if (mode === 'policy-recovery-exhausted')
     writeFileSync(`${contextPath}.recovery-used`, context.attemptId);
@@ -163,12 +165,13 @@ else process.exitCode = 1;
   writeFileSync(
     plugin,
     `import { appendFileSync, writeFileSync } from 'node:fs';
-${lineageProbe ? `import { probeLineage } from ${JSON.stringify(pathToFileURL(resolve('tools/probes/opencode-lineage-fixture.mjs')).href)};` : ''}
+${lineageProbe ? `import { probeLineage, probeLineageRecovery } from ${JSON.stringify(pathToFileURL(resolve('tools/probes/opencode-lineage-fixture.mjs')).href)};` : ''}
 export default async (native) => ({
   'tool.execute.before': async (input) => {
     if (input.tool !== ${JSON.stringify(fileProbe ? 'write' : 'bash')}) return;
     appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
-    ${lineageProbe ? `writeFileSync(${JSON.stringify(lineageReceipt)}, JSON.stringify(await probeLineage(native, input.sessionID)));` : ''}
+    ${lineageProbe ? `writeFileSync(${JSON.stringify(lineageReceipt)}, JSON.stringify(await ${lineageRecovery ? `probeLineageRecovery(native, input.sessionID, ${lineageExhausted})` : 'probeLineage(native, input.sessionID)'}));` : ''}
+    ${lineageExhausted ? "throw new Error('LCARS control execution failed; preserve work and report an infrastructure failure; do not fabricate a human blocker or PARK.');" : ''}
     ${mode === 'deny' ? "throw new Error('LCARS_PROBE_DENY');" : ''}
     ${mode === 'failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
   }
@@ -460,13 +463,15 @@ export default async (context) => {
     secondIssued &&
     !existsSync(secondSentinel) &&
     ownershipReadCount === 2;
-  const expectedDenial = outcome
-    ? outcome.denial
-    : holdProbe
-      ? reviewDenial(mode)
-      : fileProbe
-        ? expectedFileDenial(mode)
-        : '';
+  const expectedDenial = lineageExhausted
+    ? 'infrastructure failure'
+    : outcome
+      ? outcome.denial
+      : holdProbe
+        ? reviewDenial(mode)
+        : fileProbe
+          ? expectedFileDenial(mode)
+          : '';
   const reviewReadCount = existsSync(reviewReads)
     ? readFileSync(reviewReads, 'utf8').trim().split('\n').length
     : 0;
@@ -483,6 +488,24 @@ export default async (context) => {
     existsSync(lineageReceipt) &&
     JSON.parse(readFileSync(lineageReceipt, 'utf8'))
       .providerApiLineageVerified === true;
+  const runnerFailureRecognized =
+    lineageRecovery &&
+    spawnSync(
+      'bash',
+      [
+        '-c',
+        'source ./apps/runner-autoscaler/runner-image/runtime/worker-policy-bootstrap.sh; worker_control_failed',
+      ],
+      {
+        cwd: resolve('.'),
+        env: {
+          PATH: process.env.PATH,
+          RUNNER_TEMP: dir,
+          LCARS_WORKER_CONTEXT: contextPath,
+          ATTEMPT_ID: context.attemptId,
+        },
+      },
+    ).status === 0;
   return {
     mode,
     requests,
@@ -497,6 +520,7 @@ export default async (context) => {
     denialReasonObserved,
     sessionBindingVerified,
     providerApiLineageVerified,
+    runnerFailureRecognized,
     resumedSameSession,
     reviewReadCount,
     code: execution.code,
@@ -509,23 +533,27 @@ export default async (context) => {
       sessionBindingVerified &&
       (!outcomeProbe || ownershipReadCount === 0) &&
       (!lineageProbe || providerApiLineageVerified) &&
+      (!lineageRecovery || runnerFailureRecognized === lineageExhausted) &&
       (!resumeProbe || resumedSameSession) &&
       (!recovery || recoveryVerified) &&
-      (holdProbe
-        ? hookInvoked &&
-          reviewReadCount === 1 &&
-          effect === mode.endsWith('-released')
-        : ownershipChanged
-          ? hookInvoked && ownershipChangeVerified
-          : fileProbe
-            ? hookInvoked && effect === (mode.endsWith('-allow') || resumeProbe)
-            : mode === 'policy-marker' ||
-                bootstrap ||
-                mode === 'policy-recovery-success'
-              ? hookInvoked && effect && markerRepaired
-              : mode === 'missing'
-                ? !hookInvoked && effect
-                : hookInvoked && effect === (mode === 'allow')),
+      (lineageExhausted
+        ? hookInvoked && !effect
+        : holdProbe
+          ? hookInvoked &&
+            reviewReadCount === 1 &&
+            effect === mode.endsWith('-released')
+          : ownershipChanged
+            ? hookInvoked && ownershipChangeVerified
+            : fileProbe
+              ? hookInvoked &&
+                effect === (mode.endsWith('-allow') || resumeProbe)
+              : mode === 'policy-marker' ||
+                  bootstrap ||
+                  mode === 'policy-recovery-success'
+                ? hookInvoked && effect && markerRepaired
+                : mode === 'missing'
+                  ? !hookInvoked && effect
+                  : hookInvoked && effect === (mode === 'allow')),
   };
 }
 
@@ -561,6 +589,8 @@ const modes = [
   'bootstrap-outcome-unrelated',
   'bootstrap-lineage',
   'bootstrap-file-resume',
+  'bootstrap-lineage-recovery-success',
+  'bootstrap-lineage-recovery-exhausted',
 ];
 if (scenario && !modes.includes(scenario))
   throw new Error(`Unknown scenario: ${scenario}`);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import workerPolicy from '../../packages/fleet-tools/bin/worker-opencode-plugin.mjs';
 
@@ -53,5 +53,58 @@ export async function probeLineage(native, root) {
     unrelated,
     providerApiLineageVerified: true,
     nativeDelegatedExecution: false,
+  };
+}
+
+export async function probeLineageRecovery(native, root, exhausted) {
+  const initial = await workerPolicy(native);
+  await initial['tool.execute.before'](
+    { tool: 'bash', sessionID: root },
+    { args: { command: 'echo establish-root' } },
+  );
+  const contextPath = process.env.LCARS_WORKER_CONTEXT;
+  const context = JSON.parse(readFileSync(contextPath, 'utf8'));
+  const binding = readFileSync(`${contextPath}.session.json`, 'utf8');
+  const work = `${contextPath}.preserved-work`;
+  writeFileSync(work, 'uncommitted fixture work');
+  const child = await native.client.session.create({
+    body: { parentID: root, title: 'LCARS empty recovery fixture' },
+  });
+  assert.ok(!child.error && child.data?.id);
+  let reads = 0;
+  const hooks = await workerPolicy({
+    ...native,
+    client: {
+      session: {
+        get: async (options) => {
+          reads++;
+          if (reads === 1 || exhausted)
+            throw new Error('Injected native session API outage');
+          return native.client.session.get(options);
+        },
+      },
+    },
+  });
+  const action = hooks['tool.execute.before'](
+    { tool: 'bash', sessionID: child.data.id },
+    { args: { command: 'echo recovered-lineage' } },
+  );
+  if (exhausted) await assert.rejects(action, /infrastructure failure/);
+  else await action;
+  assert.equal(reads, 2);
+  assert.equal(
+    readFileSync(`${contextPath}.recovery-used`, 'utf8'),
+    context.attemptId,
+  );
+  assert.equal(existsSync(`${contextPath}.recovery-succeeded`), !exhausted);
+  assert.equal(existsSync(`${contextPath}.control-failed`), exhausted);
+  assert.equal(readFileSync(work, 'utf8'), 'uncommitted fixture work');
+  assert.equal(readFileSync(`${contextPath}.session.json`, 'utf8'), binding);
+  return {
+    providerApiLineageVerified: true,
+    nativeDelegatedExecution: false,
+    reads,
+    exhausted,
+    preservedWork: true,
   };
 }

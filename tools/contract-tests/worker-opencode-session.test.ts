@@ -1,15 +1,23 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { afterEach, expect, it, vi } from 'vitest';
 
+import bridge from '../../packages/fleet-tools/bin/worker-hook-bridge.cjs';
 import plugin from '../../packages/fleet-tools/bin/worker-opencode-plugin.mjs';
 import { sessionResolver } from '../../packages/fleet-tools/bin/worker-opencode-session.mjs';
 import session from '../../packages/fleet-tools/bin/worker-session.cjs';
 
 const roots: string[] = [];
 const context = {
+  policyVersion: 1,
   provider: 'opencode',
   runId: 'work:item/r1',
   attemptId: 'g1:work:item/r1',
@@ -89,20 +97,29 @@ it.each([
       }),
     ).rejects.toThrow('does not match');
     expect(session.boundSession(context)).toBe('root');
+    expect(existsSync(f.path + '.recovery-used')).toBe(false);
   },
 );
-it('rejects missing, mismatched, and failed API responses without creating a child binding', async () => {
-  const f = fixture();
-  for (const result of [
-    undefined,
-    { data: { id: 'other', parentID: 'root' } },
-    { data: { id: 'child', parentID: 'root' }, error: 'failure' },
-  ]) {
-    f.get.mockResolvedValueOnce(result as never);
-    await expect(f.resolve(event('child'))).rejects.toThrow('does not match');
-  }
-  expect(session.boundSession(context)).toBe('root');
-});
+it.each([
+  undefined,
+  { data: { id: 'other', parentID: 'root' } },
+  { data: { id: 'child', parentID: 'root' }, error: 'failure' },
+])(
+  'classifies exhausted invalid API responses as infrastructure failure: %j',
+  async (result) => {
+    const f = fixture();
+    f.get.mockResolvedValue(result as never);
+    await expect(f.resolve(event('child'))).rejects.toThrow(
+      'infrastructure failure',
+    );
+    expect(f.get).toHaveBeenCalledTimes(2);
+    expect(readFileSync(f.path + '.control-failed', 'utf8')).toBe(
+      context.attemptId,
+    );
+    expect(existsSync(f.path + '.recovery-succeeded')).toBe(false);
+    expect(session.boundSession(context)).toBe('root');
+  },
+);
 it('bounds ancestry lookup time and aborts the native request', async () => {
   const f = fixture();
   f.get.mockImplementationOnce(
@@ -111,10 +128,59 @@ it('bounds ancestry lookup time and aborts the native request', async () => {
         /* Simulate an unresponsive provider API. */
       }),
   );
-  await expect(f.resolve(event('child'))).rejects.toThrow('does not match');
+  expect(await f.resolve(event('child'))).toMatchObject({
+    session_id: 'root',
+    native_session_id: 'child',
+  });
+  expect(f.get).toHaveBeenCalledTimes(2);
+  expect(readFileSync(f.path + '.recovery-succeeded', 'utf8')).toBe(
+    context.attemptId,
+  );
   expect(
     (f.get.mock.calls[0][0] as { signal?: AbortSignal }).signal?.aborted,
   ).toBe(true);
+});
+it('shares one recovery allowance across new adapters and preserves work after exhaustion', async () => {
+  const f = fixture();
+  const preserved = join(f.root, 'preserved-work');
+  writeFileSync(preserved, 'uncommitted work');
+  f.get.mockRejectedValueOnce(new Error('temporary native API outage'));
+  await f.resolve(event('child'));
+  expect(f.get).toHaveBeenCalledTimes(2);
+  f.get.mockRejectedValueOnce(new Error('outage after restart'));
+  await expect(
+    sessionResolver(context, f.client)(event('child')),
+  ).rejects.toThrow('infrastructure failure');
+  expect(f.get).toHaveBeenCalledTimes(3);
+  expect(readFileSync(preserved, 'utf8')).toBe('uncommitted work');
+  expect(readFileSync(f.path + '.control-failed', 'utf8')).toBe(
+    context.attemptId,
+  );
+});
+it('keeps a recovered unrelated-session rejection distinct from infrastructure failure', async () => {
+  const f = fixture({ child: undefined });
+  f.get.mockRejectedValueOnce(new Error('temporary native API outage'));
+  await expect(f.resolve(event('child'))).rejects.toThrow('does not match');
+  expect(readFileSync(f.path + '.recovery-succeeded', 'utf8')).toBe(
+    context.attemptId,
+  );
+  expect(existsSync(f.path + '.control-failed')).toBe(false);
+});
+it('does not grant evaluator recovery a second allowance after native API recovery', async () => {
+  const f = fixture();
+  f.get.mockRejectedValueOnce(new Error('temporary native API outage'));
+  await f.resolve(event('child'));
+  const result = bridge.recover(
+    resolve('packages/fleet-tools/bin/worker-policy.cjs'),
+    JSON.stringify(event('root')),
+  );
+  expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+  expect(result.hookSpecificOutput.permissionDecisionReason).toContain(
+    'infrastructure failure',
+  );
+  expect(readFileSync(f.path + '.control-failed', 'utf8')).toBe(
+    context.attemptId,
+  );
 });
 it('does not trust cached descendants after the attempt binding changes', async () => {
   const f = fixture();

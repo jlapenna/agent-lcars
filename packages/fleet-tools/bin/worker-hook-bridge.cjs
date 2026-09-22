@@ -83,27 +83,25 @@ function invokeOnce(handler, input, options = {}) {
   }
 }
 
-// Only entered after a control execution failure. Never executes the proposed
-// tool: restarting the evaluator cannot replay a publication or code mutation.
-// Atomic creation shares one recovery allowance across hooks and resumed rounds.
-function recover(handler, input, options = {}) {
-  const env = options.env ?? process.env;
-  let failed = deny;
+// Share one attempt-bound allowance between evaluator and native API recovery.
+// These are execution receipts, not installation-presence checks.
+function recoveryState(env = process.env) {
   try {
     const contextPath = env.LCARS_WORKER_CONTEXT;
     if (!isDispatch(env) || !contextPath || !path.isAbsolute(contextPath))
-      return deny();
+      return null;
     const context = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
     if (
       context.policyVersion !== 1 ||
       !['claude', 'codex', 'opencode'].includes(context.provider) ||
       context.runId !== env.LCARS_RUN_ID ||
+      (env.ATTEMPT_ID && env.ATTEMPT_ID !== context.attemptId) ||
       typeof context.attemptId !== 'string' ||
       context.attemptId !==
         `g${context.runId?.match(/\/r([1-9][0-9]*)$/)?.[1]}:${context.runId}`
     )
-      return deny();
-    failed = () => {
+      return null;
+    const failed = () => {
       try {
         fs.writeFileSync(`${contextPath}.control-failed`, context.attemptId, {
           flag: 'wx',
@@ -114,10 +112,31 @@ function recover(handler, input, options = {}) {
       }
       return deny();
     };
-    fs.writeFileSync(`${contextPath}.recovery-used`, context.attemptId, {
-      flag: 'wx',
-      mode: 0o600,
-    });
+    const write = (suffix) =>
+      fs.writeFileSync(`${contextPath}.${suffix}`, context.attemptId, {
+        flag: 'wx',
+        mode: 0o600,
+      });
+    return {
+      failed,
+      claim: () => write('recovery-used'),
+      succeeded: () => write('recovery-succeeded'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Only entered after a control execution failure. Never executes the proposed
+// tool: restarting the evaluator cannot replay a publication or code mutation.
+// Atomic creation shares one recovery allowance across hooks and resumed rounds.
+function recover(handler, input, options = {}) {
+  let failed = deny;
+  try {
+    const state = recoveryState(options.env ?? process.env);
+    if (!state) return deny();
+    failed = state.failed;
+    state.claim();
     // The outer provider process remains under its existing runner deadline.
     // This additional bound fits inside the native hook timeout, without a new
     // task budget. A crash consumes the allowance rather than resetting it.
@@ -147,10 +166,7 @@ function recover(handler, input, options = {}) {
     }
     const result = run(input);
     if (!result) return failed();
-    fs.writeFileSync(`${contextPath}.recovery-succeeded`, context.attemptId, {
-      flag: 'wx',
-      mode: 0o600,
-    });
+    state.succeeded();
     return result;
   } catch {
     return failed();
@@ -175,4 +191,4 @@ if (require.main === module && isDispatch(process.env)) {
   process.stdout.write(`${JSON.stringify(output)}\n`);
 }
 
-module.exports = { invoke, recover, isDispatch };
+module.exports = { invoke, recover, isDispatch, recoveryState, failure: deny };

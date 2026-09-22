@@ -223,7 +223,7 @@ the publication transport. Holder-released actions must reach that transport.
 A separate released-draft case retains an unresolved thread and must still
 reject readiness. This does not claim proof of arbitrary narrative conditions.
 The complete local suites pass 31 observations each on Codex 0.155.1 and
-Claude Code 2.1.278, and 30 on OpenCode 1.18.25; their reports remain
+Claude Code 2.1.278, and 32 on OpenCode 1.18.25; their reports remain
 `qualification: not-evaluated`, not candidate-image graduation evidence.
 
 ### Native session binding
@@ -252,6 +252,17 @@ or tool arguments. The chain must reach the existing valid attempt root within
 evidence rejects the action. Verified ancestry is cached inside that adapter
 instance, with the root binding revalidated on subsequent events. A new adapter
 instance resolves ancestry again. No child can replace the root record.
+
+Native API execution errors and invalid API response shapes are distinct from
+valid evidence of unrelated ancestry. An API failure consumes the same atomic,
+attempt-wide recovery allowance as evaluator recovery and retries the complete
+native lookup once. Each lookup remains bounded to two seconds. A recovered
+lookup must prove the chain before the action can proceed; a recovered policy
+denial remains denied. Exhaustion writes the existing infrastructure-failure
+receipt, preserves work/root binding, and never fabricates a human blocker or
+PARK. Restarting the adapter cannot reset the allowance. The native recovery
+fixtures also run the actual runner failure-classification helper against these
+receipts; they still do not claim full delegated-agent or image qualification.
 
 After verification, `session_id` carries the bound root for shared policy and
 recovery, while `native_session_id` retains the actual child ID. The same
@@ -396,6 +407,30 @@ approval rules remain applicable. Provider canaries can run concurrently and
 graduate independently, but cannot substitute for these separate acceptance
 gates. #2033 is a separate LCARS-wide setup/runtime audit, not this project's
 implementation scope.
+
+### Member-repository inventory checkpoint (2026-09-21)
+
+The checked-in console admission and watched-repository lists in
+`apps/console/apphosting.yaml` both name the same seven repositories; the
+label-contract audit matrix agrees. All seven have available local checkouts.
+This is a discovery checkpoint for #2031, **not a completed instruction or
+behavior audit**, and not proof of remote or deployed convergence.
+
+| Repository                       | Local checkout                     | Observed revision | Discovered instruction / hook entry points                                                             |
+| -------------------------------- | ---------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `jlapenna/agent-lcars`           | `/home/jlapenna/p/agent-lcars`     | `4397a9bb187d`    | `AGENTS.md`, `CLAUDE.md`, Claude settings/local settings, Codex hooks, `agents/opencode/opencode.json` |
+| `jlapenna/homelab`               | `/home/jlapenna/p/homelab`         | `db2132d24fb0`    | `AGENTS.md`, `CLAUDE.md`, `.agents/AGENTS.md`, Claude settings, Codex hooks                            |
+| `supersprinklesracing/sprinkles` | `/home/jlapenna/p/sprinkles`       | `d8693b529401`    | Root and CLI/Primes instructions, Claude local settings                                                |
+| `supersprinklesracing/www`       | `/home/jlapenna/p/www`             | `c590a2ca9938`    | `AGENTS.md`, Claude settings, Codex hooks                                                              |
+| `supersprinklesracing/girosf`    | `/home/jlapenna/p/girosf`          | `b1f9f83741cb`    | `AGENTS.md`, Claude settings, Codex hooks                                                              |
+| `jlapenna/nx-cache-server`       | `/home/jlapenna/p/nx-cache-server` | `d7f40064ab7d`    | `AGENTS.md`, Claude settings, Codex hooks                                                              |
+| `jlapenna/sync-padd`             | `/home/jlapenna/p/sync-padd`       | `f08543b4f5d2`    | `AGENTS.md`, Claude settings, Codex hooks                                                              |
+
+Remaining coverage: read applicable skills and referenced instructions; trace
+generated/shared registrations to their source; inspect ignored or externally
+managed effective configuration; exercise interactive/dispatched behavior; and
+record findings and fixes through each repository's normal workflow. No member
+repository was edited or marked clean by this inventory pass. #2031 remains open.
 
 ## Native Claude/Codex command-hook boundary
 
