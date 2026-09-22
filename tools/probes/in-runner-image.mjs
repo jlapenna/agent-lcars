@@ -89,7 +89,13 @@ const args = [
 ];
 const result = spawnSync(process.execPath, args, {
   cwd: workspace,
-  env: { PATH: process.env.PATH, HOME: process.env.HOME },
+  env: {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    ...(provider === 'opencode'
+      ? { LCARS_PROBE_OPENCODE_DEPENDENCIES: '/home/runner/.config/opencode' }
+      : {}),
+  },
   encoding: 'utf8',
   timeout: 45 * 60000,
   maxBuffer: 8 * 1024 * 1024,

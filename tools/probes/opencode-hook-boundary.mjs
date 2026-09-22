@@ -3,6 +3,7 @@
 // This measures interception primitives, NOT full LCARS policy qualification.
 import { spawn, spawnSync } from 'node:child_process';
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -92,6 +93,17 @@ async function probe(mode) {
   const home = join(dir, 'home');
   mkdirSync(workspace, { recursive: true });
   mkdirSync(home, { recursive: true });
+  if (process.env.LCARS_PROBE_OPENCODE_DEPENDENCIES) {
+    const config = join(home, '.config/opencode');
+    mkdirSync(config, { recursive: true });
+    // Image probes consume prepared SDK deps, never credentials or user config.
+    for (const name of ['package.json', 'package-lock.json', 'node_modules'])
+      cpSync(
+        join(process.env.LCARS_PROBE_OPENCODE_DEPENDENCIES, name),
+        join(config, name),
+        { recursive: true },
+      );
+  }
   const outcomeProbe = mode.startsWith('bootstrap-outcome-');
   const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
   const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
@@ -471,11 +483,12 @@ export default async (context) => {
     !usesPolicy ||
     (mode === 'bootstrap-file-session-expected-mismatch'
       ? nativeBinding === null
-      : nativeBinding?.sessionId ===
-        (mode === 'bootstrap-file-session-bound-mismatch'
-          ? 'another-native-session'
-          : JSON.parse(readFileSync(receipt, 'utf8').trim().split('\n')[0])
-              .sessionID));
+      : existsSync(receipt) &&
+        nativeBinding?.sessionId ===
+          (mode === 'bootstrap-file-session-bound-mismatch'
+            ? 'another-native-session'
+            : JSON.parse(readFileSync(receipt, 'utf8').trim().split('\n')[0])
+                .sessionID));
   const ownershipReadCount = existsSync(ownershipReads)
     ? readFileSync(ownershipReads, 'utf8').trim().split('\n').length
     : 0;

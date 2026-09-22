@@ -213,6 +213,25 @@ linked Git checkouts as the job user. Regression tests reject missing commands,
 non-executable targets, and guards that always allow or always deny. A rebuilt
 candidate must still pass the native probes; the failed image is not qualified.
 
+The corrected local candidate, runtime source `3aa27fa8`, image
+`sha256:eb0b7b4643bd1c3033505bdd7ec8059018fc46ddd009ac3bb5cdc6ca5e79bd55`,
+passed its build-time invariants as UID 1001. Codex 0.155.1 and Claude Code
+2.1.278 each passed all 44 native observations against its baked handlers with
+external networking disabled. These are image-bound primitive observations,
+not completion of the combined workflow or every acceptance gate below.
+
+OpenCode 1.18.25's first offline edit probe stalled during cold configuration
+startup before producing a hook receipt. The pinned CLI installs
+`@opencode-ai/plugin` in configuration directories on startup; the image did
+not carry those prepared dependencies. The SDK installation now belongs in
+the image build, matching the reviewed CLI version. The runner's existing
+configuration copy carries it into attempt configuration. The native framework
+smoke must run with `--network=none` using only the prepared dependencies;
+isolated image probes likewise copy only SDK manifests/modules, never user
+configuration or credentials. A rebuilt image and OpenCode canaries remain
+required. Missing native receipts now yield failed observations instead of
+hiding startup diagnostics behind an attempted receipt read.
+
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
 

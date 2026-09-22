@@ -604,10 +604,11 @@ code_mode = false
     !bootstrap ||
     (mode === 'bootstrap-file-session-expected-mismatch'
       ? nativeBinding === null
-      : nativeBinding?.sessionId ===
-        (mode === 'bootstrap-file-session-bound-mismatch'
-          ? 'another-native-session'
-          : JSON.parse(readFileSync(receipt, 'utf8')).session_id));
+      : existsSync(receipt) &&
+        nativeBinding?.sessionId ===
+          (mode === 'bootstrap-file-session-bound-mismatch'
+            ? 'another-native-session'
+            : JSON.parse(readFileSync(receipt, 'utf8')).session_id));
   const ownershipReadCount = existsSync(ownershipReads)
     ? readFileSync(ownershipReads, 'utf8').trim().split('\n').length
     : 0;

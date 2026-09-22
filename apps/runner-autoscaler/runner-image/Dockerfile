@@ -567,10 +567,19 @@ RUN /usr/local/bin/opencode --version && \
 # Prove the installed binaries and real hook enforcement as the job user.
 RUN uv --version && bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 
+# OpenCode installs its plugin SDK in each configuration directory on cold
+# startup. Bake the version matching the reviewed CLI here; direct-runner's
+# existing configuration copy then carries package.json, lock, and modules
+# into the attempt configuration without doing an installation during work.
+RUN OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)" && \
+    npm install --prefix /home/runner/.config/opencode --ignore-scripts --save-exact \
+      "@opencode-ai/plugin@${OPENCODE_VERSION#v}"
+
 # Exercise the exact installed CLI and global config through a deterministic
 # localhost provider. Unit-importing the hooks cannot prove that OpenCode
 # reloads instructions and hooks after its own automatic compaction boundary.
-RUN bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh
+# No registry connection may hide an unprepared dependency during this proof.
+RUN --network=none bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh
 
 # Register the shared source checkout in each provider's own runner-user
 # plugin state. Both providers require their own installed plugin snapshot;
