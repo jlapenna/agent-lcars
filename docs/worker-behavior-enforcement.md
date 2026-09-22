@@ -412,9 +412,32 @@ transport captures the body at actual publication time, including unchanged
 All 22 publication checks passed on each pinned local CLI (66 observations),
 including the seven existing ownership/mode/marker controls. Evidence:
 `/tmp/lcars-codex-hook-probe-wGm75t`, `/tmp/lcars-claude-hook-probe-pcjolj`, and
-`/tmp/lcars-opencode-hook-probe-RUZqbK`. The prior candidate is no longer present
-locally; a replacement runtime-source `32531a5d` build is in progress for these
-expanded image-bound checks. Local passes are not image qualification.
+`/tmp/lcars-opencode-hook-probe-RUZqbK`. The prior candidate was no longer present
+locally, so the expanded image-bound checks used a replacement built from
+runtime source `32531a5d`. Local passes alone are not image qualification.
+
+The replacement image built successfully as
+`sha256:fe829e5a964d2db9ccf1e9b61c5a4a334e7fd07c9e2ec4abd2d97718dfe4668b`.
+All 66 publication checks then passed against its baked handlers, as UID 1001
+with external networking disabled. Source body files remained unchanged and
+the transport captured the exact marker once for allowed publications. Reports:
+`/tmp/lcars-image-probe-dp9soa` (Codex), `/tmp/lcars-image-probe-RaxHol`
+(Claude), and `/tmp/lcars-image-probe-QQe2rf` (OpenCode). The complete expanded
+Codex suite passed all 77 observations (`/tmp/lcars-image-probe-Z8NLx7`),
+Claude passed all 76 (`/tmp/lcars-image-probe-EEB6yQ`), and OpenCode passed all 79
+(`/tmp/lcars-image-probe-x72U3y`) against this same image: 232 observations total.
+The reports bind the image, baked modules, runner helpers, launch script, and
+mounted harness separately; older image identities are not combined into this
+candidate's qualification. CI run `35688385065` passed for source/harness head
+`562ff608`. Combined recovery and live acceptance gaps below remain open.
+
+The same replacement image also passed all nine setup-negative checks: malformed
+configuration, symlinked configuration, and an absent setup executable for each
+provider. Every case prevented launch and preserved configuration and unpublished
+work. Reports and native evidence were copied out of the containers:
+`/tmp/lcars-image-probe-q5zXJ5` (Codex), `/tmp/lcars-image-probe-3CMqOU`
+(Claude), and `/tmp/lcars-image-probe-BtVNZE` (OpenCode). These checks do not
+substitute for workstation convergence or fresh interactive-session acceptance.
 
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
@@ -426,7 +449,7 @@ image-bound scenario. No row grants provider graduation on its own.
 | `mode-violation`       | Image-bound review-mode file edits, PR creation, and actual Git pushes reject with corrective reason                                                                               | Separate live-dispatch acceptance                                                    |
 | `ownership-lost`       | Image-bound absent/unreadable ownership denies; two-tool sessions preserve the first edit/publication and deny the second after ownership changes                                  | Separate live-dispatch acceptance                                                    |
 | `primary-worktree`     | Image-installed guard and native direct/symlink-to-primary edits deny; real Git push succeeds only from linked checkout                                                            | Separate live-dispatch acceptance                                                    |
-| `missing-marker`       | Image-bound native repair, exact-marker idempotence, and foreign-marker denial                                                                                                     | Full supported-deliverable coverage                                                  |
+| `missing-marker`       | Image-bound PR creation, issue/PR comments, and reviews; inline/body-file repair, exact-marker idempotence, foreign-marker denial, and unchanged source body files                 | Separate live-dispatch acceptance                                                    |
 | `premature-completion` | All-provider image-bound workflow correction resumes the same session within its original deadline; exhaustion preserves work without resuming                                     | Production control-plane dispatch acceptance                                         |
 | `review-hold`          | Image-bound held/released actions plus all-provider current-head acknowledgments, invalid acknowledgment denials, independent review gates, and self-release rejection             | Separate live-dispatch acceptance; arbitrary human conditions are not machine-proven |
 | `missing-hook`         | Native bootstrap installs omitted registration; all nine image-bound negative setup cases refuse launch and preserve configuration/work                                            | Fresh workstation/member-repository convergence gates                                |
@@ -682,6 +705,30 @@ generated/shared registrations to their source; inspect ignored or externally
 managed effective configuration; exercise interactive/dispatched behavior; and
 record findings and fixes through each repository's normal workflow. No member
 repository was edited or marked clean by this inventory pass. #2031 remains open.
+
+A subsequent read-only audit covered `www`, `nx-cache-server`, and `sync-padd`
+at the revisions above: root instructions, their development skills and
+verification/PR references, and both repository hook registrations. The exact
+registered shell commands were executed with the PATH-installed issue guard
+(SHA-256 `6a573a9826ef690733056e7f75b8888fc1c388cd6d06ea84a0bd9edfa013edea`)
+and a GitHub transport that records calls but cannot reach GitHub. All 90 cases
+passed: interactive, generic-CI, provider-ID, whitespace-only dispatch markers,
+and malformed interactive input emitted no fleet guidance and made zero API
+calls; both explicit dispatch markers retained one exact-anchor read and
+console-owned claim guidance, including closed-routing feedback. Inputs modeled
+issue tool events; no issue command, assignment, comment, or routing write was
+executed. Evidence, command harness, installed-module hash, registration hashes,
+and per-repository revisions are retained at
+`/tmp/lcars-member-hook-audit.jJ08VP/observations.json`.
+
+This covers these repository registrations, not fresh full agent sessions or
+all effective global configuration. `www` and `nx-cache-server` still use a
+relative protocol reference that does not exist within the member checkout;
+`sync-padd` explicitly names the dispatch-provided `AGENT_PROTOCOL_PATH`.
+The shared-protocol delivery path still needs verification before those first
+two references can be treated as resolved. No member checkout was modified;
+unrelated existing `www` work was preserved. The remaining four repositories
+and externally managed configuration remain separate audit coverage.
 
 Subsequent local checks on pike confirmed that the PATH-installed
 `fleet-codex-issue-guardrail` resolves through its pnpm shim to a handler
