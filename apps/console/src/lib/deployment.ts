@@ -139,9 +139,9 @@ const OWNER_NAME_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 /**
  * Repositories this backend is willing to admit as control-plane callers —
  * webhook deliveries, completion/task-state lookups (see
- * {@link isControlPlaneRepository}). Parsed once from
+ * {@link isControlPlaneRepository}). Parsed from
  * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (a comma-separated `owner/name`
- * list). It must exactly match `AGENT_LCARS_WATCHED_REPOS`: accepting an
+ * list), and validated at boot by `validateStartupConfiguration` (#2033). It must exactly match `AGENT_LCARS_WATCHED_REPOS`: accepting an
  * anchor whose durable projection the queue will not render is an invalid
  * deployment, not a degraded single-repository mode.
  *

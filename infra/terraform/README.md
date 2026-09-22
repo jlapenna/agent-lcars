@@ -3,8 +3,8 @@
 Terraform owns the project services, default Firestore database, transcript
 bucket, runtime secret containers, service accounts, GitHub Workload Identity
 Federation, and the $5/month billing budget. Secret _values_ are never stored
-in Terraform state. (The `Protect main` repository ruleset moved to the
-homelab repo's terraform root — see the GitHub ruleset section below.)
+in Terraform state. (The `Protect main` repository ruleset has its own
+repository-owned root — see the GitHub ruleset section below.)
 
 Bootstrap state once with `gcloud storage buckets create
 gs://agent-lcars-terraform-state --project agent-lcars --location us`, then add
@@ -26,19 +26,19 @@ with the normal backend and credentials.
 
 ## GitHub ruleset (`Protect main`)
 
-Branch protection for this repo is currently managed in the **homelab** repo's
-terraform root (homelab#523, unified fleet governance 2026-08-11):
-`homelab/terraform/github_rulesets.tf` instantiates one `protect-main`
-module for homelab, agent-lcars, and supersprinklesracing/sprinkles, and
-homelab's scheduled drift check reports hand edits. The live ruleset
-(id 19524095) was imported there with a 0-diff plan and removed from
-this state with a `removed` block (`github.tf`), so it was never
-recreated. The repository-owned successor is
-[`../github-ruleset`](../github-ruleset/): it holds Agent LCARS's
-check-context configuration while Homelab retains credentials, state, and
-execution. Until the reviewed state handoff completes, the Homelab module
-remains live; never change branch protection through this retired root or by
-hand through the GitHub UI or API.
+Branch protection for this repo is declared in
+[`../github-ruleset`](../github-ruleset/), next to the workflows that produce
+its required check contexts. The live ruleset (id 19524095) is tracked in an
+isolated GCS state prefix for this root. Homelab retains the trusted GitHub and
+GCP credentials, backend configuration, operator pathway, and scheduled drift
+check; it no longer carries Agent LCARS's ruleset declaration in its own
+Terraform root.
+
+The ruleset moved through Homelab's shared `protect-main` module in 2026-08
+and returned here through a reviewed, zero-change state handoff on 2026-09-21.
+Both transfers used `removed` blocks with `destroy = false`, so the GitHub
+ruleset was never recreated. Never change branch protection through this
+retired infrastructure root or by hand through the GitHub UI or API.
 
 ## Dispatch webhook queue backlog alert
 

@@ -434,7 +434,7 @@ FAKE
 cat > "$bindir/opencode" <<'FAKE'
 #!/usr/bin/env bash
 if [ "${1:-}" = run ] && [ "${2:-}" = --help ]; then
-  [ "${FAKE_OPENCODE_NO_AUTO:-}" = 1 ] || echo '      --auto         auto-approve permissions'
+  echo '      --auto         auto-approve permissions'
   exit 0
 fi
 if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
@@ -1350,20 +1350,6 @@ if grep -q 'runner sidecar' "$NODE_ARGS_LOG" 2>/dev/null; then
   fail "telemetry started after database initialization failure"
 fi
 grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" || fail "initialization failure misclassified"
-
-# The queued direct path must reject a reviewed OpenCode CLI that no longer
-# supports the non-interactive --auto contract before it attempts a real turn.
-export FAKE_OPENCODE_NO_AUTO=1
-run_scenario opencode-no-auto opencode
-unset FAKE_OPENCODE_NO_AUTO
-
-[ "$rc" -ne 0 ] || fail "opencode no-auto: expected a non-zero exit"
-[ ! -s "$OPENCODE_ARGS_LOG" ] ||
-  fail "opencode no-auto: invoked OpenCode after the capability preflight ($(cat "$OPENCODE_ARGS_LOG"))"
-grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
-  fail "opencode no-auto: completion did not report runner-failed ($(cat "$COMPLETE_LOG"))"
-
-echo "scenario opencode-no-auto: OK"
 
 # A GitHub reply keeps its anchor, mode, reply/runbook/context, and exact
 # marker lookup when it travels through the same direct runner. The marker is

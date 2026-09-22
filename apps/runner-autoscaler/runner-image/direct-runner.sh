@@ -600,15 +600,10 @@ if [ "$PIPELINE" = "opencode" ]; then
     echo "FATAL: $OPENCODE_TOKEN_FILE is required (OPENCODE_LLM_API_KEY source) but is missing or unreadable" >&2
     exit 1
   fi
+  # The trusted binary and its --auto contract are image invariants proven by
+  # verify-image-invariants.sh at build (#2033); a genuine execution failure
+  # still surfaces through the store initialization just below.
   OPENCODE_BIN="${OPENCODE_BIN:-/usr/local/bin/opencode}"
-  if [ ! -x "$OPENCODE_BIN" ]; then
-    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN is missing or not executable" >&2
-    exit 1
-  fi
-  if ! "$OPENCODE_BIN" run --help 2>&1 | grep -Fq -- '--auto'; then
-    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN does not support QueueExecutor's --auto mode" >&2
-    exit 1
-  fi
   OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS="${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS:-30}"
   case "$OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS" in
     '' | *[!0-9]*)

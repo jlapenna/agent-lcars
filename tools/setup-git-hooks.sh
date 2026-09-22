@@ -12,8 +12,7 @@ fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-# setup-worktree.sh deliberately installs dependencies with HUSKY=0. Remove
-# that setting here so this explicit initialization step cannot silently skip
-# hook generation.
+# Remove any inherited HUSKY=0 so this explicit initialization step cannot
+# silently skip hook generation.
 env -u HUSKY pnpm exec husky
 ./tools/assert-git-hooks-installed.sh

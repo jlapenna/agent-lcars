@@ -1,7 +1,7 @@
 #!/bin/sh
-# Runtime toolchain predicates for the JIT runner image. Sourced by
-# entrypoint.sh rather than executed so boot can refuse GitHub registration
-# when a required job tool is absent or broken (#468).
+# Toolchain predicates for the JIT runner image. Sourced by
+# verify-image-invariants.sh at image build so an image whose required job
+# tool is absent or broken is never published (#468, #2033).
 
 pnpm_runs() {
   # Corepack selects the repo-pinned pnpm version from this manifest. From an
@@ -16,8 +16,8 @@ pnpm_runs() {
 }
 
 # Firebase's Firestore emulator rejects Java runtimes older than 21. Keep the
-# check at the image boundary so a damaged or regressed JRE fails before the
-# runner registers and accepts an E2E job it cannot complete.
+# check at the image boundary so a damaged or regressed JRE fails the image
+# build instead of an E2E job it cannot complete.
 java_21_runs() (
   java_command="${AGENT_LCARS_JAVA_COMMAND:-java}"
   command -v "$java_command" >/dev/null 2>&1 || return 1
@@ -37,7 +37,7 @@ java_21_runs() (
 
 # The telemetry watcher intentionally invokes this exact image-owned binary,
 # never PATH or an agent-writable action install. Keep the command parameter
-# only as a shell-test seam; runner boot always passes the literal path.
+# only as a shell-test seam; the image gate always passes the literal path.
 trusted_opencode_runs() {
   local opencode_command="${1:-/usr/local/bin/opencode}"
   [ -x "$opencode_command" ] && "$opencode_command" --version >/dev/null 2>&1
@@ -46,8 +46,8 @@ trusted_opencode_runs() {
 # QueueExecutor invokes OpenCode through its ordinary non-interactive CLI,
 # with --auto approving permissions not explicitly denied. Keep that contract
 # at the image boundary: a reviewed CLI upgrade that drops or renames the
-# flag must fail runner registration rather than accepting work and dying
-# after checkout.
+# flag must fail the image build rather than accepting work and dying after
+# checkout.
 trusted_opencode_supports_auto() {
   local opencode_command="${1:-/usr/local/bin/opencode}"
   [ -x "$opencode_command" ] &&
