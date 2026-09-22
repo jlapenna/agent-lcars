@@ -32,7 +32,10 @@ export function fileProbeFixture(directory, home, mode) {
     });
   if (check(feature).status !== 0 || check(primary).status !== 1)
     throw new Error('Installed worktree guard failed its fixture control');
-  const sentinel = join(mode.endsWith('-allow') ? feature : primary, 'effect');
+  const sentinel = join(
+    mode.endsWith('-primary') || mode.endsWith('-symlink') ? primary : feature,
+    'effect',
+  );
   let target = sentinel;
   if (mode.endsWith('-symlink')) {
     writeFileSync(sentinel, 'original');
@@ -40,4 +43,15 @@ export function fileProbeFixture(directory, home, mode) {
     symlinkSync(sentinel, target);
   }
   return { sentinel, target };
+}
+
+export function expectedFileDenial(mode) {
+  if (mode.endsWith('-review')) return 'This dispatch requests review';
+  if (mode.endsWith('-ownership-unreadable'))
+    return 'ownership could not be verified';
+  if (mode.endsWith('-ownership-absent') || mode.endsWith('-ownership-changed'))
+    return 'no longer claimed by the fleet';
+  if (mode.endsWith('-primary') || mode.endsWith('-symlink'))
+    return 'require a feature worktree';
+  return '';
 }

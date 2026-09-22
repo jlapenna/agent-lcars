@@ -187,6 +187,33 @@ PR or issue should be modified by multiple canaries.
 | `recovery-exhausted`   | Bounded repair ends as infrastructure failure, no human assignment                            |
 | `authorized-exception` | A specific trusted-policy exception works without relaxing unrelated restrictions             |
 
+### Current evidence and remaining qualification work
+
+This ledger distinguishes native interception evidence from the complete,
+image-bound scenario. No row grants provider graduation on its own.
+
+| Scenario               | Current evidence                                                                                                                        | Still required for full qualification                                                      |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `valid-work`           | Native feature edit and marker-repaired fixture comment succeed on all three CLIs                                                       | Combined authorized implementation/publication/completion in the candidate runner image    |
+| `invalid-identity`     | Setup rejects mismatched attempt/run/anchor; runner harness prevents task launch after setup failure                                    | Provider session-to-attempt binding and native negative launch proof                       |
+| `mode-violation`       | Native review-mode file edits are rejected with the expected policy reason                                                              | Native publication/push rejection in review mode                                           |
+| `ownership-lost`       | Native absent/unreadable ownership blocks edits; a two-tool session allows the first edit and blocks the second after ownership changes | Matching publication scenarios and candidate-image evidence                                |
+| `primary-worktree`     | Real Git linked/primary fixtures and installed repo-tools guard; native direct and symlink-to-primary edits denied                      | Candidate-image Git mutation/publication coverage                                          |
+| `missing-marker`       | Native command repair reaches the local publication transport; unit tests cover foreign bodies and idempotence                          | Native foreign-artifact/idempotence negative cases and full supported-deliverable coverage |
+| `premature-completion` | All-provider runner harness; native Claude/Codex same-session resumption                                                                | Combined native completion correction and exhausted-budget canaries, including OpenCode    |
+| `review-hold`          | Shared fresh/paginated review gate, focused contract tests, and a real read-only GraphQL snapshot                                       | Native held/released readiness and merge-arm scenarios                                     |
+| `missing-hook`         | Native bootstrap installs omitted registration; runner harness refuses launch after setup failure                                       | Combined candidate-image negative setup scenario                                           |
+| `hook-failure`         | Native thrown failures deny; Claude/Codex native timeout denies                                                                         | OpenCode timeout coverage and preserved-work proof in candidate image                      |
+| `recovery-success`     | Native evaluator restart and control smoke allow the still-unexecuted action                                                            | Candidate-image recovery with retained session/work and original deadline                  |
+| `recovery-exhausted`   | Native failure/exhaustion receipts; all-provider runner outcomes and Work API failed-item proof                                         | Combined native-to-control-plane failure, with no human assignment                         |
+| `authorized-exception` | Exact setup-bound native Work terminal-file policy contract                                                                             | Native allowed/denied exception cases without relaxing other protections                   |
+
+The ownership-change probe captures two ownership reads, two native edit
+attempts, the successful first file, the absent second file, and the policy
+denial delivered back to the model. Review-mode and absent/unreadable-ownership
+probes also require the specific policy reason; an unrelated provider refusal
+or a tool that never reaches the hook cannot satisfy them.
+
 Probe drivers must invoke the actual pinned provider runtime and observe
 side effects independently (for example a sentinel file or captured local
 API request). Test allow and deny paths: an agent simply declining to call a
@@ -263,6 +290,8 @@ independently checks tool-result delivery, hook invocation and the actual file:
   fresh shared-policy process; a pre-consumed allowance prevents publication.
 - Native file writes: a real linked-worktree edit succeeds; primary-checkout
   and symlink-to-primary edits are denied with independently unchanged targets.
+- Mode/ownership: review-mode edits and absent/unreadable ownership are denied;
+  changing ownership between two edits in one session blocks only the later edit.
 
 Exit zero means these native behaviors were observed, **not** that the
 mandatory LCARS canary suite passed. This probe deliberately reports
@@ -326,7 +355,7 @@ On the tested Codex 0.155.1 and Claude Code 2.1.278, raw command-hook exceptions
 allowed the requested action. The shared `worker-hook-bridge.cjs` instead
 converted exceptions and its five-second handler timeout into explicit native
 PreToolUse denials; the actual CLI then prevented both sentinel writes. The
-allowed case still executed. All sixteen observations passed on each CLI,
+allowed case still executed. All twenty observations passed on each CLI,
 including an exact repaired marker in the independently captured comment body.
 The tenth observation executes a second round within the same probe deadline:
 Claude retains its preallocated UUID; Codex resumes the first hook's native
