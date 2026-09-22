@@ -1,7 +1,8 @@
 // One native session must edit, commit, push and publish before the actual
 // runner verifier accepts completion. Git is real; GitHub is a local transport.
-import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 
 import { fileProbeFixture } from './worktree-fixture.mjs';
@@ -18,7 +19,11 @@ function resultIds(value, into = new Set()) {
   return into;
 }
 
-export function workflowFixture(directory, home) {
+export function workflowFixture(directory, home, mode) {
+  const exhausted = mode === 'bootstrap-workflow-exhausted';
+  const correction = mode === 'bootstrap-workflow-correction' || exhausted;
+  let correcting = false;
+  let correctionEvidence;
   fileProbeFixture(directory, home, 'bootstrap-workflow');
   const workspace = join(directory, 'workspace');
   const target = join(workspace, 'implementation.txt');
@@ -75,18 +80,117 @@ export function workflowFixture(directory, home) {
     sentinel,
     eventsPath,
     env,
+    expectPublication: !exhausted,
+    budgetMs: exhausted ? 30000 : 60000,
     next(input) {
       if (pending && resultIds(input).has(pending.id)) {
         completed.push(pending);
         pending = undefined;
         cursor++;
       }
-      return pending ? null : steps[cursor];
+      return pending || (correction && cursor === 4 && !correcting)
+        ? null
+        : steps[cursor];
     },
     issued(id) {
       if (pending || !steps[cursor])
         throw new Error('Invalid workflow tool sequence');
       pending = { name: steps[cursor].name, id };
+    },
+    async correct(context, runtimeEnv, execution, deadline, resume) {
+      if (!correction) return;
+      const before = this.completion(context, runtimeEnv, 'premature');
+      // Let the original wall-clock budget actually expire. Do not substitute
+      // a fabricated timestamp or give a resumed process a fresh deadline.
+      if (exhausted)
+        await new Promise((done) =>
+          setTimeout(done, Math.max(1, deadline - Date.now() + 25)),
+        );
+      let heartbeats = 0;
+      const lease = createServer((req, res) => {
+        if (req.method === 'POST' && req.url === '/heartbeat') {
+          heartbeats++;
+          res.writeHead(200);
+        } else res.writeHead(404);
+        res.end();
+      });
+      await new Promise((done) => lease.listen(0, '127.0.0.1', done));
+      const remaining = Math.floor((deadline - Date.now()) / 1000);
+      const helperRoot = resolve('apps/runner-autoscaler/runner-image/runtime');
+      let decision;
+      try {
+        decision = await new Promise((done) => {
+          const child = spawn(
+            'bash',
+            [
+              '-c',
+              'source "$1/worker-policy-bootstrap.sh"; source "$1/worker-completion.sh"; worker_completion_needed "$2" "$((SECONDS + $3))" && worker_authorize_correction && printf "%s" "$WORKER_COMPLETION_PROMPT"',
+              'workflow-correction',
+              helperRoot,
+              String(execution.code ?? 1),
+              String(remaining),
+            ],
+            {
+              cwd: workspace,
+              env: {
+                ...runtimeEnv,
+                RUNNER_TEMP: directory,
+                AGENT_NAME: context.provider,
+                TARGET_REPO: context.repository,
+                ISSUE: '42',
+                MODE: context.mode,
+                ANCHOR_TYPE: 'issue',
+                ATTEMPT_ID: context.attemptId,
+                VERIFY_OUTCOME: join(helperRoot, 'verify-outcome.sh'),
+                RUNS_API: `http://127.0.0.1:${lease.address().port}`,
+                AUTH_HEADER: 'Authorization: Bearer local-fixture-only',
+                CURL_TIMEOUT_CONFIG: 'connect-timeout = 2\nmax-time = 5',
+              },
+              // The short local decision read is allowed after expiration; no
+              // native work is launched unless the real helper authorizes it.
+              timeout: exhausted ? 5000 : Math.max(1, deadline - Date.now()),
+            },
+          );
+          let stdout = '',
+            stderr = '';
+          child.stdout.on('data', (data) => {
+            stdout += data;
+          });
+          child.stderr.on('data', (data) => {
+            stderr += data;
+          });
+          child.on('error', (error) =>
+            done({ code: null, error: error.message }),
+          );
+          child.on('close', (code) => done({ code, stdout, stderr }));
+        });
+      } finally {
+        lease.closeAllConnections();
+        await new Promise((done) => lease.close(done));
+      }
+      let resumed;
+      if (decision.code === 0 && decision.stdout && Date.now() < deadline) {
+        correcting = true;
+        resumed = await resume(
+          decision.stdout,
+          Math.max(1, deadline - Date.now()),
+        );
+      }
+      correctionEvidence = {
+        before,
+        decision,
+        heartbeats,
+        resumed: !!resumed,
+        resumedCode: resumed?.code,
+        originalDeadlineRetained: exhausted
+          ? !resumed && Date.now() >= deadline
+          : !!resumed && !resumed.timedOut && Date.now() < deadline,
+      };
+      writeFileSync(
+        join(directory, 'correction.json'),
+        JSON.stringify(correctionEvidence, null, 2),
+      );
+      return correctionEvidence;
     },
     // Honor the verifier's actual jq filter rather than returning a fabricated
     // success string. The artifact body comes only from native gh publication.
@@ -141,7 +245,9 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
       let details;
       try {
         const head = git(['rev-parse', 'HEAD']);
-        const published = JSON.parse(readFileSync(sentinel, 'utf8'));
+        const published = existsSync(sentinel)
+          ? JSON.parse(readFileSync(sentinel, 'utf8'))
+          : null;
         const events = readFileSync(eventsPath, 'utf8')
           .trim()
           .split('\n')
@@ -150,7 +256,7 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
           steps: completed.map(({ name }) => name),
           sameNativeSession:
             !!sessionId &&
-            events.length >= steps.length &&
+            events.length >= (exhausted ? 4 : steps.length) &&
             events.every((e) => (e.session_id ?? e.sessionID) === sessionId),
           implementationCommitted:
             head !== originalHead &&
@@ -170,20 +276,40 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
           preservedWork:
             readFileSync(preserved, 'utf8') ===
             'retain unrelated unpublished work\n',
-          exactMarkerOnce:
-            published[published.indexOf('--body') + 1] ===
-            `Fixture deliverable\n\n<!-- attempt-claim:${context.attemptId} -->`,
+          ...(exhausted
+            ? { publicationAbsent: published === null }
+            : {
+                exactMarkerOnce:
+                  published[published.indexOf('--body') + 1] ===
+                  `Fixture deliverable\n\n<!-- attempt-claim:${context.attemptId} -->`,
+              }),
         };
       } catch (error) {
         details = { error: error.message };
       }
+      const correctionPassed =
+        !correction ||
+        (correctionEvidence?.before.code === 1 &&
+          correctionEvidence.before.missing &&
+          correctionEvidence.decision.code === (exhausted ? 1 : 0) &&
+          correctionEvidence.heartbeats === (exhausted ? 0 : 1) &&
+          correctionEvidence.resumed === !exhausted &&
+          (exhausted || correctionEvidence.resumedCode === 0) &&
+          correctionEvidence.originalDeadlineRetained);
       const passed =
+        correctionPassed &&
         !pending &&
-        cursor === steps.length &&
+        cursor === (exhausted ? 4 : steps.length) &&
         Object.entries(details).every(([key, value]) =>
-          key === 'steps' ? value.length === steps.length : value === true,
+          key === 'steps'
+            ? value.length === (exhausted ? 4 : steps.length)
+            : value === true,
         );
-      return { passed, ...details };
+      return {
+        passed,
+        ...details,
+        ...(correction ? { correction: correctionEvidence } : {}),
+      };
     },
   };
 }

@@ -53,7 +53,11 @@ for (const name of readdirSync(join(source, 'packages/fleet-tools/bin')).filter(
 if (!moduleHashes['worker-policy.cjs'])
   throw new Error('Worker modules missing');
 const runtimeHashes = {};
-for (const helper of ['worker-policy-bootstrap.sh', 'verify-outcome.sh']) {
+for (const helper of [
+  'worker-policy-bootstrap.sh',
+  'verify-outcome.sh',
+  'worker-completion.sh',
+]) {
   const actual = sha256(join(runtime, helper));
   if (
     actual !==

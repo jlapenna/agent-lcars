@@ -106,8 +106,9 @@ async function probe(mode) {
       );
   }
   const outcomeProbe = mode.startsWith('bootstrap-outcome-');
-  const workflow =
-    mode === 'bootstrap-workflow' ? workflowFixture(dir, home) : null;
+  const workflow = mode.startsWith('bootstrap-workflow')
+    ? workflowFixture(dir, home, mode)
+    : null;
   const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
   const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
   const resumeProbe = mode === 'bootstrap-file-resume';
@@ -425,7 +426,7 @@ export default async (context) => {
   const completionBefore = workflow?.completion(context, env, 'before');
   let execution;
   let resumedSameSession = false;
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + (workflow?.budgetMs ?? 60000);
   try {
     execution = await run(
       args,
@@ -433,6 +434,28 @@ export default async (context) => {
       env,
       Math.max(1, deadline - Date.now()),
     );
+    if (workflow && existsSync(receipt)) {
+      const sessionId = JSON.parse(
+        readFileSync(receipt, 'utf8').trim().split('\n')[0],
+      ).sessionID;
+      await workflow.correct(
+        context,
+        env,
+        execution,
+        deadline,
+        async (prompt, remaining) => {
+          const resumed = await run(
+            [...args.slice(0, -1), '--session', sessionId, prompt],
+            workspace,
+            env,
+            remaining,
+          );
+          writeFileSync(join(dir, 'resume-stdout.txt'), resumed.stdout);
+          writeFileSync(join(dir, 'resume-stderr.txt'), resumed.stderr);
+          return resumed;
+        },
+      );
+    }
     if (
       resumeProbe &&
       execution.code === 0 &&
@@ -575,7 +598,9 @@ export default async (context) => {
     sessionBindingVerified,
     providerApiLineageVerified,
     runnerFailureRecognized,
-    resumedSameSession,
+    resumedSameSession: workflowResult?.correction?.resumed
+      ? workflowResult.sameNativeSession
+      : resumedSameSession,
     reviewReadCount,
     pushVerified: push?.verify() ?? false,
     workflow: workflowResult,
@@ -617,10 +642,10 @@ export default async (context) => {
         ? workflowResult.passed &&
           completionBefore.code === 1 &&
           completionBefore.missing &&
-          completionAfter.code === 0 &&
-          !completionAfter.missing &&
-          markerRepaired &&
-          ownershipReadCount === 5
+          completionAfter.code === (workflow.expectPublication ? 0 : 1) &&
+          completionAfter.missing === !workflow.expectPublication &&
+          markerRepaired === workflow.expectPublication &&
+          ownershipReadCount === (workflow.expectPublication ? 5 : 4)
         : lineageExhausted
           ? hookInvoked && !effect
           : holdProbe
@@ -647,6 +672,8 @@ export default async (context) => {
 const observations = [];
 const modes = [
   'bootstrap-workflow',
+  'bootstrap-workflow-correction',
+  'bootstrap-workflow-exhausted',
   'allow',
   'deny',
   'failure',

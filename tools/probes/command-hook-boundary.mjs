@@ -96,8 +96,9 @@ async function probe(mode) {
   mkdirSync(workspace, { recursive: true });
   mkdirSync(join(home, '.codex'), { recursive: true });
   mkdirSync(join(home, '.claude'), { recursive: true });
-  const workflow =
-    mode === 'bootstrap-workflow' ? workflowFixture(dir, home) : null;
+  const workflow = mode.startsWith('bootstrap-workflow')
+    ? workflowFixture(dir, home, mode)
+    : null;
   const outcomeProbe = mode.startsWith('bootstrap-outcome-');
   const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
   const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
@@ -245,7 +246,10 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
     if (setup.installRegistration(configPath, hook).changed)
       throw new Error('Setup was not idempotent');
   }
-  const contextPath = join(dir, 'worker-context.json');
+  const contextPath = join(
+    dir,
+    workflow ? 'worker-policy-context.json' : 'worker-context.json',
+  );
   if (recovery) writeFileSync(contextPath, JSON.stringify(context));
   if (bootstrap) {
     const briefPath = join(dir, 'brief.json');
@@ -557,7 +561,7 @@ code_mode = false
     mode === 'resume' && provider === 'claude'
       ? ['--session-id', allocatedSession, ...args]
       : args;
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + (workflow?.budgetMs ?? 60000);
   try {
     execution = await execute(
       initialArgs,
@@ -565,6 +569,26 @@ code_mode = false
       env,
       Math.max(1, deadline - Date.now()),
     );
+    if (workflow && existsSync(receipt)) {
+      const sessionId = JSON.parse(readFileSync(receipt, 'utf8')).session_id;
+      await workflow.correct(
+        context,
+        env,
+        execution,
+        deadline,
+        async (prompt, remaining) => {
+          const continuedArgs = [...args.slice(0, -1), prompt];
+          const resumeArgs =
+            provider === 'codex'
+              ? ['exec', 'resume', sessionId, ...continuedArgs.slice(1)]
+              : ['--resume', sessionId, ...continuedArgs];
+          const resumed = await execute(resumeArgs, workspace, env, remaining);
+          writeFileSync(join(dir, 'resume-stdout.txt'), resumed.stdout);
+          writeFileSync(join(dir, 'resume-stderr.txt'), resumed.stderr);
+          return resumed;
+        },
+      );
+    }
     if (mode === 'resume' && execution.code === 0 && existsSync(receipt)) {
       const firstReceipt = JSON.parse(readFileSync(receipt, 'utf8'));
       writeFileSync(
@@ -676,7 +700,9 @@ code_mode = false
     effect,
     rewrittenEffect,
     markerRepaired,
-    resumedSameSession,
+    resumedSameSession: workflowResult?.correction?.resumed
+      ? workflowResult.sameNativeSession
+      : resumedSameSession,
     recoveryVerified,
     ownershipReadCount,
     ownershipChangeVerified,
@@ -718,10 +744,10 @@ code_mode = false
         ? workflowResult.passed &&
           completionBefore.code === 1 &&
           completionBefore.missing &&
-          completionAfter.code === 0 &&
-          !completionAfter.missing &&
-          markerRepaired &&
-          ownershipReadCount === 5
+          completionAfter.code === (workflow.expectPublication ? 0 : 1) &&
+          completionAfter.missing === !workflow.expectPublication &&
+          markerRepaired === workflow.expectPublication &&
+          ownershipReadCount === (workflow.expectPublication ? 5 : 4)
         : holdProbe
           ? hookInvoked &&
             reviewReadCount === 1 &&
@@ -754,6 +780,8 @@ code_mode = false
 const observations = [];
 const modes = [
   'bootstrap-workflow',
+  'bootstrap-workflow-correction',
+  'bootstrap-workflow-exhausted',
   'allow',
   'deny',
   'failure',

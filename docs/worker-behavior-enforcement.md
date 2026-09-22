@@ -195,7 +195,7 @@ PR or issue should be modified by multiple canaries.
 user against baked handlers and the baked bootstrap/completion helpers, verifying their
 hashes against the candidate source first. Mount only the probe directory,
 worker module directory, and the individual `worker-policy-bootstrap.sh` and
-`verify-outcome.sh` helpers read-only; do not mount a user
+`verify-outcome.sh` and `worker-completion.sh` helpers read-only; do not mount a user
 home, credentials, the complete checkout, or the Docker socket. Record the
 immutable ID returned by `docker image inspect` and run that same ID with
 `--network none`. Reports retain diagnostics and never claim graduation.
@@ -260,6 +260,32 @@ the new fixture omitted its local transport from PATH; correcting the harness
 made both pass without changing production policy. This closes the combined
 happy-path evidence gap, not premature-completion correction, exhausted-budget,
 delegated-child, or live-dispatch acceptance.
+
+The combined `bootstrap-workflow-correction` and
+`bootstrap-workflow-exhausted` canaries also passed on all three pinned CLIs
+against the same image. Both stop after the native edit/commit/push, before
+publication. The correction case executes the baked completion helper and
+verifier, obtains one heartbeat from an isolated local lease endpoint, and
+resumes the same native session with the actual correction prompt and the
+original remaining wall-clock budget. The final artifact verifies successfully.
+The exhausted case lets its original 30-second wall-clock budget expire: the
+helper refuses correction, no heartbeat or second native launch occurs, and
+completion remains missing. Both cases retain the exact pushed commit and
+unrelated untracked work. The completion helper is hash-bound in image reports.
+Correction diagnostics: Codex `/tmp/lcars-image-probe-upZlCb`, Claude
+`/tmp/lcars-image-probe-ZmwAaw`, OpenCode `/tmp/lcars-image-probe-BN3pJW`.
+Exhaustion diagnostics: Codex `/tmp/lcars-image-probe-7kQY8r`, Claude
+`/tmp/lcars-image-probe-UEFONN`, OpenCode `/tmp/lcars-image-probe-GMsF64`.
+These exercise real native continuation and the runner's helpers, not a full
+production dispatch or control-plane completion. The direct-runner harness
+separately covers the single-correction limit and terminal outcomes.
+
+CI run `35683071566` failed the existing Codex bounded-completion deadline
+assertion. Its log omitted the observed timeout values; the assertion now
+reports them without printing prompts or credentials. A local reproduction
+observed decreasing 5/3-second round limits and passed that scenario. The
+assertion has not been weakened, the failure has not been rerun away, and its
+root cause remains unproven pending stronger CI evidence.
 
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.

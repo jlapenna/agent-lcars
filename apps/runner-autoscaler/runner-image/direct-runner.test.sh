@@ -1762,7 +1762,7 @@ for provider in claude codex; do
     grep -Fq -- 'exec resume thread-codex-fixture' "$CODEX_ARGS_LOG" || fail "Codex correction changed thread"
   fi
   mapfile -t round_timeouts < <(grep -E "[0-9]+s $provider " "$TIMEOUT_ARGS_LOG" | sed -nE "s/.* ([0-9]+)s $provider .*/\\1/p")
-  [ "${#round_timeouts[@]}" -eq 2 ] && [ "${round_timeouts[1]}" -lt "${round_timeouts[0]}" ] || fail "$provider correction reset its deadline"
+  [ "${#round_timeouts[@]}" -eq 2 ] && [ "${round_timeouts[1]}" -lt "${round_timeouts[0]}" ] || fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
 
   for refusal in heartbeat lookup native exit deadline; do
     export FAKE_GH_NO_MATCH=1
