@@ -7,7 +7,7 @@ const path = require('node:path');
 // trusted event to the setup-owned attempt before permitting task actions.
 // Publish a complete immutable record atomically so parallel hooks cannot
 // replace the winner or observe a partially written identity.
-function rejection(input, context, env = process.env) {
+function rejection(input, context, env = process.env, allowBinding = true) {
   let temporary;
   try {
     const sessionId = input.session_id;
@@ -30,6 +30,7 @@ function rejection(input, context, env = process.env) {
     });
     const destination = `${contextPath}.session.json`;
     if (!fs.existsSync(destination)) {
+      if (!allowBinding) throw new Error('Native binding is missing');
       temporary = fs.mkdtempSync(
         path.join(path.dirname(contextPath), '.worker-session-'),
       );
@@ -56,4 +57,20 @@ function rejection(input, context, env = process.env) {
   }
 }
 
-module.exports = { rejection };
+// Read only an already-established, still-valid root. A failed lineage lookup
+// must never create or replace the attempt's binding.
+function boundSession(context, env = process.env) {
+  try {
+    const record = JSON.parse(
+      fs.readFileSync(`${env.LCARS_WORKER_CONTEXT}.session.json`, 'utf8'),
+    );
+    return rejection({ session_id: record.sessionId }, context, env, false) ===
+      null
+      ? record.sessionId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { rejection, boundSession };

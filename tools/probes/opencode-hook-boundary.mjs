@@ -24,10 +24,10 @@ import {
 } from './review-fixture.mjs';
 import { expectedFileDenial, fileProbeFixture } from './worktree-fixture.mjs';
 
-const [binary, expectedVersion] = process.argv.slice(2);
+const [binary, expectedVersion, scenario] = process.argv.slice(2);
 if (!binary || !expectedVersion) {
   throw new Error(
-    'usage: node opencode-hook-boundary.mjs <absolute-cli-path> <expected-version>',
+    'usage: node opencode-hook-boundary.mjs <absolute-cli-path> <expected-version> [scenario]',
   );
 }
 const root = mkdtempSync(join(tmpdir(), 'lcars-opencode-hook-probe-'));
@@ -90,6 +90,8 @@ async function probe(mode) {
   const outcomeProbe = mode.startsWith('bootstrap-outcome-');
   const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
   const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
+  const resumeProbe = mode === 'bootstrap-file-resume';
+  let round = 1;
   const holdProbe = mode.startsWith('bootstrap-hold-');
   const reviewReads = join(dir, 'review-reads');
   const ownershipChanged = mode === 'bootstrap-file-ownership-changed';
@@ -103,7 +105,10 @@ async function probe(mode) {
   const sentinel = files?.sentinel ?? join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
-  const bootstrap = mode === 'bootstrap-marker' || fileProbe || holdProbe;
+  const lineageProbe = mode === 'bootstrap-lineage';
+  const lineageReceipt = join(dir, 'lineage.json');
+  const bootstrap =
+    mode === 'bootstrap-marker' || lineageProbe || fileProbe || holdProbe;
   const recovery = mode.startsWith('policy-recovery-');
   const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
@@ -157,11 +162,13 @@ else process.exitCode = 1;
   );
   writeFileSync(
     plugin,
-    `import { appendFileSync } from 'node:fs';
-export default async () => ({
+    `import { appendFileSync, writeFileSync } from 'node:fs';
+${lineageProbe ? `import { probeLineage } from ${JSON.stringify(pathToFileURL(resolve('tools/probes/opencode-lineage-fixture.mjs')).href)};` : ''}
+export default async (native) => ({
   'tool.execute.before': async (input) => {
     if (input.tool !== ${JSON.stringify(fileProbe ? 'write' : 'bash')}) return;
     appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
+    ${lineageProbe ? `writeFileSync(${JSON.stringify(lineageReceipt)}, JSON.stringify(await probeLineage(native, input.sessionID)));` : ''}
     ${mode === 'deny' ? "throw new Error('LCARS_PROBE_DENY');" : ''}
     ${mode === 'failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
   }
@@ -235,7 +242,10 @@ export default async (context) => {
                   arguments: JSON.stringify(
                     fileProbe
                       ? {
-                          filePath: second ? secondSentinel : files.target,
+                          filePath:
+                            second || round === 2
+                              ? secondSentinel
+                              : files.target,
                           content: fileContent,
                         }
                       : {
@@ -335,35 +345,80 @@ export default async (context) => {
       throw new Error('Setup was not idempotent');
   }
   writeFileSync(join(dir, 'models.json'), '{}');
+  const args = [
+    'run',
+    '--model',
+    'probe/test',
+    '--auto',
+    '--dir',
+    workspace,
+    'Execute the supplied probe tool call, then finish.',
+  ];
+  const env = {
+    PATH: usesPolicy ? `${fakeBin}:${process.env.PATH}` : process.env.PATH,
+    ...(usesPolicy
+      ? { LCARS_RUN_ID: context.runId, LCARS_WORKER_CONTEXT: contextPath }
+      : {}),
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, '.config'),
+    XDG_DATA_HOME: join(dir, 'data'),
+    XDG_CACHE_HOME: join(dir, 'cache'),
+    XDG_STATE_HOME: join(dir, 'state'),
+    OPENCODE_DISABLE_AUTOUPDATE: 'true',
+    OPENCODE_DISABLE_MODELS_FETCH: 'true',
+    OPENCODE_DISABLE_TERMINAL_TITLE: 'true',
+    OPENCODE_MODELS_PATH: join(dir, 'models.json'),
+  };
   let execution;
+  let resumedSameSession = false;
+  const deadline = Date.now() + 60000;
   try {
     execution = await run(
-      [
-        'run',
-        '--model',
-        'probe/test',
-        '--auto',
-        '--dir',
-        workspace,
-        'Execute the supplied probe tool call, then finish.',
-      ],
+      args,
       workspace,
-      {
-        PATH: usesPolicy ? `${fakeBin}:${process.env.PATH}` : process.env.PATH,
-        ...(usesPolicy
-          ? { LCARS_RUN_ID: context.runId, LCARS_WORKER_CONTEXT: contextPath }
-          : {}),
-        HOME: home,
-        XDG_CONFIG_HOME: join(home, '.config'),
-        XDG_DATA_HOME: join(dir, 'data'),
-        XDG_CACHE_HOME: join(dir, 'cache'),
-        XDG_STATE_HOME: join(dir, 'state'),
-        OPENCODE_DISABLE_AUTOUPDATE: 'true',
-        OPENCODE_DISABLE_MODELS_FETCH: 'true',
-        OPENCODE_DISABLE_TERMINAL_TITLE: 'true',
-        OPENCODE_MODELS_PATH: join(dir, 'models.json'),
-      },
+      env,
+      Math.max(1, deadline - Date.now()),
     );
+    if (
+      resumeProbe &&
+      execution.code === 0 &&
+      !execution.timedOut &&
+      existsSync(sentinel) &&
+      existsSync(receipt)
+    ) {
+      const originalSession = JSON.parse(
+        readFileSync(receipt, 'utf8').trim().split('\n')[0],
+      ).sessionID;
+      const binding = readFileSync(`${contextPath}.session.json`, 'utf8');
+      round = 2;
+      issued = false;
+      returnedToolResult = false;
+      const resumed = await run(
+        [
+          ...args.slice(0, -1),
+          '--session',
+          originalSession,
+          'Continue this same probe session with the supplied second tool call.',
+        ],
+        workspace,
+        env,
+        Math.max(1, deadline - Date.now()),
+      );
+      writeFileSync(join(dir, 'resume-stdout.txt'), resumed.stdout);
+      writeFileSync(join(dir, 'resume-stderr.txt'), resumed.stderr);
+      const events = readFileSync(receipt, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      resumedSameSession =
+        resumed.code === 0 &&
+        !resumed.timedOut &&
+        existsSync(secondSentinel) &&
+        readFileSync(secondSentinel, 'utf8') === fileContent &&
+        events.length === 2 &&
+        events.every((event) => event.sessionID === originalSession) &&
+        readFileSync(`${contextPath}.session.json`, 'utf8') === binding;
+    }
   } finally {
     server.closeAllConnections();
     await new Promise((done) => server.close(done));
@@ -424,6 +479,10 @@ export default async (context) => {
       (mode === 'policy-recovery-success') &&
     existsSync(`${contextPath}.control-failed`) ===
       (mode === 'policy-recovery-exhausted');
+  const providerApiLineageVerified =
+    existsSync(lineageReceipt) &&
+    JSON.parse(readFileSync(lineageReceipt, 'utf8'))
+      .providerApiLineageVerified === true;
   return {
     mode,
     requests,
@@ -437,6 +496,8 @@ export default async (context) => {
     ownershipChangeVerified,
     denialReasonObserved,
     sessionBindingVerified,
+    providerApiLineageVerified,
+    resumedSameSession,
     reviewReadCount,
     code: execution.code,
     timedOut: execution.timedOut,
@@ -447,6 +508,8 @@ export default async (context) => {
       denialReasonObserved &&
       sessionBindingVerified &&
       (!outcomeProbe || ownershipReadCount === 0) &&
+      (!lineageProbe || providerApiLineageVerified) &&
+      (!resumeProbe || resumedSameSession) &&
       (!recovery || recoveryVerified) &&
       (holdProbe
         ? hookInvoked &&
@@ -455,7 +518,7 @@ export default async (context) => {
         : ownershipChanged
           ? hookInvoked && ownershipChangeVerified
           : fileProbe
-            ? hookInvoked && effect === mode.endsWith('-allow')
+            ? hookInvoked && effect === (mode.endsWith('-allow') || resumeProbe)
             : mode === 'policy-marker' ||
                 bootstrap ||
                 mode === 'policy-recovery-success'
@@ -467,7 +530,7 @@ export default async (context) => {
 }
 
 const observations = [];
-for (const mode of [
+const modes = [
   'allow',
   'deny',
   'failure',
@@ -496,7 +559,12 @@ for (const mode of [
   'bootstrap-outcome-no-op-allow',
   'bootstrap-outcome-foreign',
   'bootstrap-outcome-unrelated',
-])
+  'bootstrap-lineage',
+  'bootstrap-file-resume',
+];
+if (scenario && !modes.includes(scenario))
+  throw new Error(`Unknown scenario: ${scenario}`);
+for (const mode of scenario ? [scenario] : modes)
   observations.push(await probe(mode));
 const report = {
   provider: 'opencode',

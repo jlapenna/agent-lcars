@@ -113,6 +113,14 @@ it('rejects a session different from the setup-known session before binding', ()
     ),
   ).toBeNull();
 });
+it('never creates a root when only validating an existing binding', () => {
+  const env = fixture();
+  expect(
+    session.rejection({ session_id: 'root' }, context, env, false),
+  ).not.toBeNull();
+  expect(session.boundSession(context, env)).toBeNull();
+  expect(existsSync(env.LCARS_WORKER_CONTEXT + '.session.json')).toBe(false);
+});
 it('rejects foreign run/attempt context and linked or malformed records', () => {
   const env = fixture(),
     input = { session_id: 'native-session' };
