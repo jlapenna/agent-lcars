@@ -22,7 +22,11 @@ import {
   reviewDenial,
   reviewFixture,
 } from './review-fixture.mjs';
-import { expectedFileDenial, fileProbeFixture } from './worktree-fixture.mjs';
+import {
+  expectedFileDenial,
+  fileProbeFixture,
+  gitPushFixture,
+} from './worktree-fixture.mjs';
 
 const [provider, binary, expectedVersion, scenario] = process.argv.slice(2);
 if (
@@ -95,12 +99,17 @@ async function probe(mode) {
   const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
   const holdProbe = mode.startsWith('bootstrap-hold-');
   const publicationProbe = mode.startsWith('bootstrap-publication-');
+  const push = mode.startsWith('bootstrap-push-')
+    ? gitPushFixture(dir, home, mode)
+    : null;
   const reviewReads = join(dir, 'review-reads');
   const ownershipChanged = mode.endsWith('-ownership-changed');
   const ownershipState = join(dir, 'ownership-changed');
   const ownershipReads = join(dir, 'ownership-reads');
-  const secondSentinel = join(workspace, 'second-effect');
+  const secondSentinel =
+    push?.secondSentinel ?? join(workspace, 'second-effect');
   const files =
+    push ??
     outcome ??
     (fileProbe || holdProbe || publicationProbe
       ? fileProbeFixture(dir, home, mode)
@@ -112,7 +121,11 @@ async function probe(mode) {
   const resumedSentinel = join(workspace, 'resumed-effect');
   let round = 1;
   const bootstrap =
-    mode === 'bootstrap-marker' || fileProbe || holdProbe || publicationProbe;
+    mode === 'bootstrap-marker' ||
+    fileProbe ||
+    holdProbe ||
+    publicationProbe ||
+    !!push;
   const recovery = mode.startsWith('bridge-recovery-');
   const policyMarker = mode === 'bridge-marker' || mode === 'bootstrap-marker';
   const context = policy.prepareContext(
@@ -120,7 +133,7 @@ async function probe(mode) {
       repository: 'octo/example',
       mode: mode.endsWith('-review')
         ? 'review'
-        : fileProbe || holdProbe || publicationProbe
+        : fileProbe || holdProbe || publicationProbe || push
           ? 'implement'
           : 'reply',
       anchor: {
@@ -317,13 +330,15 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
         else if (second) secondIssued = true;
         else issued = true;
       }
-      const command = publicationProbe
-        ? 'gh pr create --repo octo/example --title "Fixture PR" --body "Fixture deliverable"'
-        : holdProbe
-          ? reviewCommand(mode)
-          : policyMarker
-            ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
-            : `touch ${quote(round === 1 ? sentinel : resumedSentinel)}`;
+      const command = push
+        ? push.command(second)
+        : publicationProbe
+          ? 'gh pr create --repo octo/example --title "Fixture PR" --body "Fixture deliverable"'
+          : holdProbe
+            ? reviewCommand(mode)
+            : policyMarker
+              ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+              : `touch ${quote(round === 1 ? sentinel : resumedSentinel)}`;
       const args = preRead
         ? { file_path: fileTarget }
         : fileProbe
@@ -444,7 +459,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
   const base = `http://127.0.0.1:${server.address().port}`;
   const env = {
     PATH:
-      policyMarker || fileProbe || holdProbe || publicationProbe
+      policyMarker || fileProbe || holdProbe || publicationProbe || push
         ? `${fakeBin}:${process.env.PATH}`
         : process.env.PATH,
     HOME: home,
@@ -452,7 +467,12 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
     XDG_DATA_HOME: join(dir, 'data'),
     XDG_CACHE_HOME: join(dir, 'cache'),
     LCARS_RUN_ID:
-      policyMarker || recovery || fileProbe || holdProbe || publicationProbe
+      policyMarker ||
+      recovery ||
+      fileProbe ||
+      holdProbe ||
+      publicationProbe ||
+      push
         ? context.runId
         : 'work:local-boundary-probe/r1',
     ...(bootstrap || recovery ? { LCARS_WORKER_CONTEXT: contextPath } : {}),
@@ -600,7 +620,7 @@ code_mode = false
     ? outcome.denial
     : holdProbe
       ? reviewDenial(mode)
-      : fileProbe || publicationProbe
+      : fileProbe || publicationProbe || push
         ? expectedFileDenial(mode)
         : '';
   const reviewReadCount = existsSync(reviewReads)
@@ -633,6 +653,7 @@ code_mode = false
     denialReasonObserved,
     sessionBindingVerified,
     reviewReadCount,
+    pushVerified: push?.verify() ?? false,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
@@ -641,6 +662,15 @@ code_mode = false
       denialReasonObserved &&
       sessionBindingVerified &&
       (!outcomeProbe || ownershipReadCount === 0) &&
+      (!push ||
+        (hookInvoked &&
+          push.verify() &&
+          ownershipReadCount ===
+            (mode.endsWith('-review') || mode.endsWith('-primary')
+              ? 0
+              : ownershipChanged
+                ? 2
+                : 1))) &&
       (!publicationProbe ||
         (hookInvoked &&
           ownershipReadCount ===
@@ -653,7 +683,7 @@ code_mode = false
           effect === mode.endsWith('-released')
         : ownershipChanged
           ? hookInvoked && ownershipChangeVerified
-          : publicationProbe
+          : publicationProbe || push
             ? hookInvoked
             : fileProbe
               ? hookInvoked && effect === mode.endsWith('-allow')
@@ -714,6 +744,12 @@ const modes = [
   'bootstrap-publication-ownership-absent',
   'bootstrap-publication-ownership-unreadable',
   'bootstrap-publication-ownership-changed',
+  'bootstrap-push-allow',
+  'bootstrap-push-review',
+  'bootstrap-push-primary',
+  'bootstrap-push-ownership-absent',
+  'bootstrap-push-ownership-unreadable',
+  'bootstrap-push-ownership-changed',
 ];
 if (scenario && !modes.includes(scenario))
   throw new Error(`Unknown scenario: ${scenario}`);
