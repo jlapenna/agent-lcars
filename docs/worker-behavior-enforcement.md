@@ -287,6 +287,24 @@ observed decreasing 5/3-second round limits and passed that scenario. The
 assertion has not been weakened, the failure has not been rerun away, and its
 root cause remains unproven pending stronger CI evidence.
 
+OpenCode policy execution now uses the same bounded child-process bridge as
+the command-hook adapters. In-process synchronous evaluation could hang the
+CLI before its exception recovery ran. The bridge terminates a timed-out
+evaluator with SIGKILL, so ignoring SIGTERM cannot defeat the bound; it retains
+the existing single recovery allowance and allow/deny smoke. Installation and
+registration still belong to setup, not per-action presence checks.
+Source-level native probes with pinned OpenCode 1.18.25 passed a CPU-bound
+evaluator that ignores SIGTERM: successful recovery took 5236 ms; an already
+consumed allowance denied publication in 5015 ms, emitted the infrastructure
+failure receipt recognized by the runner helper, and preserved unrelated work.
+The combined happy-path workflow also passed with this adapter. Evidence is
+in `/tmp/lcars-opencode-hook-probe-4pxS5q`,
+`/tmp/lcars-opencode-hook-probe-vBytlT`, and
+`/tmp/lcars-opencode-hook-probe-tk5Vhz`. Focused policy, bridge, setup, and native
+session contracts passed (90 tests). These new runtime changes require a new
+candidate build and image-bound native qualification; the previous candidate
+was removed by external cleanup, not changed or promoted.
+
 This ledger distinguishes native interception evidence from the complete,
 image-bound scenario. No row grants provider graduation on its own.
 
@@ -479,7 +497,7 @@ independently checks tool-result delivery, hook invocation and the actual file:
 - Shared policy lookup failure: a failed ownership read prevents publication.
 - Bootstrap marker: the actual runner bootstrap installs and verifies the
   policy; the native loader executes it and the fixture receives the repaired body.
-- Evaluator recovery: an injected in-process adapter failure is recovered by a
+- Evaluator recovery: an injected evaluator-process failure is recovered by a
   fresh shared-policy process; a pre-consumed allowance prevents publication.
 - Native file writes: a real linked-worktree edit succeeds; primary-checkout
   and symlink-to-primary edits are denied with independently unchanged targets.

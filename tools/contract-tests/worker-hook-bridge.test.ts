@@ -144,14 +144,17 @@ console.log(JSON.stringify({hookSpecificOutput: {
   });
   it('bounds a hanging recovery and consumes its allowance without leaking errors', () => {
     const { file, env, input } = recoveryFixture();
-    writeFileSync(file, 'setInterval(() => {}, 1000);');
+    writeFileSync(
+      file,
+      "process.on('SIGTERM', () => {}); setTimeout(() => process.exit(0), 1500); setInterval(() => {}, 1000);",
+    );
     const started = Date.now();
     const result = bridge.recover(file, input, { env, timeout: 50 });
     expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
     expect(result.hookSpecificOutput.permissionDecisionReason).toContain(
       'infrastructure failure',
     );
-    expect(Date.now() - started).toBeLessThan(2000);
+    expect(Date.now() - started).toBeLessThan(1000);
     expect(existsSync(env.LCARS_WORKER_CONTEXT + '.recovery-used')).toBe(true);
   });
   it('uses the provisioned Node interpreter when loaded in a Bun host', () => {

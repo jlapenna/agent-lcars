@@ -148,7 +148,13 @@ async function probe(mode) {
     holdProbe ||
     publicationProbe ||
     !!push;
-  const recovery = mode.startsWith('policy-recovery-');
+  const timeoutProbe = mode.startsWith('policy-timeout-');
+  const recovery = mode.startsWith('policy-recovery-') || timeoutProbe;
+  const recoveryExhausted = recovery && mode.endsWith('-exhausted');
+  const retainedControlWork = join(workspace, 'retained-control-work');
+  const controlTiming = join(dir, 'control-timing.json');
+  if (recovery)
+    writeFileSync(retainedControlWork, 'retain work after control failure\n');
   const usesPolicy = mode.startsWith('policy-') || bootstrap;
   const context = policy.prepareContext(
     outcome?.brief ?? {
@@ -175,7 +181,7 @@ async function probe(mode) {
   );
   const contextPath = join(dir, 'worker-policy-context.json');
   writeFileSync(contextPath, JSON.stringify(context));
-  if (mode === 'policy-recovery-exhausted')
+  if (recoveryExhausted)
     writeFileSync(`${contextPath}.recovery-used`, context.attemptId);
   const fakeBin = join(dir, 'bin');
   mkdirSync(fakeBin);
@@ -217,12 +223,30 @@ export default async (native) => ({
 });
 `,
   );
+  const failedHandler = join(dir, 'failed-handler.cjs');
+  if (recovery)
+    writeFileSync(
+      failedHandler,
+      `
+const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const payload = fs.readFileSync(0, 'utf8');
+const marker = __filename + '.started';
+if (!fs.existsSync(marker)) {
+  fs.writeFileSync(marker, 'started');
+  ${timeoutProbe ? "process.on('SIGTERM', () => {}); while (true) {}" : "throw new Error('LCARS_INJECTED_CONTROL_CRASH');"}
+}
+const result = spawnSync(process.execPath, [${JSON.stringify(resolve('packages/fleet-tools/bin/worker-policy.cjs'))}], {input:payload,encoding:'utf8',timeout:3000});
+process.stdout.write(result.stdout || '');
+process.exit(result.status ?? 1);
+`,
+    );
   if (usesPolicy && !bootstrap)
     writeFileSync(
       plugin,
       `import {appendFileSync} from 'node:fs';
 import workerPolicy from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-opencode-plugin.mjs')).href)};
-import policy from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-policy.cjs')).href)};
+import bridge from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-hook-bridge.cjs')).href)};
 export default async (context) => {
   const hooks = await workerPolicy(context);
   return {'tool.execute.before': async (input, output) => {
@@ -230,10 +254,11 @@ export default async (context) => {
     ${
       recovery
         ? `
-    const original = policy.evaluate;
-    policy.evaluate = () => { throw new Error('LCARS_INJECTED_CONTROL_CRASH'); };
+    const original = bridge.invoke;
+    const started = Date.now();
+    bridge.invoke = (_handler, payload, options) => original(${JSON.stringify(failedHandler)}, payload, options);
     try { await hooks['tool.execute.before'](input, output); }
-    finally { policy.evaluate = original; }
+    finally { bridge.invoke = original; appendFileSync(${JSON.stringify(controlTiming)}, JSON.stringify({elapsedMs:Date.now()-started}) + '\\n'); }
     `
         : "await hooks['tool.execute.before'](input, output);"
     }
@@ -540,15 +565,16 @@ export default async (context) => {
     secondIssued &&
     !existsSync(secondSentinel) &&
     ownershipReadCount === 2;
-  const expectedDenial = lineageExhausted
-    ? 'infrastructure failure'
-    : outcome
-      ? outcome.denial
-      : holdProbe
-        ? reviewDenial(mode)
-        : fileProbe || publicationProbe || push
-          ? expectedFileDenial(mode)
-          : '';
+  const expectedDenial =
+    lineageExhausted || recoveryExhausted
+      ? 'infrastructure failure'
+      : outcome
+        ? outcome.denial
+        : holdProbe
+          ? reviewDenial(mode)
+          : fileProbe || publicationProbe || push
+            ? expectedFileDenial(mode)
+            : '';
   const reviewReadCount = existsSync(reviewReads)
     ? readFileSync(reviewReads, 'utf8').trim().split('\n').length
     : 0;
@@ -557,16 +583,21 @@ export default async (context) => {
   const recoveryVerified =
     recovery &&
     existsSync(`${contextPath}.recovery-used`) &&
-    existsSync(`${contextPath}.recovery-succeeded`) ===
-      (mode === 'policy-recovery-success') &&
-    existsSync(`${contextPath}.control-failed`) ===
-      (mode === 'policy-recovery-exhausted');
+    existsSync(`${contextPath}.recovery-succeeded`) === !recoveryExhausted &&
+    existsSync(`${contextPath}.control-failed`) === recoveryExhausted;
+  const retainedWorkVerified =
+    !recovery ||
+    readFileSync(retainedControlWork, 'utf8') ===
+      'retain work after control failure\n';
+  const controlElapsedMs = existsSync(controlTiming)
+    ? JSON.parse(readFileSync(controlTiming, 'utf8').trim()).elapsedMs
+    : null;
   const providerApiLineageVerified =
     existsSync(lineageReceipt) &&
     JSON.parse(readFileSync(lineageReceipt, 'utf8'))
       .providerApiLineageVerified === true;
   const runnerFailureRecognized =
-    lineageRecovery &&
+    (lineageRecovery || recovery) &&
     spawnSync(
       'bash',
       [
@@ -592,6 +623,8 @@ export default async (context) => {
     effect,
     markerRepaired,
     recoveryVerified,
+    retainedWorkVerified,
+    controlElapsedMs,
     ownershipReadCount,
     ownershipChangeVerified,
     denialReasonObserved,
@@ -638,6 +671,11 @@ export default async (context) => {
       (!lineageRecovery || runnerFailureRecognized === lineageExhausted) &&
       (!resumeProbe || resumedSameSession) &&
       (!recovery || recoveryVerified) &&
+      (!recovery ||
+        (retainedWorkVerified &&
+          runnerFailureRecognized === recoveryExhausted)) &&
+      (!timeoutProbe ||
+        (controlElapsedMs >= 4500 && controlElapsedMs < 15000)) &&
       (workflow
         ? workflowResult.passed &&
           completionBefore.code === 1 &&
@@ -661,7 +699,7 @@ export default async (context) => {
                     effect === (mode.endsWith('-allow') || resumeProbe)
                   : mode === 'policy-marker' ||
                       bootstrap ||
-                      mode === 'policy-recovery-success'
+                      (recovery && !recoveryExhausted)
                     ? hookInvoked && effect && markerRepaired
                     : mode === 'missing'
                       ? !hookInvoked && effect
@@ -684,6 +722,8 @@ const modes = [
   'bootstrap-marker',
   'policy-recovery-success',
   'policy-recovery-exhausted',
+  'policy-timeout-success',
+  'policy-timeout-exhausted',
   'bootstrap-file-allow',
   'bootstrap-file-primary',
   'bootstrap-file-symlink',

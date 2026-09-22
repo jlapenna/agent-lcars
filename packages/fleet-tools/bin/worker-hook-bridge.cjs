@@ -32,6 +32,7 @@ function invokeOnce(handler, input, options = {}) {
     input,
     encoding: 'utf8',
     timeout: options.timeout ?? 5000,
+    killSignal: 'SIGKILL',
     maxBuffer: 1024 * 1024,
     env: options.env ?? process.env,
   });
