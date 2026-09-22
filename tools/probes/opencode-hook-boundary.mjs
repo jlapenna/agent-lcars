@@ -21,6 +21,8 @@ import { delegationFixture } from './delegation-fixture.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
 import { publicationCommand } from './publication-fixture.mjs';
 import {
+  reviewAcknowledgmentModes,
+  reviewAllowed,
   reviewCommand,
   reviewDenial,
   reviewFixture,
@@ -724,7 +726,7 @@ export default async (context) => {
           : holdProbe
             ? hookInvoked &&
               reviewReadCount === 1 &&
-              effect === mode.endsWith('-released')
+              effect === reviewAllowed(mode)
             : ownershipChanged
               ? hookInvoked && ownershipChangeVerified
               : publicationProbe || push
@@ -775,6 +777,7 @@ const modes = [
   'bootstrap-hold-merge-blocked',
   'bootstrap-hold-merge-released',
   'bootstrap-hold-draft-threads',
+  ...reviewAcknowledgmentModes,
   'bootstrap-outcome-park-allow',
   'bootstrap-outcome-no-op-allow',
   'bootstrap-outcome-foreign',
@@ -798,10 +801,19 @@ const modes = [
   'bootstrap-push-ownership-unreadable',
   'bootstrap-push-ownership-changed',
 ];
-if (scenario && !modes.includes(scenario))
+if (
+  scenario &&
+  scenario !== 'review-acknowledgments' &&
+  !modes.includes(scenario)
+)
   throw new Error(`Unknown scenario: ${scenario}`);
-for (const mode of scenario ? [scenario] : modes)
-  observations.push(await probe(mode));
+const selectedModes =
+  scenario === 'review-acknowledgments'
+    ? reviewAcknowledgmentModes
+    : scenario
+      ? [scenario]
+      : modes;
+for (const mode of selectedModes) observations.push(await probe(mode));
 const report = {
   provider: 'opencode',
   providerVersion: expectedVersion,
