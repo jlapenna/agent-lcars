@@ -52,13 +52,16 @@ for (const name of readdirSync(join(source, 'packages/fleet-tools/bin')).filter(
 }
 if (!moduleHashes['worker-policy.cjs'])
   throw new Error('Worker modules missing');
-const helper = 'worker-policy-bootstrap.sh';
-const helperHash = sha256(join(runtime, helper));
-if (
-  helperHash !==
-  sha256(join(source, 'apps/runner-autoscaler/runner-image/runtime', helper))
-)
-  throw new Error('Image bootstrap helper source mismatch');
+const runtimeHashes = {};
+for (const helper of ['worker-policy-bootstrap.sh', 'verify-outcome.sh']) {
+  const actual = sha256(join(runtime, helper));
+  if (
+    actual !==
+    sha256(join(source, 'apps/runner-autoscaler/runner-image/runtime', helper))
+  )
+    throw new Error(`Image runtime helper source mismatch: ${helper}`);
+  runtimeHashes[helper] = actual;
+}
 
 const workspace = mkdtempSync(join(tmpdir(), 'lcars-image-probe-'));
 cpSync(join(source, 'tools/probes'), join(workspace, 'tools/probes'), {
@@ -121,7 +124,8 @@ const report = {
   jobUid: process.getuid(),
   moduleHashes,
   probeHashes,
-  bootstrapHelperHash: helperHash,
+  bootstrapHelperHash: runtimeHashes['worker-policy-bootstrap.sh'],
+  runtimeHashes,
   passed,
   qualification: 'not-evaluated',
   nativeReport,

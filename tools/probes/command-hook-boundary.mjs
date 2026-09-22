@@ -23,6 +23,7 @@ import {
   reviewDenial,
   reviewFixture,
 } from './review-fixture.mjs';
+import { workflowFixture } from './workflow-fixture.mjs';
 import {
   expectedFileDenial,
   fileProbeFixture,
@@ -95,6 +96,8 @@ async function probe(mode) {
   mkdirSync(workspace, { recursive: true });
   mkdirSync(join(home, '.codex'), { recursive: true });
   mkdirSync(join(home, '.claude'), { recursive: true });
+  const workflow =
+    mode === 'bootstrap-workflow' ? workflowFixture(dir, home) : null;
   const outcomeProbe = mode.startsWith('bootstrap-outcome-');
   const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
   const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
@@ -110,18 +113,21 @@ async function probe(mode) {
   const secondSentinel =
     push?.secondSentinel ?? join(workspace, 'second-effect');
   const files =
+    workflow ??
     push ??
     outcome ??
     (fileProbe || holdProbe || publicationProbe
       ? fileProbeFixture(dir, home, mode)
       : null);
-  const fileContent = outcome?.content ?? 'LCARS_FILE_PROBE\n';
+  const fileContent =
+    workflow?.content ?? outcome?.content ?? 'LCARS_FILE_PROBE\n';
   const sentinel = files?.sentinel ?? join(workspace, 'effect'),
     receipt = join(dir, 'receipt.json');
   const rewrittenSentinel = join(workspace, 'rewritten-effect');
   const resumedSentinel = join(workspace, 'resumed-effect');
   let round = 1;
   const bootstrap =
+    !!workflow ||
     mode === 'bootstrap-marker' ||
     fileProbe ||
     holdProbe ||
@@ -134,7 +140,7 @@ async function probe(mode) {
       repository: 'octo/example',
       mode: mode.endsWith('-review')
         ? 'review'
-        : fileProbe || holdProbe || publicationProbe || push
+        : fileProbe || holdProbe || publicationProbe || push || workflow
           ? 'implement'
           : 'reply',
       anchor: {
@@ -164,6 +170,7 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   fs.appendFileSync(${JSON.stringify(reviewReads)}, 'read\\n');
   console.log(${JSON.stringify(JSON.stringify(reviewFixture(mode)))});
 } else if (args[0] === 'api') {
+  ${workflow?.apiSource ?? ''}
   fs.appendFileSync(${JSON.stringify(ownershipReads)}, 'read\\n');
   ${mode.endsWith('-ownership-unreadable') ? 'process.exit(1);' : ''}
   const lost = ${mode.endsWith('-ownership-absent')} || fs.existsSync(${JSON.stringify(ownershipState)});
@@ -181,6 +188,7 @@ else process.exitCode = 1;
     hook,
     `const fs = require('node:fs');
 fs.writeFileSync(${JSON.stringify(receipt)}, fs.readFileSync(0));
+${workflow ? `fs.appendFileSync(${JSON.stringify(workflow.eventsPath)}, JSON.stringify(JSON.parse(fs.readFileSync(${JSON.stringify(receipt)}, 'utf8'))) + '\\n');` : ''}
 ${mode === 'deny' ? "process.stderr.write('LCARS_PROBE_DENY'); process.exitCode = 2;" : ''}
 ${mode === 'failure' || mode === 'bridge-failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
 ${mode === 'bridge-timeout' ? 'setInterval(() => {}, 1000);' : ''}
@@ -307,9 +315,11 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
         provider === 'claude' &&
         mode === 'bootstrap-file-symlink' &&
         !readIssued;
+      const workflowStep = workflow?.next(content);
+      const fileAction = fileProbe || workflowStep?.kind === 'write';
       const toolName = preRead
         ? 'Read'
-        : fileProbe
+        : fileAction
           ? provider === 'codex'
             ? 'apply_patch'
             : 'Write'
@@ -325,24 +335,32 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
         );
       const fileTarget = second ? secondSentinel : files?.target;
       const callTool =
-        (!issued || second) && tools.some((tool) => tool.name === toolName);
+        (workflow ? !!workflowStep : !issued || second) &&
+        tools.some((tool) => tool.name === toolName);
       if (callTool) {
-        if (preRead) readIssued = true;
+        if (workflow) {
+          workflow.issued(
+            `${provider === 'codex' ? 'call_probe_' : 'tool_probe_'}${requests}`,
+          );
+          issued = true;
+        } else if (preRead) readIssued = true;
         else if (second) secondIssued = true;
         else issued = true;
       }
-      const command = push
-        ? push.command(second)
-        : publicationProbe
-          ? publicationCommand(mode, context)
-          : holdProbe
-            ? reviewCommand(mode)
-            : policyMarker
-              ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
-              : `touch ${quote(round === 1 ? sentinel : resumedSentinel)}`;
+      const command = workflow
+        ? workflowStep?.command
+        : push
+          ? push.command(second)
+          : publicationProbe
+            ? publicationCommand(mode, context)
+            : holdProbe
+              ? reviewCommand(mode)
+              : policyMarker
+                ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+                : `touch ${quote(round === 1 ? sentinel : resumedSentinel)}`;
       const args = preRead
         ? { file_path: fileTarget }
-        : fileProbe
+        : fileAction
           ? { file_path: fileTarget, content: fileContent }
           : provider === 'codex'
             ? { cmd: command, yield_time_ms: 1000 }
@@ -352,7 +370,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       if (provider === 'codex') {
         const item = callTool
-          ? fileProbe
+          ? fileAction
             ? {
                 type: 'custom_tool_call',
                 id: `ctc_probe_${requests}`,
@@ -367,8 +385,8 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
               }
             : {
                 type: 'function_call',
-                id: 'fc_probe',
-                call_id: 'call_probe',
+                id: `fc_probe_${requests}`,
+                call_id: `call_probe_${requests}`,
                 name: toolName,
                 arguments: JSON.stringify(args),
                 status: 'completed',
@@ -460,7 +478,12 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
   const base = `http://127.0.0.1:${server.address().port}`;
   const env = {
     PATH:
-      policyMarker || fileProbe || holdProbe || publicationProbe || push
+      policyMarker ||
+      fileProbe ||
+      holdProbe ||
+      publicationProbe ||
+      push ||
+      workflow
         ? `${fakeBin}:${process.env.PATH}`
         : process.env.PATH,
     HOME: home,
@@ -473,7 +496,8 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
       fileProbe ||
       holdProbe ||
       publicationProbe ||
-      push
+      push ||
+      workflow
         ? context.runId
         : 'work:local-boundary-probe/r1',
     ...(bootstrap || recovery ? { LCARS_WORKER_CONTEXT: contextPath } : {}),
@@ -483,10 +507,12 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
     ANTHROPIC_API_KEY: 'local-test-placeholder',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     DISABLE_AUTOUPDATER: '1',
+    ...workflow?.env,
   };
+  const completionBefore = workflow?.completion(context, env, 'before');
   writeFileSync(
     join(home, '.codex', 'config.toml'),
-    `model = "${fileProbe ? 'gpt-5.4' : 'probe'}"
+    `model = "${fileProbe || workflow ? 'gpt-5.4' : 'probe'}"
 model_provider = "probe"
 [model_providers.probe]
 name = "Local deterministic probe"
@@ -589,7 +615,7 @@ code_mode = false
           (provider === 'codex' ? 'apply_patch' : 'Write'));
   const rewrittenEffect = existsSync(rewrittenSentinel);
   let markerRepaired = false;
-  if ((policyMarker || publicationProbe) && effect) {
+  if ((policyMarker || publicationProbe || workflow) && effect) {
     const published = JSON.parse(readFileSync(sentinel, 'utf8'));
     markerRepaired =
       published[published.indexOf('--body') + 1] ===
@@ -609,6 +635,8 @@ code_mode = false
           (mode === 'bootstrap-file-session-bound-mismatch'
             ? 'another-native-session'
             : JSON.parse(readFileSync(receipt, 'utf8')).session_id));
+  const completionAfter = workflow?.completion(context, env, 'after');
+  const workflowResult = workflow?.verify(context, nativeBinding?.sessionId);
   const ownershipReadCount = existsSync(ownershipReads)
     ? readFileSync(ownershipReads, 'utf8').trim().split('\n').length
     : 0;
@@ -656,6 +684,9 @@ code_mode = false
     sessionBindingVerified,
     reviewReadCount,
     pushVerified: push?.verify() ?? false,
+    workflow: workflowResult,
+    completionBefore,
+    completionAfter,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
@@ -683,37 +714,46 @@ code_mode = false
                 : 1) &&
           effect === (mode.endsWith('-allow') || ownershipChanged) &&
           (!effect || markerRepaired))) &&
-      (holdProbe
-        ? hookInvoked &&
-          reviewReadCount === 1 &&
-          effect === mode.endsWith('-released')
-        : ownershipChanged
-          ? hookInvoked && ownershipChangeVerified
-          : publicationProbe || push
-            ? hookInvoked
-            : fileProbe
-              ? hookInvoked && effect === mode.endsWith('-allow')
-              : recovery
-                ? hookInvoked &&
-                  recoveryVerified &&
-                  effect === (mode === 'bridge-recovery-success')
-                : mode === 'resume'
-                  ? hookInvoked && effect && resumedSameSession
-                  : policyMarker
-                    ? hookInvoked && effect && markerRepaired
-                    : mode === 'bridge-rewrite'
-                      ? hookInvoked && !effect && rewrittenEffect
-                      : mode === 'missing'
-                        ? !hookInvoked && effect
-                        : hookInvoked &&
-                          (mode === 'failure' ||
-                            effect ===
-                              (mode === 'allow' || mode === 'bridge-allow'))),
+      (workflow
+        ? workflowResult.passed &&
+          completionBefore.code === 1 &&
+          completionBefore.missing &&
+          completionAfter.code === 0 &&
+          !completionAfter.missing &&
+          markerRepaired &&
+          ownershipReadCount === 5
+        : holdProbe
+          ? hookInvoked &&
+            reviewReadCount === 1 &&
+            effect === mode.endsWith('-released')
+          : ownershipChanged
+            ? hookInvoked && ownershipChangeVerified
+            : publicationProbe || push
+              ? hookInvoked
+              : fileProbe
+                ? hookInvoked && effect === mode.endsWith('-allow')
+                : recovery
+                  ? hookInvoked &&
+                    recoveryVerified &&
+                    effect === (mode === 'bridge-recovery-success')
+                  : mode === 'resume'
+                    ? hookInvoked && effect && resumedSameSession
+                    : policyMarker
+                      ? hookInvoked && effect && markerRepaired
+                      : mode === 'bridge-rewrite'
+                        ? hookInvoked && !effect && rewrittenEffect
+                        : mode === 'missing'
+                          ? !hookInvoked && effect
+                          : hookInvoked &&
+                            (mode === 'failure' ||
+                              effect ===
+                                (mode === 'allow' || mode === 'bridge-allow'))),
   };
 }
 
 const observations = [];
 const modes = [
+  'bootstrap-workflow',
   'allow',
   'deny',
   'failure',

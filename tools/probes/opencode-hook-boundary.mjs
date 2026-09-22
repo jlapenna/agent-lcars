@@ -24,6 +24,7 @@ import {
   reviewDenial,
   reviewFixture,
 } from './review-fixture.mjs';
+import { workflowFixture } from './workflow-fixture.mjs';
 import {
   expectedFileDenial,
   fileProbeFixture,
@@ -105,6 +106,8 @@ async function probe(mode) {
       );
   }
   const outcomeProbe = mode.startsWith('bootstrap-outcome-');
+  const workflow =
+    mode === 'bootstrap-workflow' ? workflowFixture(dir, home) : null;
   const outcome = outcomeProbe ? outcomeFixture(mode, dir) : null;
   const fileProbe = mode.startsWith('bootstrap-file-') || outcomeProbe;
   const resumeProbe = mode === 'bootstrap-file-resume';
@@ -121,12 +124,14 @@ async function probe(mode) {
   const secondSentinel =
     push?.secondSentinel ?? join(workspace, 'second-effect');
   const files =
+    workflow ??
     push ??
     outcome ??
     (fileProbe || holdProbe || publicationProbe
       ? fileProbeFixture(dir, home, mode)
       : null);
-  const fileContent = outcome?.content ?? 'LCARS_FILE_PROBE\n';
+  const fileContent =
+    workflow?.content ?? outcome?.content ?? 'LCARS_FILE_PROBE\n';
   const sentinel = files?.sentinel ?? join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
   const plugin = join(workspace, 'probe-plugin.mjs');
@@ -135,6 +140,7 @@ async function probe(mode) {
   const lineageExhausted = mode === 'bootstrap-lineage-recovery-exhausted';
   const lineageReceipt = join(dir, 'lineage.json');
   const bootstrap =
+    !!workflow ||
     mode === 'bootstrap-marker' ||
     lineageProbe ||
     fileProbe ||
@@ -148,7 +154,7 @@ async function probe(mode) {
       repository: 'octo/example',
       mode: mode.endsWith('-review')
         ? 'review'
-        : fileProbe || holdProbe || publicationProbe || push
+        : fileProbe || holdProbe || publicationProbe || push || workflow
           ? 'implement'
           : 'reply',
       anchor: {
@@ -181,6 +187,7 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   fs.appendFileSync(${JSON.stringify(reviewReads)}, 'read\\n');
   console.log(${JSON.stringify(JSON.stringify(reviewFixture(mode)))});
 } else if (args[0] === 'api') {
+  ${workflow?.apiSource ?? ''}
   fs.appendFileSync(${JSON.stringify(ownershipReads)}, 'read\\n');
   ${mode === 'policy-failure' || mode.endsWith('-ownership-unreadable') ? 'process.exit(1);' : ''}
   const lost = ${mode === 'policy-deny' || mode.endsWith('-ownership-absent')} || fs.existsSync(${JSON.stringify(ownershipState)});
@@ -198,8 +205,9 @@ else process.exitCode = 1;
 ${lineageProbe ? `import { probeLineage, probeLineageRecovery } from ${JSON.stringify(pathToFileURL(resolve('tools/probes/opencode-lineage-fixture.mjs')).href)};` : ''}
 export default async (native) => ({
   'tool.execute.before': async (input) => {
-    if (input.tool !== ${JSON.stringify(fileProbe ? 'write' : 'bash')}) return;
+    if (${workflow ? "!['write', 'bash'].includes(input.tool)" : `input.tool !== ${JSON.stringify(fileProbe ? 'write' : 'bash')}`}) return;
     appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
+    ${workflow ? `appendFileSync(${JSON.stringify(workflow.eventsPath)}, JSON.stringify(input) + '\\n');` : ''}
     ${lineageProbe ? `writeFileSync(${JSON.stringify(lineageReceipt)}, JSON.stringify(await ${lineageRecovery ? `probeLineageRecovery(native, input.sessionID, ${lineageExhausted})` : 'probeLineage(native, input.sessionID)'}));` : ''}
     ${lineageExhausted ? "throw new Error('LCARS control execution failed; preserve work and report an infrastructure failure; do not fabricate a human blocker or PARK.');" : ''}
     ${mode === 'deny' ? "throw new Error('LCARS_PROBE_DENY');" : ''}
@@ -247,7 +255,9 @@ export default async (context) => {
       returnedToolResult ||=
         input.messages?.some((message) => message.role === 'tool') ?? false;
       // Auxiliary title requests are text-only and must not consume the tool call.
-      const toolName = fileProbe ? 'write' : 'bash';
+      const workflowStep = workflow?.next(input.messages ?? []);
+      const fileAction = fileProbe || workflowStep?.kind === 'write';
+      const toolName = fileAction ? 'write' : 'bash';
       const second =
         ownershipChanged && issued && !secondIssued && returnedToolResult;
       if (second)
@@ -256,10 +266,13 @@ export default async (context) => {
           'ownership changed after first tool result',
         );
       const tool =
-        (!issued || second) &&
+        (workflow ? !!workflowStep : !issued || second) &&
         input.tools?.some((entry) => entry.function?.name === toolName);
       if (tool) {
-        if (second) secondIssued = true;
+        if (workflow) {
+          workflow.issued(`probe-call-${requests}`);
+          issued = true;
+        } else if (second) secondIssued = true;
         else issued = true;
       }
       const delta = tool
@@ -273,7 +286,7 @@ export default async (context) => {
                 function: {
                   name: toolName,
                   arguments: JSON.stringify(
-                    fileProbe
+                    fileAction
                       ? {
                           filePath:
                             second || round === 2
@@ -282,15 +295,17 @@ export default async (context) => {
                           content: fileContent,
                         }
                       : {
-                          command: push
-                            ? push.command(second)
-                            : publicationProbe
-                              ? publicationCommand(mode, context)
-                              : holdProbe
-                                ? reviewCommand(mode)
-                                : usesPolicy
-                                  ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
-                                  : `touch '${sentinel}'`,
+                          command: workflow
+                            ? workflowStep?.command
+                            : push
+                              ? push.command(second)
+                              : publicationProbe
+                                ? publicationCommand(mode, context)
+                                : holdProbe
+                                  ? reviewCommand(mode)
+                                  : usesPolicy
+                                    ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
+                                    : `touch '${sentinel}'`,
                           description: 'Create harmless probe sentinel',
                         },
                   ),
@@ -405,7 +420,9 @@ export default async (context) => {
     OPENCODE_DISABLE_MODELS_FETCH: 'true',
     OPENCODE_DISABLE_TERMINAL_TITLE: 'true',
     OPENCODE_MODELS_PATH: join(dir, 'models.json'),
+    ...workflow?.env,
   };
+  const completionBefore = workflow?.completion(context, env, 'before');
   let execution;
   let resumedSameSession = false;
   const deadline = Date.now() + 60000;
@@ -492,6 +509,8 @@ export default async (context) => {
   const ownershipReadCount = existsSync(ownershipReads)
     ? readFileSync(ownershipReads, 'utf8').trim().split('\n').length
     : 0;
+  const completionAfter = workflow?.completion(context, env, 'after');
+  const workflowResult = workflow?.verify(context, nativeBinding?.sessionId);
   const ownershipChangeVerified =
     ownershipChanged &&
     effect &&
@@ -559,6 +578,9 @@ export default async (context) => {
     resumedSameSession,
     reviewReadCount,
     pushVerified: push?.verify() ?? false,
+    workflow: workflowResult,
+    completionBefore,
+    completionAfter,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
@@ -591,31 +613,40 @@ export default async (context) => {
       (!lineageRecovery || runnerFailureRecognized === lineageExhausted) &&
       (!resumeProbe || resumedSameSession) &&
       (!recovery || recoveryVerified) &&
-      (lineageExhausted
-        ? hookInvoked && !effect
-        : holdProbe
-          ? hookInvoked &&
-            reviewReadCount === 1 &&
-            effect === mode.endsWith('-released')
-          : ownershipChanged
-            ? hookInvoked && ownershipChangeVerified
-            : publicationProbe || push
-              ? hookInvoked
-              : fileProbe
-                ? hookInvoked &&
-                  effect === (mode.endsWith('-allow') || resumeProbe)
-                : mode === 'policy-marker' ||
-                    bootstrap ||
-                    mode === 'policy-recovery-success'
-                  ? hookInvoked && effect && markerRepaired
-                  : mode === 'missing'
-                    ? !hookInvoked && effect
-                    : hookInvoked && effect === (mode === 'allow')),
+      (workflow
+        ? workflowResult.passed &&
+          completionBefore.code === 1 &&
+          completionBefore.missing &&
+          completionAfter.code === 0 &&
+          !completionAfter.missing &&
+          markerRepaired &&
+          ownershipReadCount === 5
+        : lineageExhausted
+          ? hookInvoked && !effect
+          : holdProbe
+            ? hookInvoked &&
+              reviewReadCount === 1 &&
+              effect === mode.endsWith('-released')
+            : ownershipChanged
+              ? hookInvoked && ownershipChangeVerified
+              : publicationProbe || push
+                ? hookInvoked
+                : fileProbe
+                  ? hookInvoked &&
+                    effect === (mode.endsWith('-allow') || resumeProbe)
+                  : mode === 'policy-marker' ||
+                      bootstrap ||
+                      mode === 'policy-recovery-success'
+                    ? hookInvoked && effect && markerRepaired
+                    : mode === 'missing'
+                      ? !hookInvoked && effect
+                      : hookInvoked && effect === (mode === 'allow')),
   };
 }
 
 const observations = [];
 const modes = [
+  'bootstrap-workflow',
   'allow',
   'deny',
   'failure',
