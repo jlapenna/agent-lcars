@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -7,7 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { afterEach, expect, it } from 'vitest';
@@ -26,6 +27,118 @@ function fixture() {
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
+});
+
+it.each([
+  {
+    name: 'no failure receipt',
+    used: false,
+    success: false,
+    failure: false,
+    foreign: false,
+    wrongPath: false,
+    failed: false,
+  },
+  {
+    name: 'foreign failure receipt',
+    used: false,
+    success: false,
+    failure: true,
+    foreign: true,
+    wrongPath: false,
+    failed: false,
+  },
+  {
+    name: 'exact failure receipt',
+    used: false,
+    success: false,
+    failure: true,
+    foreign: false,
+    wrongPath: false,
+    failed: true,
+  },
+  {
+    name: 'interrupted recovery',
+    used: true,
+    success: false,
+    failure: false,
+    foreign: false,
+    wrongPath: false,
+    failed: true,
+  },
+  {
+    name: 'successful recovery',
+    used: true,
+    success: true,
+    failure: false,
+    foreign: false,
+    wrongPath: false,
+    failed: false,
+  },
+  {
+    name: 'failure after earlier recovery',
+    used: true,
+    success: true,
+    failure: true,
+    foreign: false,
+    wrongPath: false,
+    failed: true,
+  },
+  {
+    name: 'foreign recovery success',
+    used: true,
+    success: true,
+    failure: false,
+    foreign: true,
+    wrongPath: false,
+    failed: true,
+  },
+  {
+    name: 'unbound receipt location',
+    used: false,
+    success: false,
+    failure: true,
+    foreign: false,
+    wrongPath: true,
+    failed: false,
+  },
+])('classifies terminal control evidence: $name', (test) => {
+  const root = dirname(fixture().config);
+  const context = join(
+    root,
+    test.wrongPath ? 'foreign-context.json' : 'worker-policy-context.json',
+  );
+  const attempt = 'g1:work:test/r1';
+  if (test.used) writeFileSync(context + '.recovery-used', attempt);
+  for (const [enabled, suffix] of [
+    [test.success, '.recovery-succeeded'],
+    [test.failure, '.control-failed'],
+  ] as const)
+    if (enabled)
+      writeFileSync(
+        context + suffix,
+        test.foreign ? 'g9:work:other/r9' : attempt,
+      );
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      'source "$1"; worker_control_failed',
+      '--',
+      resolve(
+        'apps/runner-autoscaler/runner-image/runtime/worker-policy-bootstrap.sh',
+      ),
+    ],
+    {
+      env: {
+        PATH: process.env.PATH,
+        RUNNER_TEMP: root,
+        LCARS_WORKER_CONTEXT: context,
+        ATTEMPT_ID: attempt,
+      },
+    },
+  );
+  expect(result.status).toBe(test.failed ? 0 : 1);
 });
 
 it('installs a missing registration, preserves unrelated state, and repeats without a write', () => {

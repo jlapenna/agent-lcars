@@ -2,6 +2,26 @@
 # Sourced once by direct-runner. The rollout selector is set by the trusted
 # deployment only after that provider's native canaries qualify. It is not
 # inferred from task content or from whether a hook happens to be present.
+worker_control_failed() {
+  # Terminal execution evidence, not an installation-presence check. Bind the
+  # receipt location and contents to this runner's setup and exact attempt.
+  local context="${LCARS_WORKER_CONTEXT:-}"
+  [ "$context" = "$RUNNER_TEMP/worker-policy-context.json" ] || return 1
+  if [ -f "$context.control-failed" ] &&
+    printf '%s' "$ATTEMPT_ID" | cmp -s - "$context.control-failed"; then
+    return 0
+  fi
+  # A killed recovery can leave only its consumed allowance. Without positive
+  # completion evidence it must not become a success or another correction.
+  [ -f "$context.recovery-used" ] &&
+    printf '%s' "$ATTEMPT_ID" | cmp -s - "$context.recovery-used" || return 1
+  if [ -f "$context.recovery-succeeded" ] &&
+    printf '%s' "$ATTEMPT_ID" | cmp -s - "$context.recovery-succeeded"; then
+    return 1
+  fi
+  return 0
+}
+
 worker_policy_bootstrap() {
   local config_path="$1" selected=false provider
   local -a providers=()

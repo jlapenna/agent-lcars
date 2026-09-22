@@ -15,9 +15,9 @@ and acknowledgments of external draft/auto-merge holds.
 The direct runner now shares one bounded completion-correction rule across all
 three providers, verified by its executable runner harness. Hook setup is
 connected to all three launch paths behind provider-specific qualification.
-Bounded evaluator restart recovery is implemented; remaining policy coverage,
-terminal infrastructure-failure classification, and full acceptance canaries
-remain to be built and verified.
+Bounded evaluator restart recovery and terminal infrastructure-failure
+classification are implemented; remaining policy coverage and full acceptance
+canaries remain to be built and verified.
 
 ## Scope and decisions
 
@@ -119,8 +119,21 @@ probe, exhausted allowance, or mismatched context keeps the action denied with
 an infrastructure-failure instruction, never a fabricated PARK. Genuine policy
 denials do not consume recovery. No task command or publication is replayed by
 the evaluator. The allowance persists across hooks and same-attempt resumed
-rounds; setup does not clear it. This does not repair broken packages, and the
-runner's terminal infrastructure classification still needs acceptance coverage.
+rounds; setup does not clear it. This does not repair broken packages.
+
+Recovery writes attempt-bound `.recovery-succeeded` or `.control-failed`
+receipts without task contents. A later failure remains recorded even if an
+earlier recovery succeeded. A consumed allowance without success evidence also
+counts as failed, covering interruption during repair. Before a completion
+correction and at terminal classification, the runner reads these execution
+receipts at its setup-bound location; it does not inspect hook installation.
+Unrecovered failure suppresses correction and reports `worker-control-failed`,
+not PARK/no-op or success inferred from a process exit. The Work API stores this
+as `ok: false`. A positively identified, exact-attempt PR, comment, or review
+retains its deliverable outcome and reference; failure does not erase published
+work. Unclassified success or a terminal PARK/no-op record cannot conceal the
+infrastructure fault. Runner tests exercise all three providers; native probes
+verify that successful and exhausted recovery produce distinct receipts.
 
 Mechanically repair omitted attempt markers on supported deliverables; never
 invent identity or stamp unrelated artifacts. Ownership, authorization and

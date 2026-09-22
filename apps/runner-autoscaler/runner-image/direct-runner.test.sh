@@ -77,6 +77,26 @@ make_fake_bins() {
   bindir="$1"
   mkdir -p "$bindir"
 
+  cat > "$bindir/worker-control-fixture" <<'FAKE'
+#!/usr/bin/env bash
+[ -n "${FAKE_CONTROL_RECEIPT:-}" ] || exit 0
+context="${LCARS_WORKER_CONTEXT:?}"
+case "$FAKE_CONTROL_RECEIPT" in
+  failed) printf '%s' "$ATTEMPT_ID" > "$context.control-failed" ;;
+  interrupted) printf '%s' "$ATTEMPT_ID" > "$context.recovery-used" ;;
+  recovered)
+    printf '%s' "$ATTEMPT_ID" > "$context.recovery-used"
+    printf '%s' "$ATTEMPT_ID" > "$context.recovery-succeeded"
+    ;;
+  foreign) printf '%s' 'g9:work:other/r9' > "$context.control-failed" ;;
+esac
+if [ -n "${FAKE_CONTROL_TERMINAL:-}" ]; then
+  printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
+    "$FAKE_CONTROL_TERMINAL" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
+fi
+FAKE
+  chmod +x "$bindir/worker-control-fixture"
+
   cat > "$bindir/curl" <<'FAKE'
 #!/usr/bin/env bash
 url=""
@@ -330,6 +350,7 @@ FAKE
   cat > "$bindir/claude" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$CLAUDE_ARGS_LOG"
+worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
@@ -361,6 +382,7 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
   exit 0
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
+worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
@@ -429,6 +451,7 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
   exit 0
 fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
+worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
 echo run >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
@@ -1800,6 +1823,31 @@ for provider in claude codex opencode; do
   export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
   unset LCARS_WORKER_POLICY_PROVIDERS
   echo "scenario $provider-policy-bootstrap: OK"
+done
+
+for provider in claude codex opencode; do
+  export LCARS_WORKER_POLICY_PROVIDERS="$provider" FAKE_GH_NO_MATCH=1
+  for receipt in failed interrupted; do
+    export FAKE_CONTROL_RECEIPT="$receipt"
+    for terminal in '' park no-op; do
+      export FAKE_CONTROL_TERMINAL="$terminal"
+      run_scenario "$provider-control-$receipt-${terminal:-incomplete}" "$provider"
+      [ "$rc" -ne 0 ] || fail "$provider reported success after control failure"
+      jq -e '.outcome == "worker-control-failed" and (.message | contains("No human decision"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "$provider lost infrastructure classification"
+      count_file="$WORKER_RUN_COUNT_FILE"
+      if [ "$provider" = opencode ]; then count_file="$OPENCODE_RUN_COUNT_FILE"; fi
+      [ "$(cat "$count_file")" -eq 1 ] || fail "$provider continued after exhausted control recovery"
+    done
+  done
+  unset FAKE_GH_NO_MATCH FAKE_CONTROL_TERMINAL
+  for receipt in failed recovered foreign; do
+    export FAKE_CONTROL_RECEIPT="$receipt"
+    run_scenario "$provider-control-$receipt-published" "$provider"
+    [ "$rc" -eq 0 ] || fail "$provider lost a verified published deliverable"
+    jq -e '.outcome == "pull-request"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "$provider relabeled a verified PR"
+  done
+  unset LCARS_WORKER_POLICY_PROVIDERS FAKE_CONTROL_RECEIPT
+  echo "scenario $provider-control-failure-outcomes: OK"
 done
 
 echo "direct-runner.sh: OK"

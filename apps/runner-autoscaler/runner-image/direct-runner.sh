@@ -1286,6 +1286,15 @@ if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]] &&
   [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]]; then
   OUTCOME=provider-limit
 fi
+if worker_control_failed; then
+  case "$OUTCOME" in
+    pull-request | comment | review) ;;
+    *)
+      OUTCOME=worker-control-failed
+      AGENT_MESSAGE="Worker policy control failed without successful recovery. Infrastructure failure; preserve the session and unpublished work. No human decision is requested."
+      ;;
+  esac
+fi
 jq -cn --arg outcome "$OUTCOME" --argjson ref "$OUTCOME_REFERENCE" \
   --arg message "$AGENT_MESSAGE" \
   '{outcome: $outcome, outcomeReference: $ref}

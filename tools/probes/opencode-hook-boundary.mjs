@@ -307,6 +307,13 @@ export default async (context) => {
   }
   const exercised =
     execution.code === 0 && !execution.timedOut && issued && returnedToolResult;
+  const recoveryVerified =
+    recovery &&
+    existsSync(`${contextPath}.recovery-used`) &&
+    existsSync(`${contextPath}.recovery-succeeded`) ===
+      (mode === 'policy-recovery-success') &&
+    existsSync(`${contextPath}.control-failed`) ===
+      (mode === 'policy-recovery-exhausted');
   return {
     mode,
     requests,
@@ -315,14 +322,14 @@ export default async (context) => {
     hookInvoked,
     effect,
     markerRepaired,
-    recoveryUsed: recovery && existsSync(`${contextPath}.recovery-used`),
+    recoveryVerified,
     code: execution.code,
     timedOut: execution.timedOut,
     exercised,
     // Missing-hook case intentionally exposes lack of native admission.
     observedExpectedPrimitive:
       exercised &&
-      (!recovery || existsSync(`${contextPath}.recovery-used`)) &&
+      (!recovery || recoveryVerified) &&
       (mode === 'policy-marker' ||
       bootstrap ||
       mode === 'policy-recovery-success'

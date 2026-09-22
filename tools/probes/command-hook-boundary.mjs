@@ -452,6 +452,10 @@ code_mode = false
   const recoveryVerified =
     recovery &&
     existsSync(`${contextPath}.recovery-used`) &&
+    existsSync(`${contextPath}.recovery-succeeded`) ===
+      (mode === 'bridge-recovery-success') &&
+    existsSync(`${contextPath}.control-failed`) ===
+      (mode === 'bridge-recovery-failure') &&
     readFileSync(join(dir, 'recovery-calls'), 'utf8').trim().split('\n')
       .length === (mode === 'bridge-recovery-success' ? 4 : 3);
   return {

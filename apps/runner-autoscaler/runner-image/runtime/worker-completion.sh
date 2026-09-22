@@ -5,6 +5,7 @@
 worker_completion_needed() {
   local agent_exit="$1" deadline="$2" remaining probe_dir probe_exit
   [ "$agent_exit" -eq 0 ] || return 1
+  if worker_control_failed; then return 1; fi
   remaining=$((deadline - SECONDS))
   [ "$remaining" -gt 0 ] || return 1
   if [ "$ANCHOR_TYPE" = work ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ]; then

@@ -88,6 +88,7 @@ function invokeOnce(handler, input, options = {}) {
 // Atomic creation shares one recovery allowance across hooks and resumed rounds.
 function recover(handler, input, options = {}) {
   const env = options.env ?? process.env;
+  let failed = deny;
   try {
     const contextPath = env.LCARS_WORKER_CONTEXT;
     if (!isDispatch(env) || !contextPath || !path.isAbsolute(contextPath))
@@ -102,6 +103,17 @@ function recover(handler, input, options = {}) {
         `g${context.runId?.match(/\/r([1-9][0-9]*)$/)?.[1]}:${context.runId}`
     )
       return deny();
+    failed = () => {
+      try {
+        fs.writeFileSync(`${contextPath}.control-failed`, context.attemptId, {
+          flag: 'wx',
+          mode: 0o600,
+        });
+      } catch {
+        // Existing evidence is retained; diagnostics must not expose task data.
+      }
+      return deny();
+    };
     fs.writeFileSync(`${contextPath}.recovery-used`, context.attemptId, {
       flag: 'wx',
       mode: 0o600,
@@ -130,11 +142,17 @@ function recover(handler, input, options = {}) {
         }),
       );
       if (result?.hookSpecificOutput.permissionDecision !== expected)
-        return deny();
+        return failed();
     }
-    return run(input) ?? deny();
+    const result = run(input);
+    if (!result) return failed();
+    fs.writeFileSync(`${contextPath}.recovery-succeeded`, context.attemptId, {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    return result;
   } catch {
-    return deny();
+    return failed();
   }
 }
 

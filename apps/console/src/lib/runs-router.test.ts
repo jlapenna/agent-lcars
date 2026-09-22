@@ -2029,6 +2029,32 @@ describe('codexAuth', () => {
     expect(r.status).toBe(401);
   });
 
+  it('records worker control failure as unsuccessful infrastructure, not PARK', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'POST',
+      runPath(runId, '/complete'),
+      {
+        outcome: 'worker-control-failed',
+        outcomeReference: null,
+        message: 'Infrastructure failure. No human decision is requested.',
+      },
+    );
+    expect(r.status).toBe(200);
+    const settled = await store.readRun(runId);
+    expect(settled?.state).toBe('finished');
+    expect(settled?.result).toMatchObject({
+      ok: false,
+      summary: 'worker-control-failed',
+    });
+    const workId = wid('work-codex-auth');
+    const task = await store.readTask({ workId });
+    const runs = await store.listRuns({ workId });
+    expect(task).toBeDefined();
+    expect(deriveItemState(task!.task, runs)).toBe('failed');
+  });
+
   it('releases an owned subscription lease when a Codex run completes early', async () => {
     const { store, orchestrator, now, runId, token } = await claimedCodexRun();
     const releaseLease = vi.fn(async () => undefined);

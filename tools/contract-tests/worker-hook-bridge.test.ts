@@ -83,6 +83,12 @@ console.log(JSON.stringify({hookSpecificOutput: {
     expect(
       readFileSync(env.LCARS_WORKER_CONTEXT + '.recovery-used', 'utf8'),
     ).toBe('g1:work:test/r1');
+    expect(
+      readFileSync(env.LCARS_WORKER_CONTEXT + '.recovery-succeeded', 'utf8'),
+    ).toBe('g1:work:test/r1');
+    expect(existsSync(env.LCARS_WORKER_CONTEXT + '.control-failed')).toBe(
+      false,
+    );
     // A later hook process or resumed round cannot acquire another allowance.
     expect(
       bridge.recover(file, input, { env }).hookSpecificOutput
@@ -93,6 +99,9 @@ console.log(JSON.stringify({hookSpecificOutput: {
         .trim()
         .split('\n'),
     ).toHaveLength(4);
+    expect(
+      readFileSync(env.LCARS_WORKER_CONTEXT + '.control-failed', 'utf8'),
+    ).toBe('g1:work:test/r1');
   });
   it('stops before reevaluating the action when the denial smoke fails', () => {
     const { file, env, input } = recoveryFixture(true);
@@ -104,6 +113,12 @@ console.log(JSON.stringify({hookSpecificOutput: {
         .trim()
         .split('\n'),
     ).toHaveLength(3);
+    expect(existsSync(env.LCARS_WORKER_CONTEXT + '.recovery-succeeded')).toBe(
+      false,
+    );
+    expect(
+      readFileSync(env.LCARS_WORKER_CONTEXT + '.control-failed', 'utf8'),
+    ).toBe('g1:work:test/r1');
   });
   it('does not recover genuine policy denials or accept a foreign context', () => {
     const { file, env, input } = recoveryFixture();
