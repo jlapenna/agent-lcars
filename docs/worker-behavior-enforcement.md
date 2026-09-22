@@ -784,7 +784,45 @@ relative protocol reference that does not exist within the member checkout;
 The shared-protocol delivery path still needs verification before those first
 two references can be treated as resolved. No member checkout was modified;
 unrelated existing `www` work was preserved. The remaining four repositories
-and externally managed configuration remain separate audit coverage.
+and externally managed configuration remained separate audit coverage at that
+checkpoint.
+
+The next read-only pass covered GiroSF's complete root instructions, Homelab's
+root/imported instructions and development skill, Sprinkles' root and nested
+CLI/Primes instructions and development skill, and repository hook metadata.
+GiroSF explicitly uses `AGENT_PROTOCOL_PATH`; Homelab retains only its local
+deployment reminder. Another 150 executable registration checks passed: 30 for
+GiroSF's installed guard and 120 across LCARS's source guard and Homelab's
+reminder. Interactive, generic-CI, provider-ID, and blank-marker cases made no
+issue API reads or fleet-ownership suggestions. Explicit dispatches retained
+LCARS ownership/closed-routing feedback. Homelab's deployment reminder remained
+active in both modes while issue events, command text mentioning `deploy.sh`,
+and shell syntax checks stayed quiet. Only hook event payloads were executed;
+no issue edit or deployment command ran. Evidence and exact revision/handler/
+registration hashes: `/tmp/lcars-member-hook-followup.mIi1Yi/observations.json`
+and `local-observations.json` in the same directory. Member checkouts were not
+modified.
+
+Sprinkles' observed main `e4019ac6922c` still contains the interactive claim,
+takeover, and human-blocker instructions addressed by the prepared
+`e37dd9e96` fix. Fetching its current remote base found no pin-alignment fix:
+`package.json` requires pnpm 11.27.1 while `tools/sandbox/Dockerfile` retains
+11.27.0. Publication remains blocked by the normal pre-push check; approval to
+include that one-line alignment was requested, without bypassing the hook.
+
+Local managed-global inspection found no issue-ownership hook registration in
+the live Codex or Claude settings. Codex hook-file SHA-256:
+`0b0ef118edb41a5dc3795c8e7b1eb2ed4bf7bfd7454a975bad21b30f803ba58f`;
+Claude settings SHA-256:
+`24eb13b1efb3fd2b79c3471bfa82d17eef0ef9657247c8984a2755d228743f8b`.
+The live OpenCode JSON has no hook table; its global instructions concern
+delivery completion, not fleet claims. Local Homegit source was `841c79dd2653`.
+Only relevant metadata and instruction text were inspected, not credentials;
+no global apply or session restart occurred. This is a local registration
+inventory, not proof of every plugin's behavior, fleet convergence, or a fresh
+interactive session. The dispatch source resolves its baked shared protocol
+and exports `AGENT_PROTOCOL_PATH`; the two ambiguous member-relative references
+still merit clarification rather than protocol copies.
 
 Subsequent local checks on pike confirmed that the PATH-installed
 `fleet-codex-issue-guardrail` resolves through its pnpm shim to a handler
