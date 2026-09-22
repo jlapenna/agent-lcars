@@ -4,6 +4,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { fileProbeFixture } from './worktree-fixture.mjs';
 
@@ -116,7 +117,12 @@ export function workflowFixture(directory, home, mode) {
       });
       await new Promise((done) => lease.listen(0, '127.0.0.1', done));
       const remaining = Math.floor((deadline - Date.now()) / 1000);
-      const helperRoot = resolve('apps/runner-autoscaler/runner-image/runtime');
+      const helperRoot = fileURLToPath(
+        new URL(
+          '../../apps/runner-autoscaler/runner-image/runtime/',
+          import.meta.url,
+        ),
+      );
       let decision;
       try {
         decision = await new Promise((done) => {

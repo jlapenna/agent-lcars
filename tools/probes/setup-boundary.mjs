@@ -9,9 +9,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const [provider, binary, expectedVersion] = process.argv.slice(2);
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 if (
   !['codex', 'claude', 'opencode'].includes(provider) ||
   !binary?.startsWith('/')
@@ -55,7 +57,8 @@ for (const mode of ['malformed-config', 'symlink-config', 'missing-setup']) {
       '-c',
       'source "$1"; worker_policy_bootstrap "$2" || exit $?; printf "launch reached" > "$3"',
       'setup-boundary',
-      resolve(
+      join(
+        repoRoot,
         'apps/runner-autoscaler/runner-image/runtime/worker-policy-bootstrap.sh',
       ),
       config,
@@ -75,7 +78,7 @@ for (const mode of ['malformed-config', 'symlink-config', 'missing-setup']) {
         WORKER_POLICY_SETUP:
           mode === 'missing-setup'
             ? join(dir, 'absent-setup.cjs')
-            : resolve('packages/fleet-tools/bin/worker-hook-setup.cjs'),
+            : join(repoRoot, 'packages/fleet-tools/bin/worker-hook-setup.cjs'),
       },
       encoding: 'utf8',
       timeout: 15000,
