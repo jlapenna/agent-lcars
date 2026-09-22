@@ -821,8 +821,31 @@ Only relevant metadata and instruction text were inspected, not credentials;
 no global apply or session restart occurred. This is a local registration
 inventory, not proof of every plugin's behavior, fleet convergence, or a fresh
 interactive session. The dispatch source resolves its baked shared protocol
-and exports `AGENT_PROTOCOL_PATH`; the two ambiguous member-relative references
-still merit clarification rather than protocol copies.
+and exports `AGENT_PROTOCOL_PATH`. The apparent member-relative reference gaps
+at this checkpoint came from stale local checkouts; the remote refresh below
+supersedes that finding.
+
+#### Refreshed member instruction sources
+
+Readback of the merged PRs and remote-tracking instruction files resolves the
+two apparent shared-protocol reference gaps without new member changes:
+
+- `www` remote main `58a511bcdafd5eaf6224476ac79570fc9a59d32f` explicitly
+  directs headless workers to `$AGENT_PROTOCOL_PATH` and interactive authors
+  to LCARS documentation. This was delivered by
+  [www PR #17](https://github.com/supersprinklesracing/www/pull/17), merged as
+  `3f8671a35ac8d09f213a3ac7f3c265cf225a18dd`.
+- `nx-cache-server` remote main
+  `e0171792c319e3e32fb4fe1e2cdb5d51de5a1a89` has the same explicit boundary,
+  delivered by [PR #36](https://github.com/jlapenna/nx-cache-server/pull/36),
+  merged as `bc1e83e140680375079db3d137821a355e22f06a`.
+
+Both PRs report merged on 2026-08-21. The audited Claude and Codex hook
+registrations are unchanged between each local checkout and its refreshed
+remote main, so their executable registration evidence remains applicable.
+The dirty `www` primary and stale local checkouts were preserved; no duplicate
+fix PR was opened. This resolves these two instruction findings, not the
+Sprinkles publication gate or fresh-session/live-dispatch acceptance.
 
 Subsequent local checks on pike confirmed that the PATH-installed
 `fleet-codex-issue-guardrail` resolves through its pnpm shim to a handler
