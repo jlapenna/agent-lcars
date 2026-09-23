@@ -47,7 +47,8 @@
    [`infra/terraform/README.md`](../../../../infra/terraform/README.md#github-ruleset-protect-main)
    for the hand-over record and the admin-bypass hazard.
 
-   The ruleset enforces required `Verify`,
+   The ruleset enforces required `E2E`, `Verify`,
+   `Runner image pnpm-store seed`, and `repository-owned Terraform`,
    `required_review_thread_resolution`, linear history, and no deletion or
    force-push. The up-to-date-branch policy is **non-strict** (harmonized
    with the sprinkles repo, 2026-08-11): an armed PR merges on green even
