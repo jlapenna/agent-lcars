@@ -71,6 +71,9 @@ resource "github_repository_ruleset" "protect_main" {
       required_check {
         context = "Runner image pnpm-store seed"
       }
+      required_check {
+        context = "repository-owned Terraform"
+      }
     }
   }
 }

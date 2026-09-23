@@ -11,6 +11,7 @@ grep -Fqx '  repository  = "agent-lcars"' "$config"
 grep -Fqx '        context = "E2E"' "$config"
 grep -Fqx '        context = "Verify"' "$config"
 grep -Fqx '        context = "Runner image pnpm-store seed"' "$config"
+grep -Fqx '        context = "repository-owned Terraform"' "$config"
 if grep -Fq 'source = "git::https://github.com/jlapenna/homelab.git' "$config"; then
   echo "github-ruleset root must not import Homelab source" >&2
   exit 1
