@@ -40,6 +40,11 @@ cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
 BAKED_RUNTIME_HELPERS_DIR="$baked/runtime"
 BAKED_PREPARE_DISPATCH="$baked/runtime/prepare-dispatch.sh"
 BAKED_VERIFY_OUTCOME="$baked/runtime/verify-outcome.sh"
+# Sourced helpers do not pass through the fake external bash path mapper.
+export WORKER_COMPLETION_HELPER="$baked/runtime/worker-completion.sh"
+export WORKER_POLICY_BOOTSTRAP_HELPER="$baked/runtime/worker-policy-bootstrap.sh"
+export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
+export WORKER_POLICY_NODE="$real_node"
 # sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
 # delegates to the fake `node` below. Keep it separate from the source tree:
 # the real runner image contains the compiled bundle, while this shell harness
@@ -71,6 +76,26 @@ export FAKE_CLAUDE_OAUTH_TOKEN="fake-claude-oauth-token-abc123"
 make_fake_bins() {
   bindir="$1"
   mkdir -p "$bindir"
+
+  cat > "$bindir/worker-control-fixture" <<'FAKE'
+#!/usr/bin/env bash
+[ -n "${FAKE_CONTROL_RECEIPT:-}" ] || exit 0
+context="${LCARS_WORKER_CONTEXT:?}"
+case "$FAKE_CONTROL_RECEIPT" in
+  failed) printf '%s' "$ATTEMPT_ID" > "$context.control-failed" ;;
+  interrupted) printf '%s' "$ATTEMPT_ID" > "$context.recovery-used" ;;
+  recovered)
+    printf '%s' "$ATTEMPT_ID" > "$context.recovery-used"
+    printf '%s' "$ATTEMPT_ID" > "$context.recovery-succeeded"
+    ;;
+  foreign) printf '%s' 'g9:work:other/r9' > "$context.control-failed" ;;
+esac
+if [ -n "${FAKE_CONTROL_TERMINAL:-}" ]; then
+  printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
+    "$FAKE_CONTROL_TERMINAL" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
+fi
+FAKE
+  chmod +x "$bindir/worker-control-fixture"
 
   cat > "$bindir/curl" <<'FAKE'
 #!/usr/bin/env bash
@@ -246,6 +271,10 @@ printf '%s' "${GH_TOKEN:-}" > "$GH_INVOCATION_TOKEN_LOG"
 if [[ "$*" == *"pulls?state=all"* ]]; then
   if [ "${FAKE_GH_LOOKUP_FAIL:-}" = 1 ]; then
     exit 1
+  elif [ -n "${FAKE_GH_MATCH_AFTER_WORKER_RUNS:-}" ] &&
+    [ -f "${WORKER_RUN_COUNT_FILE:-/nonexistent}" ] &&
+    [ "$(cat "$WORKER_RUN_COUNT_FILE")" -ge "$FAKE_GH_MATCH_AFTER_WORKER_RUNS" ]; then
+    echo '12'
   elif [ -n "${FAKE_GH_MATCH_AFTER_OPENCODE_RUNS:-}" ] &&
     [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ] &&
     [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -ge "$FAKE_GH_MATCH_AFTER_OPENCODE_RUNS" ]; then
@@ -321,6 +350,20 @@ FAKE
   cat > "$bindir/claude" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$CLAUDE_ARGS_LOG"
+worker-control-fixture
+printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
+run_count=1
+if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
+echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
+  printf '%s start %s sleep=%s\n' "$run_count" "$EPOCHREALTIME" "$FAKE_WORKER_SLEEP" >> "$WORKER_TIME_LOG"
+  sleep "$FAKE_WORKER_SLEEP"
+  printf '%s end %s\n' "$run_count" "$EPOCHREALTIME" >> "$WORKER_TIME_LOG"
+fi
+if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
+  printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
+    "$FAKE_NATIVE_OUTCOME" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
+fi
 printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
 if [ -n "${FAKE_CREDENTIAL_USE_AFTER_SLEEP:-}" ]; then
   sleep "$FAKE_CREDENTIAL_USE_AFTER_SLEEP"
@@ -333,7 +376,7 @@ fi
 if [ -n "${FAKE_CLAUDE_STDOUT:-}" ]; then
   printf '%s' "$FAKE_CLAUDE_STDOUT"
 fi
-exit 0
+exit "${FAKE_WORKER_EXIT:-0}"
 FAKE
   chmod +x "$bindir/claude"
 
@@ -343,6 +386,18 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
   exit 0
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
+worker-control-fixture
+printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
+run_count=1
+if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
+echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
+  printf '%s start %s sleep=%s\n' "$run_count" "$EPOCHREALTIME" "$FAKE_WORKER_SLEEP" >> "$WORKER_TIME_LOG"
+  sleep "$FAKE_WORKER_SLEEP"
+  printf '%s end %s\n' "$run_count" "$EPOCHREALTIME" >> "$WORKER_TIME_LOG"
+fi
+if [ "${FAKE_WORKER_NO_THREAD:-}" != 1 ]; then echo '{"type":"thread.started","thread_id":"thread-codex-fixture"}'; fi
+if [ "${FAKE_WORKER_ERROR_EVENT:-}" = 1 ]; then echo '{"type":"error","message":"provider execution failed"}'; fi
 printf '%s' "${ACTIONS_RERUN_TOKEN:-}" > "$CODEX_ENV_LOG"
 # Real codex writes the final message to the file named by
 # --output-last-message, not to stdout -- opt-in, mirroring the fake
@@ -380,7 +435,7 @@ if [ "${FAKE_CODEX_FALSE_POSITIVE:-}" = "1" ]; then
   echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"refresh token was already used"}}'
 fi
 echo '{"type":"turn.completed"}'
-exit 0
+exit "${FAKE_WORKER_EXIT:-0}"
 FAKE
   chmod +x "$bindir/codex"
 
@@ -404,6 +459,8 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
   exit 0
 fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
+worker-control-fixture
+printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
 echo run >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
 run_count=1
@@ -579,6 +636,9 @@ run_scenario() {
   export NODE_ARGS_LOG="$dir/node-args.log"
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
   export CODEX_ARGS_LOG="$dir/codex-args.log"
+  export WORKER_RUN_COUNT_FILE="$dir/worker-run-count"
+  export WORKER_TIME_LOG="$dir/worker-times.log"
+  export WORKER_CONTEXT_LOG="$dir/worker-context.log"
   export CODEX_ENV_LOG="$dir/codex-env.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
@@ -1695,5 +1755,97 @@ run_scenario lookup-failure
 unset FAKE_GH_LOOKUP_FAIL
 [ "$rc" -ne 0 ] || fail "failed lookup succeeded"
 jq -e '.outcome == "verification-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "failed lookup lost its diagnosis"
+
+for provider in claude codex; do
+  export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_WORKER_RUNS=2 FAKE_WORKER_SLEEP=1
+  export CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5
+  run_scenario "$provider-completion-correction" "$provider"
+  unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_WORKER_RUNS FAKE_WORKER_SLEEP
+  unset CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS
+  [ "$rc" -eq 0 ] || fail "$provider correction did not deliver"
+  [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] || fail "$provider correction must run exactly twice"
+  if [ "$provider" = claude ]; then
+    session="$(sed -nE 's/.*--session-id ([^ ]+).*/\1/p' "$CLAUDE_ARGS_LOG" | head -1)"
+    [ -n "$session" ] && grep -Fq -- "--resume $session" "$CLAUDE_ARGS_LOG" || fail "Claude correction changed session"
+  else
+    grep -Fq -- 'exec resume thread-codex-fixture' "$CODEX_ARGS_LOG" || fail "Codex correction changed thread"
+  fi
+  mapfile -t round_timeouts < <(grep -E "[0-9]+s $provider " "$TIMEOUT_ARGS_LOG" | sed -nE "s/.* ([0-9]+)s $provider .*/\\1/p")
+  if [ "${#round_timeouts[@]}" -ne 2 ] || [ "${round_timeouts[1]}" -ge "${round_timeouts[0]}" ]; then
+    cat "$WORKER_TIME_LOG" >&2
+    fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
+  fi
+
+  for refusal in heartbeat lookup native exit deadline; do
+    export FAKE_GH_NO_MATCH=1
+    case "$refusal" in
+      heartbeat) export FAKE_HEARTBEAT_FAIL=1 ;;
+      lookup) export FAKE_GH_LOOKUP_FAIL=1 ;;
+      native) export FAKE_NATIVE_OUTCOME=no-op ;;
+      exit) export FAKE_WORKER_EXIT=1 ;;
+      deadline) export FAKE_WORKER_SLEEP=2 CLAUDE_TIMEOUT_SECONDS=1 CODEX_TIMEOUT_SECONDS=1 ;;
+    esac
+    run_scenario "$provider-correction-refused-$refusal" "$provider"
+    unset FAKE_GH_NO_MATCH FAKE_HEARTBEAT_FAIL FAKE_GH_LOOKUP_FAIL FAKE_NATIVE_OUTCOME FAKE_WORKER_EXIT FAKE_WORKER_SLEEP CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS
+    [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "$provider incorrectly corrected after $refusal"
+    if [ "$refusal" = native ]; then
+      [ "$rc" -eq 0 ] || fail "$provider lost the native terminal outcome"
+    else
+      [ "$rc" -ne 0 ] || fail "$provider reported success after $refusal without a deliverable"
+    fi
+  done
+  echo "scenario $provider-bounded-completion: OK"
+done
+export FAKE_WORKER_NO_THREAD=1 FAKE_GH_NO_MATCH=1
+run_scenario codex-no-thread-no-correction codex
+unset FAKE_WORKER_NO_THREAD FAKE_GH_NO_MATCH
+[ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "Codex continued without a native thread identity"
+export FAKE_WORKER_ERROR_EVENT=1 FAKE_GH_NO_MATCH=1
+run_scenario codex-error-event-no-correction codex
+unset FAKE_WORKER_ERROR_EVENT FAKE_GH_NO_MATCH
+[ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "Codex retried a provider error as missing work"
+
+for provider in claude codex opencode; do
+  export LCARS_WORKER_POLICY_PROVIDERS="$provider"
+  run_scenario "$provider-policy-bootstrap" "$provider"
+  [ "$rc" -eq 0 ] || fail "$provider policy bootstrap failed ($(tail -n 4 "$scenario_log"))"
+  context_file="$(cat "$WORKER_CONTEXT_LOG")"
+  [ "$context_file" = "$scenario_runner_temp/worker-policy-context.json" ] || fail "$provider launched without bound policy context"
+  jq -e --arg provider "$provider" '.provider == $provider and .attemptId == "g1:work:01DIRECTRUNNERTESTFIXTURE1/r1"' "$context_file" >/dev/null || fail "$provider context mismatch"
+  jq -e '.controlSmokePassed == true and .executionSmokeRequired == false' "$scenario_runner_temp/worker-policy-setup.json" >/dev/null || fail "$provider launched without execution smoke"
+
+  export WORKER_POLICY_SETUP="$tmp/missing-worker-policy.cjs"
+  run_scenario "$provider-policy-setup-failed" "$provider"
+  [ "$rc" -ne 0 ] || fail "$provider launched after failed setup"
+  [ ! -f "$WORKER_CONTEXT_LOG" ] || fail "$provider task process started despite setup failure"
+  export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
+  unset LCARS_WORKER_POLICY_PROVIDERS
+  echo "scenario $provider-policy-bootstrap: OK"
+done
+
+for provider in claude codex opencode; do
+  export LCARS_WORKER_POLICY_PROVIDERS="$provider" FAKE_GH_NO_MATCH=1
+  for receipt in failed interrupted; do
+    export FAKE_CONTROL_RECEIPT="$receipt"
+    for terminal in '' park no-op; do
+      export FAKE_CONTROL_TERMINAL="$terminal"
+      run_scenario "$provider-control-$receipt-${terminal:-incomplete}" "$provider"
+      [ "$rc" -ne 0 ] || fail "$provider reported success after control failure"
+      jq -e '.outcome == "worker-control-failed" and (.message | contains("No human decision"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "$provider lost infrastructure classification"
+      count_file="$WORKER_RUN_COUNT_FILE"
+      if [ "$provider" = opencode ]; then count_file="$OPENCODE_RUN_COUNT_FILE"; fi
+      [ "$(cat "$count_file")" -eq 1 ] || fail "$provider continued after exhausted control recovery"
+    done
+  done
+  unset FAKE_GH_NO_MATCH FAKE_CONTROL_TERMINAL
+  for receipt in failed recovered foreign; do
+    export FAKE_CONTROL_RECEIPT="$receipt"
+    run_scenario "$provider-control-$receipt-published" "$provider"
+    [ "$rc" -eq 0 ] || fail "$provider lost a verified published deliverable"
+    jq -e '.outcome == "pull-request"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "$provider relabeled a verified PR"
+  done
+  unset LCARS_WORKER_POLICY_PROVIDERS FAKE_CONTROL_RECEIPT
+  echo "scenario $provider-control-failure-outcomes: OK"
+done
 
 echo "direct-runner.sh: OK"

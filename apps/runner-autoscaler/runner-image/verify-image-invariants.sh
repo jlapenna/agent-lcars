@@ -22,6 +22,8 @@ opencode="${AGENT_LCARS_OPENCODE:-/usr/local/bin/opencode}"
 lcars="${AGENT_LCARS_LCARS:-/usr/local/bin/lcars}"
 archive_cache="${AGENT_LCARS_ARCHIVE_CACHE:-/opt/actions-archive-cache}"
 skills_list="${AGENT_LCARS_LAYER1_SKILLS:-$lib/runtime/layer1-skills.conf}"
+repo_tools="${AGENT_LCARS_REPO_TOOLS:-/opt/repo-tools}"
+repo_tools_bin="${AGENT_LCARS_REPO_TOOLS_BIN:-/usr/local/bin}"
 
 # shellcheck source=externals-health.sh
 source "$lib/externals-health.sh"
@@ -48,6 +50,8 @@ check "trusted OpenCode CLI supports QueueExecutor's --auto mode" \
   trusted_opencode_supports_auto "$opencode"
 check "action-archive cache is baked at $archive_cache" test -d "$archive_cache"
 check "lcars CLI is executable at $lcars" test -x "$lcars"
+check "repo-tools commands are installed and the worktree guard executes" \
+  node "$lib/repo-tools-bins.mjs" verify "$repo_tools" "$repo_tools_bin"
 check "image carries no Codex authentication" test ! -e "$home/.codex/auth.json"
 
 skills=0

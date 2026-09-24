@@ -359,6 +359,8 @@ RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 # files so the predicates can be exercised without building the image.
 COPY toolchain-health.sh /usr/local/lib/agent-lcars/toolchain-health.sh
 COPY verify-image-invariants.sh /usr/local/lib/agent-lcars/verify-image-invariants.sh
+COPY repo-tools-bins.mjs /usr/local/lib/agent-lcars/repo-tools-bins.mjs
+COPY repo-tools-bins.test.mjs /usr/local/lib/agent-lcars/repo-tools-bins.test.mjs
 RUN chmod +r /usr/local/lib/agent-lcars/toolchain-health.sh \
     /usr/local/lib/agent-lcars/verify-image-invariants.sh
 
@@ -459,7 +461,10 @@ RUN npm install -g /opt/agent-tools
 # the Codex and Claude plugin managers. Keep one shallow checkout as their
 # shared source of truth. The plugin managers retain their required,
 # provider-specific installed snapshots, but neither performs another Git
-# fetch; the CLI is installed from this same checkout in its private prefix.
+# fetch; CLI entrypoints link to this checkout's declared package binaries.
+# Installing only its dependencies does not create its own node_modules/.bin
+# shims. Resolve package.json's bin map, then exercise the installed worktree
+# guard as the job user in the final build-time invariant gate.
 # REPO_TOOLS_REF (build-arg, set to repo-tools' current main SHA by the
 # publishing script) forces this RUN's cache key to change whenever
 # repo-tools/main advances -- the same registry cache-from/to: type=registry
@@ -481,13 +486,14 @@ ARG REPO_TOOLS_REF=main
 # runner-image publish -- and with it merge-to-live's whole cycle -- until
 # fixed. Each repo's pnpm now follows its own declaration, which is the
 # contract the pnpm-store comment above already states.
-RUN echo "repo-tools ref: ${REPO_TOOLS_REF}" && \
+RUN node --test /usr/local/lib/agent-lcars/repo-tools-bins.test.mjs && \
+    echo "repo-tools ref: ${REPO_TOOLS_REF}" && \
     git init /opt/repo-tools && \
     git -C /opt/repo-tools remote add origin https://github.com/jlapenna/repo-tools.git && \
     git -C /opt/repo-tools fetch --depth 1 origin "${REPO_TOOLS_REF}" && \
     git -C /opt/repo-tools checkout --detach FETCH_HEAD && \
     (cd /opt/repo-tools && pnpm install --prod --frozen-lockfile --ignore-scripts) && \
-    ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/
+    node /usr/local/lib/agent-lcars/repo-tools-bins.mjs install /opt/repo-tools /usr/local/bin
 # The launcher itself lives on PATH at /usr/local/bin (standard on this
 # Debian-derived base for every user, root or `runner` -- no ENV PATH
 # change needed), named literally `lcars` rather than
@@ -561,10 +567,19 @@ RUN /usr/local/bin/opencode --version && \
 # Prove the installed binaries and real hook enforcement as the job user.
 RUN uv --version && bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 
+# OpenCode installs its plugin SDK in each configuration directory on cold
+# startup. Bake the version matching the reviewed CLI here; direct-runner's
+# existing configuration copy then carries package.json, lock, and modules
+# into the attempt configuration without doing an installation during work.
+RUN OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)" && \
+    npm install --prefix /home/runner/.config/opencode --ignore-scripts --save-exact \
+      "@opencode-ai/plugin@${OPENCODE_VERSION#v}"
+
 # Exercise the exact installed CLI and global config through a deterministic
 # localhost provider. Unit-importing the hooks cannot prove that OpenCode
 # reloads instructions and hooks after its own automatic compaction boundary.
-RUN bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh
+# No registry connection may hide an unprepared dependency during this proof.
+RUN --network=none bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh
 
 # Register the shared source checkout in each provider's own runner-user
 # plugin state. Both providers require their own installed plugin snapshot;

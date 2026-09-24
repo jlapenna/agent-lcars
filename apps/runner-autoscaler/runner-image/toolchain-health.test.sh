@@ -68,16 +68,21 @@ fi
 # fail here rather than at image-build time.
 if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
   ! grep -Fqx 'ARG REPO_TOOLS_REF=main' "$dockerfile" ||
-  ! grep -Fqx 'RUN echo "repo-tools ref: ${REPO_TOOLS_REF}" && \' "$dockerfile" ||
   ! grep -Fqx '    git init /opt/repo-tools && \' "$dockerfile" ||
   ! grep -Fqx '    git -C /opt/repo-tools remote add origin https://github.com/jlapenna/repo-tools.git && \' "$dockerfile" ||
   ! grep -Fqx '    git -C /opt/repo-tools fetch --depth 1 origin "${REPO_TOOLS_REF}" && \' "$dockerfile" ||
   ! grep -Fqx '    git -C /opt/repo-tools checkout --detach FETCH_HEAD && \' "$dockerfile" ||
   ! grep -Fqx '    (cd /opt/repo-tools && pnpm install --prod --frozen-lockfile --ignore-scripts) && \' "$dockerfile" ||
-  ! grep -Fqx '    ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/' "$dockerfile"; then
+  ! grep -Fqx 'COPY repo-tools-bins.mjs /usr/local/lib/agent-lcars/repo-tools-bins.mjs' "$dockerfile" ||
+  ! grep -Fqx '    node /usr/local/lib/agent-lcars/repo-tools-bins.mjs install /opt/repo-tools /usr/local/bin' "$dockerfile"; then
   echo "runner image must install agent-tools and repo-tools from one source checkout, with a cache-bust guard against a stale registry-cached layer" >&2
   exit 1
 fi
+
+# This is packaging/wiring evidence only. repo-tools-bins.test.mjs covers
+# installation failures, and the final image gate executes the actual guard
+# as runner. Do not pin a logging line or the retired dependency-shim glob:
+# that literal assertion accepted a dangling link in the first #2029 canary.
 
 if ! grep -Fqx 'COPY repair-node-tar.sh /usr/local/lib/agent-lcars/repair-node-tar.sh' "$dockerfile" ||
   ! grep -Fq 'bash /usr/local/lib/agent-lcars/repair-node-tar.sh' "$dockerfile"; then

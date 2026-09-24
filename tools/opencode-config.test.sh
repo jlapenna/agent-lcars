@@ -82,8 +82,8 @@ NODE
 node "$repo_root/tools/opencode-context.test.mjs"
 grep -Fq '/repo/agents/opencode/context-lifecycle.js' "$runner_dockerfile" ||
   fail "runner image no longer installs the context lifecycle plugin"
-grep -Fq 'RUN bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh' "$runner_dockerfile" ||
-  fail "runner image no longer exercises the real OpenCode continuation contract"
+grep -Fq 'RUN --network=none bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh' "$runner_dockerfile" ||
+  fail "runner image must exercise the real OpenCode continuation contract without registry access"
 
 # --- agent.*.prompt must stay unset ------------------------------------------
 # Measured 2026-08-16 against opencode 1.18.18 by capturing the wire request:

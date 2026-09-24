@@ -56,6 +56,10 @@ cp "$source_config_dir/instructions.md" \
   "$source_config_dir/context-lifecycle.js" \
   "$source_config_dir/lcars-session.js" \
   "$tmp/home/.config/opencode/"
+# Match the runner's configuration copy, including build-installed SDK deps.
+# Missing preparation fails here rather than being repaired over the network.
+cp -R "$source_config_dir/package.json" "$source_config_dir/package-lock.json" \
+  "$source_config_dir/node_modules" "$tmp/home/.config/opencode/"
 mkdir -p "$tmp/workspace/.claude/worktrees/task/app"
 python3 - "$tmp/workspace" <<'PY'
 import sys

@@ -20,6 +20,9 @@ bin="$tmp/bin"
 mkdir -p "$lib/runtime" "$lib/agents/shared" "$home" "$bin" "$tmp/corepack" \
   "$tmp/externals/node20/bin" "$tmp/externals/node24/bin" "$tmp/archive"
 cp "$here/externals-health.sh" "$here/toolchain-health.sh" "$here/verify-image-invariants.sh" "$lib/"
+# The dedicated package-bin tests and real image build exercise this checker.
+# This gate fixture tests aggregation and failure propagation only.
+printf '%s\n' 'process.exit(Number(process.env.IMAGE_TEST_REPO_TOOLS_FAILURE || 0));' > "$lib/repo-tools-bins.mjs"
 cp "$here/runtime/install-skills.sh" "$here/runtime/layer1-skills.conf" "$lib/runtime/"
 cp -R "$repo_root/agents/shared/skills" "$lib/agents/shared/skills"
 
@@ -73,6 +76,10 @@ expect_failure() {
   if gate; then fail "$label: gate accepted a broken image"; fi
   grep -Fq "FAIL: $message" "$tmp/out" || fail "$label: expected 'FAIL: $message' ($(cat "$tmp/out"))"
 }
+
+export IMAGE_TEST_REPO_TOOLS_FAILURE=1
+expect_failure "repo-tools" "repo-tools commands are installed and the worktree guard executes"
+unset IMAGE_TEST_REPO_TOOLS_FAILURE
 
 write_exe "$tmp/externals/node20/bin/node" 'exit 1'
 write_exe "$bin/opencode" 'exit 0'
