@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Claude/Codex native command hooks against a deterministic localhost model.
 // No real credentials, remote repository writes, or full-policy qualification.
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
   existsSync,
@@ -20,6 +19,7 @@ import {
   claudeRunnerToolArgs,
   delegationFixture,
 } from './delegation-fixture.mjs';
+import { runNativeProcess } from './native-process.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
 import {
   publicationBrief,
@@ -56,39 +56,7 @@ const root = mkdtempSync(join(tmpdir(), `lcars-${provider}-hook-probe-`));
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
 function execute(args, cwd, env, timeout = 60000) {
-  return new Promise((done) => {
-    const child = spawn(binary, args, {
-      cwd,
-      env,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '',
-      stderr = '',
-      timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(-child.pid, 'SIGKILL');
-      } catch {
-        /* already exited */
-      }
-    }, timeout);
-    child.stdout.on('data', (chunk) => {
-      stdout = (stdout + chunk).slice(-1000000);
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr = (stderr + chunk).slice(-1000000);
-    });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      done({ code: null, stdout, stderr: error.message, timedOut });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      done({ code, stdout, stderr, timedOut });
-    });
-  });
+  return runNativeProcess(binary, args, cwd, env, timeout);
 }
 
 const version = await execute(
@@ -365,6 +333,7 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
           .flatMap((item) => item.tools ?? []),
       ]);
       observations.push({
+        receivedAt: new Date().toISOString(),
         path: req.url,
         tools: tools.map((tool) => tool.name ?? tool.type),
         ...(delegation ? { toolDefinitions: tools } : {}),
@@ -817,6 +786,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
     completionAfter,
     code: execution.code,
     timedOut: execution.timedOut,
+    execution: execution.diagnostics,
     exercised,
     observedExpectedPrimitive:
       exercised &&

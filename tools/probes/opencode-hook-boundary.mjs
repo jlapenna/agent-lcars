@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real CLI, deterministic localhost model, no credentials or GitHub writes.
 // This measures interception primitives, NOT full LCARS policy qualification.
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
@@ -18,6 +18,7 @@ import { pathToFileURL } from 'node:url';
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
 import { delegationFixture } from './delegation-fixture.mjs';
+import { runNativeProcess } from './native-process.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
 import {
   publicationBrief,
@@ -49,39 +50,7 @@ const root = mkdtempSync(join(tmpdir(), 'lcars-opencode-hook-probe-'));
 const cli = resolve(binary);
 
 function run(args, cwd, env, timeout = 60000) {
-  return new Promise((resolveRun) => {
-    const child = spawn(cli, args, {
-      cwd,
-      env,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(-child.pid, 'SIGKILL');
-      } catch {
-        /* already exited */
-      }
-    }, timeout);
-    child.stdout.on('data', (chunk) => {
-      stdout = (stdout + chunk).slice(-1000000);
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr = (stderr + chunk).slice(-1000000);
-    });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      resolveRun({ code: null, stdout, stderr: error.message, timedOut });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolveRun({ code, stdout, stderr, timedOut });
-    });
-  });
+  return runNativeProcess(cli, args, cwd, env, timeout);
 }
 
 const version = await run(
@@ -695,6 +664,7 @@ export default async (context) => {
     completionAfter,
     code: execution.code,
     timedOut: execution.timedOut,
+    execution: execution.diagnostics,
     exercised,
     // Missing-hook case intentionally exposes lack of native admission.
     observedExpectedPrimitive:
