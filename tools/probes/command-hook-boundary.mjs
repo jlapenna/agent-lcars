@@ -19,7 +19,7 @@ import {
   claudeRunnerToolArgs,
   delegationFixture,
 } from './delegation-fixture.mjs';
-import { runNativeProcess } from './native-process.mjs';
+import { recordNativeProcesses, runNativeProcess } from './native-process.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
 import {
   publicationBrief,
@@ -69,6 +69,7 @@ if (version.code !== 0 || version.stdout.trim() !== expectedVersion)
   throw new Error(`version mismatch: ${version.stdout.trim()}`);
 
 async function probe(mode) {
+  const { run: execute, executions } = recordNativeProcesses(binary);
   const dir = join(root, mode),
     workspace = join(dir, 'workspace'),
     home = join(dir, 'home');
@@ -786,7 +787,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
     completionAfter,
     code: execution.code,
     timedOut: execution.timedOut,
-    execution: execution.diagnostics,
+    executions,
     exercised,
     observedExpectedPrimitive:
       exercised &&

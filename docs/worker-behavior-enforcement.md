@@ -1114,7 +1114,9 @@ failure; it does not prove that every historical shutdown timeout has the same
 cause, nor does a host run qualify an image.
 
 Both native probe drivers now retain execution start, first output, exit,
-close, deadline, and host pressure evidence. Timeout cancellation still kills
+close, deadline, and host pressure evidence for every launch in a scenario's
+`executions` array, including correction and explicit resume attempts.
+Timeout cancellation still kills
 the process group at the original deadline before collecting diagnostics.
 Printed output or an exited parent with inherited open pipes cannot turn a
 timeout into success. Diagnostic collection excludes environment, command

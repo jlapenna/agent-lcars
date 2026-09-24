@@ -97,3 +97,21 @@ export function runNativeProcess(binary, args, cwd, env, timeout = 60000) {
     });
   });
 }
+
+// One recorder per scenario, including its correction and explicit resume.
+export function recordNativeProcesses(binary) {
+  const executions = [];
+  return {
+    executions,
+    async run(args, cwd, env, timeout = 60000) {
+      const result = await runNativeProcess(binary, args, cwd, env, timeout);
+      executions.push({
+        launch: executions.length + 1,
+        code: result.code,
+        timedOut: result.timedOut,
+        ...result.diagnostics,
+      });
+      return result;
+    },
+  };
+}

@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url';
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
 import { delegationFixture } from './delegation-fixture.mjs';
-import { runNativeProcess } from './native-process.mjs';
+import { recordNativeProcesses, runNativeProcess } from './native-process.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
 import {
   publicationBrief,
@@ -66,6 +66,7 @@ if (version.code !== 0 || version.stdout.trim() !== expectedVersion) {
 }
 
 async function probe(mode) {
+  const { run, executions } = recordNativeProcesses(cli);
   const dir = join(root, mode);
   const workspace = join(dir, 'workspace');
   const home = join(dir, 'home');
@@ -664,7 +665,7 @@ export default async (context) => {
     completionAfter,
     code: execution.code,
     timedOut: execution.timedOut,
-    execution: execution.diagnostics,
+    executions,
     exercised,
     // Missing-hook case intentionally exposes lack of native admission.
     observedExpectedPrimitive:
