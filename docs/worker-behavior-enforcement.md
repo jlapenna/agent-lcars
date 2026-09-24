@@ -1093,3 +1093,38 @@ delivery does not certify a candidate image.
 
 Production provider selection remains empty. Neither source merge nor the
 normal review dispatch constitutes provider graduation or image publication.
+
+### Native timeout investigation (#2048)
+
+The image refresh did not qualify Codex 0.156.1: seven of 79 observations
+timed out. Retained report: `/tmp/lcars-image-probe-srmkRU/image-observations.json`.
+Do not reinterpret those failures as passes after a later successful probe.
+
+A subsequent host reproduction with the same CLI version and unchanged
+60-second scenario budget confirmed severe storage stalls. The syscall trace
+`/tmp/lcars-2048-fsync.1OZL4l` records a 12.9-second `fsync` on Codex's
+`memories_1.sqlite-journal`, plus multiple multi-second database/directory
+flushes. Host I/O pressure exceeded 80%. The instrumented disk-backed
+`bootstrap-hold-merge-self-release` run made no model requests and timed out
+(`/tmp/lcars-codex-hook-probe-UtdJei`). Changing only temporary fixture storage
+to the existing user-owned tmpfs completed that scenario in 8.7 seconds while
+host I/O pressure was above 90%; retained observation:
+`/tmp/lcars-2048-ram-observations.json`. This diagnoses the reproduced startup
+failure; it does not prove that every historical shutdown timeout has the same
+cause, nor does a host run qualify an image.
+
+Both native probe drivers now retain execution start, first output, exit,
+close, deadline, and host pressure evidence for every launch in a scenario's
+`executions` array, including correction and explicit resume attempts.
+Timeout cancellation still kills
+the process group at the original deadline before collecting diagnostics.
+Printed output or an exited parent with inherited open pipes cannot turn a
+timeout into success. Diagnostic collection excludes environment, command
+lines, and process memory. The existing required contract-test lane protects
+that behavior for release operators consuming these reports.
+
+Fresh image-bound qualification remains required using the documented narrow
+mounts and recorded storage configuration. Use isolated, adequately provisioned
+test storage; do not extend deadlines, disable database durability, or change
+production worker storage to hide contention. No provider activation or new
+runtime admission gate follows from this investigation.
