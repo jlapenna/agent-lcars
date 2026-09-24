@@ -6,8 +6,8 @@ name: Agent PR Auto-Merge
 # cannot carry: the triggers below and this repo's parameter values. Any PR
 # whose author is one of this repo's known coding-agent bot identities
 # (vars.AGENT_BOT_LOGINS - a JSON array) gets squash
-# auto-merge enabled the moment it's opened/marked ready, gated only on the
-# ruleset's required "Verify" check. Adding a new agent pipeline later that
+# auto-merge enabled the moment it's opened/marked ready, gated on this
+# repository's required CI checks. Adding a new agent pipeline later that
 # follows the shared agent-protocol.md conventions only
 # needs its bot login appended to that one repo variable - never a change
 # to this workflow.
@@ -74,6 +74,6 @@ jobs:
       # the QueueExecutor direct-container route.
       runs-on: '["lcars-default"]'
       # The required CI checks in the Protect main ruleset.
-      required-checks: '["Verify","Runner image pnpm-store seed"]'
+      required-checks: '["Verify","Runner image pnpm-store seed","repository-owned Terraform"]'
       ci-workflow: ci.yml
       deploy-workflow: deploy-console.yml

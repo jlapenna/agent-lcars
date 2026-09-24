@@ -23,8 +23,9 @@ own only Agent LCARS-specific behavior.
 Local initialization uses `pnpm install`, whose `prepare` lifecycle installs
 and verifies Husky through `tools/setup-git-hooks.sh`. Linked worktrees use
 `tools/setup-worktree.sh`; the primary checkout remains a clean `main`.
-GitHub's active `Protect main` ruleset additionally requires the `Verify`
-check and resolved review threads before merge.
+GitHub's active `Protect main` ruleset requires `E2E`, `Verify`,
+`Runner image pnpm-store seed`, and `repository-owned Terraform`, plus
+resolved review threads before merge.
 
 If a skill is not discoverable, read its `SKILL.md` and `references/`
 files directly from `.agents/skills/<name>/`.
