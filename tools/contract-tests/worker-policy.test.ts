@@ -389,18 +389,72 @@ describe('dispatched worker policy', () => {
     },
   );
   it('resolves supported literal command directories', () => {
-    const deps = dependencies();
-    expect(
-      verdict(
-        shell('cd "feature tree" && git -C src commit -m "a \\q"'),
-        context,
-        deps,
-      ),
-    ).toBe('allow');
-    expect(deps.assertWorktree).toHaveBeenCalledWith(
-      '/tmp/worker/feature tree/src',
-    );
-    expect(policy.literalCommands('echo "a \\q"')).toEqual([['echo', 'a \\q']]);
+    const root = mkdtempSync(join(tmpdir(), 'worker-git-cwd-'));
+    try {
+      mkdirSync(join(root, 'feature tree', 'src'), { recursive: true });
+      const deps = dependencies();
+      expect(
+        verdict(
+          {
+            ...shell('cd "feature tree" && git -C src commit -m "a \\q"'),
+            cwd: root,
+          },
+          context,
+          deps,
+        ),
+      ).toBe('allow');
+      expect(deps.assertWorktree).toHaveBeenCalledWith(
+        join(root, 'feature tree', 'src'),
+      );
+      expect(policy.literalCommands('echo "a \\q"')).toEqual([
+        ['echo', 'a \\q'],
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it('checks the same physical directory as Git through symlinks and repeated -C', () => {
+    const root = mkdtempSync(join(tmpdir(), 'worker-git-physical-'));
+    try {
+      const primary = join(root, 'primary');
+      const feature = join(root, 'feature');
+      mkdirSync(join(primary, 'subdir'), { recursive: true });
+      mkdirSync(feature);
+      symlinkSync(join(primary, 'subdir'), join(feature, 'link'));
+      expect(spawnSync('git', ['init', '--quiet', primary]).status).toBe(0);
+      const deps = dependencies();
+      deps.assertWorktree.mockImplementation((directory?: string) => {
+        if (directory === primary) throw new Error('primary checkout');
+      });
+      for (const args of [
+        ['-C', `${feature}/link/..`],
+        ['-C', feature, '-C', 'link', '-C', '..'],
+        ['-C', feature, '-C', '', '-C', 'link/..'],
+      ]) {
+        const gitRoot = spawnSync(
+          'git',
+          [...args, 'rev-parse', '--show-toplevel'],
+          { encoding: 'utf8' },
+        );
+        expect(gitRoot.status).toBe(0);
+        expect(gitRoot.stdout.trim()).toBe(primary);
+        expect(
+          verdict(
+            {
+              ...shell(
+                `git ${args.map((arg) => JSON.stringify(arg)).join(' ')} add target.txt`,
+              ),
+              cwd: feature,
+            },
+            context,
+            deps,
+          ),
+        ).toBe('deny');
+        expect(deps.assertWorktree).toHaveBeenLastCalledWith(primary);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
   it.each(['git $verb', 'git push | tee log', 'git add *', 'sh -c "git push"'])(
     'does not claim unsupported shell interception: %s',

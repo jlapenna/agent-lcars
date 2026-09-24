@@ -289,8 +289,18 @@ function operations(input) {
       let gitCwd = directory;
       while (words[0] === '-C') {
         words.shift();
-        if (!words[0]) return result;
-        gitCwd = path.resolve(gitCwd, words.shift());
+        if (words[0] === undefined) return result;
+        const target = words.shift();
+        // Git chdir resolves symlinks before '..'. path.resolve/join (and
+        // non-native realpath) normalize lexically and can select another repo.
+        if (target === '') continue; // Git explicitly treats -C '' as a no-op.
+        try {
+          gitCwd = fs.realpathSync.native(
+            path.isAbsolute(target) ? target : `${gitCwd}/${target}`,
+          );
+        } catch {
+          return [{ kind: 'implementation', cwd: gitCwd, invalidPath: true }];
+        }
       }
       const verb = words[0];
       if (
