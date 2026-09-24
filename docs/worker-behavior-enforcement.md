@@ -1037,3 +1037,59 @@ record for that attempt there, without requiring a code worktree. Patch updates,
 deletions, moves, additional targets, and extra content cannot use the exception.
 The exception neither accepts arbitrary contents nor follows symlink redirects;
 missing/unreadable parents and non-file destinations receive corrective denial.
+
+## Delivery acceptance checkpoint (2026-09-24)
+
+This checkpoint supersedes the earlier statements that no legitimate dispatch
+had been observed. It does not supersede artifact-bound image evidence.
+
+PR #2029 merged as `5bbf5adf021386c0c705708f08678d2c84facd1a` at
+`2026-09-24T03:31:56Z`. Post-merge CI run `35951837655` passed, as did
+current-main run `35951912000`; all six review threads were resolved. The
+native image refresh was still in progress when the merge occurred; source
+delivery does not certify a candidate image.
+
+- **Normal dispatch (#2032, closed):** the maintainer-requested `review:codex`
+  run `jlapenna/agent-lcars#2029/r1` ran on Locutus, image
+  `sha256:4a59514f9a16c1bce2a024986b5af2a944ee65e2e67d3202dabd59159eb18d85`.
+  GitHub attributes the fleet assignment to `agent-lcars-bot` at
+  `2026-09-23T04:16:27Z`; live inspection confirmed the nonempty `LCARS_RUN_ID`.
+  Native session `01a0cc7a-d22e-7912-a2c5-b856dff96cab` recorded title/status
+  calls at `04:17:00Z`. Its retained session title is
+  `Review #2029 worker enforcement`, with no remaining status. The worker
+  submitted [a marker-bound review](https://github.com/jlapenna/agent-lcars/pull/2029#pullrequestreview-5286862322)
+  at `04:22:03Z`, and the normal finalizer
+  [reported finished/review](https://github.com/jlapenna/agent-lcars/pull/2029#issuecomment-5789007029)
+  at `04:22:49Z`. The archive is
+  `gs://agent-lcars-session-transcripts/runs/jlapenna/agent-lcars#2029/r1/codex/01a0cc7a-d22e-7912-a2c5-b856dff96cab.jsonl`.
+  This was useful review work, not synthetic issue churn or activation of the
+  candidate policy. The earlier three native interactive checks plus this
+  run complete the scoped execution-mode separation acceptance. The separate
+  Claude mandatory-skill compliance finding remains in #2044.
+- **Review correction:** that dispatch reproduced a real literal Git `-C`
+  symlink/`..` bypass. Commit `7cd8cd0e` resolves each `-C` using physical
+  filesystem semantics, including repeated relative and empty arguments.
+  All 109 focused worker-policy/review/bridge/session/readiness tests and
+  current-head CI (run `35949959050`, including E2E) passed. A separate real
+  primary/linked-worktree reproduction with the installed repo-tools guard
+  denied all three variants and preserved both indexes; retained fixture:
+  `/tmp/lcars-physical-cwd-6YLpbf`. The review thread is resolved. Older
+  image reports do not qualify this changed policy.
+- **Workstation setup (#2031, closed):** Homegit commit
+  `02df77296dc951a308c1e3f0e52ba2fcf49964b3` is published and passed
+  [validation](https://github.com/jlapenna/homegit/actions/runs/35949710341).
+  Existing bootstrap now installs the canonical fleet-tools package from its
+  current default branch and exercises the installed guard; installation,
+  executable, and module failures fail setup. Hourly reconciliation propagates
+  bootstrap failure. No per-tool presence gate was added. The normal fleet
+  controller completed successfully at `2026-09-24T04:02:27Z`. Independent
+  checks on Pike/jlapenna, laptop/jlapenna, Homelab/homelab, LaForge/jlapenna,
+  and Janeway/jlapenna found clean current `main` at
+  `65f2e19eccd7b86c87d99e03d72fca974ff31e1d` (containing the setup change),
+  successful installed-guard execution with dispatch markers unset, and
+  successful `chezmoi verify`. Together with the seven-member instruction
+  audit, this closes the setup/convergence acceptance without changing
+  locks, schedules, or runtime installation gates.
+
+Production provider selection remains empty. Neither source merge nor the
+normal review dispatch constitutes provider graduation or image publication.
