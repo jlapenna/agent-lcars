@@ -251,7 +251,7 @@ test.describe('populated dashboard', () => {
     await expect(recent.getByText('opencode', { exact: true })).toHaveCount(0);
   });
 
-  test('the primary Open task action reaches the canonical task page with the duplicate-attempt anomaly (#306)', async ({
+  test('the primary Open task action opens the selected run in the desktop Bridge pane', async ({
     page,
   }) => {
     await page.goto('/');
@@ -263,6 +263,41 @@ test.describe('populated dashboard', () => {
       .getByTestId('current-run-primary-action')
       .first();
     await expect(primaryAction).toHaveText('Open task');
+    await primaryAction.click();
+
+    await expect(page).toHaveURL(/\bsel=run%3A/);
+    await expect(duplicateGroup).toBeVisible();
+    const detail = page.locator('.bridge-workspace__detail');
+    await expect(detail.getByTestId('bridge-detail')).toBeVisible();
+    await expect(
+      detail.getByRole('link', {
+        name: `#${E2E_ITEM_NUMBERS.duplicateDispatch}: feat(console): repo filter chips`,
+      }),
+    ).toBeVisible();
+
+    await page
+      .locator('.bridge-workspace__list')
+      .getByTestId('cli-session-link')
+      .first()
+      .click();
+    await expect(page).toHaveURL(/\bsel=session%3A/);
+    await expect(
+      detail.getByRole('link', { name: 'E2E fixture: live CLI session' }),
+    ).toBeVisible();
+  });
+
+  test('the primary Open task action keeps its canonical navigation on mobile (#306)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    const duplicateGroup = page.getByTestId(
+      `live-run-group-${E2E_ITEM_NUMBERS.duplicateDispatch}`,
+    );
+    const primaryAction = duplicateGroup
+      .getByTestId('current-run-primary-action')
+      .first();
     await primaryAction.click();
 
     await expect(page).toHaveURL(

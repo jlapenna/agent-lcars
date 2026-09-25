@@ -1,6 +1,7 @@
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Card, Group, Stack, Text, Title } from '@mantine/core';
 
+import { BridgePaneLink } from './bridge-pane-link';
 import { bridgeSelectionHref, parkedWorkKey } from './bridge-selection';
 import { formatRelativeTime } from './format';
 import { type WorkAction, WorkActions } from './work/work-actions';
@@ -85,9 +86,9 @@ export function ParkedWorkPanel({
                 gap="sm"
               >
                 <Stack gap={2}>
-                  <Text
-                    component="a"
-                    href={bridgeSelectionHref(
+                  <BridgePaneLink
+                    mobileHref={summaryHref(item)}
+                    paneHref={bridgeSelectionHref(
                       parkedWorkKey(item),
                       repoFilterKey,
                     )}
@@ -99,7 +100,7 @@ export function ParkedWorkPanel({
                     className="bridge-row-select"
                   >
                     {item.spec.title}
-                  </Text>
+                  </BridgePaneLink>
                   <Text size="xs" c="dimmed">
                     {item.spec.target.repo} ·{' '}
                     <span>{latest?.result?.summary ?? 'lost'}</span> ·{' '}

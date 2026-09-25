@@ -112,11 +112,11 @@ describe('ParkedWorkPanel', () => {
     ]);
     const links = screen.getAllByRole('link', { name: /older|newer/ });
     expect(links.map((l) => l.textContent)).toEqual(['older', 'newer']);
-    // The title selects the row into the Bridge's own detail pane rather
-    // than navigating away to `/work/<id>`.
+    // The canonical mobile/default destination stays in href. On desktop the
+    // shared BridgePaneLink swaps this to the pane selection before navigation.
     expect(links[0]).toHaveAttribute(
       'href',
-      '/?sel=parked%3Awork%3A01M107KR3X6VDH7NZ4JDXZNSS2',
+      '/work/01M107KR3X6VDH7NZ4JDXZNSS2',
     );
     expect(screen.getAllByText('outcome-gate-failure')).toHaveLength(2);
     const redispatchButtons = screen.getAllByRole('button', {
@@ -172,11 +172,11 @@ describe('ParkedWorkPanel', () => {
     expect(screen.getByText('lost')).toBeInTheDocument();
   });
 
-  it("links a parked GitHub task into the Bridge's own detail pane without native controls, but still names a redispatch path (#1816)", () => {
+  it('links a parked GitHub task to its canonical mobile view without native controls, but still names a redispatch path (#1816)', () => {
     renderPanel([item({ githubIssue: 1502, title: 'GitHub task' })]);
     expect(screen.getByRole('link', { name: 'GitHub task' })).toHaveAttribute(
       'href',
-      '/?sel=parked%3Aocto%2Fexample%231502',
+      '/task/octo/example/1502',
     );
     expect(screen.queryByRole('button', { name: /redispatch/i })).toBeNull();
     // Rendering nothing here is what made the rows look inconsistent - some
