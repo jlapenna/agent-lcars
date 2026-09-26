@@ -46,7 +46,7 @@ esac
 
 # A declared profile adds only manifest-required variables; optional lane
 # flags deliberately keep their missing-is-enabled/disarmed semantics.
-run_profile agent-lcars $'AGENT_FLEET_LOGIN=agent-lcars-bot'
+run_profile fleet-member $'AGENT_FLEET_LOGIN=agent-lcars-bot'
 test "$status" = 0 || fail "profile required variable present must pass"
 
 run_profile agent-lcars $'AGENT_FLEET_LOGIN='

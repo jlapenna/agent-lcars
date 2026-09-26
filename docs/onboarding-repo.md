@@ -147,7 +147,83 @@ Do not run a direct deploy merely to accelerate this step. Do this step only
 after step 1 has merged and landed on the target repository's `main` — see
 "Order matters" above.
 
-## 5. Prove the complete path
+## 5. Audit setup before dispatch
+
+Run `node tools/verify-onboarding.mjs` with `APP_CLIENT_ID`,
+`APP_PRIVATE_KEY`, and `AGENT_FLEET_LOGIN` supplied by the approved credential
+environment. Do not paste credentials into commands or logs. Use
+`--repo=OWNER/REPO` to narrow repository checks, or `--registrations=PATH` to
+read an operator-supplied autoscaler configuration instead of Homelab's
+committed configuration. The default watches the console's actual repository
+list and reads Homelab's registration data through the GitHub API; it does not
+copy the registration list or import Homelab source code.
+
+The tool emits one JSON result per repository and setup fact: App installation,
+fleet-login push permission and assignability, declared label metadata,
+required variables, required-check contexts, and registration runner-list
+scope. It only reads configuration. The only non-GET requests mint temporary
+read-permission installation tokens and revoke them afterward. Values of
+variables, private keys, tokens, and raw GitHub error bodies are not reported.
+Label repair remains the separate, explicit label-sync operation.
+
+`config/github-variables.json` classifies every variable referenced by this
+repository's workflows. The other fleet profiles specify their shared inputs;
+they do not replace each member repository's application-specific configuration
+contract. Required values are checked through the published `assert-repo-vars`
+implementation. Required check names and App identities come from the effective
+default-branch rules and are compared with checks/statuses observed on its
+current head. A head whose CI has not emitted every context yet needs a repeat
+after CI completes; this audit does not wait for CI or grade check conclusions.
+
+`PASS` means that particular setup fact was observed. `FAIL` identifies a gap
+or failed API request. `UNVERIFIED` means the necessary credential or identity
+was unavailable; both non-pass states produce a nonzero exit. In particular,
+the legacy root autoscaler registration gets its App identity from deployment
+environment variables. Its identity cannot be established from the committed
+YAML alone. Supply its resolved registration metadata and its actual App
+credential for that check; another App's successful runner-list response is
+not evidence for it. No private-key file referenced by registration YAML is
+opened by this tool. Record per-fact results when registrations use different
+Apps, rather than treating one credential's audit as complete fleet coverage.
+
+`AUDIT_READ_TOKEN` can supply a separate credential for repository variables
+and rules/check metadata. All use of that token is GET-only; installation,
+claim permission, labels, and runner scope still use the actual fleet or
+runner App. This avoids granting administrative visibility to the fleet App
+solely for auditing. For the autoscaler App, supply `RUNNER_APP_CLIENT_ID` and
+`RUNNER_APP_PRIVATE_KEY` separately. Resolve the legacy registration identity
+from deployment into `LEGACY_RUNNER_APP_CLIENT_ID` and
+`LEGACY_RUNNER_APP_INSTALLATION_ID`, or supply resolved `app` metadata in the
+operator configuration file. These identifiers must describe the actual
+registration, not whichever credential happens to be available.
+
+The `Fleet onboarding audit` workflow runs daily, on demand, and after changes
+to its local configuration sources. It uses the existing fleet App credential;
+an unavailable permission or different registration App remains a reported gap,
+not an automatic permission grant. Rerun after changes to watched repositories,
+App permissions, registration configuration, or rulesets. A configuration audit
+does not establish that committed configuration is deployed or that a real
+dispatch works.
+
+The workflow accepts optional `ONBOARDING_AUDIT_READ_TOKEN` and
+`AGENT_LCARS_RUNNER_APP_PRIVATE_KEY` secrets, with the corresponding runner
+identity variables. Adding or distributing these credentials is a separate
+operator action; this change does not provision them. The first live fleet-App
+audit on 2026-09-25 verified installation, fleet permissions, and declared labels
+for all seven watched repositories. Variable reads returned HTTP 403 in all
+seven, and several ruleset metadata reads also returned HTTP 403. Runner scopes
+were unverified with only the fleet credential. These are remaining rollout
+gates for #2037, not a successful complete onboarding audit.
+
+A second read-only run supplied the existing maintainer credential for
+administrative metadata and the controller's actual autoscaler credential and
+legacy identity, without persisting or redistributing them. All seven variable
+profiles and all seven runner-list scopes passed. Six repositories' required
+contexts were observed; Agent LCARS's newly merged head was still waiting for
+CI and remained unverified. Scheduled credential provisioning and a completed
+current-head audit remain outstanding.
+
+## 6. Prove the complete path
 
 Use a real, suitably scoped issue rather than a synthetic success check.
 
