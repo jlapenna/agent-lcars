@@ -14,6 +14,13 @@ const readJson = (name) =>
 const readYaml = (name) => parse(readFileSync(new URL(name, root), 'utf8'));
 class AuditError extends Error {}
 class UnverifiedError extends AuditError {}
+class GitHubHttpError extends AuditError {
+  constructor(status, rateLimited) {
+    super(`GitHub HTTP ${status}`);
+    this.status = status;
+    this.rateLimited = rateLimited;
+  }
+}
 const safeMessage = (error) =>
   error instanceof AuditError || /^GitHub HTTP \d+$/.test(error.message)
     ? error.message
@@ -81,7 +88,12 @@ export function createApi(fetchImpl = fetch) {
       signal: AbortSignal.timeout(30_000),
     });
     // Never include response bodies, tokens, variables, or fetch exception text.
-    if (!response.ok) throw new AuditError(`GitHub HTTP ${response.status}`);
+    if (!response.ok)
+      throw new GitHubHttpError(
+        response.status,
+        response.status === 403 &&
+          response.headers?.get?.('x-ratelimit-remaining') === '0',
+      );
     return response.status === 204 ? null : response.json();
   };
 }
@@ -149,7 +161,9 @@ export async function auditRepository({
     } catch (error) {
       if (
         !explicitMetadataToken &&
-        /^GitHub HTTP (403|404)$/.test(error.message)
+        error instanceof GitHubHttpError &&
+        error.status === 403 &&
+        !error.rateLimited
       )
         throw new UnverifiedError('Metadata read credential unavailable');
       throw error;
@@ -245,17 +259,23 @@ export async function auditRepository({
       .flatMap((rule) => rule.parameters.required_status_checks);
     if (!required.length)
       throw new AuditError('Default branch has no required checks');
-    const commit = await api(`/repos/${repo}/commits/${branch}`, metadataToken);
-    const checks = await pages(
-      api,
-      `/repos/${repo}/commits/${commit.sha}/check-runs?filter=all`,
-      metadataToken,
-      'check_runs',
+    const commit = await optionalMetadataRead(() =>
+      api(`/repos/${repo}/commits/${branch}`, metadataToken),
     );
-    const statuses = await pages(
-      api,
-      `/repos/${repo}/commits/${commit.sha}/statuses`,
-      metadataToken,
+    const checks = await optionalMetadataRead(() =>
+      pages(
+        api,
+        `/repos/${repo}/commits/${commit.sha}/check-runs?filter=all`,
+        metadataToken,
+        'check_runs',
+      ),
+    );
+    const statuses = await optionalMetadataRead(() =>
+      pages(
+        api,
+        `/repos/${repo}/commits/${commit.sha}/statuses`,
+        metadataToken,
+      ),
     );
     const missing = required.filter(
       (rule) =>
@@ -276,9 +296,11 @@ export async function auditRepository({
           (rule) => !checks.some((check) => check.name === rule.context),
         )
       ) {
-        const runs = await api(
-          `/repos/${repo}/actions/runs?head_sha=${commit.sha}&per_page=100`,
-          metadataToken,
+        const runs = await optionalMetadataRead(() =>
+          api(
+            `/repos/${repo}/actions/runs?head_sha=${commit.sha}&per_page=100`,
+            metadataToken,
+          ),
         );
         if (
           !runs.workflow_runs?.length ||
