@@ -1,10 +1,11 @@
-import { Anchor, Badge, Card, Group, Stack, Text } from '@mantine/core';
+import { Badge, Card, Group, Stack } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import { getWatchedRepos } from '../lib/github-client';
 import { repoKey } from '../lib/watched-repo';
 import { RepoBadge } from './agent-activity-panel';
 import type { BoardCard } from './board-card';
+import { BridgePaneLink } from './bridge-pane-link';
 import { bridgeSelectionHref, itemKey } from './bridge-selection';
 import { QueueWorkspace } from './queue-workspace';
 import { SectionHeading } from './section-heading';
@@ -94,9 +95,11 @@ function IdleItemsSection({
                 {item.kind === 'pr' ? 'PR' : 'Issue'}
               </Badge>
               <RepoBadge repo={item.repo} />
-              <Text
-                component="a"
-                href={bridgeSelectionHref(itemKey(item), repoFilterKey)}
+              <BridgePaneLink
+                mobileHref={item.url}
+                paneHref={bridgeSelectionHref(itemKey(item), repoFilterKey)}
+                target="_blank"
+                rel="noreferrer"
                 size="sm"
                 fw={600}
                 c="inherit"
@@ -105,17 +108,18 @@ function IdleItemsSection({
                 className="bridge-row-select"
               >
                 #{item.number} {item.title}
-              </Text>
+              </BridgePaneLink>
             </Group>
-            <Anchor
-              href={item.url}
+            <BridgePaneLink
+              mobileHref={item.url}
+              paneHref={bridgeSelectionHref(itemKey(item), repoFilterKey)}
               target="_blank"
               rel="noreferrer"
               size="sm"
               className="operations-primary-action"
             >
               Open {item.kind === 'pr' ? 'PR' : 'issue'} ↗
-            </Anchor>
+            </BridgePaneLink>
           </div>
         ))}
       </Stack>

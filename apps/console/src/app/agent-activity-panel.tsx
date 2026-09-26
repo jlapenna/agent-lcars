@@ -39,6 +39,7 @@ import {
 } from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
+import { BridgePaneLink } from './bridge-pane-link';
 import { bridgeSelectionHref, runKey, sessionKey } from './bridge-selection';
 import { Eyebrow } from './eyebrow';
 import { formatCost, formatDuration } from './format';
@@ -105,12 +106,22 @@ export function isActiveCliSession(session: CliSession): boolean {
 /**
  * The bold leading label on an operational row. On the Bridge's unified
  * two-panel view the row doubles as the master list, so the title becomes the
- * selection control (a `?sel=` link that opens this row in the right pane);
- * everywhere else it stays the plain non-interactive text it has always been.
- * Only the operations variant passes `selectHref`, so the /agents detail rows -
- * which render the same components at the `detail` variant - are untouched.
+ * responsive navigation control: its canonical detail route opens on mobile,
+ * while desktop changes the Bridge's `?sel=` and opens the row in the right
+ * pane. Everywhere else it stays the plain non-interactive text it has always
+ * been. Only the operations variant passes `selectHref`, so the /agents detail
+ * rows - which render the same components at the `detail` variant - are
+ * untouched.
  */
-function RowTitle({ text, selectHref }: { text: string; selectHref?: string }) {
+function RowTitle({
+  text,
+  mobileHref,
+  selectHref,
+}: {
+  text: string;
+  mobileHref?: string;
+  selectHref?: string;
+}) {
   if (!selectHref) {
     return (
       <Text size="sm" fw={600} truncate>
@@ -119,9 +130,9 @@ function RowTitle({ text, selectHref }: { text: string; selectHref?: string }) {
     );
   }
   return (
-    <Text
-      component="a"
-      href={selectHref}
+    <BridgePaneLink
+      mobileHref={mobileHref ?? selectHref}
+      paneHref={selectHref}
       size="sm"
       fw={600}
       c="inherit"
@@ -131,7 +142,7 @@ function RowTitle({ text, selectHref }: { text: string; selectHref?: string }) {
       data-testid="bridge-row-select"
     >
       {text}
-    </Text>
+    </BridgePaneLink>
   );
 }
 
@@ -365,6 +376,7 @@ export function LiveRunRow({
             text={
               item ? `#${item.number} ${item.title}` : operationsRunTitle(run)
             }
+            mobileHref={actionHref}
             selectHref={selectHref}
           />
           <Group gap="xs" wrap="wrap">
@@ -401,8 +413,9 @@ export function LiveRunRow({
           )}
         </Stack>
         <Group gap="xs" wrap="nowrap" className="operations-row__actions">
-          <Anchor
-            href={actionHref}
+          <BridgePaneLink
+            mobileHref={actionHref}
+            paneHref={selectHref ?? actionHref}
             target={taskHref ? undefined : '_blank'}
             rel={taskHref ? undefined : 'noreferrer'}
             size="sm"
@@ -411,7 +424,7 @@ export function LiveRunRow({
           >
             {taskHref ? 'Open task' : 'Inspect run'}
             {!taskHref && ' ↗'}
-          </Anchor>
+          </BridgePaneLink>
         </Group>
       </div>
     );
@@ -663,7 +676,11 @@ export function FinishedRunRow({
         data-status={classification.status}
       >
         <Stack gap={5} style={{ minWidth: 0 }}>
-          <RowTitle text={operationsRunTitle(run)} selectHref={selectHref} />
+          <RowTitle
+            text={operationsRunTitle(run)}
+            mobileHref={actionHref}
+            selectHref={selectHref}
+          />
           <Group gap="xs" wrap="wrap">
             <Badge
               variant="light"
@@ -682,8 +699,9 @@ export function FinishedRunRow({
             </Text>
           )}
         </Stack>
-        <Anchor
-          href={actionHref}
+        <BridgePaneLink
+          mobileHref={actionHref}
+          paneHref={selectHref ?? actionHref}
           target={taskHref ? undefined : '_blank'}
           rel={taskHref ? undefined : 'noreferrer'}
           size="sm"
@@ -692,7 +710,7 @@ export function FinishedRunRow({
         >
           {successful ? 'View result' : 'Investigate'}
           {!taskHref && ' ↗'}
-        </Anchor>
+        </BridgePaneLink>
       </div>
     );
   }
@@ -811,7 +829,11 @@ export function CliSessionRow({
         data-testid={`cli-session-${session.sessionId}`}
       >
         <Stack gap={5} style={{ minWidth: 0 }}>
-          <RowTitle text={label} selectHref={selectHref} />
+          <RowTitle
+            text={label}
+            mobileHref={`/sessions/${session.sessionId}`}
+            selectHref={selectHref}
+          />
           <SessionStatusLine
             status={session.status}
             statusUpdatedAt={session.statusUpdatedAt}
@@ -831,14 +853,15 @@ export function CliSessionRow({
             {session.repo && <RepoBadge repo={session.repo} />}
           </Group>
         </Stack>
-        <Anchor
-          href={`/sessions/${session.sessionId}`}
+        <BridgePaneLink
+          mobileHref={`/sessions/${session.sessionId}`}
+          paneHref={selectHref ?? `/sessions/${session.sessionId}`}
           size="sm"
           className="operations-primary-action"
           data-testid="cli-session-link"
         >
           Open session
-        </Anchor>
+        </BridgePaneLink>
       </div>
     );
   }
