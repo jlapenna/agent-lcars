@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Cheap build invariant: metadata and an actual readable SQLite schema, no CLI
-# process or network call. Runtime still uses its synchronous migration fallback.
+# Cheap build/runtime invariant: version metadata and a readable empty schema.
+# Runtime falls back to synchronous migration when this assertion does not hold.
 set -euo pipefail
 runner_home="${AGENT_LCARS_RUNNER_HOME:-$HOME}"
 version_file="${OPENCODE_VERSION_FILE:-/usr/local/share/agent-lcars-tooling/opencode-version}"
