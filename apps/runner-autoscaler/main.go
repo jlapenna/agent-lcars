@@ -58,6 +58,9 @@ var cmd = &cobra.Command{
 		if err := verifyCheckpointWritable(resolved.Raw.Server.StatePath); err != nil {
 			return err
 		}
+		if err := validateQueueExecutorEnvironment(resolved); err != nil {
+			return err
+		}
 		if checkOrchestratorConfig {
 			return nil
 		}

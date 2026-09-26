@@ -18,18 +18,15 @@ import (
 // attempts fail there before checkout, credentials, or provider execution.
 // Run before this controller starts claiming new work. Docker start is itself
 // idempotent if a previous controller's start request completes concurrently.
-func recoverCreatedDirectRunners(ctx context.Context, resolved resolvedOrchestratorConfig, newClient func(string) (*dockerclient.Client, error), logger *slog.Logger) error {
-	targets, order, err := ParseDockerHosts(resolved.DockerHosts)
-	if err != nil {
-		return err
-	}
+func recoverCreatedDirectRunners(ctx context.Context, resolved queueExecutorResolved, newClient func(string) (*dockerclient.Client, error), logger *slog.Logger) error {
+	targets, order := resolved.targets, resolved.order
 	var errs []error
 	for _, host := range order {
 		if ctx.Err() != nil {
 			return errors.Join(append(errs, ctx.Err())...)
 		}
 		hostCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := recoverCreatedDirectRunnersOnHost(hostCtx, targets[host], newClient, directRunnerMaxConcurrent(), logger)
+		err := recoverCreatedDirectRunnersOnHost(hostCtx, targets[host], newClient, resolved.maxConcurrent, logger)
 		cancel()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("host %q: %w", host, err))

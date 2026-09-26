@@ -344,11 +344,12 @@ bind-mounted this file (read-only, at `/run/secrets/telemetry-writer.json`,
 the fixed path `direct-runner.sh` reads) by the Docker daemon that actually
 creates it, which may be a remote fleet host over SSH -- so it cannot be
 inferred from a path meaningful only inside the autoscaler's own container.
-Required for queue-executor startup; a claim that cannot resolve it fails
-loudly rather than guessing.
+Required for queue-executor startup; a missing path fails boot and
+`--check-config` before any claim.
 
 `LCARS_QUEUE_MAX_CONCURRENT` (default `1`) caps how many direct-mode
-containers may run concurrently on any one host. Placement itself is
+containers may run concurrently on any one host. An explicitly invalid value
+fails boot and `--check-config`; it never silently falls back to one. Placement itself is
 round-robin over the same `--docker-hosts` pool used for GitHub-mode
 runners -- deliberately not `Scaler`'s load-aware host scoring, a stated
 simplification for this first cut.
@@ -358,8 +359,21 @@ direct-mode run launches, whichever pipeline (Claude, Codex, or OpenCode)
 claimed it -- GitHub scale-set image/label configuration is a separate,
 unrelated axis. It has no fleet-named default: this is deployment-specific
 registry/tag knowledge the autoscaler cannot infer, so it is required for
-queue-executor startup and a claim fails loudly, naming the missing
-variable, rather than launching against a guessed image.
+queue-executor startup and a missing value fails boot, naming the variable.
+
+The eligible host targets, image reference, credential bind paths, and concurrency
+limit are captured in one startup snapshot. Launches and capacity reservations do
+not re-read their environment after claiming work. Credential **contents** still
+rotate through the existing per-run file reads.
+
+Direct placement checks for the image on its selected host and pulls only when
+it is absent (including after image pruning). A background refresh starts after
+preflight and then runs every five minutes to follow the configured tag. Each
+host refresh has a two-minute deadline; a failed refresh keeps the cached image
+available to launches. A missing image with an unavailable registry still fails,
+as there is no runnable artifact. GitHub scale-set image policy is unchanged.
+`--check-config` includes the environment-only queue checks; it does not perform
+the mutating per-host credential-container probe.
 
 ### Readiness and claim outcomes
 

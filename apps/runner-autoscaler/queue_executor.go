@@ -461,26 +461,20 @@ var directRunnerHostCursor atomic.Uint64
 type directRunnerCapacityReservations struct {
 	mu        sync.Mutex
 	held      map[string]int
-	resolved  resolvedOrchestratorConfig
+	resolved  queueExecutorResolved
 	newClient func(target string) (*dockerclient.Client, error)
 	logger    *slog.Logger
 }
 
-func newDirectRunnerCapacityReservations(resolved resolvedOrchestratorConfig, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) *directRunnerCapacityReservations {
+func newDirectRunnerCapacityReservations(resolved queueExecutorResolved, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) *directRunnerCapacityReservations {
 	return &directRunnerCapacityReservations{held: map[string]int{}, resolved: resolved, newClient: newClient, logger: logger}
 }
 
 func (r *directRunnerCapacityReservations) reserve(ctx context.Context) (*directRunnerReservation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	targets, order, err := ParseDockerHosts(r.resolved.DockerHosts)
-	if err != nil {
-		return nil, fmt.Errorf("parsing fleet docker hosts: %w", err)
-	}
-	if len(order) == 0 {
-		return nil, fmt.Errorf("no docker hosts configured")
-	}
-	maxConcurrent := directRunnerMaxConcurrent()
+	targets, order := r.resolved.targets, r.resolved.order
+	maxConcurrent := r.resolved.maxConcurrent
 	start := directRunnerHostCursor.Add(1) - 1
 	var probeErr error
 	for i := range order {
@@ -507,7 +501,7 @@ func (r *directRunnerCapacityReservations) reserve(ctx context.Context) (*direct
 		return &directRunnerReservation{
 			release: release,
 			launch: func(l directRunnerLaunch) error {
-				return launchDirectRunnerReservedHost(ctx, host, targets[host], l, r.newClient, r.logger)
+				return launchDirectRunnerReservedHost(ctx, r.resolved, host, targets[host], l, r.newClient, r.logger)
 			},
 		}, nil
 	}
@@ -519,20 +513,12 @@ func (r *directRunnerCapacityReservations) reserve(ctx context.Context) (*direct
 	return nil, nil
 }
 
-func launchDirectRunnerReservedHost(ctx context.Context, host, target string, l directRunnerLaunch, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) error {
-	runnerImage, err := directRunnerImage()
-	if err != nil {
-		return err
+func launchDirectRunnerReservedHost(ctx context.Context, q queueExecutorResolved, host, target string, l directRunnerLaunch, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) error {
+	binds, ok := q.binds[strings.ToLower(strings.TrimSpace(l.pipeline))]
+	if !ok {
+		return fmt.Errorf("no direct-runner provider adapter for pipeline %q", l.pipeline)
 	}
-	writerKeyHostPath, err := directRunnerTelemetryWriterHostPath()
-	if err != nil {
-		return err
-	}
-	binds, err := directRunnerProviderCredentialBinds(l.pipeline)
-	if err != nil {
-		return err
-	}
-	if err := launchDirectRunnerOnHost(ctx, newClient, host, target, runnerImage, writerKeyHostPath, binds, directRunnerMaxConcurrent(), l, logger); err != nil {
+	if err := launchDirectRunnerOnHost(ctx, newClient, host, target, q.image, q.writerPath, binds, q.maxConcurrent, l, logger); err != nil {
 		return fmt.Errorf("launching direct-mode runner for run %q: %w", l.runID, err)
 	}
 	return nil
@@ -547,37 +533,17 @@ func launchDirectRunnerReservedHost(ctx context.Context, host, target string, l 
 // launchDirectRunnerOnHost (and this function's round-robin) directly
 // against fakeDockerServer, via an injected client factory the same way
 // newDockerClient itself is the injected default here.
-func launchDirectRunner(ctx context.Context, resolved resolvedOrchestratorConfig, l directRunnerLaunch, logger *slog.Logger) error {
+func launchDirectRunner(ctx context.Context, resolved queueExecutorResolved, l directRunnerLaunch, logger *slog.Logger) error {
 	return launchDirectRunnerWithClient(ctx, resolved, l, newDockerClient, logger)
 }
 
-func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestratorConfig, l directRunnerLaunch, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) error {
-	targets, order, err := ParseDockerHosts(resolved.DockerHosts)
-	if err != nil {
-		return fmt.Errorf("parsing fleet docker hosts: %w", err)
-	}
-	if len(order) == 0 {
-		return fmt.Errorf("no docker hosts configured to launch a direct-mode runner")
-	}
-	runnerImage, err := directRunnerImage()
-	if err != nil {
-		return err
-	}
-	writerKeyHostPath, err := directRunnerTelemetryWriterHostPath()
-	if err != nil {
-		return err
-	}
-	providerCredentialBinds, err := directRunnerProviderCredentialBinds(l.pipeline)
-	if err != nil {
-		return err
-	}
-	maxConcurrent := directRunnerMaxConcurrent()
-
+func launchDirectRunnerWithClient(ctx context.Context, resolved queueExecutorResolved, l directRunnerLaunch, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) error {
+	targets, order := resolved.targets, resolved.order
 	start := directRunnerHostCursor.Add(1) - 1
 	var lastErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
-		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, providerCredentialBinds, maxConcurrent, l, logger); err != nil {
+		if err := launchDirectRunnerReservedHost(ctx, resolved, host, targets[host], l, newClient, logger); err != nil {
 			lastErr = err
 			continue
 		}
@@ -611,16 +577,16 @@ func directRunnerImage() (string, error) {
 // scaler.go covers direct-mode containers, since they are deliberately
 // outside Scaler.HandleDesiredRunnerCount's state machine -- so a simple,
 // independently-configured cap (default 1) stands in for it.
-func directRunnerMaxConcurrent() int {
+func directRunnerMaxConcurrent() (int, error) {
 	raw := strings.TrimSpace(os.Getenv("LCARS_QUEUE_MAX_CONCURRENT"))
 	if raw == "" {
-		return 1
+		return 1, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 {
-		return 1
+		return 0, fmt.Errorf("LCARS_QUEUE_MAX_CONCURRENT must be a positive integer")
 	}
-	return n
+	return n, nil
 }
 
 // directRunnerTelemetryWriterHostPath returns the Docker-host-side path of
@@ -879,7 +845,7 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 	if len(running) >= maxConcurrent {
 		return fmt.Errorf("host %q: at direct-runner capacity (%d/%d)", host, len(running), maxConcurrent)
 	}
-	preparedImage, err := prepareRunnerImageForHost(ctx, client, host, runnerImage, logger)
+	preparedImage, err := ensureQueueRunnerImage(ctx, client, host, runnerImage, logger)
 	if err != nil {
 		return err
 	}

@@ -40,15 +40,12 @@ func newQueueExecutorStatusSource(
 // configureEligibleHosts is called exactly once, before ready becomes true.
 // Keeping the selected set here makes status capacity and active-run counts
 // use the exact same host pool as the poller's launch callback.
-func (s *queueExecutorStatusSource) configureEligibleHosts(resolved resolvedOrchestratorConfig, newClient func(string) (*dockerclient.Client, error)) {
-	capacity := 0
-	if _, hosts, err := ParseDockerHosts(resolved.DockerHosts); err == nil {
-		capacity = len(hosts) * directRunnerMaxConcurrent()
-	}
+func (s *queueExecutorStatusSource) configureEligibleHosts(resolved queueExecutorResolved, newClient func(string) (*dockerclient.Client, error)) {
+	capacity := len(resolved.order) * resolved.maxConcurrent
 	s.mu.Lock()
 	s.maxConcurrent = capacity
 	s.activeRuns = func(ctx context.Context) (int, error) {
-		return activeDirectRunnerCount(ctx, resolved, newClient)
+		return activeDirectRunnerCount(ctx, resolved.resolvedOrchestratorConfig, newClient)
 	}
 	s.mu.Unlock()
 }

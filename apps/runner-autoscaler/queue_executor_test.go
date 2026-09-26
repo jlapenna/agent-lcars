@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -555,25 +556,33 @@ func TestDirectRunnerImage(t *testing.T) {
 }
 
 func TestDirectRunnerMaxConcurrent(t *testing.T) {
-	cases := []struct {
-		name string
-		env  string
+	for _, tc := range []struct {
+		raw  string
 		want int
-	}{
-		{"unset defaults to 1", "", 1},
-		{"valid override", "3", 3},
-		{"zero falls back to 1", "0", 1},
-		{"negative falls back to 1", "-1", 1},
-		{"non-numeric falls back to 1", "many", 1},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LCARS_QUEUE_MAX_CONCURRENT", tc.env)
-			if got := directRunnerMaxConcurrent(); got != tc.want {
-				t.Errorf("directRunnerMaxConcurrent() = %d, want %d", got, tc.want)
+		bad  bool
+	}{{"", 1, false}, {"3", 3, false}, {"0", 0, true}, {"-1", 0, true}, {"many", 0, true}} {
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Setenv("LCARS_QUEUE_MAX_CONCURRENT", tc.raw)
+			got, err := directRunnerMaxConcurrent()
+			if got != tc.want || (err != nil) != tc.bad {
+				t.Fatalf("got %d, %v", got, err)
 			}
 		})
 	}
+}
+
+func testQueueResolved(t *testing.T, raw resolvedOrchestratorConfig) queueExecutorResolved {
+	t.Helper()
+	for key, value := range map[string]string{"LCARS_QUEUE_RUNNER_IMAGE": "registry/direct-runner:test", "LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH": "/secrets/telemetry-writer.json", "LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH": "/secrets/claude-token", "LCARS_QUEUE_OPENCODE_KEY_HOST_PATH": "/secrets/opencode-key"} {
+		if os.Getenv(key) == "" {
+			t.Setenv(key, value)
+		}
+	}
+	q, err := resolveQueueExecutor(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return q
 }
 
 // TestQueueExecutorStartupDecision proves durable startup depends on the
@@ -1245,7 +1254,7 @@ func TestPollOnceReservedCapacityLaunchesExactlyOnce(t *testing.T) {
 		return docker.client(t), nil
 	}
 	reservations := newDirectRunnerCapacityReservations(
-		resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}},
+		testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}),
 		newClient,
 		discardLogger(),
 	)
@@ -1286,7 +1295,7 @@ func TestDirectRunnerCapacityReservationsDoNotDoubleReserveOneSlot(t *testing.T)
 	t.Setenv("LCARS_QUEUE_MAX_CONCURRENT", "1")
 	docker := newFakeDockerServer(t)
 	reservations := newDirectRunnerCapacityReservations(
-		resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}},
+		testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}),
 		func(string) (*dockerclient.Client, error) { return docker.client(t), nil },
 		discardLogger(),
 	)
@@ -1379,7 +1388,7 @@ func TestPollOnceDoesNotClaimWhenCapacityInventoryFails(t *testing.T) {
 	}))
 	defer server.Close()
 	reservations := newDirectRunnerCapacityReservations(
-		resolvedOrchestratorConfig{DockerHosts: []string{"host-a=unreachable"}},
+		testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=unreachable"}}),
 		func(string) (*dockerclient.Client, error) { return nil, errors.New("docker unavailable") },
 		discardLogger(),
 	)
@@ -1430,7 +1439,7 @@ func TestLaunchDirectRunnerRoundRobinsPastAFullHost(t *testing.T) {
 	}
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX03/r1", runToken: "t", pipeline: "claude"}
 
-	if err := launchDirectRunnerWithClient(context.Background(), resolved, l, newClient, discardLogger()); err != nil {
+	if err := launchDirectRunnerWithClient(context.Background(), testQueueResolved(t, resolved), l, newClient, discardLogger()); err != nil {
 		t.Fatalf("launchDirectRunnerWithClient: %v", err)
 	}
 	if full.createCount() != 0 {
@@ -1459,7 +1468,9 @@ func TestLaunchDirectRunnerCodexDoesNotRequireClaudeTokenPath(t *testing.T) {
 	}
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTCODEX2/r1", runToken: "t", pipeline: "codex"}
 
-	if err := launchDirectRunnerWithClient(context.Background(), resolved, l, newClient, discardLogger()); err != nil {
+	snapshot := testQueueResolved(t, resolved)
+	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "")
+	if err := launchDirectRunnerWithClient(context.Background(), snapshot, l, newClient, discardLogger()); err != nil {
 		t.Fatalf("launchDirectRunnerWithClient: %v", err)
 	}
 	if f.createCount() != 1 {

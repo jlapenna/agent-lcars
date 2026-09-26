@@ -194,6 +194,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					setQueueExecutorStartupState(queueExecutorStateReady)
 					queueStatus.ready.Store(true)
 					capacityReservations := newDirectRunnerCapacityReservations(queueExecutorResolved, newDockerClient, logger)
+					go refreshQueueRunnerImages(ctx, queueExecutorResolved, newDockerClient, logger)
 					go runQueueExecutorPoller(ctx, queueExecutorConfig{
 						consoleURL: consoleURL,
 						recover: func(recoveryCtx context.Context) error {
@@ -211,7 +212,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 						},
 						draining: queueDraining.Load,
 						cleanup: func(cleanupCtx context.Context) error {
-							return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved, newDockerClient, time.Now())
+							return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved.resolvedOrchestratorConfig, newDockerClient, time.Now())
 						},
 					}, 15*time.Second, logger)
 				}

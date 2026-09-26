@@ -42,34 +42,30 @@ func directRunnerPermanentCredentialMounts() ([]directRunnerCredentialMount, err
 // read the permanent bind sources is excluded from the queue's immutable
 // launch pool. This lets optional/offline hosts remain configured for the
 // GitHub runner fleet without ever receiving a direct queue claim.
-func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestratorConfig, newClient func(string) (*dockerclient.Client, error), logger *slog.Logger) (resolvedOrchestratorConfig, error) {
-	mounts, err := directRunnerPermanentCredentialMounts()
+func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestratorConfig, newClient func(string) (*dockerclient.Client, error), logger *slog.Logger) (queueExecutorResolved, error) {
+	q, err := resolveQueueExecutor(resolved)
 	if err != nil {
-		return resolvedOrchestratorConfig{}, err
+		return q, err
 	}
-	images, err := directRunnerPreflightImages()
-	if err != nil {
-		return resolvedOrchestratorConfig{}, err
-	}
-	targets, order, err := ParseDockerHosts(resolved.DockerHosts)
-	if err != nil {
-		return resolvedOrchestratorConfig{}, err
-	}
-
-	eligible := make([]string, 0, len(order))
-	for _, host := range order {
-		if err := directRunnerPreflightHostImages(ctx, newClient, host, targets[host], images, mounts, logger); err != nil {
+	eligible := []string{}
+	order := []string{}
+	targets := map[string]string{}
+	for _, host := range q.order {
+		if err := directRunnerPreflightHostImages(ctx, newClient, host, q.targets[host], []string{q.image}, q.mounts, logger); err != nil {
 			logger.Warn("Direct queue host is ineligible; excluding it from queue launch", slog.String("host", host), slog.String("error", err.Error()))
 			continue
 		}
-		eligible = append(eligible, host+"="+targets[host])
+		eligible = append(eligible, host+"="+q.targets[host])
+		order = append(order, host)
+		targets[host] = q.targets[host]
 	}
 	if len(eligible) == 0 {
-		return resolvedOrchestratorConfig{}, fmt.Errorf("no configured Docker host passed the direct-runner credential preflight")
+		return q, fmt.Errorf("no configured Docker host passed the direct-runner credential preflight")
 	}
-	queueResolved := resolved
-	queueResolved.DockerHosts = eligible
-	return queueResolved, nil
+	q.DockerHosts = eligible
+	q.order = order
+	q.targets = targets
+	return q, nil
 }
 
 // directRunnerPreflightImages returns the one direct-runner image that every
@@ -107,7 +103,7 @@ func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*doc
 	// mutable image here as part of this host's admission probe instead of
 	// racing its background pull on a fresh host. A host with a failed pull is
 	// excluded before it can claim any provider's work.
-	preparedImage, err := prepareRunnerImageForHost(ctx, client, host, runnerImage, logger)
+	preparedImage, err := ensureQueueRunnerImage(ctx, client, host, runnerImage, logger)
 	if err != nil {
 		return err
 	}
