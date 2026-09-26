@@ -15,4 +15,5 @@ cd "$root"
 # Remove any inherited HUSKY=0 so this explicit initialization step cannot
 # silently skip hook generation.
 env -u HUSKY pnpm exec husky
+pnpm exec repo-install-husky-hooks
 ./tools/assert-git-hooks-installed.sh

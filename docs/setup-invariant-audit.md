@@ -206,8 +206,26 @@ Dependency checks in pre-push run only when dependency inputs differ from
 verify Git LFS forwarding and the dependency-change boundary, replacing the
 install-time source-content assertion.
 
-Bare-worktree hook coverage and workstation remote-cache credential bootstrap
-remain shared-tooling/Homegit work. Homegit #82 is closed and describes
-interactive guardrail convergence; its closure is not proof of either remaining
-#2039 acceptance condition. Do not copy the repository's hooks into Homegit or
-claim these external conditions are complete from this local change.
+Husky installation now calls the shared `repo-install-husky-hooks` helper from
+repo-tools #79. It stores generated runtime in Git's common directory while
+executing each worktree's own tracked hook. A new linked worktree therefore
+does not need its ignored `.husky/_` directory to run commit/push guards.
+Rerun setup after a historical branch's Husky installer restores a relative
+hook path. No repository hook body is copied into Homegit or repo-tools.
+
+Homegit #83 adds the account-wide Nx credential to its existing hourly apply
+reconciliation. `repo-nx` consumes that file only when explicit environment and
+repository configuration do not override it. Homegit authenticates before
+atomically replacing the private file; failure retains the previous value.
+This replaces the manual-bootstrap gap without distributing per-worktree
+credential copies. Homegit #82's earlier closure was not evidence for this work.
+
+On Pike, the shared helper's real Git/Husky fixtures covered bare worktrees,
+primary rejection, current-worktree policy, push arguments/stdin, and missing
+runtime. A native LCARS `git hook run pre-commit` also rejected deliberately
+invalid staged TypeScript while `.husky/_` was absent. The disposable worktree
+was removed after restoring only its test artifact. The first native hook
+invocation had triggered pnpm's normal automatic dependency install and then
+ran lint-staged; that was hook execution, not a missing-dependency failure.
+Homegit's reviewed commit was applied on Pike and created the account cache
+file with mode 0600. Other workstation convergence remains asynchronous.
