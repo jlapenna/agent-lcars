@@ -177,7 +177,7 @@ after CI completes; this audit does not wait for CI or grade check conclusions.
 
 `PASS` means that particular setup fact was observed. `FAIL` identifies a gap
 or failed API request. `UNVERIFIED` means the necessary credential or identity
-was unavailable; both non-pass states produce a nonzero exit. In particular,
+was unavailable; only `FAIL` produces a nonzero exit. In particular,
 the legacy root autoscaler registration gets its App identity from deployment
 environment variables. Its identity cannot be established from the committed
 YAML alone. Supply its resolved registration metadata and its actual App
@@ -196,6 +196,9 @@ from deployment into `LEGACY_RUNNER_APP_CLIENT_ID` and
 `LEGACY_RUNNER_APP_INSTALLATION_ID`, or supply resolved `app` metadata in the
 operator configuration file. These identifiers must describe the actual
 registration, not whichever credential happens to be available.
+Missing optional credentials and authorization gaps are emitted as
+`UNVERIFIED` facts without failing the workflow; only an observed mismatch or
+operational request failure is `FAIL`.
 
 The `Fleet onboarding audit` workflow runs daily, on demand, and after changes
 to its local configuration sources. It uses the existing fleet App credential;
