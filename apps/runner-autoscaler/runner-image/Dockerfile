@@ -294,7 +294,7 @@ RUN set -eux; \
     # python3-yaml: GitHub-hosted ubuntu-latest ships PyYAML, and consumer
     # workflows (sprinkles deploy.py) assume it; with PEP 668 a job cannot
     # pip-install it at run time without --break-system-packages. \
-    apt-get install -y --no-install-recommends nodejs git-lfs gh jq python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
+    apt-get install -y --no-install-recommends nodejs git-lfs gh jq xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
     node --version; \
     # NodeSource's nodejs package bundles the `corepack` binary but never
     # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
@@ -320,6 +320,7 @@ RUN set -eux; \
     git-lfs --version; \
     gh --version; \
     jq --version; \
+    xz --version; \
     python3 -m pip --version; \
     test "$(go env GOVERSION)" = "go${GO_VERSION}"; \
     actionlint -version; \

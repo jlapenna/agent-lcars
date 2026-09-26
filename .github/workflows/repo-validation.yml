@@ -34,7 +34,7 @@ on:
           Runner labels as a JSON array string, passed straight to
           fromJSON(). Defaults to GitHub-hosted ubuntu-latest on purpose:
           validation must stay green-capable before a repo's self-hosted
-          fleet capacity deploys. Linux x64/arm64 runners need curl, tar,
+          fleet capacity deploys. Linux x64/arm64 runners need curl, tar, xz,
           Python 3 and pip; no Docker daemon is required.
         required: false
         type: string
