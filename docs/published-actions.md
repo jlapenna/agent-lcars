@@ -150,7 +150,9 @@ before authorization or storage; callers must not pre-truncate it.
 or `tool: actionlint` for actionlint (optional `actionlint-version`, default
 1.7.7), ShellCheck 0.10.0 and Pyflakes 3.2.0. It adds the executables to PATH
 on Linux x64/arm64 using a temporary directory and verified release archives.
-Python 3 and pip are required for actionlint's Python-script checks.
+The actionlint toolchain requires xz to unpack ShellCheck, plus Python 3 and
+pip for Python-script checks. These prerequisites are installed in the fleet
+runner image.
 
 `repo-validation.yml` uses this action, so registered consumer repositories can
 set its `runs-on` input to their socketless fleet pool. Keep GitHub-hosted
