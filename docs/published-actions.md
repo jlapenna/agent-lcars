@@ -39,9 +39,9 @@ QueueExecutor instead.
 
 `agent-automerge-reusable.yml`'s `reconcile-automerge` job also updates a
 BEHIND branch on any open, non-draft, non-parked PR that already has
-auto-merge armed (any author -- arming auto-merge is the opt-in, not
-agent-authorship): GitHub's own auto-merge arms a PR but never updates its
-branch, so under a strict "up to date" ruleset a PR whose head falls behind
+auto-merge armed (arming auto-merge is the opt-in, except for dependency
+bots such as Renovate and Dependabot, which retain branch ownership):
+GitHub's own auto-merge arms a PR but never updates its branch, so under a strict "up to date" ruleset a PR whose head falls behind
 `main` after another merge stalls indefinitely until a human rebases it
 (#1748; jlapenna/homelab#1121 sat 16 hours this way with green checks and
 auto-merge armed). The sweep only acts once a PR's checks are all green with
@@ -49,6 +49,15 @@ none still running and it has no unresolved review thread, re-checks a
 stale `UNKNOWN` mergeability once, prefers `gh pr update-branch --rebase`
 and falls back to the default merge-commit update if the rebase form is
 refused, and is capped at 5 updates per run.
+
+The sweep never updates Renovate or Dependabot PRs (#2049). Updating a
+Renovate branch with `GITHUB_TOKEN` can suppress follow-up CI and cause
+Renovate to treat the branch as externally modified. The shared Renovate
+preset sets `rebaseWhen: "auto"` so Renovate handles behind-branch updates
+for strict up-to-date rulesets itself. Consumers overriding that setting
+with `"conflicted"` must remove the override or use `"behind-base-branch"`.
+This leaves branch updates and the resulting CI events under Renovate's
+own identity.
 
 The workflow's required `runs-on` input selects the short-lived glue-job
 pool. Consumers whose required-check aggregators use that same constrained

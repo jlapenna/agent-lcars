@@ -127,12 +127,36 @@ describe('agent-automerge-reusable update-behind-branches step', () => {
       ).toBe(false);
     });
 
-    it('is not limited to agent bot-logins (no author field is consulted)', () => {
-      // The predicate only ever reads .autoMergeRequest and .labels - no
-      // author/login field exists in its input at all, which is what makes
-      // "any author" true: there is nothing here that could filter on one.
-      expect(eligibilityPredicate.text).not.toMatch(/login|author|bot-logins/);
-    });
+    it.each([
+      'renovate[bot]',
+      'app/renovate',
+      'dependabot[bot]',
+      'app/dependabot',
+    ])(
+      'leaves dependency branch ownership with %s even when armed',
+      (login) => {
+        expect(
+          runJqPredicate(eligibilityPredicate.text, {
+            author: { login },
+            autoMergeRequest: { enabledAt: '2026-09-01T00:00:00Z' },
+            labels: [],
+          }),
+        ).toBe(false);
+      },
+    );
+
+    it.each(['jlapenna', 'agent-lcars[bot]'])(
+      'still admits an armed PR authored by %s',
+      (login) => {
+        expect(
+          runJqPredicate(eligibilityPredicate.text, {
+            author: { login },
+            autoMergeRequest: { enabledAt: '2026-09-01T00:00:00Z' },
+            labels: [],
+          }),
+        ).toBe(true);
+      },
+    );
   });
 
   describe('checks-green-and-none-running predicate', () => {
