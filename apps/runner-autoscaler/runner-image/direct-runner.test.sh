@@ -701,7 +701,43 @@ run_scenario() {
   set +e
   scenario_log="$dir/direct-runner.log"
   if [ "${FAKE_CANCEL_CODEX_WAIT:-0}" = 1 ]; then
-    timeout --signal=TERM --kill-after=2s 3s /bin/bash "$here/direct-runner.sh" >"$scenario_log" 2>&1
+    # Docker stops the entrypoint, not every child in its process group.
+    # Wait for the credential-wait boundary before sending one TERM: a
+    # whole-group timeout also kills the completion callback's helpers and
+    # can interrupt the EXIT trap a second time, losing the cancellation.
+    /bin/bash "$here/direct-runner.sh" >"$scenario_log" 2>&1 &
+    local runner_pid=$! ready=0
+    for _ in $(seq 1 300); do
+      if grep -q 'Codex credential lease busy' "$scenario_log"; then
+        ready=1
+        break
+      fi
+      kill -0 "$runner_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if [ "$ready" -ne 1 ]; then
+      kill -KILL "$runner_pid" 2>/dev/null || true
+      wait "$runner_pid" 2>/dev/null || true
+      fail 'runner never reached the credential-wait cancellation boundary'
+    fi
+    kill -TERM "$runner_pid"
+    # Bound cleanup independently of startup; do not turn a stuck EXIT trap
+    # into a hung CI job. This watcher is owned and reaped by the test.
+    (
+      for _ in $(seq 1 100); do
+        kill -0 "$runner_pid" 2>/dev/null || exit 0
+        sleep 0.1
+      done
+      kill -KILL "$runner_pid" 2>/dev/null || true
+    ) &
+    local cancellation_watchdog=$!
+    wait "$runner_pid"
+    rc=$?
+    kill "$cancellation_watchdog" 2>/dev/null || true
+    wait "$cancellation_watchdog" 2>/dev/null || true
+    set -e
+    workspace="$scenario_runner_temp/checkout"
+    return 0
   else
     /bin/bash "$here/direct-runner.sh" >"$scenario_log" 2>&1
   fi
