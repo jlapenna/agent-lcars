@@ -47,6 +47,17 @@ trap cleanup EXIT
 source_config_dir="$HOME/.config/opencode"
 test -f "$source_config_dir/opencode.json" || fail "runner-global OpenCode config is missing"
 mkdir -p "$tmp/workspace" "$tmp/data" "$tmp/state" "$tmp/cache" "$tmp/home/.config/opencode"
+# Exercise continuation from the baked empty schema, not a fresh migration.
+# SQLite backup includes any checkpoint state without copying transient WALs.
+mkdir -p "$tmp/data/opencode"
+python3 - "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db" "$tmp/data/opencode/opencode.db" <<'PY_STORE'
+import sqlite3
+import sys
+from pathlib import Path
+with sqlite3.connect(Path(sys.argv[1]).as_uri() + '?mode=ro', uri=True) as source:
+    with sqlite3.connect(sys.argv[2]) as target:
+        source.backup(target)
+PY_STORE
 printf '{}\n' > "$tmp/models.json"
 # The production provider references a runtime-mounted secret that correctly
 # does not exist while building the image. Keep the exact global instructions

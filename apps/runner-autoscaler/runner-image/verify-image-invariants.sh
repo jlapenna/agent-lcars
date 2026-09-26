@@ -45,9 +45,12 @@ check() {
 check "Actions node20/node24 runtimes run" required_node_runtimes_run
 check "Corepack pnpm runs offline" pnpm_runs
 check "Java 21+ runs" java_21_runs
+check "Terraform CLI runs as runner" terraform version -json
+check "managed Python 3.14 runs as runner" bash -c '"$(uv python find --managed-python 3.14)" --version'
 check "trusted OpenCode CLI runs" trusted_opencode_runs "$opencode"
 check "trusted OpenCode CLI supports QueueExecutor's --auto mode" \
   trusted_opencode_supports_auto "$opencode"
+check "empty version-matched OpenCode store is baked" bash "$lib/check-opencode-store.sh"
 check "action-archive cache is baked at $archive_cache" test -d "$archive_cache"
 check "lcars CLI is executable at $lcars" test -x "$lcars"
 check "repo-tools commands are installed and the worktree guard executes" \

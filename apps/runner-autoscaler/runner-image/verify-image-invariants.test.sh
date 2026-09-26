@@ -33,9 +33,14 @@ write_exe() {
 write_exe "$tmp/externals/node20/bin/node" 'exit 0'
 write_exe "$tmp/externals/node24/bin/node" 'exit 0'
 write_exe "$bin/pnpm" 'exit 0'
+write_exe "$bin/terraform" 'exit 0'
+write_exe "$bin/python314" 'exit 0'
+write_exe "$bin/uv" 'command -v python314'
 write_exe "$bin/java" "echo 'openjdk version \"21.0.8\" 2025-07-15' >&2"
 write_exe "$bin/opencode" '[ "$1 $2" = "run --help" ] && echo "      --auto   auto-approve permissions"; exit 0'
 write_exe "$bin/lcars" 'exit 0'
+# Real SQLite/schema behavior is tested by the image's two build layers.
+write_exe "$lib/check-opencode-store.sh" 'exit 0'
 
 gate() {
   env HOME="$home" PATH="$bin:/usr/bin:/bin" \
