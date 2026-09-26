@@ -603,6 +603,7 @@ RUN OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/open
 # in its own layer so the next command exercises copy-up from the baked layer.
 RUN --network=none bash /usr/local/lib/agent-lcars/prepare-opencode-store.sh
 RUN --network=none set -eu; \
+    config_home="$(mktemp -d)"; export XDG_CONFIG_HOME="$config_home"; \
     /usr/local/bin/opencode --pure session list --format json >/tmp/opencode-reader-a.json & first=$!; \
     /usr/local/bin/opencode --pure session list --format json >/tmp/opencode-reader-b.json & second=$!; \
     wait "$first"; wait "$second"; \
@@ -610,6 +611,7 @@ RUN --network=none set -eu; \
       if [ -s "$listing" ]; then jq -e 'type == "array" and length == 0' "$listing"; fi; \
     done; \
     rm /tmp/opencode-reader-{a,b}.json; \
+    rm -rf "$config_home"; \
     bash /usr/local/lib/agent-lcars/check-opencode-store.sh
 
 # Exercise the exact installed CLI and global config through a deterministic
