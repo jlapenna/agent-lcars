@@ -821,10 +821,12 @@ func runListenerSupervisor(ctx context.Context, runtime *scaleSetRuntime, logger
 			sessionErr = err
 			if sessionErr == nil {
 				statsRecorder := newScaleSetStatsRecorder(runtime.config.ScaleSetName, session.Session().SessionID, runtime.scaler.logger.With("component", "scale_set_stats"))
-				setListener, listenerErr := listener.New(session, listener.Config{
+				sessionLogger := runtime.scaler.logger.With("scale_set", runtime.config.ScaleSetName, "session_id", session.Session().SessionID.String())
+				diagnosticClient := &diagnosticSessionClient{Client: session, logger: sessionLogger}
+				setListener, listenerErr := listener.New(diagnosticClient, listener.Config{
 					ScaleSetID: runtime.scaler.scaleSetID,
 					MaxRunners: runtime.config.MaxRunners,
-					Logger:     runtime.scaler.logger.With("component", "listener"),
+					Logger:     sessionLogger.With("component", "listener"),
 				})
 				if listenerErr == nil {
 					// scaleset v0.4.1-0.20260916214619 removed
@@ -836,7 +838,7 @@ func runListenerSupervisor(ctx context.Context, runtime *scaleSetRuntime, logger
 					// ever calls back into Scale synchronously from this same
 					// goroutine, so plain field assignment (no mutex) is safe here,
 					// same as scaleSetID/scalesetClient above.
-					runtime.scaler.messageSessionClient = session
+					runtime.scaler.messageSessionClient = diagnosticClient
 					runtime.scaler.statsRecorder = statsRecorder
 					listenerUpGauge.WithLabelValues(runtime.config.ScaleSetName).Set(1)
 					orchestratorListenerStates.Store(runtime.config.ScaleSetName, true)
@@ -844,7 +846,11 @@ func runListenerSupervisor(ctx context.Context, runtime *scaleSetRuntime, logger
 				}
 				listenerUpGauge.WithLabelValues(runtime.config.ScaleSetName).Set(0)
 				orchestratorListenerStates.Store(runtime.config.ScaleSetName, false)
-				_ = closeMessageSession(ctx, session, sessionCloseTimeout)
+				if closeErr := closeMessageSession(ctx, session, sessionCloseTimeout); closeErr != nil {
+					sessionLogger.Error("Scale-set session close failed")
+				} else {
+					sessionLogger.Info("Scale-set session closed")
+				}
 				sessionErr = listenerErr
 			}
 		}

@@ -879,7 +879,24 @@ func (a *Scaler) runnersChanged() {
 // their own "already-busy runner" / "unassigned runner" branches, hit
 // routinely today by GitHub's own cancel/re-dispatch replays per
 // agent-lcars#1687), so this is a safety improvement, not a new hazard.
-func (a *Scaler) Scale(ctx context.Context, message *scaleset.RunnerScaleSetMessage) error {
+func (a *Scaler) Scale(ctx context.Context, message *scaleset.RunnerScaleSetMessage) (scaleErr error) {
+	logger := a.logger.With("scale_set", a.scaleSetLabel())
+	if a.messageSessionClient != nil {
+		logger = logger.With("session_id", a.messageSessionClient.Session().SessionID.String())
+	}
+	if message != nil {
+		logger = logger.With("message_id", message.MessageID)
+		logScaleSetBatch(logger, message)
+	} else {
+		logger = logger.With("idle_poll", true)
+	}
+	ctx = context.WithValue(ctx, scaleDiagnosticLoggerKey{}, logger)
+	defer func() {
+		if scaleErr != nil {
+			logger.Error("Scale-set batch processing failed")
+		}
+	}()
+
 	if message == nil {
 		// A long poll that timed out with no activity. The new listener no
 		// longer tracks the last-seen statistics itself (the old
@@ -943,12 +960,12 @@ func (a *Scaler) acquireAvailableJobs(ctx context.Context, jobsAvailable []*scal
 		ids = append(ids, job.RunnerRequestID)
 	}
 
-	a.logger.Info("Acquiring jobs", slog.Int("count", len(ids)))
+	scaleDiagnosticLogger(ctx, a.logger).Info("Acquiring jobs", slog.Any("runner_request_ids", ids))
 	acquired, err := a.messageSessionClient.AcquireJobs(ctx, ids)
 	if err != nil {
 		return fmt.Errorf("acquiring jobs: %w", err)
 	}
-	a.logger.Info("Jobs acquired", slog.Int("count", len(acquired)))
+	scaleDiagnosticLogger(ctx, a.logger).Info("Jobs acquired", slog.Any("runner_request_ids", acquired))
 	return nil
 }
 
@@ -970,6 +987,7 @@ func (a *Scaler) updateSchedulerDemand(now time.Time) {
 }
 
 func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
+	logger := scaleDiagnosticLogger(ctx, a.logger)
 	a.queuedJobs.Store(int64(count))
 	// Correct idle currentCount against reality BEFORE comparing it to demand --
 	// a stale idle entry can otherwise pin desired == current forever and starve
@@ -980,6 +998,11 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 	currentCount := a.runners.count()
 	scaleSet := a.scaleSetLabel()
 	targetRunnerCount := min(a.maxRunners, a.minRunners+count)
+	logger.Info("Scale-set capacity decision", slog.Int("assigned", count), slog.Int("current", currentCount),
+		slog.Int("desired", targetRunnerCount), slog.Bool("draining", a.draining.Load()))
+	defer func() {
+		logger.Info("Scale-set capacity result", slog.Int("current", a.runners.count()), slog.Int("desired", targetRunnerCount))
+	}()
 	if a.draining.Load() {
 		// Keep desired_runners honest instead of freezing it at whatever it
 		// last read before the drain started: GitHub keeps assigning jobs
@@ -991,7 +1014,7 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 		desiredRunnersGauge.WithLabelValues(scaleSet).Set(float64(targetRunnerCount))
 		placementsRefusedDrainingTotal.WithLabelValues(scaleSet).Inc()
 		if a.drainRefusalLogged.CompareAndSwap(false, true) {
-			a.logger.Info("Refusing runner placement while draining",
+			logger.Info("Refusing runner placement while draining",
 				slog.String("scale_set", scaleSet), slog.Int("assigned", count))
 		}
 		a.removeIdleRunners(context.WithoutCancel(ctx))
@@ -1011,7 +1034,7 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 	case targetRunnerCount > currentCount:
 		// Scale up
 		scaleUp := targetRunnerCount - currentCount
-		a.logger.Info(
+		logger.Info(
 			"Scaling up runners",
 			slog.Int("currentCount", currentCount),
 			slog.Int("desiredCount", targetRunnerCount),
@@ -1032,7 +1055,7 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 				// remaining slots; this reconciliation loop is
 				// level-triggered, so a shortfall here is picked up again
 				// on the next HandleDesiredRunnerCount call regardless.
-				a.logger.Error("Failed to start runner during scale-up; continuing with remaining slots", slog.String("error", err.Error()))
+				logger.Error("Failed to start runner during scale-up; continuing with remaining slots", slog.String("error", err.Error()))
 				if errors.Is(err, errFleetAtCapacity) {
 					// Unlike a transient single-host failure, this means no
 					// host in the fleet had room for the LAST attempt either
@@ -3551,6 +3574,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to generate JIT config: %w", err)
 	}
 
+	scaleDiagnosticLogger(ctx, a.logger).Info("Runner JIT registration created", slog.String("name", name), slog.String("host", host))
 	binds := runnerBinds(a.fileMounts)
 	hostConfig := runnerHostConfig(binds, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize, a.runnerNanoCPUs, a.runnerCgroupParent)
 
@@ -3600,13 +3624,13 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		rmErr := client.ContainerRemove(removeCtx, c.ID, container.RemoveOptions{Force: true})
 		cancelRemove()
 		if rmErr != nil {
-			a.logger.Warn("Failed to remove container that failed to start", slog.String("host", host), slog.String("containerID", c.ID), slog.String("error", rmErr.Error()))
+			scaleDiagnosticLogger(ctx, a.logger).Warn("Failed to remove container that failed to start", slog.String("host", host), slog.String("containerID", c.ID), slog.String("error", rmErr.Error()))
 		}
 		return "", fmt.Errorf("failed to start runner container on host %q: %w", host, err)
 	}
 
 	runnerStartDuration.WithLabelValues(scaleSet, host).Observe(time.Since(start).Seconds())
-	a.logger.Info("Placed runner", slog.String("name", name), slog.String("host", host))
+	scaleDiagnosticLogger(ctx, a.logger).Info("Placed runner", slog.String("name", name), slog.String("host", host))
 	a.runners.addIdle(name, host, c.ID, time.Now())
 	a.runnersChanged()
 	return name, nil

@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 const CANONICAL_ENV = fileURLToPath(new URL('./ci.env', import.meta.url));
 
-const SAFE_CREDENTIAL_VALUES = new Map([['AUTH_SECRET', 'dummy-secret']]);
+const SAFE_CREDENTIAL_VALUES = new Map([
+  ['AUTH_SECRET', 'dummy-secret'],
+  ['AGENT_LCARS_WEBHOOK_SECRET', 'dummy-webhook-secret'],
+]);
 const REMOTE_CACHE_TOKEN = 'NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN';
 const REMOTE_CACHE_URL = 'NX_SELF_HOSTED_REMOTE_CACHE_SERVER';
 
