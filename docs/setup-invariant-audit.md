@@ -195,3 +195,19 @@ These cannot be completed from the PR:
 4. **Cross-repository and offline-account items.** Workstation hook
    installation and the consumer guardrail belong to jlapenna/homegit#82
    and #2031. Offline accounts were not exercised.
+
+### #2039 development-loop follow-up
+
+Native-binding hashing and content validation now run in `postinstall` and the
+idempotent worktree setup. `tools/nx` reads an install receipt; if its shared cache
+was evicted, it uses Nx's direct-loading mode until setup restores the receipt.
+Dependency checks in pre-push run only when dependency inputs differ from
+`origin/main`; CI retains the full check. A CI contract executes the hook to
+verify Git LFS forwarding and the dependency-change boundary, replacing the
+install-time source-content assertion.
+
+Bare-worktree hook coverage and workstation remote-cache credential bootstrap
+remain shared-tooling/Homegit work. Homegit #82 is closed and describes
+interactive guardrail convergence; its closure is not proof of either remaining
+#2039 acceptance condition. Do not copy the repository's hooks into Homegit or
+claim these external conditions are complete from this local change.

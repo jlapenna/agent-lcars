@@ -25,6 +25,9 @@ pnpm install --frozen-lockfile
 # above only runs `prepare` (which generates it) when it changed something; an
 # "Already up to date" rerun skips lifecycle scripts. Regenerating explicitly
 # keeps a repeated setup a safe, idempotent repair (#2033).
+echo "==> Preparing native binding cache"
+bash tools/setup-nx-native-file-cache.sh
+
 echo "==> Regenerating git hooks"
 ./tools/setup-git-hooks.sh
 

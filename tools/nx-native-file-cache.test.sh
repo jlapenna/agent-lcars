@@ -28,7 +28,7 @@ mkdir -p "$TEST_DIR/cache" "$TEST_DIR/home" "$TEST_DIR/repo-uninstalled"
 cache_path() {
   env -u CI -u NX_NATIVE_FILE_CACHE_DIRECTORY -u NX_SKIP_NATIVE_FILE_CACHE \
     HOME="$TEST_DIR/home" XDG_CACHE_HOME="$TEST_DIR/cache" \
-    bash -c '. "$1"; configure_agent_lcars_nx_native_file_cache "$2"; printf "%s\n" "$NX_NATIVE_FILE_CACHE_DIRECTORY"' \
+    bash -c '. "$1"; prepare_agent_lcars_nx_native_file_cache "$2"; printf "%s\n" "$NX_NATIVE_FILE_CACHE_DIRECTORY"' \
     bash "$ROOT/tools/nx-native-file-cache.sh" "$1"
 }
 
@@ -112,4 +112,28 @@ ci_path="$({
   exit 1
 }
 
-echo "ok: Nx native cache is content-addressed and atomically shared"
+# Once installed, repeated launches must never hash or compare the binding.
+actual_runtime="$({
+  unset NX_NATIVE_FILE_CACHE_DIRECTORY NX_SKIP_NATIVE_FILE_CACHE CI
+  sha256sum() { echo "unexpected hash" >&2; return 99; }
+  shasum() { echo "unexpected hash" >&2; return 99; }
+  cmp() { echo "unexpected comparison" >&2; return 99; }
+  configure_agent_lcars_nx_native_file_cache "$TEST_DIR/repo-a"
+  printf '%s\n' "$NX_NATIVE_FILE_CACHE_DIRECTORY"
+})"
+[ "$actual_runtime" = "$first_path" ]
+
+# A new install invalidates the receipt even when Nx keeps the same version.
+printf 'native artifact replaced\n' >"$source_binding"
+updated_path="$(cache_path "$TEST_DIR/repo-a")"
+[ "$updated_path" != "$first_path" ]
+
+# Eviction falls back to direct loading, never to a runtime hash/copy.
+rm -rf "$updated_path"
+(
+  unset NX_NATIVE_FILE_CACHE_DIRECTORY NX_SKIP_NATIVE_FILE_CACHE CI
+  configure_agent_lcars_nx_native_file_cache "$TEST_DIR/repo-a"
+  [ "$NX_SKIP_NATIVE_FILE_CACHE" = true ]
+  [ -z "${NX_NATIVE_FILE_CACHE_DIRECTORY:-}" ]
+)
+echo "ok: install publishes a content-addressed cache; runtime reads its receipt"
