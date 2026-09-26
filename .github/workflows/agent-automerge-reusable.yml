@@ -605,9 +605,9 @@ jobs:
       # until a human rebases it (jlapenna/homelab#1121 sat 16h behind a
       # green, armed, no-review-comments PR for exactly this reason). This
       # is the opt-in half of the mechanism: auto-merge already being armed
-      # is the opt-in, so this acts on any author's PR, not only
-      # agent-authored ones. Parked (status:needs-human) and draft PRs are
-      # left alone, matching the arm step above. A branch update restarts
+      # is the opt-in, so this also acts on human-authored PRs.
+      # Dependency bots retain ownership of their branches (#2049).
+      # Parked (status:needs-human) and draft PRs are left alone, matching the arm step above. A branch update restarts
       # CI, so this only touches a PR whose checks are already green with
       # nothing still running, to avoid manufacturing churn on one that is
       # mid-flight. Bounded to a handful of updates per run so one sweep
@@ -637,12 +637,16 @@ jobs:
             fi
 
             VIEW=$(gh pr view "$PR" --repo "$REPO" \
-              --json autoMergeRequest,labels,mergeStateStatus,statusCheckRollup)
+              --json author,autoMergeRequest,labels,mergeStateStatus,statusCheckRollup)
 
             # Auto-merge armed by anyone is the opt-in for this sweep --
             # unlike the arm step above, this is not limited to agent
-            # bot-logins.
+            # bot-logins. Dependency bots must rebase under their own identity:
+            # a GITHUB_TOKEN update can suppress CI and make Renovate treat
+            # the branch as externally modified (#2049).
             if ! jq -e '
+              ((.author.login // "" | ascii_downcase) as $author |
+                ["renovate[bot]", "app/renovate", "dependabot[bot]", "app/dependabot"] | index($author) == null) and
               .autoMergeRequest != null and
               ([.labels[].name] | index("status:needs-human") == null)
             ' <<<"$VIEW" >/dev/null; then
