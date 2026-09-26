@@ -28,6 +28,7 @@ export interface EnvVars {
   /** Base URL the share-media skill's files are served from. Required, no
    *  fallback (#1731) -- see `deployment.ts`'s `artifactShareBaseUrl`. */
   AGENT_LCARS_ARTIFACT_SHARE_BASE_URL?: string;
+  AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORY?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORIES?: string;
   AGENT_LCARS_FLEET_GITHUB_LOGIN?: string;
