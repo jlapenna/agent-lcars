@@ -337,7 +337,7 @@ COPY cache-terraform-providers.py /usr/local/lib/agent-lcars/cache-terraform-pro
 RUN test "$(terraform version -json | jq -r .terraform_version)" = "1.16.3" && \
     uv python install 3.14 && \
     python3 /usr/local/lib/agent-lcars/cache-terraform-providers.py /tmp/ci-providers/*.lock.hcl && \
-    chown -R runner:runner /opt/terraform-plugin-cache && \
+    chown -R runner:runner /opt/terraform-plugin-cache /opt/uv-python && \
     rm -rf /tmp/ci-providers
 
 COPY requirements-precommit.txt /usr/local/share/agent-lcars-tooling/requirements-precommit.txt
@@ -583,6 +583,7 @@ RUN /usr/local/bin/opencode --version && \
 # Prove the installed binaries and real hook enforcement as the job user.
 RUN uv --version && \
     "$(uv python find --managed-python 3.14)" --version && \
+    probe="$(mktemp -d "$UV_PYTHON_INSTALL_DIR/runner-write.XXXXXX")" && rmdir "$probe" && \
     terraform version -json | jq -e '.terraform_version == "1.16.3"'
 RUN bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 
