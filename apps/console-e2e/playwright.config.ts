@@ -1,3 +1,5 @@
+import { generateKeyPairSync } from 'node:crypto';
+
 import { workspaceRoot } from '@nx/devkit';
 import { nxE2EPreset } from '@nx/playwright/preset';
 import { defineConfig, devices } from '@playwright/test';
@@ -57,6 +59,13 @@ export default defineConfig({
     command:
       'pnpm exec dotenv -e "${E2E_ENV_FILE:-.env.e2e}" -e "${E2E_ENV_LOCAL_FILE:-.env.e2e.local}" --optional -- node dist/apps/console/.next/standalone/apps/console/server.js',
     env: {
+      // Unregistered, ephemeral key: exercise production's boot parser without
+      // checking a credential into the hermetic fixture or importing a real one.
+      AGENT_LCARS_APP_PRIVATE_KEY: generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+      }).privateKey,
       PORT: '4200',
       HOSTNAME: '127.0.0.1',
       NODE_OPTIONS: '--max-old-space-size=8192',

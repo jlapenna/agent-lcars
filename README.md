@@ -83,3 +83,21 @@ Start with the focused document that matches your task. This README intentionall
 does not duplicate deployment steps, runner topology, credential setup, or
 migration history; those operational contracts live with their owning systems
 and should be verified there.
+
+## Console startup configuration
+
+The console validates static backend configuration before accepting requests.
+Local development uses the same boot checks as production. Supply the runtime
+variables declared in `apps/console/apphosting.yaml`, including the GitHub App
+client ID and PEM private key, webhook secret, project and webhook queue/location,
+`AUTH_URL`, `QUICK_TASK_EVIDENCE_BUCKET`, and `AGENT_LCARS_WORK_AUDIENCE`. Store
+credentials in the supported private environment; never commit them. A blank
+value or malformed App key fails startup with the variable name, without printing
+the credential. Dispatch drains continue rebuilding token providers so key
+rotation is still observed.
+
+Hermetic E2E uses `tools/e2e/ci.env` plus an unregistered App key generated in
+memory for each Playwright server launch. The standalone bundle smoke generates
+its own ephemeral key. Neither path imports deployment credentials or bypasses
+the production boot validator. An autoscaler using a custom Work audience must
+set `LCARS_WORK_AUDIENCE` to match the console's explicit audience.

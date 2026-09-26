@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -20,11 +21,35 @@ const VARS = [
   'AGENT_LCARS_WATCHED_REPOS',
   'AGENT_LCARS_WORK_GRANTS',
   'AGENT_LCARS_OUTCOME_WEBHOOKS',
+  'AGENT_LCARS_APP_CLIENT_ID',
+  'AGENT_LCARS_APP_PRIVATE_KEY',
+  'AGENT_LCARS_WEBHOOK_SECRET',
+  'PROJECT_ID',
+  'AGENT_LCARS_WEBHOOK_QUEUE',
+  'AGENT_LCARS_WEBHOOK_QUEUE_LOCATION',
+  'AUTH_URL',
+  'QUICK_TASK_EVIDENCE_BUCKET',
+  'AGENT_LCARS_WORK_AUDIENCE',
 ];
+
+const privateKey = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+}).privateKey;
 
 const saved: Record<string, string | undefined> = {};
 
 function completeEnv() {
+  process.env['AGENT_LCARS_APP_CLIENT_ID'] = 'test-app';
+  process.env['AGENT_LCARS_APP_PRIVATE_KEY'] = privateKey;
+  process.env['AGENT_LCARS_WEBHOOK_SECRET'] = 'test-webhook';
+  process.env['PROJECT_ID'] = 'test-project';
+  process.env['AGENT_LCARS_WEBHOOK_QUEUE'] = 'test-queue';
+  process.env['AGENT_LCARS_WEBHOOK_QUEUE_LOCATION'] = 'us-central1';
+  process.env['AUTH_URL'] = 'http://localhost:4200';
+  process.env['QUICK_TASK_EVIDENCE_BUCKET'] = 'test-bucket';
+  process.env['AGENT_LCARS_WORK_AUDIENCE'] = 'test-audience';
   process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'someone';
   process.env['AGENT_LCARS_CONSOLE_URL'] = 'https://lcars.example.test';
   process.env['AGENT_LCARS_ARTIFACT_SHARE_BASE_URL'] =
@@ -80,19 +105,77 @@ describe('validateStartupConfiguration', () => {
         path.join(import.meta.dirname, '../../apphosting.yaml'),
         'utf8',
       ),
-    ) as { env: { variable: string; value?: string }[] };
-    const checked = [
-      'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
-      'AGENT_LCARS_WATCHED_REPOS',
-      'AGENT_LCARS_WORK_GRANTS',
-      'AGENT_LCARS_OUTCOME_WEBHOOKS',
+    ) as {
+      env: {
+        variable: string;
+        value?: string;
+        secret?: string;
+        availability: string[];
+      }[];
+    };
+    const secretNames = [
+      'AGENT_LCARS_APP_PRIVATE_KEY',
+      'AGENT_LCARS_WEBHOOK_SECRET',
     ];
-    for (const name of checked) {
+    for (const name of VARS) {
+      const entry = config.env.find((e) => e.variable === name);
+      expect(entry?.availability).toContain('RUNTIME');
+    }
+    for (const name of secretNames) {
+      expect(config.env.find((e) => e.variable === name)?.secret).toBeTypeOf(
+        'string',
+      );
+    }
+    for (const name of VARS.filter((name) => !secretNames.includes(name))) {
       const entry = config.env.find((e) => e.variable === name);
       expect(entry?.value).toBeTypeOf('string');
       process.env[name] = entry?.value;
     }
     await expect(validate()).resolves.toBeUndefined();
+  });
+
+  it.each([
+    'AGENT_LCARS_APP_CLIENT_ID',
+    'AGENT_LCARS_APP_PRIVATE_KEY',
+    'AGENT_LCARS_WEBHOOK_SECRET',
+    'PROJECT_ID',
+    'AGENT_LCARS_WEBHOOK_QUEUE',
+    'AGENT_LCARS_WEBHOOK_QUEUE_LOCATION',
+    'AUTH_URL',
+    'QUICK_TASK_EVIDENCE_BUCKET',
+    'AGENT_LCARS_WORK_AUDIENCE',
+  ])('rejects missing or blank %s before accepting traffic', async (name) => {
+    delete process.env[name];
+    await expect(validate()).rejects.toThrow(name);
+    process.env[name] = '  ';
+    await expect(validate()).rejects.toThrow(name);
+  });
+
+  it('rejects an unparseable App key with a redacted variable-specific error', async () => {
+    process.env['AGENT_LCARS_APP_PRIVATE_KEY'] = 'not-a-private-key';
+    await expect(validate()).rejects.toThrow(
+      'AGENT_LCARS_APP_PRIVATE_KEY must be a valid PEM private key',
+    );
+  });
+
+  it.each(['relative/path', 'ftp://example.test'])(
+    'rejects invalid AUTH_URL %s',
+    async (url) => {
+      process.env['AUTH_URL'] = url;
+      await expect(validate()).rejects.toThrow('AUTH_URL');
+    },
+  );
+
+  it('revalidates a rotated App key without making network requests', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    try {
+      await validate();
+      process.env['AGENT_LCARS_APP_PRIVATE_KEY'] = 'bad-rotation';
+      await expect(validate()).rejects.toThrow('AGENT_LCARS_APP_PRIVATE_KEY');
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   it('is safe to repeat', async () => {

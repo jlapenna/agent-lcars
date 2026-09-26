@@ -364,10 +364,9 @@ func queueExecutorStartupStatus(consoleURL, credentialsFile, writerKeyPath strin
 
 // queueExecutorAudience resolves the Google ID token audience the queue
 // executor's claim calls are minted for: LCARS_WORK_AUDIENCE if set,
-// else the same "agent-lcars-work" default the console's own
-// AGENT_LCARS_WORK_AUDIENCE (route.ts's googleIdTokenVerifier) falls back
-// to, so an unconfigured deployment's autoscaler and console agree without
-// either side setting anything.
+// else the "agent-lcars-work" audience configured by the console deployment.
+// The console requires AGENT_LCARS_WORK_AUDIENCE at boot; deployments that
+// customize it must set LCARS_WORK_AUDIENCE to the same value here.
 func queueExecutorAudience(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

@@ -28,6 +28,13 @@ trap cleanup EXIT
 smoke_port="$((43000 + RANDOM % 10000))"
 smoke_url="http://127.0.0.1:${smoke_port}"
 
+# Generate an unregistered key solely for the boot parser; never persist it.
+smoke_app_key="$(node -e 'process.stdout.write(require("node:crypto").generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } }).privateKey)')"
+
+AGENT_LCARS_APP_CLIENT_ID=standalone-smoke-app \
+AGENT_LCARS_APP_PRIVATE_KEY="$smoke_app_key" \
+AGENT_LCARS_WORK_AUDIENCE=agent-lcars-work \
+QUICK_TASK_EVIDENCE_BUCKET=standalone-smoke-evidence \
 PORT="$smoke_port" \
 HOSTNAME=127.0.0.1 \
 AUTH_URL="$smoke_url" \

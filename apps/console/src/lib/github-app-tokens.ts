@@ -303,22 +303,11 @@ export class AppInstallationTokenProvider implements ExpiringDispatchTokenProvid
  * comment): #1284 retired `AmbientTokenProvider`/`CompositeTokenProvider`
  * once nothing selected the ambient path in production anymore.
  *
- * This function is called lazily, once per outbox drain (see
- * `orchestrator-runtime.ts`'s `drain: () => drainOutbox({ ...,
- * tokens: createDispatchTokenProvider(process.env) })`), not once at
- * process startup. The private key is still parse-validated *here*,
- * eagerly, before the provider is constructed: `AppInstallationTokenProvider
- * .tokenFor` only ever parses the key lazily, inside `mintAppJwt`, the
- * first time some repo's dispatch actually drains, so a malformed key
- * (e.g. GitHub's own PKCS1 download format, before #1276) would otherwise
- * be a silent outage until the first drain attempt. Throwing here instead
- * means the very first drain after a bad key is deployed fails loudly and
- * immediately, for every repo, before any dispatch is attempted --
- * surfaced via each HTTP route's `internalError` `console.error`
- * (`orchestrator-routes.ts`) or the console server action's own error
- * path, whichever reaches a drain first. In practice that is within
- * `dispatch-reconcile.yml`'s cron window (`7,37 * * * *`, so at most ~30
- * minutes after deploy) if nothing else drains sooner.
+ * Startup configuration validation constructs a provider to parse-check the
+ * deployment's App key before accepting traffic. Each outbox drain still
+ * constructs its own provider, so a rotated key is validated and used on the
+ * next drain. Construction performs no network calls; token minting remains
+ * lazy in `tokenFor`.
  */
 export function createDispatchTokenProvider(
   env: Record<string, string | undefined>,
