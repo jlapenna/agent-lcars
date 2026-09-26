@@ -204,6 +204,9 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 # the worker has no local Docker daemon or mounted host socket.
 FROM ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc AS uv-runtime
 
+# Exact multi-platform Terraform artifact; only its static CLI is copied.
+FROM hashicorp/terraform:1.16.3@sha256:c9a9d991c113f3bda5269de1506983d45ce1409dfe702df433acf10a5ea9f6bc AS terraform-runtime
+
 FROM ${RUNNER_BASE}
 
 ARG GO_VERSION
@@ -325,6 +328,18 @@ RUN set -eux; \
 # binaries image-owned and the Python packages isolated from Ubuntu's
 # externally managed Python; the runner writes only its own hook caches.
 COPY --from=uv-runtime /uv /uvx /usr/local/bin/
+COPY --from=terraform-runtime /bin/terraform /usr/local/bin/terraform
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+ENV TF_PLUGIN_CACHE_DIR=/opt/terraform-plugin-cache
+COPY --from=telemetry-watcher-build /repo/infra/terraform/.terraform.lock.hcl /tmp/ci-providers/terraform.lock.hcl
+COPY --from=telemetry-watcher-build /repo/infra/github-ruleset/.terraform.lock.hcl /tmp/ci-providers/github-ruleset.lock.hcl
+COPY cache-terraform-providers.py /usr/local/lib/agent-lcars/cache-terraform-providers.py
+RUN test "$(terraform version -json | jq -r .terraform_version)" = "1.16.3" && \
+    uv python install 3.14 && \
+    python3 /usr/local/lib/agent-lcars/cache-terraform-providers.py /tmp/ci-providers/*.lock.hcl && \
+    chown -R runner:runner /opt/terraform-plugin-cache && \
+    rm -rf /tmp/ci-providers
+
 COPY requirements-precommit.txt /usr/local/share/agent-lcars-tooling/requirements-precommit.txt
 RUN uv venv --python /usr/bin/python3 /opt/runner-python-tools && \
     uv pip install --python /opt/runner-python-tools/bin/python --no-cache \
@@ -550,6 +565,7 @@ COPY --from=telemetry-watcher-build \
     /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs
 RUN node --test /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs && \
     rm /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs
+COPY prepare-opencode-store.sh check-opencode-store.sh /usr/local/lib/agent-lcars/
 COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.sh \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
@@ -565,7 +581,10 @@ RUN /usr/local/bin/opencode --version && \
     probe="$(mktemp /tmp/opencode/runner-write.XXXXXX)" && rm -- "$probe"
 
 # Prove the installed binaries and real hook enforcement as the job user.
-RUN uv --version && bash /usr/local/lib/agent-lcars/python-hooks.test.sh
+RUN uv --version && \
+    "$(uv python find --managed-python 3.14)" --version && \
+    terraform version -json | jq -e '.terraform_version == "1.16.3"'
+RUN bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 
 # OpenCode installs its plugin SDK in each configuration directory on cold
 # startup. Bake the version matching the reviewed CLI here; direct-runner's
@@ -574,6 +593,19 @@ RUN uv --version && bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 RUN OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)" && \
     npm install --prefix /home/runner/.config/opencode --ignore-scripts --save-exact \
       "@opencode-ai/plugin@${OPENCODE_VERSION#v}"
+
+# The store is image-owned, version-bound, and contains no sessions. Keep this
+# in its own layer so the next command exercises copy-up from the baked layer.
+RUN --network=none bash /usr/local/lib/agent-lcars/prepare-opencode-store.sh
+RUN --network=none set -eu; \
+    /usr/local/bin/opencode --pure session list --format json >/tmp/opencode-reader-a.json & first=$!; \
+    /usr/local/bin/opencode --pure session list --format json >/tmp/opencode-reader-b.json & second=$!; \
+    wait "$first"; wait "$second"; \
+    for listing in /tmp/opencode-reader-{a,b}.json; do \
+      if [ -s "$listing" ]; then jq -e 'type == "array" and length == 0' "$listing"; fi; \
+    done; \
+    rm /tmp/opencode-reader-{a,b}.json; \
+    bash /usr/local/lib/agent-lcars/check-opencode-store.sh
 
 # Exercise the exact installed CLI and global config through a deterministic
 # localhost provider. Unit-importing the hooks cannot prove that OpenCode
