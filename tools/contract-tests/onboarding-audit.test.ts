@@ -67,6 +67,55 @@ const audit = (api: unknown) =>
   });
 
 describe('read-only onboarding audit', () => {
+  it('falls back to the fleet token for an unset workflow secret', async () => {
+    const base = fixture();
+    const tokens: string[] = [];
+    await auditRepository({
+      repo,
+      token: 'fleet-token',
+      auditReadToken: '',
+      labels,
+      profiles,
+      fleetLogin: 'fleet',
+      checkVariables: (_profile: string, variables: Record<string, string>) =>
+        assertVariables('fleet-member', variables),
+      api: async (path: string, token: string) => {
+        tokens.push(token);
+        return base.api(path);
+      },
+    });
+    expect(tokens.length).toBeGreaterThan(0);
+    expect(tokens.every((token) => token === 'fleet-token')).toBe(true);
+  });
+
+  it('continues administrative reads when the fleet App is not installed', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const base = fixture();
+    const result = await runAudit({
+      clientId: 'fleet-app',
+      privateKey,
+      repos: [repo],
+      labels,
+      profiles: { 'fleet-member': { repositories: [repo] } },
+      fleetLogin: 'fleet',
+      auditReadToken: 'admin-read',
+      registrationConfig: {
+        github: { url: 'https://github.com/example/legacy' },
+      },
+      api: async (path: string, token: string) => {
+        if (path.endsWith('/installation')) throw new Error('GitHub HTTP 404');
+        expect(token).toBe('admin-read');
+        return base.api(path);
+      },
+    });
+    expect(
+      result.slice(0, 5).map((fact: { status: string }) => fact.status),
+    ).toEqual(['FAIL', 'UNVERIFIED', 'UNVERIFIED', 'PASS', 'PASS']);
+    expect(
+      base.requests.some((path) => /collaborators|assignees|labels/.test(path)),
+    ).toBe(false);
+  });
+
   it('keeps App authorization checks separate from optional administrative reads', async () => {
     const base = fixture();
     const calls: { path: string; token: string }[] = [];

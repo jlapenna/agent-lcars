@@ -138,9 +138,10 @@ export async function auditRepository({
   profiles,
   fleetLogin,
   checkVariables = assertVariables,
-  auditReadToken = token,
+  auditReadToken,
 }) {
   const facts = [];
+  const metadataToken = auditReadToken?.trim() || token;
   async function fact(name, action) {
     try {
       facts.push({ repo, fact: name, status: 'PASS', detail: await action() });
@@ -154,6 +155,7 @@ export async function auditRepository({
     }
   }
   await fact('fleet-login', async () => {
+    if (!token) throw new UnverifiedError('Fleet App credential unavailable');
     const permission = await api(
       `/repos/${repo}/collaborators/${fleetLogin}/permission`,
       token,
@@ -167,6 +169,7 @@ export async function auditRepository({
     return 'push permission and assignability verified';
   });
   await fact('labels', async () => {
+    if (!token) throw new UnverifiedError('Fleet App credential unavailable');
     const expected = labels.repositories[repo]?.labels;
     if (!expected)
       throw new AuditError('Repository missing from label manifest');
@@ -192,6 +195,8 @@ export async function auditRepository({
     return `${expected.length} declared labels match`;
   });
   await fact('variables', async () => {
+    if (!metadataToken)
+      throw new UnverifiedError('Metadata read credential unavailable');
     const profile = Object.entries(profiles).find(([, value]) =>
       value.repositories.includes(repo),
     )?.[0];
@@ -202,7 +207,7 @@ export async function auditRepository({
         await pages(
           api,
           `/repos/${repo}/actions/variables`,
-          auditReadToken,
+          metadataToken,
           'variables',
         )
       ).map(({ name, value }) => [name, value]),
@@ -211,32 +216,31 @@ export async function auditRepository({
     return `required ${profile} variables present`;
   });
   await fact('required-checks', async () => {
-    const metadata = await api(`/repos/${repo}`, auditReadToken);
+    if (!metadataToken)
+      throw new UnverifiedError('Metadata read credential unavailable');
+    const metadata = await api(`/repos/${repo}`, metadataToken);
     const branch = encodeURIComponent(metadata.default_branch);
     const rules = await pages(
       api,
       `/repos/${repo}/rules/branches/${branch}`,
-      auditReadToken,
+      metadataToken,
     );
     const required = rules
       .filter((rule) => rule.type === 'required_status_checks')
       .flatMap((rule) => rule.parameters.required_status_checks);
     if (!required.length)
       throw new AuditError('Default branch has no required checks');
-    const commit = await api(
-      `/repos/${repo}/commits/${branch}`,
-      auditReadToken,
-    );
+    const commit = await api(`/repos/${repo}/commits/${branch}`, metadataToken);
     const checks = await pages(
       api,
       `/repos/${repo}/commits/${commit.sha}/check-runs?filter=all`,
-      auditReadToken,
+      metadataToken,
       'check_runs',
     );
     const statuses = await pages(
       api,
       `/repos/${repo}/commits/${commit.sha}/statuses`,
-      auditReadToken,
+      metadataToken,
     );
     const missing = required.filter(
       (rule) =>
@@ -259,7 +263,7 @@ export async function auditRepository({
       ) {
         const runs = await api(
           `/repos/${repo}/actions/runs?head_sha=${commit.sha}&per_page=100`,
-          auditReadToken,
+          metadataToken,
         );
         if (
           !runs.workflow_runs?.length ||
@@ -366,19 +370,6 @@ export async function runAudit({
           status: 'FAIL',
           detail: safeMessage(error),
         });
-        for (const fact of [
-          'fleet-login',
-          'labels',
-          'variables',
-          'required-checks',
-        ])
-          facts.push({
-            repo,
-            fact,
-            status: 'UNVERIFIED',
-            detail: 'App installation credential unavailable',
-          });
-        continue;
       }
       facts.push(
         ...(await auditRepository({
@@ -522,7 +513,7 @@ async function main() {
     labels: readJson('config/github-labels.json'),
     profiles: readJson('config/github-variables.json').profiles,
     fleetLogin: process.env.AGENT_FLEET_LOGIN || 'agent-lcars-bot',
-    auditReadToken: process.env.AUDIT_READ_TOKEN,
+    auditReadToken: process.env.AUDIT_READ_TOKEN?.trim() || undefined,
     runnerClientId: process.env.RUNNER_APP_CLIENT_ID,
     runnerPrivateKey: process.env.RUNNER_APP_PRIVATE_KEY,
     legacyRunnerApp:
