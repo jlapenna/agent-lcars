@@ -20,6 +20,9 @@ interface Workflow {
   >;
 }
 
+// This contract creates three Git commits and executes four shell probes.
+// Allow the same scheduling headroom as the Nx test lane: the standalone
+// contract lane hit its default 5s limit on CI run 36205666264.
 describe('CI E2E operational gate', () => {
   it('keeps the selected browser gate CI-owned', async () => {
     const workflow = parseYaml(
@@ -161,5 +164,5 @@ describe('CI E2E operational gate', () => {
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
