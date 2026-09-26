@@ -52,7 +52,7 @@ func TestDirectRunnerPreflightExcludesUnreadableHostsFromLaunchPool(t *testing.T
 	status.configureEligibleHosts(selected, clients)
 	status.ready.Store(true)
 	snapshot := status.snapshot(context.Background(), nowForTest())
-	if snapshot.MaxConcurrent != directRunnerMaxConcurrent() || snapshot.ActiveRuns == nil || *snapshot.ActiveRuns != 0 {
+	if snapshot.MaxConcurrent != 1 || snapshot.ActiveRuns == nil || *snapshot.ActiveRuns != 0 {
 		t.Fatalf("queue status must use only eligible launch hosts: %#v", snapshot)
 	}
 	for name, fake := range map[string]*fakeDockerServer{"healthy": healthy, "unreadable": unreadable} {
