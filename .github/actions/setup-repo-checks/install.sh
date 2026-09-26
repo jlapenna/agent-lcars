@@ -44,7 +44,9 @@ else
   curl --fail --silent --show-error --location --retry 3 \
     "https://github.com/koalaman/shellcheck/releases/download/v0.10.0/$asset" -o "$asset"
   printf '%s  %s\n' "$shellcheck_sha" "$asset" | sha256sum --check
-  tar -xJf "$asset" --strip-components=1 -C bin shellcheck-v0.10.0/shellcheck
+  # Minimal fleet workers have Python's LZMA support but no xz executable.
+  python3 -c 'import lzma, shutil, sys; shutil.copyfileobj(lzma.open(sys.argv[1]), sys.stdout.buffer)' "$asset" |
+    tar -xf - --strip-components=1 -C bin shellcheck-v0.10.0/shellcheck
   # Keep both embedded-script analyzers from the former actionlint image.
   # --target works with externally-managed Python and needs no sudo/venv.
   python3 -m pip install --disable-pip-version-check --no-compile \

@@ -240,6 +240,17 @@ jobs:
       - name: Test published-action contracts
         run: node .github/actions/published-actions.contract.test.mjs
 
+      - name: Smoke-test native repository scanners without xz
+        run: |
+          # Consumer workers do not include xz. Exercise the real installer
+          # with that executable unavailable, including on hosted fallback CI.
+          unavailable="$(mktemp -d "$RUNNER_TEMP/no-xz.XXXXXX")"
+          printf '#!/bin/sh\nexit 127\n' > "$unavailable/xz"
+          chmod +x "$unavailable/xz"
+          PATH="$unavailable:$PATH" CHECK_TOOL=actionlint \
+            bash .github/actions/setup-repo-checks/install.sh
+          CHECK_TOOL=gitleaks bash .github/actions/setup-repo-checks/install.sh
+
       - name: Test codex issue guardrail hook
         run: node --test packages/fleet-tools/tests/codex-issue-guardrail.test.cjs
 
