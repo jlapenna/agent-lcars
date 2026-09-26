@@ -74,6 +74,6 @@ jobs:
       # the QueueExecutor direct-container route.
       runs-on: '["lcars-default"]'
       # The required CI checks in the Protect main ruleset.
-      required-checks: '["Verify","Runner image pnpm-store seed","repository-owned Terraform"]'
+      required-checks: '["E2E","Verify","Runner image pnpm-store seed","repository-owned Terraform"]'
       ci-workflow: ci.yml
       deploy-workflow: deploy-console.yml

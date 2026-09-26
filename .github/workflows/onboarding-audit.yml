@@ -1,0 +1,51 @@
+name: Fleet onboarding audit
+
+on:
+  schedule:
+    - cron: '43 13 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/onboarding-audit.yml'
+      - '.github/workflows/agent-automerge.yml'
+      - '.github/actions/assert-repo-vars/**'
+      - 'apps/console/apphosting.yaml'
+      - 'config/github-labels.json'
+      - 'config/github-variables.json'
+      - 'infra/github-ruleset/**'
+      - 'tools/verify-onboarding.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onboarding-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-node-pnpm
+      # Fail locally before attempting to authenticate with an empty App ID.
+      - uses: ./.github/actions/assert-repo-vars
+        with:
+          vars: |
+            AGENT_LCARS_CLIENT_ID=${{ vars.AGENT_LCARS_CLIENT_ID }}
+            AGENT_FLEET_LOGIN=${{ vars.AGENT_FLEET_LOGIN }}
+      - name: Audit watched repositories and declared registrations
+        env:
+          APP_CLIENT_ID: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          AUDIT_READ_TOKEN: ${{ secrets.ONBOARDING_AUDIT_READ_TOKEN }}
+          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
+          # Optional operator-provisioned runner credential. Missing access is
+          # reported UNVERIFIED; the fleet App cannot prove another App's scope.
+          RUNNER_APP_CLIENT_ID: ${{ vars.AGENT_LCARS_RUNNER_APP_CLIENT_ID }}
+          RUNNER_APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_RUNNER_APP_PRIVATE_KEY }}
+          LEGACY_RUNNER_APP_CLIENT_ID: ${{ vars.LEGACY_RUNNER_APP_CLIENT_ID }}
+          LEGACY_RUNNER_APP_INSTALLATION_ID: ${{ vars.LEGACY_RUNNER_APP_INSTALLATION_ID }}
+        run: node tools/verify-onboarding.mjs
