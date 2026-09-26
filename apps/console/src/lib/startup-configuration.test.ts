@@ -158,6 +158,17 @@ describe('validateStartupConfiguration', () => {
     );
   });
 
+  it.each([
+    generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey,
+    generateKeyPairSync('ed25519').privateKey,
+    generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey,
+  ])('rejects a parseable key that cannot sign RS256', async (key) => {
+    process.env['AGENT_LCARS_APP_PRIVATE_KEY'] = key
+      .export({ type: 'pkcs8', format: 'pem' })
+      .toString();
+    await expect(validate()).rejects.toThrow('AGENT_LCARS_APP_PRIVATE_KEY');
+  });
+
   it.each(['relative/path', 'ftp://example.test'])(
     'rejects invalid AUTH_URL %s',
     async (url) => {

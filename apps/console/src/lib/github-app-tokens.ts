@@ -381,7 +381,14 @@ export function lazyDispatchTokenProvider(
  */
 function parsePrivateKey(privateKeyPem: string): KeyObject {
   try {
-    return createPrivateKey({ key: privateKeyPem, format: 'pem' });
+    const key = createPrivateKey({ key: privateKeyPem, format: 'pem' });
+    if (
+      key.asymmetricKeyType !== 'rsa' ||
+      (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048
+    ) {
+      throw new Error('Key cannot sign RS256');
+    }
+    return key;
   } catch {
     throw new Error(
       'GitHub App private key is not a valid PEM-encoded RSA private key (PKCS1 or PKCS8)',
