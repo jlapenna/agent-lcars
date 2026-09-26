@@ -35,7 +35,8 @@ on:
           fromJSON(). Defaults to GitHub-hosted ubuntu-latest on purpose:
           validation must stay green-capable before a repo's self-hosted
           fleet capacity deploys. Linux x64/arm64 runners need curl, tar, xz,
-          Python 3 and pip; no Docker daemon is required.
+          Python 3 and pip. Missing xz is installed with sudo apt-get; no
+          Docker daemon is required.
         required: false
         type: string
         default: '["ubuntu-latest"]'
@@ -51,6 +52,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install xz when missing
+        run: |
+          if ! command -v xz >/dev/null 2>&1; then
+            sudo -n apt-get update
+            sudo -n apt-get install -y --no-install-recommends xz-utils
+          fi
 
       - uses: jlapenna/agent-lcars/.github/actions/setup-repo-checks@main
         with:

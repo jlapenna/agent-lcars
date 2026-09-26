@@ -155,7 +155,8 @@ pip for Python-script checks. These prerequisites are installed in the fleet
 runner image.
 
 `repo-validation.yml` uses this action, so registered consumer repositories can
-set its `runs-on` input to their socketless fleet pool. Keep GitHub-hosted
+set its `runs-on` input to their socketless fleet pool. The workflow installs
+`xz-utils` with passwordless sudo/apt when an older worker lacks xz. Keep GitHub-hosted
 routing for fork pull requests. Secret scanning can use the same setup action
 without changing its check name, commit range, redaction or repository config.
 
