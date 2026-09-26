@@ -3,7 +3,7 @@ module github.com/jlapenna/agent-lcars/apps/runner-autoscaler
 go 1.26.5
 
 require (
-	cloud.google.com/go/firestore v1.25.0
+	cloud.google.com/go/firestore v1.26.0
 	github.com/actions/scaleset v0.4.1-0.20260916214619-e6daac702355
 	github.com/containerd/errdefs v1.0.0
 	github.com/docker/cli v29.8.1+incompatible
