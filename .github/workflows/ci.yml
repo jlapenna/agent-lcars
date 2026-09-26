@@ -23,7 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Detect matching baked Terraform
+        id: terraform-tooling
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python3 tools/detect-baked-ci-tools.py terraform
+
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        if: steps.terraform-tooling.outputs.ready != 'true'
         with:
           terraform_version: v1.16.4
 
@@ -69,7 +76,14 @@ jobs:
           # the shipper rather than silently pushing to homelab's Loki.
           loki-url: ${{ vars.CI_LOG_LOKI_URL }}
 
+      - name: Detect matching baked Terraform
+        id: terraform-tooling
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python3 tools/detect-baked-ci-tools.py terraform
+
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        if: steps.terraform-tooling.outputs.ready != 'true'
         with:
           terraform_version: v1.16.4
 
@@ -261,7 +275,21 @@ jobs:
       - name: Test bounded Nx native binding cache (#1458)
         run: bash tools/nx-native-file-cache.test.sh
 
+      - name: Detect matching baked uv and Python
+        id: python-tooling
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python3 tools/detect-baked-ci-tools.py python
+
+      - name: Cache dependencies for baked uv
+        if: steps.python-tooling.outputs.ready == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.python-tooling.outputs.cache_dir }}
+          key: uv-baked-${{ runner.os }}-${{ runner.arch }}-${{ steps.python-tooling.outputs.uv_version }}-${{ steps.python-tooling.outputs.python_version }}-${{ hashFiles('apps/github-actions-exporter/requirements.lock') }}
+
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: steps.python-tooling.outputs.ready != 'true'
         with:
           version: 0.12.19
           python-version: '3.14'
@@ -404,10 +432,8 @@ jobs:
               echo "::warning::No usable pnpm-store seed comparison base; running the check."
             elif ! changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
               echo "::warning::Changed-file detection failed; running the pnpm-store seed check."
-            # The assertion also inspects the fleet agent callers for
-            # workspace-level pnpm-store overrides, and this workflow owns
-            # the selector itself. Changes to either therefore must run it.
-            elif ! grep -Eq '^(apps/runner-autoscaler/runner-image/|package\.json$|\.github/workflows/(ci|claude|codex|opencode)\.yml$)' <<<"$changed_files"; then
+            # The image and this selector own the immutable seed contract.
+            elif ! grep -Eq '^(apps/runner-autoscaler/runner-image/|package\.json$|\.github/workflows/ci\.yml$)' <<<"$changed_files"; then
               run=false
             fi
           fi
@@ -458,28 +484,6 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # The shared runner workspace can retain the hook installed by an older
-      # `checkout lfs:true` run even after this repository stops using LFS.
-      # That hook makes checkout fail before the new revision is available if
-      # the refreshed runner image no longer contains git-lfs (#1049). This
-      # migration must therefore be inline and precede checkout: a script from
-      # the incoming revision cannot be read yet. Leave every non-LFS hook
-      # untouched.
-      - name: Remove retired Git LFS checkout hook
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! git rev-parse --git-dir >/dev/null 2>&1; then
-            exit 0
-          fi
-
-          hook_path="$(git rev-parse --git-path hooks/post-checkout)"
-          if [[ -f "$hook_path" ]] &&
-            grep -Fq 'git lfs post-checkout' "$hook_path"; then
-            rm -- "$hook_path"
-            echo "::notice::Removed retired Git LFS post-checkout hook."
-          fi
-
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -584,32 +588,41 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # The trusted E2E path runs on the lcars-e2e sandbox lineage (FROM
-      # mcr.microsoft.com/playwright), which preinstalls browsers at
-      # /ms-playwright along with their system dependencies -- being that
-      # environment is the pool's entire purpose. Only a truly bare host
-      # (fork PRs on ubuntu-latest) takes the --with-deps path; the first
-      # lcars-e2e run (31464244136) proved that fallback hard-fails without
-      # root there, so this detection is load-bearing, not an optimization.
-      # (The generic JIT image's #905 bake and its version marker were
-      # reverted per #920 -- E2E never runs on that image anymore.)
-      - name: Detect preinstalled Playwright browsers
+      # A stale sandbox retains OS dependencies but may lack this lockfile's
+      # browser revision. Ask the installed Playwright to launch its exact
+      # headless Chromium; checking only a chromium-* directory missed drift.
+      - name: Detect matching preinstalled Playwright browser
         id: playwright-deps
         if: steps.e2e-scope.outputs.run == 'true'
         shell: bash
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
-          if compgen -G '/ms-playwright/chromium-*' > /dev/null; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
+          ready=false
+          dependencies_ready=false
+          if [[ "$RUNNER_ENVIRONMENT" == self-hosted ]] && \
+            compgen -G "${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}/chromium-*" >/dev/null; then
+            dependencies_ready=true
+            if node --input-type=module -e '
+              import { chromium } from "@playwright/test";
+              const browser = await chromium.launch({ timeout: 5000 });
+              await browser.close();
+            ' >/dev/null 2>&1; then
+              ready=true
+            fi
+          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "dependencies_ready=$dependencies_ready" >> "$GITHUB_OUTPUT"
+          if [[ "$ready" != true ]]; then
+            echo "::notice::The matching baked Playwright browser is unavailable; using browser installation."
           fi
 
       - name: Install Playwright browser from baked dependencies
-        if: steps.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.ready == 'true'
+        if: steps.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.ready != 'true' && steps.playwright-deps.outputs.dependencies_ready == 'true'
         run: pnpm exec playwright install chromium
 
       - name: Install Playwright browser and dependencies
-        if: steps.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.ready != 'true'
+        if: steps.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.dependencies_ready != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
       # One e2e entrypoint for every environment (fork ubuntu-latest,

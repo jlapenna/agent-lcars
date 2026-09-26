@@ -587,12 +587,11 @@ PROMPT
 fi
 
 # OpenCode and the telemetry sidecar share its SQLite store. On a fresh home,
-# either process can otherwise race the initial schema migration and fail with
-# `database is locked` or `Failed query: CREATE TABLE workspace`. Initialize
-# the trusted store synchronously before the sidecar starts, without making an
-# inference request. The same listing also records the workspace's baseline
-# sessions so one fresh provider run can be continued only when it creates one
-# unambiguous session.
+# either process can otherwise race schema migration. The published image
+# carries an empty, version-matched store (#2040), so fresh runs can use an
+# empty baseline. Resumes, nonempty/missing stores, and a different CLI keep
+# synchronous migration/listing before the sidecar starts. The baseline lets
+# continuation select only one unambiguous newly-created workspace session.
 OPENCODE_BASELINE_SESSIONS=''
 if [ "$PIPELINE" = "opencode" ]; then
   OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
@@ -616,30 +615,42 @@ if [ "$PIPELINE" = "opencode" ]; then
     exit 1
   fi
   OPENCODE_BASELINE_SESSIONS="$RUNNER_TEMP/opencode-baseline-sessions.txt"
-  opencode_bootstrap_json="$RUNNER_TEMP/opencode-bootstrap-sessions.json"
-  if ! env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
-    timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
-    "$OPENCODE_BIN" --pure session list --format json > "$opencode_bootstrap_json"; then
-    EARLY_FAILURE_MESSAGE='OpenCode store initialization failed'
-    echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
-    exit 1
-  fi
-  if [ -s "$opencode_bootstrap_json" ] &&
-    ! jq -e 'type == "array"' "$opencode_bootstrap_json" >/dev/null 2>&1; then
-    EARLY_FAILURE_MESSAGE='OpenCode store initialization returned malformed session data'
-    echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
-    exit 1
-  fi
-  if [ -s "$opencode_bootstrap_json" ]; then
-    jq -r --arg directory "$PWD" '
-        .[]
-        | select((.id | type) == "string")
-        | select(.id | test("^[A-Za-z0-9._:-]+$"))
-        | select(.directory == $directory)
-        | .id
-      ' "$opencode_bootstrap_json" | sort -u > "$OPENCODE_BASELINE_SESSIONS"
-  else
+  opencode_store_check="${OPENCODE_STORE_CHECK:-/usr/local/lib/agent-lcars/check-opencode-store.sh}"
+  opencode_version_file="${OPENCODE_VERSION_FILE:-/usr/local/share/agent-lcars-tooling/opencode-version}"
+  if [ -z "$RESUME_SESSION_ID" ] &&
+    bash "$opencode_store_check" >/dev/null 2>&1 &&
+    opencode_current_version="$(timeout --kill-after=2s 5s "$OPENCODE_BIN" --version 2>/dev/null)" &&
+    opencode_expected_version="$(tr -d '\r\n' < "$opencode_version_file")" &&
+    [ "$opencode_current_version" = "${opencode_expected_version#v}" ]; then
     : > "$OPENCODE_BASELINE_SESSIONS"
+    echo 'Using the baked empty OpenCode store.'
+  else
+    echo 'Using synchronous OpenCode store migration and baseline discovery.'
+    opencode_bootstrap_json="$RUNNER_TEMP/opencode-bootstrap-sessions.json"
+    if ! env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
+      timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
+      "$OPENCODE_BIN" --pure session list --format json > "$opencode_bootstrap_json"; then
+      EARLY_FAILURE_MESSAGE='OpenCode store initialization failed'
+      echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+      exit 1
+    fi
+    if [ -s "$opencode_bootstrap_json" ] &&
+      ! jq -e 'type == "array"' "$opencode_bootstrap_json" >/dev/null 2>&1; then
+      EARLY_FAILURE_MESSAGE='OpenCode store initialization returned malformed session data'
+      echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
+      exit 1
+    fi
+    if [ -s "$opencode_bootstrap_json" ]; then
+      jq -r --arg directory "$PWD" '
+          .[]
+          | select((.id | type) == "string")
+          | select(.id | test("^[A-Za-z0-9._:-]+$"))
+          | select(.directory == $directory)
+          | .id
+        ' "$opencode_bootstrap_json" | sort -u > "$OPENCODE_BASELINE_SESSIONS"
+    else
+      : > "$OPENCODE_BASELINE_SESSIONS"
+    fi
   fi
 fi
 

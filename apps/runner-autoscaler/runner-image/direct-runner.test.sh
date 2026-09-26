@@ -441,6 +441,10 @@ FAKE
 
 cat > "$bindir/opencode" <<'FAKE'
 #!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  echo "${FAKE_OPENCODE_VERSION:-1.18.30}"
+  exit 0
+fi
 if [ "${1:-}" = run ] && [ "${2:-}" = --help ]; then
   echo '      --auto         auto-approve permissions'
   exit 0
@@ -673,6 +677,23 @@ run_scenario() {
   printf '%s' 'fake-opencode-llm-key' > "$dir/opencode-llm-api-key"
   export OPENCODE_TOKEN_FILE="$dir/opencode-llm-api-key"
   export OPENCODE_BIN="$dir/bin/opencode"
+  export OPENCODE_STORE_CHECK="$here/check-opencode-store.sh"
+  export OPENCODE_VERSION_FILE="$dir/opencode-version"
+  printf 'v1.18.30\n' > "$OPENCODE_VERSION_FILE"
+  if [ "${FAKE_OPENCODE_BAKED_STORE:-}" = 1 ]; then
+    mkdir -p "$HOME/.local/share/opencode"
+    printf '%s\n' "${FAKE_OPENCODE_STORE_VERSION:-1.18.30}" > "$HOME/.local/share/opencode/.lcars-baked-version"
+    python3 - "$HOME/.local/share/opencode/opencode.db" <<'PYDB'
+import os
+import sqlite3
+import sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute('CREATE TABLE session (id TEXT)')
+    if os.environ.get('FAKE_OPENCODE_NONEMPTY_STORE') == '1':
+        db.execute("INSERT INTO session VALUES ('old-session')")
+PYDB
+    touch "$tmp/opencode-initialized"
+  fi
   # Exercise the adapter's production default instead of masking it here.
   unset OPENCODE_MODEL
 
@@ -1120,6 +1141,29 @@ first_opencode_step="$(head -n1 "$OPENCODE_SEQUENCE_LOG")"
 
 echo "scenario opencode-bootstrap-order: OK"
 
+# A baked empty schema avoids the migration CLI before sidecar startup. Drift
+# and resumes must still initialize synchronously before either store reader.
+export FAKE_OPENCODE_BAKED_STORE=1 FAKE_BRIEF_NO_RESUME=1
+run_scenario opencode-baked-empty opencode
+[ "$rc" -eq 0 ] || fail "baked OpenCode store: run failed"
+[ "$(head -n1 "$OPENCODE_SEQUENCE_LOG")" = sidecar ] ||
+  fail "baked OpenCode store: initialization CLI was not skipped"
+for drift in version marker nonempty resume; do
+  case "$drift" in
+    version) export FAKE_OPENCODE_VERSION=1.18.31 ;;
+    marker) export FAKE_OPENCODE_STORE_VERSION=1.18.29 ;;
+    nonempty) export FAKE_OPENCODE_NONEMPTY_STORE=1 ;;
+    resume) unset FAKE_BRIEF_NO_RESUME ;;
+  esac
+  run_scenario "opencode-baked-$drift" opencode
+  [ "$rc" -eq 0 ] || fail "baked OpenCode $drift: fallback failed"
+  [ "$(head -n1 "$OPENCODE_SEQUENCE_LOG")" = bootstrap ] ||
+    fail "baked OpenCode $drift: synchronous bootstrap was skipped"
+  unset FAKE_OPENCODE_VERSION FAKE_OPENCODE_STORE_VERSION FAKE_OPENCODE_NONEMPTY_STORE
+done
+unset FAKE_OPENCODE_BAKED_STORE FAKE_BRIEF_NO_RESUME
+echo "scenario opencode-baked-store: OK"
+
 # OpenCode 1.18.30 returns successful empty stdout for a fresh pure session
 # listing. That is a valid empty baseline, while non-empty malformed JSON still
 # fails closed.
@@ -1140,7 +1184,9 @@ export FAKE_GH_NO_MATCH=1
 export FAKE_GH_MATCH_AFTER_OPENCODE_RUNS=2
 export FAKE_OPENCODE_SLEEP_SECONDS=1
 export OPENCODE_TIMEOUT_SECONDS=5
+export FAKE_OPENCODE_BAKED_STORE=1
 run_scenario opencode-premature-stop opencode
+unset FAKE_OPENCODE_BAKED_STORE
 unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_OPENCODE_RUNS
 unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS
 
