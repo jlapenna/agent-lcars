@@ -9,7 +9,7 @@
     "format": "./tools/nx format:write --all",
     "format:check": "./tools/nx format:check --all",
     "lint": "./tools/nx run-many -t lint --all",
-    "postinstall": "patch-package; . tools/cloud-build-prebuild.sh",
+    "postinstall": "patch-package && bash tools/setup-nx-native-file-cache.sh && . tools/cloud-build-prebuild.sh",
     "prepare": "./tools/setup-git-hooks.sh",
     "tsc": "./tools/nx run-many -t typecheck",
     "lint:circular": "madge --circular --extensions ts,tsx --ts-config tsconfig.base.json --exclude '.*(dist|test|spec).*' libs/ apps/",

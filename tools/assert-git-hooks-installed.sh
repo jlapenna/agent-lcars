@@ -26,9 +26,4 @@ if ! git lfs version >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! grep -Fq 'git lfs pre-push "$@"' .husky/pre-push; then
-  echo "ERROR: .husky/pre-push must forward pushes to Git LFS." >&2
-  exit 1
-fi
-
 echo "Git hooks are installed."

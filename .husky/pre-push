@@ -24,7 +24,13 @@ fi
 
 printf '%s\n' "$refs" | repo-require-worktree pushes
 
-./tools/check-dependencies.sh
+# Full dependency health still runs in CI. Compare to the same base as the
+# affected gate, including working-tree edits, so code-only pushes stay cheap.
+if ! git diff --quiet origin/main -- package.json '**/package.json' \
+  pnpm-lock.yaml pnpm-workspace.yaml .npmrc .pnpmfile.cjs patches \
+  tools/check-dependencies.sh; then
+  ./tools/check-dependencies.sh
+fi
 ./tools/nx format:check --base=origin/main
 ./tools/nx affected -t lint typecheck --base=origin/main
 ./tools/console-build-smoke.sh

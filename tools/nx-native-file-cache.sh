@@ -3,7 +3,7 @@
 # Configure Nx's extracted native binding cache before Node starts. Nx's
 # default includes the workspace root in its cache key, so every linked
 # worktree otherwise stores another identical ~22 MiB binding under /tmp.
-configure_agent_lcars_nx_native_file_cache() {
+populate_agent_lcars_nx_native_file_cache() {
   local repo_root="$1"
   local cache_home
   local nx_version
@@ -121,4 +121,50 @@ configure_agent_lcars_nx_native_file_cache() {
 
   echo "tools/nx: failed to publish the native binding atomically: $target" >&2
   return 1
+}
+
+# Install owns hashing/content validation. Runtime reads a tiny receipt and
+# checks only that the completed artifact still exists (cache cleanup is normal).
+prepare_agent_lcars_nx_native_file_cache() {
+  local repo_root="$1"
+  local receipt="$repo_root/node_modules/.cache/agent-lcars/nx-native-cache"
+  local staging
+  # Any install invalidates the prior binding, even when this install skips
+  # cache preparation or fails. Never let a later shell reuse a stale receipt.
+  rm -f -- "$receipt"
+  if [ -n "${NX_NATIVE_FILE_CACHE_DIRECTORY:-}" ] ||
+    [ "${NX_SKIP_NATIVE_FILE_CACHE:-}" = "true" ] || [ "${CI:-}" = "true" ]; then
+    return 0
+  fi
+  populate_agent_lcars_nx_native_file_cache "$repo_root" || return 1
+  [ -n "${NX_NATIVE_FILE_CACHE_DIRECTORY:-}" ] || return 0
+  mkdir -p "$(dirname "$receipt")"
+  staging="$receipt.$$.$RANDOM"
+  printf '%s\n' "$NX_NATIVE_FILE_CACHE_DIRECTORY" >"$staging"
+  mv -f "$staging" "$receipt"
+}
+
+configure_agent_lcars_nx_native_file_cache() {
+  local repo_root="$1"
+  local receipt="$repo_root/node_modules/.cache/agent-lcars/nx-native-cache"
+  local cache_dir target
+  if [ -n "${NX_NATIVE_FILE_CACHE_DIRECTORY:-}" ] ||
+    [ "${NX_SKIP_NATIVE_FILE_CACHE:-}" = "true" ] || [ "${CI:-}" = "true" ]; then
+    return 0
+  fi
+  [ -f "$repo_root/node_modules/nx/package.json" ] || return 0
+  if [ -f "$receipt" ]; then
+    IFS= read -r cache_dir <"$receipt"
+    for target in "$cache_dir"/*.node; do
+      if [ -f "$target" ]; then
+        export NX_NATIVE_FILE_CACHE_DIRECTORY="$cache_dir"
+        return 0
+      fi
+    done
+  fi
+  # Do not hash/copy in the command loop, including on an old installation or
+  # after eviction. Loading the installed binding directly is Nx's supported
+  # no-cache mode, also used by CI to avoid concurrent cache-copy faults.
+  export NX_SKIP_NATIVE_FILE_CACHE=true
+  echo "tools/nx: native-cache receipt missing or evicted; run bash tools/setup-nx-native-file-cache.sh to restore sharing" >&2
 }
