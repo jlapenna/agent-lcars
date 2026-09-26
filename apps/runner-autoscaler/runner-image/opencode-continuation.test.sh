@@ -10,6 +10,7 @@ expected_version="$(tr -d '\r\n' < "$here/opencode-version")"
 expected_version="${expected_version#v}"
 framework_timeout_seconds=60
 version_timeout_seconds=10
+provider_start_timeout_seconds=10
 # The multi-platform publisher executes the arm64 CLI through QEMU on its
 # amd64 BuildKit host. The same deterministic framework sequence takes more
 # than the native deadline there, before the localhost provider sees a first
@@ -19,6 +20,7 @@ case "$(uname -m)" in
   aarch64 | arm64)
     version_timeout_seconds=60
     framework_timeout_seconds=180
+    provider_start_timeout_seconds=60
     ;;
 esac
 
@@ -92,11 +94,16 @@ PY
 
 python3 "$here/opencode-continuation.test.py" "$tmp" &
 server_pid=$!
-for _ in $(seq 1 50); do
-  [ -s "$tmp/port" ] && break
-  sleep 0.02
+# Python's http.server imports can exceed one second under arm64 emulation.
+# Wait for the server's actual bound-port signal, while retaining a deadline
+# and failing immediately if the fixture exits instead of becoming ready.
+provider_start_deadline=$((SECONDS + provider_start_timeout_seconds))
+while [ ! -s "$tmp/port" ]; do
+  kill -0 "$server_pid" 2>/dev/null || fail "deterministic provider exited before becoming ready"
+  [ "$SECONDS" -lt "$provider_start_deadline" ] ||
+    fail "deterministic provider did not start within ${provider_start_timeout_seconds}s"
+  sleep 0.1
 done
-[ -s "$tmp/port" ] || fail "deterministic provider did not start"
 port="$(cat "$tmp/port")"
 
 cat > "$tmp/workspace/opencode.json" <<JSON
