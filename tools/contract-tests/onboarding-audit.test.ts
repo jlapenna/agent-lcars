@@ -67,6 +67,30 @@ const audit = (api: unknown) =>
       assertVariables('fleet-member', variables),
   });
 
+async function githubHttpError(
+  status: number,
+  rateLimitRemaining: string,
+  retryAfter?: string,
+) {
+  const api = createApi(async () =>
+    Promise.resolve(
+      new Response(null, {
+        status,
+        headers: {
+          'x-ratelimit-remaining': rateLimitRemaining,
+          ...(retryAfter ? { 'retry-after': retryAfter } : {}),
+        },
+      }),
+    ),
+  );
+  try {
+    await api('/fixture', 'token');
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error('expected GitHub API failure');
+}
+
 describe('read-only onboarding audit', () => {
   it('falls back to the fleet token for an unset workflow secret', async () => {
     const base = fixture();
@@ -90,13 +114,12 @@ describe('read-only onboarding audit', () => {
   });
 
   it('reports optional metadata authorization gaps without failing the audit', async () => {
+    const authorizationDenied = await githubHttpError(403, '4999');
     const { api } = fixture({
-      [`/repos/${repo}/actions/variables?per_page=100&page=1`]: new Error(
-        'GitHub HTTP 403',
-      ),
-      [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: new Error(
-        'GitHub HTTP 403',
-      ),
+      [`/repos/${repo}/actions/variables?per_page=100&page=1`]:
+        authorizationDenied,
+      [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
+        authorizationDenied,
     });
     const result = await audit(api);
     expect(result).toMatchObject([
@@ -117,10 +140,27 @@ describe('read-only onboarding audit', () => {
     expect(auditHasFailure([...result, { status: 'FAIL' }])).toBe(true);
   });
 
-  it('fails when a required-check operational request is denied', async () => {
+  it('fails when a required-check request is rate limited', async () => {
+    const rateLimited = await githubHttpError(403, '0');
     const { api } = fixture({
       [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
-        new Error('GitHub HTTP 403'),
+        rateLimited,
+    });
+    const result = await audit(api);
+    expect(result.find(({ fact }) => fact === 'required-checks')).toMatchObject(
+      {
+        status: 'FAIL',
+        detail: 'GitHub HTTP 403',
+      },
+    );
+    expect(auditHasFailure(result)).toBe(true);
+  });
+
+  it('fails when a required-check request hits a secondary rate limit', async () => {
+    const rateLimited = await githubHttpError(403, '4999', '60');
+    const { api } = fixture({
+      [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
+        rateLimited,
     });
     const result = await audit(api);
     expect(result.find(({ fact }) => fact === 'required-checks')).toMatchObject(
