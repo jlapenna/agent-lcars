@@ -124,7 +124,8 @@ actual_runtime="$({
 [ "$actual_runtime" = "$first_path" ]
 
 # A new install invalidates the receipt even when Nx keeps the same version.
-printf 'native artifact replaced\n' >"$source_binding"
+printf 'native artifact replaced\n' >"$source_binding.new"
+mv "$source_binding.new" "$source_binding"
 updated_path="$(cache_path "$TEST_DIR/repo-a")"
 [ "$updated_path" != "$first_path" ]
 
@@ -137,3 +138,12 @@ rm -rf "$updated_path"
   [ -z "${NX_NATIVE_FILE_CACHE_DIRECTORY:-}" ]
 )
 echo "ok: install publishes a content-addressed cache; runtime reads its receipt"
+
+# A skipped install invalidates a receipt from the preceding installation.
+for option in CI=true NX_SKIP_NATIVE_FILE_CACHE=true NX_NATIVE_FILE_CACHE_DIRECTORY=/explicit; do
+  cache_path "$TEST_DIR/repo-b" >/dev/null
+  env -u CI -u NX_SKIP_NATIVE_FILE_CACHE -u NX_NATIVE_FILE_CACHE_DIRECTORY "$option" \
+    bash -c '. "$1"; prepare_agent_lcars_nx_native_file_cache "$2"' \
+    bash "$ROOT/tools/nx-native-file-cache.sh" "$TEST_DIR/repo-b"
+  [ ! -e "$TEST_DIR/repo-b/node_modules/.cache/agent-lcars/nx-native-cache" ]
+done

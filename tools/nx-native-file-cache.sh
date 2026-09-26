@@ -129,6 +129,9 @@ prepare_agent_lcars_nx_native_file_cache() {
   local repo_root="$1"
   local receipt="$repo_root/node_modules/.cache/agent-lcars/nx-native-cache"
   local staging
+  # Any install invalidates the prior binding, even when this install skips
+  # cache preparation or fails. Never let a later shell reuse a stale receipt.
+  rm -f -- "$receipt"
   if [ -n "${NX_NATIVE_FILE_CACHE_DIRECTORY:-}" ] ||
     [ "${NX_SKIP_NATIVE_FILE_CACHE:-}" = "true" ] || [ "${CI:-}" = "true" ]; then
     return 0
