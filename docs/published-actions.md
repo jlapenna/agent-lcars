@@ -52,11 +52,12 @@ refused, and is capped at 5 updates per run.
 
 The sweep never updates Renovate or Dependabot PRs (#2049). Updating a
 Renovate branch with `GITHUB_TOKEN` can suppress follow-up CI and cause
-Renovate to treat the branch as externally modified. Repositories with a
-strict up-to-date ruleset must configure Renovate with `rebaseWhen: "auto"`
-(or `"behind-base-branch"`), overriding a fleet preset's `"conflicted"`
-setting. This leaves branch updates and the resulting CI events under
-Renovate's own identity.
+Renovate to treat the branch as externally modified. The shared Renovate
+preset sets `rebaseWhen: "auto"` so Renovate handles behind-branch updates
+for strict up-to-date rulesets itself. Consumers overriding that setting
+with `"conflicted"` must remove the override or use `"behind-base-branch"`.
+This leaves branch updates and the resulting CI events under Renovate's
+own identity.
 
 The workflow's required `runs-on` input selects the short-lived glue-job
 pool. Consumers whose required-check aggregators use that same constrained

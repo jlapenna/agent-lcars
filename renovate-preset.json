@@ -20,7 +20,7 @@
   "extends": ["config:recommended"],
   "labels": ["bot:renovate", "type:dependency-update"],
   "platformAutomerge": true,
-  "rebaseWhen": "conflicted",
+  "rebaseWhen": "auto",
   "schedule": ["after 8pm on monday"],
   "toolSettings": {
     "nodeMaxMemory": 1536
