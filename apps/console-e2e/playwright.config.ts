@@ -56,8 +56,11 @@ export default defineConfig({
   // ("Recursive task invocation detected"). The `e2e` target's `dependsOn`
   // builds and bundles the standalone server up-front.
   webServer: {
+    // pnpm exec creates a separate process group; Playwright can kill its
+    // launcher while leaving dotenv/Next alive with the output pipes open.
+    // Invoke the installed CLI directly so teardown owns the whole group.
     command:
-      'pnpm exec dotenv -e "${E2E_ENV_FILE:-.env.e2e}" -e "${E2E_ENV_LOCAL_FILE:-.env.e2e.local}" --optional -- node dist/apps/console/.next/standalone/apps/console/server.js',
+      'node node_modules/dotenv-cli/cli.js -e "${E2E_ENV_FILE:-.env.e2e}" -e "${E2E_ENV_LOCAL_FILE:-.env.e2e.local}" --optional -- node dist/apps/console/.next/standalone/apps/console/server.js',
     env: {
       // Unregistered, ephemeral key: exercise production's boot parser without
       // checking a credential into the hermetic fixture or importing a real one.
