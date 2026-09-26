@@ -67,12 +67,19 @@ const audit = (api: unknown) =>
       assertVariables('fleet-member', variables),
   });
 
-async function githubHttpError(status: number, rateLimitRemaining: string) {
+async function githubHttpError(
+  status: number,
+  rateLimitRemaining: string,
+  retryAfter?: string,
+) {
   const api = createApi(async () =>
     Promise.resolve(
       new Response(null, {
         status,
-        headers: { 'x-ratelimit-remaining': rateLimitRemaining },
+        headers: {
+          'x-ratelimit-remaining': rateLimitRemaining,
+          ...(retryAfter ? { 'retry-after': retryAfter } : {}),
+        },
       }),
     ),
   );
@@ -135,6 +142,22 @@ describe('read-only onboarding audit', () => {
 
   it('fails when a required-check request is rate limited', async () => {
     const rateLimited = await githubHttpError(403, '0');
+    const { api } = fixture({
+      [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
+        rateLimited,
+    });
+    const result = await audit(api);
+    expect(result.find(({ fact }) => fact === 'required-checks')).toMatchObject(
+      {
+        status: 'FAIL',
+        detail: 'GitHub HTTP 403',
+      },
+    );
+    expect(auditHasFailure(result)).toBe(true);
+  });
+
+  it('fails when a required-check request hits a secondary rate limit', async () => {
+    const rateLimited = await githubHttpError(403, '4999', '60');
     const { api } = fixture({
       [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
         rateLimited,

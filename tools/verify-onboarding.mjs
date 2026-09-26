@@ -92,7 +92,8 @@ export function createApi(fetchImpl = fetch) {
       throw new GitHubHttpError(
         response.status,
         response.status === 403 &&
-          response.headers?.get?.('x-ratelimit-remaining') === '0',
+          (response.headers?.get?.('x-ratelimit-remaining') === '0' ||
+            Boolean(response.headers?.get?.('retry-after'))),
       );
     return response.status === 204 ? null : response.json();
   };
