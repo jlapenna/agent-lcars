@@ -10,8 +10,14 @@ expected="$(tr -d '\r\n' < "$version_file")"
 actual="$("$opencode_bin" --version)"
 [ "$actual" = "${expected#v}" ] || { echo 'OpenCode binary does not match the image pin' >&2; exit 1; }
 # Idempotent only for an empty store. Refuse to sanitize real session history.
-listing="$(mktemp)"
-trap 'rm -f "$listing"' EXIT
+scratch="$(mktemp -d)"
+listing="$scratch/listing.json"
+trap 'rm -rf "$scratch"' EXIT
+# Store migration needs no provider. --pure still resolves global config file
+# references, including the production API-key mount absent during a build.
+# Isolate configuration while retaining the real runner home/data directory.
+export XDG_CONFIG_HOME="$scratch/config"
+unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR
 OPENCODE_DISABLE_AUTOUPDATE=true OPENCODE_DISABLE_MODELS_FETCH=true \
   "$opencode_bin" --pure session list --format json >"$listing"
 # The pinned CLI emits no bytes for an empty result; SQLite below remains
