@@ -26,6 +26,13 @@ const actionsDirectory = path.resolve('.github/actions');
 // `default` is asserted only when present here (multi-line defaults are
 // asserted by requiredness alone).
 const PUBLISHED = {
+  'setup-repo-checks': {
+    inputs: {
+      tool: { required: true },
+      'actionlint-version': { required: false, default: '1.7.7' },
+    },
+    outputs: [],
+  },
   'mint-agent-token': {
     inputs: {
       'client-id': { required: true },

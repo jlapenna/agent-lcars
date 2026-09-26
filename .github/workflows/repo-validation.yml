@@ -23,7 +23,7 @@ on:
     inputs:
       actionlint-version:
         description: >-
-          rhysd/actionlint Docker image tag to run. The default tracks the
+          Exact native actionlint release version to run. The default tracks the
           version baked into the fleet runner image
           (apps/runner-autoscaler/runner-image/actionlint-version).
         required: false
@@ -34,8 +34,8 @@ on:
           Runner labels as a JSON array string, passed straight to
           fromJSON(). Defaults to GitHub-hosted ubuntu-latest on purpose:
           validation must stay green-capable before a repo's self-hosted
-          fleet capacity deploys, and glue checks must never queue behind
-          a long agent session. The runner must be able to `docker run`.
+          fleet capacity deploys. Linux x64/arm64 runners need curl, tar,
+          Python 3 and pip; no Docker daemon is required.
         required: false
         type: string
         default: '["ubuntu-latest"]'
@@ -52,17 +52,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # `docker run` rather than a `uses: docker://...` step because `uses:`
-      # cannot carry an expression, and the image tag is this workflow's one
-      # published version knob. Same image, same flags as the inlined step
-      # this replaces; the image bundles shellcheck and pyflakes, so script
-      # bodies inside workflows are linted too.
+      - uses: jlapenna/agent-lcars/.github/actions/setup-repo-checks@main
+        with:
+          tool: actionlint
+          actionlint-version: ${{ inputs.actionlint-version }}
+
       - name: actionlint
-        env:
-          ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/repo" \
-            --workdir /repo \
-            "rhysd/actionlint:${ACTIONLINT_VERSION}" -color
+        run: actionlint -color

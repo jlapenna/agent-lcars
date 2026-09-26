@@ -1,0 +1,19 @@
+name: Set up repository checks
+description: Install native, versioned secret and workflow scanners without Docker.
+inputs:
+  tool:
+    description: Scanner to install (gitleaks or actionlint).
+    required: true
+  actionlint-version:
+    description: Exact actionlint release version (without v).
+    required: false
+    default: '1.7.7'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CHECK_TOOL: ${{ inputs.tool }}
+        ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
+        SETUP_ACTION_PATH: ${{ github.action_path }}
+      run: bash "$SETUP_ACTION_PATH/install.sh"

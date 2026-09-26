@@ -144,6 +144,19 @@ bodies that already fit the Work description limit exactly, and normalizes
 empty or oversized bodies with the shared Work byte-budget/truncation rule
 before authorization or storage; callers must not pre-truncate it.
 
+## Native repository checks
+
+`setup-repo-checks` is Published. Set `tool: gitleaks` for Gitleaks 8.18.2,
+or `tool: actionlint` for actionlint (optional `actionlint-version`, default
+1.7.7), ShellCheck 0.10.0 and Pyflakes 3.2.0. It adds the executables to PATH
+on Linux x64/arm64 using a temporary directory and verified release archives.
+Python 3 and pip are required for actionlint's Python-script checks.
+
+`repo-validation.yml` uses this action, so registered consumer repositories can
+set its `runs-on` input to their socketless fleet pool. Keep GitHub-hosted
+routing for fork pull requests. Secret scanning can use the same setup action
+without changing its check name, commit range, redaction or repository config.
+
 ## Contract verification
 
 `published-actions.contract.test.mjs` verifies each Published composite
