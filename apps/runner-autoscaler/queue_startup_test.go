@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	dockerclient "github.com/docker/docker/client"
 )
@@ -84,5 +86,46 @@ func TestQueueImageRefreshFailurePreservesCachedLaunch(t *testing.T) {
 	}
 	if fake.pullCount() != 1 || fake.createCount() != 1 {
 		t.Fatal("launch retried failed registry refresh")
+	}
+}
+
+func TestQueueImageRefreshDoesNotSerializeHealthyHostBehindSlowHost(t *testing.T) {
+	q := testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"slow=slow", "healthy=healthy"}})
+	slow, healthy := newFakeDockerServer(t), newFakeDockerServer(t)
+	stalled := make(chan struct{})
+	release := make(chan struct{})
+	reached := make(chan struct{})
+	done := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	clients := func(target string) (*dockerclient.Client, error) {
+		if target == "slow" {
+			close(stalled)
+			<-release
+			return slow.client(t), nil
+		}
+		close(reached)
+		return healthy.client(t), nil
+	}
+	go func() { refreshQueueRunnerImagesOnce(context.Background(), q, clients, discardLogger()); close(done) }()
+	select {
+	case <-stalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow refresh did not start")
+	}
+	select {
+	case <-reached:
+	case <-time.After(2 * time.Second):
+		t.Fatal("healthy refresh waited for stalled host")
+	}
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not finish")
+	}
+	if healthy.pullCount() != 1 || slow.pullCount() != 1 {
+		t.Fatal("both hosts must refresh")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -43,21 +44,25 @@ func refreshQueueRunnerImages(ctx context.Context, q queueExecutorResolved, newC
 }
 
 func refreshQueueRunnerImagesOnce(ctx context.Context, q queueExecutorResolved, newClient func(string) (*dockerclient.Client, error), logger *slog.Logger) {
+	var refreshes sync.WaitGroup
+	defer refreshes.Wait()
 	for _, host := range q.order {
 		if ctx.Err() != nil {
 			return
 		}
-		client, err := newClient(q.targets[host])
-		if err != nil {
-			logger.Warn("Queue runner image refresh could not connect", slog.String("host", host))
-			continue
-		}
-		refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		_, err = prepareRunnerImageForHost(refreshCtx, client, host, q.image, logger)
-		cancel()
-		_ = client.Close()
-		if err != nil {
-			logger.Warn("Queue runner image refresh failed; retaining cached image", slog.String("host", host), slog.String("error", err.Error()))
-		}
+		refreshes.Go(func() {
+			client, err := newClient(q.targets[host])
+			if err != nil {
+				logger.Warn("Queue runner image refresh could not connect", slog.String("host", host))
+				return
+			}
+			refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			_, err = prepareRunnerImageForHost(refreshCtx, client, host, q.image, logger)
+			cancel()
+			_ = client.Close()
+			if err != nil {
+				logger.Warn("Queue runner image refresh failed; retaining cached image", slog.String("host", host), slog.String("error", err.Error()))
+			}
+		})
 	}
 }
