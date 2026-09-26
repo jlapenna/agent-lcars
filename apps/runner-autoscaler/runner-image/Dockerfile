@@ -41,6 +41,9 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d6491
 # still letting BuildKit cache its immutable image layers.
 ARG GO_VERSION=1.26.5
 
+# One pin feeds the source image and both runtime-user build assertions.
+ARG TERRAFORM_VERSION=1.16.4
+
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool AND the
 # `lcars` session-title/status CLI (apps/telemetry-watcher's `bundle` and
 # `session-title-cli` targets, respectively -- agent-lcars#1289 added the
@@ -205,11 +208,12 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv-runtime
 
 # Exact multi-platform Terraform artifact; only its static CLI is copied.
-FROM hashicorp/terraform:1.16.4@sha256:985cdc6c1d9b0a65b83377f666efd2f740b47f02ac55be1ced3d18f7d3b0e829 AS terraform-runtime
+FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:985cdc6c1d9b0a65b83377f666efd2f740b47f02ac55be1ced3d18f7d3b0e829 AS terraform-runtime
 
 FROM ${RUNNER_BASE}
 
 ARG GO_VERSION
+ARG TERRAFORM_VERSION
 ARG TARGETARCH
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -334,7 +338,7 @@ ENV TF_PLUGIN_CACHE_DIR=/opt/terraform-plugin-cache
 COPY --from=telemetry-watcher-build /repo/infra/terraform/.terraform.lock.hcl /tmp/ci-providers/terraform.lock.hcl
 COPY --from=telemetry-watcher-build /repo/infra/github-ruleset/.terraform.lock.hcl /tmp/ci-providers/github-ruleset.lock.hcl
 COPY cache-terraform-providers.py /usr/local/lib/agent-lcars/cache-terraform-providers.py
-RUN test "$(terraform version -json | jq -r .terraform_version)" = "1.16.3" && \
+RUN test "$(terraform version -json | jq -r .terraform_version)" = "$TERRAFORM_VERSION" && \
     uv python install 3.14 && \
     python3 /usr/local/lib/agent-lcars/cache-terraform-providers.py /tmp/ci-providers/*.lock.hcl && \
     chown -R runner:runner /opt/terraform-plugin-cache /opt/uv-python && \
@@ -584,7 +588,7 @@ RUN /usr/local/bin/opencode --version && \
 RUN uv --version && \
     "$(uv python find --managed-python 3.14)" --version && \
     probe="$(mktemp -d "$UV_PYTHON_INSTALL_DIR/runner-write.XXXXXX")" && rmdir "$probe" && \
-    terraform version -json | jq -e '.terraform_version == "1.16.3"'
+    terraform version -json | jq -e --arg expected "$TERRAFORM_VERSION" '.terraform_version == $expected'
 RUN bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 
 # OpenCode installs its plugin SDK in each configuration directory on cold
