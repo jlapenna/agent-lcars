@@ -143,24 +143,27 @@ export async function auditRepository({
   const facts = [];
   const explicitMetadataToken = auditReadToken?.trim();
   const metadataToken = explicitMetadataToken || token;
+  async function optionalMetadataRead(action) {
+    try {
+      return await action();
+    } catch (error) {
+      if (
+        !explicitMetadataToken &&
+        /^GitHub HTTP (403|404)$/.test(error.message)
+      )
+        throw new UnverifiedError('Metadata read credential unavailable');
+      throw error;
+    }
+  }
   async function fact(name, action) {
     try {
       facts.push({ repo, fact: name, status: 'PASS', detail: await action() });
     } catch (error) {
-      const optionalMetadataReadDenied =
-        !explicitMetadataToken &&
-        (name === 'variables' || name === 'required-checks') &&
-        /^GitHub HTTP (403|404)$/.test(error.message);
       facts.push({
         repo,
         fact: name,
-        status:
-          error instanceof UnverifiedError || optionalMetadataReadDenied
-            ? 'UNVERIFIED'
-            : 'FAIL',
-        detail: optionalMetadataReadDenied
-          ? 'Metadata read credential unavailable'
-          : safeMessage(error),
+        status: error instanceof UnverifiedError ? 'UNVERIFIED' : 'FAIL',
+        detail: safeMessage(error),
       });
     }
   }
@@ -214,11 +217,13 @@ export async function auditRepository({
       throw new AuditError('Repository missing from variable manifest');
     const variables = Object.fromEntries(
       (
-        await pages(
-          api,
-          `/repos/${repo}/actions/variables`,
-          metadataToken,
-          'variables',
+        await optionalMetadataRead(() =>
+          pages(
+            api,
+            `/repos/${repo}/actions/variables`,
+            metadataToken,
+            'variables',
+          ),
         )
       ).map(({ name, value }) => [name, value]),
     );
@@ -228,12 +233,12 @@ export async function auditRepository({
   await fact('required-checks', async () => {
     if (!metadataToken)
       throw new UnverifiedError('Metadata read credential unavailable');
-    const metadata = await api(`/repos/${repo}`, metadataToken);
+    const metadata = await optionalMetadataRead(() =>
+      api(`/repos/${repo}`, metadataToken),
+    );
     const branch = encodeURIComponent(metadata.default_branch);
-    const rules = await pages(
-      api,
-      `/repos/${repo}/rules/branches/${branch}`,
-      metadataToken,
+    const rules = await optionalMetadataRead(() =>
+      pages(api, `/repos/${repo}/rules/branches/${branch}`, metadataToken),
     );
     const required = rules
       .filter((rule) => rule.type === 'required_status_checks')

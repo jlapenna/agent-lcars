@@ -117,6 +117,21 @@ describe('read-only onboarding audit', () => {
     expect(auditHasFailure([...result, { status: 'FAIL' }])).toBe(true);
   });
 
+  it('fails when a required-check operational request is denied', async () => {
+    const { api } = fixture({
+      [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
+        new Error('GitHub HTTP 403'),
+    });
+    const result = await audit(api);
+    expect(result.find(({ fact }) => fact === 'required-checks')).toMatchObject(
+      {
+        status: 'FAIL',
+        detail: 'GitHub HTTP 403',
+      },
+    );
+    expect(auditHasFailure(result)).toBe(true);
+  });
+
   it('continues administrative reads when the fleet App is not installed', async () => {
     const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const base = fixture();

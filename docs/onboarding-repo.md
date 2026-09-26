@@ -177,7 +177,7 @@ after CI completes; this audit does not wait for CI or grade check conclusions.
 
 `PASS` means that particular setup fact was observed. `FAIL` identifies a gap
 or failed API request. `UNVERIFIED` means the necessary credential or identity
-was unavailable; both non-pass states produce a nonzero exit. In particular,
+was unavailable; only `FAIL` produces a nonzero exit. In particular,
 the legacy root autoscaler registration gets its App identity from deployment
 environment variables. Its identity cannot be established from the committed
 YAML alone. Supply its resolved registration metadata and its actual App
