@@ -141,16 +141,26 @@ export async function auditRepository({
   auditReadToken,
 }) {
   const facts = [];
-  const metadataToken = auditReadToken?.trim() || token;
+  const explicitMetadataToken = auditReadToken?.trim();
+  const metadataToken = explicitMetadataToken || token;
   async function fact(name, action) {
     try {
       facts.push({ repo, fact: name, status: 'PASS', detail: await action() });
     } catch (error) {
+      const optionalMetadataReadDenied =
+        !explicitMetadataToken &&
+        (name === 'variables' || name === 'required-checks') &&
+        /^GitHub HTTP (403|404)$/.test(error.message);
       facts.push({
         repo,
         fact: name,
-        status: error instanceof UnverifiedError ? 'UNVERIFIED' : 'FAIL',
-        detail: safeMessage(error),
+        status:
+          error instanceof UnverifiedError || optionalMetadataReadDenied
+            ? 'UNVERIFIED'
+            : 'FAIL',
+        detail: optionalMetadataReadDenied
+          ? 'Metadata read credential unavailable'
+          : safeMessage(error),
       });
     }
   }
@@ -281,6 +291,10 @@ export async function auditRepository({
     return `${required.length} required contexts observed on ${commit.sha}`;
   });
   return facts;
+}
+
+export function auditHasFailure(facts) {
+  return facts.some((fact) => fact.status === 'FAIL');
 }
 
 export async function runAudit({
@@ -531,7 +545,7 @@ async function main() {
       : undefined,
   });
   for (const fact of facts) console.log(JSON.stringify(fact));
-  if (facts.some((fact) => fact.status !== 'PASS')) process.exitCode = 1;
+  if (auditHasFailure(facts)) process.exitCode = 1;
 }
 if (
   process.argv[1] &&

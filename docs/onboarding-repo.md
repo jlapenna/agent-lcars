@@ -196,6 +196,9 @@ from deployment into `LEGACY_RUNNER_APP_CLIENT_ID` and
 `LEGACY_RUNNER_APP_INSTALLATION_ID`, or supply resolved `app` metadata in the
 operator configuration file. These identifiers must describe the actual
 registration, not whichever credential happens to be available.
+Missing optional credentials and authorization gaps are emitted as
+`UNVERIFIED` facts without failing the workflow; only an observed mismatch or
+operational request failure is `FAIL`.
 
 The `Fleet onboarding audit` workflow runs daily, on demand, and after changes
 to its local configuration sources. It uses the existing fleet App credential;

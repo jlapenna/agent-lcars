@@ -6,6 +6,7 @@ import { parse } from 'yaml';
 
 import {
   assertVariables,
+  auditHasFailure,
   auditRepository,
   createApi,
   runAudit,
@@ -86,6 +87,34 @@ describe('read-only onboarding audit', () => {
     });
     expect(tokens.length).toBeGreaterThan(0);
     expect(tokens.every((token) => token === 'fleet-token')).toBe(true);
+  });
+
+  it('reports optional metadata authorization gaps without failing the audit', async () => {
+    const { api } = fixture({
+      [`/repos/${repo}/actions/variables?per_page=100&page=1`]: new Error(
+        'GitHub HTTP 403',
+      ),
+      [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: new Error(
+        'GitHub HTTP 403',
+      ),
+    });
+    const result = await audit(api);
+    expect(result).toMatchObject([
+      { fact: 'fleet-login', status: 'PASS' },
+      { fact: 'labels', status: 'PASS' },
+      {
+        fact: 'variables',
+        status: 'UNVERIFIED',
+        detail: 'Metadata read credential unavailable',
+      },
+      {
+        fact: 'required-checks',
+        status: 'UNVERIFIED',
+        detail: 'Metadata read credential unavailable',
+      },
+    ]);
+    expect(auditHasFailure(result)).toBe(false);
+    expect(auditHasFailure([...result, { status: 'FAIL' }])).toBe(true);
   });
 
   it('continues administrative reads when the fleet App is not installed', async () => {
