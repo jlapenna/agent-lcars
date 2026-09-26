@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# Ensure this checkout's Husky bootstrap exists before relying on its guards.
+# Ensure linked worktrees share generated runtime, not tracked hook policy.
 set -euo pipefail
 
 hooks_path="$(git config --get core.hooksPath || true)"
-if [ "$hooks_path" != ".husky/_" ]; then
+expected="$(git rev-parse --path-format=absolute --git-common-dir)/repo-tools-husky"
+if [ "$hooks_path" != "$expected" ]; then
   display_path="${hooks_path:-unset}"
-  echo "ERROR: expected core.hooksPath to be .husky/_; found $display_path." >&2
+  echo "ERROR: expected shared Husky hooks at $expected; found $display_path." >&2
   exit 1
 fi
 
-if [ ! -f .husky/_/h ]; then
-  echo "ERROR: missing Husky bootstrap .husky/_/h. Run pnpm exec husky." >&2
+if [ ! -f "$expected/h" ] || [ ! -x "$expected/run-hook" ]; then
+  echo "ERROR: missing shared Husky runtime. Run ./tools/setup-git-hooks.sh." >&2
   exit 1
 fi
 
 for hook in pre-commit pre-push; do
-  if [ ! -x ".husky/_/$hook" ]; then
-    echo "ERROR: missing executable Husky bootstrap .husky/_/$hook. Run pnpm exec husky." >&2
+  if [ ! -x "$expected/$hook" ]; then
+    echo "ERROR: missing executable shared hook $hook. Run ./tools/setup-git-hooks.sh." >&2
     exit 1
   fi
 done
