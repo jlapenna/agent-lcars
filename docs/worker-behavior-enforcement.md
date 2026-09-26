@@ -937,6 +937,47 @@ unproven; no unrelated dispatch was launched. This workstation OpenCode version
 does not replace or qualify the separately tested image's 1.18.25 artifact.
 #2032 remains open and production provider activation remains off.
 
+### Native Claude instruction-loader checkpoint (2026-09-25)
+
+For #2044, `CLAUDE.md` now imports the canonical
+`.agents/skills/agent-lcars-dev/SKILL.md` directly, alongside `AGENTS.md`.
+Claude's [native instruction imports](https://code.claude.com/docs/en/memory#import-additional-files)
+load referenced files at startup. This removes the model's choice about whether
+to fetch the mandatory skill for a read-only task. The skill remains the single
+source of its rules; no rule body, hook, claim requirement, or dispatch behavior
+is duplicated in `CLAUDE.md`. Loaded instructions remain model context, not an
+enforcement boundary.
+
+Two fresh native interactive TUI sessions used the normal workstation home,
+the dedicated `agent-lcars-2044-skill-import` checkout, `dontAsk` with a narrow
+read-only tool allowlist, and per-invocation automatic memory disabled. Dispatch
+markers and inherited provider-session IDs were unset.
+
+| Checkpoint             | Native session                         | CLI     | Local inspector evidence                                                                                                    |
+| ---------------------- | -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Existing single import | `6529ed8d-11fc-419f-a73e-367057a8384a` | 2.1.282 | `/context all`: memory files 1.7k tokens; skill catalog entry present                                                       |
+| Explicit skill import  | `76d8a8cc-a2bc-4b3d-8f63-930fd6b82262` | 2.1.283 | `/memory`: both `AGENTS.md` and the canonical skill explicitly listed as imported; `/context all`: memory files 5.8k tokens |
+
+The baseline's normal CLI auto-updater advanced the installed binary during
+the run. The candidate disabled automatic updates for that invocation. These
+are not identical-version behavioral comparisons. Both used the configured
+Opus 5.5 model, rather than the original checkpoint's Opus 5.
+
+The baseline's bounded request to read #2044 and #2038, inspect Git status, and
+checksum the issue guard hit the account's weekly usage limit before any task
+reads. The candidate therefore used only local `/memory` and `/context`
+inspection; inference was not retried against the known limit. Both sessions
+exited normally. Native transcripts are under
+`~/.claude/projects/-home-jlapenna-p-agent-lcars-2044-skill-import/`, named by the
+session IDs above.
+
+**Loader verified; fresh-session behavior remains unverified.** #2044 stays open
+until the bounded read-only task can run in a new native session with available
+quota, showing the imported safety rules are available and interactive work
+does not acquire autonomous claim, parking, or fleet-status requirements.
+No global configuration was edited for this check, and no billing or model
+fallback was used to bypass the account limit.
+
 ## Native Claude/Codex command-hook boundary
 
 ```sh
