@@ -133,18 +133,11 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
 # copies only /pnpm-store, so manifests, lockfiles, build cache, and any
 # credentials cannot reach a job image.
 #
-# Corepack resolves each exact version from its local seed manifest. pnpm 11
-# must match Agent LCARS's root packageManager declaration; pnpm 10.34.5 is a
-# deliberate compatible-store seed for the representative Sprinkles workload.
-# The store layout is pnpm-major-version-specific, so one cannot satisfy the
-# other. Keep each copy below as a distinct final-image layer to make its size
-# and churn visible.
-FROM node:24-slim AS pnpm10-store-seed
-WORKDIR /seed
-RUN corepack enable
-COPY pnpm-seed/pnpm10/package.json pnpm-seed/pnpm10/pnpm-lock.yaml ./
-RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
-
+# Corepack resolves the exact version from the seed manifest, which must match
+# Agent LCARS's root packageManager declaration. Every fleet JavaScript
+# consumer uses pnpm 11, whose store layout is v11; the store layout is
+# pnpm-major-version-specific. Keep the copy below as a distinct final-image
+# layer to make its size and churn visible.
 FROM node:24-slim AS pnpm-store-seed
 WORKDIR /seed
 RUN corepack enable
@@ -155,9 +148,6 @@ RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
 # only the compressed store payload, not the Node base or fetch-stage virtual
 # node_modules. Homelab's canonical image publisher measures these targets on
 # its remote BuildKit builder and blocks promotion above the 1.5 GiB budget.
-FROM scratch AS pnpm10-store-content
-COPY --from=pnpm10-store-seed /pnpm-store/ /pnpm-store/
-
 FROM scratch AS pnpm-store-content
 COPY --from=pnpm-store-seed /pnpm-store/ /pnpm-store/
 
@@ -652,10 +642,8 @@ RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh
 # normal pnpm store, so overlayfs shares these immutable lower-layer files on
 # a host while a job can add a cache miss only to that runner container's
 # private writable layer. No host mount or shared mutable cache is involved.
-# The regression test exercises pnpm 10 and pnpm 11 lower-layer content hits
-# followed by writable misses, including the no-whole-store-copy property.
-COPY --from=pnpm10-store-seed --chown=runner:runner \
-    /pnpm-store/ /home/runner/.local/share/pnpm/store/
+# The regression test exercises a pnpm 11 lower-layer content hit followed by
+# a writable miss, including the no-whole-store-copy property.
 COPY --from=pnpm-store-seed --chown=runner:runner \
     /pnpm-store/ /home/runner/.local/share/pnpm/store/
 
