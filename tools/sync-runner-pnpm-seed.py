@@ -8,12 +8,14 @@ content instead of downloading it (agent-lcars#2076). This script copies, as
 data, exactly what `pnpm fetch --frozen-lockfile` needs from each repository
 listed in pnpm-seed/fleet.json at its default branch head:
 
-  pnpm-lock.yaml       verbatim
+  pnpm-lock.yaml       without its patchedDependencies block
   package.json         only name/private/packageManager (corepack version)
-  pnpm-workspace.yaml  only patchedDependencies and supportedArchitectures
-  <patch files>        the files patchedDependencies names
+  pnpm-workspace.yaml  only supportedArchitectures
 
-Nothing else is read: no source, scripts, or build context. Files are fetched
+Nothing else is read: no source, scripts, patches, or build context. The
+store holds unpatched package content either way (pnpm applies patches when
+it links a package), so dropping the lockfile's patch map lets `pnpm fetch`
+run without the patch files. Files are fetched
 through `gh api` with the raw media type (lockfiles exceed the 1 MB JSON
 contents limit). GH_TOKEN_<OWNER> (owner upper-cased, `-` as `_`) is used for
 that owner's repositories when set, otherwise GH_TOKEN.
@@ -27,7 +29,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import posixpath
 import shutil
 import subprocess
 import sys
@@ -38,7 +39,7 @@ import yaml
 DEFAULT_SEED_DIR = Path(__file__).resolve().parent.parent / (
     "apps/runner-autoscaler/runner-image/pnpm-seed"
 )
-WORKSPACE_KEYS = ("patchedDependencies", "supportedArchitectures")
+WORKSPACE_KEYS = ("supportedArchitectures",)
 
 
 def gh(owner: str, *args: str) -> str:
@@ -65,11 +66,19 @@ def raw_file(repo: str, owner: str, path: str, ref: str) -> str | None:
         raise
 
 
-def safe_relative(path: str) -> str:
-    normalized = posixpath.normpath(path)
-    if normalized.startswith(("/", "../")) or normalized in ("..", "."):
-        raise ValueError(f"patch path escapes the repository: {path}")
-    return normalized
+def without_patched_dependencies(lockfile: str) -> str:
+    """Drop the lockfile's top-level patchedDependencies mapping."""
+    kept: list[str] = []
+    skipping = False
+    for line in lockfile.splitlines(keepends=True):
+        if line.startswith("patchedDependencies:"):
+            skipping = True
+            continue
+        if skipping and (line[:1] in (" ", "\t") or not line.strip()):
+            continue
+        skipping = False
+        kept.append(line)
+    return "".join(kept)
 
 
 def sync_repository(repo: str, destination: Path) -> str:
@@ -92,7 +101,7 @@ def sync_repository(repo: str, destination: Path) -> str:
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True)
-    (destination / "pnpm-lock.yaml").write_text(lockfile)
+    (destination / "pnpm-lock.yaml").write_text(without_patched_dependencies(lockfile))
     (destination / "package.json").write_text(
         json.dumps(
             {
@@ -108,14 +117,6 @@ def sync_repository(repo: str, destination: Path) -> str:
         (destination / "pnpm-workspace.yaml").write_text(
             yaml.safe_dump(seed_workspace, sort_keys=True)
         )
-    for patch in sorted(set(seed_workspace.get("patchedDependencies", {}).values())):
-        relative = safe_relative(patch)
-        content = raw_file(repo, owner, relative, commit)
-        if content is None:
-            raise ValueError(f"{repo} names missing patch file {relative}")
-        target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
     return commit
 
 

@@ -129,9 +129,9 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
 # union of every fleet JavaScript repository's lockfile (agent-lcars#2076).
 # pnpm-seed/fleet/ is data refreshed weekly by
 # .github/workflows/refresh-runner-pnpm-seed.yml: each directory holds one
-# repository's pnpm-lock.yaml, a manifest carrying only its packageManager,
-# and the patch configuration `pnpm fetch` validates. No source, script, or
-# build context from another repository enters this image. `pnpm fetch`
+# repository's pnpm-lock.yaml (without its patch map), a manifest carrying
+# only its packageManager, and its supportedArchitectures. No source, script,
+# patch, or build context from another repository enters this image. `pnpm fetch`
 # downloads package content only; `--ignore-scripts` keeps lifecycle output
 # out of the seed. The final stage copies only /pnpm-store, so manifests,
 # lockfiles, build cache, and any credentials cannot reach a job image.

@@ -15,12 +15,6 @@ overrides:
   uuid@<11.1.1: '>=11.1.1 <12'
   less@>=4.0.0 <4.9.0: '>=4.9.0 <5'
 
-patchedDependencies:
-  '@google-cloud/storage@8.2.0': 645169e3bcdfc5dc57ba73df31bf2eeadf3325a946f1bcad93e3149cca0f2532
-  '@nx/react@23.2.1': 51be8a9132c963fa51ef2b1df6adc279a77ee6427e5070a1f7bfbe47825ef6a9
-  nx@23.2.1: b0e794cc9f26ce9660aaa2110693e5b91d96f4600589bd7739695f153a487bb2
-  strava-api-client@1.4.0: 397c882ce86d3519b48e9dac8f65fad50c6926ba988cec3e9ece206c75c64b96
-
 importers:
 
   .:

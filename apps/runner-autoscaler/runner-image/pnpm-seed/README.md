@@ -10,10 +10,11 @@ that private layer in the normal way. On runner hosts with overlayfs
 metadata rather than a full copy of the file.
 
 `fleet.json` lists the repositories. `fleet/<owner>__<repo>/` holds, as data,
-exactly what `pnpm fetch` needs from each at its default-branch head:
-`pnpm-lock.yaml` verbatim, a `package.json` carrying only `packageManager`,
-and the `patchedDependencies`/`supportedArchitectures` configuration with the
-patch files it names. No source, script, or build context is copied; the
+exactly what `pnpm fetch` needs from each at its default-branch head: its
+`pnpm-lock.yaml` without the `patchedDependencies` map, a `package.json`
+carrying only `packageManager`, and its `supportedArchitectures`. No source,
+script, patch, or build context is copied (the store holds unpatched package
+content either way; pnpm applies patches when it links); the
 Dockerfile's `pnpm-store-seed` stage fetches with `--ignore-scripts`, and the
 final image copies only the resulting store.
 

@@ -77,7 +77,9 @@ afterEach(() =>
     .forEach((dir) => rmSync(dir, { recursive: true, force: true })),
 );
 
-const lockfile = "lockfileVersion: '9.0'\npackages: {}\n";
+const lockfile = "lockfileVersion: '9.0'\n\npackages: {}\n";
+const patchedLockfile =
+  "lockfileVersion: '9.0'\n\npatchedDependencies:\n  left@1.0.0:\n    hash: abc\n    path: patches/left.patch\n\npackages: {}\n";
 
 describe('runner pnpm seed sync', () => {
   it('copies only what pnpm fetch needs from each repository', () => {
@@ -89,7 +91,7 @@ describe('runner pnpm seed sync', () => {
           scripts: { postinstall: 'curl evil' },
           dependencies: { left: '1.0.0' },
         }),
-        'pnpm-lock.yaml': lockfile,
+        'pnpm-lock.yaml': patchedLockfile,
         'pnpm-workspace.yaml':
           'packages: [apps/*]\noverrides: {a: "1"}\nsupportedArchitectures:\n  cpu: [x64, arm64]\npatchedDependencies:\n  left@1.0.0: patches/left.patch\n',
         'patches/left.patch': 'diff --git a/x b/x\n',
@@ -103,13 +105,14 @@ describe('runner pnpm seed sync', () => {
       private: true,
       packageManager: 'pnpm@11.27.1',
     });
+    // The patch map is dropped and no patch file is copied: the store holds
+    // unpatched content, so pnpm fetch needs neither.
     expect(f.read('fleet/acme__app/pnpm-lock.yaml')).toBe(lockfile);
     expect(parse(f.read('fleet/acme__app/pnpm-workspace.yaml'))).toEqual({
-      patchedDependencies: { 'left@1.0.0': 'patches/left.patch' },
       supportedArchitectures: { cpu: ['x64', 'arm64'] },
     });
-    expect(f.read('fleet/acme__app/patches/left.patch')).toBe(
-      'diff --git a/x b/x\n',
+    expect(existsSync(path.join(f.seed, 'fleet/acme__app/patches'))).toBe(
+      false,
     );
   });
 
@@ -144,16 +147,6 @@ describe('runner pnpm seed sync', () => {
       'a missing lockfile',
       { 'package.json': '{"packageManager":"pnpm@11.27.1"}' },
       /has no pnpm-lock.yaml/,
-    ],
-    [
-      'a patch path outside the repository',
-      {
-        'package.json': '{"packageManager":"pnpm@11.27.1"}',
-        'pnpm-lock.yaml': lockfile,
-        'pnpm-workspace.yaml':
-          'patchedDependencies:\n  x@1: ../../escape.patch\n',
-      },
-      /escapes the repository/,
     ],
   ])('fails on %s', (_name, files, error) => {
     const f = fixture({ 'acme/app': files });
