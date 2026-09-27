@@ -23,14 +23,6 @@
       "matchPackageNames": ["!pnpm"]
     },
     {
-      "description": "The pnpm 10 compatibility seeds stay on their explicitly tested toolchain until a deliberate compatibility refresh. The pnpm 11 seeds follow the root toolchain through the normal non-major group; the repo-wide major hold still applies.",
-      "enabled": false,
-      "matchFileNames": [
-        "apps/runner-autoscaler/runner-image/pnpm-seed/pnpm10/**",
-        "apps/runner-autoscaler/runner-image/pnpm-seed-regression/*-pnpm10/**"
-      ]
-    },
-    {
       "description": "CI's JDK deliberately tracks a floating Temurin major line ('21'), like node '24' and actions/setup-java v6. The java-version datasource can only offer exact builds (re-bumped every quarter) or a new major (25), and the JVM here only runs the Firestore emulator: the runner image installs openjdk-21-jre-headless and the E2E sandbox image Ubuntu Noble's default-jre-headless (Java 21), so moving setup-java alone would split the fleet across two JVMs for no benefit. Same rule and reasoning as sprinkles. Revisit when the sandbox base image's default JRE moves (#2001).",
       "enabled": false,
       "matchDatasources": ["java-version"],

@@ -17,17 +17,17 @@ emulator downloads, browser payloads, credentials, or a whole consumer
 lockfile.
 
 `package.json` must match Agent LCARS's root `packageManager` declaration.
-`pnpm10/package.json` is the separately versioned compatibility seed for the
-representative Sprinkles workload, whose pnpm 10 store layout is `v10` and
-therefore cannot reuse Agent LCARS's `v11` content. Both manifests carry the
-same curated package set and are fetched into their own immutable final-image
-layer; neither comes from Sprinkles source or its build context. Refresh no
-more than monthly, or when measured hit coverage falls below 70%; keep
-lockfile updates independent from consumer dependency updates.
+Every fleet JavaScript consumer (Sprinkles, WWW, GiroSF, Agent LCARS) uses
+pnpm 11, so this one `v11` store serves them all; the former pnpm 10
+compatibility seed was retired once Sprinkles moved to pnpm 11. The seed is
+fetched into its own immutable final-image layer and never comes from a
+consumer's source or build context. Refresh no more than monthly, or when
+measured hit coverage falls below 70%; keep lockfile updates independent from
+consumer dependency updates.
 
-Before publishing a refreshed runner image, record the combined compressed
+Before publishing a refreshed runner image, record the compressed
 seed-layer size for both `linux/amd64` and `linux/arm64`. The pilot budget is
 at most 1.5 GiB of additional compressed image data per architecture. The
-Dockerfile deliberately leaves both seed stages target-platform native, so
+Dockerfile deliberately leaves the seed stage target-platform native, so
 native packages such as SWC, esbuild, and sharp are fetched for the image
 architecture being built.
