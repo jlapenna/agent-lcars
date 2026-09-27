@@ -1,0 +1,16 @@
+patchedDependencies:
+  '@google-cloud/storage@8.2.0': pnpm-patches/@google-cloud__storage@8.2.0.patch
+  '@nx/react@23.2.1': pnpm-patches/@nx__react@23.2.1.patch
+  nx@23.2.1: pnpm-patches/nx@23.2.1.patch
+  strava-api-client@1.4.0: pnpm-patches/strava-api-client@1.4.0.patch
+supportedArchitectures:
+  cpu:
+  - current
+  - x64
+  - arm64
+  libc:
+  - current
+  - glibc
+  os:
+  - current
+  - linux

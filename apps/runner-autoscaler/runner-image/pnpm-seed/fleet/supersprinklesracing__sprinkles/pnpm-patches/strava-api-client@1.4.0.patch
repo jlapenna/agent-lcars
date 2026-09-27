@@ -1,0 +1,100 @@
+diff --git a/mjs/classes/index.js b/mjs/classes/index.js
+index 6141da3..a3412e6 100644
+--- a/mjs/classes/index.js
++++ b/mjs/classes/index.js
+@@ -1 +1 @@
+-export * from "./strava.class";
++export * from "./strava.class.js";
+diff --git a/mjs/enums/index.js b/mjs/enums/index.js
+index 7ce2ff1..31d9c1f 100644
+--- a/mjs/enums/index.js
++++ b/mjs/enums/index.js
+@@ -1,5 +1,5 @@
+-export * from "./activity-stream.enum";
+-export * from "./activity-type.enum";
+-export * from "./scope.enum";
+-export * from "./segment-stream.enum";
+-export * from "./sport-type.enum";
++export * from "./activity-stream.enum.js";
++export * from "./activity-type.enum.js";
++export * from "./scope.enum.js";
++export * from "./segment-stream.enum.js";
++export * from "./sport-type.enum.js";
+diff --git a/mjs/index.js b/mjs/index.js
+index 50af1e3..994b0da 100644
+--- a/mjs/index.js
++++ b/mjs/index.js
+@@ -1,3 +1,3 @@
+-export * from "./classes";
+-export * from "./enums";
+-export * from "./interfaces";
++export * from "./classes/index.js";
++export * from "./enums/index.js";
++export * from "./interfaces/index.js";
+diff --git a/mjs/interfaces/index.js b/mjs/interfaces/index.js
+index 89e2233..b10d537 100644
+--- a/mjs/interfaces/index.js
++++ b/mjs/interfaces/index.js
+@@ -1,2 +1,2 @@
+-export * from "./oauth-configuration.interface";
+-export * from "./oauth-response.interface";
++export * from "./oauth-configuration.interface.js";
++export * from "./oauth-response.interface.js";
+diff --git a/cjs/classes/strava.class.d.ts b/cjs/classes/strava.class.d.ts
+index b721a08..63c1fd0 100644
+--- a/cjs/classes/strava.class.d.ts
++++ b/cjs/classes/strava.class.d.ts
+@@ -333,7 +333,7 @@ export declare class Strava {
+         }>;
+     };
+     activity: {
+-        create: (name: string, sport_type: SportType, start_date_local: string, elapsed_time: number, type?: ActivityType, description?: string, distance?: number, trainer?: boolean, commute?: boolean, confidential?: boolean, flagged?: boolean, gear_id?: string) => Promise<{
++        create: (name: string, sport_type: SportType, start_date_local: string, elapsed_time: number, description?: string, distance?: number, trainer?: boolean, commute?: boolean, confidential?: boolean, flagged?: boolean, gear_id?: string) => Promise<{
+             id?: number;
+         } & {
+             external_id?: string;
+diff --git a/cjs/classes/strava.class.js b/cjs/classes/strava.class.js
+index f7e7998..50288fc 100644
+--- a/cjs/classes/strava.class.js
++++ b/cjs/classes/strava.class.js
+@@ -240,9 +240,9 @@ class Strava {
+             }
+         };
+         this.activity = {
+-            create: async (name, sport_type, start_date_local, elapsed_time, type, description, distance, trainer, commute, confidential, flagged, gear_id) => {
++            create: async (name, sport_type, start_date_local, elapsed_time, description, distance, trainer, commute, confidential, flagged, gear_id) => {
+                 // Get the activity
+-                const response = await this.client.POST('/activities', { body: { name, type, sport_type, start_date_local, elapsed_time, description, distance, trainer: trainer ? 1 : 0, commute: commute ? 1 : 0, private: confidential, flagged, gear_id } });
++                const response = await this.client.POST('/activities', { body: { name, sport_type, start_date_local, elapsed_time, description, distance, trainer: trainer ? 1 : 0, commute: commute ? 1 : 0, private: confidential, flagged, gear_id } });
+                 // Throw the error if there is one
+                 if (response.error) {
+                     throw response.error;
+diff --git a/mjs/classes/strava.class.d.ts b/mjs/classes/strava.class.d.ts
+index b721a08..63c1fd0 100644
+--- a/mjs/classes/strava.class.d.ts
++++ b/mjs/classes/strava.class.d.ts
+@@ -333,7 +333,7 @@ export declare class Strava {
+         }>;
+     };
+     activity: {
+-        create: (name: string, sport_type: SportType, start_date_local: string, elapsed_time: number, type?: ActivityType, description?: string, distance?: number, trainer?: boolean, commute?: boolean, confidential?: boolean, flagged?: boolean, gear_id?: string) => Promise<{
++        create: (name: string, sport_type: SportType, start_date_local: string, elapsed_time: number, description?: string, distance?: number, trainer?: boolean, commute?: boolean, confidential?: boolean, flagged?: boolean, gear_id?: string) => Promise<{
+             id?: number;
+         } & {
+             external_id?: string;
+diff --git a/mjs/classes/strava.class.js b/mjs/classes/strava.class.js
+index 70ff15f..41d2f34 100644
+--- a/mjs/classes/strava.class.js
++++ b/mjs/classes/strava.class.js
+@@ -234,9 +234,9 @@ export class Strava {
+             }
+         };
+         this.activity = {
+-            create: async (name, sport_type, start_date_local, elapsed_time, type, description, distance, trainer, commute, confidential, flagged, gear_id) => {
++            create: async (name, sport_type, start_date_local, elapsed_time, description, distance, trainer, commute, confidential, flagged, gear_id) => {
+                 // Get the activity
+-                const response = await this.client.POST('/activities', { body: { name, type, sport_type, start_date_local, elapsed_time, description, distance, trainer: trainer ? 1 : 0, commute: commute ? 1 : 0, private: confidential, flagged, gear_id } });
++                const response = await this.client.POST('/activities', { body: { name, sport_type, start_date_local, elapsed_time, description, distance, trainer: trainer ? 1 : 0, commute: commute ? 1 : 0, private: confidential, flagged, gear_id } });
+                 // Throw the error if there is one
+                 if (response.error) {
+                     throw response.error;
