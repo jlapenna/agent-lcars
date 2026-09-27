@@ -15,3 +15,6 @@ pnpm-lock.yaml
 .gemini/
 .jules/
 .worktrees/
+
+# Synced verbatim from fleet repositories by tools/sync-runner-pnpm-seed.py.
+apps/runner-autoscaler/runner-image/pnpm-seed/fleet/

@@ -1,33 +1,30 @@
-# Curated runner pnpm-store seed
+# Runner pnpm-store seed
 
-This is a deliberately small, standalone dependency manifest for the generic
-ephemeral runner image. It is not a consumer lockfile and must never import,
-checkout, or otherwise derive from another repository.
+The generic ephemeral runner image carries a pnpm content store seeded with
+the union of every fleet JavaScript repository's lockfile, so a job's
+`pnpm install --frozen-lockfile` reuses image content instead of downloading
+it (agent-lcars#2076). Jobs keep their own writable container layer: matching
+packages are read from the immutable seed layer, and misses are fetched into
+that private layer in the normal way. On runner hosts with overlayfs
+`metacopy` (homelab's docker role), a seeded hard link also costs only
+metadata rather than a full copy of the file.
 
-The Dockerfile fetches this exact lockfile into the `runner` user's normal
-pnpm content-addressable store in a dedicated image layer. Jobs keep their
-own writable container layer: matching packages are read from the immutable
-seed, while misses are fetched into that private layer in the normal way.
+`fleet.json` lists the repositories. `fleet/<owner>__<repo>/` holds, as data,
+exactly what `pnpm fetch` needs from each at its default-branch head: its
+`pnpm-lock.yaml` without the `patchedDependencies` map, a `package.json`
+carrying only `packageManager`, and its `supportedArchitectures`. No source,
+script, patch, or build context is copied (the store holds unpatched package
+content either way; pnpm applies patches when it links); the
+Dockerfile's `pnpm-store-seed` stage fetches with `--ignore-scripts`, and the
+final image copies only the resulting store.
 
-Keep this list to broadly useful JavaScript tooling families: Nx, TypeScript,
-SWC/esbuild, React/Next/sharp, ESLint/Prettier, Vitest/Testing Library,
-Firebase/Google clients, and Playwright's package code (not browsers). Do
-not add application-only packages, `node_modules`, postinstall output,
-emulator downloads, browser payloads, credentials, or a whole consumer
-lockfile.
+`tools/sync-runner-pnpm-seed.py` writes `fleet/`, and
+`.github/workflows/refresh-runner-pnpm-seed.yml` runs it weekly and opens an
+auto-merged bot PR when anything changed. Do not edit `fleet/` by hand.
+Every listed repository must use pnpm 11 (the `v11` store layout); the
+seed test fails otherwise.
 
-`package.json` must match Agent LCARS's root `packageManager` declaration.
-Every fleet JavaScript consumer (Sprinkles, WWW, GiroSF, Agent LCARS) uses
-pnpm 11, so this one `v11` store serves them all; the former pnpm 10
-compatibility seed was retired once Sprinkles moved to pnpm 11. The seed is
-fetched into its own immutable final-image layer and never comes from a
-consumer's source or build context. Refresh no more than monthly, or when
-measured hit coverage falls below 70%; keep lockfile updates independent from
-consumer dependency updates.
-
-Before publishing a refreshed runner image, record the compressed
-seed-layer size for both `linux/amd64` and `linux/arm64`. The pilot budget is
-at most 1.5 GiB of additional compressed image data per architecture. The
-Dockerfile deliberately leaves the seed stage target-platform native, so
-native packages such as SWC, esbuild, and sharp are fetched for the image
-architecture being built.
+Homelab's canonical publisher measures every `pnpm*-store-content` target
+before promotion and refuses a combined compressed seed above 1.5 GiB per
+architecture. The seed stage is target-platform native, so native packages
+such as SWC, esbuild, and sharp are fetched for the architecture being built.

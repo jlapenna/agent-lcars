@@ -125,24 +125,34 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
     ./tools/nx session-title-cli @agent-lcars/telemetry-watcher
 
-# Curated, architecture-specific content-addressable pnpm stores for the JIT
-# runner. These workspaces are intentionally local to agent-lcars's
-# runner-image build context: neither is a consumer lockfile or a
-# cross-repository build/import. `pnpm fetch` downloads package content only;
-# `--ignore-scripts` keeps lifecycle output out of the seeds. The final stage
-# copies only /pnpm-store, so manifests, lockfiles, build cache, and any
-# credentials cannot reach a job image.
+# Architecture-specific pnpm content store for the JIT runner, seeded with the
+# union of every fleet JavaScript repository's lockfile (agent-lcars#2076).
+# pnpm-seed/fleet/ is data refreshed weekly by
+# .github/workflows/refresh-runner-pnpm-seed.yml: each directory holds one
+# repository's pnpm-lock.yaml (without its patch map), a manifest carrying
+# only its packageManager, and its supportedArchitectures. No source, script,
+# patch, or build context from another repository enters this image. `pnpm fetch`
+# downloads package content only; `--ignore-scripts` keeps lifecycle output
+# out of the seed. The final stage copies only /pnpm-store, so manifests,
+# lockfiles, build cache, and any credentials cannot reach a job image.
 #
-# Corepack resolves the exact version from the seed manifest, which must match
-# Agent LCARS's root packageManager declaration. Every fleet JavaScript
-# consumer uses pnpm 11, whose store layout is v11; the store layout is
-# pnpm-major-version-specific. Keep the copy below as a distinct final-image
-# layer to make its size and churn visible.
+# Corepack resolves each directory's own pnpm version. Every fleet consumer
+# uses pnpm 11, whose store layout is v11 (layouts are major-version
+# specific). The release-age policy is each consumer's to enforce on its own
+# installs; the seed only pre-fetches lockfiles those repositories already
+# accepted, so a package published hours before a refresh must not fail the
+# image build. Keep the copy below as a distinct final-image layer to make
+# its size and churn visible.
 FROM node:24-slim AS pnpm-store-seed
 WORKDIR /seed
 RUN corepack enable
-COPY pnpm-seed/package.json pnpm-seed/pnpm-lock.yaml ./
-RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
+COPY pnpm-seed/fleet/ ./
+RUN set -eu; \
+    for repository in */; do \
+      (cd "$repository" && \
+        pnpm fetch --frozen-lockfile --ignore-scripts \
+          --config.minimum-release-age=0 --store-dir /pnpm-store); \
+    done
 
 # Measurement-only targets: `FROM scratch` ensures their OCI output contains
 # only the compressed store payload, not the Node base or fetch-stage virtual

@@ -20,14 +20,29 @@ require_equal_package_manager() {
 }
 
 root_package_manager="$(node -p "require(process.argv[1]).packageManager" "$repo_root/package.json")"
-require_equal_package_manager "$seed_dir/package.json" "$root_package_manager"
+# Every fleet seed directory is a fetchable pnpm 11 lockfile snapshot, and
+# the fleet list and its synced directories agree (tools/sync-runner-pnpm-seed.py).
+expected_dirs="$(node -p "require(process.argv[1]).repositories.map((r) => r.replace('/', '__')).sort().join('\\n')" "$seed_dir/fleet.json")"
+actual_dirs="$(find "$seed_dir/fleet" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)"
+if [[ "$expected_dirs" != "$actual_dirs" ]]; then
+  echo "pnpm-seed/fleet does not match fleet.json (run tools/sync-runner-pnpm-seed.py)" >&2
+  exit 1
+fi
+while IFS= read -r repository_dir; do
+  test -s "$seed_dir/fleet/$repository_dir/pnpm-lock.yaml"
+  package_manager="$(node -p "require(process.argv[1]).packageManager" "$seed_dir/fleet/$repository_dir/package.json")"
+  if [[ "$package_manager" != pnpm@11.* ]]; then
+    echo "$repository_dir seeds $package_manager; the image seeds the pnpm 11 (v11) store" >&2
+    exit 1
+  fi
+done <<<"$actual_dirs"
 for fixture in seed hit miss; do
   require_equal_package_manager "$fixture_dir/$fixture/package.json" "$root_package_manager"
 done
 
 # The production build uses the runner user's normal pnpm store.
-grep -Fqx 'COPY pnpm-seed/package.json pnpm-seed/pnpm-lock.yaml ./' "$dockerfile"
-grep -Fqx 'RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store' "$dockerfile"
+grep -Fqx 'COPY pnpm-seed/fleet/ ./' "$dockerfile"
+grep -Fqx '          --config.minimum-release-age=0 --store-dir /pnpm-store); \' "$dockerfile"
 grep -Fqx '    /pnpm-store/ /home/runner/.local/share/pnpm/store/' "$dockerfile"
 if ! grep -Fq 'COPY --from=pnpm-store-seed --chown=runner:runner \' "$dockerfile"; then
   echo 'runner image must copy the isolated pnpm store seed into the final image' >&2

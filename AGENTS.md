@@ -60,7 +60,10 @@ replaced an earlier versioned-standalone-bundle-on-GCS scheme (issue #29,
 retired for good in #66) whose published pin went stale for months. Do
 not add cross-repository _source_ imports or build contexts elsewhere —
 this one image-build integration point is the sanctioned exception, not a
-precedent for others. Publishing this repo's composite actions for fleet
+precedent for others. The runner image's pnpm seed also reads fleet
+repositories' lockfiles, as data only, through a weekly bot PR
+(`apps/runner-autoscaler/runner-image/pnpm-seed/README.md`, #2076); it
+copies no source or build context. Publishing this repo's composite actions for fleet
 consumption (consumers reference `jlapenna/agent-lcars/.github/actions/*`)
 is the sanctioned direction of dependency — consumers depend on this repo,
 never the reverse — see [docs/published-actions.md](docs/published-actions.md).
