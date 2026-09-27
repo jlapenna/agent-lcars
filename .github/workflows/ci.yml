@@ -10,8 +10,12 @@ on:
 permissions:
   contents: read
 
+# One group per pull request (newer pushes cancel older runs) but one per
+# commit on main: consecutive merges verify concurrently instead of queueing
+# 5-9 minutes behind each other (#2076). deploy-console.yml keeps production
+# moving forward regardless of completion order.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:

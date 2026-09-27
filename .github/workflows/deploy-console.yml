@@ -57,6 +57,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       verify_passed: ${{ steps.check.outputs.verify_passed }}
+      superseded: ${{ steps.supersession.outputs.superseded }}
     steps:
       - name: Check Verify job's conclusion
         id: check
@@ -83,9 +84,27 @@ jobs:
             exit 1
           fi
 
+      # main's CI runs concurrently, so CI completions (and these runs) can
+      # arrive out of merge order. Never roll production back to a revision
+      # the last successful deploy already contains. Manual dispatches are
+      # deliberate recoveries and are not second-guessed.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'workflow_run'
+        with:
+          sparse-checkout: tools/deploy-console-superseded.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Skip a revision production has already moved past
+        id: supersession
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: tools/deploy-console-superseded.sh "${{ github.repository }}" "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
   deploy:
     needs: gate
-    if: needs.gate.outputs.verify_passed == 'true'
+    if: needs.gate.outputs.verify_passed == 'true' && needs.gate.outputs.superseded != 'true'
     # The optional prebuilt path runs the console's production Nx graph
     # locally. Keep that long-running diagnostic work off lcars-default's
     # latency-sensitive glue pool.
