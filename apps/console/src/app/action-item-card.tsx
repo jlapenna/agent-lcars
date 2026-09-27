@@ -7,6 +7,7 @@ import {
   Box,
   Button,
   Card,
+  Divider,
   Group,
   SegmentedControl,
   Stack,
@@ -645,12 +646,43 @@ export function ActionItemCard({
         )}
 
         {replyOpen && (
-          <Stack gap={6} mt={4}>
-            <Group
-              gap="sm"
-              wrap="nowrap"
-              className={workspace ? 'queue-detail-reply' : undefined}
-            >
+          <Stack
+            gap={6}
+            mt={4}
+            className={workspace ? 'queue-detail-reply' : undefined}
+          >
+            {replyTargets.length > 0 && (
+              <Stack gap={4}>
+                {/* Governs what the Reply button below does, so it reads
+                    before that button, not after it - the reverse order
+                    read as an unrelated control. */}
+                <Text size="xs" c="dimmed">
+                  Reply, handing off to:
+                </Text>
+                <SegmentedControl
+                  size="xs"
+                  value={chosenReplyTarget ?? NO_REPLY_TARGET}
+                  onChange={(value) =>
+                    setChosenReplyTarget(
+                      value === NO_REPLY_TARGET
+                        ? undefined
+                        : (value as Pipeline),
+                    )
+                  }
+                  data={[
+                    { value: NO_REPLY_TARGET, label: 'Comment only' },
+                    ...replyTargets.map((target) => ({
+                      value: target,
+                      label:
+                        agentIntegration(item.repo, target)?.replyTrigger ??
+                        target,
+                    })),
+                  ]}
+                  aria-label={`Hand #${item.number} to an agent`}
+                />
+              </Stack>
+            )}
+            <Group gap="sm" wrap="nowrap">
               <TextInput
                 value={replyBody}
                 onChange={(e) => setReplyBody(e.currentTarget.value)}
@@ -672,51 +704,40 @@ export function ActionItemCard({
                 {chosenReplyTarget ? 'Reply & dispatch' : 'Reply'}
               </Button>
             </Group>
-            {replyTargets.length > 0 && (
-              <SegmentedControl
-                size="xs"
-                value={chosenReplyTarget ?? NO_REPLY_TARGET}
-                onChange={(value) =>
-                  setChosenReplyTarget(
-                    value === NO_REPLY_TARGET ? undefined : (value as Pipeline),
-                  )
-                }
-                data={[
-                  { value: NO_REPLY_TARGET, label: 'Comment only' },
-                  ...replyTargets.map((target) => ({
-                    value: target,
-                    label:
-                      agentIntegration(item.repo, target)?.replyTrigger ??
-                      target,
-                  })),
-                ]}
-                aria-label={`Hand #${item.number} to an agent`}
-              />
-            )}
           </Stack>
         )}
 
         {localAgentPipelines.length > 0 && effectiveLocalAgentPipeline && (
-          <Group gap="xs" wrap="wrap" mt={4} data-testid="local-agent-prompt">
-            <Text size="xs" c="dimmed">
-              Work locally:
-            </Text>
-            <SegmentedControl
-              size="xs"
-              value={effectiveLocalAgentPipeline}
-              onChange={(value) => setLocalAgentPipeline(value as Pipeline)}
-              data={localAgentPipelines.map((target) => ({
-                value: target,
-                label: localAgentDisplayName(target),
-              }))}
-              aria-label={`Choose a local agent for #${item.number}`}
+          <>
+            {/* Marks this as a distinct path from Reply above it - it posts
+                nothing to GitHub, it just copies a prompt for a CLI run
+                locally - rather than a continuation of the same flow. */}
+            <Divider
+              my={4}
+              label="Or work on it locally (nothing here is posted to GitHub)"
+              labelPosition="left"
             />
-            <TakeoverCommand
-              command={localAgentCommand(effectiveLocalAgentPipeline, item)}
-              label="Copy local-agent prompt"
-              copiedLabel="Prompt copied"
-            />
-          </Group>
+            <Group gap="xs" wrap="wrap" data-testid="local-agent-prompt">
+              <Text size="xs" c="dimmed">
+                Work locally:
+              </Text>
+              <SegmentedControl
+                size="xs"
+                value={effectiveLocalAgentPipeline}
+                onChange={(value) => setLocalAgentPipeline(value as Pipeline)}
+                data={localAgentPipelines.map((target) => ({
+                  value: target,
+                  label: localAgentDisplayName(target),
+                }))}
+                aria-label={`Choose a local agent for #${item.number}`}
+              />
+              <TakeoverCommand
+                command={localAgentCommand(effectiveLocalAgentPipeline, item)}
+                label="Copy local-agent prompt"
+                copiedLabel="Prompt copied"
+              />
+            </Group>
+          </>
         )}
 
         {error && (
