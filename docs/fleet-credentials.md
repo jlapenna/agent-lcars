@@ -60,7 +60,8 @@ is "All repositories".
 
 The Sprinkles `claude-agent-github` WIF provider admits only the workflow paths
 for `ci.yml`, `e2e.yml`, `deploy.yml`, `deploy-rules-and-indexes.yml`,
-`deploy-qbp-appsscript.yml`, and `config-reconcile.yml`. Each prefix ends at
+`deploy-qbp-appsscript.yml`, `config-reconcile.yml`, and
+`relation-feedback-alerts.yml` (homelab#1595). Each prefix ends at
 the `@` delimiter, so a similarly prefixed sibling filename cannot match, while
 the branch, tag, or SHA suffix after `@` is intentionally unrestricted.
 Admission to the provider is only the first gate; a workflow still needs an
