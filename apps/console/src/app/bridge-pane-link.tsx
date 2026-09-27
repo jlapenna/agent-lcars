@@ -1,6 +1,7 @@
 'use client';
 
 import { Anchor, type AnchorProps } from '@mantine/core';
+import Link from 'next/link';
 import { type ReactNode, useSyncExternalStore } from 'react';
 
 const DESKTOP_PANE_QUERY = '(min-width: 64em)';
@@ -53,6 +54,11 @@ function mobilePaneSnapshot(): boolean {
  * as the two-pane CSS swaps desktop links to the server-rendered `?sel=` URL.
  * The initial client render also uses the mobile target, avoiding a hydration
  * mismatch while preserving a useful no-JavaScript fallback.
+ *
+ * Renders through next/link (Mantine's `component` prop) so a desktop
+ * selection swaps only the RHS detail pane via a client-side transition
+ * instead of a full page reload; a plain `<a>` here previously forced a
+ * hard navigation on every row tap.
  */
 export function BridgePaneLink({
   mobileHref,
@@ -77,6 +83,7 @@ export function BridgePaneLink({
 
   return (
     <Anchor
+      component={Link}
       href={desktopPane ? paneHref : mobileHref}
       target={desktopPane ? undefined : target}
       rel={desktopPane ? undefined : rel}
