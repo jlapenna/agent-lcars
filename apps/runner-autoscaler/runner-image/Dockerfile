@@ -133,7 +133,8 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
 # only its packageManager, and its supportedArchitectures. No source, script,
 # patch, or build context from another repository enters this image. `pnpm fetch`
 # downloads package content only; `--ignore-scripts` keeps lifecycle output
-# out of the seed. The final stage copies only /pnpm-store, so manifests,
+# out of the seed. The final stage copies only /pnpm-store and pnpm's metadata
+# cache, so manifests,
 # lockfiles, build cache, and any credentials cannot reach a job image.
 #
 # Corepack resolves each directory's own pnpm version. Every fleet consumer
@@ -147,12 +148,21 @@ FROM node:24-slim AS pnpm-store-seed
 WORKDIR /seed
 RUN corepack enable
 COPY pnpm-seed/fleet/ ./
+# Each fetch also runs pnpm 11's supply-chain verification, which caches the
+# registry metadata of every locked package (~590 MiB for Sprinkles). Jobs run
+# the same verification on every install; without this cache in the image each
+# job re-downloaded and re-wrote that metadata (#2082). Keep only the metadata:
+# lockfile-verified.jsonl records verifications of these seed lockfiles, not a
+# job's own, so it is dropped.
 RUN set -eu; \
     for repository in */; do \
       (cd "$repository" && \
         pnpm fetch --frozen-lockfile --ignore-scripts \
-          --config.minimum-release-age=0 --store-dir /pnpm-store); \
-    done
+          --config.minimum-release-age=0 --store-dir /pnpm-store \
+          --config.cache-dir=/pnpm-cache); \
+    done; \
+    rm -f /pnpm-cache/lockfile-verified.jsonl; \
+    test -d /pnpm-cache/v11/metadata
 
 # Measurement-only targets: `FROM scratch` ensures their OCI output contains
 # only the compressed store payload, not the Node base or fetch-stage virtual
@@ -160,6 +170,7 @@ RUN set -eu; \
 # its remote BuildKit builder and blocks promotion above the 1.5 GiB budget.
 FROM scratch AS pnpm-store-content
 COPY --from=pnpm-store-seed /pnpm-store/ /pnpm-store/
+COPY --from=pnpm-store-seed /pnpm-cache/ /pnpm-cache/
 
 # CI's Verify job runs Go race tests and validates Actions syntax with
 # actionlint. On an ephemeral JIT runner actions/setup-go had to fetch and
@@ -656,6 +667,10 @@ RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh
 # a writable miss, including the no-whole-store-copy property.
 COPY --from=pnpm-store-seed --chown=runner:runner \
     /pnpm-store/ /home/runner/.local/share/pnpm/store/
+# pnpm's registry-metadata cache from the same fetch, so a job's supply-chain
+# verification reads it from this lower layer instead of rewriting it.
+COPY --from=pnpm-store-seed --chown=runner:runner \
+    /pnpm-cache/ /home/runner/.cache/pnpm/
 
 WORKDIR /home/runner
 

@@ -42,7 +42,13 @@ done
 
 # The production build uses the runner user's normal pnpm store.
 grep -Fqx 'COPY pnpm-seed/fleet/ ./' "$dockerfile"
-grep -Fqx '          --config.minimum-release-age=0 --store-dir /pnpm-store); \' "$dockerfile"
+grep -Fqx '          --config.minimum-release-age=0 --store-dir /pnpm-store \' "$dockerfile"
+# pnpm's registry-metadata cache ships with the store (#2082), minus the seed's
+# own lockfile-verification record.
+grep -Fqx '          --config.cache-dir=/pnpm-cache); \' "$dockerfile"
+grep -Fqx '    rm -f /pnpm-cache/lockfile-verified.jsonl; \' "$dockerfile"
+grep -Fqx '    /pnpm-cache/ /home/runner/.cache/pnpm/' "$dockerfile"
+grep -Fqx 'COPY --from=pnpm-store-seed /pnpm-cache/ /pnpm-cache/' "$dockerfile"
 grep -Fqx '    /pnpm-store/ /home/runner/.local/share/pnpm/store/' "$dockerfile"
 if ! grep -Fq 'COPY --from=pnpm-store-seed --chown=runner:runner \' "$dockerfile"; then
   echo 'runner image must copy the isolated pnpm store seed into the final image' >&2

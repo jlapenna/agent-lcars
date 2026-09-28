@@ -18,6 +18,12 @@ content either way; pnpm applies patches when it links); the
 Dockerfile's `pnpm-store-seed` stage fetches with `--ignore-scripts`, and the
 final image copies only the resulting store.
 
+The image also carries pnpm's registry-metadata cache from the same fetch
+(`~/.cache/pnpm/v11/metadata`). pnpm 11 verifies every locked package against
+its supply-chain policies on each install and caches the metadata it reads;
+without the baked cache each job re-downloaded and re-wrote about 590 MiB of
+it (#2082).
+
 `tools/sync-runner-pnpm-seed.py` writes `fleet/`, and
 `.github/workflows/refresh-runner-pnpm-seed.yml` runs it weekly and opens an
 auto-merged bot PR when anything changed. Do not edit `fleet/` by hand.
