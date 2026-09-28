@@ -1,5 +1,5 @@
 {
   "name": "runner-pnpm-seed-supersprinklesracing-www",
   "private": true,
-  "packageManager": "pnpm@11.27.0"
+  "packageManager": "pnpm@11.28.0"
 }
