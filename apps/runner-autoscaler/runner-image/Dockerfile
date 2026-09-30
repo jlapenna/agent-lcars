@@ -156,6 +156,9 @@ COPY pnpm-seed/fleet/ ./
 # job's own, so it is dropped.
 RUN set -eu; \
     for repository in */; do \
+      grep -q '^packages:' "$repository/pnpm-lock.yaml" || { \
+        echo "fleet seed $repository has an empty lockfile; re-run tools/sync-runner-pnpm-seed.py (#2084 rewrote them)" >&2; \
+        exit 1; }; \
       (cd "$repository" && \
         pnpm fetch --frozen-lockfile --ignore-scripts \
           --config.minimum-release-age=0 --store-dir /pnpm-store \
