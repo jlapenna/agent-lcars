@@ -25,9 +25,25 @@
    `agent-lcars[bot]`) squash-auto-merges once the ruleset's required
    `Verify` check goes green (`.github/workflows/agent-automerge.yml`) — see
    the [lcars](../../lcars/SKILL.md) skill for the exact mechanism and how
-   to register a new pipeline's bot login. A human-authored or
-   interactively-driven PR merges normally through GitHub's own review
-   flow.
+   to register a new pipeline's bot login.
+
+   A PR pushed under the maintainer's own login — every interactive Claude
+   Code, Codex, or cloud session — is **not** armed by that workflow. Arm
+   it yourself the moment the PR is open and ready (or the moment you mark
+   a draft ready; a draft cannot be armed), before watching CI or handing
+   off:
+
+   ```bash
+   gh pr merge --squash --auto <PR_NUMBER>
+   ```
+
+   Auto-merge armed under the maintainer's login is the opt-in the fleet
+   reconciler honours (it updates a `BEHIND` branch when `main` moves, see
+   `stacked-prs.md`), and the merge lands under that login, so the
+   push-triggered `main` workflows fire naturally with no recovery
+   dispatch. Review requests and required checks gate the merge exactly as
+   before; a session that ends without arming leaves a green PR waiting for
+   a human click.
 
    **The `Protect main` ruleset is the only thing protecting `main`.** The
    classic branch protection that used to sit alongside it was retired on
