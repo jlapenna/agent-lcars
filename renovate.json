@@ -14,13 +14,12 @@
       "matchUpdateTypes": ["major"]
     },
     {
-      "description": "The runner image's curated pnpm-store seed and its regression fixtures are refreshed deliberately (pnpm-seed/README.md: no more than monthly, independent of consumer dependency updates), and the image only ever reads their lockfiles (`pnpm fetch --frozen-lockfile`). Renovate bumped the fixture package.json files weekly without touching those locks, so the manifests drifted from what is actually seeded, the fixtures made up about half of the weekly group, and the still-locked vitest 4.1.11 kept a phantom 'update vitest monorepo to v5' major on the dashboard (#3) after the repo itself had moved to vitest 5. Exclude pnpm itself from this disable rule so its version lookup runs before update types are known.",
+      "description": "The runner image's curated pnpm-store seed and its regression fixtures are refreshed deliberately (pnpm-seed/README.md: no more than monthly, independent of consumer dependency updates), and the image only ever reads their lockfiles (`pnpm fetch --frozen-lockfile`). Renovate bumped the fixture package.json files weekly without touching those locks, so the manifests drifted from what is actually seeded, the fixtures made up about half of the weekly group, and the still-locked vitest 4.1.11 kept a phantom 'update vitest monorepo to v5' major on the dashboard (#3) after the repo itself had moved to vitest 5. pnpm is NOT exempt: each fleet seed's packageManager is copied from its source repository by tools/sync-runner-pnpm-seed.py, and when #2084 bumped it here Renovate re-ran pnpm against the seed's dependency-less package.json and rewrote all four fleet lockfiles to empty, which failed every runner-image build (merge-to-live) until they were restored.",
       "enabled": false,
       "matchFileNames": [
         "apps/runner-autoscaler/runner-image/pnpm-seed/**",
         "apps/runner-autoscaler/runner-image/pnpm-seed-regression/**"
-      ],
-      "matchPackageNames": ["!pnpm"]
+      ]
     },
     {
       "description": "CI's JDK deliberately tracks a floating Temurin major line ('21'), like node '24' and actions/setup-java v6. The java-version datasource can only offer exact builds (re-bumped every quarter) or a new major (25), and the JVM here only runs the Firestore emulator: the runner image installs openjdk-21-jre-headless and the E2E sandbox image Ubuntu Noble's default-jre-headless (Java 21), so moving setup-java alone would split the fleet across two JVMs for no benefit. Same rule and reasoning as sprinkles. Revisit when the sandbox base image's default JRE moves (#2001).",
