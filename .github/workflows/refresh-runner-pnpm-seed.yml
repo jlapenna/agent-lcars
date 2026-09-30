@@ -32,6 +32,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The push below authenticates as agent-lcars[bot] through the
+          # remote URL; checkout's persisted GITHUB_TOKEN header would
+          # override that and push as github-actions[bot], which has no
+          # write access here.
+          persist-credentials: false
 
       # Read-only, and only the lockfile-bearing repositories: the sync reads
       # pnpm-lock.yaml, package.json and pnpm-workspace.yaml.

@@ -43,6 +43,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # The push below authenticates as agent-lcars[bot] through the
+          # remote URL; checkout's persisted GITHUB_TOKEN header would
+          # override that and push as github-actions[bot], which has no
+          # write access here (every run since 2026-09-14 failed this way).
+          persist-credentials: false
 
       - uses: actions/setup-go@v7
         with:
