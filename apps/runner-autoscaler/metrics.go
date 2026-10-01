@@ -39,6 +39,10 @@ var (
 		Name: "github_runner_autoscaler_queue_executor_launches_total",
 		Help: "Direct-runner launch attempts after a successful claim, by outcome: success or error.",
 	}, []string{"outcome"})
+	queueExecutorHostUnreadyTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_queue_executor_host_unready_total",
+		Help: "Direct-runner launches skipped for one host because its readiness probe failed or returned a value other than 1, by host.",
+	}, []string{"host"})
 	scheduleTicksTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_schedule_ticks_total",
 		Help: "Server-owned Work API schedule tick attempts by outcome.",
@@ -108,6 +112,7 @@ func registerMetrics() {
 			queueExecutorPollsTotal,
 			queueExecutorClaimsTotal,
 			queueExecutorLaunchesTotal,
+			queueExecutorHostUnreadyTotal,
 			scheduleTicksTotal,
 			maintenanceTicksTotal,
 			maintenanceLastSuccessTimestamp,

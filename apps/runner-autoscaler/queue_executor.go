@@ -462,11 +462,24 @@ type directRunnerCapacityReservations struct {
 	held      map[string]int
 	resolved  queueExecutorResolved
 	newClient func(target string) (*dockerclient.Client, error)
-	logger    *slog.Logger
+	// checkReadiness evaluates one host's optional readiness gate (see
+	// resolvedOrchestratorConfig.Readiness). Defaulted to fetchHostReadiness
+	// in newDirectRunnerCapacityReservations; tests inject a stub so they
+	// never perform a real HTTP fetch.
+	checkReadiness func(ctx context.Context, cfg hostReadinessConfig) (bool, error)
+	logger         *slog.Logger
 }
 
 func newDirectRunnerCapacityReservations(resolved queueExecutorResolved, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) *directRunnerCapacityReservations {
-	return &directRunnerCapacityReservations{held: map[string]int{}, resolved: resolved, newClient: newClient, logger: logger}
+	return &directRunnerCapacityReservations{
+		held:      map[string]int{},
+		resolved:  resolved,
+		newClient: newClient,
+		checkReadiness: func(ctx context.Context, cfg hostReadinessConfig) (bool, error) {
+			return fetchHostReadiness(ctx, nil, cfg)
+		},
+		logger: logger,
+	}
 }
 
 func (r *directRunnerCapacityReservations) reserve(ctx context.Context) (*directRunnerReservation, error) {
@@ -478,6 +491,18 @@ func (r *directRunnerCapacityReservations) reserve(ctx context.Context) (*direct
 	var probeErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
+		if cfg, gated := r.resolved.Readiness[host]; gated {
+			ready, err := r.checkReadiness(ctx, cfg)
+			if err != nil || !ready {
+				reason := "readiness metric is not 1"
+				if err != nil {
+					reason = err.Error()
+				}
+				r.logger.Info("Direct-runner host is not ready for this launch; skipping", slog.String("host", host), slog.String("reason", reason))
+				queueExecutorHostUnreadyTotal.WithLabelValues(host).Inc()
+				continue
+			}
+		}
 		client, err := r.newClient(targets[host])
 		if err != nil {
 			probeErr = errors.Join(probeErr, fmt.Errorf("host %q: connecting: %w", host, err))

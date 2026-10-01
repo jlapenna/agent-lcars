@@ -54,14 +54,42 @@ fleet:
       docker: local
     - name: laforge
       docker: ssh://homelab@laforge.lan.jlapenna.net
+    - name: laptop
+      docker: ssh://homelab@laptop.ts.jlapenna.net
+      readiness_url: http://homelab.lan.jlapenna.net:9100/metrics # optional
+      readiness_metric: host_ready # optional, this is the default
 ```
 
-`fleet.hosts[].{name,docker}` is the one piece of fleet configuration the
-queue executor reads: `docker` is `local` (the mounted socket) or
+`fleet.hosts[].{name,docker}` is almost all of fleet configuration the queue
+executor reads: `docker` is `local` (the mounted socket) or
 `ssh://user@host` (proxied over the fleet SSH key, same as before -- see
-`hosts.go`). Which of these configured hosts actually launches a direct
-runner is decided by `direct_runner_preflight.go`'s own disposable
-credential-mount probe at startup, not by anything else in this file.
+`hosts.go`). Which of these configured hosts ever enters the launch pool at
+all is decided once, at startup, by `direct_runner_preflight.go`'s own
+disposable credential-mount probe, not by anything else in this file.
+
+`readiness_url` and `readiness_metric` add a second, per-launch eligibility
+gate on top of that startup preflight, for a host whose online-ness can
+change while the process keeps running -- a travelling, battery-powered
+laptop being the motivating case (homelab#1664/homelab#1623). When
+`readiness_url` is set, `directRunnerCapacityReservations.reserve` fetches it
+fresh (3s timeout) immediately before every launch attempt on that host and
+requires `readiness_metric` (default `host_ready`) to be present with value
+`1`; a failed fetch, a non-1 value, or a missing metric all skip the host for
+_that_ launch (`github_runner_autoscaler_queue_executor_host_unready_total{host}`,
+logged at Info) without touching probeErr/inventory-fault handling, and the
+reservation moves on to the next configured host exactly like a full one. If
+every configured host is unready, the claim is left queued -- the same
+"no capacity" outcome (`capacity_wait`) as an entirely full fleet, not an
+error. A host with no `readiness_url` is always eligible, which is every
+existing deployment's behavior today, unchanged. The endpoint is expected to
+be a Prometheus-exposition HTTP response (e.g. a node-exporter textfile
+collector); this binary has no opinion about what publishes it or what the
+metric means (Tailscale LAN presence, mains power, anything else) -- that is
+deployment knowledge that belongs entirely to the config that sets
+`readiness_url`, never to this repo (see `AGENTS.md`'s cross-repository
+independence rule). The per-host distinction comes from each host pointing at
+its own `readiness_url`, not from a label inside the metric body, so a bare
+`host_ready 1` line is exactly as valid as one carrying labels.
 
 A deployment's `orchestrator.yml` may still carry retired scale-set sections
 (`github`, `registrations`, `scale_sets`, `fleet.max_runners`,
@@ -275,6 +303,10 @@ The metrics endpoint exposes the queue worker's own health:
   then records whether that claim launched a direct runner (`success` or
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
+- `github_runner_autoscaler_queue_executor_host_unready_total{host}` counts
+  launches skipped for one host because its `readiness_url` fetch failed or
+  did not return `readiness_metric == 1` (see "Configuration" above). It is
+  only ever incremented for a host that actually sets `readiness_url`.
 
 ### Exited direct-runner retention
 
