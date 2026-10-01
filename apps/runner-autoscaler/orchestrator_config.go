@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -46,12 +47,14 @@ type OrchestratorServer struct {
 }
 
 type OrchestratorFleet struct {
-	// Hosts is the only part of fleet.* the queue executor actually reads
-	// (via resolvedOrchestratorConfig.DockerHosts): the host name and Docker
-	// transport (newDockerClient's "local" / "ssh://..." target), nothing
-	// else. direct_runner_preflight.go's own preflight -- not any of the
-	// legacy per-host keys below -- decides which configured hosts are
-	// actually eligible to launch a direct runner.
+	// Hosts is almost all of fleet.* the queue executor actually reads: the
+	// host name, Docker transport (newDockerClient's "local" / "ssh://..."
+	// target, via resolvedOrchestratorConfig.DockerHosts), and each host's
+	// optional per-launch readiness gate (resolvedOrchestratorConfig.Readiness
+	// -- see FleetHostConfig.ReadinessURL). direct_runner_preflight.go's own
+	// startup preflight -- not any of the legacy per-host keys below --
+	// decides which configured hosts ever enter the launch pool; readiness is
+	// evaluated separately, per launch, by directRunnerCapacityReservations.
 	Hosts []FleetHostConfig `yaml:"hosts"`
 
 	MaxRunnersLegacy         any `yaml:"max_runners,omitempty"`
@@ -62,6 +65,23 @@ type OrchestratorFleet struct {
 type FleetHostConfig struct {
 	Name   string `yaml:"name"`
 	Docker string `yaml:"docker"`
+
+	// ReadinessURL, when set, is a Prometheus-exposition HTTP endpoint (for
+	// example a node-exporter textfile collector) this host's eligibility for
+	// a direct-runner launch is gated on -- see
+	// directRunnerCapacityReservations.reserve in queue_executor.go and
+	// fetchHostReadiness in host_readiness.go. It deliberately carries no
+	// opinion about what produces the metric (Tailscale presence, mains
+	// power, anything else): that knowledge belongs to the deployment that
+	// sets this value, never to this binary (AGENTS.md's cross-repository
+	// independence rule). A host with no ReadinessURL is always eligible --
+	// today's behavior for every existing deployment.
+	ReadinessURL string `yaml:"readiness_url,omitempty"`
+	// ReadinessMetric is the metric name fetched from ReadinessURL; the host
+	// is eligible only when a fresh fetch returns that metric with value 1.
+	// Defaults to "host_ready" (defaultReadinessMetric) when ReadinessURL is
+	// set and this is empty. Ignored when ReadinessURL is empty.
+	ReadinessMetric string `yaml:"readiness_metric,omitempty"`
 
 	// Legacy scale-set placement knobs (fleet-wide scheduling: runner limits,
 	// readiness/role gating, memory/inference load awareness) -- retired by
@@ -94,6 +114,11 @@ type resolvedOrchestratorConfig struct {
 	// "name=target", the shape ParseDockerHosts/newDockerClient consume. This
 	// is the one piece of fleet config the queue executor actually uses.
 	DockerHosts []string
+	// Readiness holds one hostReadinessConfig per fleet.hosts[] entry that set
+	// readiness_url, keyed by host name. A host absent from this map has no
+	// readiness gate and is always eligible for a launch -- see
+	// FleetHostConfig.ReadinessURL and directRunnerCapacityReservations.reserve.
+	Readiness map[string]hostReadinessConfig
 	// Warnings collects non-fatal compatibility notices produced while
 	// resolving the config (today: retired sections the file still carries),
 	// surfaced by the caller (which holds the logger resolve itself does not)
@@ -151,6 +176,27 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 		}
 		seenHosts[name] = true
 		r.DockerHosts = append(r.DockerHosts, name+"="+docker)
+
+		if readinessURL := strings.TrimSpace(h.ReadinessURL); readinessURL != "" {
+			parsed, err := url.ParseRequestURI(readinessURL)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+				return fmt.Errorf("fleet.hosts[%d] readiness_url must be an absolute HTTP(S) URL", i)
+			}
+			metric := strings.TrimSpace(h.ReadinessMetric)
+			if metric == "" {
+				metric = defaultReadinessMetric
+			}
+			if r.Readiness == nil {
+				r.Readiness = map[string]hostReadinessConfig{}
+			}
+			r.Readiness[name] = hostReadinessConfig{url: readinessURL, metric: metric}
+		} else if strings.TrimSpace(h.ReadinessMetric) != "" {
+			// readiness_metric only means anything alongside readiness_url; a
+			// lone readiness_metric is a likely typo (e.g. readiness_url
+			// misspelled or left out) that would otherwise silently leave the
+			// host ungated instead of failing to parse.
+			r.Warnings = append(r.Warnings, fmt.Sprintf("fleet.hosts[%d] (%s) sets readiness_metric without readiness_url; readiness_metric is ignored and this host remains always eligible", i, name))
+		}
 	}
 
 	r.Warnings = append(r.Warnings, legacyConfigWarnings(c)...)

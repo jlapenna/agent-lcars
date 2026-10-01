@@ -102,6 +102,94 @@ func TestOrchestratorConfigRejectsDuplicateHostName(t *testing.T) {
 	}
 }
 
+// TestOrchestratorConfigParsesReadinessKeys proves the strict
+// (KnownFields(true)) parser accepts the new per-host readiness_url and
+// readiness_metric keys, resolves them into resolvedOrchestratorConfig.Readiness
+// keyed by host name, and applies the defaultReadinessMetric default when
+// readiness_metric is omitted.
+func TestOrchestratorConfigParsesReadinessKeys(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"      docker: local\n",
+		"      docker: local\n      readiness_url: http://janeway.lan.jlapenna.net:9100/metrics\n",
+		1)
+	body = strings.Replace(body,
+		"      docker: ssh://homelab@laforge.lan.jlapenna.net\n",
+		"      docker: ssh://homelab@laforge.lan.jlapenna.net\n      readiness_url: http://laforge.lan.jlapenna.net:9100/metrics\n      readiness_metric: laforge_ready\n",
+		1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("readiness_url/readiness_metric must parse under the strict decoder: %v", err)
+	}
+	if len(resolved.Readiness) != 2 {
+		t.Fatalf("Readiness = %v, want exactly 2 entries", resolved.Readiness)
+	}
+	janeway, ok := resolved.Readiness["janeway"]
+	if !ok {
+		t.Fatalf("Readiness[janeway] missing, got %v", resolved.Readiness)
+	}
+	if janeway.url != "http://janeway.lan.jlapenna.net:9100/metrics" || janeway.metric != defaultReadinessMetric {
+		t.Fatalf("janeway readiness = %+v, want url set and metric defaulted to %q", janeway, defaultReadinessMetric)
+	}
+	laforge, ok := resolved.Readiness["laforge"]
+	if !ok {
+		t.Fatalf("Readiness[laforge] missing, got %v", resolved.Readiness)
+	}
+	if laforge.url != "http://laforge.lan.jlapenna.net:9100/metrics" || laforge.metric != "laforge_ready" {
+		t.Fatalf("laforge readiness = %+v, want its explicit metric name preserved", laforge)
+	}
+}
+
+// TestOrchestratorConfigHostWithoutReadinessURLHasNoReadinessEntry proves a
+// host that never sets readiness_url gets no Readiness map entry at all --
+// today's "always eligible" behavior is preserved by absence, not a
+// zero-value struct.
+func TestOrchestratorConfigHostWithoutReadinessURLHasNoReadinessEntry(t *testing.T) {
+	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.Readiness) != 0 {
+		t.Fatalf("Readiness = %v, want none when no host sets readiness_url", resolved.Readiness)
+	}
+}
+
+// TestOrchestratorConfigRejectsInvalidReadinessURL proves a malformed
+// readiness_url fails config loading loudly (fail-fast at startup), the same
+// posture this file already takes for a malformed LCARS_CONSOLE_URL in
+// validateQueueExecutorEnvironment.
+func TestOrchestratorConfigRejectsInvalidReadinessURL(t *testing.T) {
+	tests := map[string]string{
+		"not a URL at all":   "not-a-url",
+		"missing scheme":     "janeway.lan.jlapenna.net:9100/metrics",
+		"non-http(s) scheme": "ftp://janeway.lan.jlapenna.net/metrics",
+	}
+	for name, readinessURL := range tests {
+		t.Run(name, func(t *testing.T) {
+			body := strings.Replace(validOrchestratorYAML, "      docker: local\n", "      docker: local\n      readiness_url: "+readinessURL+"\n", 1)
+			if _, err := loadOrchestratorConfig(writeConfig(t, body)); err == nil || !strings.Contains(err.Error(), "readiness_url") {
+				t.Fatalf("expected a readiness_url error, got %v", err)
+			}
+		})
+	}
+}
+
+// TestOrchestratorConfigWarnsOnReadinessMetricWithoutReadinessURL proves a
+// lone readiness_metric (readiness_url missing or misspelled) warns rather
+// than silently leaving the host ungated with no signal at all.
+func TestOrchestratorConfigWarnsOnReadinessMetricWithoutReadinessURL(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      docker: local\n", "      docker: local\n      readiness_metric: host_ready\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("a lone readiness_metric must still resolve: %v", err)
+	}
+	if !containsSubstring(resolved.Warnings, "readiness_metric without readiness_url") {
+		t.Fatalf("Warnings = %v, want a notice about readiness_metric without readiness_url", resolved.Warnings)
+	}
+	if len(resolved.Readiness) != 0 {
+		t.Fatalf("Readiness = %v, want none: a lone readiness_metric must not gate the host", resolved.Readiness)
+	}
+}
+
 func TestOrchestratorConfigRejectsUnknownField(t *testing.T) {
 	_, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML+"unknown: true\n"))
 	if err == nil || !strings.Contains(err.Error(), "field unknown not found") {
