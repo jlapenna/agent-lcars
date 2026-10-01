@@ -913,7 +913,28 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	}
 
 	if len(r.ScaleSets) == 0 {
-		return fmt.Errorf("at least one enabled scale set is required (every registration is disabled or empty)")
+		// Zero enabled scale sets is allowed (homelab#1623 Phase 3): once
+		// every GitHub Actions runner lane has migrated off this custom
+		// autoscaler onto Actions Runner Controller, a registration may be
+		// declared here (or every registration left disabled) solely to keep
+		// this process alive to run the LCARS queue executor (queue_*.go,
+		// started from runOrchestrator) on the same Docker fleet -- there is
+		// no separate "queue executor" process. Whether that is actually
+		// useful can only be judged once environment variables are
+		// available, not here: see validateQueueExecutorEnvironment, called
+		// from main.go right after loadCredentials, which fails startup
+		// outright when the queue executor is ALSO unconfigured (nothing
+		// would run). A totally empty config (neither scale_sets nor
+		// registrations at all) is still rejected above -- that is always a
+		// mistake, not a deliberate queue-executor-only deployment.
+		//
+		// fleet.max_runners has no aggregate scale-set maximum to validate
+		// against in this mode (maxSum is 0 with no scale sets), so the
+		// exceeds-aggregate-maximum check below is skipped entirely rather
+		// than rejecting every positive max_runners value; the plain "must be
+		// at least 1" check above still applies unconditionally.
+		r.Warnings = append(r.Warnings, "no enabled scale sets: running the queue executor only")
+		return nil
 	}
 	if c.Fleet.MaxRunners > maxSum {
 		return fmt.Errorf("fleet.max_runners %d exceeds aggregate scale-set maximum %d", c.Fleet.MaxRunners, maxSum)

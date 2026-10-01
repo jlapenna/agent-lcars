@@ -278,6 +278,34 @@ its global subscription credential lease admits one session. Claude remains
 bounded by fleet host capacity. The claim request cannot select pipelines or
 change these server-owned limits.
 
+### Queue-executor-only mode (zero scale sets)
+
+`scale_sets`/`registrations` may resolve to **zero** enabled scale sets, as
+long as the queue executor above is fully configured (homelab#1623 Phase 3).
+This is the end state of moving every GitHub Actions runner lane off this
+custom autoscaler onto Actions Runner Controller: nothing left needs a
+GitHub scale-set listener, but this same process, on this same Docker host
+fleet, still needs to keep running the queue executor, the native schedule
+ticker, the metrics/health server, and checkpointing.
+
+`loadOrchestratorConfig` accepts this shape -- every registration disabled,
+or `scale_sets` present but effectively empty -- and records a startup
+warning ("no enabled scale sets: running the queue executor only") instead
+of failing. `fleet.max_runners` still must be at least 1, but its
+aggregate-scale-set-maximum check is skipped in this mode (the aggregate is
+necessarily 0). `runOrchestrator` connects the Docker host pool, restores and
+writes the checkpoint, starts the metrics server, and runs the queue
+executor and schedule ticker exactly as in the normal case -- it just never
+builds scaler runtimes, starts a listener, or pulls a GitHub-runner image,
+since there is no scale set to do any of that for.
+
+A wholly empty config -- neither `scale_sets` nor `registrations` set at all
+-- is still rejected; that is always a mistake, never a deliberate
+queue-executor-only deployment. And if the queue executor is _also_
+unconfigured while there are zero enabled scale sets, startup (and
+`--check-config`) fails outright: a process with neither a scale set to
+listen for nor a queue to poll would have nothing to run.
+
 ### Native schedule ticker
 
 The same continuously running process ticks native schedules through
