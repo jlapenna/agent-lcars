@@ -675,6 +675,31 @@ COPY --from=pnpm-store-seed --chown=runner:runner \
 COPY --from=pnpm-store-seed --chown=runner:runner \
     /pnpm-cache/ /home/runner/.cache/pnpm/
 
+# Pin pnpm's content-addressable store and metadata cache to the exact paths
+# seeded above, in pnpm's own global config file (XDG:
+# ~/.config/pnpm/config.yaml), rather than leaving pnpm to pick its default
+# per job. pnpm's default store-dir is chosen on the SAME FILESYSTEM as the
+# project being installed, for hardlinking -- a property the k3s runner pods
+# (homelab#1623) broke: /home/runner/_work is its own mount there (hostPath
+# before, emptyDir now), so a job installing from under _work silently
+# created and populated a fresh, empty store there instead, re-downloading
+# every package on every run and discarding this seed entirely (#2077,
+# #2083; measured live as "Content-addressable store is at:
+# /home/runner/_work/.pnpm-store/v11" with "reused 0, downloaded 1743").
+# Neither `PNPM_STORE_DIR` nor `npm_config_store_dir` changes pnpm 11's
+# resolved store-dir (verified empirically -- this file is the mechanism it
+# actually honors), and this global config wins over a project's own
+# `.npmrc` `store-dir` (also verified empirically), so no fleet repository's
+# own config can accidentally un-pin it. With the store on a different
+# filesystem than the project, pnpm falls back from hardlinking to copying
+# package content (`package-import-method=copy`) -- more I/O per file than a
+# hardlink, but the content is still `reused`, never re-downloaded, which is
+# the whole point of the seed. pnpm-store-seed.test.sh's separate-mount case
+# proves both the `reused`/`downloaded` accounting and the resolved path.
+RUN install -d -m 0755 /home/runner/.config/pnpm && \
+    printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\n' \
+      > /home/runner/.config/pnpm/config.yaml
+
 WORKDIR /home/runner
 
 ENTRYPOINT ["/entrypoint.sh"]

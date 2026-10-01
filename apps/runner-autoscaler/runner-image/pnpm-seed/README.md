@@ -34,3 +34,39 @@ Homelab's canonical publisher measures every `pnpm*-store-content` target
 before promotion and refuses a combined compressed seed above 1.5 GiB per
 architecture. The seed stage is target-platform native, so native packages
 such as SWC, esbuild, and sharp are fetched for the architecture being built.
+
+## Why the store and cache paths are pinned
+
+Copying the seed into `~/.local/share/pnpm/store` and `~/.cache/pnpm` is not
+enough on its own: pnpm's _default_ store-dir is chosen on the same
+filesystem as the project being installed, so it can hardlink package
+content into the project's virtual store. That default broke once a job's
+project directory stopped being on the image's own filesystem -- the k3s
+runner pods (homelab#1623) mount `/home/runner/_work` as its own volume
+(hostPath before, emptyDir now), so a job there silently got a brand-new,
+empty store under `_work` and re-downloaded every locked package on every
+run, discarding this seed entirely. The retired Docker runners never hit
+this: their `_work` lived on the container's own overlay filesystem, same
+as the seed.
+
+The Dockerfile fixes this by writing pnpm's own global config file
+(`~/.config/pnpm/config.yaml`, not `.npmrc`) with explicit `storeDir`/
+`cacheDir` entries, so the paths above are used regardless of which
+filesystem a job's project lives on. Neither the `PNPM_STORE_DIR` nor the
+`npm_config_store_dir` environment variable changes pnpm 11's resolved
+store-dir; this global config file is the mechanism pnpm 11 actually
+honors, and it takes precedence over a project's own `.npmrc` `store-dir`,
+so no consuming repository's checkout can accidentally un-pin it. When the
+store ends up on a different filesystem than the project (as on the k3s
+pods), pnpm falls back from hardlinking to copying package content
+(`package-import-method=copy`); that is slower per file than a hardlink,
+but the content is still `reused`, never re-downloaded, which is the
+property that matters. `pnpm-store-seed.test.sh`'s separate-mount case
+proves this against a tmpfs standing in for `_work`.
+
+The pin is config baked into the image at `~/.config/pnpm/config.yaml`, keyed
+off the runner user's `$HOME`, not an environment variable threaded through a
+specific launch path -- so it applies equally to a QueueExecutor direct-runner
+session (`direct-runner.sh`, which runs this same image under plain Docker and
+never reassigns `$HOME`) and to a k3s ARC pod, with no launcher-specific
+handling needed in either.
