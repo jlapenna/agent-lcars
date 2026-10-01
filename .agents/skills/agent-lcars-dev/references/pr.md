@@ -4,7 +4,20 @@
    [SKILL.md](../SKILL.md#hard-guardrails)'s checkout-safety guardrail) —
    never on `main`, never in the primary checkout.
 2. Run [verify.md](verify.md) before opening or updating the PR.
-3. For an interactive, human-driven change, open the PR with `jlapenna` as
+3. **Get an independent review before arming auto-merge** when the change
+   touches a live system's contract — a runner image, a deploy playbook, a
+   k3s/ARC manifest, the autoscaler's config schema, a migration, or
+   anything a green `Verify` cannot exercise. Codex review is quota-limited
+   and often posts nothing; do not treat its silence as approval. Launch a
+   fresh reviewer agent (`pr-review-toolkit:code-reviewer`, or a sonnet
+   subagent with the same brief) against the branch with a focused list of
+   failure scenarios to check, and fix what it finds before arming. On
+   2026-09-30/10-01 that step caught, in one day, an image whose `runner`
+   uid was 1002 not 1001 (every e2e pod would have crash-looped), a k3s
+   data-dir move that k3s cannot start from (absolute paths in its stored
+   kubeconfigs), and a rescue path that would have rolled a healthy cluster
+   back onto hour-old state — none of which CI could see.
+4. For an interactive, human-driven change, open the PR with `jlapenna` as
    reviewer:
 
    ```bash
@@ -20,7 +33,7 @@
    headless-dispatch parking recipe), or a fleet-claim escalation might
    need — the same login across interactive and headless sessions.
 
-4. A PR authored by one of the agent bot identities listed in the
+5. A PR authored by one of the agent bot identities listed in the
    `AGENT_BOT_LOGINS` repo variable (currently `claude[bot]` and
    `agent-lcars[bot]`) squash-auto-merges once the ruleset's required
    `Verify` check goes green (`.github/workflows/agent-automerge.yml`) — see
@@ -77,7 +90,7 @@
    is ever refused, update the branch and let `Verify` re-run rather than
    reaching for a bigger hammer.
 
-5. **Resolve every review thread — replying is not enough.** The
+6. **Resolve every review thread — replying is not enough.** The
    `Protect main` ruleset sets `required_review_thread_resolution: true`
    on its `pull_request` rule: a PR with any unresolved review thread
    (Codex or human) cannot merge, full stop, no matter how green its
