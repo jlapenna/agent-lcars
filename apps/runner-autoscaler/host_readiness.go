@@ -82,18 +82,15 @@ func parsePrometheusMetricValue(body io.Reader, metric string) (value float64, f
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		name, rest, ok := splitPrometheusSample(line)
+		if !ok || name != metric {
 			continue
 		}
-		name := fields[0]
-		if idx := strings.IndexByte(name, '{'); idx >= 0 {
-			name = name[:idx]
-		}
-		if name != metric {
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
 			continue
 		}
-		v, parseErr := strconv.ParseFloat(fields[1], 64)
+		v, parseErr := strconv.ParseFloat(fields[0], 64)
 		if parseErr != nil {
 			continue
 		}
@@ -103,4 +100,33 @@ func parsePrometheusMetricValue(body io.Reader, metric string) (value float64, f
 		return 0, false, scanErr
 	}
 	return 0, false, nil
+}
+
+// splitPrometheusSample splits one exposition line into its metric name and
+// everything after it (the value, and an optional trailing timestamp).
+// Naively splitting the whole line on whitespace (as an earlier version of
+// this function did) misparses a labeled sample whose label VALUE itself
+// contains a space followed by a token that looks like "1": a quoted value
+// like `reason="on 1 battery"` would make `host_ready{reason="on 1
+// battery"} 0` falsely report ready, since the second field of the whole
+// line is "1", not the real value "0" after the closing brace. Finding the
+// LAST '}' on the line and treating everything after it as the value fixes
+// that: a label value is vanishingly unlikely to itself contain an
+// unescaped '}', and even a line with no labels at all still works, since
+// braceIdx is then -1 and this falls back to splitting on the first
+// whitespace run.
+func splitPrometheusSample(line string) (name, rest string, ok bool) {
+	braceIdx := strings.IndexByte(line, '{')
+	spaceIdx := strings.IndexAny(line, " \t")
+	if braceIdx < 0 || (spaceIdx >= 0 && spaceIdx < braceIdx) {
+		if spaceIdx < 0 {
+			return "", "", false
+		}
+		return line[:spaceIdx], line[spaceIdx+1:], true
+	}
+	closeIdx := strings.LastIndexByte(line, '}')
+	if closeIdx < braceIdx {
+		return "", "", false
+	}
+	return line[:braceIdx], line[closeIdx+1:], true
 }

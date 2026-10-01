@@ -25,6 +25,10 @@ func TestParsePrometheusMetricValue(t *testing.T) {
 		{name: "empty body", body: "", metric: "host_ready", wantFound: false},
 		{name: "optional timestamp ignored", body: "host_ready 1 1700000000000\n", metric: "host_ready", wantValue: 1, wantFound: true},
 		{name: "first matching sample wins", body: "host_ready 1\nhost_ready 0\n", metric: "host_ready", wantValue: 1, wantFound: true},
+		// Regression: a label VALUE containing a space followed by a "1"
+		// token must not make a naive whitespace split read the wrong
+		// field as the sample's value. The real value here is 0.
+		{name: "label value containing a space does not leak into the value field", body: `host_ready{reason="on 1 battery"} 0` + "\n", metric: "host_ready", wantValue: 0, wantFound: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

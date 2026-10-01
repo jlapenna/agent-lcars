@@ -190,6 +190,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 				r.Readiness = map[string]hostReadinessConfig{}
 			}
 			r.Readiness[name] = hostReadinessConfig{url: readinessURL, metric: metric}
+		} else if strings.TrimSpace(h.ReadinessMetric) != "" {
+			// readiness_metric only means anything alongside readiness_url; a
+			// lone readiness_metric is a likely typo (e.g. readiness_url
+			// misspelled or left out) that would otherwise silently leave the
+			// host ungated instead of failing to parse.
+			r.Warnings = append(r.Warnings, fmt.Sprintf("fleet.hosts[%d] (%s) sets readiness_metric without readiness_url; readiness_metric is ignored and this host remains always eligible", i, name))
 		}
 	}
 

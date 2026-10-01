@@ -173,6 +173,23 @@ func TestOrchestratorConfigRejectsInvalidReadinessURL(t *testing.T) {
 	}
 }
 
+// TestOrchestratorConfigWarnsOnReadinessMetricWithoutReadinessURL proves a
+// lone readiness_metric (readiness_url missing or misspelled) warns rather
+// than silently leaving the host ungated with no signal at all.
+func TestOrchestratorConfigWarnsOnReadinessMetricWithoutReadinessURL(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      docker: local\n", "      docker: local\n      readiness_metric: host_ready\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("a lone readiness_metric must still resolve: %v", err)
+	}
+	if !containsSubstring(resolved.Warnings, "readiness_metric without readiness_url") {
+		t.Fatalf("Warnings = %v, want a notice about readiness_metric without readiness_url", resolved.Warnings)
+	}
+	if len(resolved.Readiness) != 0 {
+		t.Fatalf("Readiness = %v, want none: a lone readiness_metric must not gate the host", resolved.Readiness)
+	}
+}
+
 func TestOrchestratorConfigRejectsUnknownField(t *testing.T) {
 	_, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML+"unknown: true\n"))
 	if err == nil || !strings.Contains(err.Error(), "field unknown not found") {

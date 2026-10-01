@@ -72,10 +72,12 @@ gate on top of that startup preflight, for a host whose online-ness can
 change while the process keeps running -- a travelling, battery-powered
 laptop being the motivating case (homelab#1664/homelab#1623). When
 `readiness_url` is set, `directRunnerCapacityReservations.reserve` fetches it
-fresh (3s timeout) immediately before every launch attempt on that host and
-requires `readiness_metric` (default `host_ready`) to be present with value
-`1`; a failed fetch, a non-1 value, or a missing metric all skip the host for
-_that_ launch (`github_runner_autoscaler_queue_executor_host_unready_total{host}`,
+fresh (3s timeout) as part of every capacity check that reaches that host --
+on every poll tick (default 15s), whether or not a run is actually claimed
+that tick, not only immediately before a successful launch -- and requires
+`readiness_metric` (default `host_ready`) to be present with value `1`; a
+failed fetch, a non-1 value, or a missing metric all skip the host for that
+check (`github_runner_autoscaler_queue_executor_host_unready_total{host}`,
 logged at Info) without touching probeErr/inventory-fault handling, and the
 reservation moves on to the next configured host exactly like a full one. If
 every configured host is unready, the claim is left queued -- the same
@@ -90,6 +92,16 @@ deployment knowledge that belongs entirely to the config that sets
 independence rule). The per-host distinction comes from each host pointing at
 its own `readiness_url`, not from a label inside the metric body, so a bare
 `host_ready 1` line is exactly as valid as one carrying labels.
+
+This gate only ever narrows the fixed pool `direct_runner_preflight.go`
+establishes at startup -- it cannot widen it. A host that is offline (fails
+the startup credential-mount preflight) never joins the launch pool later no
+matter what its readiness metric reports afterward; only a full daemon
+restart re-runs that preflight. A travelling laptop therefore still needs to
+be reachable at controller-startup time at least once per daemon generation,
+same as every other host -- `readiness_url` governs whether an
+already-admitted host may receive the _next_ launch, not whether it can join
+the pool at all.
 
 A deployment's `orchestrator.yml` may still carry retired scale-set sections
 (`github`, `registrations`, `scale_sets`, `fleet.max_runners`,
@@ -304,9 +316,12 @@ The metrics endpoint exposes the queue worker's own health:
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
 - `github_runner_autoscaler_queue_executor_host_unready_total{host}` counts
-  launches skipped for one host because its `readiness_url` fetch failed or
-  did not return `readiness_metric == 1` (see "Configuration" above). It is
-  only ever incremented for a host that actually sets `readiness_url`.
+  capacity checks skipped for one host because its `readiness_url` fetch
+  failed or did not return `readiness_metric == 1` (see "Configuration"
+  above). It increments on every poll tick that reaches a gated host, not
+  only on a successful claim, so an offline host with readiness configured
+  accrues it continuously, not once per launch. It is only ever incremented
+  for a host that actually sets `readiness_url`.
 
 ### Exited direct-runner retention
 

@@ -9,12 +9,30 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
+// resetDirectRunnerHostCursor pins the package-level round-robin cursor
+// (queue_executor.go's directRunnerHostCursor) to a known value for the
+// duration of a test and restores it afterward. reserve()'s loop always
+// visits every configured host once per call UNLESS an earlier host in its
+// rotation already satisfies the claim -- so any test asserting something
+// about a SPECIFIC host (rather than "every host was visited") depends on
+// which host that rotation starts from, and the cursor is a shared package
+// global every other test mutates too. Without this, a test ordering or
+// `-shuffle=on` run can start the rotation on the "wrong" host and never
+// reach the one the assertion cares about.
+func resetDirectRunnerHostCursor(t *testing.T) {
+	t.Helper()
+	previous := directRunnerHostCursor.Load()
+	directRunnerHostCursor.Store(0)
+	t.Cleanup(func() { directRunnerHostCursor.Store(previous) })
+}
+
 // TestDirectRunnerCapacityReservationsSkipsUnreadyHostAndChoosesNext proves
 // reserve() treats a failed or zero-valued readiness probe as "skip this
 // host for this launch", the same way it already treats a full host --
 // never as an inventory fault -- and moves on to the next configured host in
 // round-robin order.
 func TestDirectRunnerCapacityReservationsSkipsUnreadyHostAndChoosesNext(t *testing.T) {
+	resetDirectRunnerHostCursor(t)
 	unready := newFakeDockerServer(t)
 	spare := newFakeDockerServer(t)
 	newClient := func(target string) (*dockerclient.Client, error) {
@@ -36,7 +54,9 @@ func TestDirectRunnerCapacityReservationsSkipsUnreadyHostAndChoosesNext(t *testi
 		},
 	})
 	reservations := newDirectRunnerCapacityReservations(resolved, newClient, discardLogger())
+	var checkedHosts []string
 	reservations.checkReadiness = func(ctx context.Context, cfg hostReadinessConfig) (bool, error) {
+		checkedHosts = append(checkedHosts, cfg.url)
 		if cfg.url == "http://unused.invalid/metrics" {
 			return false, nil
 		}
@@ -52,6 +72,9 @@ func TestDirectRunnerCapacityReservationsSkipsUnreadyHostAndChoosesNext(t *testi
 		t.Fatal("reserve returned no reservation, want the spare host's capacity")
 	}
 	defer reservation.release()
+	if len(checkedHosts) != 1 || checkedHosts[0] != "http://unused.invalid/metrics" {
+		t.Fatalf("checkReadiness calls = %v, want exactly one call for the gated host", checkedHosts)
+	}
 	if got := testutil.ToFloat64(queueExecutorHostUnreadyTotal.WithLabelValues("readiness-unready-a")); got != before+1 {
 		t.Fatalf("host_unready_total{host=%q} = %v, want %v", "readiness-unready-a", got, before+1)
 	}
@@ -75,6 +98,7 @@ func TestDirectRunnerCapacityReservationsSkipsUnreadyHostAndChoosesNext(t *testi
 // exactly like a 0 value -- the host is skipped, not treated as an inventory
 // fault that fails the whole reserve() call.
 func TestDirectRunnerCapacityReservationsReadinessFetchErrorSkipsHost(t *testing.T) {
+	resetDirectRunnerHostCursor(t)
 	spare := newFakeDockerServer(t)
 	newClient := func(target string) (*dockerclient.Client, error) { return spare.client(t), nil }
 
@@ -85,7 +109,9 @@ func TestDirectRunnerCapacityReservationsReadinessFetchErrorSkipsHost(t *testing
 		},
 	})
 	reservations := newDirectRunnerCapacityReservations(resolved, newClient, discardLogger())
+	checked := false
 	reservations.checkReadiness = func(ctx context.Context, cfg hostReadinessConfig) (bool, error) {
+		checked = true
 		return false, errors.New("readiness endpoint unreachable")
 	}
 
@@ -95,6 +121,9 @@ func TestDirectRunnerCapacityReservationsReadinessFetchErrorSkipsHost(t *testing
 	}
 	if reservation == nil {
 		t.Fatal("reserve returned no reservation, want the ungated host's capacity")
+	}
+	if !checked {
+		t.Fatal("checkReadiness was never called for the gated host")
 	}
 	reservation.release()
 }
