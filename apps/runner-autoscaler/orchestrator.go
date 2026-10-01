@@ -2,130 +2,29 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"math"
-	"math/rand/v2"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"github.com/actions/scaleset"
-	"github.com/actions/scaleset/listener"
-	dockerclient "github.com/docker/docker/client"
-	"github.com/docker/go-units"
-	"github.com/google/uuid"
 )
 
-type scaleSetRuntime struct {
-	mu          sync.RWMutex
-	config      Config
-	scaler      *Scaler
-	client      *scaleset.Client
-	initialized bool
-}
-
-// runtimeGeneration owns all work that reads a particular resolved config.
-// Stopping it before replacing the runtimes guarantees a reload never races a
-// listener, sampler, or sweeper that still refers to the previous settings.
-type runtimeGeneration struct {
-	cancel context.CancelFunc
-	done   <-chan struct{}
-}
-
-// orchestratorComponentLogger returns the "component=orchestrator" logger
-// derived from the first configured scale set's own log level/format.
-// Queue-executor-only mode (homelab#1623 Phase 3) resolves to zero scale
-// sets, so there is no Config instance to call Logger() on; slog.Default()
-// takes over in that case instead.
-func orchestratorComponentLogger(scaleSets []Config) *slog.Logger {
-	base := slog.Default()
-	if len(scaleSets) > 0 {
-		base = scaleSets[0].Logger()
-	}
-	return base.With("component", "orchestrator")
-}
-
-// startOrchestratorRuntimeGeneration starts the scaler runtime generation
-// (host sampler, degradation-ladder refresher, sweepers, GitHub scale-set
-// listeners) for the given runtimes, or returns an already-quiesced
-// generation when there are none to run. Queue-executor-only mode
-// (homelab#1623 Phase 3) resolves to zero scale sets: startRuntimeGeneration
-// itself unconditionally indexes runtimes[0] for the shared host sampler, so
-// it must not be called at all in that mode -- there is no scaler runtime to
-// run, and the queue executor's own direct-runner placement is plain
-// round-robin (directRunnerCapacityReservations.reserve) that never reads
-// the fleet's host-load cache the sampler populates.
-func startOrchestratorRuntimeGeneration(ctx context.Context, runtimes []*scaleSetRuntime, fleet *FleetCoordinator, ladder resolvedDegradationLadder, logger *slog.Logger, statusPublisher consoleStatusPublisher) runtimeGeneration {
-	if len(runtimes) == 0 {
-		done := make(chan struct{})
-		close(done)
-		return runtimeGeneration{cancel: func() {}, done: done}
-	}
-	return startRuntimeGeneration(ctx, runtimes, fleet, ladder, logger, statusPublisher)
-}
-
+// runOrchestrator runs the LCARS queue executor and schedule ticker -- the
+// whole of this process's job since homelab#1623 Phase 3 retired the custom
+// GitHub Actions scale-set runner management (every lane now runs on Actions
+// Runner Controller). It starts the metrics/healthz server, launches the
+// queue executor's poller and the schedule ticker when their environment is
+// configured, and then just watches for SIGUSR1 (pause/resume direct-runner
+// claims), SIGHUP (revalidate and hot-swap the Docker host configuration),
+// and shutdown.
 func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) error {
-	logger := orchestratorComponentLogger(resolved.ScaleSets)
+	logger := slog.Default().With("component", "orchestrator")
 	for _, warning := range resolved.Warnings {
 		logger.Warn(warning)
 	}
-	placementHosts, err := newDockerHostPool(resolved.DockerHosts)
-	if err != nil {
-		return fmt.Errorf("connecting fleet docker hosts: %w", err)
-	}
-	fleet := newFleetCoordinator(0, nil, nil, nil, nil)
-	configureFleet(fleet, resolved)
-	managedHosts := placementHosts
-
-	// Load before building runtimes: the scalers consult their slice of it
-	// during cleanupOrphans' boot pass. A missing file is a normal first
-	// boot; a corrupt or wrong-version one is logged and then treated the
-	// same way, falling adoption back to the ContainerTop probe rather than
-	// refusing to start over state the fleet can survive without.
-	checkpoints := newCheckpointStore(resolved.Raw.Server.StatePath, logger)
-	restored, loadErr := loadCheckpoint(resolved.Raw.Server.StatePath)
-	switch {
-	case loadErr != nil:
-		setCheckpointRestoreStatus(checkpointRestoreUnreadable)
-		logger.Error("Ignoring unreadable control-plane checkpoint; adopting runners from Docker instead",
-			slog.String("path", resolved.Raw.Server.StatePath), slog.Any("error", loadErr))
-	case restored == nil:
-		setCheckpointRestoreStatus(checkpointRestoreAbsent)
-		logger.Info("No control-plane checkpoint found; this is a first boot for this state path",
-			slog.String("path", resolved.Raw.Server.StatePath))
-	default:
-		setCheckpointRestoreStatus(checkpointRestoreRestored)
-		fleet.restore(restored.Fleet, time.Now())
-		logger.Info("Restored control-plane checkpoint",
-			slog.Time("written_at", restored.WrittenAt), slog.Int("scale_sets", len(restored.ScaleSets)))
-	}
-
-	// buildOrchestratorRuntimes and pullConfiguredRunnerImages below are both
-	// no-ops on an empty resolved.ScaleSets (queue-executor-only mode,
-	// homelab#1623 Phase 3): each simply loops over zero scale sets. Only
-	// startOrchestratorRuntimeGeneration needs an explicit empty-input guard
-	// -- see its doc comment.
-	runtimes, err := buildOrchestratorRuntimes(resolved, managedHosts, placementHosts, fleet, checkpoints, restored)
-	if err != nil {
-		return err
-	}
-	statusPublisher, err := newConsoleStatusPublisher(ctx, logger)
-	if err != nil {
-		// Console observability is deliberately fail-soft: a bad/missing
-		// telemetry credential must never keep an otherwise healthy runner
-		// fleet from accepting GitHub work.
-		logger.Warn("Console status publication disabled; runner placement continues", slog.String("error", err.Error()))
-		statusPublisher = noopConsoleStatusPublisher{}
-	}
-	defer func() { _ = statusPublisher.Close() }()
-	checkpoints.setSnapshot(orchestratorSnapshot(runtimes, fleet))
-	pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
 
 	orchestratorSchedulerReady.Store(true)
 	defer orchestratorSchedulerReady.Store(false)
@@ -134,19 +33,20 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		return fmt.Errorf("starting metrics server: %w", err)
 	}
 
-	generation := startOrchestratorRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
+	statusPublisher, err := newConsoleStatusPublisher(ctx, logger)
+	if err != nil {
+		// Console observability is deliberately fail-soft: a bad/missing
+		// telemetry credential must never keep an otherwise healthy queue
+		// executor from claiming and launching direct runners.
+		logger.Warn("Console status publication disabled; queue executor continues", slog.String("error", err.Error()))
+		statusPublisher = noopConsoleStatusPublisher{}
+	}
+	defer func() { _ = statusPublisher.Close() }()
 
-	// queueDraining mirrors the fleet's own SIGUSR1 drain flag for the queue
-	// executor's poller goroutine below: a claim minted moments before this
-	// instance is replaced is just another launch failure to recover from
-	// (see queueExecutorConfig.launch's doc comment), so a drain stops the
-	// poller from claiming at all -- the same "stop accepting new work"
-	// BeginDrain already gives every GitHub-mode scale set. atomic because
-	// it is written only by this function's own select loop below (the
-	// SIGUSR1 case, and the drain watchdog's self-heal branch) and read
-	// only by the poller goroutine, which run concurrently. Live config
-	// reloads (SIGHUP) do NOT reach the poller at all -- see this block's
-	// own comment just below, and the README's "Queue executor" section.
+	// queueDraining pauses the queue executor's poller without touching the
+	// rest of the process: SIGUSR1 toggles it (see the signal loop below).
+	// This is the whole of what used to be the fleet-wide scale-set drain --
+	// there is no scale-set listener left here to drain.
 	var queueDraining atomic.Bool
 	queueStatus := newQueueExecutorStatusSource(
 		queueDraining.Load,
@@ -155,18 +55,18 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// Publish even while disabled or misconfigured: a v2 queue-executor
 	// snapshot says explicitly that no direct worker is ready, rather than
 	// leaving a consumer unable to distinguish that condition from a stale
-	// telemetry writer. It shares the existing bounded runner-status store.
+	// telemetry writer.
 	go runQueueExecutorStatusPublisher(ctx, statusPublisher, queueStatus)
 
 	// Native work items: the durable queue executor claims and launches direct
 	// runners, while the schedule ticker calls the Work API's schedule route.
 	// Both use the same server-owned API and Google ID-token path, but the
-	// server grants work.executor and work.cron independently. Neither path
-	// depends on a GitHub scheduled workflow.
-	// These values are read once at startup, not on SIGHUP, so changing an
-	// LCARS_QUEUE_*/LCARS_CONSOLE_URL/LCARS_WORK_AUDIENCE value (or the Docker
-	// host pool launchDirectRunner reads from `resolved`) needs a full daemon
-	// restart rather than a config-file replace-and-SIGHUP.
+	// server grants work.executor and work.cron independently.
+	// These values are read once at startup, not on SIGHUP: changing an
+	// LCARS_QUEUE_*/LCARS_CONSOLE_URL/LCARS_WORK_AUDIENCE value, or the Docker
+	// host pool launchDirectRunner reads from `resolved`, needs a full daemon
+	// restart rather than a config-file replace-and-SIGHUP (see the SIGHUP
+	// case below).
 	consoleURL := strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL"))
 	keyPath := strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 	startQueuePoller, queueStartupState, queueDisabledReason := queueExecutorStartupStatus(
@@ -195,8 +95,8 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		audience := queueExecutorAudience(os.Getenv("LCARS_WORK_AUDIENCE"))
 		// Built once here, not per request: see newDirectRunnerIDTokenSource's
 		// doc comment. A bad/missing key fails this the same way a bad
-		// GitHub credential fails registration elsewhere in this
-		// function -- loudly, at startup, rather than silently every 15s.
+		// configuration fails startup elsewhere in this function -- loudly, at
+		// startup, rather than silently every 15s.
 		tokenSource, tokenErr := newDirectRunnerIDTokenSource(ctx, keyPath, audience)
 		if tokenErr != nil {
 			setQueueExecutorStartupState(queueExecutorStateMisconfigured)
@@ -204,8 +104,8 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		} else {
 			// Schedule ticking needs no Docker host or provider credential. Keep
 			// it independent from direct-runner launch preflight so a temporary
-			// host fault cannot reintroduce GitHub as the scheduler. The API
-			// enforces the distinct work.cron grant on this same Google identity.
+			// host fault cannot couple the two together. The API enforces the
+			// distinct work.cron grant on this same Google identity.
 			go runScheduleTicker(ctx, scheduleTickerConfig{
 				consoleURL: consoleURL,
 				idToken: func() (string, error) {
@@ -265,784 +165,54 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	signal.Notify(reloadSignals, syscall.SIGHUP)
 	defer signal.Stop(drainSignals)
 	defer signal.Stop(reloadSignals)
-	draining := false
-	// drainZeroSince tracks how long the fleet has sat globally drained with
-	// zero runners across every scale set; see drainStuckTimeout's doc
-	// comment for why this decision must be fleet-wide rather than made
-	// independently by each Scaler. Read and written only by this loop.
-	var drainZeroSince time.Time
-	drainWatchdog := time.NewTicker(drainWatchdogInterval)
-	defer drainWatchdog.Stop()
-	checkpointTicker := time.NewTicker(checkpointFlushInterval)
-	defer checkpointTicker.Stop()
+	paused := false
 
 	for {
 		select {
 		case <-ctx.Done():
-			quiesce(ctx, generation, runtimes, checkpoints, logger)
+			logger.Info("Shutting down queue executor")
 			return nil
-		case <-checkpointTicker.C:
-			// Runner transitions checkpoint synchronously; this tick exists
-			// only to keep the fleet telemetry half (overload cooldowns, host
-			// samples) reasonably fresh.
-			checkpoints.flush()
 		case <-drainSignals:
-			if draining {
-				// A second SIGUSR1 while already draining is the explicit
-				// end-drain signal: see beginDrainFleet's doc comment for why
-				// the first SIGUSR1 no longer blocks here, and the README's
-				// "Drain semantics" section for the full signal contract.
-				// This lets homelab's deploy script recover a drain it
-				// abandoned (e.g. an interrupted drain-and-restart.sh run)
-				// without waiting out drainStuckTimeout.
-				draining = false
-				queueDraining.Store(false)
-				drainZeroSince = time.Time{}
-				for _, runtime := range runtimes {
-					runtime.scaler.EndDrain()
-				}
-				logger.Info("Global drain ended by operator request (second SIGUSR1)")
-				continue
+			// Toggle, mirroring the fleet-wide drain's old "first SIGUSR1
+			// begins, second SIGUSR1 ends" contract: a deploy script that
+			// already sends SIGUSR1 once before replacing this container keeps
+			// working unchanged, and an operator can still send a second one to
+			// resume claims without a restart.
+			paused = !paused
+			queueDraining.Store(paused)
+			if paused {
+				logger.Info("Queue executor claims paused (SIGUSR1)")
+			} else {
+				logger.Info("Queue executor claims resumed (second SIGUSR1)")
 			}
-			draining = true
-			queueDraining.Store(true)
-			drainZeroSince = time.Time{}
-			logger.Info("Global drain requested")
-			beginDrainFleet(context.WithoutCancel(ctx), runtimes)
-		case <-drainWatchdog.C:
-			now := time.Now()
-			nextZeroSince, selfHeal := drainWatchdogTick(draining, fleetRunnerCount(runtimes), drainZeroSince, now)
-			stuckFor := now.Sub(drainZeroSince)
-			drainZeroSince = nextZeroSince
-			if !selfHeal {
-				continue
-			}
-			draining = false
-			queueDraining.Store(false)
-			assignedJobsWaiting := fleetAssignedJobs(runtimes)
-			for _, runtime := range runtimes {
-				runtime.scaler.EndDrainStuck()
-			}
-			logger.Warn("Fleet drain self-healed after sitting at zero runners past the stuck timeout; a deploy was likely interrupted before its recreate step",
-				slog.Duration("stuck_for", stuckFor),
-				slog.Int64("assigned_jobs_waiting", assignedJobsWaiting))
 		case <-reloadSignals:
 			next, reloadErr := loadOrchestratorConfig(orchestratorConfigPath)
 			if reloadErr == nil {
-				reloadErr = next.loadCredentials()
-			}
-			if reloadErr == nil {
-				reloadErr = validateReloadCompatibility(resolved, next)
+				// Validate the new Docker host list is actually reachable before
+				// accepting the reload, same fail-fast intent newDockerHostPool
+				// always had. These connections are only a reachability probe --
+				// close them immediately rather than holding them open, since the
+				// queue executor's own launch host pool (captured once above at
+				// startup) does not switch to them without a full restart.
+				probe, poolErr := newDockerHostPool(next.DockerHosts)
+				if poolErr != nil {
+					reloadErr = poolErr
+				} else {
+					for _, host := range probe {
+						_ = host.Client.Close()
+					}
+				}
 			}
 			if reloadErr != nil {
 				logger.Error("Configuration reload rejected; keeping current configuration", slog.Any("error", reloadErr))
 				continue
 			}
-			nextPlacementHosts, poolErr := newDockerHostPool(next.DockerHosts)
-			if poolErr != nil {
-				logger.Error("Configuration reload rejected; keeping current configuration", slog.Any("error", poolErr))
-				continue
-			}
-
-			// The old generation is stopped, but no runner is drained or
-			// removed. The new scalers adopt the still-running containers
-			// during initialization before accepting new work.
-			generation.cancel()
-			<-generation.done
-			nextManagedHosts := mergeDockerHosts(nextPlacementHosts, managedHosts, trackedRunnerHosts(runtimes))
-			configureFleet(fleet, next)
-			// Hand the outgoing generation's live state to the replacement
-			// scalers as their adoption source. A reload re-adopts through
-			// the same cleanupOrphans boot pass a restart uses, so without
-			// this it would re-derive idle/busy from the ContainerTop probe
-			// and inherit the same misclassification -- despite the answer
-			// being known exactly, in memory, microseconds earlier.
-			handover := orchestratorSnapshot(runtimes, fleet)()
-			nextRuntimes, buildErr := buildOrchestratorRuntimes(next, nextManagedHosts, nextPlacementHosts, fleet, checkpoints, &handover)
-			if buildErr != nil {
-				// This should be impossible after loadOrchestratorConfig and
-				// compatibility validation. Keep the old config live if an
-				// internal construction error nevertheless occurs.
-				logger.Error("Configuration reload could not build runtimes; restoring current configuration", slog.Any("error", buildErr))
-				closeDockerHostClients(nextPlacementHosts)
-				configureFleet(fleet, resolved)
-				generation = startOrchestratorRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
-				continue
-			}
-			closeUnusedDockerHostClients(managedHosts, nextManagedHosts)
-			resolved, runtimes = next, nextRuntimes
-			checkpoints.setSnapshot(orchestratorSnapshot(runtimes, fleet))
-			managedHosts, placementHosts = nextManagedHosts, nextPlacementHosts
-			logger = orchestratorComponentLogger(resolved.ScaleSets)
+			resolved = next
+			logger = slog.Default().With("component", "orchestrator")
 			for _, warning := range resolved.Warnings {
 				logger.Warn(warning)
 			}
-			pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
-			if draining {
-				// The replacement scalers re-adopt already-running containers
-				// during initialization (see initializeGitHubScaleSet), which
-				// takes a moment and would otherwise read as a momentary,
-				// spurious fleet-wide zero. Restart the stuck-drain clock so
-				// the watchdog measures from after adoption, not before it.
-				drainZeroSince = time.Time{}
-				beginDrainFleet(context.WithoutCancel(ctx), runtimes)
-			}
-			generation = startOrchestratorRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
-			logger.Info("Configuration reloaded without draining runners")
+			logger.Info("Configuration reloaded and Docker host connectivity validated; the queue executor's own launch host pool is fixed at startup and needs a full restart to pick up a Docker host change")
 		}
 	}
-}
-
-// orchestratorSnapshot builds the closure the checkpoint store flushes. It
-// reads whichever runtimes are live when it runs, so a config reload replaces
-// it rather than leaving the store writing a stale generation's runners.
-func orchestratorSnapshot(runtimes []*scaleSetRuntime, fleet *FleetCoordinator) func() checkpointFile {
-	return func() checkpointFile {
-		cp := checkpointFile{
-			Version:   checkpointVersion,
-			WrittenAt: time.Now(),
-			ScaleSets: make(map[string]checkpointScaleSet, len(runtimes)),
-			Fleet:     fleet.snapshot(),
-		}
-		for _, runtime := range runtimes {
-			cp.ScaleSets[runtime.config.ScaleSetName] = runtime.scaler.snapshotRunners()
-		}
-		return cp
-	}
-}
-
-// quiesceTimeout bounds how long shutdown waits for the runtime generation to
-// unwind before checkpointing and exiting anyway. It sits well inside Docker's
-// default 10s stop grace period: overrunning that grace turns an orderly exit
-// into a SIGKILL, which would discard the very checkpoint this path exists to
-// write. Listeners that have not noticed cancellation by then are abandoned
-// rather than waited on -- their work is a long-poll against GitHub, and the
-// replacement process re-establishes it regardless.
-const (
-	quiesceTimeout = 3 * time.Second
-	// Leave enough of the quiesce window for the generation wait to observe
-	// the listener exiting and for the checkpoint write itself. Session close
-	// survives cancellation of the listener context, but it must not outlive
-	// the shutdown budget it is part of.
-	sessionCloseTimeout = quiesceTimeout - 500*time.Millisecond
-)
-
-// quiesce is the fast shutdown path, and the reason an aggressive restart no
-// longer needs a fleet drain. It stops accepting new work, gives in-flight
-// control-plane operations a bounded moment to settle, writes the checkpoint,
-// and returns.
-//
-// It deliberately does NOT remove idle runners, which is what SIGTERM used to
-// do. An idle runner is a warm, already-registered container: destroying it
-// throws away capacity the replacement process could adopt in milliseconds,
-// and doing so was pure loss once the checkpoint made adoption reliable.
-// Busy runners were already preserved for adoption; now idle ones are too.
-//
-// Draining the fleet (SIGUSR1) remains available for the cases that genuinely
-// need an empty fleet -- removing a scale set, decommissioning a host -- and
-// is unchanged.
-func quiesce(ctx context.Context, generation runtimeGeneration, runtimes []*scaleSetRuntime, checkpoints *checkpointStore, logger *slog.Logger) {
-	quiesceWithGenerationTimeout(ctx, generation, runtimes, checkpoints, logger, time.After(quiesceTimeout))
-}
-
-// quiesceWithGenerationTimeout keeps quiesce's production timeout policy
-// explicit while allowing the hung-generation behavior to be exercised without
-// a wall-clock-sensitive test sleep.
-func quiesceWithGenerationTimeout(ctx context.Context, generation runtimeGeneration, runtimes []*scaleSetRuntime, checkpoints *checkpointStore, logger *slog.Logger, generationTimeout <-chan time.Time) {
-	started := time.Now()
-	logger.Info("Quiescing control plane; preserving all runners for adoption by the next instance")
-
-	// Refuse new placements first, so nothing new is created during the
-	// window between cancelling the generation and writing the checkpoint.
-	for _, runtime := range runtimes {
-		runtime.scaler.stopPlacing()
-	}
-	generation.cancel()
-
-	select {
-	case <-generation.done:
-	case <-generationTimeout:
-		quiesceGenerationTimeouts.Inc()
-		logger.Warn("Runtime generation did not stop within the quiesce timeout; checkpointing and exiting anyway",
-			slog.Duration("timeout", quiesceTimeout))
-	}
-
-	checkpoints.flush()
-	logger.Info("Control plane quiesced", slog.Duration("took", time.Since(started)))
-}
-
-func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator, checkpoints *checkpointStore, restored *checkpointFile) ([]*scaleSetRuntime, error) {
-	runtimes := make([]*scaleSetRuntime, 0, len(resolved.ScaleSets))
-	for _, base := range resolved.ScaleSets {
-		c := base
-		c.DockerHosts = append([]string(nil), resolved.DockerHosts...)
-		c.InferenceMetricsURLs = make(map[string]string, len(resolved.InferenceMetricsURLs))
-		for host, url := range resolved.InferenceMetricsURLs {
-			c.InferenceMetricsURLs[host] = url
-		}
-		c.InferenceIdleWatts = make(map[string]float64, len(resolved.InferenceIdleWatts))
-		for host, watts := range resolved.InferenceIdleWatts {
-			c.InferenceIdleWatts[host] = watts
-		}
-		c.HostMetricsURLTemplate = resolved.Raw.Fleet.Placement.HostMetricsURLTemplate
-		c.HostMetricsTimeouts = make(map[string]time.Duration, len(resolved.HostMetricsTimeouts))
-		for host, timeout := range resolved.HostMetricsTimeouts {
-			c.HostMetricsTimeouts[host] = timeout
-		}
-		c.HostLoadPolicy = resolved.Placement
-		c.HostMemoryExempt = append([]string(nil), resolved.Raw.Fleet.Placement.HostMemoryExempt...)
-		c.HostMemoryOvercommit = make(map[string]float64, len(resolved.MemoryOvercommit))
-		for host, factor := range resolved.MemoryOvercommit {
-			c.HostMemoryOvercommit[host] = factor
-		}
-		c.HostMemorySafetyMargins = make(map[string]float64, len(resolved.MemorySafetyMargins))
-		for host, margin := range resolved.MemorySafetyMargins {
-			c.HostMemorySafetyMargins[host] = margin
-		}
-		c.MemorySafetyMargin = resolved.Raw.Fleet.Placement.MemorySafetyMargin
-		c.CPUSafetyMargin = resolved.Raw.Fleet.Placement.CPUSafetyMargin
-		if capStr := resolved.Raw.Fleet.Placement.MemorySafetyMarginMax; capStr != "" {
-			// Already validated by loadOrchestratorConfig; a parse failure here
-			// would mean the two disagree, which must not silently drop the cap.
-			n, err := units.RAMInBytes(capStr)
-			if err != nil {
-				return nil, fmt.Errorf("fleet.placement.memory_safety_margin_max %q: %w", capStr, err)
-			}
-			c.MemorySafetyMarginMaxBytes = n
-		}
-		c.ReadinessMetricsURL = resolved.Raw.Fleet.Placement.ReadinessMetricsURL
-		c.ReadinessMetric = resolved.Raw.Fleet.Placement.ReadinessMetric
-		c.ReadinessMaxAge = resolved.ReadinessMaxAge
-		c.RunnerCgroupParent = resolved.RunnerCgroupParent
-		runtime, err := buildScaleSetRuntime(c, dockerHosts, placementHosts, fleet, checkpoints, restored.runners(c.ScaleSetName))
-		if err != nil {
-			return nil, fmt.Errorf("initializing scale set %q: %w", c.ScaleSetName, err)
-		}
-		runtimes = append(runtimes, runtime)
-	}
-	return runtimes, nil
-}
-
-// mergeDockerHosts returns the new placement pool plus any removed host that
-// still owns a tracked runner. A retained host is no longer a placement
-// candidate, but the replacement scaler needs its client to adopt the runner
-// and remove it normally on JobCompleted.
-func mergeDockerHosts(next, previous []DockerHost, retain map[string]bool) []DockerHost {
-	merged := append([]DockerHost(nil), next...)
-	known := make(map[string]bool, len(merged))
-	for _, host := range merged {
-		known[host.Name] = true
-	}
-	for _, host := range previous {
-		if retain[host.Name] && !known[host.Name] {
-			merged = append(merged, host)
-			known[host.Name] = true
-		}
-	}
-	return merged
-}
-
-func trackedRunnerHosts(runtimes []*scaleSetRuntime) map[string]bool {
-	hosts := map[string]bool{}
-	for _, runtime := range runtimes {
-		for host := range runtime.scaler.runners.hosts() {
-			hosts[host] = true
-		}
-	}
-	return hosts
-}
-
-func closeUnusedDockerHostClients(previous, next []DockerHost) {
-	keep := map[*dockerclient.Client]bool{}
-	for _, host := range next {
-		keep[host.Client] = true
-	}
-	closed := map[*dockerclient.Client]bool{}
-	for _, host := range previous {
-		if host.Client != nil && !keep[host.Client] && !closed[host.Client] {
-			_ = host.Client.Close()
-			closed[host.Client] = true
-		}
-	}
-}
-
-func closeDockerHostClients(hosts []DockerHost) {
-	closeUnusedDockerHostClients(hosts, nil)
-}
-
-func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig) {
-	order := make([]string, 0, len(resolved.ScaleSets))
-	for _, c := range resolved.ScaleSets {
-		order = append(order, c.ScaleSetName)
-	}
-	fleet.mu.Lock()
-	fleet.maxRunners = resolved.Raw.Fleet.MaxRunners
-	fleet.hostRunnerLimits = resolved.RunnerLimits
-	fleet.mainsRequired = resolved.MainsRequired
-	fleet.metricsViaSSH = resolved.MetricsViaSSH
-	fleet.readinessRequired = resolved.ReadinessRequired
-	fleet.hostRoles = resolved.HostRoles
-	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
-	fleet.priorities = resolved.Priorities
-	fleet.observedMemoryMaxAge = resolved.DegradationLadder.MaxSampleAge
-	fleet.mu.Unlock()
-	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
-	// Static description of every declared host's role, always 1
-	// (agent-lcars#1696): join against placementBlocked{reason="maintenance"}
-	// or lane_permanent_admissible_slots to name which hosts back either
-	// gauge. Republished on every reload; a role or host that no longer
-	// exists leaves its old series in place, same as scaleSetLabelInfoGauge.
-	for host, role := range resolved.HostRoles {
-		hostRoleInfoGauge.WithLabelValues(host, role).Set(1)
-	}
-}
-
-func pullConfiguredRunnerImages(ctx context.Context, dockerHosts []DockerHost, scaleSets []Config, logger *slog.Logger) {
-	seenImages := map[string]bool{}
-	for _, c := range scaleSets {
-		if !seenImages[c.RunnerImage] {
-			seenImages[c.RunnerImage] = true
-			go pullRunnerImages(ctx, dockerHosts, c.RunnerImage, logger)
-		}
-	}
-}
-
-// validateReloadCompatibility rejects changes that would leave existing
-// runner containers ambiguous. Docker hosts may change: removed hosts are
-// cordoned and retained only while they own tracked runners. The metrics bind
-// is a process-lifetime resource, and removing or moving a scale set could
-// orphan containers that are still executing jobs.
-func validateReloadCompatibility(current, next resolvedOrchestratorConfig) error {
-	if current.Raw.Server.MetricsAddr != next.Raw.Server.MetricsAddr {
-		return fmt.Errorf("server.metrics_addr cannot change during a live reload")
-	}
-	// The checkpoint store binds its path once at startup, so a reload that
-	// moved it would leave every subsequent checkpoint going to the OLD file
-	// while the config claimed otherwise -- and a later restart would then
-	// adopt from a path nothing had written since the reload. Process-lifetime
-	// for the same reason metrics_addr is: the resource is bound before the
-	// reload path can reach it.
-	if current.Raw.Server.StatePath != next.Raw.Server.StatePath {
-		return fmt.Errorf("server.state_path cannot change during a live reload")
-	}
-	currentTargets, _, _ := ParseDockerHosts(current.DockerHosts)
-	nextTargets, _, _ := ParseDockerHosts(next.DockerHosts)
-	for name, currentTarget := range currentTargets {
-		if nextTarget, ok := nextTargets[name]; ok && nextTarget != currentTarget {
-			return fmt.Errorf("fleet host %q cannot change Docker transport during a live reload; remove it and add the replacement with a new name", name)
-		}
-	}
-	nextByName := make(map[string]Config, len(next.ScaleSets))
-	for _, c := range next.ScaleSets {
-		nextByName[c.ScaleSetName] = c
-	}
-	for _, currentSet := range current.ScaleSets {
-		nextSet, ok := nextByName[currentSet.ScaleSetName]
-		if !ok {
-			return fmt.Errorf("scale set %q cannot be removed during a live reload", currentSet.ScaleSetName)
-		}
-		if currentSet.RegistrationName != nextSet.RegistrationName || currentSet.RegistrationURL != nextSet.RegistrationURL || currentSet.RunnerGroup != nextSet.RunnerGroup {
-			return fmt.Errorf("scale set %q cannot change GitHub registration or runner group during a live reload", currentSet.ScaleSetName)
-		}
-	}
-	return nil
-}
-
-func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime, fleet *FleetCoordinator, ladder resolvedDegradationLadder, logger *slog.Logger, statusPublisher consoleStatusPublisher) runtimeGeneration {
-	ctx, cancel := context.WithCancel(parent)
-	var wg sync.WaitGroup
-	orchestratorExpectedListeners.Store(int64(len(runtimes)))
-	// All scalers share the coordinator's telemetry maps, so exactly one
-	// sampler populates fleet load/cooldown state for every listener.
-	wg.Add(1)
-	go func() { defer wg.Done(); runtimes[0].scaler.RunHostSampler(ctx) }()
-	wg.Add(1)
-	go func() { defer wg.Done(); runDegradationLadderRefresher(ctx, runtimes, fleet, ladder) }()
-	wg.Add(1)
-	go func() { defer wg.Done(); runConsoleStatusPublisher(ctx, runtimes, statusPublisher) }()
-	wg.Add(1)
-	go func() { defer wg.Done(); runFleetOrphanSweeper(ctx, runtimes) }()
-	wg.Add(1)
-	go func() { defer wg.Done(); runFleetTrackedRunnerReconciler(ctx, runtimes) }()
-	startGitHubRunnerStatusMonitors(ctx, runtimes, logger, &wg)
-	startGhostRunnerSweepers(ctx, runtimes, logger, &wg)
-	for _, runtime := range runtimes {
-		wg.Add(1)
-		go func(rt *scaleSetRuntime) { defer wg.Done(); runListenerSupervisor(ctx, rt, logger) }(runtime)
-	}
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	return runtimeGeneration{cancel: cancel, done: done}
-}
-
-// publishScaleSetInfo exports the static description of a declared scale set:
-// its memory reservation and ceiling, its CPU reservation, the registration
-// and repository it serves, and one series per runs-on label
-// (agent-lcars#1683, #1699, #2004). Called once per scale set at build/reload
-// time, independent of any placement attempt, so every declared lane's
-// gauges are set regardless of whether it ever wins a placement (mind
-// agent-lcars#1973/#1974).
-func publishScaleSetInfo(c Config, memoryReservation, memoryLimit int64, cpuReservationCores float64) {
-	scaleSetMemoryReservationGauge.WithLabelValues(c.ScaleSetName).Set(float64(memoryReservation))
-	scaleSetMemoryLimitGauge.WithLabelValues(c.ScaleSetName).Set(float64(memoryLimit))
-	scaleSetCPUReservationGauge.WithLabelValues(c.ScaleSetName).Set(cpuReservationCores)
-	owner, repository := registrationTarget(c.RegistrationURL)
-	scaleSetInfoGauge.WithLabelValues(c.ScaleSetName, c.RegistrationName, owner, repository).Set(1)
-	for _, label := range c.Labels {
-		scaleSetLabelInfoGauge.WithLabelValues(c.ScaleSetName, label).Set(1)
-	}
-}
-
-func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator, checkpoints *checkpointStore, boot map[string]checkpointRunner) (*scaleSetRuntime, error) {
-	if err := c.Validate(); err != nil {
-		return nil, err
-	}
-	logger := c.Logger().With("scale_set", c.ScaleSetName, "registration", c.RegistrationName)
-	memory := int64(0)
-	var err error
-	if c.RunnerMemory != "" {
-		memory, err = units.RAMInBytes(c.RunnerMemory)
-		if err != nil {
-			return nil, err
-		}
-	}
-	reservation := memory
-	if c.RunnerMemoryReservation != "" {
-		reservation, err = units.RAMInBytes(c.RunnerMemoryReservation)
-		if err != nil {
-			return nil, err
-		}
-		if memory <= 0 || reservation <= 0 || reservation > memory {
-			return nil, fmt.Errorf("scale set %q runner_memory_reservation %q must be positive and at most runner_memory %q", c.ScaleSetName, c.RunnerMemoryReservation, c.RunnerMemory)
-		}
-	}
-	cpuReservationCores := c.RunnerCPUs
-	if c.RunnerCPUReservation != 0 {
-		cpuReservationCores = c.RunnerCPUReservation
-		if c.RunnerCPUs <= 0 || cpuReservationCores <= 0 || cpuReservationCores > c.RunnerCPUs {
-			return nil, fmt.Errorf("scale set %q runner_cpu_reservation %v must be positive and at most runner_cpus %v", c.ScaleSetName, c.RunnerCPUReservation, c.RunnerCPUs)
-		}
-	}
-	publishScaleSetInfo(c, reservation, memory, cpuReservationCores)
-	shmSize := int64(0)
-	if c.RunnerShmSize != "" {
-		shmSize, err = units.RAMInBytes(c.RunnerShmSize)
-		if err != nil {
-			return nil, err
-		}
-	}
-	scaler := &Scaler{
-		scaleSetName: c.ScaleSetName, registrationName: c.RegistrationName, registrationURL: c.RegistrationURL, logger: logger.With("component", "scaler"),
-		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
-		runnerImage:  c.RunnerImage,
-		runnerMemory: memory, runnerMemoryReservation: reservation, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
-		runnerNanoCPUs:       int64(math.Round(c.RunnerCPUs * 1e9)),
-		runnerCPUReservation: int64(math.Round(cpuReservationCores * 1e9)),
-		runnerCgroupParent:   c.RunnerCgroupParent,
-		minRunners:           c.MinRunners, maxRunners: c.MaxRunners,
-		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
-		inferenceMetricsURLs: c.InferenceMetricsURLs, inferenceIdleWatts: c.InferenceIdleWatts,
-		hostMetricsURLTemplate:     c.HostMetricsURLTemplate,
-		hostLoadPolicy:             c.HostLoadPolicy,
-		hostMetricsTimeouts:        c.HostMetricsTimeouts,
-		hostMemoryExempt:           stringSet(c.HostMemoryExempt),
-		hostMemoryOvercommit:       c.HostMemoryOvercommit,
-		hostMemorySafetyMargins:    c.HostMemorySafetyMargins,
-		memorySafetyMargin:         c.MemorySafetyMargin,
-		cpuSafetyMargin:            c.CPUSafetyMargin,
-		memorySafetyMarginMaxBytes: c.MemorySafetyMarginMaxBytes,
-		readinessMetricsURL:        c.ReadinessMetricsURL,
-		readinessMetric:            c.ReadinessMetric,
-		readinessMaxAge:            c.ReadinessMaxAge,
-		hostRunnerLimits:           fleet.hostRunnerLimits,
-		degradationLadderEnabled:   c.DegradationLadderEnabled,
-		fleet:                      fleet,
-		checkpoints:                checkpoints, bootCheckpoint: boot,
-	}
-	drainingGauge.WithLabelValues(c.ScaleSetName).Set(0)
-	listenerUpGauge.WithLabelValues(c.ScaleSetName).Set(0)
-	// Make this scale set's own admission math reachable by name for the
-	// priority-reservation gate (agent-lcars#1718): see FleetCoordinator's
-	// scalers field.
-	fleet.registerScaler(scaler)
-	return &scaleSetRuntime{config: c, scaler: scaler}, nil
-}
-
-func initializeGitHubScaleSet(ctx context.Context, runtime *scaleSetRuntime) error {
-	client, err := runtime.config.ScalesetClient()
-	if err != nil {
-		return err
-	}
-	runnerGroupID := 1
-	if runtime.config.RunnerGroup != scaleset.DefaultRunnerGroup {
-		group, groupErr := client.GetRunnerGroupByName(ctx, runtime.config.RunnerGroup)
-		if groupErr != nil {
-			return groupErr
-		}
-		runnerGroupID = group.ID
-	}
-	set, err := client.GetRunnerScaleSet(ctx, runnerGroupID, runtime.config.ScaleSetName)
-	if err != nil {
-		return err
-	}
-	if set == nil {
-		set, err = client.CreateRunnerScaleSet(ctx, &scaleset.RunnerScaleSet{
-			Name: runtime.config.ScaleSetName, RunnerGroupID: runnerGroupID, Labels: runtime.config.BuildLabels(),
-			RunnerSetting: scaleset.RunnerSetting{DisableUpdate: true},
-		})
-		if err != nil {
-			return err
-		}
-		runtime.scaler.logger.Info("Created runner scale set", slog.Int("scaleSetID", set.ID))
-	} else {
-		warnIfAdoptedLabelsDiffer(runtime.scaler.logger, set.Labels, runtime.config.BuildLabels())
-		runtime.scaler.logger.Info("Adopted runner scale set", slog.Int("scaleSetID", set.ID))
-	}
-	client.SetSystemInfo(systemInfo(set.ID))
-	runtime.mu.Lock()
-	runtime.client = client
-	runtime.scaler.scalesetClient = client
-	runtime.scaler.scaleSetID = set.ID
-	runtime.initialized = true
-	runtime.mu.Unlock()
-	runtime.scaler.cleanupOrphans(ctx, true)
-	// A config reload can occur while SIGUSR1 drain is already active. The
-	// replacement scaler adopts runners after runOrchestrator reapplies the
-	// drain flag, so remove any newly adopted idle capacity here rather than
-	// leaving it behind until GitHub happens to send another desired-count
-	// message. Busy runners remain protected by removeIdleRunners.
-	if runtime.scaler.draining.Load() {
-		runtime.scaler.DrainIdleRunners(context.WithoutCancel(ctx))
-	}
-	return nil
-}
-
-type messageSessionCloser interface {
-	Close(context.Context) error
-}
-
-// closeMessageSession gives GitHub a fresh, bounded window to release the
-// server-side owner after listener cancellation. WithoutCancel is intentional:
-// the listener's parent is already cancelled when orderly shutdown reaches
-// this point, but carrying that cancellation into Close would prevent the
-// release attempt entirely.
-func closeMessageSession(ctx context.Context, session messageSessionCloser, timeout time.Duration) error {
-	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
-	defer cancel()
-	return session.Close(closeCtx)
-}
-
-func runListenerSupervisor(ctx context.Context, runtime *scaleSetRuntime, logger *slog.Logger) {
-	backoff := time.Second
-	owner, err := os.Hostname()
-	if err != nil {
-		owner = uuid.NewString()
-	}
-	owner += "-" + runtime.config.ScaleSetName
-	for ctx.Err() == nil {
-		runtime.mu.RLock()
-		initialized, client := runtime.initialized, runtime.client
-		runtime.mu.RUnlock()
-		var sessionErr error
-		if !initialized {
-			sessionErr = initializeGitHubScaleSet(ctx, runtime)
-			runtime.mu.RLock()
-			client = runtime.client
-			runtime.mu.RUnlock()
-		}
-		if sessionErr != nil {
-			listenerUpGauge.WithLabelValues(runtime.config.ScaleSetName).Set(0)
-			orchestratorListenerStates.Store(runtime.config.ScaleSetName, false)
-		} else {
-			session, err := client.MessageSessionClient(ctx, runtime.scaler.scaleSetID, owner)
-			sessionErr = err
-			if sessionErr == nil {
-				statsRecorder := newScaleSetStatsRecorder(runtime.config.ScaleSetName, session.Session().SessionID, runtime.scaler.logger.With("component", "scale_set_stats"))
-				sessionLogger := runtime.scaler.logger.With("scale_set", runtime.config.ScaleSetName, "session_id", session.Session().SessionID.String())
-				diagnosticClient := &diagnosticSessionClient{Client: session, logger: sessionLogger}
-				setListener, listenerErr := listener.New(diagnosticClient, listener.Config{
-					ScaleSetID: runtime.scaler.scaleSetID,
-					MaxRunners: runtime.config.MaxRunners,
-					Logger:     sessionLogger.With("component", "listener"),
-				})
-				if listenerErr == nil {
-					// scaleset v0.4.1-0.20260916214619 removed
-					// listener.WithMetricsRecorder (and the Option/MetricsRecorder
-					// types) along with the rest of Listener's internal message
-					// handling -- see Scaler.Scale's doc comment in scaler.go. Wire
-					// this session's message client and stats recorder directly onto
-					// the Scaler instead of through a constructor option; Run only
-					// ever calls back into Scale synchronously from this same
-					// goroutine, so plain field assignment (no mutex) is safe here,
-					// same as scaleSetID/scalesetClient above.
-					runtime.scaler.messageSessionClient = diagnosticClient
-					runtime.scaler.statsRecorder = statsRecorder
-					listenerUpGauge.WithLabelValues(runtime.config.ScaleSetName).Set(1)
-					orchestratorListenerStates.Store(runtime.config.ScaleSetName, true)
-					listenerErr = setListener.Run(ctx, runtime.scaler)
-				}
-				listenerUpGauge.WithLabelValues(runtime.config.ScaleSetName).Set(0)
-				orchestratorListenerStates.Store(runtime.config.ScaleSetName, false)
-				if closeErr := closeMessageSession(ctx, session, sessionCloseTimeout); closeErr != nil {
-					sessionLogger.Error("Scale-set session close failed")
-				} else {
-					sessionLogger.Info("Scale-set session closed")
-				}
-				sessionErr = listenerErr
-			}
-		}
-		if ctx.Err() != nil || errors.Is(sessionErr, context.Canceled) {
-			return
-		}
-		listenerRestarts.WithLabelValues(runtime.config.ScaleSetName).Inc()
-		orchestratorListenerStates.Store(runtime.config.ScaleSetName, false)
-		logger.Error("Scale-set listener failed; other listeners remain active",
-			slog.String("scale_set", runtime.config.ScaleSetName), slog.Any("error", sessionErr), slog.Duration("retry_in", backoff))
-		jitter := 0.8 + rand.Float64()*0.4
-		timer := time.NewTimer(time.Duration(float64(backoff) * jitter))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		backoff = min(time.Minute, backoff*2)
-	}
-}
-
-func runFleetOrphanSweeper(ctx context.Context, runtimes []*scaleSetRuntime) {
-	ticker := time.NewTicker(orphanSweepInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			for _, runtime := range runtimes {
-				runtime.mu.RLock()
-				initialized := runtime.initialized
-				runtime.mu.RUnlock()
-				if initialized {
-					runtime.scaler.cleanupOrphans(ctx, false)
-				}
-			}
-		}
-	}
-}
-
-// trackedRunnerReconcileInterval bounds how long a stale checkpoint/runtime
-// entry can suppress placement when GitHub has no completion event to deliver.
-// It is intentionally much shorter than orphanSweepInterval: this loop is a
-// read-only Docker inspect pass over the already-tracked (and fleet-bounded)
-// set, whereas orphan cleanup lists and may remove every owned container.
-const trackedRunnerReconcileInterval = time.Minute
-
-// runFleetTrackedRunnerReconciler continuously compares each initialized scale
-// set's in-memory map with Docker. Run once immediately so a checkpoint that
-// retained a container which exited during a restart cannot strand the first
-// queued job while waiting for a later desired-count callback.
-//
-// This is also the periodic refresh for lane_admissible_slots: a placement
-// attempt already republishes it (see pickHostLocked), but a lane sitting at
-// its desired count for a while never makes one, and this loop is the
-// fleet's own "still here, still evaluating" heartbeat regardless of
-// pending demand.
-func runFleetTrackedRunnerReconciler(ctx context.Context, runtimes []*scaleSetRuntime) {
-	reconcile := func() {
-		for _, runtime := range runtimes {
-			runtime.mu.RLock()
-			initialized := runtime.initialized
-			scaler := runtime.scaler
-			runtime.mu.RUnlock()
-			if initialized {
-				scaler.reconcileTrackedRunners(ctx)
-				scaler.refreshAdmissibleSlots(ctx)
-			}
-		}
-	}
-
-	reconcile()
-	ticker := time.NewTicker(trackedRunnerReconcileInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			reconcile()
-		}
-	}
-}
-
-// fleetRunnerCount sums tracked runners across every scale set, mirroring
-// what drain-and-restart.sh's own fleet_runner_count gate waits to see reach
-// zero (across every scale set, not just one) before it recreates the
-// container. Used by runOrchestrator's drain watchdog for the same reason:
-// see drainStuckTimeout's doc comment.
-func fleetRunnerCount(runtimes []*scaleSetRuntime) int {
-	total := 0
-	for _, runtime := range runtimes {
-		total += runtime.scaler.runners.count()
-	}
-	return total
-}
-
-// fleetAssignedJobs sums each scale set's most recently observed
-// TotalAssignedJobs (Scaler.queuedJobs), mirroring fleetRunnerCount's
-// fleet-wide aggregation. Used only to size the drain watchdog's self-heal
-// WARN log below with how much GitHub-side demand sat refused for the
-// duration of a drain that outlived its deploy (agent-lcars#1722).
-func fleetAssignedJobs(runtimes []*scaleSetRuntime) int64 {
-	var total int64
-	for _, runtime := range runtimes {
-		total += runtime.scaler.queuedJobs.Load()
-	}
-	return total
-}
-
-// beginDrainFleet marks every scale set as draining and publishes
-// drainingGauge for all of them BEFORE starting any of the per-lane
-// idle-runner teardown, and then runs that teardown concurrently rather than
-// one scale set at a time.
-//
-// This split matters because Scaler.BeginDrain used to do both in one
-// synchronous call: mark-and-publish, then removeIdleRunners' Docker/SSH
-// round trips. Looping runtime-by-runtime over that combined call meant one
-// lane with an unreachable host (removeIdleRunnerTimeout /
-// deregisterRunnerTimeout: 15s each, per idle runner) delayed every later
-// lane's drainingGauge=1 -- observed as 4 of 5 controller deploys in one day
-// missing the deploy script's 30s fleet-wide drain acknowledgement
-// (agent-lcars#1722). Publishing first, for every lane, means the
-// acknowledgement is visible within about as long as this first loop takes
-// to run -- no Docker or GitHub I/O on it at all -- regardless of how slow
-// or unreachable any single lane's hosts are.
-func beginDrainFleet(ctx context.Context, runtimes []*scaleSetRuntime) {
-	for _, runtime := range runtimes {
-		runtime.scaler.BeginDrain(ctx)
-	}
-	for _, runtime := range runtimes {
-		go runtime.scaler.DrainIdleRunners(ctx)
-	}
-}
-
-// drainWatchdogTick decides what runOrchestrator's drain watchdog should do
-// on one tick, given the current draining state, the fleet's current runner
-// count, when the fleet was first observed at zero while draining
-// (zeroSince, zero value = not yet observed), and now. It returns the
-// zeroSince value to carry into the next tick and whether the fleet drain
-// should self-heal on this tick. Pure and side-effect-free -- runOrchestrator
-// applies the result (flips draining, calls EndDrainStuck on every scaler,
-// logs) and is the only production caller, always passing time.Now(); tests call
-// this directly instead of driving a live ticker.
-func drainWatchdogTick(draining bool, fleetRunnerCount int, zeroSince, now time.Time) (nextZeroSince time.Time, selfHeal bool) {
-	if !draining || fleetRunnerCount > 0 {
-		return time.Time{}, false
-	}
-	if zeroSince.IsZero() {
-		return now, false
-	}
-	if now.Sub(zeroSince) < drainStuckTimeout {
-		return zeroSince, false
-	}
-	return time.Time{}, true
 }

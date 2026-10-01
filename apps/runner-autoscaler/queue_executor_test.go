@@ -1424,7 +1424,6 @@ func TestLaunchDirectRunnerRoundRobinsPastAFullHost(t *testing.T) {
 
 	resolved := resolvedOrchestratorConfig{
 		DockerHosts: []string{"full=fake-target-full", "spare=fake-target-spare"},
-		ScaleSets:   []Config{{ScaleSetName: "claude-actions", Labels: []string{"claude"}, RunnerImage: "registry/claude-image:latest"}},
 	}
 	newClient := func(target string) (*dockerclient.Client, error) {
 		switch target {
@@ -1458,7 +1457,6 @@ func TestLaunchDirectRunnerCodexDoesNotRequireClaudeTokenPath(t *testing.T) {
 	f := newFakeDockerServer(t)
 	resolved := resolvedOrchestratorConfig{
 		DockerHosts: []string{"host-a=fake-target"},
-		ScaleSets:   []Config{{ScaleSetName: "codex-actions", Labels: []string{"codex"}, RunnerImage: "registry/codex-image:latest"}},
 	}
 	newClient := func(target string) (*dockerclient.Client, error) {
 		if target != "fake-target" {

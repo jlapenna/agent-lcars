@@ -3,12 +3,23 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/docker/cli/cli/connhelper"
 	dockerclient "github.com/docker/docker/client"
 )
 
-// DockerHost is one fleet member the scaler can place runners on.
+// Docker API call deadlines shared by every direct-runner Docker operation
+// (image inspect/pull, container create/start/wait/remove). Centralized here
+// rather than duplicated per call site.
+const (
+	dockerInspectTimeout            = 10 * time.Second
+	dockerContainerOperationTimeout = 30 * time.Second
+	dockerImagePullTimeout          = 90 * time.Second
+)
+
+// DockerHost is one fleet member the queue executor can place direct runners
+// on.
 type DockerHost struct {
 	Name   string
 	Target string
@@ -82,6 +93,20 @@ func newDockerClient(target string) (*dockerclient.Client, error) {
 		dockerclient.WithDialContext(helper.Dialer),
 		dockerclient.WithAPIVersionNegotiation(),
 	)
+}
+
+// dockerSafeNamePart replaces every character Docker container names
+// disallow with "-", so an arbitrary pipeline/label string can be embedded in
+// a generated container name.
+func dockerSafeNamePart(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '.', r == '-':
+			return r
+		default:
+			return '-'
+		}
+	}, s)
 }
 
 // newDockerHostPool connects to every configured host up front (fail fast on

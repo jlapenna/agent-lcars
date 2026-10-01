@@ -1,9 +1,11 @@
-# Autoscaler control plane for GitHub Actions runners (runs on homelab).
+# LCARS queue executor for direct-runner work items (runs on homelab).
 #
-# Standard Go module build. Depends on the actions/scaleset *library* pinned
-# in go.mod (a normal `require`) — NOT a fork/overlay of its example. The Go
-# source here was seeded from that example's `dockerscaleset` template and is
-# now a single multi-scale-set orchestrator with fleet-wide placement.
+# Standard Go module build. Every GitHub Actions runner lane has migrated
+# onto Actions Runner Controller (homelab#1623); this binary's only job now
+# is the queue executor (queue_*.go, started from runOrchestrator) that
+# launches direct-runner containers on the fleet's Docker hosts for LCARS
+# work items. The custom scale-set runner management this image used to also
+# run was retired in homelab#1623 Phase 3.
 # Compile on the native builder platform and cross-compile the static binary
 # for each requested target. Letting this stage inherit TARGETPLATFORM made
 # the arm64 image run the entire Go compiler under QEMU on the amd64 BuildKit
@@ -38,15 +40,6 @@ RUN apt-get update \
 # $HOME resolution and fails outright ("No user exists for uid 1001") without
 # a matching /etc/passwd entry — unrelated to the remote login (-l) user.
 RUN useradd --uid 1001 --create-home --shell /usr/sbin/nologin runner-autoscaler
-# State directory for server.state_path's checkpoint. Created here, owned by
-# the runtime uid, specifically so the deployment's named volume inherits that
-# ownership when Docker initializes it from the image on first mount -- a
-# volume mounted over a path the image does not define comes up root-owned,
-# and the process (uid 1001, read_only rootfs) could not write its checkpoint.
-# The mount must be a volume, not a container path: the container filesystem
-# is destroyed by the very restart the checkpoint exists to make safe.
-RUN mkdir -p /var/lib/runner-autoscaler \
- && chown 1001:1001 /var/lib/runner-autoscaler
 COPY --from=build /out/runner-autoscaler /usr/local/bin/runner-autoscaler
 USER 1001:1001
 ENTRYPOINT ["/usr/local/bin/runner-autoscaler"]

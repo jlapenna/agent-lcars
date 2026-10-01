@@ -9,7 +9,7 @@ available through Git history.
 | System          | Owns                                                                          | Source                                                           |
 | --------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Orchestrator    | Per-task admission, leases, dispatch/outcome outbox, and reconciliation.      | `libs/orchestrator/`, `apps/console/src/lib/orchestrator-*.ts`   |
-| Runner platform | Worker capacity, registration, placement, readiness, and loss recovery.       | `apps/runner-autoscaler/`; live configuration belongs to Homelab |
+| Runner platform | Direct-runner launch capacity, host readiness preflight, and loss recovery.   | `apps/runner-autoscaler/`; live configuration belongs to Homelab |
 | Worker runtime  | Bootstrap, agent invocation, credential separation, and deliverable evidence. | QueueExecutor direct-runner image and native runtime helpers     |
 
 ## Dispatch contract
@@ -57,16 +57,18 @@ available through Git history.
 
 ## Runner platform boundary
 
-- `agent-lcars` owns QueueExecutor provider configuration and direct-runner image.
-- Homelab owns the scale-set configuration, credentials, host placement, and
-  running autoscaler process.
-- For a queued job, confirm a registered runner has the exact requested
-  label, then compare Homelab's running scale sets with its configuration.
-- A Homelab configuration change requires its supported reload or restart;
-  an Agent LCARS change cannot provision missing capacity.
+Every GitHub Actions runner lane runs on Actions Runner Controller (k3s,
+homelab#1623); `apps/runner-autoscaler`'s own GitHub scale-set runner
+management was retired in that issue's Phase 3. What remains:
 
-Read [Autoscaler onboarding](onboarding-autoscaler.md) before changing a
-registration or its ownership boundary.
+- `agent-lcars` owns the LCARS QueueExecutor's provider configuration and
+  direct-runner image (not a GitHub-registered runner).
+- Homelab owns the Docker fleet (`orchestrator.yml`'s `fleet.hosts`),
+  credentials, and the running queue-executor process, plus the separate
+  ARC `AutoscalingRunnerSet` configuration for GitHub Actions runner lanes.
+- A Homelab configuration change requires its supported reload (Docker
+  hosts) or restart (queue executor settings); an Agent LCARS change cannot
+  provision missing capacity.
 
 ## Worker runtime boundary
 
@@ -85,7 +87,6 @@ runner-variable ownership.
 | Topic                     | Document                                                        |
 | ------------------------- | --------------------------------------------------------------- |
 | Orchestrator design       | [`libs/orchestrator/README.md`](../libs/orchestrator/README.md) |
-| Runner registrations      | [Autoscaler onboarding](onboarding-autoscaler.md)               |
 | Agent label vocabulary    | [GitHub label contract](github-label-contract.md)               |
 | Fleet-consumable actions  | [Published actions](published-actions.md)                       |
 | Variables and credentials | [Deployment boundary](deployment-boundary.md)                   |

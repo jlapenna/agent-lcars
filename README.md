@@ -62,7 +62,6 @@ Session Archive is the durable record for investigation and audit.
 | Need                                    | Source of truth                                                                                   |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Onboard a repository to the agent fleet | [Repository onboarding](docs/onboarding-repo.md)                                                  |
-| Add a runner registration               | [Autoscaler onboarding](docs/onboarding-autoscaler.md)                                            |
 | Agent labels and routing                | [GitHub label contract](docs/github-label-contract.md)                                            |
 | Credentials and GitHub App identity     | [Fleet credentials](docs/fleet-credentials.md) and [bot identities](docs/bot-identity-formats.md) |
 | CI dispatch and published actions       | [Published actions](docs/published-actions.md)                                                    |

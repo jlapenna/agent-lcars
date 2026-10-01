@@ -71,38 +71,21 @@ func TestQueueEnvironmentRejectsStaticDefects(t *testing.T) {
 	}
 }
 
-// TestQueueExecutorEnvironmentRejectsZeroScaleSetsWithoutQueueExecutor covers
-// the startup half of queue-executor-only mode (homelab#1623 Phase 3): a
-// config resolving to zero enabled scale sets is allowed by
-// resolvedOrchestratorConfig.resolve (with a warning, see
-// TestOrchestratorConfigAllDisabledRegistrationsResolvesWithQueueExecutorWarning
-// in orchestrator_config_test.go), but this process must still refuse to
-// start when the queue executor is ALSO unconfigured -- neither half would
-// have anything to do.
-func TestQueueExecutorEnvironmentRejectsZeroScaleSetsWithoutQueueExecutor(t *testing.T) {
+// TestQueueExecutorEnvironmentRejectsDisabledQueueExecutor covers startup
+// after homelab#1623 Phase 3 retired the scale-set runtime: the queue
+// executor is this process's only possible job, so an unconfigured queue
+// executor must always refuse to start rather than run forever as a silent
+// no-op.
+func TestQueueExecutorEnvironmentRejectsDisabledQueueExecutor(t *testing.T) {
 	for _, key := range []string{"LCARS_CONSOLE_URL", "GOOGLE_APPLICATION_CREDENTIALS", "LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"} {
 		t.Setenv(key, "")
 	}
 	err := validateQueueExecutorEnvironment(resolvedOrchestratorConfig{})
 	if err == nil {
-		t.Fatal("expected an error: neither scale sets nor the queue executor is configured, nothing would run")
+		t.Fatal("expected an error: the queue executor is this process's only job and it is unconfigured")
 	}
-	if !strings.Contains(err.Error(), "no scale sets are enabled either") {
+	if !strings.Contains(err.Error(), "nothing else to run") {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// TestQueueExecutorEnvironmentDisabledIsFineWithScaleSetsConfigured guards
-// the ordinary (non-queue-executor-only) case: an unconfigured queue
-// executor must remain a silent no-op, exactly as before this change, when
-// at least one scale set is actually enabled.
-func TestQueueExecutorEnvironmentDisabledIsFineWithScaleSetsConfigured(t *testing.T) {
-	for _, key := range []string{"LCARS_CONSOLE_URL", "GOOGLE_APPLICATION_CREDENTIALS", "LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"} {
-		t.Setenv(key, "")
-	}
-	resolved := resolvedOrchestratorConfig{ScaleSets: []Config{{ScaleSetName: "default"}}}
-	if err := validateQueueExecutorEnvironment(resolved); err != nil {
-		t.Fatalf("a disabled queue executor with scale sets configured should not fail startup: %v", err)
 	}
 }
 
