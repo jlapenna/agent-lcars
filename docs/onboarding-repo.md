@@ -8,8 +8,6 @@ It deliberately coordinates the focused runbooks rather than copying them.
 Those documents own their domains and should be updated there when the
 underlying system changes:
 
-- [Runner-autoscaler onboarding](onboarding-autoscaler.md) — registration,
-  scale sets, and homelab deployment.
 - [Console and telemetry onboarding](onboarding-console-and-telemetry.md) —
   protocol, telemetry, console configuration, and the telemetry IAM boundary.
 - [Fleet credentials](fleet-credentials.md) — credential ownership, minting,
@@ -92,10 +90,13 @@ merged label and instruction contract — before admitting it to the Console.
 
 ## 2. Give it runner capacity
 
-Follow [runner-autoscaler onboarding](onboarding-autoscaler.md) in the
-canonical homelab repository. Confirm QueueExecutor's shared runner pool has
-capacity for the target repository's work. Add a dedicated pool only when
-measured workload duration or isolation demands it. Add the repository to
+Every GitHub Actions runner lane runs on Actions Runner Controller (k3s),
+owned and deployed by `jlapenna/homelab` (homelab#1623); `apps/runner-autoscaler`
+in this repo no longer manages GitHub scale-set runner registrations, only the
+LCARS QueueExecutor's shared direct-runner pool. Confirm QueueExecutor's
+shared runner pool has capacity for the target repository's work, and provision
+a dedicated ARC lane in `jlapenna/homelab` only when measured workload
+duration or isolation demands it. Add the repository to
 homelab's `protect-main` ruleset module as
 well. Every repository starts with required `gitleaks` and
 `validate / repository validation` checks: secret scanning is the fleet's

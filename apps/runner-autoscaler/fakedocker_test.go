@@ -15,58 +15,36 @@ import (
 )
 
 // fakeDockerServer is a minimal httptest-based stand-in for a docker
-// daemon's HTTP API, covering only what scaler_test.go's
-// pruneDeadIdleRunners/cleanupOrphans/pickHost tests exercise: version
-// negotiation's lazy /_ping probe, ContainerInspect, ContainerList, and
-// ContainerRemove. Shared here (rather than duplicated per test) since
-// several TestXxx functions in scaler_test.go need one.
+// daemon's HTTP API, covering what the queue executor's direct-runner tests
+// exercise: version negotiation's lazy /_ping probe, ContainerInspect,
+// ContainerList, ContainerCreate/Start/Wait/Remove, and image inspect/pull.
+// Shared here (rather than duplicated per test) since several TestXxx
+// functions need one.
 type fakeDockerServer struct {
 	srv *httptest.Server
 
 	mu      sync.Mutex
 	inspect map[string]inspectStub // containerID -> canned ContainerInspect response
-	// inspectCalls records ContainerInspect requests by container ID so tests
-	// can prove a listener-path reconciliation did not probe busy runners.
-	inspectCalls map[string]int
-	// tops: containerID -> canned ContainerTop process list. An ID absent
-	// here 404s, which is what cleanupOrphans sees as a top error.
-	tops       map[string]container.TopResponse
+
 	containers []container.Summary // ContainerList response
-	// memoryTotal is the Docker /info MemTotal value used by reservation-aware
-	// placement tests.
-	memoryTotal int64
-	ncpu        int
-	removed     []string // IDs passed to ContainerRemove, in call order
+	removed    []string            // IDs passed to ContainerRemove, in call order
 	// removeForced records whether each ContainerRemove request asked Docker to
 	// force deletion. Queue retention must remain false here: a state race
 	// should be refused by Docker rather than ending a live direct runner.
 	removeForced []bool
-	// listDelay stalls every ContainerList response, standing in for a slow
-	// fleet host. Lets a test distinguish concurrent from serial fan-out by
-	// wall-clock rather than by inspecting goroutines.
-	listDelay time.Duration
-	// listBlock makes ContainerList wait for either explicit release or the
-	// request deadline, modeling a daemon that accepts a request and stalls.
-	listBlock    chan struct{}
-	listStarted  chan struct{}
 	inspectDelay time.Duration
-	// removeBlock, when non-nil, makes every ContainerRemove request wait
-	// until it is closed (or the request's own context is cancelled, e.g. by
-	// the test server shutting down) -- standing in for a host that accepts
-	// the connection and then hangs indefinitely, unlike listDelay/
-	// inspectDelay's fixed durations. See blockRemoves.
-	removeBlock      chan struct{}
+
 	imagePresent     bool
 	imagePulls       int
 	pullStreamError  bool
 	containerCreates int
-	createFailures   []int
 	// lastCreate captures the most recent /containers/create request body so
 	// a test can assert exactly what a caller (e.g. launchDirectRunner) sent
 	// -- image, env, labels, bind mounts -- without a real docker daemon.
 	lastCreate createdContainerRequest
 	// starts counts POST .../containers/{id}/start calls; startFailures pops
-	// one status per call (0 means succeed) the same way createFailures does.
+	// one status per call (0 means succeed) the same way the create-failure
+	// path does.
 	starts        int
 	startFailures []int
 	waits         int
@@ -107,8 +85,7 @@ type inspectStub struct {
 func newFakeDockerServer(t *testing.T) *fakeDockerServer {
 	t.Helper()
 	f := &fakeDockerServer{
-		inspect: make(map[string]inspectStub), inspectCalls: make(map[string]int), tops: make(map[string]container.TopResponse),
-		memoryTotal: 64 * 1024 * 1024 * 1024, ncpu: 12,
+		inspect: make(map[string]inspectStub),
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
@@ -142,39 +119,10 @@ func (f *fakeDockerServer) setInspect(containerID string, status int, state *con
 	f.inspect[containerID] = inspectStub{status: status, state: state}
 }
 
-func (f *fakeDockerServer) inspectCallCount(containerID string) int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.inspectCalls[containerID]
-}
-
-// setListDelay makes every ContainerList response stall, standing in for a
-// slow fleet host.
-func (f *fakeDockerServer) setListDelay(d time.Duration) {
-	f.mu.Lock()
-	f.listDelay = d
-	f.mu.Unlock()
-}
-
 func (f *fakeDockerServer) setInspectDelay(d time.Duration) {
 	f.mu.Lock()
 	f.inspectDelay = d
 	f.mu.Unlock()
-}
-
-// blockRemoves makes every ContainerRemove request against this fake host
-// hang until the returned unblock func is called (register it with
-// t.Cleanup so a test that never calls it explicitly still releases any
-// still-pending request when the fake server shuts down). Standing in for a
-// host that accepts a connection and then never answers -- the scenario
-// agent-lcars#1722's immediate drain acknowledgement exists to survive.
-func (f *fakeDockerServer) blockRemoves() (unblock func()) {
-	f.mu.Lock()
-	ch := make(chan struct{})
-	f.removeBlock = ch
-	f.mu.Unlock()
-	var once sync.Once
-	return func() { once.Do(func() { close(ch) }) }
 }
 
 // setContainers configures the full ContainerList response.
@@ -182,22 +130,6 @@ func (f *fakeDockerServer) setContainers(cs []container.Summary) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.containers = cs
-}
-
-func (f *fakeDockerServer) setMemoryTotal(bytes int64) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.memoryTotal = bytes
-}
-
-func (f *fakeDockerServer) blockLists() (<-chan struct{}, func()) {
-	f.mu.Lock()
-	f.listBlock = make(chan struct{})
-	f.listStarted = make(chan struct{}, 1)
-	block := f.listBlock
-	started := f.listStarted
-	f.mu.Unlock()
-	return started, func() { close(block) }
 }
 
 // removedIDs returns the container IDs passed to ContainerRemove so far, in
@@ -225,65 +157,20 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("OSType", "linux")
 		w.WriteHeader(http.StatusOK)
 
-	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info"):
-		f.mu.Lock()
-		memoryTotal := f.memoryTotal
-		ncpu := f.ncpu
-		containers := len(f.containers)
-		f.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ID": "fake", "Containers": containers, "MemTotal": memoryTotal, "NCPU": ncpu,
-			"DriverStatus": [][2]string{}, "Plugins": map[string]any{},
-		})
-
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/json"):
 		f.mu.Lock()
 		cs := f.containers
-		delay := f.listDelay
-		block := f.listBlock
-		started := f.listStarted
 		f.mu.Unlock()
-		if block != nil {
-			select {
-			case started <- struct{}{}:
-			default:
-			}
-			select {
-			case <-block:
-			case <-r.Context().Done():
-				return
-			}
-		}
-		if delay > 0 {
-			time.Sleep(delay)
-		}
 		if cs == nil {
 			cs = []container.Summary{}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(cs)
 
-	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/top"):
-		// ContainerTop: GET .../containers/{id}/top. Must be matched before
-		// the generic inspect case below, which would otherwise swallow it.
-		id := containerIDFromPath(r.URL.Path)
-		f.mu.Lock()
-		top, ok := f.tops[id]
-		f.mu.Unlock()
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{"message": "No such container: " + id})
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(top)
-
 	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/containers/"):
 		// Inspect: GET .../containers/{id}/json
 		id := containerIDFromPath(r.URL.Path)
 		f.mu.Lock()
-		f.inspectCalls[id]++
 		stub, ok := f.inspect[id]
 		delay := f.inspectDelay
 		f.mu.Unlock()
@@ -306,16 +193,6 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/containers/"):
-		f.mu.Lock()
-		block := f.removeBlock
-		f.mu.Unlock()
-		if block != nil {
-			select {
-			case <-block:
-			case <-r.Context().Done():
-				return
-			}
-		}
 		id := containerIDFromPath(r.URL.Path)
 		f.mu.Lock()
 		f.removed = append(f.removed, id)
@@ -362,22 +239,7 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.containerCreates++
 		f.lastCreate = req
-		status := 0
-		if len(f.createFailures) > 0 {
-			status = f.createFailures[0]
-			f.createFailures = f.createFailures[1:]
-		}
-		if status == http.StatusNotFound {
-			// The exact #478 race: a host-side prune removed the image after
-			// the caller's successful inspect and before this create.
-			f.imagePresent = false
-		}
 		f.mu.Unlock()
-		if status != 0 {
-			w.WriteHeader(status)
-			_ = json.NewEncoder(w).Encode(map[string]string{"message": "No such image"})
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(container.CreateResponse{ID: "created-container"})
@@ -415,25 +277,10 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// setTop configures the canned ContainerTop process list for containerID.
-// Pass process rows as ContainerTop returns them; a row containing
-// "Runner.Worker" is what topHasRunnerWorker looks for.
-func (f *fakeDockerServer) setTop(containerID string, processes [][]string) {
-	f.mu.Lock()
-	f.tops[containerID] = container.TopResponse{Titles: []string{"PID", "CMD"}, Processes: processes}
-	f.mu.Unlock()
-}
-
 func (f *fakeDockerServer) pullCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.imagePulls
-}
-
-func (f *fakeDockerServer) setCreateFailures(statuses ...int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.createFailures = append([]int(nil), statuses...)
 }
 
 func (f *fakeDockerServer) createCount() int {
@@ -457,7 +304,7 @@ func (f *fakeDockerServer) startCount() int {
 }
 
 // setStartFailures queues per-call ContainerStart response statuses (0 means
-// succeed), the same way setCreateFailures does for ContainerCreate.
+// succeed).
 func (f *fakeDockerServer) setStartFailures(statuses ...int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

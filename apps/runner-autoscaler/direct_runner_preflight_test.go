@@ -12,7 +12,6 @@ import (
 func directRunnerPreflightResolved() resolvedOrchestratorConfig {
 	return resolvedOrchestratorConfig{
 		DockerHosts: []string{"eligible=eligible-target", "ineligible=ineligible-target"},
-		ScaleSets:   []Config{{RunnerImage: "registry/direct-runner:test"}},
 	}
 }
 
@@ -140,7 +139,6 @@ func TestDirectRunnerPreflightPullsMissingImageBeforeCredentialProbe(t *testing.
 	fake := newFakeDockerServer(t)
 	resolved := resolvedOrchestratorConfig{
 		DockerHosts: []string{"host=host-target"},
-		ScaleSets:   []Config{{RunnerImage: "registry/direct-runner:test"}},
 	}
 
 	selected, err := directRunnerPreflightHosts(context.Background(), resolved, func(string) (*dockerclient.Client, error) {
@@ -163,7 +161,6 @@ func TestDirectRunnerPreflightRefusesHostWhenImagePullReportsFailure(t *testing.
 	fake.pullStreamError = true
 	resolved := resolvedOrchestratorConfig{
 		DockerHosts: []string{"host=host-target"},
-		ScaleSets:   []Config{{RunnerImage: "registry/direct-runner:test"}},
 	}
 
 	_, err := directRunnerPreflightHosts(context.Background(), resolved, func(string) (*dockerclient.Client, error) {
@@ -174,33 +171,5 @@ func TestDirectRunnerPreflightRefusesHostWhenImagePullReportsFailure(t *testing.
 	}
 	if fake.pullCount() != 1 || fake.createCount() != 0 || fake.startCount() != 0 {
 		t.Fatalf("failed image pull must refuse before the credential probe: pulls/creates/starts = %d/%d/%d, want 1/0/0", fake.pullCount(), fake.createCount(), fake.startCount())
-	}
-}
-
-func TestDirectRunnerPreflightIgnoresGitHubScaleSetImages(t *testing.T) {
-	configureDirectRunnerPreflightMounts(t)
-	fake := newFakeDockerServer(t)
-	resolved := resolvedOrchestratorConfig{
-		DockerHosts: []string{"host=host-target"},
-		ScaleSets: []Config{
-			{ScaleSetName: "claude", Labels: []string{"claude"}, RunnerImage: "registry/claude:test"},
-			{ScaleSetName: "codex", Labels: []string{"codex"}, RunnerImage: "registry/codex:test"},
-		},
-	}
-
-	selected, err := directRunnerPreflightHosts(context.Background(), resolved, func(string) (*dockerclient.Client, error) {
-		return fake.client(t), nil
-	}, discardLogger())
-	if err != nil {
-		t.Fatalf("preflight error = %v", err)
-	}
-	if got := strings.Join(selected.DockerHosts, ","); got != "host=host-target" {
-		t.Fatalf("eligible launch hosts = %q, want host=host-target", got)
-	}
-	if fake.createCount() != 1 || fake.startCount() != 1 || fake.waitCount() != 1 {
-		t.Fatalf("single queue image must be probed: creates/starts/waits = %d/%d/%d, want 1/1/1", fake.createCount(), fake.startCount(), fake.waitCount())
-	}
-	if len(fake.removedIDs()) != 1 {
-		t.Fatalf("single image probe must clean up: removals=%v", fake.removedIDs())
 	}
 }

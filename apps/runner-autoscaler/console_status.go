@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,47 +14,23 @@ import (
 )
 
 // runnerStatusCollection is intentionally shared with the console's
-// read-only telemetry client. A document is overwritten for each scale set,
-// so this registration channel has bounded storage even when a runner fleet
-// is busy for months.
+// read-only telemetry client.
 const runnerStatusCollection = "runner-status"
 
-// queueExecutorStatusDocument is deliberately a reserved, non-scale-set
-// document in the same bounded telemetry collection.  Keeping queue-executor
-// health beside (rather than inside) a scale-set snapshot prevents a direct
-// runner from being mistaken for a GitHub-registered runner, while avoiding a
-// second operational store.
+// queueExecutorStatusDocument is a reserved document name in the shared
+// runner-status telemetry collection. It used to live alongside one document
+// per scale set (schemaVersion 1); homelab#1623 Phase 3 retired the
+// scale-set runtime that published those, so this is the only document this
+// process writes now. The console (apps/console/src/lib/autoscaler-status.ts)
+// reads the whole collection and tolerates either shape -- or neither, if a
+// document has gone stale -- so no console change was needed for the
+// per-scale-set documents to simply stop being written.
 const queueExecutorStatusDocument = "queue-executor"
 
 const (
 	consoleStatusInterval = 10 * time.Second
 	consoleStatusTimeout  = 5 * time.Second
 )
-
-// consoleRunnerStatus is the deliberately small operational projection the
-// console needs. It contains no checkout, command, token, or container
-// internals: runner names, host placement, and the opaque GitHub job ID are
-// enough to answer "what is the autoscaler doing right now?".
-type consoleRunnerStatus struct {
-	Name  string `firestore:"name"`
-	Host  string `firestore:"host"`
-	State string `firestore:"state"`
-	JobID string `firestore:"jobId,omitempty"`
-}
-
-type consoleScaleSetStatus struct {
-	SchemaVersion   int                   `firestore:"schemaVersion"`
-	ScaleSet        string                `firestore:"scaleSet"`
-	Registration    string                `firestore:"registration"`
-	RegistrationURL string                `firestore:"registrationUrl,omitempty"`
-	QueuedJobs      int64                 `firestore:"queuedJobs"`
-	MinRunners      int                   `firestore:"minRunners"`
-	MaxRunners      int                   `firestore:"maxRunners"`
-	Draining        bool                  `firestore:"draining"`
-	Runners         []consoleRunnerStatus `firestore:"runners"`
-	UpdatedAt       string                `firestore:"updatedAt"`
-	ExpireAt        time.Time             `firestore:"expireAt"`
-}
 
 // consoleQueueExecutorStatus is the generic direct-executor health
 // projection. It intentionally has no repository, pipeline, credential, or
@@ -64,9 +39,8 @@ type consoleScaleSetStatus struct {
 // direct-runner adapter.
 //
 // SchemaVersion 2 plus Kind makes this safely distinguishable from the
-// existing scale-set schema (v1). Older console readers reject this document
-// rather than treating it as a malformed scale set; newer readers can accept
-// both independently.
+// retired scale-set schema (v1), which an older console reader could
+// otherwise mistake this for.
 type consoleQueueExecutorStatus struct {
 	SchemaVersion int       `firestore:"schemaVersion"`
 	Kind          string    `firestore:"kind"`
@@ -80,9 +54,8 @@ type consoleQueueExecutorStatus struct {
 }
 
 // consoleStatusPublisher abstracts the writer for tests and keeps status
-// telemetry isolated from the placement/listener critical path.
+// telemetry isolated from the queue executor's claim/launch critical path.
 type consoleStatusPublisher interface {
-	Publish(context.Context, consoleScaleSetStatus)
 	PublishQueueExecutor(context.Context, consoleQueueExecutorStatus)
 	Enabled() bool
 	Close() error
@@ -90,7 +63,6 @@ type consoleStatusPublisher interface {
 
 type noopConsoleStatusPublisher struct{}
 
-func (noopConsoleStatusPublisher) Publish(context.Context, consoleScaleSetStatus) {}
 func (noopConsoleStatusPublisher) PublishQueueExecutor(context.Context, consoleQueueExecutorStatus) {
 }
 func (noopConsoleStatusPublisher) Enabled() bool { return false }
@@ -99,10 +71,10 @@ func (noopConsoleStatusPublisher) Close() error  { return nil }
 type firestoreConsoleStatusPublisher struct {
 	client *firestore.Client
 	logger *slog.Logger
-	// A single slot per scale set coalesces rapid listener transitions. The
-	// autoscaler never waits for Firestore, and the next 10-second snapshot
-	// heals any dropped write after a transient outage.
-	pending sync.Map // map[string]consoleScaleSetStatus | consoleQueueExecutorStatus
+	// A single slot coalesces rapid status transitions. The autoscaler never
+	// waits for Firestore, and the next 10-second snapshot heals any dropped
+	// write after a transient outage.
+	pending sync.Map // map[string]consoleQueueExecutorStatus
 	wake    chan struct{}
 	closed  atomic.Bool
 }
@@ -130,10 +102,6 @@ func newConsoleStatusPublisher(ctx context.Context, logger *slog.Logger) (consol
 	publisher := &firestoreConsoleStatusPublisher{client: client, logger: logger, wake: make(chan struct{}, 1)}
 	go publisher.run(ctx)
 	return publisher, nil
-}
-
-func (p *firestoreConsoleStatusPublisher) Publish(_ context.Context, status consoleScaleSetStatus) {
-	p.publish(status.ScaleSet, status)
 }
 
 func (p *firestoreConsoleStatusPublisher) PublishQueueExecutor(_ context.Context, status consoleQueueExecutorStatus) {
@@ -166,7 +134,7 @@ func (p *firestoreConsoleStatusPublisher) run(ctx context.Context) {
 			_, err := p.client.Collection(runnerStatusCollection).Doc(name).Set(writeCtx, value)
 			cancel()
 			if err != nil {
-				p.logger.Warn("Failed to publish autoscaler status to the console; placement continues", slog.String("scale_set", name), slog.String("error", err.Error()))
+				p.logger.Warn("Failed to publish autoscaler status to the console; queue executor continues", slog.String("document", name), slog.String("error", err.Error()))
 				return true
 			}
 			p.pending.Delete(name)
@@ -178,48 +146,4 @@ func (p *firestoreConsoleStatusPublisher) run(ctx context.Context) {
 func (p *firestoreConsoleStatusPublisher) Close() error {
 	p.closed.Store(true)
 	return p.client.Close()
-}
-
-// consoleStatusSnapshot is lock-contained so the status publisher can never
-// observe a half-transition between the idle and busy maps.
-func (a *Scaler) consoleStatusSnapshot(now time.Time) consoleScaleSetStatus {
-	a.runners.mu.Lock()
-	runners := make([]consoleRunnerStatus, 0, len(a.runners.idle)+len(a.runners.busy))
-	for name, ref := range a.runners.idle {
-		runners = append(runners, consoleRunnerStatus{Name: name, Host: ref.host, State: "idle"})
-	}
-	for name, ref := range a.runners.busy {
-		runners = append(runners, consoleRunnerStatus{Name: name, Host: ref.host, State: "busy", JobID: ref.jobID})
-	}
-	a.runners.mu.Unlock()
-	sort.Slice(runners, func(i, j int) bool { return runners[i].Name < runners[j].Name })
-	return consoleScaleSetStatus{
-		SchemaVersion: 1, ScaleSet: a.scaleSetLabel(), Registration: a.registrationName, RegistrationURL: a.registrationURL,
-		QueuedJobs: a.queuedJobs.Load(), MinRunners: a.minRunners, MaxRunners: a.maxRunners,
-		Draining: a.draining.Load(), Runners: runners, UpdatedAt: now.UTC().Format(time.RFC3339Nano),
-		// The console treats this as a presentation staleness boundary. It is
-		// intentionally not a Firestore TTL field: the collection is bounded
-		// by scale-set name and never accumulates historical documents.
-		ExpireAt: now.Add(3 * consoleStatusInterval),
-	}
-}
-
-func runConsoleStatusPublisher(ctx context.Context, runtimes []*scaleSetRuntime, publisher consoleStatusPublisher) {
-	publish := func() {
-		now := time.Now()
-		for _, runtime := range runtimes {
-			publisher.Publish(ctx, runtime.scaler.consoleStatusSnapshot(now))
-		}
-	}
-	publish()
-	ticker := time.NewTicker(consoleStatusInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			publish()
-		}
-	}
 }

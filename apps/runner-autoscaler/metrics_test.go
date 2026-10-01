@@ -27,10 +27,8 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 	}
 
 	// Record a test metric so label vector produces output
-	desiredRunnersGauge.WithLabelValues("test-scaleset").Set(2)
-	hostMemoryReservedGauge.WithLabelValues("test-host").Set(12 << 30)
-	hostMemoryBudgetGauge.WithLabelValues("test-host").Set(14 << 30)
-	setCheckpointRestoreStatus(checkpointRestoreAbsent)
+	queueExecutorClaimsTotal.WithLabelValues("claude").Inc()
+	setQueueExecutorStartupState(queueExecutorStateReady)
 
 	// Give the server a brief moment to start
 	time.Sleep(100 * time.Millisecond)
@@ -50,10 +48,6 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 		t.Errorf("expected /healthz body OK\\n, got %q", string(body))
 	}
 
-	orchestratorSchedulerReady.Store(true)
-	orchestratorExpectedListeners.Store(2)
-	orchestratorListenerStates.Store("a", true)
-	orchestratorListenerStates.Store("b", false)
 	degraded, err := http.Get("http://" + addr + "/readyz")
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +56,7 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 	if degraded.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("degraded /readyz status = %d, want 503", degraded.StatusCode)
 	}
-	orchestratorListenerStates.Store("b", true)
+	orchestratorSchedulerReady.Store(true)
 	ready, err := http.Get("http://" + addr + "/readyz")
 	if err != nil {
 		t.Fatal(err)
@@ -84,18 +78,13 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 		t.Errorf("expected /metrics status 200, got %d", respMetrics.StatusCode)
 	}
 	metricsBody, _ := io.ReadAll(respMetrics.Body)
-	if !strings.Contains(string(metricsBody), "github_runner_autoscaler_desired_runners") {
-		t.Errorf("expected /metrics response to contain github_runner_autoscaler_desired_runners, got:\n%s", string(metricsBody))
-	}
 	for _, metric := range []string{
-		"github_runner_autoscaler_checkpoint_write_failures_total",
-		"github_runner_autoscaler_checkpoint_last_write_timestamp_seconds",
-		"github_runner_autoscaler_checkpoint_restore_status",
-		"github_runner_autoscaler_host_memory_reserved_bytes",
-		"github_runner_autoscaler_host_memory_budget_bytes",
+		"github_runner_autoscaler_queue_executor_claims_total",
+		"github_runner_autoscaler_queue_executor_ready",
+		"github_runner_autoscaler_queue_executor_state",
 	} {
 		if !strings.Contains(string(metricsBody), metric) {
-			t.Errorf("expected /metrics response to contain %s", metric)
+			t.Errorf("expected /metrics response to contain %s, got:\n%s", metric, string(metricsBody))
 		}
 	}
 }
