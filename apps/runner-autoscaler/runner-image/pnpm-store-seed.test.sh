@@ -65,10 +65,13 @@ fi
 
 tag="agent-lcars-pnpm-store-seed-test-$$"
 container_id=""
+work_mount_container_id=""
 cleanup() {
-  if [[ -n "$container_id" ]]; then
-    docker rm -f "$container_id" >/dev/null 2>&1 || true
-  fi
+  for cid in "$container_id" "$work_mount_container_id"; do
+    if [[ -n "$cid" ]]; then
+      docker rm -f "$cid" >/dev/null 2>&1 || true
+    fi
+  done
   docker image rm -f "$tag" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -121,5 +124,27 @@ for store_major in 11; do
     exit 1
   fi
 done
+
+# k3s runner pods (homelab#1623) mount /home/runner/_work on its own
+# filesystem (hostPath before, emptyDir now), separate from the image
+# filesystem the seed lives on. pnpm's *default* store-dir is chosen on the
+# SAME filesystem as the project being installed (so it can hardlink), so a
+# project under _work must still resolve to the pinned seed instead of
+# pnpm silently creating and populating a fresh, empty store under _work
+# and re-downloading every package -- exactly the live regression measured
+# on lcars-ci-dbttw-runner-m4qsc ("Content-addressable store is at:
+# /home/runner/_work/.pnpm-store/v11", "reused 0, downloaded 1743"). This
+# case must fail without the Dockerfile's pnpm global-config pin and pass
+# with it.
+work_mount_container_id="$(docker create --tmpfs /home/runner/_work:rw,uid=1001,gid=1001 "$tag" bash -ceu '
+  mkdir -p /home/runner/_work/hit
+  cp -r /opt/pnpm-hit/* /home/runner/_work/hit/
+  cd /home/runner/_work/hit
+  pnpm install --frozen-lockfile --ignore-scripts | tee /tmp/pnpm-work-hit.log
+  grep -Eq "reused 1, downloaded 0" /tmp/pnpm-work-hit.log
+  grep -Fq "Content-addressable store is at: /home/runner/.local/share/pnpm/store/v11" /tmp/pnpm-work-hit.log
+  test -f node_modules/typescript/lib/typescript.js
+')"
+docker start --attach "$work_mount_container_id"
 
 echo "pnpm-store-seed.test.sh: pnpm 11 lower-layer content hit and writable miss passed (seed=${seed_bytes}B)"
