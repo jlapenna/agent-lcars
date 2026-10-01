@@ -60,6 +60,16 @@ func validateQueueExecutorEnvironment(resolved resolvedOrchestratorConfig) error
 	consoleURL := strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL"))
 	_, state, reason := queueExecutorStartupStatus(consoleURL, os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"), os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"))
 	if state == queueExecutorStateDisabled {
+		// An unconfigured queue executor is ordinarily fine -- this process
+		// just runs its configured GitHub scale-set listeners instead. But
+		// with zero enabled scale sets too (queue-executor-only mode's config
+		// side; see resolvedOrchestratorConfig.resolve's "no enabled scale
+		// sets" warning), neither half of this process has anything to do.
+		// Fail loudly at startup (and at --check-config) rather than running
+		// forever as a silent no-op that never touches Docker or GitHub.
+		if len(resolved.ScaleSets) == 0 {
+			return fmt.Errorf("queue executor: %s, and no scale sets are enabled either; this process would have nothing to run", reason)
+		}
 		return nil
 	}
 	if state != queueExecutorStateReady {

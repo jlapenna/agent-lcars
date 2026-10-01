@@ -38,8 +38,40 @@ type runtimeGeneration struct {
 	done   <-chan struct{}
 }
 
+// orchestratorComponentLogger returns the "component=orchestrator" logger
+// derived from the first configured scale set's own log level/format.
+// Queue-executor-only mode (homelab#1623 Phase 3) resolves to zero scale
+// sets, so there is no Config instance to call Logger() on; slog.Default()
+// takes over in that case instead.
+func orchestratorComponentLogger(scaleSets []Config) *slog.Logger {
+	base := slog.Default()
+	if len(scaleSets) > 0 {
+		base = scaleSets[0].Logger()
+	}
+	return base.With("component", "orchestrator")
+}
+
+// startOrchestratorRuntimeGeneration starts the scaler runtime generation
+// (host sampler, degradation-ladder refresher, sweepers, GitHub scale-set
+// listeners) for the given runtimes, or returns an already-quiesced
+// generation when there are none to run. Queue-executor-only mode
+// (homelab#1623 Phase 3) resolves to zero scale sets: startRuntimeGeneration
+// itself unconditionally indexes runtimes[0] for the shared host sampler, so
+// it must not be called at all in that mode -- there is no scaler runtime to
+// run, and the queue executor's own direct-runner placement is plain
+// round-robin (directRunnerCapacityReservations.reserve) that never reads
+// the fleet's host-load cache the sampler populates.
+func startOrchestratorRuntimeGeneration(ctx context.Context, runtimes []*scaleSetRuntime, fleet *FleetCoordinator, ladder resolvedDegradationLadder, logger *slog.Logger, statusPublisher consoleStatusPublisher) runtimeGeneration {
+	if len(runtimes) == 0 {
+		done := make(chan struct{})
+		close(done)
+		return runtimeGeneration{cancel: func() {}, done: done}
+	}
+	return startRuntimeGeneration(ctx, runtimes, fleet, ladder, logger, statusPublisher)
+}
+
 func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) error {
-	logger := resolved.ScaleSets[0].Logger().With("component", "orchestrator")
+	logger := orchestratorComponentLogger(resolved.ScaleSets)
 	for _, warning := range resolved.Warnings {
 		logger.Warn(warning)
 	}
@@ -74,6 +106,11 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			slog.Time("written_at", restored.WrittenAt), slog.Int("scale_sets", len(restored.ScaleSets)))
 	}
 
+	// buildOrchestratorRuntimes and pullConfiguredRunnerImages below are both
+	// no-ops on an empty resolved.ScaleSets (queue-executor-only mode,
+	// homelab#1623 Phase 3): each simply loops over zero scale sets. Only
+	// startOrchestratorRuntimeGeneration needs an explicit empty-input guard
+	// -- see its doc comment.
 	runtimes, err := buildOrchestratorRuntimes(resolved, managedHosts, placementHosts, fleet, checkpoints, restored)
 	if err != nil {
 		return err
@@ -97,7 +134,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		return fmt.Errorf("starting metrics server: %w", err)
 	}
 
-	generation := startRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
+	generation := startOrchestratorRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
 
 	// queueDraining mirrors the fleet's own SIGUSR1 drain flag for the queue
 	// executor's poller goroutine below: a claim minted moments before this
@@ -329,14 +366,14 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				logger.Error("Configuration reload could not build runtimes; restoring current configuration", slog.Any("error", buildErr))
 				closeDockerHostClients(nextPlacementHosts)
 				configureFleet(fleet, resolved)
-				generation = startRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
+				generation = startOrchestratorRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
 				continue
 			}
 			closeUnusedDockerHostClients(managedHosts, nextManagedHosts)
 			resolved, runtimes = next, nextRuntimes
 			checkpoints.setSnapshot(orchestratorSnapshot(runtimes, fleet))
 			managedHosts, placementHosts = nextManagedHosts, nextPlacementHosts
-			logger = resolved.ScaleSets[0].Logger().With("component", "orchestrator")
+			logger = orchestratorComponentLogger(resolved.ScaleSets)
 			for _, warning := range resolved.Warnings {
 				logger.Warn(warning)
 			}
@@ -350,7 +387,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				drainZeroSince = time.Time{}
 				beginDrainFleet(context.WithoutCancel(ctx), runtimes)
 			}
-			generation = startRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
+			generation = startOrchestratorRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
 			logger.Info("Configuration reloaded without draining runners")
 		}
 	}

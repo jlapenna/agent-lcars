@@ -514,6 +514,36 @@ func TestMergeDockerHostsRetainsOnlyTrackedRemovedHosts(t *testing.T) {
 	}
 }
 
+// TestOrchestratorComponentLoggerToleratesZeroScaleSets covers
+// queue-executor-only mode (homelab#1623 Phase 3): runOrchestrator's logger
+// selection must not index scaleSets[0] when the config resolves to zero
+// scale sets.
+func TestOrchestratorComponentLoggerToleratesZeroScaleSets(t *testing.T) {
+	if logger := orchestratorComponentLogger(nil); logger == nil {
+		t.Fatal("expected a non-nil fallback logger for zero scale sets")
+	}
+	c := Config{LogLevel: "info", LogFormat: "text"}
+	if logger := orchestratorComponentLogger([]Config{c}); logger == nil {
+		t.Fatal("expected a non-nil logger derived from the first scale set")
+	}
+}
+
+// TestStartOrchestratorRuntimeGenerationToleratesZeroRuntimes guards the
+// panic startRuntimeGeneration would otherwise hit indexing runtimes[0] for
+// the shared host sampler: queue-executor-only mode (homelab#1623 Phase 3)
+// runs no scaler runtimes at all, so runOrchestrator must go through this
+// wrapper instead of calling startRuntimeGeneration directly.
+func TestStartOrchestratorRuntimeGenerationToleratesZeroRuntimes(t *testing.T) {
+	fleet := newFleetCoordinator(0, nil, nil, nil, nil)
+	generation := startOrchestratorRuntimeGeneration(context.Background(), nil, fleet, resolvedDegradationLadder{}, discardLogger(), noopConsoleStatusPublisher{})
+	generation.cancel()
+	select {
+	case <-generation.done:
+	default:
+		t.Fatal("expected an already-quiesced generation for zero runtimes")
+	}
+}
+
 func TestFleetRunnerCountSumsAcrossScaleSets(t *testing.T) {
 	runtimes := []*scaleSetRuntime{
 		{scaler: &Scaler{runners: runnerState{idle: map[string]runnerRef{"a": {}}, busy: map[string]runnerRef{"b": {}}}}},
@@ -939,13 +969,19 @@ func TestOrchestratorConfigDisabledRegistrationSkipsValidationAndCredentials(t *
 	}
 }
 
-// TestOrchestratorConfigRejectsAllDisabledRegistrations guards against
-// runOrchestrator's resolved.ScaleSets[0] panicking on startup: a config
-// with no primary scale_sets and only disabled registrations passes the
-// raw "at least one of scale_sets or registrations must be set" check
-// (registrations IS set) but must still fail validation once resolved,
-// since it resolves to zero actual scale sets.
-func TestOrchestratorConfigRejectsAllDisabledRegistrations(t *testing.T) {
+// TestOrchestratorConfigAllDisabledRegistrationsResolvesWithQueueExecutorWarning
+// covers queue-executor-only mode's config side (homelab#1623 Phase 3): once
+// every GitHub Actions runner lane has migrated to Actions Runner Controller,
+// a config with no primary scale_sets and only disabled registrations passes
+// the raw "at least one of scale_sets or registrations must be set" check
+// (registrations IS set) and must now resolve successfully -- runOrchestrator
+// and startOrchestratorRuntimeGeneration both tolerate zero scale sets (see
+// their doc comments) -- carrying a startup warning instead of failing.
+// Whether that is actually useful (rather than an idle no-op process) is
+// validated separately once environment variables are available: see
+// TestQueueExecutorEnvironmentRejectsZeroScaleSetsWithoutQueueExecutor in
+// queue_startup_test.go.
+func TestOrchestratorConfigAllDisabledRegistrationsResolvesWithQueueExecutorWarning(t *testing.T) {
 	body := `
 version: 1
 server:
@@ -972,9 +1008,21 @@ registrations:
         min_runners: 0
         max_runners: 1
 `
-	_, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "at least one enabled scale set is required") {
-		t.Fatalf("expected 'at least one enabled scale set' error, got %v", err)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("all-disabled registrations should resolve as queue-executor-only, got error: %v", err)
+	}
+	if len(resolved.ScaleSets) != 0 {
+		t.Fatalf("resolved scale sets = %#v, want none", resolved.ScaleSets)
+	}
+	found := false
+	for _, warning := range resolved.Warnings {
+		if strings.Contains(warning, "no enabled scale sets: running the queue executor only") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a queue-executor-only warning, got %#v", resolved.Warnings)
 	}
 }
 
