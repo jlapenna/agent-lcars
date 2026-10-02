@@ -93,6 +93,26 @@ need their own reviewed plan and apply.
 5. Fix the product contract or harness cause. Never regenerate a baseline only
    to turn the check green.
 
+## September 2026 failure remeasurement
+
+Issue #2096 reclassified the eight cited pull-request failures and the two
+actual main-branch E2E failures from 2026-09-07 through 2026-09-22 by their
+Playwright summaries and job logs:
+
+- eight runs reached Playwright and failed a product or test contract;
+- the text-contrast Agents dark-mode case was the repeated offender: it was
+  the hard failure in three runs and flaky inside a fourth run whose actual
+  failure was a different assertion. The badge contrast defect was fixed by
+  #2029 on 2026-09-23;
+- one environment run lost the Firestore emulator mid-suite (exit 143), and
+  one passed all 93 tests before artifact finalization returned HTTP 403.
+
+The harness now emits a dependency-named `::error::` when an emulator or its
+port fails, while diagnostics upload is non-gating because it does not change
+the browser result. In the next 80 pull-request CI runs from 2026-09-24 through
+2026-10-02, six runs failed and none failed in E2E: 0% of failed PR runs,
+below the issue's 10% target.
+
 ## Review checklist
 
 For every E2E change, reviewers should be able to answer:
