@@ -42,7 +42,7 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d6491
 ARG GO_VERSION=1.26.5
 
 # One pin feeds the source image and both runtime-user build assertions.
-ARG TERRAFORM_VERSION=1.16.4
+ARG TERRAFORM_VERSION=1.16.5
 
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool AND the
 # `lcars` session-title/status CLI (apps/telemetry-watcher's `bundle` and
@@ -222,7 +222,7 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 FROM ghcr.io/astral-sh/uv:0.12.22@sha256:f513a91fc62fe7c17567eee97230dd198e43edb8a9fbecca843714a4358fe1bc AS uv-runtime
 
 # Exact multi-platform Terraform artifact; only its static CLI is copied.
-FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:985cdc6c1d9b0a65b83377f666efd2f740b47f02ac55be1ced3d18f7d3b0e829 AS terraform-runtime
+FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:c7926feace05d0f7e73542842bf3945924e955a1f782cf000ccbb8d18fa42d77 AS terraform-runtime
 
 FROM ${RUNNER_BASE}
 
