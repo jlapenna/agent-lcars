@@ -11,7 +11,12 @@ operational instructions.
 ## Safety rules
 
 - The smoke change is a one-line README edit under a "Native work smoke"
-  heading. The PR it produces is **closed, never merged**.
+  heading. The PR it produces is **closed, never merged** -- and because a
+  PR authored by a fleet bot login squash-auto-merges the moment `Verify` is
+  green (`.github/workflows/agent-automerge.yml`), the item description must
+  say **open a DRAFT pull request** (a draft is never armed). The 2026-10-02
+  claude and codex smokes omitted that and merged before they could be
+  closed (reverted in #2100).
 - Create the item with the `work-create.yml` workflow (or a signed-in console
   session). Do not mint personal service-account tokens or add IAM bindings
   for a smoke.
@@ -40,7 +45,7 @@ operational instructions.
 ```bash
 gh workflow run work-create.yml \
   -f title='Native work smoke: add a line to README' \
-  -f description='Append one line to README.md under a new "Native work smoke" heading: the ISO date of this run. Open a PR; do not merge.' \
+  -f description='Append one line to README.md under a new "Native work smoke" heading: the ISO date of this run. Open a DRAFT pull request (gh pr create --draft); do not mark it ready and do not merge.' \
   -f repo=jlapenna/agent-lcars -f pipeline=claude
 gh run watch "$(gh run list --workflow work-create.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
