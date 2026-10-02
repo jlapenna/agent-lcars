@@ -59,6 +59,10 @@ Session Archive is the durable record for investigation and audit.
 
 ## Documentation map
 
+The full task-oriented index is [`docs/README.md`](docs/README.md), and
+[`ARCHITECTURE.md`](ARCHITECTURE.md) maps system ownership and proof
+boundaries. Common entry points:
+
 | Need                                    | Source of truth                                                                                   |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Onboard a repository to the agent fleet | [Repository onboarding](docs/onboarding-repo.md)                                                  |

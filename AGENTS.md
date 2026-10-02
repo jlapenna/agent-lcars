@@ -1,84 +1,108 @@
-# Agent LCARS contributor notes
+# Agent LCARS agent entry point
 
-## CRITICAL: Initialization
+This is the routing layer for work in the Agent LCARS repository. Keep current
+behavior in code, configuration, tests, generated contracts, and the document or
+skill that owns the workflow; do not turn this file into a parallel manual.
 
-Project-specific workflows and guardrails (worktree/git safety, PRs,
-verification) are defined by the **agent-lcars-dev** skill — it is the
-single source of truth; do not duplicate its guardrail text elsewhere in
-this file. Headless-CI-dispatch behavior is defined completely by
-**agent-protocol**. The **lcars** skill is situational control-plane
-documentation for developers changing dispatch or reconciliation machinery.
+## Start every task here
 
-Skills are auto-discovered per-runtime from `.agents/skills/` — don't skip
-checking for one just because a task looks generic. The fleet `PostToolUse`
-hook provides issue-ownership reminders only in
-LCARS-dispatched sessions. Interactive maintainer sessions follow the direct
-request and the development skill's collision checks, without automatic fleet
-claims or takeover comments for issue lookups.
+1. Read [`agent-lcars-dev`](.agents/skills/agent-lcars-dev/SKILL.md)
+   completely. It owns mandatory worktree, git, verification, pull-request,
+   deployment, infrastructure, and production-data guardrails.
+2. Confirm the primary checkout is current using that skill's freshness and
+   worktree procedure before diagnosing source.
+3. Determine execution mode. Interactive maintainer work follows the direct
+   request. Only an explicit LCARS dispatch follows
+   [`agent-protocol`](.agents/skills/agent-protocol/SKILL.md); generic CI,
+   piped input, or working in this repository does not establish a dispatch.
+4. Use the routing table below to load only the context needed for the task.
+5. Inspect the owning code, configuration, tests, and neighboring precedent
+   before adding another representation.
+6. Verify at the boundary the request cares about. Internal consistency, a
+   browser journey, a published action, a runner image, and a live deployment
+   require different evidence.
 
-The general `worktree-hygiene` skill is supplied by the installed public
-`repo-tools` plugin. Do not mirror its body in this repository; local skills
-own only Agent LCARS-specific behavior.
+When guidance is missing or wrong, repair the smallest authoritative owner so
+later runs retrieve one answer.
 
-Local initialization uses `pnpm install`, whose `prepare` lifecycle installs
-and verifies Husky through `tools/setup-git-hooks.sh`. Linked worktrees use
-`tools/setup-worktree.sh`; the primary checkout remains a clean `main`.
-GitHub's active `Protect main` ruleset requires `E2E`, `Verify`,
-`Runner image pnpm-store seed`, and `repository-owned Terraform`, plus
-resolved review threads before merge.
+## Repository map
 
-If a skill is not discoverable, read its `SKILL.md` and `references/`
-files directly from `.agents/skills/<name>/`.
+- `apps/console`: Next.js control plane, Work API, decision inbox, and session
+  views.
+- `libs/orchestrator` and `libs/work`: durable task/run state, admission,
+  leases, scheduling, and completion contracts.
+- `apps/runner-autoscaler`: QueueExecutor integration, direct-runner image,
+  host readiness, and execution support.
+- `apps/telemetry-watcher`: provider transcript and session telemetry.
+- `apps/github-actions-exporter`: GitHub Actions metrics.
+- `agents/shared/skills`: fleet-consumed worker protocol and session behavior.
+- `.github/actions` and reusable workflows: fleet-consumed CI capabilities.
+- `infra`: repository-owned GitHub and GCP policy declarations.
+- `tools`: executable repository policy, contract checks, and operator helpers.
 
-> [!IMPORTANT]
-> Git and deployment guardrails (worktrees mandatory, no `--no-verify`, and
-> explicit maintainer approval required for direct deployment or
-> Terraform/Firestore access) live in
-> [`.agents/skills/agent-lcars-dev/SKILL.md`](.agents/skills/agent-lcars-dev/SKILL.md#hard-guardrails).
-> Read them there — this section intentionally does not restate them.
+Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for ownership and dependency
+boundaries and [`docs/README.md`](docs/README.md) for the documentation index.
 
-Member repositories read this repo's fleet conventions directly — the
-**agent-protocol** skill for dispatched-agent behavior, `docs/` for the
-dispatch, credential, and published-workflow contracts. Nothing is copied
-into them: a doctrine document byte-synced across seven repos was
-duplication plus machinery to police the duplication, and it was removed.
-Repo-local facts stay in each member's own `AGENTS.md`.
+## Route context just in time
 
-Changing the console's appearance — `apps/console/src/app/global.css`, the
-theme, or a route shell — means reading
-[docs/console-design-system.md](docs/console-design-system.md) first. The
-console's look is one system, and it has come apart repeatedly by being fixed
-one route at a time; that document states the five rules and
-`design-system-contract.test.ts` fails the build when a change breaks one.
+| Task or decision                                                      | Read before acting                                                                                                                                                                                                             |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Any repository change                                                 | [`agent-lcars-dev`](.agents/skills/agent-lcars-dev/SKILL.md), then its [verification](.agents/skills/agent-lcars-dev/references/verify.md) and [PR](.agents/skills/agent-lcars-dev/references/pr.md) workflows when applicable |
+| Headless worker behavior or deliverable lifecycle                     | [`agent-protocol`](.agents/skills/agent-protocol/SKILL.md); interactive sessions do not adopt its dispatch-only claim or cadence rules                                                                                         |
+| Dispatch, reconciliation, telemetry, or auto-merge implementation     | [`lcars`](.agents/skills/lcars/SKILL.md) and [`docs/lifecycle-systems.md`](docs/lifecycle-systems.md)                                                                                                                          |
+| Work API operations or parked native work                             | [`OPERATIONS.md`](OPERATIONS.md)                                                                                                                                                                                               |
+| Deployment variables, credentials, or repository-vs-Homelab ownership | [`docs/deployment-boundary.md`](docs/deployment-boundary.md), [`docs/fleet-credentials.md`](docs/fleet-credentials.md), and [`docs/iam-contract.md`](docs/iam-contract.md)                                                     |
+| Published actions or reusable workflows                               | [`docs/published-actions.md`](docs/published-actions.md)                                                                                                                                                                       |
+| CI pause/arming flags or current state                                | [`docs/ci-control-flags.md`](docs/ci-control-flags.md); read live repository variables rather than trusting prose                                                                                                              |
+| Tests, required checks, or E2E                                        | [`docs/testing-policy.md`](docs/testing-policy.md), [`docs/e2e-reliability.md`](docs/e2e-reliability.md), and the verification workflow                                                                                        |
+| Console UI, theme, or route shell                                     | [`docs/console-design-system.md`](docs/console-design-system.md) before changing appearance                                                                                                                                    |
+| Repository onboarding, labels, or identity                            | [`docs/onboarding-repo.md`](docs/onboarding-repo.md), [`docs/github-label-contract.md`](docs/github-label-contract.md), and [`docs/bot-identity-formats.md`](docs/bot-identity-formats.md)                                     |
+| A failed or stuck agent run                                           | Use the `debug-agent-run` skill; use `issue-triage` for a requested issue-queue audit                                                                                                                                          |
+| Approved live authenticated console verification                      | Use the `verifying-console-session` skill                                                                                                                                                                                      |
 
-Keep this repository independent from the supersprinklesracing source tree.
-Shared telemetry integration is delivered by baking
-`apps/telemetry-watcher`'s bundle into the shared runner image at
-image-build time, built fresh from this repo's own `main`
-(`apps/runner-autoscaler/runner-image/Dockerfile` — see issue #30); this
-replaced an earlier versioned-standalone-bundle-on-GCS scheme (issue #29,
-retired for good in #66) whose published pin went stale for months. Do
-not add cross-repository _source_ imports or build contexts elsewhere —
-this one image-build integration point is the sanctioned exception, not a
-precedent for others. The runner image's pnpm seed also reads fleet
-repositories' lockfiles, as data only, through a weekly bot PR
-(`apps/runner-autoscaler/runner-image/pnpm-seed/README.md`, #2076); it
-copies no source or build context. Publishing this repo's composite actions for fleet
-consumption (consumers reference `jlapenna/agent-lcars/.github/actions/*`)
-is the sanctioned direction of dependency — consumers depend on this repo,
-never the reverse — see [docs/published-actions.md](docs/published-actions.md).
+`docs/superpowers/plans/` and dated audit/evidence documents describe a
+specific design or observation. They are not automatically current policy;
+reconcile them against live code and canonical contracts.
 
-That independence has a deliberate price (#1311): a tail of small foundation
-files is duplicated in both repos on purpose — per-lib `.swcrc`,
-`.prettierrc`, ambient `*.d.ts` declarations, `CODEOWNERS`, `LICENSE`, and
-`tools/nx-remote-cache-read-failure.test.sh` — and that tail may drift freely;
-do not "fix" it by sharing files. Generic runtime helpers and Vitest fixtures
-are supplied by the current `@jlapenna/fleet-runtime` artifact. The two
-Nx-aware ESLint rules and fleet baseline are supplied by the current
-`@jlapenna/repo-tools/eslint` artifact; this repository owns only its local
-configuration and contract assertions. Do not recreate local copies or
-cross-repository source imports.
+## Cross-repository and authority boundaries
 
-Never commit credentials. Runtime secrets belong in GCP Secret Manager and the
-host writer credential belongs in the encrypted homelab secret store. Terraform
-owns secret containers but not secret values.
+- Member repositories consume the shared protocol, published actions, reusable
+  workflows, and runner image from this repository. They keep their own domain
+  facts locally. Do not restore byte-synced doctrine or cross-repository source
+  imports.
+- Homelab owns the running fleet, host configuration, execution credentials,
+  and centralized apply paths. This repository owns LCARS application behavior,
+  published interfaces, runner-image inputs, and its infrastructure
+  declarations. Follow `docs/deployment-boundary.md` at the handoff.
+- Shared runtime helpers come from `@jlapenna/fleet-runtime`; shared repository
+  tooling and Nx-aware lint rules come from `@jlapenna/repo-tools`. Do not
+  recreate local source copies.
+- Secrets belong in GCP Secret Manager or the encrypted Homelab store.
+  Terraform owns secret containers, never values. Capability to invoke a tool
+  or workflow does not grant authority for deployment, Terraform, or Firestore
+  mutation.
+- The repository's `Protect main` ruleset declaration lives under
+  `infra/github-ruleset`; change it through its reviewed path, never by editing
+  GitHub policy out of band.
+
+## Setup and discovery
+
+- Primary checkout: `pnpm install` installs dependencies and git hooks.
+- Linked worktree: run `./tools/setup-worktree.sh`.
+- Use `./tools/nx` and query unfamiliar projects or flags with
+  `./tools/nx show project <name> --json` or `./tools/nx <command> --help`.
+- Search tracked source with `rg` and `rg --files`; avoid recursive scans
+  through caches and dependency trees.
+
+## Maintaining the harness
+
+- Put invariants in the earliest owner that can enforce them: type/API/state
+  machine, then executable test/lint/policy, then concise context or runbook.
+- Keep current contracts separate from chronology. Issues, PRs, and dated
+  evidence preserve the event; canonical docs and executable owners preserve
+  the lesson.
+- Add a skill only for a concrete prompt-triggered workflow that benefits from
+  progressive disclosure. Keep general repository work in `agent-lcars-dev`
+  and dispatched-worker behavior in `agent-protocol`.
+- Do not embed live operational state, retired paths, or copied member-repo
+  facts in this root guide. Link to the owner or provide a read surface.
