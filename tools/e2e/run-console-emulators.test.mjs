@@ -1,10 +1,10 @@
+/* eslint-disable vitest/no-import-node-test -- Verify runs this boundary test directly with node --test. */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-
-import test from 'vitest';
+import test from 'node:test';
 
 const root = path.resolve(import.meta.dirname, '../..');
 const runner = path.join(root, 'tools/e2e/run-console-emulators.sh');
