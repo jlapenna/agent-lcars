@@ -2,11 +2,11 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
     "Fleet-shared Renovate baseline (agent-lcars#1340 C2), consumed as",
-    "`github>jlapenna/agent-lcars//renovate-preset` by this repo, homelab,",
-    "sprinkles, and sync-padd. Carries only the common core; genuinely",
-    "repo-local policy stays in each consumer's renovate.json.",
-    "nx-cache-server keeps its deliberately stricter pin-digests config and",
-    "www/girosf have no Renovate \u2014 both stay off this preset on purpose.",
+    "`github>jlapenna/agent-lcars//renovate-preset` by hosted fleet repos.",
+    "Carries only the common core; genuinely repo-local policy stays in each",
+    "consumer's renovate.json. Update noise is controlled by the grouped",
+    "non-major automerge rule below, not a top-level schedule: Mend controls",
+    "hosted run timing, so a narrow repository window can starve updates.",
     "toolSettings.nodeMaxMemory (integer MiB, npm manager only) caps the Node",
     "child processes Renovate spawns (pnpm lockfile/artifact updates), not",
     "Renovate's own process. sprinkles' hosted job on 2026-09-15 used 3.0 GB",
@@ -21,7 +21,6 @@
   "labels": ["bot:renovate", "type:dependency-update"],
   "platformAutomerge": true,
   "rebaseWhen": "auto",
-  "schedule": ["after 8pm on monday"],
   "toolSettings": {
     "nodeMaxMemory": 1536
   },
