@@ -41,14 +41,14 @@ describe('shared Renovate preset', () => {
     );
   });
 
-  it('blocks only the known-broken @swc/core 1.16.13 release for every consumer', async () => {
+  it('blocks the @swc/core range above known-good 1.16.2 through proven-bad 1.16.13 for every consumer', async () => {
     const preset = await readRenovateConfig('renovate-preset.json');
     const localConfig = await readRenovateConfig('renovate.json');
 
     expect(preset.packageRules).toContainEqual({
-      description: expect.stringContaining('@swc/core 1.16.13'),
+      description: expect.stringContaining('@swc/core 1.16.12 and 1.16.13'),
       matchPackageNames: ['@swc/core'],
-      allowedVersions: '<1.16.13 || >1.16.13',
+      allowedVersions: '<1.16.3 || >1.16.13',
     });
     expect(localConfig.packageRules).not.toContainEqual(
       expect.objectContaining({ matchPackageNames: ['@swc/core'] }),

@@ -45,9 +45,9 @@
       "allowedVersions": "<7 || >=8"
     },
     {
-      "description": "@swc/core 1.16.13 makes Nx 23.2.1 project-graph construction fail on the fleet's Linux CI runners in both agent-lcars and Sprinkles. Hold only that broken release while allowing a later patch to prove the upstream fix.",
+      "description": "@swc/core 1.16.12 and 1.16.13 make Nx 23.2.1 project-graph construction fail on the fleet's Linux CI runners, while 1.16.2 passes the same agent-lcars verification. Hold the unverified range above the known-good release through the latest proven-bad release while allowing a later patch to prove the upstream fix.",
       "matchPackageNames": ["@swc/core"],
-      "allowedVersions": "<1.16.13 || >1.16.13"
+      "allowedVersions": "<1.16.3 || >1.16.13"
     },
     {
       "description": "Images hosted only on LAN registries (docker-registry.lan.jlapenna.net, local/ tags) are unreachable from Renovate's hosted runner, so lookups fail as recurring 'Error obtaining docker token' repository problems. These pins are deliberate and updated by hand.",
