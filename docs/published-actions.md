@@ -27,12 +27,12 @@ their operating constraints.
 
 ## Published reusable workflows
 
-| Workflow                       | Purpose                                          |
-| ------------------------------ | ------------------------------------------------ |
-| `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token.   |
-| `agent-automerge-reusable.yml` | Arm auto-merge and restore the post-merge chain. |
-| `repo-validation.yml`          | Run actionlint for a caller repository.          |
-| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job.   |
+| Workflow                       | Purpose                                        |
+| ------------------------------ | ---------------------------------------------- |
+| `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token. |
+| `agent-automerge-reusable.yml` | Arm and reconcile agent PR auto-merge.         |
+| `repo-validation.yml`          | Run actionlint for a caller repository.        |
+| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job. |
 
 Hosted provider workflows are retired; providers execute through the Console
 QueueExecutor instead.
@@ -66,6 +66,23 @@ pool should also set `restore-runs-on` to a different pool. The persistent
 `check-wait-minutes`; separating it prevents the waiter from occupying the
 only runner needed by the checks it is waiting for. Existing consumers that
 omit `restore-runs-on` retain the `runs-on` value.
+
+### Auto-merge identity
+
+Set `app-token-enabled: true`, pass `vars.AGENT_LCARS_CLIENT_ID` as
+`app-client-id`, and map `secrets.AGENT_LCARS_PRIVATE_KEY` to
+`APP_PRIVATE_KEY` for the preferred fleet path. The reusable workflow mints a
+short-lived token limited to the current repository and only the permissions
+used by its arm or reconcile job. GitHub then performs the merge as the Agent
+LCARS App, preserving the normal `push` and `workflow_run` event chain, native
+`Closes` handling, and repository branch deletion.
+
+The input defaults to false for compatible per-repository rollout. A caller
+that has not supplied the App credential continues to use `GITHUB_TOKEN`; for
+that caller only, `restore-main-checks` and `close-orphaned-anchors` remain the
+post-merge compatibility path. An App-enabled caller should retain the cron
+trigger for missed-event reconciliation but does not need a `workflow_run`
+trigger or any restore-chain inputs.
 
 ## Not consumer surfaces
 

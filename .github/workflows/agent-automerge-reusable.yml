@@ -10,8 +10,8 @@ name: Agent PR Auto-Merge (Reusable)
 # - From agent-lcars: the AGENT_BOT_LOGINS-membership admission gate (a
 #   repo-variable JSON array instead of hardcoded logins), the assert-inputs
 #   steps, per-PR concurrency on the arm job, the explicit linked-issue
-#   close after a GITHUB_TOKEN merge, and the close-orphaned-anchors cron
-#   sweep (with its reopen-respecting timeline check).
+#   legacy close after a GITHUB_TOKEN merge, and the close-orphaned-anchors
+#   fallback sweep (with its reopen-respecting timeline check).
 # - From sprinkles: latest-run-per-check-name selection (a superseded
 #   cancelled/failed run must not poison a healthy replacement, #4165),
 #   failure fast-exit with cancellation tolerance (#4400), the targeted
@@ -34,12 +34,11 @@ name: Agent PR Auto-Merge (Reusable)
 # the caller's known coding-agent bot identities gets squash auto-merge
 # enabled the moment a ready PR is opened/marked ready, gated only on the
 # ruleset's required checks. A scheduled/manual reconciliation sweep repairs a
-# missed event after an Actions outage. GITHUB_TOKEN-authored auto-merges then
-# do not emit downstream push workflows, and GITHUB_TOKEN-dispatched workflows do not
-# emit workflow_run events, so the restore-main-checks job rebuilds the
-# missing main-branch CI/deploy chain explicitly, and close-orphaned-anchors
-# sweeps up the linked issues GitHub's own "Closes #N" handling never closes
-# for GITHUB_TOKEN merges (measured repeatedly - see the step comments).
+# missed event after an Actions outage. App-enabled callers arm with a
+# repository-scoped Agent LCARS installation token, so GitHub emits the normal
+# push/workflow_run chain and applies native linked-issue closure and branch
+# deletion. Callers that have not opted in retain the GITHUB_TOKEN restore and
+# orphan-cleanup fallback paths below.
 #
 # Contract guardrails: a reusable workflow's `on.workflow_call` surface is
 # not covered by published-actions.contract.test.mjs (composite actions
@@ -68,6 +67,21 @@ on:
           AGENT_FLEET_LOGIN repo variable.
         required: true
         type: string
+      app-token-enabled:
+        description: >-
+          Mint and use a repository-scoped Agent LCARS App installation token
+          for merge operations. Opt-in per repository; false preserves the
+          legacy GITHUB_TOKEN merge actor and its post-merge restore chain.
+        required: false
+        type: boolean
+        default: false
+      app-client-id:
+        description: >-
+          Agent LCARS GitHub App client ID. Required when app-token-enabled is
+          true; pass the caller's AGENT_LCARS_CLIENT_ID repository variable.
+        required: false
+        type: string
+        default: ''
       runs-on:
         description: >-
           Runner labels as a JSON array string, passed straight to
@@ -183,6 +197,12 @@ on:
         required: false
         type: string
         default: ''
+    secrets:
+      APP_PRIVATE_KEY:
+        description: >-
+          Agent LCARS App private key. Required when app-token-enabled is true;
+          pass the caller's AGENT_LCARS_PRIVATE_KEY repository secret.
+        required: false
 
 permissions: {}
 
@@ -254,14 +274,34 @@ jobs:
         env:
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
           AGENT_FLEET_LOGIN: ${{ inputs.fleet-login }}
+          APP_TOKEN_ENABLED: ${{ inputs.app-token-enabled }}
+          APP_CLIENT_ID: ${{ inputs.app-client-id }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
         run: |
           missing=""
           [ -z "$AGENT_BOT_LOGINS" ] && missing="$missing bot-logins"
           [ -z "$AGENT_FLEET_LOGIN" ] && missing="$missing fleet-login"
+          if [ "$APP_TOKEN_ENABLED" = true ]; then
+            [ -z "$APP_CLIENT_ID" ] && missing="$missing app-client-id"
+            [ -z "$APP_PRIVATE_KEY" ] && missing="$missing APP_PRIVATE_KEY"
+          fi
           if [ -n "$missing" ]; then
             echo "::error::Missing required workflow input(s):$missing"
             exit 1
           fi
+
+      - name: Mint repository-scoped Agent LCARS token
+        if: inputs.app-token-enabled
+        id: mint-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
 
       # Ownership spine, matching the fleet lanes' own "Claim the issue as
       # agent-lcars-bot" step: agent-authored PRs carry the fleet's assignee
@@ -272,7 +312,7 @@ jobs:
       # below.
       - name: Claim the PR as the fleet login
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           FLEET_LOGIN: ${{ inputs.fleet-login }}
@@ -284,7 +324,7 @@ jobs:
 
       - name: Clear outstanding review requests
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
@@ -300,7 +340,7 @@ jobs:
 
       - name: Enable squash auto-merge
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
@@ -343,9 +383,20 @@ jobs:
       - name: Assert required inputs are set
         env:
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
+          APP_TOKEN_ENABLED: ${{ inputs.app-token-enabled }}
+          APP_CLIENT_ID: ${{ inputs.app-client-id }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
         run: |
+          missing=""
           if [ -z "$AGENT_BOT_LOGINS" ]; then
-            echo "::error::Missing required workflow input: bot-logins"
+            missing="$missing bot-logins"
+          fi
+          if [ "$APP_TOKEN_ENABLED" = true ]; then
+            [ -z "$APP_CLIENT_ID" ] && missing="$missing app-client-id"
+            [ -z "$APP_PRIVATE_KEY" ] && missing="$missing APP_PRIVATE_KEY"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required workflow input(s) or secret(s):$missing"
             exit 1
           fi
           if ! jq -e 'type == "array" and all(.[]; type == "string")' \
@@ -354,10 +405,24 @@ jobs:
             exit 1
           fi
 
+      - name: Mint repository-scoped Agent LCARS token
+        if: inputs.app-token-enabled
+        id: mint-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
+          permission-checks: read
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Arm ready open agent PRs missed by event delivery
         env:
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -466,7 +531,7 @@ jobs:
       - name: Dismiss stale bot CHANGES_REQUESTED reviews on armed green agent PRs
         env:
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -614,7 +679,7 @@ jobs:
       # cannot rewrite half the queue's heads at once.
       - name: Update behind branches of auto-merge-armed PRs
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -741,11 +806,12 @@ jobs:
     # workflow_dispatch monitor (an unstrand-style healer naming pr +
     # head_sha explicitly).
     if: >
-      (github.event_name == 'workflow_dispatch' && inputs.monitor-pr != '') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.draft == false &&
-       contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login))
+      inputs.app-token-enabled == false &&
+      ((github.event_name == 'workflow_dispatch' && inputs.monitor-pr != '') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.draft == false &&
+        contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login)))
     runs-on: ${{ fromJSON(inputs.restore-runs-on || inputs.runs-on) }}
     timeout-minutes: ${{ inputs.restore-timeout-minutes }}
     permissions:
@@ -1412,8 +1478,9 @@ jobs:
   # on a plain workflow_dispatch (one without targeted-monitor inputs).
   close-orphaned-anchors:
     if: >
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.monitor-pr == '')
+      inputs.app-token-enabled == false &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.monitor-pr == ''))
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
