@@ -41,6 +41,20 @@ describe('shared Renovate preset', () => {
     );
   });
 
+  it('blocks only the known-broken @swc/core 1.16.13 release for every consumer', async () => {
+    const preset = await readRenovateConfig('renovate-preset.json');
+    const localConfig = await readRenovateConfig('renovate.json');
+
+    expect(preset.packageRules).toContainEqual({
+      description: expect.stringContaining('@swc/core 1.16.13'),
+      matchPackageNames: ['@swc/core'],
+      allowedVersions: '<1.16.13 || >1.16.13',
+    });
+    expect(localConfig.packageRules).not.toContainEqual(
+      expect.objectContaining({ matchPackageNames: ['@swc/core'] }),
+    );
+  });
+
   it("gives every pnpm 11 consumer pnpm's 24-hour release-age policy", async () => {
     const preset = await readRenovateConfig('renovate-preset.json');
     const localConfig = await readRenovateConfig('renovate.json');
