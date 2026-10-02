@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 type RenovateConfig = {
   packageRules?: Array<Record<string, unknown>>;
+  schedule?: string[];
   toolSettings?: Record<string, unknown>;
 };
 
@@ -12,6 +13,20 @@ async function readRenovateConfig(path: string): Promise<RenovateConfig> {
 }
 
 describe('shared Renovate preset', () => {
+  it('uses grouped automerge instead of a hosted-run schedule to control update noise', async () => {
+    const preset = await readRenovateConfig('renovate-preset.json');
+
+    expect(preset.schedule).toBeUndefined();
+    expect(preset.packageRules).toContainEqual({
+      description: expect.stringContaining('Group and automerge'),
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'all non-major dependencies',
+      groupSlug: 'all-minor-patch',
+      automerge: true,
+      automergeType: 'pr',
+    });
+  });
+
   it('blocks only the known-incompatible TypeScript 7 line for every consumer', async () => {
     const preset = await readRenovateConfig('renovate-preset.json');
     const localConfig = await readRenovateConfig('renovate.json');
