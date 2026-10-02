@@ -264,7 +264,7 @@ jobs:
         run: bash tools/e2e-runner/node-tar-health.test.sh
 
       - name: Test hermetic E2E environment
-        run: node --test tools/e2e-hermetic-env.test.mjs
+        run: node --test tools/e2e-hermetic-env.test.mjs tools/e2e/run-console-emulators.test.mjs
 
       - name: Test e2e-docker isolation (#908)
         run: bash tools/e2e-docker-isolation.test.sh
@@ -650,6 +650,10 @@ jobs:
       # load-bearing: failures are when these artifacts matter most (#991).
       - name: Upload console e2e diagnostics
         if: always() && steps.e2e-scope.outputs.run == 'true'
+        # Diagnostics are ancillary. An artifact-service outage must not turn
+        # a fully passing Playwright suite into a red required E2E check
+        # (run 34252742315: 93 passed, FinalizeArtifact returned 403).
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: console-e2e-diagnostics-${{ github.run_attempt }}

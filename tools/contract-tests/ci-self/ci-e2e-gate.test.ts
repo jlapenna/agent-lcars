@@ -15,7 +15,13 @@ interface Workflow {
     {
       if?: string;
       name?: string;
-      steps?: Array<{ id?: string; if?: string; name?: string; run?: string }>;
+      steps?: Array<{
+        id?: string;
+        if?: string;
+        name?: string;
+        run?: string;
+        'continue-on-error'?: boolean;
+      }>;
     }
   >;
 }
@@ -44,6 +50,18 @@ describe('CI E2E operational gate', () => {
         if: "steps.e2e-scope.outputs.run == 'true'",
         name: 'Run console e2e suite [full-suite]',
         run: './tools/e2e-local.sh',
+      }),
+    );
+    expect(workflow.jobs?.e2e?.steps).toContainEqual(
+      expect.objectContaining({
+        name: 'Upload console e2e diagnostics',
+        'continue-on-error': true,
+      }),
+    );
+    expect(workflow.jobs?.['verify-full']?.steps).toContainEqual(
+      expect.objectContaining({
+        name: 'Test hermetic E2E environment',
+        run: expect.stringContaining('run-console-emulators.test.mjs'),
       }),
     );
 
