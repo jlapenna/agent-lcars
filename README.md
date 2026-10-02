@@ -104,3 +104,5 @@ set `LCARS_WORK_AUDIENCE` to match the console's explicit audience.
 ## Native work smoke
 
 2026-10-02 claude
+
+2026-10-02 codex
