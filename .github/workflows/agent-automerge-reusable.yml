@@ -21,7 +21,8 @@ name: Agent PR Auto-Merge (Reusable)
 #   deploy -> post-deploy-verify run-ID bridge.
 #
 # The caller owns everything `workflow_call` cannot carry: triggers (the
-# cron schedule, pull_request/pull_request_review, the repo's own
+# cron schedule, trusted pull_request_target for App-enabled callers (or
+# pull_request/pull_request_review for legacy GITHUB_TOKEN callers), the repo's own
 # workflow_run workflow names, workflow_dispatch and its targeted-monitor
 # inputs), workflow-level permissions, and the per-repo parameter values.
 # See agent-automerge.yml for this repo's own caller, which doubles as the
@@ -209,7 +210,7 @@ permissions: {}
 jobs:
   cancel-parked-automerge:
     if: >
-      github.event_name == 'pull_request' &&
+      (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') &&
       github.event.action == 'labeled' &&
       github.event.label.name == 'status:needs-human' &&
       contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login)
@@ -238,14 +239,15 @@ jobs:
             --jq 'if .autoMergeRequest == null then . else error("auto-merge remains armed on parked PR") end'
 
   automerge:
-    # The event guard is redundant for scheduled runs (a scheduled run has
-    # no `pull_request` payload, so the login check already fails) but
-    # explicit: this job must never look like it could fire off a caller's
-    # cron. The membership test reads the caller-supplied JSON directly
-    # (fromJSON, no fallback), so an empty bot-logins fails loudly here
-    # rather than skipping silently.
+    # App credentials are admitted only from pull_request_target, whose
+    # workflow code comes from the trusted default branch. Legacy callers that
+    # do not receive the App secret retain pull_request/pull_request_review.
+    # The membership test reads the caller-supplied JSON directly (fromJSON,
+    # no fallback), so an empty bot-logins fails loudly rather than skipping.
     if: >
-      (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') &&
+      ((inputs.app-token-enabled && github.event_name == 'pull_request_target') ||
+       (inputs.app-token-enabled == false &&
+        (github.event_name == 'pull_request' || github.event_name == 'pull_request_review'))) &&
       contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login) &&
       github.event.pull_request.draft == false &&
       !contains(github.event.pull_request.labels.*.name, 'status:needs-human') &&
@@ -257,10 +259,8 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    # `pull_request:[opened]` and `pull_request_review:[submitted]` for the
-    # same PR can both land here close together; without a per-PR group
-    # their `gh pr ready`/`gh pr merge --auto` calls race. Serialize per PR
-    # rather than dropping either invocation.
+    # Multiple admission events for the same PR can land close together;
+    # serialize their `gh pr ready`/`gh pr merge --auto` calls per PR.
     concurrency:
       group: automerge-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
@@ -356,26 +356,29 @@ jobs:
   reconcile-automerge:
     if: >
       github.event_name == 'schedule' ||
+      (github.event_name == 'push' && inputs.app-token-enabled) ||
       (github.event_name == 'workflow_dispatch' && inputs.monitor-pr == '')
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     # The open-PR sweep below calls `gh pr view --json statusCheckRollup`, and
     # gh expands that into a GraphQL query spanning three resources:
-    # the rollup's CheckRun nodes (`checks: read`), each context's
+    # the rollup's CheckRun nodes (`checks: read`), StatusContext nodes
+    # (`statuses: read`), each context's
     # `checkSuite.workflowRun` (`actions: read`), and the PR itself
     # (`pull-requests`). GitHub fails the *whole* field when any one of them
     # is missing -- it does not return a partial rollup -- so the sweep exits
     # non-zero and every run of this workflow fails. Granting only part of the
     # set just moves the error one level deeper into the same query.
     #
-    # A caller cannot compensate: a reusable workflow's job-level block sets
-    # the token scope, it does not inherit or widen from the caller. The
-    # post-merge job below queries the same field and declares both.
+    # Both this job and the caller must declare the scopes: a reusable
+    # workflow cannot widen the caller's token ceiling. The post-merge job
+    # below queries the same field and declares the same read scopes.
     permissions:
       actions: read
       checks: read
       contents: write
       pull-requests: write
+      statuses: read
     concurrency:
       group: agent-automerge-reconcile-open-prs
       cancel-in-progress: false
@@ -422,6 +425,9 @@ jobs:
       - name: Arm ready open agent PRs missed by event delivery
         env:
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
+          APP_LOGIN: ${{ steps.mint-app-token.outputs.app-slug && format('app/{0}', steps.mint-app-token.outputs.app-slug) || '' }}
+          APP_TOKEN_ENABLED: ${{ inputs.app-token-enabled }}
+          LEGACY_AUTOMERGE_LOGIN: app/github-actions
           GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
         run: |
@@ -480,10 +486,36 @@ jobs:
             fi
 
             VIEW=$(gh pr view "$PR" --repo "$REPO" --json state,autoMergeRequest)
-            if jq -e '.state == "MERGED" or .autoMergeRequest != null' \
-              <<<"$VIEW" >/dev/null; then
-              echo "PR #$PR is already merged or auto-merge-armed."
+            if jq -e '.state == "MERGED"' <<<"$VIEW" >/dev/null; then
+              echo "PR #$PR merged while reconciliation was inspecting it."
               continue
+            fi
+            if jq -e '.autoMergeRequest != null' <<<"$VIEW" >/dev/null; then
+              if [ "$APP_TOKEN_ENABLED" != true ] || \
+                 jq -e --arg login "$APP_LOGIN" \
+                   '.autoMergeRequest.enabledBy.login == $login' \
+                   <<<"$VIEW" >/dev/null; then
+                echo "PR #$PR is already armed by the expected identity."
+                continue
+              fi
+
+              LEGACY_ACTOR=$(jq -r '.autoMergeRequest.enabledBy.login // "unknown"' <<<"$VIEW")
+              if [ "$LEGACY_ACTOR" != "$LEGACY_AUTOMERGE_LOGIN" ]; then
+                echo "PR #$PR is already armed by $LEGACY_ACTOR; preserving that explicit actor."
+                continue
+              fi
+              echo "Migrating PR #$PR auto-merge from $LEGACY_ACTOR to $APP_LOGIN."
+              if ! gh pr merge "$PR" --repo "$REPO" --disable-auto; then
+                echo "::error::Could not disable legacy auto-merge for agent PR #$PR."
+                FAILED=$((FAILED + 1))
+                continue
+              fi
+              if ! gh pr view "$PR" --repo "$REPO" --json autoMergeRequest \
+                --jq 'if .autoMergeRequest == null then . else error("legacy auto-merge remains armed") end' >/dev/null; then
+                echo "::error::Legacy auto-merge remains armed on agent PR #$PR."
+                FAILED=$((FAILED + 1))
+                continue
+              fi
             fi
 
             if ! gh pr merge "$PR" --repo "$REPO" --auto --squash; then
@@ -493,8 +525,11 @@ jobs:
             fi
 
             VIEW=$(gh pr view "$PR" --repo "$REPO" --json state,autoMergeRequest)
-            if jq -e '.state == "MERGED" or .autoMergeRequest != null' \
-              <<<"$VIEW" >/dev/null; then
+            if jq -e --arg app_enabled "$APP_TOKEN_ENABLED" --arg login "$APP_LOGIN" '
+              .state == "MERGED" or
+              (.autoMergeRequest != null and
+               ($app_enabled != "true" or .autoMergeRequest.enabledBy.login == $login))
+            ' <<<"$VIEW" >/dev/null; then
               echo "Armed squash auto-merge for agent PR #$PR."
               ARMED=$((ARMED + 1))
             else
@@ -532,6 +567,7 @@ jobs:
         env:
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
           GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
+          GH_READ_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -563,7 +599,7 @@ jobs:
               continue
             fi
 
-            VIEW=$(gh pr view "$PR" --repo "$REPO" \
+            VIEW=$(GH_TOKEN="$GH_READ_TOKEN" gh pr view "$PR" --repo "$REPO" \
               --json autoMergeRequest,reviewDecision,headRefOid,statusCheckRollup)
 
             # Auto-merge armed is the opt-in, and a requested-changes decision
@@ -680,6 +716,7 @@ jobs:
       - name: Update behind branches of auto-merge-armed PRs
         env:
           GH_TOKEN: ${{ steps.mint-app-token.outputs.token || github.token }}
+          GH_READ_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -701,7 +738,7 @@ jobs:
               break
             fi
 
-            VIEW=$(gh pr view "$PR" --repo "$REPO" \
+            VIEW=$(GH_TOKEN="$GH_READ_TOKEN" gh pr view "$PR" --repo "$REPO" \
               --json author,autoMergeRequest,labels,mergeStateStatus,statusCheckRollup)
 
             # Auto-merge armed by anyone is the opt-in for this sweep --
@@ -820,6 +857,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      statuses: read
     concurrency:
       group: agent-postmerge-${{ inputs.monitor-head-sha || github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
       cancel-in-progress: false

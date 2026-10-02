@@ -77,6 +77,25 @@ used by its arm or reconcile job. GitHub then performs the merge as the Agent
 LCARS App, preserving the normal `push` and `workflow_run` event chain, native
 `Closes` handling, and repository branch deletion.
 
+An App-enabled caller must use `pull_request_target`, not `pull_request` or
+`pull_request_review`, and must never check out or execute PR-head content in
+that workflow. This keeps the private key in workflow code loaded from the
+trusted default branch. The reusable arm job rejects App mode on any other PR
+event as defense in depth. Legacy callers do not receive the App secret and
+retain their existing `pull_request`/`pull_request_review` triggers.
+
+The caller must also grant its `GITHUB_TOKEN` `statuses: read` alongside
+`checks: read`; GitHub's `statusCheckRollup` query fails as a whole when a
+commit-status context exists and either scope is missing. Read-only rollup
+queries use that token because the fleet App intentionally has no commit-status
+grant; mutations continue to use the repository-scoped App token. App-enabled
+callers add a `push: [main]` trigger. That first trusted-base run migrates any
+still-open agent PR armed by the exact legacy `app/github-actions` identity: it
+disables the legacy request and re-arms with the App token before the restore
+path is considered retired. Human and other App arms are preserved. Scheduled
+reconciliation also performs the migration, covering the cutover PR itself
+when its legacy merge actor suppresses that first push.
+
 The input defaults to false for compatible per-repository rollout. A caller
 that has not supplied the App credential continues to use `GITHUB_TOKEN`; for
 that caller only, `restore-main-checks` and `close-orphaned-anchors` remain the
