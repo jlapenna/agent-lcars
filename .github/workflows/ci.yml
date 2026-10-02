@@ -283,7 +283,7 @@ jobs:
 
       - name: Cache dependencies for baked uv
         if: steps.python-tooling.outputs.ready == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ steps.python-tooling.outputs.cache_dir }}
           key: uv-baked-${{ runner.os }}-${{ runner.arch }}-${{ steps.python-tooling.outputs.uv_version }}-${{ steps.python-tooling.outputs.python_version }}-${{ hashFiles('apps/github-actions-exporter/requirements.lock') }}
