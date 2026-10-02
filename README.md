@@ -100,9 +100,3 @@ memory for each Playwright server launch. The standalone bundle smoke generates
 its own ephemeral key. Neither path imports deployment credentials or bypasses
 the production boot validator. An autoscaler using a custom Work audience must
 set `LCARS_WORK_AUDIENCE` to match the console's explicit audience.
-
-## Native work smoke
-
-2026-10-02 claude
-
-2026-10-02 codex
