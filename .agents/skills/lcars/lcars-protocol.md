@@ -36,6 +36,11 @@ reconcile operations. That App identity is part of the delivery contract: its
 merge must emit the normal main-branch push chain, apply linked-issue closure,
 and honor repository branch deletion. `GITHUB_TOKEN` plus the reusable's
 restore jobs is a compatibility path only for callers that have not opted in.
+The App private key crosses only a `pull_request_target` trusted-base workflow;
+that workflow must never check out or execute PR-head content.
+The first main-branch push after cutover and every scheduled reconciliation
+migrate an auto-merge arm from the exact legacy `app/github-actions` identity
+to the App identity; arms created by humans or other Apps stay untouched.
 
 ## Repository development boundaries
 

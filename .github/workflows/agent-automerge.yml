@@ -13,13 +13,22 @@ name: Agent PR Auto-Merge
 # to this workflow.
 
 on:
-  pull_request:
+  # App credentials must only enter workflow code loaded from the trusted
+  # default branch. pull_request_target provides the PR metadata this workflow
+  # needs without evaluating the PR head; no job in this workflow checks out or
+  # executes PR content. A same-repository pull_request trigger would expose the
+  # fleet private key to workflow YAML changed on that branch.
+  pull_request_target:
     # `synchronize` and `reopened` are recovery triggers: if the opening event
     # was missed while Actions was unavailable, the next normal PR mutation
     # retries the idempotent arm instead of leaving the PR stranded until cron.
     types: [opened, reopened, synchronize, ready_for_review, labeled]
-  pull_request_review:
-    types: [submitted]
+  # Run reconciliation immediately after an App-token rollout reaches main so
+  # any PR armed earlier by github-actions[bot] is disabled and re-armed as the
+  # App before its checks can complete. The scheduled sweep remains the repair
+  # path for later missed events.
+  push:
+    branches: [main]
   # The schedule retains the missed-event reconciliation sweep. App-token
   # merges emit the normal push/workflow_run chain, close linked issues, and
   # delete merged branches, so this caller no longer subscribes to CI
@@ -37,13 +46,14 @@ permissions:
   # cancellation job and for a deliberate future fallback rollout.
   issues: write
   pull-requests: write
+  statuses: read
 
-# Multiple pull-request/review events for the same PR need only the most
-# recent auto-merge evaluation. Scheduled reconciliation uses its own run ID,
-# so it never cancels an event-driven arm.
+# Multiple pull-request-target events for the same PR need only the most recent
+# auto-merge evaluation. Scheduled reconciliation uses its own run ID, so it
+# never cancels an event-driven arm.
 concurrency:
-  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_review' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   automerge:
