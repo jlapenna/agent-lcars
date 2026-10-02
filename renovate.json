@@ -14,6 +14,11 @@
       "matchUpdateTypes": ["major"]
     },
     {
+      "description": "pnpm 11.28.3 creates self-referential links for skipped platform-specific optional dependencies on Linux, which makes Next/Turbopack standalone tracing fail; allow later 11.x fixes while holding only the broken release",
+      "allowedVersions": "!=11.28.3",
+      "matchPackageNames": ["pnpm"]
+    },
+    {
       "description": "The runner image's curated pnpm-store seed and its regression fixtures are refreshed deliberately (pnpm-seed/README.md: no more than monthly, independent of consumer dependency updates), and the image only ever reads their lockfiles (`pnpm fetch --frozen-lockfile`). Renovate bumped the fixture package.json files weekly without touching those locks, so the manifests drifted from what is actually seeded, the fixtures made up about half of the weekly group, and the still-locked vitest 4.1.11 kept a phantom 'update vitest monorepo to v5' major on the dashboard (#3) after the repo itself had moved to vitest 5. pnpm is NOT exempt: each fleet seed's packageManager is copied from its source repository by tools/sync-runner-pnpm-seed.py, and when #2084 bumped it here Renovate re-ran pnpm against the seed's dependency-less package.json and rewrote all four fleet lockfiles to empty, which failed every runner-image build (merge-to-live) until they were restored.",
       "enabled": false,
       "matchFileNames": [

@@ -1,7 +1,7 @@
 {
   "name": "pnpm-store-seed-regression-hit",
   "private": true,
-  "packageManager": "pnpm@11.28.0",
+  "packageManager": "pnpm@11.28.2",
   "dependencies": {
     "typescript": "6.0.3"
   }
