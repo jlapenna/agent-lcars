@@ -1,6 +1,6 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   expireAutoscalerStatuses,
@@ -8,6 +8,46 @@ import {
 } from './runner-autoscaler-status';
 
 describe('RunnerAutoscalerStatus', () => {
+  it('shows ARC lane capacity and expires it when polling loses the producer', () => {
+    const lane = {
+      schemaVersion: 3 as const,
+      kind: 'arc-lane' as const,
+      lane: 'lcars-ci',
+      registrationUrl: 'https://github.com/jlapenna/agent-lcars',
+      assignedJobs: 3,
+      runningJobs: 1,
+      pendingJobs: 2,
+      idleRunners: 1,
+      registeredRunners: 2,
+      desiredRunners: 3,
+      minRunners: 0,
+      maxRunners: 4,
+      updatedAt: '2026-10-03T01:00:00.000Z',
+    };
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{ statuses: [], lanes: [lane], warnings: [] }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('arc-lane-lcars-ci')).toHaveTextContent(
+      '2 pending',
+    );
+    expect(screen.getByTestId('arc-lane-lcars-ci')).toHaveTextContent(
+      '1 running',
+    );
+    expect(screen.getByRole('link', { name: 'lcars-ci' })).toHaveAttribute(
+      'href',
+      lane.registrationUrl,
+    );
+    const result = expireAutoscalerStatuses(
+      { statuses: [], lanes: [lane], warnings: [] },
+      Date.parse('2026-10-03T01:00:31.000Z'),
+    );
+    expect(result.lanes).toEqual([]);
+    expect(result.warnings[0]).toContain('stale');
+  });
   it('expires a cached status locally when polling cannot refresh it', () => {
     const result = expireAutoscalerStatuses(
       {
@@ -89,7 +129,7 @@ describe('RunnerAutoscalerStatus', () => {
     expect(result.queueExecutor).toBeUndefined();
     expect(result.warnings).toEqual([
       'An unrelated telemetry warning.',
-      'Runner autoscaler status is stale.',
+      'Runner capacity status is stale.',
     ]);
   });
 
@@ -281,8 +321,65 @@ describe('RunnerAutoscalerStatus', () => {
       </MantineProvider>,
     );
 
-    expect(
-      screen.getByTestId('runner-autoscaler-status-warning'),
-    ).toHaveTextContent('unavailable');
+    expect(screen.getByTestId('data-warnings')).toHaveTextContent(
+      'unavailable',
+    );
+  });
+
+  it('keeps partial telemetry warnings in one live workspace band and clears them on recovery', async () => {
+    vi.useFakeTimers();
+    const queueExecutor = {
+      schemaVersion: 2 as const,
+      kind: 'queue-executor' as const,
+      executor: 'queue',
+      ready: true,
+      draining: false,
+      maxConcurrent: 3,
+      updatedAt: new Date().toISOString(),
+    };
+    const warning = 'ARC lane status is stale.';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          statuses: [],
+          queueExecutor,
+          warnings: ['ARC status unavailable.'],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ statuses: [], queueExecutor, warnings: [] }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(
+        <MantineProvider>
+          <RunnerAutoscalerStatus
+            initial={{ statuses: [], queueExecutor, warnings: [warning] }}
+          />
+        </MantineProvider>,
+      );
+      expect(screen.getAllByText(warning)).toHaveLength(1);
+      expect(
+        screen
+          .getByTestId('data-warnings')
+          .closest('.console-workspace__warnings'),
+      ).not.toBeNull();
+      expect(screen.getByTestId('queue-executor-status')).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(screen.queryByText(warning)).not.toBeInTheDocument();
+      expect(screen.getAllByText('ARC status unavailable.')).toHaveLength(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(screen.queryByTestId('data-warnings')).not.toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 });

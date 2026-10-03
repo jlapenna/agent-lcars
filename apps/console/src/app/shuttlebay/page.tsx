@@ -1,4 +1,3 @@
-import { Text } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -7,31 +6,14 @@ import { auth } from '../../auth';
 import { getAutoscalerStatuses } from '../../lib/autoscaler-status';
 import { getWatchedRepos } from '../../lib/github-client';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
-import { DataWarnings } from '../console-header';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { RunnerAutoscalerStatus } from '../runner-autoscaler-status';
 import { withConsolePageShell } from '../with-console-page-shell';
-import { ShuttlebayWorkspace } from './shuttlebay-workspace';
 
 async function ShuttlebayBody() {
   const autoscaler = await getAutoscalerStatuses();
 
-  return (
-    <ShuttlebayWorkspace
-      warnings={
-        autoscaler.warnings.length > 0 ? (
-          <DataWarnings warnings={autoscaler.warnings} />
-        ) : undefined
-      }
-      toolbar={
-        <Text c="dimmed" size="sm">
-          Refreshes automatically every 10 seconds.
-        </Text>
-      }
-    >
-      <RunnerAutoscalerStatus initial={autoscaler} />
-    </ShuttlebayWorkspace>
-  );
+  return <RunnerAutoscalerStatus initial={autoscaler} />;
 }
 
 interface ShuttlebayViewProps {

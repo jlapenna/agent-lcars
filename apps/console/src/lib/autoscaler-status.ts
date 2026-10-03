@@ -45,8 +45,68 @@ export interface QueueExecutorStatus {
 
 export interface AutoscalerStatusResult {
   statuses: AutoscalerScaleSetStatus[];
+  lanes?: ArcLaneStatus[];
   queueExecutor?: QueueExecutorStatus;
   warnings: string[];
+}
+
+export interface ArcLaneStatus {
+  schemaVersion: 3;
+  kind: 'arc-lane';
+  lane: string;
+  registrationUrl: string;
+  assignedJobs: number;
+  runningJobs: number;
+  pendingJobs: number;
+  idleRunners: number;
+  registeredRunners: number;
+  desiredRunners: number;
+  minRunners: number;
+  maxRunners: number;
+  updatedAt: string;
+}
+
+function parseArcLane(value: unknown): ArcLaneStatus | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const status = value as Record<string, unknown>;
+  const counts = [
+    'assignedJobs',
+    'runningJobs',
+    'pendingJobs',
+    'idleRunners',
+    'registeredRunners',
+    'desiredRunners',
+    'minRunners',
+    'maxRunners',
+  ] as const;
+  if (
+    status['schemaVersion'] !== 3 ||
+    status['kind'] !== 'arc-lane' ||
+    typeof status['lane'] !== 'string' ||
+    typeof status['registrationUrl'] !== 'string' ||
+    !/^https?:\/\//.test(status['registrationUrl']) ||
+    typeof status['updatedAt'] !== 'string' ||
+    counts.some(
+      (key) =>
+        !Number.isSafeInteger(status[key]) || (status[key] as number) < 0,
+    )
+  )
+    return undefined;
+  return {
+    schemaVersion: 3,
+    kind: 'arc-lane',
+    lane: status['lane'],
+    registrationUrl: status['registrationUrl'],
+    assignedJobs: status['assignedJobs'] as number,
+    runningJobs: status['runningJobs'] as number,
+    pendingJobs: status['pendingJobs'] as number,
+    idleRunners: status['idleRunners'] as number,
+    registeredRunners: status['registeredRunners'] as number,
+    desiredRunners: status['desiredRunners'] as number,
+    minRunners: status['minRunners'] as number,
+    maxRunners: status['maxRunners'] as number,
+    updatedAt: status['updatedAt'],
+  };
 }
 
 function parseRunner(value: unknown): AutoscalerRunnerStatus | undefined {
@@ -185,10 +245,25 @@ export async function getAutoscalerStatuses(): Promise<AutoscalerStatusResult> {
           now - updatedAt <= RUNNER_STATUS_STALENESS_MS
         );
       });
+    const laneRecords = records
+      .map(parseArcLane)
+      .filter((status): status is ArcLaneStatus => status !== undefined);
+    const lanes = laneRecords
+      .filter((status): status is ArcLaneStatus => {
+        if (!status) return false;
+        const updatedAt = Date.parse(status.updatedAt);
+        return (
+          Number.isFinite(updatedAt) &&
+          now - updatedAt <= RUNNER_STATUS_STALENESS_MS
+        );
+      })
+      .sort((a, b) => a.lane.localeCompare(b.lane));
     return {
       statuses,
+      lanes,
       ...(queueExecutor === undefined ? {} : { queueExecutor }),
-      warnings: [],
+      warnings:
+        laneRecords.length > lanes.length ? ['ARC lane status is stale.'] : [],
     };
   } catch (error) {
     logger.error('agent-lcars: failed to list autoscaler status:', error);

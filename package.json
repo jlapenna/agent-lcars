@@ -23,7 +23,7 @@
     "pnpm": "11.28.2"
   },
   "dependencies": {
-    "@google-cloud/firestore": "9.3.0",
+    "@google-cloud/firestore": "9.3.1",
     "@google-cloud/storage": "^8.0.0",
     "@google-cloud/tasks": "^7.0.0",
     "@jlapenna/fleet-runtime": "github:jlapenna/fleet-runtime#main",
@@ -78,7 +78,7 @@
     "@testing-library/dom": "10.4.2",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "16.3.3",
-    "@types/node": "24.19.0",
+    "@types/node": "24.19.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitest/coverage-v8": "~5.0.0",

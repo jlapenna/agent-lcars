@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	yaml "go.yaml.in/yaml/v3"
@@ -40,9 +41,12 @@ func TestCheckConfigUsesReadOnlyKubernetesStartupPreflight(t *testing.T) {
 	for _, failure := range []string{"", "missing worker", "denied update", "inventory unavailable"} {
 		t.Run(failure, func(t *testing.T) {
 			seen := map[string]bool{}
+			var seenMu sync.Mutex
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
+				seenMu.Lock()
 				seen[r.Method+" "+r.URL.Path] = true
+				seenMu.Unlock()
 				var response any
 				switch r.Method + " " + r.URL.Path {
 				case "GET /api/v1/namespaces/lcars-work/secrets/credentials":
@@ -114,6 +118,8 @@ func TestCheckConfigUsesReadOnlyKubernetesStartupPreflight(t *testing.T) {
 				t.Fatalf("check-config error=%v for failure=%q", err, failure)
 			}
 			if failure == "" {
+				seenMu.Lock()
+				defer seenMu.Unlock()
 				for _, resource := range []string{"GET /api/v1/namespaces/lcars-work/secrets/credentials", "GET /api/v1/namespaces/lcars-work/serviceaccounts/worker", "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews", "GET /apis/batch/v1/namespaces/lcars-work/jobs", "GET /api/v1/nodes", "GET /api/v1/pods"} {
 					if !seen[resource] {
 						t.Errorf("check-config did not verify %s", resource)

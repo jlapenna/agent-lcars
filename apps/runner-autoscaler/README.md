@@ -40,6 +40,24 @@ metadata that any consumer uses.
 
 ## Configuration
 
+Optional `arc_lanes` entries publish listener capacity to the console using
+the existing telemetry writer (`AGENT_LCARS_AUTOSCALER_STATUS_ENABLED=true`):
+
+```yaml
+arc_lanes:
+  - name: example-ci
+    registration_url: https://github.com/example/repository
+    metrics_url: http://cluster.example:30081/metrics
+```
+
+Derive this list from the deployment's ARC lane inventory. Each listener is
+fetched independently every ten seconds with a five-second deadline. Complete
+capacity snapshots use `schemaVersion: 3`, `kind: arc-lane` in `runner-status`;
+failed or incomplete scrapes expire after thirty seconds. Pending jobs mean
+`max(assigned - running, 0)`, while desired, registered, idle and maximum
+runners retain ARC's own semantics. They are separate from Kubernetes Pending
+pods and from QueueExecutor's native Work capacity.
+
 `orchestrator.yml`'s only live schema is:
 
 ```yaml

@@ -27,6 +27,7 @@ type OrchestratorConfig struct {
 	Version    int                    `yaml:"version"`
 	Server     OrchestratorServer     `yaml:"server"`
 	Fleet      OrchestratorFleet      `yaml:"fleet"`
+	ARCLanes   []arcLaneConfig        `yaml:"arc_lanes,omitempty"`
 	Kubernetes *queueKubernetesConfig `yaml:"kubernetes,omitempty"`
 
 	GitHubLegacy        any `yaml:"github,omitempty"`
@@ -146,6 +147,9 @@ func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
 
 func (r *resolvedOrchestratorConfig) resolve() error {
 	c := &r.Raw
+	if err := validateARCLanes(c.ARCLanes); err != nil {
+		return err
+	}
 	if c.Version != 1 {
 		return fmt.Errorf("version must be 1")
 	}
