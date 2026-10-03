@@ -164,7 +164,10 @@ the Work API. Every healthy autoscaler replica may tick; deterministic
 schedule item ids and the Work API's durable orchestrator coalesce a shared
 due slot to one item/run. Its image and mounts are documented in
 `apps/runner-autoscaler/README.md`. This repository owns server routing and
-executor/scheduler grants; Homelab owns autoscaler deployment.
+executor/scheduler grants and the optional Kubernetes Job backend; Homelab owns
+autoscaler deployment, Kubernetes namespace/RBAC, provider Secrets, node
+readiness taints and backend cutover. Backend configuration changes the worker
+launch transport, never server admission or provider credential authorization.
 
 ### 4. Workflows — repo variables
 

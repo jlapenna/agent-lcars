@@ -1,6 +1,6 @@
 ---
 name: debug-agent-run
-description: Diagnose a dispatched QueueExecutor/direct-runner agent run using the fleet's own observability instead of waiting on GitHub - the live runner container on laforge/janeway/picard, Loki, Prometheus, and the LiteLLM logs. Use when an agent run is slow, silent, stuck, or finished badly; when you want to know whether it has actually committed anything yet; when asking "is it working or hung"; or before concluding a run failed for a reason you have not measured.
+description: Diagnose a dispatched QueueExecutor/direct-runner agent run using the fleet's own observability instead of waiting on GitHub - the live Kubernetes Job or Docker runner, Loki, Prometheus, and the LiteLLM logs. Use when an agent run is slow, silent, stuck, or finished badly; when you want to know whether it has actually committed anything yet; when asking "is it working or hung"; or before concluding a run failed for a reason you have not measured.
 ---
 
 # Debugging a dispatched agent run
@@ -11,7 +11,8 @@ returns `BlobNotFound` for a job that is still running — GitHub does not
 publish the log blob until the job ends. That is a fact about GitHub, not a
 fact about what you can observe.
 
-The runner is a **live container on a host you have SSH to**. Its workspace,
+The runner is a **Kubernetes pod or Docker container** selected by the active
+queue deployment. Its workspace,
 its git state, and the model traffic it is generating are all readable _right
 now_. Reach for those first and reserve `gh run view --log` for the
 post-mortem measurements in §4.
@@ -29,38 +30,58 @@ a minute without GitHub:
 An agent can look identical from GitHub whether it is thinking hard, starved
 by a competing run, or wedged. It does not look identical in these two places.
 
-## 1. Find the live or retained container
+## 1. Find the live or retained direct run
 
 Run the existing read-only helper first:
 
 ```bash
-scripts/run-evidence.sh 1900
-scripts/run-evidence.sh 'jlapenna/agent-lcars#1900/r1'
-scripts/run-evidence.sh 'work:01ABC/r1'
+.agents/skills/debug-agent-run/scripts/run-evidence.sh 1900
+.agents/skills/debug-agent-run/scripts/run-evidence.sh 'jlapenna/agent-lcars#1900/r1'
+.agents/skills/debug-agent-run/scripts/run-evidence.sh 'work:01ABC/r1'
 ```
 
-It connects to the SSH bastion, reads `fleet.hosts` from the running
-autoscaler's mounted `/config/orchestrator.yml`, and follows those declared
-Docker SSH endpoints. It selects containers by the direct-runner labels and
-prints the exact run ID, state, exit code, and timestamps. Retained exited
-containers are included but never executed. The bastion needs Python 3 and
-PyYAML; the workstation needs Python 3 and SSH.
+It connects to the operator SSH bastion and reads the running controller's
+mounted `/config/orchestrator.yml`. A top-level `kubernetes` section selects
+Jobs in that declared namespace; otherwise it follows declared `fleet.hosts`
+Docker endpoints. The helper prints exact run identity and bounded state,
+without container environments, Secret contents, credentials, or raw logs.
+The bastion needs Python 3 and PyYAML; Kubernetes also needs `kubectl`.
+
+Kubernetes Jobs are matched by the `agent-lcars.run-id` annotation, and pods
+are matched to the exact Job owner UID. A retained failed pod is never
+executed. The controller's restricted kubeconfig can read Jobs/pods for status;
+its path is translated through the actual controller mounts. An in-cluster
+controller or a config-path override may need `DEBUG_RUN_KUBECONFIG`, which is
+an **operator-side bastion path**, never a new worker credential.
+
+Live worktree inspection is explicit because the queue controller intentionally
+cannot exec into worker pods. Use an existing operator credential allowed to
+read Jobs/pods and invoke `pods/exec`; the executed script only reads Git state:
+
+```bash
+DEBUG_RUN_KUBECONFIG=/path/to/operator-kubeconfig \
+DEBUG_RUN_KUBE_WORKTREES=true \
+  .agents/skills/debug-agent-run/scripts/run-evidence.sh 'work:01ABC/r1'
+```
+
+Without that opt-in, the helper states that worktrees were not inspected.
+Unavailable API access or requested worktree reads produce incomplete evidence,
+never an inferred zero. Namespace/API endpoint/readiness ownership stays in
+[the queue deployment contract](../../../apps/runner-autoscaler/README.md#kubernetes-jobs).
 
 Defaults can be overridden with `DEBUG_RUN_BASTION`, `DEBUG_RUN_AUTOSCALER`,
 `DEBUG_RUN_CONFIG` (a bastion-side config path), and `DEBUG_RUN_FLEET_KEY`
-(a bastion-side SSH key path). `DEBUG_RUN_HOSTS` restricts the scan to names
-from the configured inventory. A bare issue number is scoped to
-`DEBUG_RUN_REPO` (default `jlapenna/agent-lcars`); pass a full anchor/run ID
-for other repositories or native Work.
-
-Each command has a deadline, each host's inspection loop has a budget,
-and the total scan is bounded. Unavailable hosts produce a nonzero result
-and explicit incomplete evidence, not a claim that no agent is running.
-The helper does not print credentials, container environments, or raw logs.
+(a bastion-side SSH key path, Docker only). `DEBUG_RUN_HOSTS` restricts a
+Docker scan to configured inventory names; for Kubernetes select an exact run
+instead. A bare issue number is scoped to `DEBUG_RUN_REPO` (default
+`jlapenna/agent-lcars`); pass a full anchor/run ID for another repository or
+native Work. Each command and the overall scan have deadlines. Unavailable
+hosts or API inventory return nonzero and explicit incomplete evidence.
 
 ## 2. Ground truth: has it committed anything?
 
-For running containers, the same helper inspects the current
+For running Docker containers, or Kubernetes pods with operator worktree
+inspection enabled, the same helper inspects the current
 `/tmp/agent-lcars-direct/checkout` and every linked worktree. It also recognizes
 the hosted checkout path if found inside a selected direct runner. Each
 worktree reports commits ahead of `origin/main` and changed-file count:
@@ -73,8 +94,8 @@ worktree reports commits ahead of `origin/main` and changed-file count:
 
 A clean primary checkout does not imply an idle agent: implementation belongs
 in linked worktrees. Missing checkouts can mean bootstrap has not finished.
-For an exited container, inspect its retained logs separately, with bounded
-output and credential redaction. Do not attempt `docker exec` on it.
+For an exited container or completed pod, inspect retained logs separately,
+with bounded output and credential redaction. Never exec into a completed run.
 
 This helper targets QueueExecutor direct runners. For a GitHub Actions
 runner, use the workflow/job identity and retained job logs rather than
@@ -123,6 +144,9 @@ hard-fails the run.
 
 ## 4. What Loki does _not_ have
 
+For native QueueExecutor runs, inspect the Console run and durable transcript
+archive. The GitHub log guidance below applies to GitHub Actions runners.
+
 The runner containers' stdout in Loki is the **GitHub Actions runner agent's
 own diagnostics** — `JobServerQueue`, `HostContext`, lease renewals — not the
 agent step's output. The same is true of `/home/runner/_diag/Worker_*.log`
@@ -147,7 +171,7 @@ which has the measured history and the bounds.
 
 ## 5. Order of operations
 
-1. `scripts/run-evidence.sh` — exact run, container state, and all worktrees.
+1. `.agents/skills/debug-agent-run/scripts/run-evidence.sh` — exact run and backend state; inspect worktrees with the appropriate operator access.
 2. If `commits=0, dirty=0`: it has not started. Check the LLM rate before
    assuming it is stuck.
 3. If `dirty>0`: work exists and is at risk. That is the urgent case.

@@ -24,10 +24,11 @@ import (
 // logs a warning naming every ignored section so the file's dead weight is
 // visible rather than silent; nothing under them is read.
 type OrchestratorConfig struct {
-	Version  int                `yaml:"version"`
-	Server   OrchestratorServer `yaml:"server"`
-	Fleet    OrchestratorFleet  `yaml:"fleet"`
-	ARCLanes []arcLaneConfig    `yaml:"arc_lanes,omitempty"`
+	Version    int                    `yaml:"version"`
+	Server     OrchestratorServer     `yaml:"server"`
+	Fleet      OrchestratorFleet      `yaml:"fleet"`
+	ARCLanes   []arcLaneConfig        `yaml:"arc_lanes,omitempty"`
+	Kubernetes *queueKubernetesConfig `yaml:"kubernetes,omitempty"`
 
 	GitHubLegacy        any `yaml:"github,omitempty"`
 	RegistrationsLegacy any `yaml:"registrations,omitempty"`
@@ -165,7 +166,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	if c.Server.LogFormat == "" {
 		c.Server.LogFormat = "text"
 	}
-	if len(c.Fleet.Hosts) == 0 {
+	if c.Kubernetes != nil {
+		if err := c.Kubernetes.validate(); err != nil {
+			return err
+		}
+	}
+	if len(c.Fleet.Hosts) == 0 && c.Kubernetes == nil {
 		return fmt.Errorf("fleet.hosts must not be empty")
 	}
 

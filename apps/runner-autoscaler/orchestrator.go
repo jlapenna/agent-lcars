@@ -73,7 +73,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	startQueuePoller, queueStartupState, queueDisabledReason := queueExecutorStartupStatus(
 		consoleURL,
 		keyPath,
-		os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"),
+		queueWriterRequirement(resolved),
 	)
 	// Do not advertise ready merely because the process configuration parses:
 	// direct work cannot be claimed until the per-host bind preflight below has
@@ -123,36 +123,54 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				// that variable instead of a snapshot would race the poller
 				// goroutine's reads of it. The preflight also narrows this snapshot
 				// to only hosts that passed every direct-adapter bind check.
-				queueExecutorResolved, preflightErr := directRunnerPreflightHosts(ctx, resolved, newDockerClient, logger)
-				if preflightErr != nil {
-					setQueueExecutorStartupState(queueExecutorStateMisconfigured)
-					logger.Error("Queue executor disabled: no eligible direct-runner host", slog.Any("error", preflightErr))
+				if resolved.Raw.Kubernetes != nil {
+					queue, err := newKubernetesQueue(ctx, *resolved.Raw.Kubernetes, logger)
+					if err != nil {
+						setQueueExecutorStartupState(queueExecutorStateMisconfigured)
+						logger.Error("Queue executor Kubernetes preflight failed", slog.Any("error", err))
+					} else {
+						queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
+						setQueueExecutorStartupState(queueExecutorStateReady)
+						queueStatus.ready.Store(true)
+						go runQueueExecutorPoller(ctx, queueExecutorConfig{
+							consoleURL: consoleURL, runnerName: runnerName,
+							idToken: func() (string, error) { return idTokenFromSource(tokenSource) },
+							reserve: func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
+							recover: queue.recover, cleanup: queue.cleanup, draining: queueDraining.Load,
+						}, 15*time.Second, logger)
+					}
 				} else {
-					queueStatus.configureEligibleHosts(queueExecutorResolved, newDockerClient)
-					setQueueExecutorStartupState(queueExecutorStateReady)
-					queueStatus.ready.Store(true)
-					capacityReservations := newDirectRunnerCapacityReservations(queueExecutorResolved, newDockerClient, logger)
-					go refreshQueueRunnerImages(ctx, queueExecutorResolved, newDockerClient, logger)
-					go runQueueExecutorPoller(ctx, queueExecutorConfig{
-						consoleURL: consoleURL,
-						recover: func(recoveryCtx context.Context) error {
-							return recoverCreatedDirectRunners(recoveryCtx, queueExecutorResolved, newDockerClient, logger)
-						},
-						runnerName: runnerName,
-						idToken: func() (string, error) {
-							return idTokenFromSource(tokenSource)
-						},
-						launch: func(l directRunnerLaunch) error {
-							return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
-						},
-						reserve: func() (*directRunnerReservation, error) {
-							return capacityReservations.reserve(ctx)
-						},
-						draining: queueDraining.Load,
-						cleanup: func(cleanupCtx context.Context) error {
-							return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved.resolvedOrchestratorConfig, newDockerClient, time.Now())
-						},
-					}, 15*time.Second, logger)
+					queueExecutorResolved, preflightErr := directRunnerPreflightHosts(ctx, resolved, newDockerClient, logger)
+					if preflightErr != nil {
+						setQueueExecutorStartupState(queueExecutorStateMisconfigured)
+						logger.Error("Queue executor disabled: no eligible direct-runner host", slog.Any("error", preflightErr))
+					} else {
+						queueStatus.configureEligibleHosts(queueExecutorResolved, newDockerClient)
+						setQueueExecutorStartupState(queueExecutorStateReady)
+						queueStatus.ready.Store(true)
+						capacityReservations := newDirectRunnerCapacityReservations(queueExecutorResolved, newDockerClient, logger)
+						go refreshQueueRunnerImages(ctx, queueExecutorResolved, newDockerClient, logger)
+						go runQueueExecutorPoller(ctx, queueExecutorConfig{
+							consoleURL: consoleURL,
+							recover: func(recoveryCtx context.Context) error {
+								return recoverCreatedDirectRunners(recoveryCtx, queueExecutorResolved, newDockerClient, logger)
+							},
+							runnerName: runnerName,
+							idToken: func() (string, error) {
+								return idTokenFromSource(tokenSource)
+							},
+							launch: func(l directRunnerLaunch) error {
+								return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
+							},
+							reserve: func() (*directRunnerReservation, error) {
+								return capacityReservations.reserve(ctx)
+							},
+							draining: queueDraining.Load,
+							cleanup: func(cleanupCtx context.Context) error {
+								return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved.resolvedOrchestratorConfig, newDockerClient, time.Now())
+							},
+						}, 15*time.Second, logger)
+					}
 				}
 			}
 		}
@@ -188,7 +206,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			}
 		case <-reloadSignals:
 			next, reloadErr := loadOrchestratorConfig(orchestratorConfigPath)
-			if reloadErr == nil {
+			if reloadErr == nil && next.Raw.Kubernetes == nil {
 				// Validate the new Docker host list is actually reachable before
 				// accepting the reload, same fail-fast intent newDockerHostPool
 				// always had. These connections are only a reachability probe --

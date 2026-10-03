@@ -63,6 +63,9 @@ func resolveQueueExecutor(resolved resolvedOrchestratorConfig) (queueExecutorRes
 // startup (and at --check-config) rather than leave the process running
 // forever as a silent no-op that never touches Docker or the console.
 func validateQueueExecutorEnvironment(resolved resolvedOrchestratorConfig) error {
+	if resolved.Raw.Kubernetes != nil {
+		return validateKubernetesQueueEnvironment(resolved.Raw.Kubernetes)
+	}
 	consoleURL := strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL"))
 	_, state, reason := queueExecutorStartupStatus(consoleURL, os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"), os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"))
 	if state == queueExecutorStateDisabled {

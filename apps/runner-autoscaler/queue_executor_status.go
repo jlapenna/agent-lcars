@@ -17,7 +17,7 @@ import (
 // queue executor. It is intentionally separate from Run lifecycle state:
 // queued/claimed/running counts are server-authoritative orchestrator data,
 // while this source can truthfully report only whether this host-side worker
-// is ready, draining, and how many direct containers Docker currently sees.
+// is ready, draining, and how many unfinished direct attempts the selected backend currently sees.
 type queueExecutorStatusSource struct {
 	ready         atomic.Bool
 	draining      func() bool
@@ -42,12 +42,16 @@ func newQueueExecutorStatusSource(
 // use the exact same host pool as the poller's launch callback.
 func (s *queueExecutorStatusSource) configureEligibleHosts(resolved queueExecutorResolved, newClient func(string) (*dockerclient.Client, error)) {
 	capacity := len(resolved.order) * resolved.maxConcurrent
-	s.mu.Lock()
-	s.maxConcurrent = capacity
-	s.activeRuns = func(ctx context.Context) (int, error) {
+	s.configureCapacity(capacity, func(ctx context.Context) (int, error) {
 		return activeDirectRunnerCount(ctx, resolved.resolvedOrchestratorConfig, newClient)
-	}
-	s.mu.Unlock()
+	})
+}
+
+func (s *queueExecutorStatusSource) configureCapacity(capacity int, count func(context.Context) (int, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.maxConcurrent = capacity
+	s.activeRuns = count
 }
 
 func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time) consoleQueueExecutorStatus {
@@ -76,10 +80,10 @@ func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time)
 	active, err := activeRuns(countCtx)
 	cancel()
 	if err != nil {
-		// Omitting activeRuns is intentional: a partial Docker-host read must
+		// Omitting activeRuns is intentional: a partial backend inventory read must
 		// never be rendered as a plausible zero. The timestamp still proves
 		// the queue process itself remains alive and publishing.
-		s.logger.Warn("Failed to count active direct runners for console status", slog.Any("error", err))
+		s.logger.Warn("Failed to count active queue attempts for console status", slog.Any("error", err))
 		return status
 	}
 	status.ActiveRuns = &active
@@ -88,7 +92,7 @@ func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time)
 
 // runQueueExecutorStatusPublisher shares the scale-set publisher's bounded
 // collection and staleness contract, without participating in queue claims or
-// Docker launch decisions. A slow status read therefore cannot delay work.
+// backend launch decisions. A slow status read therefore cannot delay work.
 func runQueueExecutorStatusPublisher(ctx context.Context, publisher consoleStatusPublisher, source *queueExecutorStatusSource) {
 	if !publisher.Enabled() {
 		return
