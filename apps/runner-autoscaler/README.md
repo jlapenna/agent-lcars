@@ -220,12 +220,15 @@ kubernetes:
   max_concurrent: 5
   node_selector:
     homelab.jlapenna.net/queue-runner: 'true'
-  requests: { cpu: '500m', memory: 1Gi, ephemeral-storage: 4Gi }
-  limits: { cpu: '4', memory: 8Gi, ephemeral-storage: 24Gi }
+  requests: { cpu: '500m', memory: 2Gi, ephemeral-storage: 4Gi }
+  limits: { cpu: '8', memory: 16Gi, ephemeral-storage: 24Gi }
 ```
 
 The deployment owns namespace, RBAC, node labels/readiness taints, Secret values,
-and resource sizing. The controller requires namespace Jobs
+and resource sizing. The example budgets are provisional for rollout, not
+measured direct-runner quantiles or binary defaults. Docker direct mode had no
+CPU/memory limit; choose burst limits conservatively and measure the new pods
+before tightening them. The controller requires namespace Jobs
 `get,list,create,update,delete`, namespace Secrets `get,create`, and cluster
 Nodes/Pods `list`, plus `get` on the configured worker ServiceAccount. Its
 credential never reaches worker pods. Startup verifies the account exists and

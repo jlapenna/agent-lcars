@@ -52,7 +52,8 @@ class EvidenceTest(unittest.TestCase):
 
     def test_unavailable_host_keeps_other_evidence_and_returns_failure(self):
         output = io.StringIO()
-        with patch.object(evidence, 'hosts', return_value=[('down', 'local'), ('up', 'local')]), \
+        with patch.object(evidence, 'deployment_config', return_value={'fleet': {}}), \
+             patch.object(evidence, 'hosts', return_value=[('down', 'local'), ('up', 'local')]), \
              patch.object(evidence, 'probe_host', side_effect=[evidence.ProbeError('timed out'), (1, 0)]), \
              contextlib.redirect_stdout(output):
             self.assertEqual(evidence.probe({}), 1)
@@ -81,6 +82,49 @@ class EvidenceTest(unittest.TestCase):
             result = subprocess.check_output(['sh', '-c', script], text=True)
             self.assertIn(f'worktree={root} commits=0 dirty=0', result)
             self.assertIn(f'worktree={work} commits=1 dirty=1', result)
+
+    def test_kubernetes_exact_run_ownership_and_retained_pod_never_exec(self):
+        calls = []
+        run_id = 'work:01ABC/r2'
+        job = {'metadata': {'name': 'job', 'uid': 'exact', 'annotations': {'agent-lcars.run-id': run_id}}, 'spec': {}}
+        def pod(name, phase, owner='exact'):
+            return {'metadata': {'name': name, 'ownerReferences': [{'uid': owner, 'kind': 'Job'}]}, 'spec': {'nodeName': 'node'}, 'status': {'phase': phase}}
+        def command(args):
+            calls.append(args)
+            if 'jobs' in args:
+                return json.dumps({'items': [job]})
+            if 'pods' in args:
+                return json.dumps({'items': [pod('live', 'Running'), pod('exited', 'Failed'), pod('unrelated', 'Running', 'other')]})
+            return '    worktree=/tmp/task commits=2 dirty=3\n'
+        config = {'selector': run_id, 'kube_worktrees': 'true', 'kubeconfig': '/operator/credential'}
+        deployment = {'kubernetes': {'namespace': 'work', 'kubeconfig': '/private/controller-credential'}}
+        output = io.StringIO()
+        with patch.object(evidence, 'command', side_effect=command), contextlib.redirect_stdout(output):
+            self.assertEqual(evidence.probe_kubernetes(config, deployment), 0)
+        self.assertIn('phase=Failed', output.getvalue())
+        self.assertIn('commits=2 dirty=3', output.getvalue())
+        self.assertNotIn('unrelated', output.getvalue())
+        self.assertEqual([args[args.index('exec') + 1] for args in calls if 'exec' in args], ['live'])
+        self.assertTrue(all('/operator/credential' in args for args in calls))
+        self.assertNotIn('/private/controller-credential', output.getvalue())
+
+    def test_kubernetes_status_does_not_exec_without_operator_opt_in(self):
+        job = {'metadata': {'name': 'job', 'uid': 'uid', 'annotations': {'agent-lcars.run-id': 'repo#1/r1'}}, 'spec': {}}
+        pod = {'metadata': {'name': 'pod', 'ownerReferences': [{'uid': 'uid', 'kind': 'Job'}]}, 'status': {'phase': 'Running'}}
+        with patch.object(evidence, 'command', side_effect=[json.dumps({'items': [job]}), json.dumps({'items': [pod]})]) as run, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(evidence.probe_kubernetes({'kubeconfig': '/credential'}, {'kubernetes': {'namespace': 'work'}}), 0)
+        self.assertEqual(run.call_count, 2)
+
+    def test_kubernetes_unavailable_worktree_returns_incomplete_evidence(self):
+        job = {'metadata': {'name': 'job', 'uid': 'uid', 'annotations': {'agent-lcars.run-id': 'repo#1/r1'}}, 'spec': {}}
+        pod = {'metadata': {'name': 'pod', 'ownerReferences': [{'uid': 'uid', 'kind': 'Job'}]}, 'status': {'phase': 'Running'}}
+        with patch.object(evidence, 'command', side_effect=[json.dumps({'items': [job]}), json.dumps({'items': [pod]}), evidence.ProbeError('kubectl exited 1')]), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(evidence.probe_kubernetes({'kubeconfig': '/credential', 'kube_worktrees': 'true'}, {'kubernetes': {'namespace': 'work'}}), 1)
+
+    def test_kubernetes_mount_path_resolves_without_credential_output(self):
+        config = {'_mounts': [{'Source': '/vault/queue-api', 'Destination': '/run/secrets/queue-kubeconfig'}]}
+        base = evidence.kubernetes_context(config, {'kubernetes': {'namespace': 'work', 'kubeconfig': '/run/secrets/queue-kubeconfig'}})
+        self.assertIn('/vault/queue-api', base)
 
     def test_command_timeout_is_sanitized(self):
         with patch.object(evidence.subprocess, 'run', side_effect=subprocess.TimeoutExpired('secret', 20)):
