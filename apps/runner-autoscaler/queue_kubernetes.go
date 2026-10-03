@@ -480,7 +480,7 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 		}
 	}
 	sort.Slice(completed, func(i, j int) bool { return queueJobFinishedAt(completed[i]).After(queueJobFinishedAt(completed[j])) })
-	// The Docker backend retained at most 24 exited containers per capacity
+	// The Docker backend retained at most five exited containers per capacity
 	// slot/host. Keep the aggregate evidence bound after Kubernetes cutover.
 	for i, j := range completed {
 		finished := queueJobFinishedAt(j)
