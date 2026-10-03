@@ -276,3 +276,25 @@ func TestKubernetesRetentionBoundsExitedEvidenceWithoutTouchingActiveJob(t *test
 		t.Fatal("retention removed running Job")
 	}
 }
+
+func TestKubernetesConfigurationRejectsAPIIlegalTolerationsBeforeClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tolerance queueToleration
+		valid     bool
+	}{
+		{"exists with value", queueToleration{Key: "inference", Operator: core.TolerationOpExists, Value: "busy", Effect: core.TaintEffectNoSchedule}, false},
+		{"invalid key", queueToleration{Key: "invalid/key/again", Operator: core.TolerationOpExists, Effect: core.TaintEffectNoSchedule}, false},
+		{"invalid equal value", queueToleration{Key: "inference", Operator: core.TolerationOpEqual, Value: "contains spaces", Effect: core.TaintEffectNoSchedule}, false},
+		{"exists", queueToleration{Key: "inference", Operator: core.TolerationOpExists, Effect: core.TaintEffectNoSchedule}, true},
+		{"equal", queueToleration{Key: "inference", Operator: core.TolerationOpEqual, Value: "idle", Effect: core.TaintEffectNoSchedule}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q, _ := kubeQueueFixture()
+			q.config.Tolerations = []queueToleration{tc.tolerance}
+			if err := q.config.validate(); (err == nil) != tc.valid {
+				t.Fatalf("validation=%v valid=%v", err, tc.valid)
+			}
+		})
+	}
+}

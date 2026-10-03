@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -57,6 +58,9 @@ func (c *queueKubernetesConfig) validate() error {
 		// Wildcard tolerations would bypass maintenance/readiness gates.
 		if t.Key == "" || (t.Operator != core.TolerationOpExists && t.Operator != core.TolerationOpEqual) || t.Effect != core.TaintEffectNoSchedule {
 			return fmt.Errorf("kubernetes tolerations require an explicit key, Exists/Equal operator and NoSchedule effect")
+		}
+		if len(validation.IsQualifiedName(t.Key)) != 0 || len(validation.IsValidLabelValue(t.Value)) != 0 || (t.Operator == core.TolerationOpExists && t.Value != "") {
+			return fmt.Errorf("kubernetes tolerations require a valid key/value and an empty value for Exists")
 		}
 	}
 	for _, values := range []map[string]string{c.Requests, c.Limits} {
