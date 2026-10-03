@@ -232,7 +232,9 @@ before tightening them. The controller requires namespace Jobs
 `get,list,create,update,delete`, namespace Secrets `get,create`, and cluster
 Nodes/Pods `list`, plus `get` on the configured worker ServiceAccount. Its
 credential never reaches worker pods. Startup verifies the account exists and
-write grants are allowed before claiming. The provider
+write grants are allowed before claiming. `--check-config` performs the same
+read-only API inventory and permission preflight before a deployment stops its
+previous controller; it creates no Jobs, Secrets or workers. The provider
 Secret must have nonempty `telemetry-writer.json`, `claude-code-oauth-token`, and
 `opencode-llm-api-key` keys. Each pod projects only the writer and its own
 provider key. Codex restores subscription credentials through the existing
@@ -365,8 +367,10 @@ preflight and then runs every five minutes to follow the configured tag. Each
 host refresh has a two-minute deadline; a failed refresh keeps the cached image
 available to launches. A missing image with an unavailable registry still fails,
 as there is no runnable artifact.
-`--check-config` includes the environment-only queue checks; it does not perform
-the mutating per-host credential-container probe.
+For Docker, `--check-config` includes the environment-only queue checks and does
+not perform the mutating per-host credential-container probe. For Kubernetes,
+it also reads the configured credential Secret, worker ServiceAccount, Jobs,
+Nodes and Pods and checks write permissions using SelfSubjectAccessReviews.
 
 ### Readiness and claim outcomes
 
