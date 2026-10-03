@@ -38,6 +38,13 @@ fake work units or no-op tasks just to produce a green run. Choose suitably
 scoped work, respect existing ownership, and obtain any required operational
 approval. This preference does not authorize extra production changes.
 
+The maintainer grants standing permission to inspect any of our issue trackers
+and select suitable real work for this proof. An empty durable work queue is
+not a reason to ask the maintainer to supply an issue: inspect the trackers,
+check current ownership and recent delivery evidence, and choose useful work
+within the authorized scope. Keep separate operational approval requirements
+and existing ownership boundaries in force.
+
 Record the issue or work-item identifier, the actual path exercised, and
 evidence of the useful result. A successful dispatch or worker exit alone
 does not prove that the requested work was delivered. If no suitable real
