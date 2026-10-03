@@ -219,7 +219,7 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 #
 # The Docker client supports remote BuildKit and static Compose validation;
 # the worker has no local Docker daemon or mounted host socket.
-FROM ghcr.io/astral-sh/uv:0.12.22@sha256:f513a91fc62fe7c17567eee97230dd198e43edb8a9fbecca843714a4358fe1bc AS uv-runtime
+FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 AS uv-runtime
 
 # Exact multi-platform Terraform artifact; only its static CLI is copied.
 FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:c7926feace05d0f7e73542842bf3945924e955a1f782cf000ccbb8d18fa42d77 AS terraform-runtime
