@@ -2,7 +2,7 @@
 
 Go source for the LCARS queue executor: a long-running process that polls
 the console's Work API and launches ephemeral "direct-runner" containers
-across a shared Docker host pool for admitted work items. Also includes
+as Kubernetes Jobs or across a shared Docker host pool for admitted work items. Also includes
 `runner-image/` and `control-plane-image/` (Dockerfiles for images still
 consumed by Actions Runner Controller pods on k3s) and is a sibling of
 `tools/e2e-runner/`.
@@ -202,6 +202,75 @@ change these server-owned limits.
 This process has nothing else to run: an unconfigured queue executor (an
 absent `LCARS_CONSOLE_URL`, or any required value missing) fails startup and
 `--check-config` outright rather than running forever as a silent no-op.
+
+### Kubernetes Jobs
+
+A top-level `kubernetes` section selects Kubernetes instead of Docker. The
+singleton controller uses the standard Kubernetes Go client; `kubeconfig`
+selects a restricted external credential, and an omitted path uses in-cluster
+ServiceAccount authentication. In this mode `fleet.hosts` and the Docker
+host-path credential environment variables are unnecessary.
+
+```yaml
+kubernetes:
+  namespace: lcars-work
+  kubeconfig: /run/secrets/queue-kubeconfig
+  credentials_secret: lcars-runner-credentials
+  service_account: lcars-direct-runner
+  max_concurrent: 5
+  node_selector:
+    homelab.jlapenna.net/queue-runner: 'true'
+  requests: { cpu: '500m', memory: 1Gi, ephemeral-storage: 4Gi }
+  limits: { cpu: '4', memory: 8Gi, ephemeral-storage: 24Gi }
+```
+
+The deployment owns namespace, RBAC, node labels/readiness taints, Secret values,
+and resource sizing. The controller requires namespace Jobs
+`get,list,create,update,delete`, namespace Secrets `get,create`, and cluster
+Nodes/Pods `list`, plus `get` on the configured worker ServiceAccount. Its
+credential never reaches worker pods. Startup verifies the account exists and
+write grants are allowed before claiming. The provider
+Secret must have nonempty `telemetry-writer.json`, `claude-code-oauth-token`, and
+`opencode-llm-api-key` keys. Each pod projects only the writer and its own
+provider key. Codex restores subscription credentials through the existing
+Console broker and keeps rotating credentials/transcripts in a 64Mi memory
+`emptyDir`. Workers disable ServiceAccount token mounting, run as uid/gid 1001,
+and use no host paths, Docker socket, or SSH key.
+
+Before claiming, the controller counts unfinished Jobs (including Pending or
+suspended Jobs), reserves a process-local slot, and checks matching nodes for
+Ready, cordon and taint eligibility plus free CPU/memory/storage/pod requests.
+Accounting includes every namespace and the scheduler's init-container,
+sidecar and pod-overhead rules. API uncertainty or no capacity leaves work
+queued. Kubernetes makes the final placement decision: another workload can
+still consume capacity between this observation and scheduling. Optional
+`tolerations` require explicit keys, `Exists` or `Equal`, and `NoSchedule`;
+do not tolerate deployment readiness, inference-busy, or maintenance taints.
+`max_concurrent` is a cluster-wide bound for the **singleton** queue controller,
+not a distributed reservation protocol; do not overlap controller generations.
+
+Each run has one deterministic Job name. The controller creates it suspended,
+creates an immutable per-run token Secret owned by that exact Job, and resumes
+it. A restart resumes the same never-started Job only when its matching token
+exists. An ambiguous create reads that same name rather than allocating a
+replacement. Failed creation remains claimed and recovers through the existing
+lease-expiry/bounded-new-generation retry path. Jobs use `restartPolicy: Never`,
+`backoffLimit: 0`, `podReplacementPolicy: Failed`, and fail on disruption.
+Kubernetes does not promise exactly-once process execution under every node
+failure; Work API authentication, completion fencing and provider credential
+leases remain authoritative. Jobs have a two-hour wall-clock deadline including scheduling and image pulls,
+which bounds infrastructure launch waits independently of worker heartbeat
+renewal or the normal 80-minute agent budget. They retain
+terminated pod logs for a day through the TTL controller. A suspended shell
+older than the two-hour lease window is deleted with UID/resourceVersion
+preconditions; running Jobs are never removed by cleanup.
+
+Provision the API boundary first, publish the controller image, pause Docker
+claims and wait for live Docker workers to finish, then switch the configuration
+and remove the controller's fleet SSH/socket/provider host mounts. Existing
+Docker workers remain owned by their original deployment during cutover; the
+Kubernetes backend neither adopts nor removes them. A full process restart is
+required for backend, credentials, topology or resource configuration changes.
 
 ### Native schedule ticker
 
