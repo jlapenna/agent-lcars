@@ -28,3 +28,23 @@ required or release-gating consumer; and dead event triggers are removed.
 For the full rationale, decision record, and rollout inventory, see
 [issue #1486](https://github.com/jlapenna/agent-lcars/issues/1486), the
 source of truth for this document.
+
+## Development proof uses real work
+
+During development, prefer a real issue or work item with a useful outcome
+to prove functionality end to end. Exercise the normal supported intake,
+dispatch, execution, and delivery paths relevant to the change; do not invent
+fake work units or no-op tasks just to produce a green run. Choose suitably
+scoped work, respect existing ownership, and obtain any required operational
+approval. This preference does not authorize extra production changes.
+
+Record the issue or work-item identifier, the actual path exercised, and
+evidence of the useful result. A successful dispatch or worker exit alone
+does not prove that the requested work was delivered. If no suitable real
+work is available, state what remains unproven rather than presenting a
+synthetic run as real-work acceptance.
+
+Fixtures, mocks, deterministic regression tests, and narrowly scoped synthetic
+canaries still belong where they protect a specific contract or safely
+exercise a failure. Label their evidence accurately: they supplement, rather
+than substitute for, real-work proof of the full development workflow.
