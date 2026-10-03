@@ -9,6 +9,8 @@ import type {
   AutoscalerStatusResult,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
+import { DataWarnings } from './console-header';
+import { ShuttlebayWorkspace } from './shuttlebay/shuttlebay-workspace';
 
 const POLL_INTERVAL_MS = 10_000;
 const STALENESS_MS = 30_000;
@@ -218,37 +220,30 @@ export function RunnerAutoscalerStatus({
     };
   }, []);
 
-  if (
-    result.statuses.length === 0 &&
-    (result.lanes?.length ?? 0) === 0 &&
-    result.queueExecutor === undefined
-  ) {
-    return result.warnings.length > 0 ? (
-      <Text size="xs" c="dimmed" data-testid="runner-autoscaler-status-warning">
-        {result.warnings[0]}
-      </Text>
-    ) : null;
-  }
   return (
-    <div data-testid="runner-autoscaler-status">
-      {result.warnings.length > 0 && (
-        <Text
-          size="xs"
-          c="dimmed"
-          data-testid="runner-autoscaler-status-warning"
-        >
-          {result.warnings.join(' ')}
+    <ShuttlebayWorkspace
+      warnings={
+        result.warnings.length > 0 ? (
+          <DataWarnings warnings={result.warnings} />
+        ) : undefined
+      }
+      toolbar={
+        <Text c="dimmed" size="sm">
+          Refreshes automatically every 10 seconds.
         </Text>
-      )}
-      {result.statuses.map((status) => (
-        <ScaleSetRow key={status.scaleSet} status={status} />
-      ))}
-      {result.lanes?.map((status) => (
-        <ArcLaneRow key={status.lane} status={status} />
-      ))}
-      {result.queueExecutor && (
-        <QueueExecutorRow status={result.queueExecutor} />
-      )}
-    </div>
+      }
+    >
+      <div data-testid="runner-autoscaler-status">
+        {result.statuses.map((status) => (
+          <ScaleSetRow key={status.scaleSet} status={status} />
+        ))}
+        {result.lanes?.map((status) => (
+          <ArcLaneRow key={status.lane} status={status} />
+        ))}
+        {result.queueExecutor && (
+          <QueueExecutorRow status={result.queueExecutor} />
+        )}
+      </div>
+    </ShuttlebayWorkspace>
   );
 }

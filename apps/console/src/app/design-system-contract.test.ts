@@ -372,13 +372,17 @@ describe('LCARS design system contract', () => {
     it('leaves no route rendering its content outside a frame', () => {
       // Every `withConsolePageShell` view either composes a workspace itself
       // or delegates to one. `/work/schedules` was the last that did neither.
-      for (const view of [
-        'work/page.tsx',
-        'work/schedules/page.tsx',
-        'shuttlebay/page.tsx',
-      ]) {
+      for (const view of ['work/page.tsx', 'work/schedules/page.tsx']) {
         expect(source(view)).toMatch(/<(Work|Shuttlebay)Workspace/);
       }
+      // Shuttlebay's polling island owns the frame so refreshed warnings
+      // reach the same warning band as its initial server snapshot.
+      expect(source('shuttlebay/page.tsx')).toContain(
+        '<RunnerAutoscalerStatus',
+      );
+      expect(source('runner-autoscaler-status.tsx')).toContain(
+        '<ShuttlebayWorkspace',
+      );
     });
 
     it('owns the warning and toolbar bands in one place', () => {

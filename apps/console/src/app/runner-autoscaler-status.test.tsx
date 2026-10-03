@@ -1,6 +1,6 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   expireAutoscalerStatuses,
@@ -321,8 +321,65 @@ describe('RunnerAutoscalerStatus', () => {
       </MantineProvider>,
     );
 
-    expect(
-      screen.getByTestId('runner-autoscaler-status-warning'),
-    ).toHaveTextContent('unavailable');
+    expect(screen.getByTestId('data-warnings')).toHaveTextContent(
+      'unavailable',
+    );
+  });
+
+  it('keeps partial telemetry warnings in one live workspace band and clears them on recovery', async () => {
+    vi.useFakeTimers();
+    const queueExecutor = {
+      schemaVersion: 2 as const,
+      kind: 'queue-executor' as const,
+      executor: 'queue',
+      ready: true,
+      draining: false,
+      maxConcurrent: 3,
+      updatedAt: new Date().toISOString(),
+    };
+    const warning = 'ARC lane status is stale.';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          statuses: [],
+          queueExecutor,
+          warnings: ['ARC status unavailable.'],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ statuses: [], queueExecutor, warnings: [] }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(
+        <MantineProvider>
+          <RunnerAutoscalerStatus
+            initial={{ statuses: [], queueExecutor, warnings: [warning] }}
+          />
+        </MantineProvider>,
+      );
+      expect(screen.getAllByText(warning)).toHaveLength(1);
+      expect(
+        screen
+          .getByTestId('data-warnings')
+          .closest('.console-workspace__warnings'),
+      ).not.toBeNull();
+      expect(screen.getByTestId('queue-executor-status')).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(screen.queryByText(warning)).not.toBeInTheDocument();
+      expect(screen.getAllByText('ARC status unavailable.')).toHaveLength(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(screen.queryByTestId('data-warnings')).not.toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 });
