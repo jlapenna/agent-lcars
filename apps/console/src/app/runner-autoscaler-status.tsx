@@ -4,10 +4,13 @@ import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 
 import type {
+  ArcLaneStatus,
   AutoscalerScaleSetStatus,
   AutoscalerStatusResult,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
+import { DataWarnings } from './console-header';
+import { ShuttlebayWorkspace } from './shuttlebay/shuttlebay-workspace';
 
 const POLL_INTERVAL_MS = 10_000;
 const STALENESS_MS = 30_000;
@@ -25,6 +28,10 @@ export function expireAutoscalerStatuses(
     return Number.isFinite(updatedAt) && now - updatedAt <= STALENESS_MS;
   });
   const queueExecutor = result.queueExecutor;
+  const lanes = result.lanes?.filter((status) => {
+    const updatedAt = Date.parse(status.updatedAt);
+    return Number.isFinite(updatedAt) && now - updatedAt <= STALENESS_MS;
+  });
   const freshQueueExecutor =
     queueExecutor !== undefined &&
     Number.isFinite(Date.parse(queueExecutor.updatedAt)) &&
@@ -33,19 +40,52 @@ export function expireAutoscalerStatuses(
       : undefined;
   if (
     statuses.length === result.statuses.length &&
+    lanes?.length === result.lanes?.length &&
     freshQueueExecutor === queueExecutor
   ) {
     return result;
   }
   return {
     statuses,
+    ...(lanes === undefined ? {} : { lanes }),
     ...(freshQueueExecutor === undefined
       ? {}
       : { queueExecutor: freshQueueExecutor }),
     warnings: Array.from(
-      new Set([...result.warnings, 'Runner autoscaler status is stale.']),
+      new Set([...result.warnings, 'Runner capacity status is stale.']),
     ),
   };
+}
+
+function ArcLaneRow({ status }: { status: ArcLaneStatus }) {
+  return (
+    <div
+      className="console-workspace__section shuttlebay-scale-set"
+      data-testid={`arc-lane-${status.lane}`}
+    >
+      <Group gap="xs" wrap="wrap">
+        <Anchor
+          href={status.registrationUrl}
+          target="_blank"
+          rel="noreferrer"
+          size="sm"
+          fw={700}
+        >
+          {status.lane}
+        </Anchor>
+        {status.pendingJobs > 0 && (
+          <Badge color="yellow" size="xs">
+            {status.pendingJobs} pending
+          </Badge>
+        )}
+        <Text size="xs" c="dimmed">
+          {status.runningJobs} running · {status.idleRunners} idle ·{' '}
+          {status.registeredRunners} registered · {status.desiredRunners}{' '}
+          desired · {status.maxRunners} max
+        </Text>
+      </Group>
+    </div>
+  );
 }
 
 /** Each autoscaler (scale set) is its own bordered section so a fleet with
@@ -180,21 +220,30 @@ export function RunnerAutoscalerStatus({
     };
   }, []);
 
-  if (result.statuses.length === 0 && result.queueExecutor === undefined) {
-    return result.warnings.length > 0 ? (
-      <Text size="xs" c="dimmed" data-testid="runner-autoscaler-status-warning">
-        {result.warnings[0]}
-      </Text>
-    ) : null;
-  }
   return (
-    <div data-testid="runner-autoscaler-status">
-      {result.statuses.map((status) => (
-        <ScaleSetRow key={status.scaleSet} status={status} />
-      ))}
-      {result.queueExecutor && (
-        <QueueExecutorRow status={result.queueExecutor} />
-      )}
-    </div>
+    <ShuttlebayWorkspace
+      warnings={
+        result.warnings.length > 0 ? (
+          <DataWarnings warnings={result.warnings} />
+        ) : undefined
+      }
+      toolbar={
+        <Text c="dimmed" size="sm">
+          Refreshes automatically every 10 seconds.
+        </Text>
+      }
+    >
+      <div data-testid="runner-autoscaler-status">
+        {result.statuses.map((status) => (
+          <ScaleSetRow key={status.scaleSet} status={status} />
+        ))}
+        {result.lanes?.map((status) => (
+          <ArcLaneRow key={status.lane} status={status} />
+        ))}
+        {result.queueExecutor && (
+          <QueueExecutorRow status={result.queueExecutor} />
+        )}
+      </div>
+    </ShuttlebayWorkspace>
   );
 }

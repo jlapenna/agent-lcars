@@ -57,6 +57,7 @@ type consoleQueueExecutorStatus struct {
 // telemetry isolated from the queue executor's claim/launch critical path.
 type consoleStatusPublisher interface {
 	PublishQueueExecutor(context.Context, consoleQueueExecutorStatus)
+	PublishARCLane(context.Context, consoleARCLaneStatus)
 	Enabled() bool
 	Close() error
 }
@@ -65,8 +66,9 @@ type noopConsoleStatusPublisher struct{}
 
 func (noopConsoleStatusPublisher) PublishQueueExecutor(context.Context, consoleQueueExecutorStatus) {
 }
-func (noopConsoleStatusPublisher) Enabled() bool { return false }
-func (noopConsoleStatusPublisher) Close() error  { return nil }
+func (noopConsoleStatusPublisher) PublishARCLane(context.Context, consoleARCLaneStatus) {}
+func (noopConsoleStatusPublisher) Enabled() bool                                        { return false }
+func (noopConsoleStatusPublisher) Close() error                                         { return nil }
 
 type firestoreConsoleStatusPublisher struct {
 	client *firestore.Client
@@ -106,6 +108,10 @@ func newConsoleStatusPublisher(ctx context.Context, logger *slog.Logger) (consol
 
 func (p *firestoreConsoleStatusPublisher) PublishQueueExecutor(_ context.Context, status consoleQueueExecutorStatus) {
 	p.publish(queueExecutorStatusDocument, status)
+}
+
+func (p *firestoreConsoleStatusPublisher) PublishARCLane(_ context.Context, status consoleARCLaneStatus) {
+	p.publish("arc-"+status.Lane, status)
 }
 
 func (p *firestoreConsoleStatusPublisher) Enabled() bool { return true }

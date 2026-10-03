@@ -24,9 +24,10 @@ import (
 // logs a warning naming every ignored section so the file's dead weight is
 // visible rather than silent; nothing under them is read.
 type OrchestratorConfig struct {
-	Version int                `yaml:"version"`
-	Server  OrchestratorServer `yaml:"server"`
-	Fleet   OrchestratorFleet  `yaml:"fleet"`
+	Version  int                `yaml:"version"`
+	Server   OrchestratorServer `yaml:"server"`
+	Fleet    OrchestratorFleet  `yaml:"fleet"`
+	ARCLanes []arcLaneConfig    `yaml:"arc_lanes,omitempty"`
 
 	GitHubLegacy        any `yaml:"github,omitempty"`
 	RegistrationsLegacy any `yaml:"registrations,omitempty"`
@@ -145,6 +146,9 @@ func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
 
 func (r *resolvedOrchestratorConfig) resolve() error {
 	c := &r.Raw
+	if err := validateARCLanes(c.ARCLanes); err != nil {
+		return err
+	}
 	if c.Version != 1 {
 		return fmt.Errorf("version must be 1")
 	}
