@@ -57,6 +57,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// leaving a consumer unable to distinguish that condition from a stale
 	// telemetry writer.
 	go runQueueExecutorStatusPublisher(ctx, statusPublisher, queueStatus)
+	go runARCLaneStatusPublisher(ctx, statusPublisher, resolved.Raw.ARCLanes, logger)
 
 	// Native work items: the durable queue executor claims and launches direct
 	// runners, while the schedule ticker calls the Work API's schedule route.

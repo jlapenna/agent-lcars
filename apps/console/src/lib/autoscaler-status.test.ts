@@ -41,6 +41,38 @@ function mockStore(docs: unknown[]) {
 describe('getAutoscalerStatuses', () => {
   afterEach(() => vi.resetAllMocks());
 
+  it('reads fresh ARC capacity without leaking Firestore metadata, rejecting uncertain counts', async () => {
+    const lane = {
+      schemaVersion: 3,
+      kind: 'arc-lane',
+      lane: 'lcars-ci',
+      registrationUrl: 'https://github.com/jlapenna/agent-lcars',
+      assignedJobs: 3,
+      runningJobs: 1,
+      pendingJobs: 2,
+      idleRunners: 1,
+      registeredRunners: 2,
+      desiredRunners: 3,
+      minRunners: 0,
+      maxRunners: 4,
+      updatedAt: new Date().toISOString(),
+    };
+    mockStore([
+      { ...lane, expireAt: Timestamp.now() },
+      {
+        ...lane,
+        lane: 'stale',
+        updatedAt: new Date(Date.now() - 31_000).toISOString(),
+      },
+      { ...lane, lane: 'bad', runningJobs: NaN },
+      { ...lane, lane: 'unsafe', registrationUrl: 'javascript:alert(1)' },
+    ]);
+    const result = await getAutoscalerStatuses();
+    expect(result.lanes).toEqual([lane]);
+    expect(result.statuses).toEqual([]);
+    expect(result.warnings).toEqual(['ARC lane status is stale.']);
+  });
+
   it('returns fresh, schema-valid scale set snapshots', async () => {
     const firestoreOnlyFields = {
       expireAt: Timestamp.now(),
