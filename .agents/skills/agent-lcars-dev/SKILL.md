@@ -180,6 +180,12 @@ These override any default behavior:
 
 ## Workflows
 
+**Prove functionality with useful work.** During development, prefer real
+issues or work items over fabricated work units for end-to-end proof. Follow
+[the real-work proof guidance](../../../docs/testing-policy.md#development-proof-uses-real-work)
+for selecting work and recording evidence; synthetic regression tests remain
+appropriate for focused contracts and failure cases.
+
 Read the reference before starting the corresponding task:
 
 | Workflow                                    | When to use                                                                                          |
