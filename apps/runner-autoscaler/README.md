@@ -261,7 +261,8 @@ failure; Work API authentication, completion fencing and provider credential
 leases remain authoritative. Jobs have a two-hour wall-clock deadline including scheduling and image pulls,
 which bounds infrastructure launch waits independently of worker heartbeat
 renewal or the normal 80-minute agent budget. They retain
-terminated pod logs for a day through the TTL controller. A suspended shell
+terminated pod logs for a day through the TTL controller, bounded to 24
+completed Jobs per configured capacity slot by the retention sweep. A suspended shell
 older than the two-hour lease window is deleted with UID/resourceVersion
 preconditions; running Jobs are never removed by cleanup.
 

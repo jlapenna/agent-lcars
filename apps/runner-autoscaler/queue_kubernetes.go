@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -462,7 +463,12 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var completed []batch.Job
 	for _, j := range jobs.Items {
+		if queueJobTerminal(j) {
+			completed = append(completed, j)
+			continue
+		}
 		if j.Spec.Suspend == nil || !*j.Spec.Suspend || j.Status.StartTime != nil || time.Since(j.CreationTimestamp.Time) < 2*time.Hour {
 			continue
 		}
@@ -470,6 +476,19 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 		rv := j.ResourceVersion
 		err = q.client.BatchV1().Jobs(q.config.Namespace).Delete(ctx, j.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &uid, ResourceVersion: &rv}, PropagationPolicy: ptr(meta.DeletePropagationBackground)})
 		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	sort.Slice(completed, func(i, j int) bool { return queueJobFinishedAt(completed[i]).After(queueJobFinishedAt(completed[j])) })
+	// The Docker backend retained at most 24 exited containers per capacity
+	// slot/host. Keep the aggregate evidence bound after Kubernetes cutover.
+	for i, j := range completed {
+		finished := queueJobFinishedAt(j)
+		if finished.IsZero() || (i < q.config.MaxConcurrent*directRunnerExitedRetentionLimit && time.Since(finished) < directRunnerExitedRetentionAge) {
+			continue
+		}
+		uid, rv := j.UID, j.ResourceVersion
+		if err := q.client.BatchV1().Jobs(q.config.Namespace).Delete(ctx, j.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &uid, ResourceVersion: &rv}, PropagationPolicy: ptr(meta.DeletePropagationBackground)}); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -483,4 +502,14 @@ func queueWriterRequirement(resolved resolvedOrchestratorConfig) string {
 		return resolved.Raw.Kubernetes.CredentialsSecret
 	}
 	return os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH")
+}
+
+func queueJobFinishedAt(job batch.Job) time.Time {
+	var finished time.Time
+	for _, c := range job.Status.Conditions {
+		if (c.Type == batch.JobComplete || c.Type == batch.JobFailed) && c.Status == core.ConditionTrue && c.LastTransitionTime.Time.After(finished) {
+			finished = c.LastTransitionTime.Time
+		}
+	}
+	return finished
 }
