@@ -374,8 +374,11 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 					ServiceAccountName: q.config.ServiceAccount, AutomountServiceAccountToken: &no,
 					NodeSelector: q.config.NodeSelector, Tolerations: q.tolerations(),
 					SecurityContext: &core.PodSecurityContext{RunAsUser: &uid, RunAsGroup: &gid, RunAsNonRoot: &yes, FSGroup: &gid},
-					DNSConfig:       &core.PodDNSConfig{Options: []core.PodDNSConfigOption{{Name: "ndots", Value: ptr("2")}}},
-					Volumes:         volumes,
+					// Query external API names before cluster search suffixes; musl can
+					// stop on a search response before reaching the absolute name.
+					DNSPolicy: core.DNSClusterFirst,
+					DNSConfig: &core.PodDNSConfig{Options: []core.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}}},
+					Volumes:   volumes,
 					Containers: []core.Container{{
 						Name: "direct-runner", Image: q.image, ImagePullPolicy: core.PullAlways,
 						Env: env, VolumeMounts: mounts,
