@@ -260,6 +260,13 @@ Console broker and keeps rotating credentials/transcripts in a 64Mi memory
 `emptyDir`. Workers disable ServiceAccount token mounting, run as uid/gid 1001,
 and use no host paths, Docker socket, or SSH key.
 
+Worker pods use `ClusterFirst` DNS with `ndots:1`. External bootstrap and provider
+API names such as `chatgpt.com` are queried before Kubernetes search suffixes,
+avoiding musl resolver failures on search responses. Bare cluster service names
+still use the cluster search list. This default is part of the controller's Job
+manifest; adopting it requires the published controller image, not a worker-image
+rebuild, and applies to newly created Jobs.
+
 Before claiming, the controller counts unfinished Jobs (including Pending or
 suspended Jobs), reserves a process-local slot, and checks matching nodes for
 Ready, cordon and taint eligibility plus free CPU/memory/storage/pod requests.

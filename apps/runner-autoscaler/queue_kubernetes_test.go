@@ -106,6 +106,9 @@ func TestKubernetesLaunchProviderIsolationAndSingleAttempt(t *testing.T) {
 			}
 			j := jobs.Items[0]
 			p := j.Spec.Template.Spec
+			if p.DNSPolicy != core.DNSClusterFirst || p.DNSConfig == nil || len(p.DNSConfig.Options) != 1 || p.DNSConfig.Options[0].Name != "ndots" || p.DNSConfig.Options[0].Value == nil || *p.DNSConfig.Options[0].Value != "1" {
+				t.Fatal("external API names must resolve before search suffixes while retaining cluster DNS")
+			}
 			if *j.Spec.Suspend || *j.Spec.BackoffLimit != 0 || p.RestartPolicy != core.RestartPolicyNever || *p.AutomountServiceAccountToken || p.NodeName != "" {
 				t.Fatal("single attempt/scheduling policy violated")
 			}
