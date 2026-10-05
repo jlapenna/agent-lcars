@@ -23,9 +23,11 @@ available through Git history.
    then reports completion through the Work API run-token route.
 4. A successful worker run must satisfy the native deliverable verifier: an artifact
    contains its exact `<!-- attempt-claim:<attempt-id> -->` marker.
-5. A lease is renewed while the run is live. Reconciliation settles terminal
-   GitHub runs or expired leases, then performs bounded retry; an exhausted
-   retry budget parks the task for manual action.
+5. A lease is renewed while the run is live. When a worker terminates
+   without reporting, the QueueExecutor reports the exit and the run is
+   settled `lost` at once; reconciliation settles expired leases as the
+   backstop. Both perform bounded retry; an exhausted retry budget parks the
+   task for manual action.
 
 ## Code map
 

@@ -771,6 +771,35 @@ export const runsContract = {
     .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
     .input(z.strictObject({ runId: runIdSchema }))
     .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
+  /** The executor's own report that the container or Job it launched for
+   *  a claimed run has terminated. Authenticated like `claim` (the
+   *  executor's `work.executor` bearer, not the run token, which lives only
+   *  inside the worker). A still-live run is settled `lost` immediately and
+   *  auto-retried; an already-settled run is returned unchanged, so the
+   *  executor may report every exit it observes. */
+  exit: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/exit',
+        operationId: 'reportRunExit',
+        summary: "Report that a claimed run's worker terminated",
+        successStatus: 200,
+        spec: withBearer,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'work.executor scope required' },
+      FORBIDDEN: { message: 'pipeline not granted to this executor' },
+      NOT_FOUND: { message: 'unknown run' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string().min(1).max(256),
+      }),
+    )
+    .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
   complete: runBase
     .meta(
       openapi({

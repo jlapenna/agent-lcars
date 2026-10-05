@@ -4,6 +4,7 @@ import {
   confirmDispatch,
   decidedRun,
   type Decision,
+  executorExitedAndRetry,
   expireLeaseAndRetry,
   isRefusal,
   type Refusal,
@@ -285,6 +286,20 @@ export class Orchestrator {
       }
     }
     return { lost, retried };
+  }
+
+  /**
+   * The QueueExecutor reports that a claimed run's worker terminated. A run
+   * still live at that point never reported its outcome, so it is settled
+   * `lost` now -- with the same bounded auto-retry `sweepExpired` applies --
+   * instead of holding its task until the two-hour lease runs out. A run
+   * that already settled (the usual case: the worker reported, then exited)
+   * is refused and left untouched, so reporting every exit is safe.
+   */
+  async executorExited(runId: string): Promise<Decision | Refusal> {
+    return this.transactOnRun(runId, (task, run) =>
+      executorExitedAndRetry({ now: this.clock.now(), task, run }),
+    );
   }
 
   async #once<T extends Decision>(

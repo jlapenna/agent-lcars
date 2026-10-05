@@ -251,7 +251,14 @@ export const runEventSchema = z.strictObject({
   at: isoUtc,
   to: runStateSchema,
   /** Who caused the transition. */
-  by: z.enum(['request', 'dispatch', 'report', 'operator', 'expiry']),
+  by: z.enum([
+    'request',
+    'dispatch',
+    'report',
+    'operator',
+    'expiry',
+    'executor',
+  ]),
   note: z.string().max(1_024).optional(),
 });
 export type RunEvent = z.infer<typeof runEventSchema>;

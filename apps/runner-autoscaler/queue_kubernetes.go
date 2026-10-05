@@ -127,6 +127,9 @@ type kubernetesQueue struct {
 	logger *slog.Logger
 	mu     sync.Mutex
 	held   int
+	// exits receives every terminated queue Job this executor's inventory
+	// reads observe (nil disables reporting). See runExitReporter.
+	exits *runExitReporter
 }
 
 func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *slog.Logger) (*kubernetesQueue, error) {
@@ -205,6 +208,16 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 	for _, j := range jobs.Items {
 		if !queueJobTerminal(j) {
 			n++
+			continue
+		}
+		// This read already sees every queue Job's terminal condition (the
+		// Job controller sets it when the worker Pod ends, including on
+		// eviction, OOM, node loss, and the active deadline). Hand each one
+		// to the exit reporter instead of leaving a dead worker's run held
+		// until its lease expires. Only a Job whose name is derived from its
+		// own run annotation identifies a run.
+		if runID := j.Annotations[queueRunAnnotation]; runID != "" && j.Name == queueJobName(runID) {
+			q.exits.observeTerminated(runID)
 		}
 	}
 	return n, nil

@@ -301,7 +301,7 @@ export function expireLease(input: {
   task: Task;
   run: Run;
 }): Decision | Refusal {
-  const { now, task, run } = input;
+  const { now, run } = input;
   if (!isLive(run.state)) return refused('run-not-live');
   // QueueExecutor capacity waits are not execution attempts. A queued run
   // may wait past its original request lease without consuming the task's
@@ -310,10 +310,38 @@ export function expireLease(input: {
   if (Date.parse(run.leaseExpiresAt) > Date.parse(now)) {
     return refused('stale-lease'); // not actually expired
   }
+  return settleLost(input, 'expiry');
+}
+
+/**
+ * The QueueExecutor observed the claimed run's container or Job terminate
+ * while the run was still live: the worker is gone without having reported
+ * an outcome (a killed, evicted, out-of-memory, or deadline-exceeded
+ * runner -- a runner that fails on its own reports `runner-failed` itself).
+ * This is the same judgement lease expiry makes, delivered when the loss
+ * happens instead of when the lease runs out. A run the executor never
+ * claimed has no worker to lose and is refused.
+ */
+export function executorExited(input: {
+  now: string;
+  task: Task;
+  run: Run;
+}): Decision | Refusal {
+  if (!isLive(input.run.state)) return refused('run-not-live');
+  if (input.run.queue?.state !== 'claimed') return refused('stale-lease');
+  if (input.task.activeRunId !== input.run.runId) return refused('stale-lease');
+  return settleLost(input, 'executor');
+}
+
+function settleLost(
+  input: { now: string; task: Task; run: Run },
+  by: 'expiry' | 'executor',
+): Decision {
+  const { now, task, run } = input;
   const settled: Run = {
     ...run,
     state: 'lost',
-    events: [...run.events, { at: now, to: 'lost', by: 'expiry' }],
+    events: [...run.events, { at: now, to: 'lost', by }],
     updatedAt: now,
   };
   return settle(
@@ -326,23 +354,21 @@ export function expireLease(input: {
   );
 }
 
-/** Atomically settle an expired run and, while budget remains, mint its
- * deterministic successor. Both runs and both outbox effects are one
- * Decision, hence one store transaction. */
-export function expireLeaseAndRetry(input: {
-  now: string;
-  task: Task;
-  run: Run;
-}): Decision | Refusal {
-  const expired = expireLease(input);
-  if (isRefusal(expired) || expired.task.consecutiveLost > MAX_AUTO_RETRIES) {
-    return expired;
+/** Settle a lost run and, while budget remains, mint its deterministic
+ * successor. Both runs and both outbox effects are one Decision, hence one
+ * store transaction. */
+function settleLostAndRetry(
+  input: { now: string },
+  lost: Decision | Refusal,
+): Decision | Refusal {
+  if (isRefusal(lost) || lost.task.consecutiveLost > MAX_AUTO_RETRIES) {
+    return lost;
   }
-  const lostRun = decidedRun(expired);
+  const lostRun = decidedRun(lost);
   const retry = mintRun({
     now: input.now,
     taskId: lostRun.task,
-    task: expired.task,
+    task: lost.task,
     requestId: `retry:${lostRun.runId}`,
     requestSource: 'auto-retry',
     pipeline: lostRun.pipeline,
@@ -352,8 +378,28 @@ export function expireLeaseAndRetry(input: {
     task: retry.task,
     run: lostRun,
     additionalRuns: [decidedRun(retry)],
-    outbox: [...expired.outbox, ...retry.outbox],
+    outbox: [...lost.outbox, ...retry.outbox],
   };
+}
+
+/** `executorExited`, then the same bounded auto-retry lease expiry uses. */
+export function executorExitedAndRetry(input: {
+  now: string;
+  task: Task;
+  run: Run;
+}): Decision | Refusal {
+  return settleLostAndRetry(input, executorExited(input));
+}
+
+/** Atomically settle an expired run and, while budget remains, mint its
+ * deterministic successor. Both runs and both outbox effects are one
+ * Decision, hence one store transaction. */
+export function expireLeaseAndRetry(input: {
+  now: string;
+  task: Task;
+  run: Run;
+}): Decision | Refusal {
+  return settleLostAndRetry(input, expireLease(input));
 }
 
 /**
