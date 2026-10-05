@@ -20,11 +20,12 @@ name: Agent PR Auto-Merge (Reusable)
 #   delayed monitors, the post-submit kill switch, and the
 #   deploy -> post-deploy-verify run-ID bridge.
 #
-# The caller owns everything `workflow_call` cannot carry: triggers (the
-# cron schedule, trusted pull_request_target for App-enabled callers (or
-# pull_request/pull_request_review for legacy GITHUB_TOKEN callers), the repo's own
-# workflow_run workflow names, workflow_dispatch and its targeted-monitor
-# inputs), workflow-level permissions, and the per-repo parameter values.
+# The caller owns everything `workflow_call` cannot carry: triggers
+# (trusted pull_request_target, push to main, and its required-check
+# workflow_run names for App-enabled callers; pull_request/pull_request_review,
+# workflow_run, and a cron schedule for legacy GITHUB_TOKEN callers;
+# workflow_dispatch and its targeted-monitor inputs), workflow-level
+# permissions, and the per-repo parameter values.
 # See agent-automerge.yml for this repo's own caller, which doubles as the
 # reference consumer.
 #
@@ -34,8 +35,10 @@ name: Agent PR Auto-Merge (Reusable)
 # agent-authored PRs, not a security boundary. Any PR whose author is one of
 # the caller's known coding-agent bot identities gets squash auto-merge
 # enabled the moment a ready PR is opened/marked ready, gated only on the
-# ruleset's required checks. A scheduled/manual reconciliation sweep repairs a
-# missed event after an Actions outage. App-enabled callers arm with a
+# ruleset's required checks. A reconciliation sweep repairs a missed arm and
+# keeps armed PRs moving: on push to main and PR CI success for App-enabled
+# callers, on the cron for legacy callers, and on a plain workflow_dispatch
+# for manual repair after an Actions outage. App-enabled callers arm with a
 # repository-scoped Agent LCARS installation token, so GitHub emits the normal
 # push/workflow_run chain and applies native linked-issue closure and branch
 # deletion. Callers that have not opted in retain the GITHUB_TOKEN restore and
@@ -353,10 +356,19 @@ jobs:
   # primary arm, and this sweep is the independent repair path for an agent
   # that timed out before handoff or a pull_request event that never ran. It
   # intentionally leaves drafts alone: draft is the fleet's parked/WIP state.
+  # Event-driven for App-enabled callers: a push to main is when an armed PR
+  # falls BEHIND, and a successful PR CI completion is when an armed PR's
+  # checks turn green (the two moments the behind-branch and stale-review
+  # steps can act). App merges and App-pushed PR heads emit both events
+  # normally, so these callers need no cron. `schedule` remains accepted for
+  # legacy GITHUB_TOKEN callers, whose merges suppress that event chain.
   reconcile-automerge:
     if: >
       github.event_name == 'schedule' ||
       (github.event_name == 'push' && inputs.app-token-enabled) ||
+      (github.event_name == 'workflow_run' && inputs.app-token-enabled &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.monitor-pr == '')
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10

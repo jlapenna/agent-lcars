@@ -27,6 +27,7 @@ interface Workflow {
       inputs: Record<string, Record<string, unknown>>;
       secrets: Record<string, Record<string, unknown>>;
     };
+    workflow_run?: { workflows?: string[] };
   };
   jobs: Record<string, Job>;
   permissions?: Record<string, string>;
@@ -148,7 +149,11 @@ describe('agent auto-merge App identity', () => {
     expect(caller.on).toHaveProperty('push');
     expect(caller.on).not.toHaveProperty('pull_request');
     expect(caller.on).not.toHaveProperty('pull_request_review');
-    expect(caller.on).not.toHaveProperty('workflow_run');
+    // Reconciliation is event-driven for App callers: push to main and PR CI
+    // success, never a cron and never the legacy restore inputs.
+    expect(caller.on).not.toHaveProperty('schedule');
+    expect(caller.on).toHaveProperty('workflow_run');
+    expect(caller.on.workflow_run?.workflows).toEqual(['CI']);
     expect(caller.jobs.automerge.with).toMatchObject({
       'app-token-enabled': true,
       'app-client-id': '${{ vars.AGENT_LCARS_CLIENT_ID }}',
@@ -163,6 +168,16 @@ describe('agent auto-merge App identity', () => {
         "github.event_name == 'push' && inputs.app-token-enabled",
       ),
     });
+    const reconcileIf = reusable.jobs['reconcile-automerge'].if ?? '';
+    expect(reconcileIf).toContain(
+      "github.event_name == 'workflow_run' && inputs.app-token-enabled",
+    );
+    expect(reconcileIf).toContain(
+      "github.event.workflow_run.event == 'pull_request'",
+    );
+    expect(reconcileIf).toContain(
+      "github.event.workflow_run.conclusion == 'success'",
+    );
     expect(reusable.jobs['restore-main-checks']).toMatchObject({
       if: expect.stringContaining('inputs.app-token-enabled == false'),
       permissions: expect.objectContaining({ statuses: 'read' }),

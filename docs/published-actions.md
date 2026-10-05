@@ -92,16 +92,24 @@ grant; mutations continue to use the repository-scoped App token. App-enabled
 callers add a `push: [main]` trigger. That first trusted-base run migrates any
 still-open agent PR armed by the exact legacy `app/github-actions` identity: it
 disables the legacy request and re-arms with the App token before the restore
-path is considered retired. Human and other App arms are preserved. Scheduled
-reconciliation also performs the migration, covering the cutover PR itself
-when its legacy merge actor suppresses that first push.
+path is considered retired. Human and other App arms are preserved. Every
+reconciliation run performs the migration; if the cutover PR's own legacy
+merge actor suppresses that first push, run the caller once with a plain
+`workflow_dispatch`.
 
 The input defaults to false for compatible per-repository rollout. A caller
 that has not supplied the App credential continues to use `GITHUB_TOKEN`; for
 that caller only, `restore-main-checks` and `close-orphaned-anchors` remain the
-post-merge compatibility path. An App-enabled caller should retain the cron
-trigger for missed-event reconciliation but does not need a `workflow_run`
-trigger or any restore-chain inputs.
+post-merge compatibility path, and its cron schedule remains the trigger for
+`reconcile-automerge` and `close-orphaned-anchors`.
+
+An App-enabled caller reconciles on events instead of a cron: `push` to main
+(when an armed PR falls behind) and `workflow_run` `completed` for the
+workflows that report its required checks (when an armed PR turns green; the
+reusable admits only successful `pull_request` runs). App merges and App-pushed
+PR heads emit both events, so a schedule only repeats sweeps that find nothing.
+Keep `workflow_dispatch` for manual repair after an Actions outage, and pass no
+restore-chain inputs.
 
 ## Not consumer surfaces
 
