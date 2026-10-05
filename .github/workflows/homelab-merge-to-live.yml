@@ -1,0 +1,73 @@
+name: Request homelab merge-to-live
+
+# Homelab's merge-to-live publishes and deploys the runner, telemetry, and
+# exporter images built from this repository. It used to poll this
+# repository's main every three minutes; it now runs when asked. After CI's
+# Verify job passes on a push to main, dispatch homelab's
+# merge-to-live-request.yml, which can only create merge-to-live's request
+# file over its restricted forced-command key. merge-to-live still fetches and
+# admits its own sources, so the SHA sent here is provenance, not an input.
+# A lost request is recovered by homelab's daily backstop timer
+# (jlapenna/homelab docs/deployments.md, "Triggering merge-to-live").
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # One pending request is enough: each only re-arms the next cycle, and that
+  # cycle deploys whatever main is current.
+  group: homelab-merge-to-live-request
+  cancel-in-progress: true
+
+jobs:
+  request:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ['lcars-default']
+    timeout-minutes: 5
+    steps:
+      # The run conclusion rolls up non-required jobs such as E2E; gate on the
+      # required Verify job itself, as deploy-console.yml does (#543).
+      - name: Check Verify job's conclusion
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" \
+            --paginate --jq '.jobs[] | select(.name == "Verify") | .conclusion')
+          echo "Verify job conclusion for run ${RUN_ID}: '${conclusion}'"
+          echo "passed=$([[ "$conclusion" == success ]] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        if: steps.verify.outputs.passed == 'true'
+
+      - name: Mint homelab dispatch token
+        id: token
+        if: steps.verify.outputs.passed == 'true'
+        uses: ./.github/actions/mint-agent-token
+        with:
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          owner: jlapenna
+          repositories: homelab
+          permission-actions: write
+
+      - name: Request one merge-to-live cycle
+        if: steps.verify.outputs.passed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          gh workflow run merge-to-live-request.yml \
+            --repo jlapenna/homelab --ref main -f source_sha="$SOURCE_SHA"
+          echo "Requested homelab merge-to-live for ${SOURCE_SHA}."
