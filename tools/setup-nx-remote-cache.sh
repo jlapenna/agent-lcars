@@ -4,7 +4,7 @@
 #
 # The credential is resolved from two sources, first hit wins:
 #
-#   1. The encrypted age secret store (secrets-cat / NX_CACHE_TOKEN_SPARK).
+#   1. The encrypted age secret store (secrets-get / NX_CACHE_TOKEN_SPARK).
 #      Covers the maintainer's home directory on any fleet host, with no cloud
 #      login required.
 #   2. This repo's own GCP project. Covers runs that do NOT happen in that home
@@ -20,6 +20,7 @@
 # worktree's config by reading through to the primary, so a per-worktree copy
 # would only add a second credential on disk that can go stale across a
 # rotation.
+set +x
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -51,15 +52,21 @@ fi
 # That is the least visible way this can break, so probe before committing.
 #
 # GET /v1/cache/<hash> on an absent hash: 404 means the bearer token was
-# accepted, 403 means it was refused. Any other status (or an unreachable
-# server) is inconclusive, so treat it as usable and let tools/nx's own
-# reachability probe decide at run time.
+# accepted. Rejection, redirects, server errors and an unreachable server
+# do not verify a candidate; optional cache setup then preserves any old file
+# or leaves builds to recompute locally.
 token_authenticates() {
   local candidate="$1" code
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
-    -H "Authorization: Bearer $candidate" \
-    "$NX_REMOTE_CACHE_URL/v1/cache/authprobe000000000000000000000" 2>/dev/null || true)"
-  [ "$code" != "403" ]
+  local escaped LC_ALL=C
+  # HTTP bearer values must be printable ASCII; this also keeps Bash %q
+  # serialization compatible with the selected shlex reader.
+  [[ "$candidate" != *[![:print:]]* ]] || return 1
+  escaped="${candidate//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  code="$(printf 'header = "Authorization: Bearer %s"\n' "$escaped" |
+    curl --disable --config - -s -o /dev/null -w '%{http_code}' --max-time 3 \
+      "$NX_REMOTE_CACHE_URL/v1/cache/authprobe000000000000000000000" 2>/dev/null || true)"
+  [ "$code" = "404" ]
 }
 
 token=""
@@ -74,15 +81,15 @@ try_source() {
     token="$candidate"
     source_used="$label"
   else
-    rejected="${rejected}    - ${label}: token refused (403)\n"
+    rejected="${rejected}    - ${label}: authentication unverified\n"
   fi
 }
 
 # 1. Encrypted age store -- maintainer workstations, no cloud login needed.
-if command -v secrets-cat >/dev/null 2>&1; then
-  try_source \
-    "$(secrets-cat 2>/dev/null | sed -n 's/^NX_CACHE_TOKEN_SPARK=//p' | tail -1)" \
-    "the age secret store (NX_CACHE_TOKEN_SPARK)"
+if command -v secrets-get >/dev/null 2>&1; then
+  if candidate="$(secrets-get NX_CACHE_TOKEN_SPARK 2>/dev/null)"; then
+    try_source "$candidate" "the age secret store (NX_CACHE_TOKEN_SPARK)"
+  fi
 fi
 
 # 2. This repo's own GCP project -- explicit --project, never ambient.
@@ -110,7 +117,7 @@ fi
 
 # umask before create so the token is never briefly group/world readable.
 umask 077
-printf 'NX_SELF_HOSTED_REMOTE_CACHE_SERVER=%s\nNX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN=%s\n' \
+printf 'NX_SELF_HOSTED_REMOTE_CACHE_SERVER=%q\nNX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN=%q\n' \
   "$NX_REMOTE_CACHE_URL" "$token" >"$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
