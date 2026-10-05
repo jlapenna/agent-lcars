@@ -98,17 +98,14 @@ func (r *runExitReporter) observeTerminated(runID string) {
 			r.logger.Warn("Run exit report failed; retrying on the next observation", slog.String("runId", runID), slog.String("error", err.Error()))
 		case state == "lost":
 			r.logger.Warn("Run worker exited without reporting; the Work API settled it lost", slog.String("runId", runID))
-		case state == "pipeline-not-granted":
-			r.logger.Warn("Run exit report refused: this executor is not granted the run's pipeline", slog.String("runId", runID))
 		default:
 			r.logger.Debug("Run exit reported", slog.String("runId", runID), slog.String("state", state))
 		}
 	}()
 }
 
-// post reports one exit. The route's 404 (the run no longer exists) and 403
-// (this executor is not granted the run's pipeline) can never succeed on a
-// later attempt, so they count as delivered.
+// post reports one exit. Only the route's own 404 (the run no longer
+// exists) can never succeed on a later attempt, so it counts as delivered.
 func (r *runExitReporter) post(runID string) (string, error) {
 	token, err := r.idToken()
 	if err != nil {
@@ -155,7 +152,9 @@ func (r *runExitReporter) post(runID string) (string, error) {
 		}
 		return "", fmt.Errorf("exit report returned 404 without the route's unknown-run answer")
 	case http.StatusForbidden:
-		return "pipeline-not-granted", nil
+		// The server-side grant can change between observations; stay
+		// retryable so a restored grant settles the run without a restart.
+		return "", fmt.Errorf("exit report refused: this executor is not granted the run's pipeline")
 	default:
 		return "", fmt.Errorf("exit report returned %d", resp.StatusCode)
 	}

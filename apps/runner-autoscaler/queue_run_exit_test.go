@@ -111,6 +111,20 @@ func TestRunExitReporterTreatsUnknownRunAsDelivered(t *testing.T) {
 	}
 }
 
+func TestRunExitReporterRetriesAPipelineGrant403(t *testing.T) {
+	recorder := &exitReportRecorder{statuses: []int{http.StatusForbidden}}
+	reporter := testExitReporter(recorder.server(t).URL)
+
+	for range 3 {
+		reporter.observeTerminated("run-grant-restored")
+		reporter.wg.Wait()
+	}
+
+	if got := recorder.requests(); len(got) != 2 {
+		t.Fatalf("exit reports = %v, want the 403 retried until delivered", got)
+	}
+}
+
 func TestRunExitReporterRetriesARouteMissing404(t *testing.T) {
 	recorder := &exitReportRecorder{statuses: []int{http.StatusGone}}
 	reporter := testExitReporter(recorder.server(t).URL)
