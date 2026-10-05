@@ -377,6 +377,28 @@ export function closeTask(input: {
   return { task: { ...task, closedAt: now, updatedAt: now }, outbox: [] };
 }
 
+/**
+ * Replaces a native task's `work` payload while no run is live. The payload
+ * is otherwise written once at creation; this is the single sanctioned
+ * rewrite, used by the work layer's item edit. A live run already carries the
+ * payload it was dispatched with, so editing under it would let the item
+ * disagree with the work in flight.
+ */
+export function updateTaskWork(input: {
+  now: string;
+  task: Task | undefined;
+  activeRun: Run | undefined;
+  work: Task['work'];
+}): Decision | Refusal {
+  const { now, task, activeRun, work } = input;
+  if (task === undefined) return refused('unknown-task');
+  if (!isWorkAnchor(task.task)) return refused('not-native');
+  if (activeRun !== undefined && isLive(activeRun.state)) {
+    return refused('task-busy', activeRun);
+  }
+  return { task: { ...task, work, updatedAt: now }, outbox: [] };
+}
+
 /** Shared tail of every settle path. */
 function settle(releasedTask: Task, settledRun: Run, now: string): Decision {
   return {

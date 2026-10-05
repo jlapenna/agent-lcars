@@ -11,6 +11,7 @@ import {
   renewLease,
   reportResult,
   requestRun,
+  updateTaskWork,
 } from './decide';
 import {
   type RequestSource,
@@ -231,6 +232,20 @@ export class Orchestrator {
   async close(taskId: TaskId): Promise<Decision | Refusal> {
     return this.transact(taskId, async (task, activeRun) =>
       closeTask({ now: this.clock.now(), task: task?.task, activeRun }),
+    );
+  }
+
+  async updateWork(
+    taskId: TaskId,
+    work: WorkPayload,
+  ): Promise<Decision | Refusal> {
+    return this.transact(taskId, async (task, activeRun) =>
+      updateTaskWork({
+        now: this.clock.now(),
+        task: task?.task,
+        activeRun,
+        work,
+      }),
     );
   }
 

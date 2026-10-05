@@ -17,6 +17,7 @@ vi.mock('../actions', () => ({
   cancelItem: vi.fn(),
   redispatchItem: vi.fn(),
   replyToWorkItem: vi.fn(),
+  updateItem: vi.fn(),
 }));
 
 // WorkDetailViewContent renders WorkActions, which calls useRouter --

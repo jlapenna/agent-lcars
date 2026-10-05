@@ -34,6 +34,7 @@ describe('itemsContract', () => {
       'maintenanceTick',
       'redispatch',
       'reply',
+      'update',
     ]);
   });
 });
@@ -399,6 +400,7 @@ describe('generateWorkOpenApi', () => {
     );
     expect(Object.keys(doc.paths['/items/{id}'] ?? {}).sort()).toEqual([
       'get',
+      'patch',
       'put',
     ]);
     expect(doc.components.securitySchemes).toHaveProperty('bearerAuth');
@@ -454,6 +456,7 @@ describe('generateWorkOpenApi', () => {
       'PUT /items/{id}': ['201', '403', '409'],
       'GET /items/{id}': ['200', '404'],
       'GET /items': ['200'],
+      'PATCH /items/{id}': ['200', '404', '409'],
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
       'POST /items/{id}/reply': ['200', '403', '404', '409'],

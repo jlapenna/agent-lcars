@@ -30,8 +30,10 @@ import {
   getItem,
   redispatchItem,
   replyToWorkItem,
+  updateItem,
 } from '../actions';
 import { Conversation } from '../conversation';
+import { EditWork } from '../edit-work';
 import { safeHttpUrl } from '../safe-url';
 import { WorkActions } from '../work-actions';
 
@@ -211,6 +213,13 @@ export function WorkDetailViewContent({ detail }: WorkDetailContentProps) {
           {item.spec.target.repo} &middot; {item.spec.pipeline}
         </Text>
       </Group>
+      <EditWork
+        id={item.id}
+        title={item.spec.title}
+        description={item.spec.description}
+        running={item.state === 'running'}
+        update={updateItem}
+      />
       <Conversation item={item} />
       <WorkActions
         id={item.id}
