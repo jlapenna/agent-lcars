@@ -70,7 +70,7 @@ which would punish a laptop off the VPN.
 
 The token is resolved from two sources, in order:
 
-1. **The encrypted age secret store** (`secrets-cat`, key
+1. **The encrypted age secret store** (`secrets-get`, named key
    `NX_CACHE_TOKEN_SPARK` — the name predates the L2 host's rename to
    `picard` and is tracked for a follow-up rename in `homegit`, the repo
    that owns the secret store). Covers the maintainer's home directory on
@@ -94,8 +94,12 @@ value in an earlier source would otherwise mask a working value in a later
 one, and the only symptom would be builds that are mysteriously slow.
 
 The probe is a `GET` for an absent hash — `404` means the bearer token was
-accepted, `403` means refused. Any other status is treated as inconclusive and
-the token is used, leaving the run-time decision to `tools/nx`.
+accepted. Only `404` verifies a candidate: `403`, redirects, server errors and
+network failures do not install it. Resolution continues to the explicit
+fallback; if neither candidate verifies, setup preserves an existing file or
+leaves caching unconfigured. The authorization header travels through Curl
+stdin rather than process arguments. Printable ASCII validation and literal
+Bash quoting keep token contents from becoming header controls or shell code.
 
 Pass `--force` to rewrite an existing file; that is the rotation path.
 
