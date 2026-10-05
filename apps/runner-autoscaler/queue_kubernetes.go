@@ -217,6 +217,10 @@ func (q *kubernetesQueue) tolerations() []core.Toleration {
 	return out
 }
 func (q *kubernetesQueue) readyNodes(ctx context.Context) (bool, error) {
+	return q.nodesFit(ctx, true)
+}
+
+func (q *kubernetesQueue) nodesFit(ctx context.Context, requireFree bool) (bool, error) {
 	nodes, err := q.client.CoreV1().Nodes().List(ctx, meta.ListOptions{LabelSelector: labels.Set(q.config.NodeSelector).String()})
 	if err != nil {
 		return false, err
@@ -258,6 +262,9 @@ func (q *kubernetesQueue) readyNodes(ctx context.Context) (bool, error) {
 		// succeeded pods release capacity; terminating pods still occupy it.
 		available := node.Status.Allocatable.DeepCopy()
 		for _, pod := range pods.Items {
+			if !requireFree {
+				break
+			}
 			if pod.Spec.NodeName != node.Name || pod.Status.Phase == core.PodSucceeded || pod.Status.Phase == core.PodFailed {
 				continue
 			}
@@ -286,6 +293,41 @@ func (q *kubernetesQueue) readyNodes(ctx context.Context) (bool, error) {
 	}
 	return false, nil
 }
+
+// Keep at most one real claim waiting for scheduler placement. A Job whose
+// Pod has not appeared yet counts too; API errors never grant admission.
+func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
+	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
+	if err != nil {
+		return false, err
+	}
+	pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	for _, job := range jobs.Items {
+		if queueJobTerminal(job) {
+			continue
+		}
+		runID := job.Annotations[queueRunAnnotation]
+		if job.UID == "" || runID == "" || job.Name != queueJobName(runID) {
+			return false, fmt.Errorf("queue Job identity conflict during placement admission")
+		}
+		placed := false
+		for _, pod := range pods.Items {
+			for _, owner := range pod.OwnerReferences {
+				if owner.UID == job.UID && owner.Kind == "Job" && owner.Controller != nil && *owner.Controller && pod.Spec.NodeName != "" && pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
+					placed = true
+				}
+			}
+		}
+		if !placed {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -296,12 +338,31 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation
 	if n+q.held >= q.config.MaxConcurrent {
 		return nil, nil
 	}
+	if q.held > 0 {
+		return nil, nil
+	}
+	pending, err := q.pendingPlacement(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if pending {
+		return nil, nil
+	}
 	ready, err := q.readyNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if !ready {
-		return nil, nil
+		// Compete with ARC through the native scheduler instead of racing its
+		// already-Pending Pods for a free slot every poll. Still require a
+		// Ready, uncordoned, tolerated node whose total budget fits the shape.
+		ready, err = q.nodesFit(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+		if !ready {
+			return nil, nil
+		}
 	}
 	q.held++
 	var once sync.Once
