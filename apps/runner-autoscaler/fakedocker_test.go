@@ -312,6 +312,12 @@ func (f *fakeDockerServer) pullCount() int {
 	return f.imagePulls
 }
 
+func (f *fakeDockerServer) lookupCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.digestLookups
+}
+
 func (f *fakeDockerServer) createCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

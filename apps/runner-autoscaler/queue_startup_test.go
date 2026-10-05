@@ -37,7 +37,7 @@ func TestQueueLaunchUsesStartupSnapshotAfterEnvironmentChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if fake.pullCount() != 0 || fake.createCount() != 1 {
-		t.Fatal("cached launch should not touch registry")
+		t.Fatal("cached launch must not pull when the registry cannot be resolved")
 	}
 	if fake.lastCreate.Image != "registry/direct-runner:test" {
 		t.Fatalf("image changed: %s", fake.lastCreate.Image)
@@ -115,8 +115,8 @@ func TestQueueLaunchFollowsTagOnlyWhenDigestMoved(t *testing.T) {
 			if err := launchDirectRunnerWithClient(context.Background(), q, directRunnerLaunch{runID: "work:01FOLLOWTAG/r1", pipeline: "codex"}, clients, discardLogger()); err != nil {
 				t.Fatal(err)
 			}
-			if fake.digestLookups != 1 {
-				t.Fatalf("digest lookups = %d, want 1", fake.digestLookups)
+			if fake.lookupCount() != 1 {
+				t.Fatalf("digest lookups = %d, want 1", fake.lookupCount())
 			}
 			if fake.pullCount() != tc.wantPulls || fake.createCount() != 1 {
 				t.Fatalf("pulls = %d (want %d), creates = %d (want 1)", fake.pullCount(), tc.wantPulls, fake.createCount())
@@ -132,7 +132,7 @@ func TestQueueLaunchPullsMissingImageWithoutDigestLookup(t *testing.T) {
 	if err := launchDirectRunnerWithClient(context.Background(), q, directRunnerLaunch{runID: "work:01MISSINGIMAGE/r1", pipeline: "codex"}, clients, discardLogger()); err != nil {
 		t.Fatal(err)
 	}
-	if fake.pullCount() != 1 || fake.digestLookups != 0 || fake.createCount() != 1 {
-		t.Fatalf("pulls = %d, lookups = %d, creates = %d", fake.pullCount(), fake.digestLookups, fake.createCount())
+	if fake.pullCount() != 1 || fake.lookupCount() != 0 || fake.createCount() != 1 {
+		t.Fatalf("pulls = %d, lookups = %d, creates = %d", fake.pullCount(), fake.lookupCount(), fake.createCount())
 	}
 }
