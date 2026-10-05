@@ -99,10 +99,10 @@ func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*doc
 		return fmt.Errorf("connecting: %w", err)
 	}
 	defer client.Close()
-	// The normal startup warmer runs asynchronously. Establish the selected
-	// mutable image here as part of this host's admission probe instead of
-	// racing its background pull on a fresh host. A host with a failed pull is
-	// excluded before it can claim any provider's work.
+	// Establish the selected mutable image here as part of this host's
+	// admission probe, so a fresh host pulls before it can claim work. A host
+	// with no image and a failed pull is excluded before it can claim any
+	// provider's work.
 	preparedImage, err := ensureQueueRunnerImage(ctx, client, host, runnerImage, logger)
 	if err != nil {
 		return err

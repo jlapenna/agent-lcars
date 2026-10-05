@@ -34,9 +34,16 @@ type fakeDockerServer struct {
 	removeForced []bool
 	inspectDelay time.Duration
 
-	imagePresent     bool
-	imagePulls       int
-	pullStreamError  bool
+	imagePresent    bool
+	imagePulls      int
+	pullStreamError bool
+	// localDigest is the cached image's repo digest and registryDigest the
+	// tag's current registry digest. An empty registryDigest makes the
+	// distribution lookup fail, the way an unreachable registry does; a
+	// successful pull adopts registryDigest as the cached digest.
+	localDigest      string
+	registryDigest   string
+	digestLookups    int
 	containerCreates int
 	// lastCreate captures the most recent /containers/create request body so
 	// a test can assert exactly what a caller (e.g. launchDirectRunner) sent
@@ -209,8 +216,29 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": "No such image"})
 			return
 		}
+		f.mu.Lock()
+		var repoDigests []string
+		if f.localDigest != "" {
+			repoDigests = []string{"registry/direct-runner@" + f.localDigest}
+		}
+		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(image.InspectResponse{ID: "sha256:test"})
+		_ = json.NewEncoder(w).Encode(image.InspectResponse{ID: "sha256:test", RepoDigests: repoDigests})
+
+	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/distribution/"):
+		f.mu.Lock()
+		f.digestLookups++
+		remote := f.registryDigest
+		f.mu.Unlock()
+		if remote == "" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "registry unreachable"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"Descriptor": map[string]any{
+			"mediaType": "application/vnd.oci.image.index.v1+json", "digest": remote, "size": 1,
+		}})
 
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/images/create"):
 		f.mu.Lock()
@@ -218,6 +246,7 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		failStream := f.pullStreamError
 		if !failStream {
 			f.imagePresent = true
+			f.localDigest = f.registryDigest
 		}
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")

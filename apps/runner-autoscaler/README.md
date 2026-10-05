@@ -386,12 +386,13 @@ limit are captured in one startup snapshot. Launches and capacity reservations d
 not re-read their environment after claiming work. Credential **contents** still
 rotate through the existing per-run file reads.
 
-Direct placement checks for the image on its selected host and pulls only when
-it is absent (including after image pruning). A background refresh starts after
-preflight and then runs every five minutes to follow the configured tag. Each
-host refresh has a two-minute deadline; a failed refresh keeps the cached image
-available to launches. A missing image with an unavailable registry still fails,
-as there is no runnable artifact.
+Direct placement follows the configured tag at launch, like the Kubernetes
+Job's `PullAlways`: it resolves the tag's registry digest (10-second deadline)
+and pulls on the selected host only when the cached image differs or is absent
+(including after image pruning). There is no background refresh loop; the tag
+moves only when a new runner image is promoted. A failed digest lookup or pull
+keeps the cached image available to the launch. A missing image with an
+unavailable registry still fails, as there is no runnable artifact.
 For Docker, `--check-config` includes the environment-only queue checks and does
 not perform the mutating per-host credential-container probe. For Kubernetes,
 it also reads the configured credential Secret, worker ServiceAccount, Jobs,
