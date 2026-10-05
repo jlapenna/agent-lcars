@@ -2,7 +2,6 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-repo_root="$(cd "$here/../../.." && pwd -P)"
 dockerfile="$here/Dockerfile"
 regression_dockerfile="$here/pnpm-seed-regression.Dockerfile"
 seed_dir="$here/pnpm-seed"
@@ -19,7 +18,11 @@ require_equal_package_manager() {
   fi
 }
 
-root_package_manager="$(node -p "require(process.argv[1]).packageManager" "$repo_root/package.json")"
+seed_package_manager="$(node -p "require(process.argv[1]).packageManager" "$fixture_dir/seed/package.json")"
+if [[ "$seed_package_manager" != pnpm@11.* ]]; then
+  echo "regression seed must use pnpm 11 (got $seed_package_manager)" >&2
+  exit 1
+fi
 # Every fleet seed directory is a fetchable pnpm 11 lockfile snapshot, and
 # the fleet list and its synced directories agree (tools/sync-runner-pnpm-seed.py).
 expected_dirs="$(node -p "require(process.argv[1]).repositories.map((r) => r.replace('/', '__')).sort().join('\\n')" "$seed_dir/fleet.json")"
@@ -36,8 +39,10 @@ while IFS= read -r repository_dir; do
     exit 1
   fi
 done <<<"$actual_dirs"
-for fixture in seed hit miss; do
-  require_equal_package_manager "$fixture_dir/$fixture/package.json" "$root_package_manager"
+# The regression image resolves pnpm from its curated seed, independently of
+# consumer dependency updates. Its hit and miss must use that same version.
+for fixture in hit miss; do
+  require_equal_package_manager "$fixture_dir/$fixture/package.json" "$seed_package_manager"
 done
 
 # The production build uses the runner user's normal pnpm store.
