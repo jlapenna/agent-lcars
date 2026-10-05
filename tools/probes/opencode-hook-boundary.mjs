@@ -6,12 +6,10 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -33,6 +31,7 @@ import {
   reviewDenial,
   reviewFixture,
 } from './review-fixture.mjs';
+import { createProbeScratch } from './scratch.mjs';
 import { workflowFixture } from './workflow-fixture.mjs';
 import {
   expectedFileDenial,
@@ -46,7 +45,7 @@ if (!binary || !expectedVersion) {
     'usage: node opencode-hook-boundary.mjs <absolute-cli-path> <expected-version> [scenario]',
   );
 }
-const root = mkdtempSync(join(tmpdir(), 'lcars-opencode-hook-probe-'));
+const root = createProbeScratch('lcars-opencode-hook-probe-');
 const cli = resolve(binary);
 
 function run(args, cwd, env, timeout = 60000) {

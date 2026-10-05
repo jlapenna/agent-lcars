@@ -5,16 +5,16 @@ import { createHash } from 'node:crypto';
 import {
   cpSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { createProbeScratch, KEEP_EVIDENCE_ENV } from './scratch.mjs';
 
 const [provider, binary, expectedVersion, imageId, scenario] =
   process.argv.slice(2);
@@ -74,7 +74,7 @@ for (const helper of [
   runtimeHashes[helper] = actual;
 }
 
-const workspace = mkdtempSync(join(tmpdir(), 'lcars-image-probe-'));
+const workspace = createProbeScratch('lcars-image-probe-');
 cpSync(join(source, 'tools/probes'), join(workspace, 'tools/probes'), {
   recursive: true,
 });
@@ -114,6 +114,11 @@ const result = spawnSync(process.execPath, args, {
   env: {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
+    // The native probe settles its own scratch root; keep it whenever this
+    // wrapper's caller asked to keep evidence.
+    ...(process.env[KEEP_EVIDENCE_ENV] === undefined
+      ? {}
+      : { [KEEP_EVIDENCE_ENV]: process.env[KEEP_EVIDENCE_ENV] }),
     ...(provider === 'opencode'
       ? { LCARS_PROBE_OPENCODE_DEPENDENCIES: '/home/runner/.config/opencode' }
       : {}),

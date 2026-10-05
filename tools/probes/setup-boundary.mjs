@@ -8,9 +8,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { createProbeScratch } from './scratch.mjs';
 
 const [provider, binary, expectedVersion] = process.argv.slice(2);
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -19,7 +20,7 @@ if (
   !binary?.startsWith('/')
 )
   throw new Error('Expected provider and absolute CLI path');
-const root = mkdtempSync(join(tmpdir(), `lcars-${provider}-setup-probe-`));
+const root = createProbeScratch(`lcars-${provider}-setup-probe-`);
 const version = spawnSync(binary, ['--version'], {
   encoding: 'utf8',
   timeout: 10000,

@@ -199,6 +199,10 @@ worker module directory, and the individual `worker-policy-bootstrap.sh` and
 home, credentials, the complete checkout, or the Docker socket. Record the
 immutable ID returned by `docker image inspect` and run that same ID with
 `--network none`. Reports retain diagnostics and never claim graduation.
+Every probe removes its temporary root when it passes and keeps it (printing
+the path to stderr) when it fails; pass `-e LCARS_PROBE_KEEP_EVIDENCE=1` to keep
+a passing run's reports for the release-qualification consumer below
+(`tools/probes/scratch.mjs`).
 Also mount the source `direct-runner.sh` read-only: the wrapper checks it against
 the baked runner and records its hash. Claude delegation probes read the actual
 runner's literal allow/deny tool flags instead of maintaining a separate policy.
@@ -669,8 +673,9 @@ The version must match exactly. The runner's pin is in
 `apps/runner-autoscaler/runner-image/opencode-version`; local results from
 another version are diagnostic only. The probe creates isolated temporary
 homes/workspaces and uses an allowlisted environment without real credentials.
-It retains stdout, stderr, hook receipts and observations under the printed
-temporary directory. It never publishes GitHub artifacts or changes global
+It writes stdout, stderr, hook receipts and observations under the printed
+temporary directory, which it removes on a pass and keeps on a failure; set
+`LCARS_PROBE_KEEP_EVIDENCE=1` to keep a passing run's directory. It never publishes GitHub artifacts or changes global
 provider configuration. The CLI has a 60-second deadline per case.
 
 The localhost model requests one harmless shell sentinel write. The probe
