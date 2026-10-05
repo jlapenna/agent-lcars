@@ -568,6 +568,99 @@ describe('auto-retry on loss', () => {
   });
 });
 
+describe('executor-reported exit', () => {
+  async function claimed(f = fixture()) {
+    const { run } = await started(f.orchestrator);
+    await f.store.enqueueRun({ runId: run.runId, now: T0 });
+    await f.orchestrator.confirmDispatch(run.runId);
+    const claim = await f.store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: T0,
+      claimedBy: 'executor',
+      tokenHash: 'a'.repeat(64),
+    });
+    expect(claim?.runId).toBe(run.runId);
+    return { ...f, run };
+  }
+
+  it('settles a claimed live run lost immediately and mints its bounded retry', async () => {
+    const { clock, store, orchestrator, run } = await claimed();
+    clock.advanceMinutes(3); // far inside the two-hour lease
+
+    const outcome = await orchestrator.executorExited(run.runId);
+
+    if (isRefusal(outcome)) throw new Error(outcome.reason);
+    const lost = decidedRun(outcome);
+    expect(lost).toMatchObject({ runId: run.runId, state: 'lost' });
+    expect(lost.events.at(-1)).toMatchObject({ to: 'lost', by: 'executor' });
+    const retry = outcome.additionalRuns?.[0];
+    expect(retry).toMatchObject({
+      requestId: `retry:${run.runId}`,
+      pipeline: run.pipeline,
+      state: 'pending',
+    });
+    expect(await store.readTask(TASK)).toMatchObject({
+      task: { activeRunId: retry?.runId, consecutiveLost: 1 },
+    });
+    expect(outcome.outbox.map((entry) => entry.kind)).toEqual([
+      'report-outcome',
+      'dispatch-run',
+    ]);
+    // The later lease sweep has nothing left to settle for this run.
+    clock.advanceMinutes(121);
+    const swept = await orchestrator.sweepExpired();
+    expect(swept.lost.map((r) => r.runId)).not.toContain(run.runId);
+  });
+
+  it('leaves a run that already reported its outcome untouched', async () => {
+    const { store, orchestrator, run } = await claimed();
+    await orchestrator.report(run.runId, { ok: true });
+
+    expect(await orchestrator.executorExited(run.runId)).toMatchObject({
+      refused: true,
+      reason: 'run-not-live',
+    });
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'finished',
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+  });
+
+  it('is idempotent: a repeated report neither re-settles nor double-retries', async () => {
+    const { store, orchestrator, run } = await claimed();
+    await orchestrator.executorExited(run.runId);
+
+    expect(await orchestrator.executorExited(run.runId)).toMatchObject({
+      refused: true,
+      reason: 'run-not-live',
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
+
+  it('refuses a run the executor never claimed', async () => {
+    const { store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await store.enqueueRun({ runId: run.runId, now: T0 });
+    await orchestrator.confirmDispatch(run.runId);
+
+    expect(await orchestrator.executorExited(run.runId)).toMatchObject({
+      refused: true,
+      reason: 'stale-lease',
+    });
+    expect(await store.readRun(run.runId)).toMatchObject({
+      queue: { state: 'queued' },
+    });
+  });
+
+  it('refuses an unknown run', async () => {
+    const { orchestrator } = fixture();
+    expect(await orchestrator.executorExited('no-such-run')).toMatchObject({
+      refused: true,
+      reason: 'unknown-run',
+    });
+  });
+});
+
 describe('the outbox', () => {
   it('hands out pending entries once and settles them', async () => {
     const { clock, store, orchestrator } = fixture();

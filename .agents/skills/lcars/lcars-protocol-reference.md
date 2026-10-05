@@ -94,16 +94,22 @@ maintenance ticker calls `/api/work/v1/maintenance/tick` using its existing
   execution lease. A failed launch after claiming still uses lease recovery,
   because the launch may have had side effects. Process-local reservations do
   not coordinate separately running executor generations.
-- **Lease expiry, not liveness polling.** Pending dispatches and claimed runs
-  hold a 2-hour lease (`decide.ts`'s `RUN_LEASE_MS`) extended by dispatch,
-  claim, or renewal. If your job dies silently — runner loss, a timeout with no
-  completion callback, anything that never reaches `expireLease` on its
-  own — the sweep is what eventually notices: once the lease is past due,
-  the run is marked `lost` and the task's mutex is released. There is
-  nothing for you to hand-repair here; you do not need to reconstruct or
-  edit any state.
-- **Bounded, automatic retry.** Immediately after marking a run `lost`, the
-  sweep requests a fresh run for the same task with the same
+- **Executor-reported exit, then lease expiry.** A worker that fails on
+  its own reports `runner-failed` through its run token. One that dies
+  without reporting (OOM, eviction, node loss, the Job deadline) is seen by
+  the QueueExecutor: its Job inventory read hands every terminated queue Job
+  to `POST /runs/{runId}/exit`, and a run still live at that point is
+  settled `lost` immediately (`decide.ts`'s `executorExited`, event
+  `by: executor`). Runs that already reported are left unchanged, so the
+  executor reports every exit. The 2-hour lease (`decide.ts`'s
+  `RUN_LEASE_MS`), extended by dispatch, claim, or renewal, remains the
+  backstop for what the executor cannot see -- a failed launch, an executor
+  outage, or the Docker compatibility backend: once the lease is past due,
+  the maintenance tick marks the run `lost` and releases the task's mutex.
+  There is nothing for you to hand-repair here; you do not need to
+  reconstruct or edit any state.
+- **Bounded, automatic retry.** Immediately after marking a run `lost`,
+  either path requests a fresh run for the same task with the same
   pipeline/params — unless the task has gone `lost` more than
   `MAX_AUTO_RETRIES` (2) times in a row since its last `finished`/
   `canceled` settlement, in which case it's left parked instead

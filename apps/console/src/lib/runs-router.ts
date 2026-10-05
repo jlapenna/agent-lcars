@@ -77,15 +77,15 @@ export interface RunsContext {
 
 const os = implement(runsContract).$context<RunsContext>();
 
-/** `claim`'s gate: a Google-ID-token principal carrying `work.executor`.
- *  Structurally identical to `work-router.ts`'s `operator` middleware.
+/** `claim`'s and `exit`'s gate: a Google-ID-token principal carrying
+ *  `work.executor`. Structurally identical to `work-router.ts`'s `operator` middleware.
  *  Built with `os.use(...)`, NOT `os.claim.use(...)` -- `@orpc/server`
  *  2.0.0-beta.31's `ProcedureImplementer.use` returns an implementer for
  *  that SAME procedure, not a reusable builder, so `os.claim.use(mw)`
  *  cannot be chained into `.claim.handler(...)` the way this looked at
  *  first. `os.use(mw)` returns a router-level implementer instead, whose
  *  own `.claim` accessor carries the middleware -- applied below to
- *  exactly the one procedure that needs it. */
+ *  exactly the executor-authenticated procedures. */
 const executor = os.use(async ({ context, next }) => {
   if (!context.principal?.scopes.has('work.executor')) {
     throw new ORPCError('UNAUTHORIZED', {
@@ -293,7 +293,7 @@ async function renewCodexLease(
  * to fall back to, only a runner left hanging on a request that should
  * have already succeeded. A drain problem here must not turn a genuinely
  * successful completion into an error the runner sees; the next drain
- * (another route's, or the 30-minute reconcile) picks up whatever this
+ * (another route's, or the maintenance tick) picks up whatever this
  * one missed, same as any other transiently-failed outbox entry.
  */
 async function drainAfterCompletion(
@@ -532,6 +532,43 @@ export const runsRouter = os.router({
       runId: run.runId,
       expiresAt,
     };
+  }),
+
+  exit: executor.exit.handler(async ({ input, context, errors }) => {
+    const run = await context.store.readRun(input.runId);
+    if (run === undefined) throw errors.NOT_FOUND();
+    // The same server-side grant that let this executor claim the run is
+    // the only authority to declare its worker gone.
+    if (!context.principal.pipelines.includes(run.pipeline)) {
+      throw errors.FORBIDDEN();
+    }
+    const settled = await context.orchestrator.executorExited(run.runId);
+    if (isRefusal(settled)) {
+      // The usual case: the worker reported its outcome, then exited.
+      const current = await context.store.readRun(run.runId);
+      return { runId: run.runId, state: current?.state ?? run.state };
+    }
+    logger.warn(
+      'agent-lcars: run %s lost: executor %s reported its worker exited before completing',
+      run.runId,
+      input.runner,
+    );
+    if (run.pipeline === 'codex') {
+      try {
+        await context.codexAuth.releaseLease(run.runId);
+      } catch (error) {
+        // The lease still expires on its own; never fail the loss report.
+        logger.error(
+          'agent-lcars: releasing the Codex lease of lost run %s failed: %s',
+          run.runId,
+          error,
+        );
+      }
+    }
+    // Deliver the loss outcome and dispatch the retry now, not on the next
+    // maintenance tick. A drain failure leaves the entries pending for it.
+    await drainAfterCompletion(context, run.runId);
+    return { runId: run.runId, state: 'lost' };
   }),
 
   complete: os.complete.handler(async ({ input, context }) => {

@@ -129,6 +129,10 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 						setQueueExecutorStartupState(queueExecutorStateMisconfigured)
 						logger.Error("Queue executor Kubernetes preflight failed", slog.Any("error", err))
 					} else {
+						// Set before any goroutine can read the Job inventory.
+						queue.exits = newRunExitReporter(consoleURL, runnerName, func() (string, error) {
+							return idTokenFromSource(tokenSource)
+						}, logger.With("component", "run-exit-reporter"))
 						queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
 						setQueueExecutorStartupState(queueExecutorStateReady)
 						queueStatus.ready.Store(true)

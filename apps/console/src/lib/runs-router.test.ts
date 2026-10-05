@@ -1570,6 +1570,153 @@ describe('heartbeat', () => {
   });
 });
 
+describe('exit', () => {
+  async function claimedRun(pipeline = 'claude') {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid(`exit-${pipeline}`),
+      pipeline,
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await f.store.claimQueuedRun({
+      pipelines: [pipeline],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    return { ...f, runId, token };
+  }
+
+  it('settles a still-live claimed run lost at once, retries it, and drains', async () => {
+    const { store, orchestrator, now, runId } = await claimedRun();
+    const drain = vi.fn(context.drain);
+
+    const response = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        drain,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+
+    expect(response).toEqual({ status: 200, json: { runId, state: 'lost' } });
+    const lost = await store.readRun(runId);
+    expect(lost?.state).toBe('lost');
+    expect(lost?.events.at(-1)).toMatchObject({ to: 'lost', by: 'executor' });
+    const task = await store.readTask({ workId: wid('exit-claude') });
+    expect(task?.task.activeRunId).not.toBe(runId);
+    expect(task?.task.consecutiveLost).toBe(1);
+    expect(drain).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers the settled state unchanged for a run that already completed', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedRun();
+    expect(
+      (
+        await call(
+          { store, orchestrator, now, ...context, bearerToken: token },
+          'POST',
+          runPath(runId, '/complete'),
+          { outcome: 'no-op' },
+        )
+      ).status,
+    ).toBe(200);
+    const drain = vi.fn(context.drain);
+
+    const response = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        drain,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+
+    expect(response).toEqual({
+      status: 200,
+      json: { runId, state: 'finished' },
+    });
+    expect(drain).not.toHaveBeenCalled();
+    expect(await store.listRuns({ workId: wid('exit-claude') })).toHaveLength(
+      1,
+    );
+  });
+
+  it('releases the Codex subscription lease of a lost Codex run', async () => {
+    const { store, orchestrator, now, runId } = await claimedRun('codex');
+    const releaseLease = vi.fn(async () => undefined);
+
+    const response = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexAuth: { ...context.codexAuth, releaseLease },
+        principal: executorPrincipal(['codex']),
+      },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+
+    expect(response.status).toBe(200);
+    expect(releaseLease).toHaveBeenCalledWith(runId);
+  });
+
+  it('requires the work.executor scope, the run pipeline grant, and a known run', async () => {
+    const { store, orchestrator, now, runId } = await claimedRun();
+    const base = { store, orchestrator, now, ...context };
+    const body = { runner: 'runner-1' };
+
+    expect(
+      (await call(base, 'POST', runPath(runId, '/exit'), body)).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(
+          { ...base, principal: operatorPrincipal() },
+          'POST',
+          runPath(runId, '/exit'),
+          body,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(
+          { ...base, principal: executorPrincipal(['opencode']) },
+          'POST',
+          runPath(runId, '/exit'),
+          body,
+        )
+      ).status,
+    ).toBe(403);
+    // The executor only treats a 404 carrying this message as delivered.
+    expect(
+      await call(
+        { ...base, principal: executorPrincipal(['claude']) },
+        'POST',
+        runPath('work:missing/r1', '/exit'),
+        body,
+      ),
+    ).toMatchObject({ status: 404, json: { message: 'unknown run' } });
+    expect((await store.readRun(runId))?.state).toBe('running');
+  });
+});
+
 describe('complete', () => {
   it('refuses a malformed body with 400 and leaves the run state unchanged', async () => {
     const { store, orchestrator, now } = fixture();
