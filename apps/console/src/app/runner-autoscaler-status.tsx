@@ -9,16 +9,23 @@ import type {
   AutoscalerStatusResult,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
+import {
+  RUNNER_STATUS_EVENT,
+  RUNNER_STATUS_STALENESS_MS,
+} from '../lib/runner-status-contract';
 import { DataWarnings } from './console-header';
 import { ShuttlebayWorkspace } from './shuttlebay/shuttlebay-workspace';
 
-const POLL_INTERVAL_MS = 10_000;
-const STALENESS_MS = 30_000;
+export const RUNNER_STATUS_STREAM_URL = '/api/runner-status/stream';
+/** Local clock only: re-checks the last snapshot's age. No network. */
+const EXPIRY_CHECK_INTERVAL_MS = 10_000;
+const STALENESS_MS = RUNNER_STATUS_STALENESS_MS;
 
 /** Removes a last-known snapshot once its producer's timestamp crosses the
- * same staleness boundary used by the server. This matters when a browser
- * loses auth/network access and polling can no longer obtain the server's
- * own stale-document filtering. */
+ * same staleness boundary used by the server. A stopped producer writes
+ * nothing, so no server event arrives to say so; and a browser that loses
+ * auth/network access receives no events at all. Either way the panel must
+ * not keep showing a dead snapshot as live. */
 export function expireAutoscalerStatuses(
   result: AutoscalerStatusResult,
   now = Date.now(),
@@ -182,7 +189,8 @@ function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
   );
 }
 
-/** A tiny, isolated polling island: status refreshes every 10 seconds without
+/** A tiny, isolated live island: the server pushes a fresh projection
+ * whenever the autoscaler writes a status change (or its heartbeat), without
  * re-running the dashboard's authoritative queue projections or invalidating
  * their cache. */
 export function RunnerAutoscalerStatus({
@@ -193,29 +201,22 @@ export function RunnerAutoscalerStatus({
   const [result, setResult] = useState(initial);
 
   useEffect(() => {
-    let active = true;
-    const expire = () => {
-      if (active) setResult((previous) => expireAutoscalerStatuses(previous));
-    };
-    const refresh = async () => {
+    // EventSource reconnects by itself whenever the server ends a stream or
+    // the connection drops; until then the last snapshot stays and expires
+    // locally below.
+    const source = new EventSource(RUNNER_STATUS_STREAM_URL);
+    source.addEventListener(RUNNER_STATUS_EVENT, (event) => {
       try {
-        const response = await fetch('/api/runner-status', {
-          cache: 'no-store',
-        });
-        if (!response.ok) return;
-        const next = (await response.json()) as AutoscalerStatusResult;
-        if (active) setResult(next);
+        setResult(JSON.parse(event.data) as AutoscalerStatusResult);
       } catch {
-        // The interval still expires an old snapshot locally; polling can
-        // recover on its next successful response.
+        // A malformed frame leaves the previous snapshot to expire locally.
       }
-    };
+    });
     const timer = window.setInterval(() => {
-      expire();
-      void refresh();
-    }, POLL_INTERVAL_MS);
+      setResult((previous) => expireAutoscalerStatuses(previous));
+    }, EXPIRY_CHECK_INTERVAL_MS);
     return () => {
-      active = false;
+      source.close();
       window.clearInterval(timer);
     };
   }, []);
@@ -229,7 +230,7 @@ export function RunnerAutoscalerStatus({
       }
       toolbar={
         <Text c="dimmed" size="sm">
-          Refreshes automatically every 10 seconds.
+          Updates live as runner capacity changes.
         </Text>
       }
     >

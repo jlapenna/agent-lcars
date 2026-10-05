@@ -1,14 +1,26 @@
 import { MantineProvider } from '@mantine/core';
 import { act, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  RUNNER_STATUS_EVENT,
+  RUNNER_STATUS_STALENESS_MS,
+} from '../lib/runner-status-contract';
+import {
   expireAutoscalerStatuses,
+  RUNNER_STATUS_STREAM_URL,
   RunnerAutoscalerStatus,
 } from './runner-autoscaler-status';
 
 describe('RunnerAutoscalerStatus', () => {
-  it('shows ARC lane capacity and expires it when polling loses the producer', () => {
+  // jsdom has no EventSource; every render opens one.
+  beforeEach(() => vi.stubGlobal('EventSource', FakeEventSource));
+  afterEach(() => {
+    FakeEventSource.instances = [];
+    vi.unstubAllGlobals();
+  });
+
+  it('shows ARC lane capacity and expires it when the producer stops writing', () => {
     const lane = {
       schemaVersion: 3 as const,
       kind: 'arc-lane' as const,
@@ -43,12 +55,12 @@ describe('RunnerAutoscalerStatus', () => {
     );
     const result = expireAutoscalerStatuses(
       { statuses: [], lanes: [lane], warnings: [] },
-      Date.parse('2026-10-03T01:00:31.000Z'),
+      Date.parse('2026-10-03T01:03:01.000Z'),
     );
     expect(result.lanes).toEqual([]);
     expect(result.warnings[0]).toContain('stale');
   });
-  it('expires a cached status locally when polling cannot refresh it', () => {
+  it('expires a cached status locally when no update arrives', () => {
     const result = expireAutoscalerStatuses(
       {
         warnings: [],
@@ -66,7 +78,7 @@ describe('RunnerAutoscalerStatus', () => {
           },
         ],
       },
-      Date.parse('2026-08-09T04:00:31.000Z'),
+      Date.parse('2026-08-09T04:03:01.000Z'),
     );
 
     expect(result.statuses).toEqual([]);
@@ -101,7 +113,7 @@ describe('RunnerAutoscalerStatus', () => {
           updatedAt: '2026-08-09T04:00:30.000Z',
         },
       },
-      Date.parse('2026-08-09T04:00:31.000Z'),
+      Date.parse('2026-08-09T04:03:01.000Z'),
     );
 
     expect(result.statuses).toEqual([]);
@@ -123,7 +135,7 @@ describe('RunnerAutoscalerStatus', () => {
           updatedAt: '2026-08-09T04:00:00.000Z',
         },
       },
-      Date.parse('2026-08-09T04:00:31.000Z'),
+      Date.parse('2026-08-09T04:03:01.000Z'),
     );
 
     expect(result.queueExecutor).toBeUndefined();
@@ -160,7 +172,7 @@ describe('RunnerAutoscalerStatus', () => {
           updatedAt: '2026-08-09T04:00:00.000Z',
         },
       },
-      Date.parse('2026-08-09T04:00:31.000Z'),
+      Date.parse('2026-08-09T04:03:01.000Z'),
     );
 
     expect(result.statuses).toHaveLength(1);
@@ -326,60 +338,95 @@ describe('RunnerAutoscalerStatus', () => {
     );
   });
 
-  it('keeps partial telemetry warnings in one live workspace band and clears them on recovery', async () => {
+  it('applies pushed snapshots, keeps warnings in one live band, and closes the stream on unmount', () => {
     vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-05T12:00:00.000Z'));
     const queueExecutor = {
       schemaVersion: 2 as const,
       kind: 'queue-executor' as const,
-      executor: 'queue',
+      executor: 'queue' as const,
       ready: true,
       draining: false,
       maxConcurrent: 3,
       updatedAt: new Date().toISOString(),
     };
     const warning = 'ARC lane status is stale.';
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          statuses: [],
-          queueExecutor,
-          warnings: ['ARC status unavailable.'],
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ statuses: [], queueExecutor, warnings: [] }),
-      });
-    vi.stubGlobal('fetch', fetchMock);
     try {
-      render(
+      const { unmount } = render(
         <MantineProvider>
           <RunnerAutoscalerStatus
             initial={{ statuses: [], queueExecutor, warnings: [warning] }}
           />
         </MantineProvider>,
       );
+      const source = FakeEventSource.only();
+      expect(source.url).toBe(RUNNER_STATUS_STREAM_URL);
       expect(screen.getAllByText(warning)).toHaveLength(1);
       expect(
         screen
           .getByTestId('data-warnings')
           .closest('.console-workspace__warnings'),
       ).not.toBeNull();
-      expect(screen.getByTestId('queue-executor-status')).toBeInTheDocument();
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(10_000);
-      });
+
+      act(() =>
+        source.push({
+          statuses: [],
+          queueExecutor: { ...queueExecutor, activeRuns: 2 },
+          warnings: ['ARC status unavailable.'],
+        }),
+      );
       expect(screen.queryByText(warning)).not.toBeInTheDocument();
       expect(screen.getAllByText('ARC status unavailable.')).toHaveLength(1);
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(10_000);
-      });
+      expect(screen.getByTestId('queue-executor-status')).toHaveTextContent(
+        '2 active',
+      );
+
+      act(() => source.push({ statuses: [], queueExecutor, warnings: [] }));
       expect(screen.queryByTestId('data-warnings')).not.toBeInTheDocument();
+
+      // No event for longer than the staleness window: the producer stopped.
+      act(() => {
+        vi.advanceTimersByTime(RUNNER_STATUS_STALENESS_MS + 10_000);
+      });
+      expect(
+        screen.queryByTestId('queue-executor-status'),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText('Runner capacity status is stale.'),
+      ).toBeInTheDocument();
+
+      unmount();
+      expect(source.closed).toBe(true);
     } finally {
-      vi.unstubAllGlobals();
       vi.useRealTimers();
     }
   });
 });
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  static only(): FakeEventSource {
+    if (FakeEventSource.instances.length !== 1) {
+      throw new Error(
+        `expected one EventSource, got ${FakeEventSource.instances.length}`,
+      );
+    }
+    return FakeEventSource.instances[0] as FakeEventSource;
+  }
+  closed = false;
+  private readonly listeners = new Map<string, (event: MessageEvent) => void>();
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(type, listener);
+  }
+  close() {
+    this.closed = true;
+  }
+  push(result: unknown) {
+    this.listeners.get(RUNNER_STATUS_EVENT)?.(
+      new MessageEvent(RUNNER_STATUS_EVENT, { data: JSON.stringify(result) }),
+    );
+  }
+}

@@ -53,7 +53,8 @@ arc_lanes:
 Derive this list from the deployment's ARC lane inventory. Each listener is
 fetched independently every ten seconds with a five-second deadline. Complete
 capacity snapshots use `schemaVersion: 3`, `kind: arc-lane` in `runner-status`;
-failed or incomplete scrapes expire after thirty seconds. Pending jobs mean
+failed or incomplete scrapes are never written, so the last complete
+snapshot expires after three minutes. Pending jobs mean
 `max(assigned - running, 0)`, while desired, registered, idle and maximum
 runners retain ARC's own semantics. They are separate from Kubernetes Pending
 pods and from QueueExecutor's native Work capacity.
@@ -163,9 +164,12 @@ GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
 
 The credential stays in the encrypted homelab secret store. A missing or
 temporarily unavailable credential logs a warning and never blocks a claim or
-launch. Snapshots publish immediately on startup and then every 10 seconds;
-the console stops presenting a snapshot as live after 30 seconds without an
-update. It reports only generic worker health: readiness, draining,
+launch. Health is sampled immediately on startup and then every 10 seconds,
+but a sample is written to Firestore only when its content differs from the
+last write or when the 60-second heartbeat is due. The console's Shuttlebay
+panel receives each write through a server-sent stream backed by a Firestore
+listener, not a poll, and stops presenting a snapshot as live after three
+minutes (three heartbeats, also the document's TTL) without one. It reports only generic worker health: readiness, draining,
 configured direct-container capacity, and an active-container count when
 every Docker host can be read. It has no pipeline, repository, provider,
 credential, or individual-run data -- queue lifecycle counts (queued,

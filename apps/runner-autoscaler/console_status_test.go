@@ -25,7 +25,7 @@ func TestQueueExecutorStatusSnapshotReportsOnlyTruthfulWorkerHealth(t *testing.T
 	if notReady.SchemaVersion != 2 || notReady.Kind != "queue-executor" || notReady.Executor != "queue" || notReady.Ready || notReady.Draining || notReady.ActiveRuns != nil || notReady.MaxConcurrent != 0 {
 		t.Fatalf("unexpected unavailable queue status: %#v", notReady)
 	}
-	if !notReady.ExpireAt.Equal(now.Add(3 * consoleStatusInterval)) {
+	if !notReady.ExpireAt.Equal(now.Add(consoleStatusTTL)) {
 		t.Fatalf("unexpected queue status expiry: %#v", notReady)
 	}
 
@@ -70,5 +70,74 @@ func TestConsoleStatusPublisherIsDisabledWithoutExplicitOptIn(t *testing.T) {
 	}
 	if _, ok := publisher.(noopConsoleStatusPublisher); !ok {
 		t.Fatalf("publisher = %T, want noop when opt-in is absent", publisher)
+	}
+}
+
+func TestStatusWriteGateWritesOnChangeOrHeartbeatOnly(t *testing.T) {
+	gate := newStatusWriteGate(consoleStatusHeartbeat)
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	active := 1
+	sample := func(at time.Time, runs int) consoleQueueExecutorStatus {
+		value := runs
+		return consoleQueueExecutorStatus{
+			SchemaVersion: 2, Kind: "queue-executor", Executor: "queue", Ready: true,
+			ActiveRuns: &value, MaxConcurrent: 3,
+			UpdatedAt: at.Format(time.RFC3339Nano), ExpireAt: at.Add(consoleStatusTTL),
+		}
+	}
+
+	first := sample(start, active)
+	if !gate.shouldWrite(queueExecutorStatusDocument, first, start) {
+		t.Fatal("first sample of a document must be written")
+	}
+	gate.recordWritten(queueExecutorStatusDocument, first, start)
+
+	// Same content, new timestamps, new pointer: a duplicate until the heartbeat.
+	for _, offset := range []time.Duration{consoleStatusInterval, consoleStatusHeartbeat - time.Second} {
+		at := start.Add(offset)
+		if gate.shouldWrite(queueExecutorStatusDocument, sample(at, active), at) {
+			t.Fatalf("unchanged sample at +%s must not be written before the heartbeat", offset)
+		}
+	}
+
+	heartbeat := start.Add(consoleStatusHeartbeat)
+	if !gate.shouldWrite(queueExecutorStatusDocument, sample(heartbeat, active), heartbeat) {
+		t.Fatal("unchanged sample must be written once the heartbeat is due")
+	}
+
+	changed := start.Add(consoleStatusInterval)
+	if !gate.shouldWrite(queueExecutorStatusDocument, sample(changed, active+1), changed) {
+		t.Fatal("a changed active-run count must be written immediately")
+	}
+	unknown := sample(changed, active)
+	unknown.ActiveRuns = nil
+	if !gate.shouldWrite(queueExecutorStatusDocument, unknown, changed) {
+		t.Fatal("an active-run count becoming unknown must be written immediately")
+	}
+}
+
+func TestStatusWriteGateTracksDocumentsIndependently(t *testing.T) {
+	gate := newStatusWriteGate(consoleStatusHeartbeat)
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	lane := consoleARCLaneStatus{SchemaVersion: 3, Kind: "arc-lane", Lane: "lcars-ci", PendingJobs: 1}
+	gate.recordWritten("arc-lcars-ci", lane, now)
+
+	other := lane
+	other.Lane = "lcars-arm64"
+	if !gate.shouldWrite("arc-lcars-arm64", other, now) {
+		t.Fatal("a lane never written must be written")
+	}
+	lane.UpdatedAt = now.Add(consoleStatusInterval).Format(time.RFC3339Nano)
+	if gate.shouldWrite("arc-lcars-ci", lane, now.Add(consoleStatusInterval)) {
+		t.Fatal("an unchanged lane must wait for its own heartbeat")
+	}
+}
+
+func TestConsoleStatusTTLOutlivesTheHeartbeat(t *testing.T) {
+	// A healthy producer rewrites an unchanged document every heartbeat plus
+	// at most one sample interval. The TTL (and the console's matching
+	// staleness threshold) must leave room for a missed heartbeat.
+	if consoleStatusTTL < 2*(consoleStatusHeartbeat+consoleStatusInterval) {
+		t.Fatalf("TTL %s leaves no room for one missed heartbeat of %s", consoleStatusTTL, consoleStatusHeartbeat)
 	}
 }

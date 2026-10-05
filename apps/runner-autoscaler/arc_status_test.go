@@ -45,7 +45,7 @@ func TestARCLaneStatusMapsListenerCapacityAndRejectsUncertainMetrics(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if status.Kind != "arc-lane" || status.SchemaVersion != 3 || status.Lane != "test" || status.PendingJobs != 2 || status.RunningJobs != 1 || status.IdleRunners != 1 || status.RegisteredRunners != 2 || status.DesiredRunners != 3 || status.MaxRunners != 4 || !status.ExpireAt.Equal(now.Add(30*time.Second)) {
+			if status.Kind != "arc-lane" || status.SchemaVersion != 3 || status.Lane != "test" || status.PendingJobs != 2 || status.RunningJobs != 1 || status.IdleRunners != 1 || status.RegisteredRunners != 2 || status.DesiredRunners != 3 || status.MaxRunners != 4 || !status.ExpireAt.Equal(now.Add(consoleStatusTTL)) {
 				t.Fatalf("incorrect capacity: %#v", status)
 			}
 		})

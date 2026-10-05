@@ -6,8 +6,9 @@ import {
   getAgentTelemetryReaderFirestore,
 } from '@agent-lcars/telemetry/server';
 
+import { RUNNER_STATUS_STALENESS_MS } from './runner-status-contract';
+
 const RUNNER_STATUS_COLLECTION = 'runner-status';
-export const RUNNER_STATUS_STALENESS_MS = 30_000;
 
 export interface AutoscalerRunnerStatus {
   name: string;
@@ -213,65 +214,104 @@ function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
   };
 }
 
+function isFresh(updatedAt: string, now: number): boolean {
+  const parsed = Date.parse(updatedAt);
+  return Number.isFinite(parsed) && now - parsed <= RUNNER_STATUS_STALENESS_MS;
+}
+
 /**
- * Reads the autoscaler's bounded current-state projection. This is deliberately
- * uncached: status is polled separately by the small client panel so refreshing
- * it never repeats the dashboard's expensive GitHub API fan-out.
+ * Projects raw `runner-status` documents into the client contract: only
+ * schema-valid, fresh documents, and only primitive fields (never a
+ * Firestore `Timestamp`), so the result can cross the server/client boundary
+ * as a prop or as JSON.
+ */
+export function projectAutoscalerStatuses(
+  records: readonly unknown[],
+  now = Date.now(),
+): AutoscalerStatusResult {
+  const statuses = records
+    .map((record) => parseStatus(record))
+    .filter(
+      (status): status is AutoscalerScaleSetStatus =>
+        status !== undefined && isFresh(status.updatedAt, now),
+    )
+    .sort((a, b) => a.scaleSet.localeCompare(b.scaleSet));
+  const queueExecutor = records
+    .map((record) => parseQueueExecutor(record))
+    .find(
+      (status): status is QueueExecutorStatus =>
+        status !== undefined && isFresh(status.updatedAt, now),
+    );
+  const laneRecords = records
+    .map(parseArcLane)
+    .filter((status): status is ArcLaneStatus => status !== undefined);
+  const lanes = laneRecords
+    .filter((status) => isFresh(status.updatedAt, now))
+    .sort((a, b) => a.lane.localeCompare(b.lane));
+  return {
+    statuses,
+    lanes,
+    ...(queueExecutor === undefined ? {} : { queueExecutor }),
+    warnings:
+      laneRecords.length > lanes.length ? ['ARC lane status is stale.'] : [],
+  };
+}
+
+const UNAVAILABLE: AutoscalerStatusResult = {
+  statuses: [],
+  warnings: ['Runner autoscaler status unavailable (telemetry store failed).'],
+};
+
+/**
+ * Reads the autoscaler's bounded current-state projection once, for the
+ * server-rendered first paint. Deliberately uncached and separate from the
+ * dashboard's GitHub fan-out; later changes arrive through
+ * {@link subscribeAutoscalerStatuses}.
  */
 export async function getAutoscalerStatuses(): Promise<AutoscalerStatusResult> {
   try {
     const firestore = await getAgentTelemetryReaderFirestore();
     const snapshot = await firestore.collection(RUNNER_STATUS_COLLECTION).get();
-    const now = Date.now();
-    const records = snapshot.docs.map((doc) => forClient(doc.data()));
-    const statuses = records
-      .map((record) => parseStatus(record))
-      .filter((status): status is AutoscalerScaleSetStatus => {
-        if (!status) return false;
-        const updatedAt = Date.parse(status.updatedAt);
-        return (
-          Number.isFinite(updatedAt) &&
-          now - updatedAt <= RUNNER_STATUS_STALENESS_MS
-        );
-      })
-      .sort((a, b) => a.scaleSet.localeCompare(b.scaleSet));
-    const queueExecutor = records
-      .map((record) => parseQueueExecutor(record))
-      .find((status) => {
-        if (!status) return false;
-        const updatedAt = Date.parse(status.updatedAt);
-        return (
-          Number.isFinite(updatedAt) &&
-          now - updatedAt <= RUNNER_STATUS_STALENESS_MS
-        );
-      });
-    const laneRecords = records
-      .map(parseArcLane)
-      .filter((status): status is ArcLaneStatus => status !== undefined);
-    const lanes = laneRecords
-      .filter((status): status is ArcLaneStatus => {
-        if (!status) return false;
-        const updatedAt = Date.parse(status.updatedAt);
-        return (
-          Number.isFinite(updatedAt) &&
-          now - updatedAt <= RUNNER_STATUS_STALENESS_MS
-        );
-      })
-      .sort((a, b) => a.lane.localeCompare(b.lane));
-    return {
-      statuses,
-      lanes,
-      ...(queueExecutor === undefined ? {} : { queueExecutor }),
-      warnings:
-        laneRecords.length > lanes.length ? ['ARC lane status is stale.'] : [],
-    };
+    return projectAutoscalerStatuses(
+      snapshot.docs.map((doc) => forClient(doc.data())),
+    );
   } catch (error) {
     logger.error('agent-lcars: failed to list autoscaler status:', error);
-    return {
-      statuses: [],
-      warnings: [
-        'Runner autoscaler status unavailable (telemetry store failed).',
-      ],
-    };
+    return UNAVAILABLE;
   }
+}
+
+/**
+ * Listens to the `runner-status` collection and calls `onResult` with a
+ * fresh projection for the initial snapshot and for every change the
+ * producer writes. The producer writes only on change or heartbeat, so this
+ * replaces the browser's former fixed-interval poll. A failure to start or a
+ * listener error is reported once as the unavailable result and ends the
+ * subscription; the caller decides when to reconnect. Never rejects. Returns
+ * the unsubscribe function.
+ */
+export async function subscribeAutoscalerStatuses(
+  onResult: (result: AutoscalerStatusResult) => void,
+): Promise<() => void> {
+  let firestore: Awaited<ReturnType<typeof getAgentTelemetryReaderFirestore>>;
+  try {
+    firestore = await getAgentTelemetryReaderFirestore();
+  } catch (error) {
+    logger.error('agent-lcars: autoscaler status listener failed:', error);
+    onResult(UNAVAILABLE);
+    return () => undefined;
+  }
+  return firestore.collection(RUNNER_STATUS_COLLECTION).onSnapshot(
+    (snapshot) => {
+      onResult(
+        projectAutoscalerStatuses(
+          snapshot.docs.map((doc) => forClient(doc.data())),
+        ),
+      );
+    },
+    (error) => {
+      logger.error('agent-lcars: autoscaler status listener failed:', error);
+      onResult(UNAVAILABLE);
+    },
+  );
 }

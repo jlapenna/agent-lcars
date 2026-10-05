@@ -14,7 +14,7 @@ test.describe('/shuttlebay workspace', () => {
       1,
     );
     await expect(
-      page.getByText('Refreshes automatically every 10 seconds.'),
+      page.getByText('Updates live as runner capacity changes.'),
     ).toBeVisible();
     await expect(
       page

@@ -63,7 +63,7 @@ func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time)
 		Ready:         ready,
 		Draining:      s.draining != nil && s.draining(),
 		UpdatedAt:     now.UTC().Format(time.RFC3339Nano),
-		ExpireAt:      now.Add(3 * consoleStatusInterval),
+		ExpireAt:      now.Add(consoleStatusTTL),
 	}
 	if !ready {
 		return status
