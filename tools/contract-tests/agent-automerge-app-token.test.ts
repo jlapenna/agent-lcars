@@ -182,15 +182,24 @@ describe('agent auto-merge App identity', () => {
     expect(reconcileIf).toContain(
       "github.event.workflow_run.conclusion == 'success'",
     );
-    // Same clause, not a separate `||` branch: fork-originated runs never
-    // reach the App private key.
-    const workflowRunClause = reconcileIf
+    // Every workflow_run branch carries every guard, so no later `||`
+    // branch can admit a fork-originated run to the App private key.
+    const workflowRunClauses = reconcileIf
       .split('||')
-      .find((clause) => clause.includes("github.event_name == 'workflow_run'"));
-    expect(workflowRunClause).toContain(
-      'github.event.workflow_run.head_repository.full_name == github.repository',
-    );
-    expect(workflowRunClause).toContain('inputs.app-token-enabled');
+      .filter((clause) =>
+        clause.includes("github.event_name == 'workflow_run'"),
+      );
+    expect(workflowRunClauses).not.toHaveLength(0);
+    for (const clause of workflowRunClauses) {
+      for (const guard of [
+        'inputs.app-token-enabled',
+        "github.event.workflow_run.event == 'pull_request'",
+        "github.event.workflow_run.conclusion == 'success'",
+        'github.event.workflow_run.head_repository.full_name == github.repository',
+      ]) {
+        expect(clause).toContain(guard);
+      }
+    }
     expect(reusable.jobs['restore-main-checks']).toMatchObject({
       if: expect.stringContaining('inputs.app-token-enabled == false'),
       permissions: expect.objectContaining({ statuses: 'read' }),
@@ -198,17 +207,13 @@ describe('agent auto-merge App identity', () => {
     expect(caller.permissions).toMatchObject({ statuses: 'read' });
   });
 
-  it('never runs PR content in jobs reachable from privileged triggers', async () => {
+  it('never runs PR content in any job, and mints the App token only where needed', async () => {
     const reusable = parseYaml(
       await readFile('.github/workflows/agent-automerge-reusable.yml', 'utf8'),
     ) as Workflow;
-    // Jobs admitted on pull_request_target or workflow_run for App callers.
-    for (const name of [
-      'automerge',
-      'cancel-parked-automerge',
-      'reconcile-automerge',
-    ]) {
-      const steps = reusable.jobs[name].steps ?? [];
+    const minting: string[] = [];
+    for (const [name, job] of Object.entries(reusable.jobs)) {
+      const steps = job.steps ?? [];
       const actions = steps.flatMap((step) => (step.uses ? [step] : []));
       // The only action is the pinned, repository-scoped App token mint.
       expect(actions.map((step) => step.uses)).toEqual(
@@ -218,6 +223,7 @@ describe('agent auto-merge App identity', () => {
           ),
         ),
       );
+      if (actions.length > 0) minting.push(name);
       for (const mint of actions) {
         expect(mint.with?.repositories).toBe(
           '${{ github.event.repository.name }}',
@@ -228,12 +234,18 @@ describe('agent auto-merge App identity', () => {
           ),
         ).not.toHaveLength(0);
       }
-      // Event values reach scripts only through env, never `${{ }}`.
+      const scripts = steps.map((step) => step.run ?? '');
+      // Event values reach scripts only through env, never `${{ }}`, and no
+      // script fetches or checks out repository content.
+      expect(scripts.filter((run) => run.includes('${{'))).toEqual([]);
       expect(
-        steps
-          .filter((step) => (step.run ?? '').includes('${{'))
-          .map((s) => s.name),
+        scripts.filter((run) =>
+          /\bgh (pr checkout|repo clone)\b|\bgit (clone|fetch|checkout|switch)\b/.test(
+            run,
+          ),
+        ),
       ).toEqual([]);
     }
+    expect(minting.sort()).toEqual(['automerge', 'reconcile-automerge']);
   });
 });
