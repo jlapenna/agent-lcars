@@ -2,7 +2,10 @@ import { getAgentTelemetryReaderFirestore } from '@agent-lcars/telemetry/server'
 import { Timestamp } from 'firebase-admin/firestore';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { getAutoscalerStatuses } from './autoscaler-status';
+import {
+  getAutoscalerStatuses,
+  subscribeAutoscalerStatuses,
+} from './autoscaler-status';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   forClient: vi.fn((value: unknown) => value),
@@ -62,7 +65,7 @@ describe('getAutoscalerStatuses', () => {
       {
         ...lane,
         lane: 'stale',
-        updatedAt: new Date(Date.now() - 31_000).toISOString(),
+        updatedAt: new Date(Date.now() - 181_000).toISOString(),
       },
       { ...lane, lane: 'bad', runningJobs: NaN },
       { ...lane, lane: 'unsafe', registrationUrl: 'javascript:alert(1)' },
@@ -126,7 +129,7 @@ describe('getAutoscalerStatuses', () => {
 
   it('drops stale or malformed registrations instead of presenting them as live', async () => {
     mockStore([
-      status({ updatedAt: new Date(Date.now() - 31_000).toISOString() }),
+      status({ updatedAt: new Date(Date.now() - 181_000).toISOString() }),
       status({ schemaVersion: 2 }),
       status({ runners: [{ name: 'bad', host: 'spark', state: 'unknown' }] }),
     ]);
@@ -173,5 +176,67 @@ describe('getAutoscalerStatuses', () => {
 
     expect(result.statuses).toEqual([]);
     expect(result.warnings[0]).toContain('unavailable');
+  });
+});
+
+describe('subscribeAutoscalerStatuses', () => {
+  afterEach(() => vi.resetAllMocks());
+
+  function mockListener() {
+    const unsubscribe = vi.fn();
+    const onSnapshot = vi.fn().mockReturnValue(unsubscribe);
+    (getAgentTelemetryReaderFirestore as Mock).mockResolvedValue({
+      collection: vi.fn().mockReturnValue({ onSnapshot }),
+    });
+    const emit = (docs: unknown[]) =>
+      (onSnapshot.mock.calls[0]?.[0] as (snapshot: unknown) => void)({
+        docs: docs.map((data) => ({ data: () => data })),
+      });
+    const fail = (error: Error) =>
+      (onSnapshot.mock.calls[0]?.[1] as (error: Error) => void)(error);
+    return { unsubscribe, emit, fail };
+  }
+
+  it('projects every pushed snapshot and hands back the unsubscribe', async () => {
+    const { unsubscribe, emit } = mockListener();
+    const results: unknown[] = [];
+
+    const stop = await subscribeAutoscalerStatuses((result) =>
+      results.push(result),
+    );
+    emit([status({ expireAt: Timestamp.now() })]);
+    emit([status({ queuedJobs: 5 })]);
+
+    expect(results).toHaveLength(2);
+    expect(results[1]).toMatchObject({ statuses: [{ queuedJobs: 5 }] });
+    expect(JSON.stringify(results[0])).not.toContain('expireAt');
+    stop();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('reports a listener error as unavailable instead of throwing', async () => {
+    const { fail } = mockListener();
+    const onResult = vi.fn();
+
+    await subscribeAutoscalerStatuses(onResult);
+    fail(new Error('permission denied'));
+
+    expect(onResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        warnings: [expect.stringContaining('unavailable')],
+      }),
+    );
+  });
+
+  it('reports a reader failure as unavailable and never rejects', async () => {
+    (getAgentTelemetryReaderFirestore as Mock).mockRejectedValue(
+      new Error('offline'),
+    );
+    const onResult = vi.fn();
+
+    const stop = await subscribeAutoscalerStatuses(onResult);
+
+    expect(onResult).toHaveBeenCalledOnce();
+    expect(() => stop()).not.toThrow();
   });
 });

@@ -18,11 +18,22 @@
         "cwd": "apps/runner-autoscaler"
       }
     },
+    "test": {
+      "inputs": [
+        "goSource",
+        "^goSource",
+        "{workspaceRoot}/apps/console/src/lib/runner-status-contract.ts"
+      ]
+    },
     "test-race": {
       "executor": "@naxodev/gonx:test",
       "cache": true,
       "dependsOn": ["generate", "^build"],
-      "inputs": ["goSource", "^goSource"],
+      "inputs": [
+        "goSource",
+        "^goSource",
+        "{workspaceRoot}/apps/console/src/lib/runner-status-contract.ts"
+      ],
       "options": {
         "race": true
       }

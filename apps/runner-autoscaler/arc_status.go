@@ -126,7 +126,7 @@ func fetchARCLaneStatus(ctx context.Context, client *http.Client, lane arcLaneCo
 		AssignedJobs: values["gha_assigned_jobs"], RunningJobs: values["gha_running_jobs"], PendingJobs: pending,
 		IdleRunners: values["gha_idle_runners"], RegisteredRunners: values["gha_registered_runners"], DesiredRunners: values["gha_desired_runners"],
 		MinRunners: values["gha_min_runners"], MaxRunners: values["gha_max_runners"],
-		UpdatedAt: now.UTC().Format(time.RFC3339Nano), ExpireAt: now.Add(3 * consoleStatusInterval),
+		UpdatedAt: now.UTC().Format(time.RFC3339Nano), ExpireAt: now.Add(consoleStatusTTL),
 	}, nil
 }
 

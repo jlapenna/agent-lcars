@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,9 +29,79 @@ const runnerStatusCollection = "runner-status"
 const queueExecutorStatusDocument = "queue-executor"
 
 const (
+	// consoleStatusInterval is how often the producers sample local health.
+	// Sampling is cheap and local; a Firestore write is not, so the publisher
+	// writes a sample only when its content differs from the last write or
+	// the heartbeat is due.
 	consoleStatusInterval = 10 * time.Second
-	consoleStatusTimeout  = 5 * time.Second
+	// consoleStatusHeartbeat bounds how long an unchanged document goes
+	// without a write. It is what proves the producer is still alive, so the
+	// console's staleness threshold (RUNNER_STATUS_STALENESS_MS in
+	// apps/console/src/lib/runner-status-contract.ts) and the document's TTL
+	// are both consoleStatusTTL.
+	consoleStatusHeartbeat = 60 * time.Second
+	consoleStatusTTL       = 3 * consoleStatusHeartbeat
+	consoleStatusTimeout   = 5 * time.Second
 )
+
+// consoleStatusDocument is one runner-status document. contentKey returns
+// the document without its write-time fields (updatedAt, expireAt), so two
+// samples with equal keys describe the same state.
+type consoleStatusDocument interface {
+	contentKey() any
+}
+
+// The publisher's sync.Map.CompareAndDelete panics at runtime on an
+// uncomparable value; using each document type as a map key turns adding a
+// slice or map field into a compile error instead.
+var (
+	_ map[consoleQueueExecutorStatus]struct{}
+	_ map[consoleARCLaneStatus]struct{}
+)
+
+func (s consoleQueueExecutorStatus) contentKey() any {
+	s.UpdatedAt, s.ExpireAt = "", time.Time{}
+	if s.ActiveRuns != nil {
+		active := *s.ActiveRuns
+		s.ActiveRuns = &active
+	}
+	return s
+}
+
+func (s consoleARCLaneStatus) contentKey() any {
+	s.UpdatedAt, s.ExpireAt = "", time.Time{}
+	return s
+}
+
+// statusWriteGate decides which samples reach Firestore: a sample whose
+// content changed since the last successful write, or any sample once the
+// heartbeat is due. Everything else is a duplicate of a document the console
+// already has. Only the publisher's single run goroutine uses it.
+type statusWriteGate struct {
+	heartbeat time.Duration
+	written   map[string]writtenStatus
+}
+
+type writtenStatus struct {
+	key any
+	at  time.Time
+}
+
+func newStatusWriteGate(heartbeat time.Duration) *statusWriteGate {
+	return &statusWriteGate{heartbeat: heartbeat, written: map[string]writtenStatus{}}
+}
+
+func (g *statusWriteGate) shouldWrite(name string, status consoleStatusDocument, now time.Time) bool {
+	last, ok := g.written[name]
+	if !ok || now.Sub(last.at) >= g.heartbeat {
+		return true
+	}
+	return !reflect.DeepEqual(last.key, status.contentKey())
+}
+
+func (g *statusWriteGate) recordWritten(name string, status consoleStatusDocument, now time.Time) {
+	g.written[name] = writtenStatus{key: status.contentKey(), at: now}
+}
 
 // consoleQueueExecutorStatus is the generic direct-executor health
 // projection. It intentionally has no repository, pipeline, credential, or
@@ -74,11 +145,12 @@ type firestoreConsoleStatusPublisher struct {
 	client *firestore.Client
 	logger *slog.Logger
 	// A single slot coalesces rapid status transitions. The autoscaler never
-	// waits for Firestore, and the next 10-second snapshot heals any dropped
-	// write after a transient outage.
-	pending sync.Map // map[string]consoleQueueExecutorStatus
+	// waits for Firestore, and the next sample heals any dropped write after
+	// a transient outage: a failed write is never recorded by the gate.
+	pending sync.Map // map[string]consoleStatusDocument
 	wake    chan struct{}
 	closed  atomic.Bool
+	gate    *statusWriteGate
 }
 
 func newConsoleStatusPublisher(ctx context.Context, logger *slog.Logger) (consoleStatusPublisher, error) {
@@ -101,7 +173,7 @@ func newConsoleStatusPublisher(ctx context.Context, logger *slog.Logger) (consol
 	if err != nil {
 		return nil, err
 	}
-	publisher := &firestoreConsoleStatusPublisher{client: client, logger: logger, wake: make(chan struct{}, 1)}
+	publisher := &firestoreConsoleStatusPublisher{client: client, logger: logger, wake: make(chan struct{}, 1), gate: newStatusWriteGate(consoleStatusHeartbeat)}
 	go publisher.run(ctx)
 	return publisher, nil
 }
@@ -116,7 +188,7 @@ func (p *firestoreConsoleStatusPublisher) PublishARCLane(_ context.Context, stat
 
 func (p *firestoreConsoleStatusPublisher) Enabled() bool { return true }
 
-func (p *firestoreConsoleStatusPublisher) publish(name string, status any) {
+func (p *firestoreConsoleStatusPublisher) publish(name string, status consoleStatusDocument) {
 	if p.closed.Load() {
 		return
 	}
@@ -136,14 +208,21 @@ func (p *firestoreConsoleStatusPublisher) run(ctx context.Context) {
 		}
 		p.pending.Range(func(key, value any) bool {
 			name := key.(string)
+			status := value.(consoleStatusDocument)
+			now := time.Now()
+			if !p.gate.shouldWrite(name, status, now) {
+				p.pending.CompareAndDelete(name, value)
+				return true
+			}
 			writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), consoleStatusTimeout)
-			_, err := p.client.Collection(runnerStatusCollection).Doc(name).Set(writeCtx, value)
+			_, err := p.client.Collection(runnerStatusCollection).Doc(name).Set(writeCtx, status)
 			cancel()
 			if err != nil {
 				p.logger.Warn("Failed to publish autoscaler status to the console; queue executor continues", slog.String("document", name), slog.String("error", err.Error()))
 				return true
 			}
-			p.pending.Delete(name)
+			p.gate.recordWritten(name, status, now)
+			p.pending.CompareAndDelete(name, value)
 			return true
 		})
 	}
