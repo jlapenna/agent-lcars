@@ -1,7 +1,5 @@
 import { logger } from '@agent-lcars/logging';
 import {
-  type GithubAnchor,
-  isLive,
   isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
@@ -39,13 +37,13 @@ export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
   drain: (limit?: number) => Promise<DrainOutboxResult>;
-  /** Exact, bounded GitHub lifecycle read used by maintenance to recover
-   * close webhooks that were dropped or predate this behavior. */
+  /** Exact GitHub lifecycle read that fences a close delivery against a
+   * reopen. A close webhook that is dropped entirely needs no sweep: the
+   * claim route repeats this read before a closed anchor's queued
+   * implementation run could reach a worker (`runs-router.ts`). */
   loadGithubAnchorLifecycle?: (
     anchor: Extract<TaskId, { repo: string }>,
   ) => Promise<GithubAnchorLifecycle | undefined>;
-  /** Clock for deterministic rotation of the bounded maintenance window. */
-  now?: () => string;
   /** Test seam for the exact server-side refresh; production uses the shared
    * reconciler rather than interpreting partial webhook payloads. */
   refreshGithubAnchorProjection?: (
@@ -55,72 +53,6 @@ export interface OrchestratorRouteDeps {
   /** Invoked only after the durable projection refresh has completed. The
    * hosted webhook route binds this to the console queue cache tag. */
   invalidateAuthoritativeQueue?: () => void | Promise<void>;
-}
-
-const QUEUED_GITHUB_CHECK_LIMIT = 10;
-
-async function reconcileClosedQueuedImplementations(
-  deps: OrchestratorRouteDeps,
-): Promise<{ canceled: string[]; failed: string[] }> {
-  if (deps.loadGithubAnchorLifecycle === undefined) {
-    return { canceled: [], failed: [] };
-  }
-  // The stores already read their queued index in full. Filter that complete
-  // live population before choosing the bounded GitHub-read window so native,
-  // review, and reply runs cannot form a permanent prefix horizon.
-  const queued = await deps.store.listQueuedRuns();
-  const eligible = queued.filter(
-    (run): run is Run & { task: GithubAnchor } =>
-      isLive(run.state) &&
-      !isWorkAnchor(run.task) &&
-      run.params?.['mode'] === 'implement',
-  );
-  const tick = Math.floor(
-    Date.parse(deps.now?.() ?? new Date().toISOString()) / (5 * 60_000),
-  );
-  const start =
-    eligible.length === 0
-      ? 0
-      : (tick * QUEUED_GITHUB_CHECK_LIMIT) % eligible.length;
-  const candidates = Array.from(
-    { length: Math.min(eligible.length, QUEUED_GITHUB_CHECK_LIMIT) },
-    (_, offset) =>
-      eligible[(start + offset) % eligible.length] as Run & {
-        task: GithubAnchor;
-      },
-  );
-  // Each exact read has its own four-second timeout. Run the small bounded set
-  // concurrently so one slow repository cannot turn a maintenance request
-  // into ten serialized timeout windows.
-  const outcomes = await Promise.all(
-    candidates.map(async (run) => {
-      try {
-        const lifecycle = await deps.loadGithubAnchorLifecycle?.(run.task);
-        if (lifecycle === undefined) return { failed: run.runId };
-        if (lifecycle.state !== 'closed') return {};
-        const outcome = await deps.orchestrator.cancelUnclaimedBefore({
-          runId: run.runId,
-          notAfter: lifecycle.sourceUpdatedAt,
-          note: `GitHub anchor confirmed closed at ${lifecycle.sourceUpdatedAt}`,
-        });
-        return 'refused' in outcome ? {} : { canceled: run.runId };
-      } catch (error) {
-        logger.error(
-          `agent-lcars: queued anchor reconciliation failed for ${run.runId}`,
-          error,
-        );
-        return { failed: run.runId };
-      }
-    }),
-  );
-  const canceled = outcomes.flatMap((outcome) =>
-    outcome.canceled === undefined ? [] : [outcome.canceled],
-  );
-  const failed = outcomes.flatMap((outcome) =>
-    outcome.failed === undefined ? [] : [outcome.failed],
-  );
-  if (canceled.length > 0) await deps.invalidateAuthoritativeQueue?.();
-  return { canceled, failed };
 }
 
 type RouteResult = { status: number; body: Record<string, unknown> };
@@ -375,7 +307,6 @@ export async function handleReconcile(
 ): Promise<RouteResult> {
   try {
     const swept = await deps.orchestrator.sweepExpired();
-    const closedAnchors = await reconcileClosedQueuedImplementations(deps);
     // One drain owns the whole bounded maintenance pass so its failed-entry
     // exclusion remains effective across all 30 claims. The five-minute
     // ticker continues any larger backlog on its next pass.
@@ -390,10 +321,6 @@ export async function handleReconcile(
       body: {
         lost: swept.lost.map((run) => run.runId),
         retried: swept.retried,
-        closedAnchorsCanceled: closedAnchors.canceled,
-        ...(closedAnchors.failed.length === 0
-          ? {}
-          : { closedAnchorChecksFailed: closedAnchors.failed }),
         dispatched: drained.dispatched,
         reported: drained.reported,
         outboxProcessed,

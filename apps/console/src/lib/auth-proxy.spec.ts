@@ -58,10 +58,10 @@ describe('createAuthProxy', () => {
 
   it('lets a route with its own request authentication reach its handler', () => {
     const proxy = createAuthProxy({
-      publicRoutes: ['/api/control-plane/reconcile'],
+      publicRoutes: ['/api/control-plane/webhook'],
     });
 
-    const response = proxy(makePathRequest('/api/control-plane/reconcile'));
+    const response = proxy(makePathRequest('/api/control-plane/webhook'));
 
     expect(response.status).toBe(200);
   });

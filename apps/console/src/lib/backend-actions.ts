@@ -120,7 +120,7 @@ export async function clearNeedsHumanLabel(
   // A label write is invisible to the orchestrator (it tracks no GitHub
   // label state at all - see model.ts), but it may be running behind on an
   // unrelated expired lease. Catch it up now rather than waiting on the
-  // next scheduled sweep (dispatch-reconcile.yml).
+  // next maintenance tick.
   await notifyReconcile(issueNumber);
 }
 
@@ -321,7 +321,7 @@ export async function approveAndMergePr(
   // model.ts). What still helps is catching up any unrelated run whose
   // lease has already silently expired, same as every other mutation below
   // that used to ping the legacy controller - do it now instead of waiting
-  // on dispatch-reconcile.yml's next scheduled sweep.
+  // on the next maintenance tick.
   await notifyReconcile(prNumber);
 }
 
@@ -427,7 +427,7 @@ export async function closeIssue(
   // GitHub state), so this close does not change anything it needs to
   // learn about. It may still be running behind on an unrelated expired
   // lease elsewhere, though - catch it up now rather than waiting on the
-  // next scheduled sweep (dispatch-reconcile.yml).
+  // next maintenance tick.
   await notifyReconcile(issueNumber);
 }
 
@@ -537,21 +537,22 @@ const DISPATCH_CALLER_ID_PATTERN =
 
 // After a console action mutates a GitHub-side fact (a park-state label, an
 // issue close, or a merge), catch the orchestrator up
-// immediately rather than only on dispatch-reconcile.yml's next scheduled
-// sweep (up to ~30 minutes later - see that workflow's cron). #1183: unlike
-// the legacy dispatch controller this replaced, the orchestrator tracks no
-// GitHub-side state to reconcile *toward* (see model.ts's doc comment - a
-// durable per-task mutex over runs, not a projection of issue/PR fields), so
-// there is no anchor-scoped "reconcile #N" operation left to call. Sweeping
-// every expired lease and draining the outbox is the actual mechanism the
-// scheduled sweep itself runs (`orchestrator-routes.ts`'s `handleReconcile`,
-// invoked by `/api/control-plane/reconcile`); reusing it here just runs that
+// immediately rather than only on the QueueExecutor's next maintenance tick
+// (up to five minutes later - `apps/runner-autoscaler/schedule_ticker.go`).
+// #1183: unlike the legacy dispatch controller this replaced, the
+// orchestrator tracks no GitHub-side state to reconcile *toward* (see
+// model.ts's doc comment - a durable per-task mutex over runs, not a
+// projection of issue/PR fields), so there is no anchor-scoped
+// "reconcile #N" operation left to call. Sweeping every expired lease and
+// draining the outbox is the actual mechanism the
+// maintenance tick itself runs (`orchestrator-routes.ts`'s `handleReconcile`,
+// invoked by `/api/work/v1/maintenance/tick`); reusing it here just runs that
 // same catch-up early instead of waiting for the next tick.
 //
 // The mutation this follows has already landed on GitHub by the time this
 // runs, so any failure here is logged and swallowed rather than surfaced to
 // the caller - a red toast over a best-effort follow-up sweep would be a
-// worse bug than the latency this exists to shrink; the scheduled sweep
+// worse bug than the latency this exists to shrink; the maintenance tick
 // remains the backstop either way.
 //
 // `anchor` is only ever an issue/PR number log-line label; the actual sweep
