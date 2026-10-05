@@ -685,6 +685,37 @@ describe('GitHub anchors', () => {
   });
 });
 
+describe('updateWork', () => {
+  it('replaces the payload only while no run is live', async () => {
+    const { orchestrator, store } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: { spec: { title: 'first' } },
+    });
+    expect(
+      await orchestrator.updateWork(WORK, { spec: { title: 'second' } }),
+    ).toMatchObject({ refused: true, reason: 'task-busy' });
+    await orchestrator.report(`work:${WORK.workId}/r1`, { ok: false });
+    const outcome = await orchestrator.updateWork(WORK, {
+      spec: { title: 'second' },
+    });
+    expect(isRefusal(outcome)).toBe(false);
+    expect((await store.readTask(WORK))?.task.work).toEqual({
+      spec: { title: 'second' },
+    });
+  });
+
+  it('refuses an unknown task', async () => {
+    const { orchestrator } = fixture();
+    expect(await orchestrator.updateWork(WORK, {})).toMatchObject({
+      refused: true,
+      reason: 'unknown-task',
+    });
+  });
+});
+
 describe('close', () => {
   it('refuses while a run is live', async () => {
     const { orchestrator } = fixture();

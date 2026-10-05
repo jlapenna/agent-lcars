@@ -45,13 +45,14 @@ const functionable = createServerFunctionable({ context });
 
 const createItemFn = functionable(workRouter.create);
 const cancelItemFn = functionable(workRouter.cancel);
+const updateItemFn = functionable(workRouter.update);
 const redispatchItemFn = functionable(workRouter.redispatch);
 const replyItemFn = functionable(workRouter.reply);
 const getItemFn = functionable(workRouter.get);
 const listItemsFn = functionable(workRouter.list);
 
 /**
- * One-line forwarders, not a behavioral difference from the five
+ * One-line forwarders, not a behavioral difference from the
  * procedures above: this repo's `fleet/use-server-actions-only` lint rule
  * requires every export of a file-level 'use server' module to be a
  * literal async function (so Next's Server Actions transform can find and
@@ -165,6 +166,9 @@ export async function createItemWithEvidence(form: FormData) {
 }
 export async function cancelItem(input: Parameters<typeof cancelItemFn>[0]) {
   return cancelItemFn(input);
+}
+export async function updateItem(input: Parameters<typeof updateItemFn>[0]) {
+  return updateItemFn(input);
 }
 export async function redispatchItem(
   input: Parameters<typeof redispatchItemFn>[0],

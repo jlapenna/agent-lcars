@@ -227,6 +227,31 @@ export const workRouter = os.router({
     return view(context, input.id, outcome.task);
   }),
 
+  update: operator.update.handler(async ({ input, context, errors }) => {
+    const task = await context.runtime.store.readTask({ workId: input.id });
+    if (task === undefined) throw errors.NOT_FOUND();
+    const stored = workPayloadSchema.parse(task.task.work);
+    // Only the prose is editable: pipeline and target are granted
+    // capabilities, so changing them would need the re-authorization
+    // `create` performs.
+    const outcome = await context.runtime.orchestrator.updateWork(
+      { workId: input.id },
+      {
+        ...task.task.work,
+        spec: {
+          ...stored.spec,
+          title: input.title,
+          description: input.description,
+        },
+      },
+    );
+    if (isRefusal(outcome)) {
+      if (outcome.reason === 'unknown-task') throw errors.NOT_FOUND();
+      throw errors.CONFLICT({ message: outcome.reason });
+    }
+    return view(context, input.id, outcome.task);
+  }),
+
   redispatch: operator.redispatch.handler(
     async ({ input, context, errors }) => {
       const task = await context.runtime.store.readTask({ workId: input.id });

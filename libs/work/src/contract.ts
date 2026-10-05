@@ -225,6 +225,29 @@ export const itemsContract = {
     })
     .input(z.strictObject({ id: workIdSchema }))
     .output(itemViewSchema),
+  update: base
+    .meta(
+      openapi({
+        method: 'PATCH',
+        path: '/items/{id}',
+        operationId: 'updateItem',
+        summary: "Edit a work item's title and description",
+      }),
+    )
+    .errors({
+      NOT_FOUND: { message: 'No such item' },
+      CONFLICT: {
+        message: 'A run is live, so the item cannot be edited right now',
+      },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        title: workSpecSchema.shape.title,
+        description: workSpecSchema.shape.description,
+      }),
+    )
+    .output(itemViewSchema),
   redispatch: base
     .meta(
       openapi({
