@@ -378,12 +378,13 @@ park only for a decision or access that genuinely needs a human.
 
 That backstop also keeps an armed PR moving once `main` moves out from under
 it: under a strict "up to date" ruleset, GitHub's own auto-merge never
-updates a BEHIND branch on its own, so a scheduled sweep in
-`reconcile-automerge` rebases (falling back to a merge update if rebase is
+updates a BEHIND branch on its own, so the `reconcile-automerge` sweep
+(run when `main` moves and when a PR's checks succeed in App-enabled repos, on
+a schedule in legacy repos) rebases (falling back to a merge update if rebase is
 refused) any open, non-draft, non-parked PR with auto-merge armed and green,
 non-running checks and no unresolved review thread, capped at a few updates
 per run (#1748). Do not manually rebase an armed, green, unparked PR to chase
-a moving `main` — that sweep runs on a short interval and will pick it up;
+a moving `main` — that sweep will pick it up;
 spend your own turn budget on the actual work instead.
 
 ## 7. Budget discipline

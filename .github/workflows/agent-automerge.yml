@@ -21,20 +21,32 @@ on:
   pull_request_target:
     # `synchronize` and `reopened` are recovery triggers: if the opening event
     # was missed while Actions was unavailable, the next normal PR mutation
-    # retries the idempotent arm instead of leaving the PR stranded until cron.
+    # retries the idempotent arm instead of leaving the PR stranded.
     types: [opened, reopened, synchronize, ready_for_review, labeled]
-  # Run reconciliation immediately after an App-token rollout reaches main so
-  # any PR armed earlier by github-actions[bot] is disabled and re-armed as the
-  # App before its checks can complete. The scheduled sweep remains the repair
-  # path for later missed events.
+  # Reconciliation is event-driven, with only a daily backstop. A push to
+  # main is when an armed PR falls behind (and, after an App-token rollout,
+  # when any PR still armed by github-actions[bot] is re-armed as the App).
+  # App-token merges emit the normal push chain, close linked issues, and
+  # delete merged branches, so the reusable's legacy restore and
+  # orphan-anchor jobs stay off.
   push:
     branches: [main]
-  # The schedule retains the missed-event reconciliation sweep. App-token
-  # merges emit the normal push/workflow_run chain, close linked issues, and
-  # delete merged branches, so this caller no longer subscribes to CI
-  # workflow_run events or enables the reusable's legacy restore jobs.
+  # A PR's checks succeeding is when an armed PR turns green, the moment the
+  # behind-branch update and stale bot-review dismissal can act. App-pushed
+  # PR heads emit workflow_run normally. The reusable admits only successful
+  # pull_request-triggered runs. List every workflow that posts checks on a
+  # PR head: the sweep's green gate waits on all of them, not just required
+  # checks.
+  workflow_run:
+    workflows: [CI, CodeQL]
+    types: [completed]
+  # Daily backstop, not a poll. Some ways a PR becomes eligible emit no event
+  # this workflow can subscribe to: a review thread resolved after checks
+  # went green, auto-merge armed after the last push and CI run, mergeability
+  # still UNKNOWN when its event's sweep ran, or a sweep that failed
+  # transiently. Those wait at most a day, or run a plain workflow_dispatch.
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '17 9 * * *'
   workflow_dispatch:
 
 permissions:
@@ -49,8 +61,8 @@ permissions:
   statuses: read
 
 # Multiple pull-request-target events for the same PR need only the most recent
-# auto-merge evaluation. Scheduled reconciliation uses its own run ID, so it
-# never cancels an event-driven arm.
+# auto-merge evaluation. Push, workflow_run, schedule, and dispatch
+# reconciliation use their own run IDs, so they never cancel an event-driven arm.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}

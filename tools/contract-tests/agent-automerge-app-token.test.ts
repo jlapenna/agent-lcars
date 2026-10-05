@@ -27,6 +27,8 @@ interface Workflow {
       inputs: Record<string, Record<string, unknown>>;
       secrets: Record<string, Record<string, unknown>>;
     };
+    workflow_run?: { workflows?: string[] };
+    schedule?: { cron: string }[];
   };
   jobs: Record<string, Job>;
   permissions?: Record<string, string>;
@@ -148,7 +150,14 @@ describe('agent auto-merge App identity', () => {
     expect(caller.on).toHaveProperty('push');
     expect(caller.on).not.toHaveProperty('pull_request');
     expect(caller.on).not.toHaveProperty('pull_request_review');
-    expect(caller.on).not.toHaveProperty('workflow_run');
+    // Reconciliation is event-driven for App callers: push to main and PR
+    // check success, with at most a daily backstop (never a short poll).
+    expect(caller.on.workflow_run?.workflows).toEqual(['CI', 'CodeQL']);
+    for (const { cron } of caller.on.schedule ?? []) {
+      const [minute, hour] = cron.split(/\s+/);
+      expect(minute).toMatch(/^\d+$/);
+      expect(hour).toMatch(/^\d+$/);
+    }
     expect(caller.jobs.automerge.with).toMatchObject({
       'app-token-enabled': true,
       'app-client-id': '${{ vars.AGENT_LCARS_CLIENT_ID }}',
@@ -163,10 +172,80 @@ describe('agent auto-merge App identity', () => {
         "github.event_name == 'push' && inputs.app-token-enabled",
       ),
     });
+    const reconcileIf = reusable.jobs['reconcile-automerge'].if ?? '';
+    expect(reconcileIf).toContain(
+      "github.event_name == 'workflow_run' && inputs.app-token-enabled",
+    );
+    expect(reconcileIf).toContain(
+      "github.event.workflow_run.event == 'pull_request'",
+    );
+    expect(reconcileIf).toContain(
+      "github.event.workflow_run.conclusion == 'success'",
+    );
+    // Every workflow_run branch carries every guard, so no later `||`
+    // branch can admit a fork-originated run to the App private key.
+    const workflowRunClauses = reconcileIf
+      .split('||')
+      .filter((clause) =>
+        clause.includes("github.event_name == 'workflow_run'"),
+      );
+    expect(workflowRunClauses).not.toHaveLength(0);
+    for (const clause of workflowRunClauses) {
+      for (const guard of [
+        'inputs.app-token-enabled',
+        "github.event.workflow_run.event == 'pull_request'",
+        "github.event.workflow_run.conclusion == 'success'",
+        'github.event.workflow_run.head_repository.full_name == github.repository',
+      ]) {
+        expect(clause).toContain(guard);
+      }
+    }
     expect(reusable.jobs['restore-main-checks']).toMatchObject({
       if: expect.stringContaining('inputs.app-token-enabled == false'),
       permissions: expect.objectContaining({ statuses: 'read' }),
     });
     expect(caller.permissions).toMatchObject({ statuses: 'read' });
+  });
+
+  it('never runs PR content in any job, and mints the App token only where needed', async () => {
+    const reusable = parseYaml(
+      await readFile('.github/workflows/agent-automerge-reusable.yml', 'utf8'),
+    ) as Workflow;
+    const minting: string[] = [];
+    for (const [name, job] of Object.entries(reusable.jobs)) {
+      const steps = job.steps ?? [];
+      const actions = steps.flatMap((step) => (step.uses ? [step] : []));
+      // The only action is the pinned, repository-scoped App token mint.
+      expect(actions.map((step) => step.uses)).toEqual(
+        actions.map(() =>
+          expect.stringMatching(
+            /^actions\/create-github-app-token@[0-9a-f]{40}$/,
+          ),
+        ),
+      );
+      if (actions.length > 0) minting.push(name);
+      for (const mint of actions) {
+        expect(mint.with?.repositories).toBe(
+          '${{ github.event.repository.name }}',
+        );
+        expect(
+          Object.keys(mint.with ?? {}).filter((key) =>
+            key.startsWith('permission-'),
+          ),
+        ).not.toHaveLength(0);
+      }
+      const scripts = steps.map((step) => step.run ?? '');
+      // Event values reach scripts only through env, never `${{ }}`, and no
+      // script fetches or checks out repository content.
+      expect(scripts.filter((run) => run.includes('${{'))).toEqual([]);
+      expect(
+        scripts.filter((run) =>
+          /\bgh (pr checkout|repo clone)\b|\bgit (clone|fetch|checkout|switch)\b/.test(
+            run,
+          ),
+        ),
+      ).toEqual([]);
+    }
+    expect(minting.sort()).toEqual(['automerge', 'reconcile-automerge']);
   });
 });

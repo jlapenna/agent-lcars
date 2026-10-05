@@ -29,8 +29,9 @@ The exact webhook, mode, lease, outbox, and provider telemetry behavior is in
 workflow. Bot identities come from the repository's `AGENT_BOT_LOGINS` variable;
 add a new pipeline's login there rather than forking the workflow logic.
 Workers arm squash auto-merge directly as part of the headless handoff. The
-workflow handles event-driven arming and periodically reconciles ready open bot
-PRs so a missed or unavailable Actions event cannot strand one. Enabled fleet
+workflow handles event-driven arming and reconciles ready open bot PRs (on
+push to main and PR check success, plus a daily backstop, for App-enabled
+callers; on a cron for legacy callers) so a missed or unavailable Actions event cannot strand one. Enabled fleet
 callers mint a repository-scoped Agent LCARS App token for the arm and
 reconcile operations. That App identity is part of the delivery contract: its
 merge must emit the normal main-branch push chain, apply linked-issue closure,
@@ -38,7 +39,7 @@ and honor repository branch deletion. `GITHUB_TOKEN` plus the reusable's
 restore jobs is a compatibility path only for callers that have not opted in.
 The App private key crosses only a `pull_request_target` trusted-base workflow;
 that workflow must never check out or execute PR-head content.
-The first main-branch push after cutover and every scheduled reconciliation
+The first main-branch push after cutover and every later reconciliation
 migrate an auto-merge arm from the exact legacy `app/github-actions` identity
 to the App identity; arms created by humans or other Apps stay untouched.
 
