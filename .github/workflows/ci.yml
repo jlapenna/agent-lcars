@@ -41,6 +41,32 @@ jobs:
           terraform -chdir=infra/github-ruleset fmt -check -recursive
           terraform -chdir=infra/github-ruleset validate
 
+  # actionlint accepts `self-hosted` beside any label, but a runner scale set
+  # (every label in .github/actionlint.yaml) matches only its own name, so
+  # `[self-hosted, lcars-ci]` queues forever (homelab hit exactly this on
+  # 2026-10-04). This runs on a GitHub-hosted runner with no `needs`, so it
+  # still reports when the label error is on a self-hosted job itself. The
+  # dependency-free check comes from @jlapenna/repo-tools at the commit the
+  # lockfile pins, without a pnpm install.
+  runner-labels:
+    name: Runner label combinations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Reject self-hosted paired with a runner scale-set label
+        run: |
+          sha="$(grep -oE 'codeload\.github\.com/jlapenna/repo-tools/tar\.gz/[0-9a-f]{40}' pnpm-lock.yaml | head -n 1)"
+          sha="${sha##*/}"
+          if [ -z "$sha" ]; then
+            echo "::error::pnpm-lock.yaml does not pin @jlapenna/repo-tools to a commit."
+            exit 1
+          fi
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/check-runner-labels.mjs" \
+            "https://raw.githubusercontent.com/jlapenna/repo-tools/$sha/bin/check-runner-labels.mjs"
+          node "$RUNNER_TEMP/check-runner-labels.mjs"
+
   verify-full:
     name: Full verification
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -389,7 +415,7 @@ jobs:
   # events start `verify-full` and this gate then requires its real result.
   verify:
     name: Verify
-    needs: verify-full
+    needs: [verify-full, runner-labels]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -405,6 +431,15 @@ jobs:
         run: |
           if [ "$VERIFY_FULL_RESULT" != 'success' ]; then
             echo "::error::Full verification concluded '$VERIFY_FULL_RESULT'."
+            exit 1
+          fi
+
+      - name: Require valid runner label combinations
+        env:
+          RUNNER_LABELS_RESULT: ${{ needs.runner-labels.result }}
+        run: |
+          if [ "$RUNNER_LABELS_RESULT" != 'success' ]; then
+            echo "::error::Runner label combinations concluded '$RUNNER_LABELS_RESULT'."
             exit 1
           fi
 
