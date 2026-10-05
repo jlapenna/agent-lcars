@@ -13,6 +13,7 @@ import {
   selfHostedRunners,
   updateFixtureIssueContent,
 } from '../../../../../lib/e2e-github-fixtures';
+import { SESSION_EXPIRY_WORKFLOW_FILE } from '../../../../../lib/github-actions-oidc';
 
 /**
  * Stands in for the bounded GitHub REST surface console writes and exact
@@ -147,6 +148,17 @@ export async function POST(
       inputs?: Record<string, unknown>;
     };
     const inputs = body.inputs;
+    if (path[5] === SESSION_EXPIRY_WORKFLOW_FILE) {
+      // A native item's close starts its telemetry session expiry.
+      return body.ref === 'main' &&
+        typeof inputs?.['item'] === 'string' &&
+        inputs['item'] !== ''
+        ? new NextResponse(null, { status: 204 })
+        : NextResponse.json(
+            { message: 'Invalid session expiry dispatch fixture request' },
+            { status: 422 },
+          );
+    }
     const valid =
       body.ref === 'main' &&
       inputs !== undefined &&

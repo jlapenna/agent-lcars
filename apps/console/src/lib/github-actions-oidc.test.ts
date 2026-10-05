@@ -14,7 +14,7 @@ vi.mock('jose', async (importOriginal) => {
 });
 
 import {
-  assertSessionPinTickOidcClaims,
+  assertSessionExpiryOidcClaims,
   assertWorkApiOidcClaims,
   githubActionsWorkSubject,
   verifyWorkApiOidcToken,
@@ -30,26 +30,26 @@ const repository = 'jlapenna/agent-lcars';
 // to `repository` above.
 const secondRepo = 'other-org/other-repo';
 
-// Sub-project 6 (Task 8): the session-pin-tick trigger for the session
-// reaper sweep, pinned to its own workflow file.
-const SESSION_PIN_TICK_OIDC_AUDIENCE = 'agent-lcars-session-pin-tick';
-const SESSION_PIN_TICK_WORKFLOW_PATH =
-  '.github/workflows/work-session-pin-tick.yml';
+// The session-expiry workflow, pinned to its own workflow file,
+// dispatch-only.
+const SESSION_EXPIRY_OIDC_AUDIENCE = 'agent-lcars-session-expiry';
+const SESSION_EXPIRY_WORKFLOW_PATH =
+  '.github/workflows/work-session-expiry.yml';
 
-const sessionPinTickClaims = {
-  aud: SESSION_PIN_TICK_OIDC_AUDIENCE,
+const sessionExpiryClaims = {
+  aud: SESSION_EXPIRY_OIDC_AUDIENCE,
   repository,
   repository_id: '1307149765',
   run_id: '93099054200',
-  job_workflow_ref: `${repository}/${SESSION_PIN_TICK_WORKFLOW_PATH}@refs/heads/main`,
+  job_workflow_ref: `${repository}/${SESSION_EXPIRY_WORKFLOW_PATH}@refs/heads/main`,
   ref: 'refs/heads/main',
-  event_name: 'schedule',
+  event_name: 'workflow_dispatch',
 };
 
-describe('GitHub Actions session-pin-tick OIDC claims', () => {
-  it('accepts the scheduled and manual tick workflow on main', () => {
+describe('GitHub Actions session-expiry OIDC claims', () => {
+  it('accepts the dispatched expiry workflow on main', () => {
     expect(
-      assertSessionPinTickOidcClaims(sessionPinTickClaims, repository),
+      assertSessionExpiryOidcClaims(sessionExpiryClaims, repository),
     ).toEqual({
       repository,
       repositoryId: 1_307_149_765,
@@ -58,18 +58,19 @@ describe('GitHub Actions session-pin-tick OIDC claims', () => {
   });
 
   it.each([
-    [{ ...sessionPinTickClaims, repository: 'attacker/fork' }, 'repository'],
+    [{ ...sessionExpiryClaims, repository: 'attacker/fork' }, 'repository'],
     [
       {
-        ...sessionPinTickClaims,
-        job_workflow_ref: `${repository}/.github/workflows/ci.yml@refs/heads/main`,
+        ...sessionExpiryClaims,
+        job_workflow_ref: `${repository}/.github/workflows/work-session-pin-tick.yml@refs/heads/main`,
       },
       'job_workflow_ref',
     ],
-    [{ ...sessionPinTickClaims, ref: 'refs/heads/feature' }, 'ref'],
-    [{ ...sessionPinTickClaims, event_name: 'pull_request' }, 'event_name'],
+    [{ ...sessionExpiryClaims, ref: 'refs/heads/feature' }, 'ref'],
+    [{ ...sessionExpiryClaims, event_name: 'schedule' }, 'event_name'],
+    [{ ...sessionExpiryClaims, event_name: 'pull_request' }, 'event_name'],
   ])('rejects a caller with the wrong %s claim', (claims, field) => {
-    expect(() => assertSessionPinTickOidcClaims(claims, repository)).toThrow(
+    expect(() => assertSessionExpiryOidcClaims(claims, repository)).toThrow(
       field,
     );
   });

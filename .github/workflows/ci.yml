@@ -185,8 +185,8 @@ jobs:
           find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 \
             | xargs -0 "$actionlint_command"
 
-      - name: Test the work-session-pin-tick workflow
-        run: bash tools/workflow-session-pin-tick.test.sh
+      - name: Test the work-session-expiry workflow
+        run: bash tools/workflow-session-expiry.test.sh
 
       - name: Test OpenCode configuration
         run: bash tools/opencode-config.test.sh

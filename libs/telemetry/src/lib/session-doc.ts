@@ -30,6 +30,29 @@ export const CLI_SESSION_RETENTION_DAYS = 30;
  * follow-up 2), well past the 30d `cli` docs get. */
 export const ISSUE_AGENT_SESSION_RETENTION_DAYS = 365;
 
+/** `intentId` prefix of a run that belongs to a native work item
+ * (`work:<ulid>/r<n>`, the orchestrator's `taskKey` plus run generation). */
+const NATIVE_WORK_INTENT_PREFIX = 'work:';
+
+/**
+ * Whether a write describes a session of a native work item. Such a session
+ * carries NO `expireAt` while it is being written: a native item can stay
+ * open (parked) for any length of time, and its sessions must outlive it.
+ * The item's close transition stamps `expireAt` instead (the console
+ * dispatches `work-session-expiry.yml`, which sets it to close time +
+ * {@link ISSUE_AGENT_SESSION_RETENTION_DAYS}). Firestore's TTL policy
+ * ignores a document without the field.
+ */
+export function isNativeWorkSessionWrite(
+  source: SessionSummary['source'],
+  options: BuildSessionDocOptions,
+): boolean {
+  return (
+    source === 'issue-agent' &&
+    options.intentId?.startsWith(NATIVE_WORK_INTENT_PREFIX) === true
+  );
+}
+
 function requiredSessionAgent(summary: SessionSummary): SessionAgent {
   if (!isSessionAgent(summary.agent)) {
     throw new Error(`Session ${summary.sessionId} requires an explicit agent`);
@@ -83,7 +106,9 @@ export function buildSessionDoc(
 ): SessionDoc {
   const source = options.forceSource ?? summary.source;
   const agent = requiredSessionAgent(summary);
-  const expireAt = computeExpireAt(summary.lastActivityAt, source);
+  const expireAt = isNativeWorkSessionWrite(source, options)
+    ? undefined
+    : computeExpireAt(summary.lastActivityAt, source);
   const base = {
     sessionId: summary.sessionId,
     liveness,
@@ -233,10 +258,11 @@ export function parseSessionDoc(value: unknown): SessionDoc {
  * the write and the daemon's dedupe-cache key are deliberately the same
  * value.
  *
- * `clearFields` is derived solely from the current summary. Missing status
- * clears both status fields; a missing OpenCode backend observation clears
- * `resolvedModel`, preventing a resumed run from displaying the backend from
- * an earlier request. Deleting an absent Firestore field is a no-op, and the
+ * `clearFields` is derived solely from the current summary and options.
+ * Missing status clears both status fields; a missing OpenCode backend
+ * observation clears `resolvedModel`, preventing a resumed run from
+ * displaying the backend from an earlier request; a native work item's
+ * session clears `expireAt` (see {@link isNativeWorkSessionWrite}). Deleting an absent Firestore field is a no-op, and the
  * write cache deduplicates identical writes. Keeping this derivation stateless
  * also ensures the cache key describes the entire write operation.
  */
@@ -252,6 +278,13 @@ export function buildSessionWrite(
   }
   if (summary.agent === 'opencode' && summary.resolvedModel === undefined) {
     clearFields.push('resolvedModel');
+  }
+  if (
+    isNativeWorkSessionWrite(options.forceSource ?? summary.source, options)
+  ) {
+    // A native item reopened (reply or redispatch) after its close stamped
+    // this session: activity means the item is open again.
+    clearFields.push('expireAt');
   }
   return { doc, clearFields };
 }

@@ -166,7 +166,7 @@ declares them.
 - `agent-automerge-reusable.yml` lines 480-600 and 900-1400 (grep only).
 - Tools the workflows invoke: `sync-github-labels.mjs`,
   `configure-github-app-webhook.mjs`, `deploy-console-prebuilt.mjs`,
-  `e2e-local.sh`, `session-pin-tick.ts`.
+  `e2e-local.sh`, `session-expiry.ts` (formerly `session-pin-tick.ts`).
 - `tools/e2e-runner/Dockerfile` beyond its header.
 - Member-repository hook files, the installed global fleet-tools copy,
   Homegit, and repo-tools' own scripts. These are owned by #2031,

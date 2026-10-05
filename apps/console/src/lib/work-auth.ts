@@ -28,9 +28,9 @@ export interface WorkAuthDeps {
   verifyGoogleIdToken: (
     token: string,
   ) => Promise<{ email: string; emailVerified: boolean }>;
-  /** GitHub Actions OIDC verifier for the session-pin-tick trigger
-   *  (`work-session-pin-tick.yml`, sub-project 6). */
-  verifySessionPinTickOidcToken: (token: string) => Promise<unknown>;
+  /** GitHub Actions OIDC verifier for the session-expiry workflow
+   *  (`work-session-expiry.yml`), dispatched when a native item closes. */
+  verifySessionExpiryOidcToken: (token: string) => Promise<unknown>;
   /** Generic GitHub Actions Work API identity. Its verifier establishes the
    * signed repository and canonical Work-grant subject; this module only
    * resolves that subject through the ordinary grant model. */
@@ -131,10 +131,10 @@ export async function authenticateWorkRequest(
       // one remaining GitHub Actions OIDC caller below.
     }
     try {
-      await deps.verifySessionPinTickOidcToken(token);
+      await deps.verifySessionExpiryOidcToken(token);
       return {
-        principal: 'pin:tick',
-        subject: 'pin:tick',
+        principal: 'session:expiry',
+        subject: 'session:expiry',
         scopes: new Set<WorkScope>(['work.reaper']),
         pipelines: [],
         via: 'oidc',

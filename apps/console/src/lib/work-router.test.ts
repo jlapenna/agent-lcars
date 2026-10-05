@@ -43,8 +43,8 @@ const executorOnly = {
   via: 'google' as const,
 };
 const reaperOnly = {
-  principal: 'pin:tick',
-  subject: 'pin:tick',
+  principal: 'session:expiry',
+  subject: 'session:expiry',
   scopes: new Set(['work.reaper'] as const),
   pipelines: [],
   via: 'oidc' as const,
@@ -209,7 +209,7 @@ describe('items routes', () => {
     }
   });
 
-  describe('a work.reaper-only principal (sub-project 6 session-pin tick)', () => {
+  describe('a work.reaper-only principal (the session-expiry workflow)', () => {
     it('refuses create/cancel/redispatch -- reaper is read-only', async () => {
       const ctx = context({ principal: reaperOnly });
       for (const [m, p, b] of [
@@ -498,6 +498,31 @@ describe('items routes', () => {
     expect(c1.status).toBe(200);
     expect(c1.json.state).toBe('canceled');
     expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(409);
+  });
+
+  it('starts session expiry when it closes a parked item, but leaves a live run to the outbox', async () => {
+    const expireItemSessions = vi.fn().mockResolvedValue(undefined);
+    const base = context();
+    const ctx = context({
+      runtime: { ...base.runtime, expireItemSessions },
+    });
+    await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    // Live run: cancelling it settles the run, whose outbox outcome
+    // dispatches the expiry (orchestrator-dispatch), not this handler.
+    await call(ctx, 'POST', `/items/${ID}/cancel`);
+    expect(expireItemSessions).not.toHaveBeenCalled();
+
+    const parked = context({
+      runtime: { ...context().runtime, expireItemSessions },
+    });
+    await call(parked, 'PUT', `/items/${ID}`, { spec });
+    await parked.runtime.orchestrator.report(`work:${ID}/r1`, {
+      ok: true,
+      summary: 'park',
+    });
+    const closed = await call(parked, 'POST', `/items/${ID}/cancel`);
+    expect(closed.json.state).toBe('canceled');
+    expect(expireItemSessions).toHaveBeenCalledExactlyOnceWith(ID);
   });
 
   it('redispatches only a parked item', async () => {

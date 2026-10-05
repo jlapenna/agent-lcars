@@ -1,0 +1,77 @@
+name: Work Session Expiry
+
+# Applies a native work item's lifecycle to its telemetry session docs:
+# a closed item's sessions expire ISSUE_AGENT_SESSION_RETENTION_DAYS after
+# the close, while an open item's sessions carry no expireAt at all, so the
+# sessions collection's Firestore TTL policy never reaps them. The telemetry
+# sidecar omits expireAt while it writes a native session; this workflow
+# applies the close.
+#
+# Event-driven: the console dispatches it with the item id when the item
+# closes (dispatchSessionExpiry in apps/console/src/lib/session-expiry.ts).
+# This hop exists because no single identity can both read the item
+# (console Work API) and write telemetry (telemetry_writer); see the native
+# work items design, "Persistence". Dispatched without an item, it clears
+# expireAt on every open item's sessions: the one-time migration from the
+# retired 30-minute pin tick, and a manual backstop.
+
+on:
+  workflow_dispatch:
+    inputs:
+      item:
+        description: Native work item id; empty clears expiry for every open item
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: work-session-expiry-${{ inputs.item || 'open-items' }}
+  cancel-in-progress: false
+
+jobs:
+  expire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-node-pnpm
+
+      # Read side: a session-expiry-audienced GitHub Actions OIDC token,
+      # verified by work-auth.ts (work.reaper scope, a hardcoded OIDC
+      # principal pinned to this workflow file on main). Minted by hand
+      # rather than through .github/actions/oidc-post because the token must
+      # survive into the later script step, which issues GETs, not a POST.
+      - name: Mint a session-expiry bearer
+        id: expiry-token
+        run: |
+          set -euo pipefail
+          token_response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=agent-lcars-session-expiry")"
+          oidc_token="$(jq -er '.value | select(type == "string" and length > 0)' <<<"$token_response")"
+          echo "::add-mask::$oidc_token"
+          echo "token=$oidc_token" >> "$GITHUB_OUTPUT"
+
+      # Write side: WIF-impersonate telemetry_writer, the existing
+      # fleet_writer_impersonation binding (infra/terraform/main.tf). No new
+      # Terraform, IAM, or secret. No untrusted step follows in this job, so
+      # the exported GCLOUD_PROJECT is safe and lets the Firestore client
+      # resolve its project outside a GCP runtime.
+      - name: Authenticate telemetry writer
+        id: telemetry-auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
+          token_format: access_token
+
+      - name: Apply session expiry
+        env:
+          SESSION_EXPIRY_BEARER: ${{ steps.expiry-token.outputs.token }}
+          SESSION_EXPIRY_ITEM: ${{ inputs.item }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+        run: pnpm exec tsx apps/telemetry-watcher/bin/session-expiry.ts

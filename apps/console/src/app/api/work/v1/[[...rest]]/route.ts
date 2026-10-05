@@ -8,7 +8,7 @@ import {
 } from '@/lib/deployment';
 import {
   githubActionsWorkSubject,
-  verifySessionPinTickOidcToken,
+  verifySessionExpiryOidcToken,
   verifyWorkApiOidcToken,
 } from '@/lib/github-actions-oidc';
 import {
@@ -72,8 +72,8 @@ async function handle(request: Request): Promise<Response> {
   const bearerToken = rawBearerToken(request);
   const principal = await authenticateWorkRequest(request, {
     verifyGoogleIdToken,
-    verifySessionPinTickOidcToken: (token) =>
-      verifySessionPinTickOidcToken(token, controlPlaneRepository()),
+    verifySessionExpiryOidcToken: (token) =>
+      verifySessionExpiryOidcToken(token, controlPlaneRepository()),
     verifyGithubActionsWorkOidcToken: async (token) => {
       const identity = await verifyWorkApiOidcToken(
         token,

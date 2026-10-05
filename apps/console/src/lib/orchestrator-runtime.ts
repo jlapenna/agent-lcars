@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import {
   type Clock,
   FirestoreScheduleStore,
@@ -16,6 +17,7 @@ import {
 } from '@/lib/github-app-tokens';
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
+import { dispatchSessionExpiry } from '@/lib/session-expiry';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed
@@ -91,6 +93,20 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     loadGithubAnchorLifecycle: (anchor) => {
       const github = orchestratorGithubRuntimeDeps(process.env);
       return loadGithubAnchorLifecycle(github, anchor);
+    },
+    expireItemSessions: async (workId: string) => {
+      try {
+        await dispatchSessionExpiry(
+          orchestratorGithubRuntimeDeps(process.env),
+          workId,
+        );
+      } catch (error) {
+        logger.error(
+          'agent-lcars: session expiry dispatch failed for work item %s; its sessions keep no expiry until work-session-expiry.yml runs for it:',
+          workId,
+          error,
+        );
+      }
     },
     drain: (limit?: number) => {
       const github = orchestratorGithubRuntimeDeps(process.env);

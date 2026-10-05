@@ -19,8 +19,8 @@ function deps(over: Partial<WorkAuthDeps> = {}): WorkAuthDeps {
       email: 'sa@example.iam.gserviceaccount.com',
       emailVerified: true,
     }),
-    verifySessionPinTickOidcToken: async () => {
-      throw new Error('not a session-pin-tick token');
+    verifySessionExpiryOidcToken: async () => {
+      throw new Error('not a session-expiry token');
     },
     verifyGithubActionsWorkOidcToken: async () => {
       throw new Error('not a GitHub Actions Work API token');
@@ -118,19 +118,19 @@ describe('authenticateWorkRequest', () => {
     );
     expect(p).toBeUndefined();
   });
-  it('falls through to the session-pin-tick verifier when the bearer is not a Google token', async () => {
+  it('falls through to the session-expiry verifier when the bearer is not a Google token', async () => {
     const p = await authenticateWorkRequest(
       req({ authorization: 'Bearer t' }),
       deps({
         verifyGoogleIdToken: async () => {
           throw new Error('not Google');
         },
-        verifySessionPinTickOidcToken: async () => ({ ok: true }),
+        verifySessionExpiryOidcToken: async () => ({ ok: true }),
       }),
     );
     expect(p).toMatchObject({
-      principal: 'pin:tick',
-      subject: 'pin:tick',
+      principal: 'session:expiry',
+      subject: 'session:expiry',
       via: 'oidc',
     });
     expect(p?.scopes.has('work.reaper')).toBe(true);
@@ -174,8 +174,8 @@ describe('authenticateWorkRequest', () => {
         verifyGoogleIdToken: async () => {
           throw new Error('not Google');
         },
-        verifySessionPinTickOidcToken: async () => {
-          throw new Error('not session-pin-tick either');
+        verifySessionExpiryOidcToken: async () => {
+          throw new Error('not session-expiry either');
         },
         verifyGithubActionsWorkOidcToken: async () => {
           throw new Error('not Work API OIDC either');

@@ -270,6 +270,32 @@ describe('buildSessionDoc', () => {
     expect(doc.expireAt).toBe(expected.toISOString());
   });
 
+  it('omits expireAt for a native work item session, which expires when the item closes', () => {
+    const doc = buildSessionDoc(
+      baseSummary({
+        source: 'issue-agent',
+        lastActivityAt: '2026-01-01T00:00:00.000Z',
+      }),
+      'live',
+      { runId: 'run-123', intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r2' },
+    );
+
+    expect(doc).not.toHaveProperty('expireAt');
+  });
+
+  it('keeps the activity-based expireAt for a GitHub-anchored run', () => {
+    const doc = buildSessionDoc(
+      baseSummary({
+        source: 'issue-agent',
+        lastActivityAt: '2026-01-01T00:00:00.000Z',
+      }),
+      'live',
+      { runId: 'run-123', intentId: 'octo/example#3107/r1' },
+    );
+
+    expect(doc.expireAt).toBeDefined();
+  });
+
   it('omits expireAt instead of throwing when lastActivityAt has no parseable timestamp (cli)', () => {
     const doc = buildSessionDoc(
       baseSummary({ source: 'cli', lastActivityAt: '' }),
@@ -562,6 +588,39 @@ describe('buildSessionWrite', () => {
     const write = buildSessionWrite(baseSummary(), 'live');
 
     expect(write.clearFields).toEqual(['status', 'statusUpdatedAt']);
+  });
+
+  it('clears a native work item session expireAt that an earlier close stamped', () => {
+    const write = buildSessionWrite(
+      baseSummary({ source: 'issue-agent' }),
+      'live',
+      { runId: 'run-123', intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1' },
+    );
+
+    expect(write.clearFields).toContain('expireAt');
+    expect(write.doc).not.toHaveProperty('expireAt');
+  });
+
+  it('clears expireAt for a forced issue-agent native write but never for cli or GitHub runs', () => {
+    expect(
+      buildSessionWrite(baseSummary({ source: 'cli' }), 'ended', {
+        forceSource: 'issue-agent',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+        runId: 'run-123',
+        intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      }).clearFields,
+    ).toContain('expireAt');
+    expect(
+      buildSessionWrite(baseSummary({ source: 'cli' }), 'live', {
+        intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      }).clearFields,
+    ).not.toContain('expireAt');
+    expect(
+      buildSessionWrite(baseSummary({ source: 'issue-agent' }), 'live', {
+        runId: 'run-123',
+        intentId: 'octo/example#3107/r1',
+      }).clearFields,
+    ).not.toContain('expireAt');
   });
 
   it('requests a clear even for a runner-mode write that never had a status', () => {

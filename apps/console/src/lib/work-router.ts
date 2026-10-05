@@ -59,8 +59,8 @@ const cron = os.use(async ({ context, next }) => {
   return next({ context });
 });
 
-/** `list`/`get` additionally accept `work.reaper` (sub-project 6's
- *  session-pin tick, a read-only caller) -- `create`/`cancel`/`redispatch`
+/** `list`/`get` additionally accept `work.reaper` (the session-expiry
+ *  workflow, a read-only caller) -- `create`/`cancel`/`redispatch`
  *  stay `operator`-only; a reaper-scoped principal must never mint or
  *  settle a run. */
 const reader = os.use(async ({ context, next }) => {
@@ -220,6 +220,13 @@ export const workRouter = os.router({
           );
     if (isRefusal(outcome)) {
       throw errors.CONFLICT({ message: outcome.reason });
+    }
+    if (live === undefined) {
+      // Closing a parked item settles no run, so no outbox outcome carries
+      // the close; start its sessions' expiry here. Best effort: the item is
+      // already canceled, and a failed dispatch only keeps its sessions
+      // longer (the workflow can be re-run by item id).
+      await context.runtime.expireItemSessions?.(input.id);
     }
     await context.runtime.drain();
     return view(context, input.id, outcome.task);

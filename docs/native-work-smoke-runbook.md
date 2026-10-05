@@ -339,6 +339,13 @@ record of how the incident was found.
 
 ## Sub-project 6: session resume and reaper (2026-08-27)
 
+> **Superseded (2026-10-05):** the 30-minute `work-session-pin-tick.yml`
+> poll below is retired. A native item's sessions now carry no `expireAt`
+> while the item is open (the sidecar omits it, `isNativeWorkSessionWrite`),
+> and the item's close dispatches `work-session-expiry.yml`, which stamps
+> close time + 365 days (`apps/telemetry-watcher/bin/session-expiry.ts`).
+> The record below is the original evidence for the retired design.
+
 Sub-project 6 (session resume and persistence) adds a `resume-session`
 lane step (era-split like every other local action in `agent-lane.yml` —
 see [Published actions](published-actions.md)) and the

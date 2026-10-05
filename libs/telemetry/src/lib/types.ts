@@ -227,7 +227,8 @@ interface BaseSessionDoc {
    * `Timestamp` (see `upsertSession`) so the `sessions` collection's TTL
    * policy can garbage-collect it — see issue #2708. Omitted when
    * `lastActivityAt` has no parseable timestamp (e.g. a transcript with no
-   * timestamped lines yet). */
+   * timestamped lines yet), and for a native work item's session, whose
+   * expiry is set when the item closes (`isNativeWorkSessionWrite`). */
   expireAt?: string;
   /** See {@link SessionSummary.totalCostUsd}. */
   totalCostUsd?: number;
@@ -338,14 +339,15 @@ export interface BuildSessionDocOptions {
 /**
  * Closed union of `SessionDoc` fields a write can request DELETED from
  * Firestore rather than merely omitted (issue #1257) — `status` and
- * `statusUpdatedAt` today, always requested together (see
+ * `statusUpdatedAt` (always requested together), `resolvedModel`, and a
+ * native work item session's `expireAt` (see
  * {@link buildSessionWrite}'s `clearFields` derivation in `session-doc.ts`).
  * Closed on purpose: nothing else on `SessionDoc` is deletable this way, so
  * a caller can never mistakenly request deletion of a field this contract
  * doesn't cover.
  */
 export type ClearableSessionField =
-  'status' | 'statusUpdatedAt' | 'resolvedModel';
+  'status' | 'statusUpdatedAt' | 'resolvedModel' | 'expireAt';
 
 /**
  * The complete description of one Firestore write: the document to merge,
