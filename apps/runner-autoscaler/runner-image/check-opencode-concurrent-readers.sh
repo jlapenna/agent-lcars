@@ -12,11 +12,14 @@
 # arm64 loses often enough to block publication. It is not an overlayfs
 # copy-up effect; a plain filesystem reproduces it.
 #
-# Runtime readers coexist with a long-lived `opencode run` connection. Model
-# that: one OpenCode reader opens the cold store alone (copy-up and WAL-index
-# initialization by the real CLI), then a held SQLite connection keeps the
-# store open while concurrent OpenCode readers start together. Every reader
-# must succeed; there is no retry.
+# This gate proves the store, not that race: one OpenCode reader opens the
+# cold store alone (copy-up and WAL-index initialization by the real CLI),
+# then a held SQLite connection, standing in for a live `opencode run`, keeps
+# the store open while concurrent OpenCode readers start together. Every
+# reader must succeed; there is no retry. The race itself remains reachable
+# at runtime whenever two OpenCode processes start or stop against an idle
+# store (e.g. a telemetry `session list` beside direct-runner's own listing
+# or `opencode run` startup) until OpenCode sets busy_timeout first.
 set -euo pipefail
 opencode_bin="${OPENCODE_BIN:-/usr/local/bin/opencode}"
 store_check="${OPENCODE_STORE_CHECK:-/usr/local/lib/agent-lcars/check-opencode-store.sh}"
