@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	dockerclient "github.com/docker/docker/client"
 )
@@ -39,7 +37,7 @@ func TestQueueLaunchUsesStartupSnapshotAfterEnvironmentChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if fake.pullCount() != 0 || fake.createCount() != 1 {
-		t.Fatal("cached launch should not touch registry")
+		t.Fatal("cached launch must not pull when the registry cannot be resolved")
 	}
 	if fake.lastCreate.Image != "registry/direct-runner:test" {
 		t.Fatalf("image changed: %s", fake.lastCreate.Image)
@@ -89,61 +87,52 @@ func TestQueueExecutorEnvironmentRejectsDisabledQueueExecutor(t *testing.T) {
 	}
 }
 
-func TestQueueImageRefreshFailurePreservesCachedLaunch(t *testing.T) {
-	q := testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host=target"}})
-	fake := newFakeDockerServer(t)
-	fake.imagePresent = true
-	fake.pullStreamError = true
-	clients := func(string) (*dockerclient.Client, error) { return fake.client(t), nil }
-	refreshQueueRunnerImagesOnce(context.Background(), q, clients, discardLogger())
-	if fake.pullCount() != 1 {
-		t.Fatal("background refresh did not follow tag")
-	}
-	if err := launchDirectRunnerWithClient(context.Background(), q, directRunnerLaunch{runID: "work:01CACHEDLAUNCH/r1", pipeline: "codex"}, clients, discardLogger()); err != nil {
-		t.Fatal(err)
-	}
-	if fake.pullCount() != 1 || fake.createCount() != 1 {
-		t.Fatal("launch retried failed registry refresh")
+// A launch follows the mutable tag the way a Kubernetes PullAlways Job does:
+// one registry digest lookup, and a pull only when the tag has moved. This
+// replaced a five-minute background refresh that pulled on every host.
+func TestQueueLaunchFollowsTagOnlyWhenDigestMoved(t *testing.T) {
+	const current = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const promoted = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	for _, tc := range []struct {
+		name            string
+		registryDigest  string
+		pullStreamError bool
+		wantPulls       int
+	}{
+		{name: "unchanged tag launches cached image", registryDigest: current, wantPulls: 0},
+		{name: "moved tag pulls before launch", registryDigest: promoted, wantPulls: 1},
+		{name: "failed pull launches cached image", registryDigest: promoted, pullStreamError: true, wantPulls: 1},
+		{name: "unreachable registry launches cached image", registryDigest: "", wantPulls: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host=target"}})
+			fake := newFakeDockerServer(t)
+			fake.imagePresent = true
+			fake.localDigest = current
+			fake.registryDigest = tc.registryDigest
+			fake.pullStreamError = tc.pullStreamError
+			clients := func(string) (*dockerclient.Client, error) { return fake.client(t), nil }
+			if err := launchDirectRunnerWithClient(context.Background(), q, directRunnerLaunch{runID: "work:01FOLLOWTAG/r1", pipeline: "codex"}, clients, discardLogger()); err != nil {
+				t.Fatal(err)
+			}
+			if fake.lookupCount() != 1 {
+				t.Fatalf("digest lookups = %d, want 1", fake.lookupCount())
+			}
+			if fake.pullCount() != tc.wantPulls || fake.createCount() != 1 {
+				t.Fatalf("pulls = %d (want %d), creates = %d (want 1)", fake.pullCount(), tc.wantPulls, fake.createCount())
+			}
+		})
 	}
 }
 
-func TestQueueImageRefreshDoesNotSerializeHealthyHostBehindSlowHost(t *testing.T) {
-	q := testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"slow=slow", "healthy=healthy"}})
-	slow, healthy := newFakeDockerServer(t), newFakeDockerServer(t)
-	stalled := make(chan struct{})
-	release := make(chan struct{})
-	reached := make(chan struct{})
-	done := make(chan struct{})
-	var once sync.Once
-	unblock := func() { once.Do(func() { close(release) }) }
-	defer unblock()
-	clients := func(target string) (*dockerclient.Client, error) {
-		if target == "slow" {
-			close(stalled)
-			<-release
-			return slow.client(t), nil
-		}
-		close(reached)
-		return healthy.client(t), nil
+func TestQueueLaunchPullsMissingImageWithoutDigestLookup(t *testing.T) {
+	q := testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host=target"}})
+	fake := newFakeDockerServer(t)
+	clients := func(string) (*dockerclient.Client, error) { return fake.client(t), nil }
+	if err := launchDirectRunnerWithClient(context.Background(), q, directRunnerLaunch{runID: "work:01MISSINGIMAGE/r1", pipeline: "codex"}, clients, discardLogger()); err != nil {
+		t.Fatal(err)
 	}
-	go func() { refreshQueueRunnerImagesOnce(context.Background(), q, clients, discardLogger()); close(done) }()
-	select {
-	case <-stalled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("slow refresh did not start")
-	}
-	select {
-	case <-reached:
-	case <-time.After(2 * time.Second):
-		t.Fatal("healthy refresh waited for stalled host")
-	}
-	unblock()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("refresh did not finish")
-	}
-	if healthy.pullCount() != 1 || slow.pullCount() != 1 {
-		t.Fatal("both hosts must refresh")
+	if fake.pullCount() != 1 || fake.lookupCount() != 0 || fake.createCount() != 1 {
+		t.Fatalf("pulls = %d, lookups = %d, creates = %d", fake.pullCount(), fake.lookupCount(), fake.createCount())
 	}
 }

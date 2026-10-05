@@ -4,65 +4,68 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
+	"strings"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	dockerclient "github.com/docker/docker/client"
 )
 
-// Registry freshness is independent of a claimed run. Existing images work
-// during an outage; an actually missing image (including after prune) is pulled.
+// queueRunnerImageDigestTimeout bounds the registry manifest lookup a launch
+// makes before using a cached image. It is deliberately short: an
+// unreachable registry must cost a claimed run seconds, not the full pull
+// deadline, before it falls back to the cached image.
+const queueRunnerImageDigestTimeout = 10 * time.Second
+
+// ensureQueueRunnerImage follows the configured mutable tag at launch time,
+// the way a Kubernetes Job's PullAlways does: resolve the tag's registry
+// digest and pull only when the cached image differs. This replaces a
+// five-minute background refresh that pulled on every host whether or not the
+// tag had moved; the tag only moves when a new runner image is promoted.
+//
+// Registry freshness never blocks a claimed run that has something runnable.
+// A failed digest lookup or a failed pull keeps the cached image; only an
+// actually missing image (including after prune) must be pulled.
 func ensureQueueRunnerImage(ctx context.Context, client *dockerclient.Client, host, image string, logger *slog.Logger) (string, error) {
 	inspectCtx, cancel := context.WithTimeout(ctx, dockerInspectTimeout)
-	_, err := client.ImageInspect(inspectCtx, image)
+	cached, err := client.ImageInspect(inspectCtx, image)
 	cancel()
-	if err == nil {
+	if err != nil {
+		if !cerrdefs.IsNotFound(err) {
+			return "", fmt.Errorf("inspecting queue runner image on %q: %w", host, err)
+		}
+		return prepareRunnerImageForHost(ctx, client, host, image, logger)
+	}
+
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, queueRunnerImageDigestTimeout)
+	remote, err := client.DistributionInspect(lookupCtx, image, "")
+	cancelLookup()
+	if err != nil {
+		logger.Warn("Could not resolve queue runner image tag; launching cached image",
+			slog.String("host", host), slog.String("image", image), slog.String("error", err.Error()))
 		return image, nil
 	}
-	if !cerrdefs.IsNotFound(err) {
-		return "", fmt.Errorf("inspecting queue runner image on %q: %w", host, err)
+	want := remote.Descriptor.Digest.String()
+	if want != "" && hasRepoDigest(cached.RepoDigests, want) {
+		return image, nil
 	}
-	return prepareRunnerImageForHost(ctx, client, host, image, logger)
+
+	logger.Info("Queue runner image tag moved; pulling before launch",
+		slog.String("host", host), slog.String("image", image), slog.String("digest", want))
+	if _, err := prepareRunnerImageForHost(ctx, client, host, image, logger); err != nil {
+		logger.Warn("Queue runner image pull failed; launching cached image",
+			slog.String("host", host), slog.String("image", image), slog.String("error", err.Error()))
+	}
+	return image, nil
 }
 
-const queueRunnerImageRefreshInterval = 5 * time.Minute
-
-// Preserve follow-tag policy with bounded background refreshes. This loop does
-// not claim work, remove cached images, or block the poller's placement path.
-func refreshQueueRunnerImages(ctx context.Context, q queueExecutorResolved, newClient func(string) (*dockerclient.Client, error), logger *slog.Logger) {
-	ticker := time.NewTicker(queueRunnerImageRefreshInterval)
-	defer ticker.Stop()
-	for {
-		refreshQueueRunnerImagesOnce(ctx, q, newClient, logger)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+// hasRepoDigest reports whether any of an image's "repo@sha256:..." entries
+// names digest.
+func hasRepoDigest(repoDigests []string, digest string) bool {
+	for _, repoDigest := range repoDigests {
+		if strings.HasSuffix(repoDigest, "@"+digest) {
+			return true
 		}
 	}
-}
-
-func refreshQueueRunnerImagesOnce(ctx context.Context, q queueExecutorResolved, newClient func(string) (*dockerclient.Client, error), logger *slog.Logger) {
-	var refreshes sync.WaitGroup
-	defer refreshes.Wait()
-	for _, host := range q.order {
-		if ctx.Err() != nil {
-			return
-		}
-		refreshes.Go(func() {
-			client, err := newClient(q.targets[host])
-			if err != nil {
-				logger.Warn("Queue runner image refresh could not connect", slog.String("host", host))
-				return
-			}
-			refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			_, err = prepareRunnerImageForHost(refreshCtx, client, host, q.image, logger)
-			cancel()
-			_ = client.Close()
-			if err != nil {
-				logger.Warn("Queue runner image refresh failed; retaining cached image", slog.String("host", host), slog.String("error", err.Error()))
-			}
-		})
-	}
+	return false
 }
