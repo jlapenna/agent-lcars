@@ -363,14 +363,19 @@ jobs:
   # normally, so these callers need no short poll, only a daily backstop for
   # transitions that emit no event (docs/published-actions.md). Legacy
   # GITHUB_TOKEN callers, whose merges suppress that event chain, keep
-  # reconciling on their cron.
+  # reconciling on their cron. workflow_run executes with secrets even when
+  # the triggering CI ran for a fork PR, so only same-repository PR runs are
+  # admitted; fork PRs are never agent-authored here anyway. No job reachable
+  # from workflow_run or pull_request_target checks out or runs PR content,
+  # and no run script interpolates `${{ }}` (contract-tested).
   reconcile-automerge:
     if: >
       github.event_name == 'schedule' ||
       (github.event_name == 'push' && inputs.app-token-enabled) ||
       (github.event_name == 'workflow_run' && inputs.app-token-enabled &&
        github.event.workflow_run.event == 'pull_request' &&
-       github.event.workflow_run.conclusion == 'success') ||
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && inputs.monitor-pr == '')
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10

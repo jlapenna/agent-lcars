@@ -182,10 +182,58 @@ describe('agent auto-merge App identity', () => {
     expect(reconcileIf).toContain(
       "github.event.workflow_run.conclusion == 'success'",
     );
+    // Same clause, not a separate `||` branch: fork-originated runs never
+    // reach the App private key.
+    const workflowRunClause = reconcileIf
+      .split('||')
+      .find((clause) => clause.includes("github.event_name == 'workflow_run'"));
+    expect(workflowRunClause).toContain(
+      'github.event.workflow_run.head_repository.full_name == github.repository',
+    );
+    expect(workflowRunClause).toContain('inputs.app-token-enabled');
     expect(reusable.jobs['restore-main-checks']).toMatchObject({
       if: expect.stringContaining('inputs.app-token-enabled == false'),
       permissions: expect.objectContaining({ statuses: 'read' }),
     });
     expect(caller.permissions).toMatchObject({ statuses: 'read' });
+  });
+
+  it('never runs PR content in jobs reachable from privileged triggers', async () => {
+    const reusable = parseYaml(
+      await readFile('.github/workflows/agent-automerge-reusable.yml', 'utf8'),
+    ) as Workflow;
+    // Jobs admitted on pull_request_target or workflow_run for App callers.
+    for (const name of [
+      'automerge',
+      'cancel-parked-automerge',
+      'reconcile-automerge',
+    ]) {
+      const steps = reusable.jobs[name].steps ?? [];
+      const actions = steps.flatMap((step) => (step.uses ? [step] : []));
+      // The only action is the pinned, repository-scoped App token mint.
+      expect(actions.map((step) => step.uses)).toEqual(
+        actions.map(() =>
+          expect.stringMatching(
+            /^actions\/create-github-app-token@[0-9a-f]{40}$/,
+          ),
+        ),
+      );
+      for (const mint of actions) {
+        expect(mint.with?.repositories).toBe(
+          '${{ github.event.repository.name }}',
+        );
+        expect(
+          Object.keys(mint.with ?? {}).filter((key) =>
+            key.startsWith('permission-'),
+          ),
+        ).not.toHaveLength(0);
+      }
+      // Event values reach scripts only through env, never `${{ }}`.
+      expect(
+        steps
+          .filter((step) => (step.run ?? '').includes('${{'))
+          .map((s) => s.name),
+      ).toEqual([]);
+    }
   });
 });
