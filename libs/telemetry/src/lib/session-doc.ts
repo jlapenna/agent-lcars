@@ -41,7 +41,9 @@ const NATIVE_WORK_INTENT_PREFIX = 'work:';
  * The item's close transition stamps `expireAt` instead (the console
  * dispatches `work-session-expiry.yml`, which sets it to close time +
  * {@link ISSUE_AGENT_SESSION_RETENTION_DAYS}). Firestore's TTL policy
- * ignores a document without the field.
+ * ignores a document without the field. A write never clears an existing
+ * stamp: a reopened item's earlier stamp (a year out) is simply restamped
+ * at its next close.
  */
 export function isNativeWorkSessionWrite(
   source: SessionSummary['source'],
@@ -262,7 +264,9 @@ export function parseSessionDoc(value: unknown): SessionDoc {
  * Missing status clears both status fields; a missing OpenCode backend
  * observation clears `resolvedModel`, preventing a resumed run from
  * displaying the backend from an earlier request; a native work item's
- * session clears `expireAt` (see {@link isNativeWorkSessionWrite}). Deleting an absent Firestore field is a no-op, and the
+ * session omits `expireAt` but never clears it: the close stamp may land
+ * before the sidecar's final write, and clearing would make the session
+ * permanent (see {@link isNativeWorkSessionWrite}). Deleting an absent Firestore field is a no-op, and the
  * write cache deduplicates identical writes. Keeping this derivation stateless
  * also ensures the cache key describes the entire write operation.
  */
@@ -278,13 +282,6 @@ export function buildSessionWrite(
   }
   if (summary.agent === 'opencode' && summary.resolvedModel === undefined) {
     clearFields.push('resolvedModel');
-  }
-  if (
-    isNativeWorkSessionWrite(options.forceSource ?? summary.source, options)
-  ) {
-    // A native item reopened (reply or redispatch) after its close stamped
-    // this session: activity means the item is open again.
-    clearFields.push('expireAt');
   }
   return { doc, clearFields };
 }

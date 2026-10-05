@@ -590,37 +590,22 @@ describe('buildSessionWrite', () => {
     expect(write.clearFields).toEqual(['status', 'statusUpdatedAt']);
   });
 
-  it('clears a native work item session expireAt that an earlier close stamped', () => {
-    const write = buildSessionWrite(
-      baseSummary({ source: 'issue-agent' }),
-      'live',
-      { runId: 'run-123', intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1' },
-    );
-
-    expect(write.clearFields).toContain('expireAt');
-    expect(write.doc).not.toHaveProperty('expireAt');
-  });
-
-  it('clears expireAt for a forced issue-agent native write but never for cli or GitHub runs', () => {
-    expect(
+  it('never clears expireAt, so a late sidecar write cannot undo the close stamp', () => {
+    for (const write of [
+      buildSessionWrite(baseSummary({ source: 'issue-agent' }), 'ended', {
+        runId: 'run-123',
+        intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      }),
       buildSessionWrite(baseSummary({ source: 'cli' }), 'ended', {
         forceSource: 'issue-agent',
         repo: { owner: 'jlapenna', name: 'agent-lcars' },
         runId: 'run-123',
         intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
-      }).clearFields,
-    ).toContain('expireAt');
-    expect(
-      buildSessionWrite(baseSummary({ source: 'cli' }), 'live', {
-        intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
-      }).clearFields,
-    ).not.toContain('expireAt');
-    expect(
-      buildSessionWrite(baseSummary({ source: 'issue-agent' }), 'live', {
-        runId: 'run-123',
-        intentId: 'octo/example#3107/r1',
-      }).clearFields,
-    ).not.toContain('expireAt');
+      }),
+    ]) {
+      expect(write.doc).not.toHaveProperty('expireAt');
+      expect(write.clearFields).not.toContain('expireAt');
+    }
   });
 
   it('requests a clear even for a runner-mode write that never had a status', () => {

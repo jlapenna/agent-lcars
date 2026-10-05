@@ -344,6 +344,12 @@ record of how the incident was found.
 > while the item is open (the sidecar omits it, `isNativeWorkSessionWrite`),
 > and the item's close dispatches `work-session-expiry.yml`, which stamps
 > close time + 365 days (`apps/telemetry-watcher/bin/session-expiry.ts`).
+> Once per rollout, after the runner image carrying the omitting sidecar
+> is live, run `gh workflow run work-session-expiry.yml` with no item: it
+> clears `expireAt` from every open item's sessions (the pin tick's and
+> older sidecars' stamps). It never stamps closed items; re-run it with
+> `-f item=<id>` for a closed item whose close dispatch failed (the console
+> logs "session expiry dispatch failed for work item <id>").
 > The record below is the original evidence for the retired design.
 
 Sub-project 6 (session resume and persistence) adds a `resume-session`

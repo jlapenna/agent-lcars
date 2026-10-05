@@ -339,15 +339,14 @@ export interface BuildSessionDocOptions {
 /**
  * Closed union of `SessionDoc` fields a write can request DELETED from
  * Firestore rather than merely omitted (issue #1257) — `status` and
- * `statusUpdatedAt` (always requested together), `resolvedModel`, and a
- * native work item session's `expireAt` (see
+ * `statusUpdatedAt` (always requested together) and `resolvedModel` (see
  * {@link buildSessionWrite}'s `clearFields` derivation in `session-doc.ts`).
  * Closed on purpose: nothing else on `SessionDoc` is deletable this way, so
  * a caller can never mistakenly request deletion of a field this contract
  * doesn't cover.
  */
 export type ClearableSessionField =
-  'status' | 'statusUpdatedAt' | 'resolvedModel' | 'expireAt';
+  'status' | 'statusUpdatedAt' | 'resolvedModel';
 
 /**
  * The complete description of one Firestore write: the document to merge,
