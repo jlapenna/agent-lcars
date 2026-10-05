@@ -54,6 +54,10 @@ export async function GET(request: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       controllerRef = controller;
+      if (request.signal.aborted) {
+        close();
+        return;
+      }
       request.signal.addEventListener('abort', close);
       controller.enqueue(encoder.encode(`retry: ${RECONNECT_DELAY_MS}\n\n`));
       // A failed listener reports the unavailable result and stays quiet;

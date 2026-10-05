@@ -401,9 +401,62 @@ describe('RunnerAutoscalerStatus', () => {
       vi.useRealTimers();
     }
   });
+
+  it('reopens the stream after the browser gives up on an HTTP error, with backoff', () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(
+        <MantineProvider>
+          <RunnerAutoscalerStatus initial={{ statuses: [], warnings: [] }} />
+        </MantineProvider>,
+      );
+      const first = FakeEventSource.only();
+
+      first.failTransiently();
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(FakeEventSource.instances).toHaveLength(1);
+
+      first.failPermanently();
+      expect(first.closed).toBe(true);
+      act(() => {
+        vi.advanceTimersByTime(4_999);
+      });
+      expect(FakeEventSource.instances).toHaveLength(1);
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(FakeEventSource.instances).toHaveLength(2);
+
+      const second = FakeEventSource.instances[1] as FakeEventSource;
+      second.failPermanently();
+      act(() => {
+        vi.advanceTimersByTime(9_999);
+      });
+      expect(FakeEventSource.instances).toHaveLength(2);
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(FakeEventSource.instances).toHaveLength(3);
+
+      const third = FakeEventSource.instances[2] as FakeEventSource;
+      third.failPermanently();
+      unmount();
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(FakeEventSource.instances).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 class FakeEventSource {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 2;
   static instances: FakeEventSource[] = [];
   static only(): FakeEventSource {
     if (FakeEventSource.instances.length !== 1) {
@@ -414,6 +467,8 @@ class FakeEventSource {
     return FakeEventSource.instances[0] as FakeEventSource;
   }
   closed = false;
+  readyState = FakeEventSource.OPEN;
+  onerror: (() => void) | null = null;
   private readonly listeners = new Map<string, (event: MessageEvent) => void>();
   constructor(readonly url: string) {
     FakeEventSource.instances.push(this);
@@ -423,6 +478,17 @@ class FakeEventSource {
   }
   close() {
     this.closed = true;
+    this.readyState = FakeEventSource.CLOSED;
+  }
+  /** What a browser does after a non-200 reconnect: closes for good. */
+  failPermanently() {
+    this.readyState = FakeEventSource.CLOSED;
+    this.onerror?.();
+  }
+  /** What a browser does on a dropped connection: retries by itself. */
+  failTransiently() {
+    this.readyState = FakeEventSource.CONNECTING;
+    this.onerror?.();
   }
   push(result: unknown) {
     this.listeners.get(RUNNER_STATUS_EVENT)?.(

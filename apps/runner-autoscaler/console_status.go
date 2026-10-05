@@ -51,6 +51,14 @@ type consoleStatusDocument interface {
 	contentKey() any
 }
 
+// The publisher's sync.Map.CompareAndDelete panics at runtime on an
+// uncomparable value; using each document type as a map key turns adding a
+// slice or map field into a compile error instead.
+var (
+	_ map[consoleQueueExecutorStatus]struct{}
+	_ map[consoleARCLaneStatus]struct{}
+)
+
 func (s consoleQueueExecutorStatus) contentKey() any {
 	s.UpdatedAt, s.ExpireAt = "", time.Time{}
 	if s.ActiveRuns != nil {

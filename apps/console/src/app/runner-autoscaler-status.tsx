@@ -20,6 +20,9 @@ export const RUNNER_STATUS_STREAM_URL = '/api/runner-status/stream';
 /** Local clock only: re-checks the last snapshot's age. No network. */
 const EXPIRY_CHECK_INTERVAL_MS = 10_000;
 const STALENESS_MS = RUNNER_STATUS_STALENESS_MS;
+/** Backoff for reopening a stream the browser closed after an HTTP error. */
+const STREAM_RETRY_MIN_MS = 5_000;
+const STREAM_RETRY_MAX_MS = 60_000;
 
 /** Removes a last-known snapshot once its producer's timestamp crosses the
  * same staleness boundary used by the server. A stopped producer writes
@@ -201,22 +204,40 @@ export function RunnerAutoscalerStatus({
   const [result, setResult] = useState(initial);
 
   useEffect(() => {
-    // EventSource reconnects by itself whenever the server ends a stream or
-    // the connection drops; until then the last snapshot stays and expires
-    // locally below.
-    const source = new EventSource(RUNNER_STATUS_STREAM_URL);
-    source.addEventListener(RUNNER_STATUS_EVENT, (event) => {
-      try {
-        setResult(JSON.parse(event.data) as AutoscalerStatusResult);
-      } catch {
-        // A malformed frame leaves the previous snapshot to expire locally.
-      }
-    });
+    // EventSource reconnects by itself after the server ends a stream or the
+    // connection drops. It gives up for good on an HTTP error (a 503 during a
+    // rollout, a 401 after the session lapses), so reopen it after a backoff
+    // in that case. Until a stream delivers, the last snapshot stays and
+    // expires locally below.
+    let source: EventSource | undefined;
+    let reconnect: number | undefined;
+    let backoffMs = STREAM_RETRY_MIN_MS;
+    const open = () => {
+      reconnect = undefined;
+      const next = new EventSource(RUNNER_STATUS_STREAM_URL);
+      source = next;
+      next.addEventListener(RUNNER_STATUS_EVENT, (event) => {
+        backoffMs = STREAM_RETRY_MIN_MS;
+        try {
+          setResult(JSON.parse(event.data) as AutoscalerStatusResult);
+        } catch {
+          // A malformed frame leaves the previous snapshot to expire locally.
+        }
+      });
+      next.onerror = () => {
+        if (next.readyState !== EventSource.CLOSED) return;
+        next.close();
+        reconnect = window.setTimeout(open, backoffMs);
+        backoffMs = Math.min(backoffMs * 2, STREAM_RETRY_MAX_MS);
+      };
+    };
+    open();
     const timer = window.setInterval(() => {
       setResult((previous) => expireAutoscalerStatuses(previous));
     }, EXPIRY_CHECK_INTERVAL_MS);
     return () => {
-      source.close();
+      source?.close();
+      if (reconnect !== undefined) window.clearTimeout(reconnect);
       window.clearInterval(timer);
     };
   }, []);

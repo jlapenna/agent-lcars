@@ -86,4 +86,36 @@ describe('GET /api/runner-status/stream', () => {
     expect(mocks.unsubscribe).toHaveBeenCalledOnce();
     expect((await reader.read()).done).toBe(true);
   });
+
+  it('never opens a listener for a request that already disconnected', async () => {
+    mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
+    const abort = new AbortController();
+    abort.abort();
+
+    const response = await GET(
+      new Request('http://console/stream', { signal: abort.signal }),
+    );
+    const reader = response.body!.getReader();
+
+    expect((await reader.read()).done).toBe(true);
+    expect(mocks.subscribe).not.toHaveBeenCalled();
+  });
+
+  it('unsubscribes at once when the client leaves before the listener opens', async () => {
+    mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
+    let open: (unsubscribe: () => void) => void = () => undefined;
+    mocks.subscribe.mockReturnValue(
+      new Promise((resolve) => {
+        open = resolve;
+      }),
+    );
+    const abort = new AbortController();
+
+    await GET(new Request('http://console/stream', { signal: abort.signal }));
+    abort.abort();
+    open(mocks.unsubscribe);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mocks.unsubscribe).toHaveBeenCalledOnce();
+  });
 });

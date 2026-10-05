@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +143,26 @@ func TestConsoleStatusTTLOutlivesTheHeartbeat(t *testing.T) {
 	// staleness threshold) must leave room for a missed heartbeat.
 	if consoleStatusTTL < 2*(consoleStatusHeartbeat+consoleStatusInterval) {
 		t.Fatalf("TTL %s leaves no room for one missed heartbeat of %s", consoleStatusTTL, consoleStatusHeartbeat)
+	}
+}
+
+func TestConsoleStalenessMatchesStatusTTL(t *testing.T) {
+	// The console hides a snapshot older than RUNNER_STATUS_STALENESS_MS; it
+	// must be the TTL this producer writes, or healthy-but-unchanged
+	// documents would flap stale between heartbeats.
+	source, err := os.ReadFile("../console/src/lib/runner-status-contract.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`RUNNER_STATUS_STALENESS_MS = ([0-9_]+);`).FindSubmatch(source)
+	if match == nil {
+		t.Fatal("RUNNER_STATUS_STALENESS_MS not found in the console contract")
+	}
+	staleness, err := strconv.Atoi(strings.ReplaceAll(string(match[1]), "_", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Duration(staleness)*time.Millisecond != consoleStatusTTL {
+		t.Fatalf("console staleness %dms != producer TTL %s", staleness, consoleStatusTTL)
 	}
 }
