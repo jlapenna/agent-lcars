@@ -3,6 +3,7 @@ import 'server-only';
 import {
   decidedRun,
   isRefusal,
+  isWorkAnchor,
   type TaskId,
   taskKey,
 } from '@agent-lcars/orchestrator';
@@ -10,6 +11,7 @@ import type { SessionDoc } from '@agent-lcars/telemetry';
 import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
 import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
+import { isClosedItemState } from './session-expiry';
 import { forbiddenReason, type WorkContext } from './work-mint';
 
 /** The pipelines whose CLI session can be restored. Values are
@@ -192,6 +194,12 @@ export async function requestReply(
   });
   if (isRefusal(outcome))
     return { ok: false, code: 'CONFLICT', message: outcome.reason };
+  if (isWorkAnchor(request.task) && isClosedItemState(state)) {
+    // Reopening a closed item: its close stamped every session's expiry,
+    // and the sidecar never clears a stamp. The workflow re-reads the item
+    // (now running) and clears them.
+    await context.runtime.expireItemSessions?.(request.task.workId);
+  }
   await context.runtime.drain();
   return {
     ok: true,

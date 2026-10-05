@@ -324,6 +324,10 @@ export const workRouter = os.router({
       }
       // Invariant, not decoration: a granted request always mints a run.
       decidedRun(outcome);
+      if (state === 'failed') {
+        // Reopening a closed item clears the expiry its close stamped.
+        await context.runtime.expireItemSessions?.(input.id);
+      }
       await context.runtime.drain();
       return view(context, input.id, outcome.task);
     },

@@ -10,13 +10,17 @@ import {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status });
 
+/** An item whose single run `r-<first session>` owns `sessionIds`; the
+ *  fake lookup below resolves sessions by run id through `bySession`. */
+const owned = new Map<string, string[]>();
 function item(state: string, sessionIds: string[]) {
-  return {
-    id: 'ITEM',
-    state,
-    sessions: sessionIds.map((sessionId) => ({ sessionId })),
-  };
+  const runId = `run-${sessionIds.join('-') || 'none'}`;
+  owned.set(runId, sessionIds);
+  return { id: 'ITEM', state, runs: [{ runId }] };
 }
+const sessionIds = vi.fn(async (runIds: readonly string[]) =>
+  runIds.flatMap((runId) => owned.get(runId) ?? []),
+);
 
 describe('settleItemSessionExpiry', () => {
   const now = new Date('2026-10-05T00:00:00.000Z');
@@ -38,6 +42,7 @@ describe('settleItemSessionExpiry', () => {
         now,
         fetchImpl,
         setExpiry,
+        sessionIds,
       });
 
       expect(fetchImpl).toHaveBeenCalledWith(
@@ -66,6 +71,7 @@ describe('settleItemSessionExpiry', () => {
         bearer: 'tok',
         fetchImpl: vi.fn().mockResolvedValue(json(item(state, ['s1']))),
         setExpiry,
+        sessionIds,
       });
 
       expect(setExpiry).toHaveBeenCalledWith('s1', null);
@@ -83,9 +89,23 @@ describe('settleItemSessionExpiry', () => {
       bearer: 'tok',
       fetchImpl: vi.fn().mockResolvedValue(json(item('done', ['gone', 's2']))),
       setExpiry,
+      sessionIds,
     });
 
     expect(result.sessions).toEqual(['s2']);
+  });
+
+  it('fails the run, touching nothing, when the session lookup fails', async () => {
+    const setExpiry = vi.fn();
+    await expect(
+      settleItemSessionExpiry('ITEM', {
+        bearer: 'tok',
+        fetchImpl: vi.fn().mockResolvedValue(json(item('done', ['s1']))),
+        setExpiry,
+        sessionIds: vi.fn().mockRejectedValue(new Error('UNAVAILABLE')),
+      }),
+    ).rejects.toThrow('UNAVAILABLE');
+    expect(setExpiry).not.toHaveBeenCalled();
   });
 
   it('fails loudly when the item cannot be read', async () => {
@@ -94,6 +114,7 @@ describe('settleItemSessionExpiry', () => {
         bearer: 'tok',
         fetchImpl: vi.fn().mockResolvedValue(json({}, 401)),
         setExpiry: vi.fn(),
+        sessionIds,
       }),
     ).rejects.toThrow('GET /items/ITEM -> 401');
   });
@@ -114,6 +135,7 @@ describe('clearOpenItemSessionExpiry', () => {
       bearer: 'tok',
       fetchImpl,
       setExpiry,
+      sessionIds,
     });
 
     expect(cleared).toEqual(['s1', 's2', 's3']);
@@ -134,7 +156,12 @@ describe('clearOpenItemSessionExpiry', () => {
     const setExpiry = vi.fn().mockResolvedValue(true);
 
     await expect(
-      clearOpenItemSessionExpiry({ bearer: 'tok', fetchImpl, setExpiry }),
+      clearOpenItemSessionExpiry({
+        bearer: 'tok',
+        fetchImpl,
+        setExpiry,
+        sessionIds,
+      }),
     ).rejects.toThrow('1/2 state(s): running');
     expect(setExpiry).toHaveBeenCalledWith('s3', null);
   });
@@ -151,6 +178,7 @@ describe('clearOpenItemSessionExpiry', () => {
         bearer: 'tok',
         fetchImpl: fetchImpl as unknown as typeof fetch,
         setExpiry: vi.fn(),
+        sessionIds,
       }),
     ).rejects.toThrow('kept returning nextCursor');
     expect(

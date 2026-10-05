@@ -133,6 +133,29 @@ export async function setSessionExpiry(
   }
 }
 
+/**
+ * Session ids of every doc tagged with one of `intentIds` (the orchestrator
+ * run ids of one work item), read through the writer client. Unlike the
+ * console's read path, which degrades to an empty list, this propagates any
+ * read failure: the session-expiry workflow must fail loudly rather than
+ * succeed having touched nothing.
+ */
+export async function sessionIdsForIntents(
+  intentIds: readonly string[],
+): Promise<string[]> {
+  const firestore = getAgentTelemetryWriterFirestore();
+  const perIntent = await Promise.all(
+    intentIds.map((intentId) =>
+      firestore
+        .collection(SESSIONS_COLLECTION)
+        .where('intentId', '==', intentId)
+        .select()
+        .get(),
+    ),
+  );
+  return perIntent.flatMap((snapshot) => snapshot.docs.map((doc) => doc.id));
+}
+
 /** gRPC NOT_FOUND (5), as the Firestore SDKs report a missing doc. */
 function isNotFound(error: unknown): boolean {
   return (

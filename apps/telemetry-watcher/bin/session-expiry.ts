@@ -17,7 +17,10 @@
 // exists. Without an item it clears `expireAt` on every open item's
 // sessions: the one-time migration of sessions the retired 30-minute pin
 // tick had stamped, and a manual backstop.
-import { setSessionExpiry } from '@agent-lcars/telemetry/server';
+import {
+  sessionIdsForIntents,
+  setSessionExpiry,
+} from '@agent-lcars/telemetry/server';
 
 /** Matches libs/telemetry/src/lib/session-doc.ts's
  *  ISSUE_AGENT_SESSION_RETENTION_DAYS (asserted by session-expiry.spec.ts)
@@ -31,7 +34,7 @@ const OPEN_STATES: readonly ItemState[] = ['running', 'parked'];
 interface ItemLike {
   id: string;
   state: ItemState;
-  sessions: { sessionId: string }[];
+  runs: { runId: string }[];
 }
 interface ItemsResponse {
   items: ItemLike[];
@@ -52,6 +55,10 @@ export interface SessionExpiryDeps {
   now?: Date;
   fetchImpl?: typeof fetch;
   setExpiry?: typeof setSessionExpiry;
+  /** Session lookup by run id. Read directly (as telemetry_writer) rather
+   *  than from the item's `sessions`, which the Work API degrades to an
+   *  empty list when its telemetry read fails. */
+  sessionIds?: typeof sessionIdsForIntents;
 }
 
 export interface ItemExpiryResult {
@@ -67,6 +74,7 @@ function resolve(deps: SessionExpiryDeps) {
     consoleUrl: deps.consoleUrl ?? 'https://lcars.jlapenna.net',
     fetchImpl: deps.fetchImpl ?? fetch,
     setExpiry: deps.setExpiry ?? setSessionExpiry,
+    sessionIds: deps.sessionIds ?? sessionIdsForIntents,
     now: deps.now ?? new Date(),
     headers: { authorization: `Bearer ${deps.bearer}` },
   };
@@ -74,11 +82,11 @@ function resolve(deps: SessionExpiryDeps) {
 
 async function applyExpiry(
   setExpiry: typeof setSessionExpiry,
-  sessions: readonly { sessionId: string }[],
+  sessions: readonly string[],
   expireAt: string | null,
 ): Promise<string[]> {
   const applied: string[] = [];
-  for (const { sessionId } of sessions) {
+  for (const sessionId of sessions) {
     if (await setExpiry(sessionId, expireAt)) applied.push(sessionId);
   }
   return applied;
@@ -93,7 +101,8 @@ export async function settleItemSessionExpiry(
   itemId: string,
   deps: SessionExpiryDeps,
 ): Promise<ItemExpiryResult> {
-  const { consoleUrl, fetchImpl, setExpiry, now, headers } = resolve(deps);
+  const { consoleUrl, fetchImpl, setExpiry, sessionIds, now, headers } =
+    resolve(deps);
   const response = await fetchImpl(
     `${consoleUrl}/api/work/v1/items/${encodeURIComponent(itemId)}`,
     { headers },
@@ -107,7 +116,11 @@ export async function settleItemSessionExpiry(
     : new Date(
         now.getTime() + RETENTION_DAYS * 24 * 60 * 60 * 1000,
       ).toISOString();
-  const sessions = await applyExpiry(setExpiry, item.sessions, expireAt);
+  const sessions = await applyExpiry(
+    setExpiry,
+    await sessionIds(item.runs.map((run) => run.runId)),
+    expireAt,
+  );
   return { itemId, state: item.state, expireAt, sessions };
 }
 
@@ -119,7 +132,8 @@ export async function settleItemSessionExpiry(
 export async function clearOpenItemSessionExpiry(
   deps: SessionExpiryDeps,
 ): Promise<{ cleared: string[] }> {
-  const { consoleUrl, fetchImpl, setExpiry, headers } = resolve(deps);
+  const { consoleUrl, fetchImpl, setExpiry, sessionIds, headers } =
+    resolve(deps);
   const cleared: string[] = [];
 
   async function clearState(state: ItemState): Promise<void> {
@@ -135,7 +149,8 @@ export async function clearOpenItemSessionExpiry(
       }
       const body = (await response.json()) as ItemsResponse;
       for (const item of body.items) {
-        cleared.push(...(await applyExpiry(setExpiry, item.sessions, null)));
+        const ids = await sessionIds(item.runs.map((run) => run.runId));
+        cleared.push(...(await applyExpiry(setExpiry, ids, null)));
       }
       if (body.nextCursor === undefined) return;
       cursor = body.nextCursor;

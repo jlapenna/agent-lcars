@@ -525,6 +525,46 @@ describe('items routes', () => {
     expect(expireItemSessions).toHaveBeenCalledExactlyOnceWith(ID);
   });
 
+  it('clears the close stamp when a failed item is redispatched or a done item gets a reply', async () => {
+    const expireItemSessions = vi.fn().mockResolvedValue(undefined);
+    const ctx = context({
+      runtime: { ...context().runtime, expireItemSessions },
+    });
+    await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    await ctx.runtime.orchestrator.report(`work:${ID}/r1`, {
+      ok: false,
+      summary: 'blocked',
+    });
+    expect((await call(ctx, 'POST', `/items/${ID}/redispatch`)).status).toBe(
+      200,
+    );
+    expect(expireItemSessions).toHaveBeenCalledExactlyOnceWith(ID);
+
+    await ctx.runtime.orchestrator.report(`work:${ID}/r2`, { ok: true });
+    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('done');
+    const reply = await call(ctx, 'POST', `/items/${ID}/reply`, {
+      text: 'one more thing',
+    });
+    expect(reply.status).toBe(200);
+    expect(expireItemSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not touch session expiry when a parked item is redispatched', async () => {
+    const expireItemSessions = vi.fn().mockResolvedValue(undefined);
+    const ctx = context({
+      runtime: { ...context().runtime, expireItemSessions },
+    });
+    await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    await ctx.runtime.orchestrator.report(`work:${ID}/r1`, {
+      ok: true,
+      summary: 'park',
+    });
+    expect((await call(ctx, 'POST', `/items/${ID}/redispatch`)).status).toBe(
+      200,
+    );
+    expect(expireItemSessions).not.toHaveBeenCalled();
+  });
+
   it('redispatches only a parked item', async () => {
     const ctx = context();
     await call(ctx, 'PUT', `/items/${ID}`, { spec });
