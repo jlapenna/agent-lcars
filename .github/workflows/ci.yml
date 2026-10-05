@@ -266,6 +266,9 @@ jobs:
       - name: Test E2E runner node-tar repair (#1435)
         run: bash tools/e2e-runner/node-tar-health.test.sh
 
+      - name: Test probe scratch cleanup (homelab#1542)
+        run: node --test tools/probes/scratch.test.mjs
+
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs tools/e2e/run-console-emulators.test.mjs
 

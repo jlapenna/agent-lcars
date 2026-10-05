@@ -2,15 +2,8 @@
 // Claude/Codex native command hooks against a deterministic localhost model.
 // No real credentials, remote repository writes, or full-policy qualification.
 import { randomUUID } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
@@ -34,6 +27,7 @@ import {
   reviewDenial,
   reviewFixture,
 } from './review-fixture.mjs';
+import { createProbeScratch } from './scratch.mjs';
 import { workflowFixture } from './workflow-fixture.mjs';
 import {
   expectedFileDenial,
@@ -52,7 +46,7 @@ if (
     'usage: command-hook-boundary.mjs <claude|codex> <absolute-binary> <exact-version-output> [scenario]',
   );
 }
-const root = mkdtempSync(join(tmpdir(), `lcars-${provider}-hook-probe-`));
+const root = createProbeScratch(`lcars-${provider}-hook-probe-`);
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
 function execute(args, cwd, env, timeout = 60000) {
