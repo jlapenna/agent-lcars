@@ -1704,16 +1704,15 @@ describe('exit', () => {
         )
       ).status,
     ).toBe(403);
+    // The executor only treats a 404 carrying this message as delivered.
     expect(
-      (
-        await call(
-          { ...base, principal: executorPrincipal(['claude']) },
-          'POST',
-          runPath('work:missing/r1', '/exit'),
-          body,
-        )
-      ).status,
-    ).toBe(404);
+      await call(
+        { ...base, principal: executorPrincipal(['claude']) },
+        'POST',
+        runPath('work:missing/r1', '/exit'),
+        body,
+      ),
+    ).toMatchObject({ status: 404, json: { message: 'unknown run' } });
     expect((await store.readRun(runId))?.state).toBe('running');
   });
 });

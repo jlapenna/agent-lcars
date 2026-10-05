@@ -36,9 +36,18 @@ func (r *exitReportRecorder) server(t *testing.T) *httptest.Server {
 			status, r.statuses = r.statuses[0], r.statuses[1:]
 		}
 		r.mu.Unlock()
-		w.WriteHeader(status)
-		if status == http.StatusOK {
+		switch status {
+		case http.StatusOK:
+			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"runId":"x","state":"lost"}`))
+		case http.StatusNotFound:
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"defined":true,"code":"NOT_FOUND","status":404,"message":"unknown run"}`))
+		case http.StatusGone: // stands in for a console without the route
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`<html>404: This page could not be found.</html>`))
+		default:
+			w.WriteHeader(status)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -99,6 +108,20 @@ func TestRunExitReporterTreatsUnknownRunAsDelivered(t *testing.T) {
 
 	if got := recorder.requests(); len(got) != 1 {
 		t.Fatalf("exit reports = %v, want a 404 never retried", got)
+	}
+}
+
+func TestRunExitReporterRetriesARouteMissing404(t *testing.T) {
+	recorder := &exitReportRecorder{statuses: []int{http.StatusGone}}
+	reporter := testExitReporter(recorder.server(t).URL)
+
+	for range 2 {
+		reporter.observeTerminated("run-before-console-rollout")
+		reporter.wg.Wait()
+	}
+
+	if got := recorder.requests(); len(got) != 2 {
+		t.Fatalf("exit reports = %v, want a bare 404 retried", got)
 	}
 }
 

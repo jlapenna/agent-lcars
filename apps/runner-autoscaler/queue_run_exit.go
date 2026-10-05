@@ -49,7 +49,9 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 	return &runExitReporter{
 		consoleURL: consoleURL,
 		runnerName: runnerName,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		// The route drains the outbox after settling a lost run; leave room
+		// for that so a slow drain is not misread as a failed report.
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 		idToken:    idToken,
 		logger:     logger,
 		now:        time.Now,
@@ -104,9 +106,9 @@ func (r *runExitReporter) observeTerminated(runID string) {
 	}()
 }
 
-// post reports one exit. A 404 (the run no longer exists) and a 403 (this
-// executor is not granted the run's pipeline) can never succeed on a later
-// attempt, so they count as delivered.
+// post reports one exit. The route's 404 (the run no longer exists) and 403
+// (this executor is not granted the run's pipeline) can never succeed on a
+// later attempt, so they count as delivered.
 func (r *runExitReporter) post(runID string) (string, error) {
 	token, err := r.idToken()
 	if err != nil {
@@ -145,7 +147,13 @@ func (r *runExitReporter) post(runID string) (string, error) {
 		}
 		return result.State, nil
 	case http.StatusNotFound:
-		return "unknown-run", nil
+		// Only the route's own answer means the run is gone. A 404 from a
+		// console that does not serve this route yet (or a wrong URL) must
+		// stay retryable rather than silently fall back to lease expiry.
+		if bytes.Contains(respBody, []byte("unknown run")) {
+			return "unknown-run", nil
+		}
+		return "", fmt.Errorf("exit report returned 404 without the route's unknown-run answer")
 	case http.StatusForbidden:
 		return "pipeline-not-granted", nil
 	default:
