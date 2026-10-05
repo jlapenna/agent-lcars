@@ -248,6 +248,13 @@ jobs:
 
       - uses: ./.github/actions/setup-node-pnpm
 
+      # actionlint accepts `self-hosted` beside any label, but a runner scale
+      # set (every label in .github/actionlint.yaml) matches only its own
+      # name, so `[self-hosted, lcars-ci]` would queue forever (homelab hit
+      # exactly this on 2026-10-04). Shared check from @jlapenna/repo-tools.
+      - name: Reject self-hosted paired with a runner scale-set label
+        run: pnpm exec repo-check-runner-labels
+
       # These are incident-derived safety, CLI, and artifact contracts. They
       # used to run in an advisory `ci-tooling.yml` lane, which meant no person
       # or system acted on failure. Keep the earned coverage in the required
