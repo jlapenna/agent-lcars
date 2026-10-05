@@ -35,7 +35,7 @@ func queueReadyNode() *core.Node {
 }
 
 // Protect claim eligibility and secret isolation through the real API client.
-func TestKubernetesReserveUnavailableLeavesWorkQueued(t *testing.T) {
+func TestKubernetesReserveEligibilityAndPendingPlacement(t *testing.T) {
 	for _, kind := range []string{"inference busy", "offline", "cordoned", "ARC cpu", "ARC init memory", "API unavailable"} {
 		t.Run(kind, func(t *testing.T) {
 			n := queueReadyNode()
@@ -61,8 +61,12 @@ func TestKubernetesReserveUnavailableLeavesWorkQueued(t *testing.T) {
 				c.PrependReactor("list", "pods", func(clienttesting.Action) (bool, runtime.Object, error) { return true, nil, fmt.Errorf("unavailable") })
 			}
 			r, err := q.reserve(context.Background())
-			if r != nil || (err != nil) != (kind == "API unavailable") {
-				t.Fatalf("reservation=%v err=%v; unavailable work must stay queued", r, err)
+			wantPending := kind == "ARC cpu" || kind == "ARC init memory"
+			if (r != nil) != wantPending || (err != nil) != (kind == "API unavailable") {
+				t.Fatalf("reservation=%v err=%v; pending placement allowed=%v", r, err, wantPending)
+			}
+			if r != nil {
+				r.release()
 			}
 		})
 	}
@@ -75,18 +79,18 @@ func TestKubernetesCapacityIncludesPendingAndHeldJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r1.release()
-	r2, _ := q.reserve(ctx)
-	if r2 == nil {
-		t.Fatal("second slot missing")
+	r2, err := q.reserve(ctx)
+	if err != nil || r2 != nil {
+		t.Fatal("a held reservation must prevent a second pending claim")
 	}
-	r2.release()
-	r2.release()
-	_, err = c.BatchV1().Jobs(q.config.Namespace).Create(ctx, &batch.Job{ObjectMeta: meta.ObjectMeta{Name: "pending", Labels: map[string]string{queueJobLabel: "true"}}}, meta.CreateOptions{})
+	r1.release()
+	r1.release()
+	_, err = c.BatchV1().Jobs(q.config.Namespace).Create(ctx, &batch.Job{ObjectMeta: meta.ObjectMeta{Name: queueJobName("work:pending/r1"), Labels: map[string]string{queueJobLabel: "true"}, Annotations: map[string]string{queueRunAnnotation: "work:pending/r1"}}}, meta.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r, err := q.reserve(ctx); err != nil || r != nil {
-		t.Fatal("pending and held Jobs must consume slots")
+		t.Fatal("an existing pending Job must prevent a second pending claim")
 	}
 }
 func TestKubernetesLaunchProviderIsolationAndSingleAttempt(t *testing.T) {
