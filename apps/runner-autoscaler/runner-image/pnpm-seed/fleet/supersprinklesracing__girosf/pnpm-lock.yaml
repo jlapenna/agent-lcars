@@ -13,7 +13,7 @@ importers:
         version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/6d0fc5359c17301dc404fd379a101b40cbfd2720(eslint@10.9.1(supports-color@7.2.0))(nx@23.1.2)(supports-color@7.2.0)(typescript@6.0.3)
       dotenv:
         specifier: ^18.0.0
-        version: 18.0.1
+        version: 18.0.5
       google-auth-library:
         specifier: ^11.0.2
         version: 11.1.0(supports-color@7.2.0)
@@ -378,8 +378,8 @@ packages:
     resolution: {integrity: sha512-47qPchRCykZC03FhkYAhrvwU4xDBFIj1QPqaarj6mdM/hgUzfPHcpkHJOn3mJAufFeeAxAzeGsr5X0M4k6fLZQ==}
     engines: {node: '>=12'}
 
-  dotenv@18.0.1:
-    resolution: {integrity: sha512-0eR4m4D/jH5eaI3evo2ZqqMii5mrTCR12v12VChdie6O1gPHs7XAjzTep0CWc1Bd+oNx3vVfbi734dK4zghigw==}
+  dotenv@18.0.5:
+    resolution: {integrity: sha512-aBrGvt6KhjxbEnatqMWOMidftwsrCiCvqh1yNIGB9QyF0J+VcWkKDMsvYOEm7ZS82oiV+BT1sTOtIlAmUlTpwQ==}
     engines: {node: '>=12'}
     hasBin: true
 
@@ -1371,7 +1371,7 @@ snapshots:
 
   dotenv@16.4.7: {}
 
-  dotenv@18.0.1: {}
+  dotenv@18.0.5: {}
 
   dunder-proto@1.0.1:
     dependencies:
