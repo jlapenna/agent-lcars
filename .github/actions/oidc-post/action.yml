@@ -19,8 +19,8 @@ inputs:
     description: >-
       Optional JSON document to POST as the request body - assembled
       caller-side (jq), passed whole, and may span multiple lines. Empty,
-      together with an empty `payloads`, means a bodyless POST (the
-      reconcile endpoint's shape). Mutually exclusive with `payloads`.
+      together with an empty `payloads`, means a bodyless POST.
+      Mutually exclusive with `payloads`.
     required: false
     default: ''
   payloads:

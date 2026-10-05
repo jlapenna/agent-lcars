@@ -13,8 +13,8 @@ export const config = {
   ],
 };
 
-// These control-plane routes do not use browser sessions. Reconcile verifies
-// GitHub Actions OIDC claims, while webhook verifies raw-body HMACs.
+// These control-plane routes do not use browser sessions: the webhook routes
+// verify raw-body HMACs.
 // Exported (rather than kept inline in the createAuthProxy call below) so
 // proxy.test.ts can iterate the real list instead of maintaining its own
 // copy that can silently drift out of coverage as routes are added (#863).
@@ -29,7 +29,6 @@ export const config = {
 export const publicRoutes = [
   '/login',
   '/api/logs/error',
-  '/api/control-plane/reconcile',
   '/api/control-plane/webhook',
   '/api/control-plane/webhook/process',
 ];

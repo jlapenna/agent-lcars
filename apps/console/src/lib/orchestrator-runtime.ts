@@ -88,7 +88,6 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
   cached = {
     store,
     orchestrator,
-    now: utcClock.now,
     loadGithubAnchorLifecycle: (anchor) => {
       const github = orchestratorGithubRuntimeDeps(process.env);
       return loadGithubAnchorLifecycle(github, anchor);

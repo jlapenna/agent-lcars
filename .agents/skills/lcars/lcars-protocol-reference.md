@@ -69,25 +69,21 @@ Review and tagged-reply modes remain usable on closed anchors. `unlabeled`,
 outcome verifier keeps the deliverable contract aligned for every mode
 regardless of how the run was requested.
 
-Close-event handling is not the only recovery path. Each maintenance tick
-checks a bounded set of queued GitHub implementation runs against GitHub's
-current lifecycle state, which retires backlog created before #1937 and work
-whose close webhook was dropped. The QueueExecutor claim route repeats that
-exact check after reserving a run but before returning its token, closing the
-interval between maintenance passes without launching a worker for a closed
-anchor. The lifecycle read has one four-second deadline covering token minting
-and HTTP. If it cannot prove the anchor's state, claim atomically returns the
-run to `queued` under the exact claimant and token identity; uncertain data
-neither launches nor discards implementation work. Maintenance rotates its
-ten-anchor check window every five-minute tick so an old open or unavailable
-anchor cannot permanently hide later closed backlog.
+A close webhook that is dropped needs no sweep. The QueueExecutor claim route
+checks GitHub's current lifecycle state after reserving a queued
+implementation run but before returning its token, so a closed anchor's work
+is canceled at the one moment it could start a worker. The lifecycle read has
+one four-second deadline covering token minting and HTTP. If it cannot prove
+the anchor's state, claim atomically returns the run to `queued` under the
+exact claimant and token identity; uncertain data neither launches nor
+discards implementation work. Maintenance performs no GitHub reads.
 
 ## Reconciliation and lease recovery
 
 There is no ledger to reconcile today. The runner autoscaler's five-minute
 maintenance ticker calls `/api/work/v1/maintenance/tick` using its existing
-`work.cron` service identity. `.github/workflows/dispatch-reconcile.yml` also
-calls `/api/control-plane/reconcile` every 30 minutes as a fallback. Both run `Orchestrator.sweepExpired()`
+`work.cron` service identity; it is the only maintenance clock. It runs
+`Orchestrator.sweepExpired()`
 (`libs/orchestrator/src/orchestrator.ts`) followed by an outbox drain
 (`apps/console/src/lib/orchestrator-dispatch.ts`). What it actually does:
 

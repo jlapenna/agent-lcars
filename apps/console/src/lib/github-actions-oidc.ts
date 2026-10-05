@@ -2,15 +2,6 @@ import 'server-only';
 
 import { createRemoteJWKSet, type JWTPayload, jwtVerify } from 'jose';
 
-// Inlined from the now-deleted @agent-lcars/dispatch-reconcile (#1015 Wave
-// 4: that lib's scan/discovery/dispatch machinery was only ever consumed by
-// the deleted apps/console/src/lib/hosted-reconciler.ts -- these two
-// constants were its only surviving live use, verifying the scheduled
-// reconciler's OIDC identity for /api/control-plane/reconcile, now served
-// by the orchestrator's handleReconcile).
-const RECONCILE_OIDC_AUDIENCE = 'agent-lcars-dispatch-reconcile';
-const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
-
 /** GitHub Actions Work-dispatch event shapes. Not `pull_request`/
  *  `issue_comment`/etc -- those already have a trusted path via the webhook
  *  route; this is for repository automation with no human-authored event to
@@ -30,12 +21,6 @@ const GITHUB_ACTIONS_ISSUER = 'https://token.actions.githubusercontent.com';
 const githubActionsJwks = createRemoteJWKSet(
   new URL(`${GITHUB_ACTIONS_ISSUER}/.well-known/jwks`),
 );
-
-export interface ReconcileOidcIdentity {
-  repository: string;
-  repositoryId: number;
-  runId: number;
-}
 
 export interface WorkApiOidcIdentity {
   repository: string;
@@ -64,51 +49,11 @@ function positiveIntegerClaim(value: unknown, name: string): number {
   return parsed;
 }
 
-export function assertReconcileOidcClaims(
-  claims: JWTPayload,
-  repository: string,
-): ReconcileOidcIdentity {
-  const expectedWorkflowRef = `${repository}/${RECONCILE_WORKFLOW_PATH}@refs/heads/main`;
-  if (claims['repository'] !== repository) {
-    throw new Error('OIDC repository claim does not match the control plane');
-  }
-  if (claims['workflow_ref'] !== expectedWorkflowRef) {
-    throw new Error('OIDC workflow_ref claim is not the reconciler on main');
-  }
-  if (claims['ref'] !== 'refs/heads/main') {
-    throw new Error('OIDC ref claim is not main');
-  }
-  if (
-    !['schedule', 'workflow_dispatch'].includes(String(claims['event_name']))
-  ) {
-    throw new Error('OIDC event_name claim is not an allowed reconciler event');
-  }
-  return {
-    repository,
-    repositoryId: positiveIntegerClaim(
-      claims['repository_id'],
-      'repository_id',
-    ),
-    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
-  };
-}
-
-export async function verifyReconcileOidcToken(
-  token: string,
-  repository: string,
-): Promise<ReconcileOidcIdentity> {
-  const { payload } = await jwtVerify(token, githubActionsJwks, {
-    issuer: GITHUB_ACTIONS_ISSUER,
-    audience: RECONCILE_OIDC_AUDIENCE,
-  });
-  return assertReconcileOidcClaims(payload, repository);
-}
-
 // Sub-project 6 (2026-08-27-native-work-items-8-sessions, Task 8): the
 // session-pin-tick trigger for the session reaper sweep -- rewrites
 // expireAt forward on sessions belonging to still-open items so the
 // collection's Firestore TTL policy never reaps them out from under a
-// live item. Same shape as the schedule-tick verifier above: one
+// live item. One
 // canonical caller, pinned to the control-plane home, not the allow-list.
 const SESSION_PIN_TICK_OIDC_AUDIENCE = 'agent-lcars-session-pin-tick';
 const SESSION_PIN_TICK_WORKFLOW_PATH =

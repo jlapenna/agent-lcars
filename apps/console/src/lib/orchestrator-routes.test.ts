@@ -2,7 +2,6 @@ import { formatQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
 import {
   MemoryStore,
   Orchestrator,
-  type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
@@ -1065,10 +1064,9 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
 });
 
 describe('handleReconcile', () => {
-  it('recovers queued implementations whose close webhook was missed', async () => {
+  it('performs no GitHub lifecycle reads: a closed anchor is caught at claim time, not by a sweep', async () => {
     const { deps, store } = fixture();
     const runId = await dispatchedRun(deps, 'queued-before-close');
-    const listQueuedRuns = vi.spyOn(store, 'listQueuedRuns');
     deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
       state: 'closed',
       sourceUpdatedAt: T0,
@@ -1076,81 +1074,14 @@ describe('handleReconcile', () => {
 
     const result = await handleReconcile(deps);
 
-    expect(result.body['closedAnchorsCanceled']).toEqual([runId]);
+    expect(result.status).toBe(200);
+    expect(result.body).not.toHaveProperty('closedAnchorsCanceled');
+    expect(deps.loadGithubAnchorLifecycle).not.toHaveBeenCalled();
+    // The queued run stays queued for the claim route's exact check
+    // (runs-router.test.ts) rather than being swept here.
     expect(await store.readRun(runId)).toMatchObject({
-      state: 'canceled',
       queue: { state: 'queued' },
     });
-    expect(deps.loadGithubAnchorLifecycle).toHaveBeenCalledWith(ISSUE);
-    expect(listQueuedRuns).toHaveBeenCalledWith();
-  });
-
-  it('bounds exact lifecycle reads per maintenance pass', async () => {
-    const { clock, deps, orchestrator, store } = fixture();
-    for (let issue = 100; issue < 111; issue += 1) {
-      const outcome = await orchestrator.request({
-        taskId: { repo: REPO, issue },
-        requestId: `bounded-${issue}`,
-        pipeline: 'claude',
-        params: { mode: 'implement' },
-        work: workPayloadFromGithub({
-          title: `Queued ${issue}`,
-          body: 'Bound maintenance GitHub reads.',
-          pipeline: 'claude',
-          repo: REPO,
-          actor: 'jlapenna',
-        }),
-      });
-      if ('refused' in outcome || outcome.run === undefined) {
-        throw new Error('expected queued run');
-      }
-      await store.enqueueRun({ runId: outcome.run.runId, now: T0 });
-      await orchestrator.confirmDispatch(outcome.run.runId);
-    }
-    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
-      state: 'open',
-      sourceUpdatedAt: T0,
-    });
-
-    await handleReconcile(deps);
-    expect(deps.loadGithubAnchorLifecycle).toHaveBeenCalledTimes(10);
-    const firstPass = new Set(
-      vi
-        .mocked(deps.loadGithubAnchorLifecycle)
-        .mock.calls.map(([anchor]) => anchor.issue),
-    );
-    clock.advanceMinutes(5);
-    await handleReconcile(deps);
-    expect(deps.loadGithubAnchorLifecycle).toHaveBeenCalledTimes(20);
-    const bothPasses = new Set(
-      vi
-        .mocked(deps.loadGithubAnchorLifecycle)
-        .mock.calls.map(([anchor]) => anchor.issue),
-    );
-    expect(firstPass.size).toBe(10);
-    expect(bothPasses.size).toBe(11);
-  });
-
-  it('reaches implementations beyond 200 unrelated queued entries', async () => {
-    const { deps, store } = fixture();
-    const runId = await dispatchedRun(deps, 'beyond-prefix');
-    const target = await store.readRun(runId);
-    if (target === undefined) throw new Error('expected target run');
-    const unrelated = Array.from({ length: 200 }, (_, index) => ({
-      ...target,
-      runId: `native-prefix-${String(index).padStart(3, '0')}`,
-      task: { workId: `01PREFIX${String(index).padStart(18, '0')}` },
-    })) satisfies Run[];
-    vi.spyOn(store, 'listQueuedRuns').mockResolvedValue([...unrelated, target]);
-    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
-      state: 'closed',
-      sourceUpdatedAt: T0,
-    });
-
-    const result = await handleReconcile(deps);
-
-    expect(result.body['closedAnchorsCanceled']).toEqual([runId]);
-    expect(deps.loadGithubAnchorLifecycle).toHaveBeenCalledTimes(1);
   });
 
   it('continues through a backlog larger than one drain batch within a bounded pass', async () => {

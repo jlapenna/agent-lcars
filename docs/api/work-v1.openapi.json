@@ -213,18 +213,6 @@
                         "additionalProperties": false
                       }
                     },
-                    "closedAnchorsCanceled": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "closedAnchorChecksFailed": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
                     "dispatched": {
                       "type": "array",
                       "items": {
@@ -265,7 +253,6 @@
                   "required": [
                     "lost",
                     "retried",
-                    "closedAnchorsCanceled",
                     "dispatched",
                     "reported",
                     "outboxProcessed",

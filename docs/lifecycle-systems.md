@@ -52,7 +52,7 @@ available through Git history.
 | Agent exits zero without deliverable evidence             | Worker runtime         | Native verifier log and the expected attempt marker                  |
 | Failed worker has no outcome comment                      | Completion path        | Direct-runner completion logs, then Work API logs                    |
 | Completion reports success but no outcome comment appears | Outbox drain           | Pending/failed outbox entries from completion or reconcile response  |
-| Task is silent or appears stuck                           | Reconciliation         | `dispatch-reconcile.yml` history and reconcile response              |
+| Task is silent or appears stuck                           | Reconciliation         | QueueExecutor `maintenance tick` logs and the tick response          |
 | Console Retry fails                                       | GitHub Work admission  | `github-work-admission.ts` and `backend-actions.ts` mutation         |
 
 ## Runner platform boundary

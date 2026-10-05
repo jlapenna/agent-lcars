@@ -1,7 +1,4 @@
-import { errors as joseErrors } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-const { JWTClaimValidationFailed, JWTExpired } = joseErrors;
 
 // OIDC verification needs to be exercised end-to-end -- including the
 // jwtVerify call -- without a real GitHub OIDC token or network JWKS fetch.
@@ -17,18 +14,12 @@ vi.mock('jose', async (importOriginal) => {
 });
 
 import {
-  assertReconcileOidcClaims,
   assertSessionPinTickOidcClaims,
   assertWorkApiOidcClaims,
   githubActionsWorkSubject,
-  verifyReconcileOidcToken,
   verifyWorkApiOidcToken,
 } from './github-actions-oidc';
 
-// Matches the constants inlined into github-actions-oidc.ts (formerly
-// @agent-lcars/dispatch-reconcile, deleted in #1015 Wave 4).
-const RECONCILE_OIDC_AUDIENCE = 'agent-lcars-dispatch-reconcile';
-const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
 const WORK_API_OIDC_AUDIENCE = 'agent-lcars-work';
 
 const repository = 'jlapenna/agent-lcars';
@@ -39,97 +30,8 @@ const repository = 'jlapenna/agent-lcars';
 // to `repository` above.
 const secondRepo = 'other-org/other-repo';
 
-const validClaims = {
-  aud: RECONCILE_OIDC_AUDIENCE,
-  repository,
-  repository_id: '1307149765',
-  run_id: '93099054125',
-  workflow_ref: `${repository}/${RECONCILE_WORKFLOW_PATH}@refs/heads/main`,
-  ref: 'refs/heads/main',
-  event_name: 'schedule',
-};
-
-describe('GitHub Actions reconciler OIDC claims', () => {
-  it('accepts the scheduled and manual reconciler workflow on main', () => {
-    expect(assertReconcileOidcClaims(validClaims, repository)).toEqual({
-      repository,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-    });
-    expect(
-      assertReconcileOidcClaims(
-        { ...validClaims, event_name: 'workflow_dispatch' },
-        repository,
-      ),
-    ).toEqual({
-      repository,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-    });
-  });
-
-  it.each([
-    [{ ...validClaims, repository: 'attacker/fork' }, 'repository'],
-    [
-      {
-        ...validClaims,
-        workflow_ref: `${repository}/.github/workflows/ci.yml@refs/heads/main`,
-      },
-      'workflow_ref',
-    ],
-    [{ ...validClaims, ref: 'refs/heads/feature' }, 'ref'],
-    [{ ...validClaims, event_name: 'pull_request' }, 'event_name'],
-    [{ ...validClaims, repository_id: 'not-a-number' }, 'repository_id'],
-    [{ ...validClaims, run_id: '0' }, 'run_id'],
-  ])('rejects a caller with the wrong %s claim', (claims, field) => {
-    expect(() => assertReconcileOidcClaims(claims, repository)).toThrow(field);
-  });
-});
-
-// `verifyReconcileOidcToken` never wraps `jwtVerify`'s own rejection -- these
-// guard that a token jose itself
-// refuses (wrong audience, expired) propagates as a rejection rather than
-// being swallowed or mis-mapped. Real claim-shape enforcement (repository,
-// ref, event_name, ...) is exercised directly against `assertReconcileOidcClaims`
-// above; jose's own audience/expiry checks are its own library's concern, not
-// this repo's.
-describe('verifyReconcileOidcToken', () => {
-  afterEach(() => {
-    jwtVerify.mockReset();
-  });
-
-  it('rejects a token bearing the wrong audience', async () => {
-    jwtVerify.mockRejectedValue(
-      new JWTClaimValidationFailed(
-        'unexpected "aud" claim value',
-        validClaims,
-        'aud',
-        'check_failed',
-      ),
-    );
-    await expect(verifyReconcileOidcToken('token', repository)).rejects.toThrow(
-      'aud',
-    );
-  });
-
-  it('rejects an expired token', async () => {
-    jwtVerify.mockRejectedValue(
-      new JWTExpired(
-        '"exp" claim timestamp check failed',
-        validClaims,
-        'exp',
-        'check_failed',
-      ),
-    );
-    await expect(verifyReconcileOidcToken('token', repository)).rejects.toThrow(
-      'exp',
-    );
-  });
-});
-
 // Sub-project 6 (Task 8): the session-pin-tick trigger for the session
-// reaper sweep -- same claim shape as the schedule-tick trigger above,
-// pinned to its own workflow file.
+// reaper sweep, pinned to its own workflow file.
 const SESSION_PIN_TICK_OIDC_AUDIENCE = 'agent-lcars-session-pin-tick';
 const SESSION_PIN_TICK_WORKFLOW_PATH =
   '.github/workflows/work-session-pin-tick.yml';

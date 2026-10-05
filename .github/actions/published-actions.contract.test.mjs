@@ -97,11 +97,11 @@ const PUBLISHED = {
   },
   // The fleet's one OIDC-mint-then-POST transport (#1340 A-R3/D7):
   // consumers are sprinkles' pr-heal/visual-refresh/
-  // post-deploy-verify and this repo's own dispatch-reconcile. Exactly one
+  // post-deploy-verify. Exactly one
   // of payload/payloads may be set; `payloads` (newline-delimited compact
   // JSON, one POST per line under a single minted token) is the
   // mint-once-reuse batch shape post-deploy-verify's per-issue loop needs,
-  // and both empty means a bodyless POST (the reconcile endpoint's shape).
+  // and both empty means a bodyless POST.
   'oidc-post': {
     inputs: {
       endpoint: { required: true },

@@ -110,8 +110,6 @@ export const itemsContract = {
         retried: z.array(
           z.strictObject({ lostRunId: z.string(), newRunId: z.string() }),
         ),
-        closedAnchorsCanceled: z.array(z.string()),
-        closedAnchorChecksFailed: z.array(z.string()).optional(),
         dispatched: z.array(z.string()),
         reported: z.array(z.string()),
         outboxProcessed: z.number().int().nonnegative(),
