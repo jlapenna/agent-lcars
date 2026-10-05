@@ -37,8 +37,8 @@ name: Agent PR Auto-Merge (Reusable)
 # enabled the moment a ready PR is opened/marked ready, gated only on the
 # ruleset's required checks. A reconciliation sweep repairs a missed arm and
 # keeps armed PRs moving: on push to main and PR check success (plus a daily
-# backstop) for App-enabled callers, on the cron for legacy callers, and on a plain workflow_dispatch
-# for manual repair after an Actions outage. App-enabled callers arm with a
+# backstop) for App-enabled callers, on the cron for legacy callers, and on a
+# plain workflow_dispatch for manual repair after an Actions outage. App-enabled callers arm with a
 # repository-scoped Agent LCARS installation token, so GitHub emits the normal
 # push/workflow_run chain and applies native linked-issue closure and branch
 # deletion. Callers that have not opted in retain the GITHUB_TOKEN restore and
