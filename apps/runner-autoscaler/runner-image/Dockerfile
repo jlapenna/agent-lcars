@@ -125,6 +125,15 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
     ./tools/nx session-title-cli @agent-lcars/telemetry-watcher
 
+# Action archives are immutable repository tarballs, never extracted or executed
+# during preparation. Download them on the existing builder-platform stage;
+# target-specific native dependencies remain in their original stages.
+FROM telemetry-watcher-build AS action-archive-cache-build
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+COPY populate-action-archive-cache.sh /usr/local/lib/agent-lcars/populate-action-archive-cache.sh
+RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/actions-archive-cache
+
 # Architecture-specific pnpm content store for the JIT runner, seeded with the
 # union of every fleet JavaScript repository's lockfile (agent-lcars#2076).
 # pnpm-seed/fleet/ is data refreshed weekly by
@@ -380,10 +389,7 @@ RUN chmod +x /entrypoint.sh
 # writable directory, and job-time downloads then warm it for the container's
 # lifetime.
 COPY populate-action-archive-cache.sh /usr/local/lib/agent-lcars/populate-action-archive-cache.sh
-COPY --from=telemetry-watcher-build /repo/.github /tmp/fleet-repo-github/.github
-RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /tmp/fleet-repo-github /opt/actions-archive-cache && \
-    rm -rf /tmp/fleet-repo-github && \
-    chown -R runner:runner /opt/actions-archive-cache
+COPY --from=action-archive-cache-build --chown=runner:runner /out/actions-archive-cache/ /opt/actions-archive-cache/
 
 COPY externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
 RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
@@ -433,10 +439,9 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 RUN chmod +x /usr/local/lib/agent-lcars/job-daemon.sh /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
 # QueueExecutor's native runtime helpers are baked beside direct-runner.sh.
-# Same fresh-`main`-checkout stage as sidecar.cjs/job-daemon.sh above, not
-# `/tmp/fleet-repo-github/.github` a few lines up -- that copy is `rm -rf`'d
-# right after populating the action-archive cache, so nothing downstream can
-# depend on it surviving.
+# Same fresh-`main`-checkout stage as sidecar.cjs/job-daemon.sh above.
+# The separate action-archive stage copies only its tarball cache into the
+# final image; native helpers still come from this exact source checkout.
 #
 # The helpers resolve the trusted shared protocol relative to this exact
 # native location. direct-runner.test.sh mirrors it, proving the image
