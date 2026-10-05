@@ -232,12 +232,14 @@ describe('agent-automerge-reusable update-behind-branches step', () => {
       );
     });
 
-    it('re-views once when mergeStateStatus is UNKNOWN before deciding', () => {
-      expect(stepText).toMatch(/if \[ "\$STATUS" = UNKNOWN \]; then/);
+    it('re-views a bounded number of times while mergeStateStatus is UNKNOWN', () => {
+      expect(stepText).toMatch(
+        /while \[ "\$STATUS" = UNKNOWN \] && \[ "\$UNKNOWN_READS" -lt 3 \]; do/,
+      );
       // The re-view must be a fresh gh pr view call, not a reuse of the
       // stale $VIEW captured before this check.
       const unknownBlock = stepText.slice(
-        stepText.indexOf('if [ "$STATUS" = UNKNOWN ]; then'),
+        stepText.indexOf('while [ "$STATUS" = UNKNOWN ]'),
         stepText.indexOf('if [ "$STATUS" != BEHIND ]; then'),
       );
       expect(unknownBlock).toMatch(

@@ -28,6 +28,7 @@ interface Workflow {
       secrets: Record<string, Record<string, unknown>>;
     };
     workflow_run?: { workflows?: string[] };
+    schedule?: { cron: string }[];
   };
   jobs: Record<string, Job>;
   permissions?: Record<string, string>;
@@ -149,11 +150,14 @@ describe('agent auto-merge App identity', () => {
     expect(caller.on).toHaveProperty('push');
     expect(caller.on).not.toHaveProperty('pull_request');
     expect(caller.on).not.toHaveProperty('pull_request_review');
-    // Reconciliation is event-driven for App callers: push to main and PR CI
-    // success, never a cron and never the legacy restore inputs.
-    expect(caller.on).not.toHaveProperty('schedule');
-    expect(caller.on).toHaveProperty('workflow_run');
-    expect(caller.on.workflow_run?.workflows).toEqual(['CI']);
+    // Reconciliation is event-driven for App callers: push to main and PR
+    // check success, with at most a daily backstop (never a short poll).
+    expect(caller.on.workflow_run?.workflows).toEqual(['CI', 'CodeQL']);
+    for (const { cron } of caller.on.schedule ?? []) {
+      const [minute, hour] = cron.split(/\s+/);
+      expect(minute).toMatch(/^\d+$/);
+      expect(hour).toMatch(/^\d+$/);
+    }
     expect(caller.jobs.automerge.with).toMatchObject({
       'app-token-enabled': true,
       'app-client-id': '${{ vars.AGENT_LCARS_CLIENT_ID }}',

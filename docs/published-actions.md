@@ -46,7 +46,7 @@ GitHub's own auto-merge arms a PR but never updates its branch, so under a stric
 (#1748; jlapenna/homelab#1121 sat 16 hours this way with green checks and
 auto-merge armed). The sweep only acts once a PR's checks are all green with
 none still running and it has no unresolved review thread, re-checks a
-stale `UNKNOWN` mergeability once, prefers `gh pr update-branch --rebase`
+stale `UNKNOWN` mergeability up to three times, prefers `gh pr update-branch --rebase`
 and falls back to the default merge-commit update if the rebase form is
 refused, and is capped at 5 updates per run.
 
@@ -103,13 +103,15 @@ that caller only, `restore-main-checks` and `close-orphaned-anchors` remain the
 post-merge compatibility path, and its cron schedule remains the trigger for
 `reconcile-automerge` and `close-orphaned-anchors`.
 
-An App-enabled caller reconciles on events instead of a cron: `push` to main
-(when an armed PR falls behind) and `workflow_run` `completed` for the
-workflows that report its required checks (when an armed PR turns green; the
-reusable admits only successful `pull_request` runs). App merges and App-pushed
-PR heads emit both events, so a schedule only repeats sweeps that find nothing.
-Keep `workflow_dispatch` for manual repair after an Actions outage, and pass no
-restore-chain inputs.
+An App-enabled caller reconciles on events instead of a short poll: `push` to
+main (when an armed PR falls behind) and `workflow_run` `completed` for every
+workflow that posts checks on a PR head (when an armed PR turns green; the
+reusable admits only successful `pull_request` runs, and its green gate waits
+on all checks, not only required ones). App merges and App-pushed PR heads
+emit both events. A late thread resolution, a late arm, mergeability still
+`UNKNOWN` after the sweep's bounded re-reads, or a transiently failed sweep
+emits nothing subscribable, so keep at most a daily `schedule` backstop plus
+`workflow_dispatch` for manual repair. Pass no restore-chain inputs.
 
 ## Not consumer surfaces
 

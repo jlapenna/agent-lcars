@@ -30,8 +30,8 @@ workflow. Bot identities come from the repository's `AGENT_BOT_LOGINS` variable;
 add a new pipeline's login there rather than forking the workflow logic.
 Workers arm squash auto-merge directly as part of the headless handoff. The
 workflow handles event-driven arming and reconciles ready open bot PRs (on
-push to main and PR CI success for App-enabled callers, on a cron for legacy
-callers) so a missed or unavailable Actions event cannot strand one. Enabled fleet
+push to main and PR check success, plus a daily backstop, for App-enabled
+callers; on a cron for legacy callers) so a missed or unavailable Actions event cannot strand one. Enabled fleet
 callers mint a repository-scoped Agent LCARS App token for the arm and
 reconcile operations. That App identity is part of the delivery contract: its
 merge must emit the normal main-branch push chain, apply linked-issue closure,
