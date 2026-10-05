@@ -19,11 +19,10 @@ permissions:
   contents: read
   actions: read
 
-concurrency:
-  # One pending request is enough: each only re-arms the next cycle, and that
-  # cycle deploys whatever main is current.
-  group: homelab-merge-to-live-request
-  cancel-in-progress: true
+# Deliberately no concurrency group: every CI completion on main would join
+# it before the Verify gate runs, so a later failed run could replace a
+# passing run's pending request. Duplicate requests are harmless; homelab
+# coalesces them into one pending cycle.
 
 jobs:
   request:
