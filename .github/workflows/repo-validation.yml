@@ -17,6 +17,14 @@ name: Repo Validation
 # actionlint's repo config (.github/actionlint.yaml, e.g. self-hosted
 # runner labels) is read from the caller's own checkout, so per-repo label
 # vocabularies keep working unchanged.
+#
+# The same declaration drives the runner-label check: every label a fleet
+# repo declares under self-hosted-runner.labels is an ARC scale set, which
+# matches a job only by its own name. actionlint accepts `self-hosted`
+# beside any label, so `[self-hosted, <scale-set>]` passes lint and then
+# queues forever (homelab, 2026-10-04). A repo that declares no labels makes
+# the check a no-op; a repo whose classic runners really carry both labels
+# sets check-runner-labels: false.
 
 on:
   workflow_call:
@@ -40,6 +48,15 @@ on:
         required: false
         type: string
         default: '["ubuntu-latest"]'
+      check-runner-labels:
+        description: >-
+          Reject any job whose runs-on pairs `self-hosted` with a label
+          declared in the caller's .github/actionlint.yaml. Disable only for a
+          repository whose declared labels are classic runners that carry
+          `self-hosted` too.
+        required: false
+        type: boolean
+        default: true
 
 permissions: {}
 
@@ -67,3 +84,14 @@ jobs:
 
       - name: actionlint
         run: actionlint -color
+
+      # repo-tools' dependency-free checker (repo-check-runner-labels), pinned
+      # to an exact commit so a repo-tools push cannot change what runs here.
+      - name: Reject self-hosted paired with a declared runner label
+        if: inputs.check-runner-labels
+        env:
+          REPO_TOOLS_SHA: 45b4201b28e40abe97a9acebff9aaa41ae860ee2
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/check-runner-labels.mjs" \
+            "https://raw.githubusercontent.com/jlapenna/repo-tools/$REPO_TOOLS_SHA/bin/check-runner-labels.mjs"
+          node "$RUNNER_TEMP/check-runner-labels.mjs"

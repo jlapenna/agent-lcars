@@ -31,7 +31,7 @@ their operating constraints.
 | ------------------------------ | ---------------------------------------------- |
 | `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token. |
 | `agent-automerge-reusable.yml` | Arm and reconcile agent PR auto-merge.         |
-| `repo-validation.yml`          | Run actionlint for a caller repository.        |
+| `repo-validation.yml`          | Run actionlint and the runner-label check.     |
 | `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job. |
 
 Hosted provider workflows are retired; providers execute through the Console
@@ -205,6 +205,14 @@ set its `runs-on` input to their socketless fleet pool. The workflow installs
 `xz-utils` with passwordless sudo/apt when an older worker lacks xz. Keep GitHub-hosted
 routing for fork pull requests. Secret scanning can use the same setup action
 without changing its check name, commit range, redaction or repository config.
+
+`repo-validation.yml` also runs repo-tools' `repo-check-runner-labels` at a
+pinned commit. It fails when a job's `runs-on` pairs `self-hosted` with a label
+the caller declares under `self-hosted-runner.labels` in
+`.github/actionlint.yaml`: fleet labels are runner scale sets, which match only
+their own name, so that combination never schedules. Declaring the repo's pool
+labels there is the opt-in; a caller with no declared labels gets a no-op. Set
+`check-runner-labels: false` only for classic runners that carry both labels.
 
 ## Contract verification
 
