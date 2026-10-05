@@ -210,6 +210,9 @@ jobs:
       - name: Test reviewed OpenCode release installation
         run: bash apps/runner-autoscaler/runner-image/install-opencode-release.test.sh
 
+      - name: Test baked OpenCode store concurrent-reader gate (#2071)
+        run: bash apps/runner-autoscaler/runner-image/check-opencode-concurrent-readers.test.sh
+
       # The runner image build runs this same file with `node --test`; without
       # this step a broken import passed Verify and blocked every image
       # promotion after #1960.

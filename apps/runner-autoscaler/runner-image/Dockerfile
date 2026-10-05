@@ -584,7 +584,8 @@ COPY --from=telemetry-watcher-build \
     /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs
 RUN node --test /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs && \
     rm /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs
-COPY prepare-opencode-store.sh check-opencode-store.sh /usr/local/lib/agent-lcars/
+COPY prepare-opencode-store.sh check-opencode-store.sh check-opencode-concurrent-readers.sh \
+    /usr/local/lib/agent-lcars/
 COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.sh \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
@@ -617,17 +618,9 @@ RUN OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/open
 # The store is image-owned, version-bound, and contains no sessions. Keep this
 # in its own layer so the next command exercises copy-up from the baked layer.
 RUN --network=none bash /usr/local/lib/agent-lcars/prepare-opencode-store.sh
-RUN --network=none set -eu; \
-    config_home="$(mktemp -d)"; export XDG_CONFIG_HOME="$config_home"; \
-    /usr/local/bin/opencode --pure session list --format json >/tmp/opencode-reader-a.json & first=$!; \
-    /usr/local/bin/opencode --pure session list --format json >/tmp/opencode-reader-b.json & second=$!; \
-    wait "$first"; wait "$second"; \
-    for listing in /tmp/opencode-reader-{a,b}.json; do \
-      if [ -s "$listing" ]; then jq -e 'type == "array" and length == 0' "$listing"; fi; \
-    done; \
-    rm /tmp/opencode-reader-{a,b}.json; \
-    rm -rf "$config_home"; \
-    bash /usr/local/lib/agent-lcars/check-opencode-store.sh
+# A cold OpenCode reader, then concurrent readers beside a held connection.
+# The script documents why bare concurrent startups are a lock race (#2071).
+RUN --network=none bash /usr/local/lib/agent-lcars/check-opencode-concurrent-readers.sh
 
 # Exercise the exact installed CLI and global config through a deterministic
 # localhost provider. Unit-importing the hooks cannot prove that OpenCode
