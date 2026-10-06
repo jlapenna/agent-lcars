@@ -32,7 +32,19 @@ if [[ "$expected_dirs" != "$actual_dirs" ]]; then
   exit 1
 fi
 while IFS= read -r repository_dir; do
-  test -s "$seed_dir/fleet/$repository_dir/pnpm-lock.yaml"
+  lockfile="$seed_dir/fleet/$repository_dir/pnpm-lock.yaml"
+  # #2084 emptied every seed lockfile; #2151 left stale patch hashes. Both
+  # passed CI and failed only at publication. tools/sync-runner-pnpm-seed.py
+  # refuses these too; this keeps a hand edit or a bot rewrite honest.
+  if ! grep -Eq "^lockfileVersion: '9\.[0-9]+'$" "$lockfile" ||
+    ! awk '/^packages:$/ { in_packages = 1; next } in_packages && NF { found = /^  [^ ]/; exit } END { exit !found }' "$lockfile"; then
+    echo "$repository_dir seeds an empty or non-pnpm-11 lockfile (run tools/sync-runner-pnpm-seed.py)" >&2
+    exit 1
+  fi
+  if grep -Eq '^patchedDependencies:|\(patch_hash=' "$lockfile"; then
+    echo "$repository_dir seed lockfile still references patches (run tools/sync-runner-pnpm-seed.py)" >&2
+    exit 1
+  fi
   package_manager="$(node -p "require(process.argv[1]).packageManager" "$seed_dir/fleet/$repository_dir/package.json")"
   if [[ "$package_manager" != pnpm@11.* ]]; then
     echo "$repository_dir seeds $package_manager; the image seeds the pnpm 11 (v11) store" >&2
@@ -44,6 +56,16 @@ done <<<"$actual_dirs"
 for fixture in hit miss; do
   require_equal_package_manager "$fixture_dir/$fixture/package.json" "$seed_package_manager"
 done
+
+# pnpm clones a `type: git` resolution with the git CLI, which node:*-slim
+# lacks: Sprinkles' git+https fleet-runtime/repo-tools locks failed every
+# publication with ERR_PNPM_GIT_FETCHER_GIT_NOT_FOUND after #2136.
+seed_stage="$(awk '/ AS pnpm-store-seed$/ { in_stage = 1 } in_stage && /^FROM / && !/ AS pnpm-store-seed$/ { exit } in_stage' "$dockerfile")"
+if grep -lq 'type: git}' "$seed_dir"/fleet/*/pnpm-lock.yaml &&
+  ! grep -Eq 'apt-get install .*\bgit\b' <<<"$seed_stage"; then
+  echo 'a fleet seed locks a git-hosted package; the pnpm-store-seed stage must install git' >&2
+  exit 1
+fi
 
 # The production build uses the runner user's normal pnpm store.
 grep -Fqx 'COPY pnpm-seed/fleet/ ./' "$dockerfile"
@@ -67,6 +89,13 @@ if ! command -v docker >/dev/null 2>&1; then
   echo 'docker is required to prove pnpm store lower-layer behavior' >&2
   exit 1
 fi
+
+# The static checks above only cover failures already seen. Fetch the real
+# fleet seed through the production stage so whatever else `pnpm fetch`
+# rejects fails this required check instead of the post-merge publication.
+# cacheonly skips exporting the multi-GiB store; the target platform is the
+# runner's own, as in the publisher's per-architecture build.
+docker buildx build --target pnpm-store-seed --output type=cacheonly "$here"
 
 tag="agent-lcars-pnpm-store-seed-test-$$"
 container_id=""

@@ -154,6 +154,13 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/
 # image build. Keep the copy below as a distinct final-image layer to make
 # its size and churn visible.
 FROM node:24-slim AS pnpm-store-seed
+# A consumer may lock a git-hosted dependency as a `type: git` resolution
+# (Sprinkles locks `@jlapenna/fleet-runtime` and `@jlapenna/repo-tools` from
+# `git+https://` specifiers); pnpm clones those with the git CLI, which the
+# slim base omits. Without it every publication failed with
+# ERR_PNPM_GIT_FETCHER_GIT_NOT_FOUND after the #2136 refresh.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /seed
 RUN corepack enable
 COPY pnpm-seed/fleet/ ./

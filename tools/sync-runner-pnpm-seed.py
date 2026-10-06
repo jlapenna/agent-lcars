@@ -114,6 +114,32 @@ def without_patched_dependencies(lockfile: str) -> str:
     return yaml.safe_dump(parsed, sort_keys=False) if collided else normalized
 
 
+def validate_seed_lockfile(repo: str, lockfile: str) -> None:
+    """Refuse a lockfile the image's `pnpm fetch --frozen-lockfile` cannot use.
+
+    The seed is only exercised when the runner image is built, so a bad
+    lockfile committed here surfaces as a failed publication of every later
+    runner-image change (#2084 emptied them all; #2151 left stale patch
+    hashes). Reject it before anything is written instead.
+    """
+    try:
+        parsed = yaml.safe_load(lockfile)
+    except yaml.YAMLError as error:
+        raise ValueError(f"{repo} seed lockfile is not YAML: {error}") from error
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{repo} seed lockfile is empty")
+    version = str(parsed.get("lockfileVersion", ""))
+    if not version.startswith("9."):
+        raise ValueError(
+            f"{repo} seed lockfile has lockfileVersion {version!r}; the seed needs pnpm 11's 9.x"
+        )
+    packages = parsed.get("packages")
+    if not isinstance(packages, dict) or not packages:
+        raise ValueError(f"{repo} seed lockfile locks no packages")
+    if "patchedDependencies" in parsed or "(patch_hash=" in lockfile:
+        raise ValueError(f"{repo} seed lockfile still references patches")
+
+
 def sync_repository(repo: str, destination: Path) -> str:
     owner = repo.split("/", 1)[0]
     branch = gh(owner, f"repos/{repo}", "--jq", ".default_branch").strip()
@@ -130,11 +156,13 @@ def sync_repository(repo: str, destination: Path) -> str:
         raw_file(repo, owner, "pnpm-workspace.yaml", commit) or "{}"
     ) or {}
     seed_workspace = {key: workspace[key] for key in WORKSPACE_KEYS if key in workspace}
+    seed_lockfile = without_patched_dependencies(lockfile)
+    validate_seed_lockfile(repo, seed_lockfile)
 
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True)
-    (destination / "pnpm-lock.yaml").write_text(without_patched_dependencies(lockfile))
+    (destination / "pnpm-lock.yaml").write_text(seed_lockfile)
     (destination / "package.json").write_text(
         json.dumps(
             {
