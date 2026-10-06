@@ -123,9 +123,12 @@ def validate_seed_lockfile(repo: str, lockfile: str) -> None:
     hashes). Reject it before anything is written instead.
     """
     try:
-        parsed = yaml.safe_load(lockfile)
+        # pnpm 11 writes a leading config-dependency document when a project
+        # has one; the last document is the project's dependency graph.
+        documents = [doc for doc in yaml.safe_load_all(lockfile) if doc is not None]
     except yaml.YAMLError as error:
         raise ValueError(f"{repo} seed lockfile is not YAML: {error}") from error
+    parsed = documents[-1] if documents else None
     if not isinstance(parsed, dict):
         raise ValueError(f"{repo} seed lockfile is empty")
     version = str(parsed.get("lockfileVersion", ""))
@@ -149,6 +152,10 @@ def sync_repository(repo: str, destination: Path) -> str:
     package_manager = manifest.get("packageManager", "")
     if not package_manager.startswith("pnpm@"):
         raise ValueError(f"{repo} does not declare a pnpm packageManager")
+    if not package_manager.startswith("pnpm@11."):
+        raise ValueError(
+            f"{repo} uses {package_manager}; the image seeds only the pnpm 11 (v11) store"
+        )
     lockfile = raw_file(repo, owner, "pnpm-lock.yaml", commit)
     if lockfile is None:
         raise ValueError(f"{repo} has no pnpm-lock.yaml at {commit}")

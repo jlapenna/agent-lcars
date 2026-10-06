@@ -176,6 +176,18 @@ snapshots:
     );
   });
 
+  it('validates the project document of a multi-document lockfile', () => {
+    const configDocument =
+      "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    configDependencies: {}\n";
+    const f = fixture({
+      'acme/app': {
+        'package.json': '{"packageManager":"pnpm@11.28.2"}',
+        'pnpm-lock.yaml': `---\n${configDocument}\n---\n${lockfile}`,
+      },
+    });
+    expect(f.run(['acme/app'])).toBe('acme/app sha-acme-app\n');
+  });
+
   it('removes repositories that left the fleet and uses per-owner tokens', () => {
     const repository = {
       'package.json': JSON.stringify({ packageManager: 'pnpm@11.27.0' }),
@@ -202,6 +214,14 @@ snapshots:
       'a non-pnpm package manager',
       { 'package.json': '{"packageManager":"npm@12.0.2"}' },
       /does not declare a pnpm packageManager/,
+    ],
+    [
+      'a pnpm 10 package manager',
+      {
+        'package.json': '{"packageManager":"pnpm@10.18.0"}',
+        'pnpm-lock.yaml': lockfile,
+      },
+      /the image seeds only the pnpm 11/,
     ],
     [
       'a missing lockfile',
