@@ -116,6 +116,64 @@ describe('runner pnpm seed sync', () => {
     );
   });
 
+  it('normalizes patch identities and nested peers while retaining package content', () => {
+    const hash = 'a'.repeat(64);
+    const source = `lockfileVersion: '9.0'
+patchedDependencies:
+  left@1.0.0:
+    hash: ${hash}
+    path: patches/left.patch
+importers:
+  .:
+    dependencies:
+      left:
+        specifier: 1.0.0
+        version: 1.0.0(patch_hash=${hash})(peer@2.0.0)
+packages:
+  left@1.0.0:
+    resolution: {integrity: sha512-original}
+snapshots:
+  left@1.0.0(patch_hash=${hash})(peer@2.0.0):
+    dependencies:
+      nested: 3.0.0(left@1.0.0(patch_hash=${hash})(peer@2.0.0))
+`;
+    const f = fixture({
+      'acme/app': {
+        'package.json': '{"packageManager":"pnpm@11.28.2"}',
+        'pnpm-lock.yaml': source,
+      },
+    });
+    f.run(['acme/app']);
+    const result = parse(f.read('fleet/acme__app/pnpm-lock.yaml'));
+    expect(result.patchedDependencies).toBeUndefined();
+    expect(result.packages).toEqual(parse(source).packages);
+    expect(result.importers['.'].dependencies.left).toEqual({
+      specifier: '1.0.0',
+      version: '1.0.0(peer@2.0.0)',
+    });
+    expect(result.snapshots['left@1.0.0(peer@2.0.0)'].dependencies.nested).toBe(
+      '3.0.0(left@1.0.0(peer@2.0.0))',
+    );
+  });
+
+  it('refuses conflicting identities instead of dropping a dependency graph', () => {
+    const hash = 'b'.repeat(64);
+    const f = fixture({
+      'acme/app': {
+        'package.json': '{"packageManager":"pnpm@11.28.2"}',
+        'pnpm-lock.yaml': `lockfileVersion: '9.0'
+packages: {}
+snapshots:
+  left@1.0.0: {dependencies: {peer: 1.0.0}}
+  left@1.0.0(patch_hash=${hash}): {dependencies: {peer: 2.0.0}}
+`,
+      },
+    });
+    expect(() => f.run(['acme/app'])).toThrow(
+      /contradictory normalized seed dependency identity/,
+    );
+  });
+
   it('removes repositories that left the fleet and uses per-owner tokens', () => {
     const repository = {
       'package.json': JSON.stringify({ packageManager: 'pnpm@11.27.0' }),

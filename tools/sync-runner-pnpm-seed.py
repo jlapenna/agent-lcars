@@ -8,14 +8,15 @@ content instead of downloading it (agent-lcars#2076). This script copies, as
 data, exactly what `pnpm fetch --frozen-lockfile` needs from each repository
 listed in pnpm-seed/fleet.json at its default branch head:
 
-  pnpm-lock.yaml       without its patchedDependencies block
+  pnpm-lock.yaml       without its patch map or patch-qualified identities
   package.json         only name/private/packageManager (corepack version)
   pnpm-workspace.yaml  only supportedArchitectures
 
 Nothing else is read: no source, scripts, patches, or build context. The
 store holds unpatched package content either way (pnpm applies patches when
 it links a package), so dropping the lockfile's patch map lets `pnpm fetch`
-run without the patch files. Files are fetched
+run without the patch files. Patch-qualified dependency paths must be normalized
+consistently too: frozen pnpm rejects hashes without their patch map. Files are fetched
 through `gh api` with the raw media type (lockfiles exceed the 1 MB JSON
 contents limit). GH_TOKEN_<OWNER> (owner upper-cased, `-` as `_`) is used for
 that owner's repositories when set, otherwise GH_TOKEN.
@@ -29,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -78,7 +80,38 @@ def without_patched_dependencies(lockfile: str) -> str:
             continue
         skipping = False
         kept.append(line)
-    return "".join(kept)
+    stripped = "".join(kept)
+    qualifier = re.compile(r"\(patch_hash=[0-9a-f]+\)")
+    normalized = qualifier.sub("", stripped)
+    if "(patch_hash=" in normalized:
+        raise ValueError("unsupported seed patch hash qualifier")
+    if normalized == stripped:
+        return stripped
+
+    collided = False
+
+    def normalize(value):
+        nonlocal collided
+        if isinstance(value, str):
+            return qualifier.sub("", value)
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                normalized_key = normalize(key)
+                normalized_item = normalize(item)
+                if normalized_key in result:
+                    if result[normalized_key] != normalized_item:
+                        raise ValueError("contradictory normalized seed dependency identity")
+                    collided = True
+                result[normalized_key] = normalized_item
+            return result
+        return value
+
+    parsed = normalize(yaml.safe_load(stripped))
+    # Preserve source formatting unless identical keys need coalescing.
+    return yaml.safe_dump(parsed, sort_keys=False) if collided else normalized
 
 
 def sync_repository(repo: str, destination: Path) -> str:
