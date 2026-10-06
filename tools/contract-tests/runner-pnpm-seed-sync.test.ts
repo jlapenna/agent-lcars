@@ -77,9 +77,10 @@ afterEach(() =>
     .forEach((dir) => rmSync(dir, { recursive: true, force: true })),
 );
 
-const lockfile = "lockfileVersion: '9.0'\n\npackages: {}\n";
+const lockfile =
+  "lockfileVersion: '9.0'\n\npackages:\n  left@1.0.0:\n    resolution: {integrity: sha512-left}\n";
 const patchedLockfile =
-  "lockfileVersion: '9.0'\n\npatchedDependencies:\n  left@1.0.0:\n    hash: abc\n    path: patches/left.patch\n\npackages: {}\n";
+  "lockfileVersion: '9.0'\n\npatchedDependencies:\n  left@1.0.0:\n    hash: abc\n    path: patches/left.patch\n\npackages:\n  left@1.0.0:\n    resolution: {integrity: sha512-left}\n";
 
 describe('runner pnpm seed sync', () => {
   it('copies only what pnpm fetch needs from each repository', () => {
@@ -162,7 +163,8 @@ snapshots:
       'acme/app': {
         'package.json': '{"packageManager":"pnpm@11.28.2"}',
         'pnpm-lock.yaml': `lockfileVersion: '9.0'
-packages: {}
+packages:
+  left@1.0.0: {resolution: {integrity: sha512-left}}
 snapshots:
   left@1.0.0: {dependencies: {peer: 1.0.0}}
   left@1.0.0(patch_hash=${hash}): {dependencies: {peer: 2.0.0}}
@@ -172,6 +174,18 @@ snapshots:
     expect(() => f.run(['acme/app'])).toThrow(
       /contradictory normalized seed dependency identity/,
     );
+  });
+
+  it('validates the project document of a multi-document lockfile', () => {
+    const configDocument =
+      "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    configDependencies: {}\n";
+    const f = fixture({
+      'acme/app': {
+        'package.json': '{"packageManager":"pnpm@11.28.2"}',
+        'pnpm-lock.yaml': `---\n${configDocument}\n---\n${lockfile}`,
+      },
+    });
+    expect(f.run(['acme/app'])).toBe('acme/app sha-acme-app\n');
   });
 
   it('removes repositories that left the fleet and uses per-owner tokens', () => {
@@ -202,12 +216,49 @@ snapshots:
       /does not declare a pnpm packageManager/,
     ],
     [
+      'a pnpm 10 package manager',
+      {
+        'package.json': '{"packageManager":"pnpm@10.18.0"}',
+        'pnpm-lock.yaml': lockfile,
+      },
+      /the image seeds only the pnpm 11/,
+    ],
+    [
       'a missing lockfile',
       { 'package.json': '{"packageManager":"pnpm@11.27.1"}' },
       /has no pnpm-lock.yaml/,
     ],
+    // #2084: Renovate rewrote every seed lockfile to one locking nothing.
+    [
+      'an empty lockfile',
+      {
+        'package.json': '{"packageManager":"pnpm@11.27.1"}',
+        'pnpm-lock.yaml': '',
+      },
+      /seed lockfile is empty/,
+    ],
+    [
+      'a lockfile that locks no packages',
+      {
+        'package.json': '{"packageManager":"pnpm@11.27.1"}',
+        'pnpm-lock.yaml':
+          "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n\npackages: {}\n",
+      },
+      /seed lockfile locks no packages/,
+    ],
+    [
+      'a pre-pnpm-11 lockfile',
+      {
+        'package.json': '{"packageManager":"pnpm@11.27.1"}',
+        'pnpm-lock.yaml':
+          "lockfileVersion: '6.0'\n\npackages:\n  /left@1.0.0: {}\n",
+      },
+      /lockfileVersion '6.0'/,
+    ],
   ])('fails on %s', (_name, files, error) => {
     const f = fixture({ 'acme/app': files });
     expect(() => f.run(['acme/app'])).toThrow(error);
+    // Nothing is written, so the refresh workflow has nothing to commit.
+    expect(existsSync(path.join(f.seed, 'fleet/acme__app'))).toBe(false);
   });
 });

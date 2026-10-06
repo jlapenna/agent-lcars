@@ -114,6 +114,35 @@ def without_patched_dependencies(lockfile: str) -> str:
     return yaml.safe_dump(parsed, sort_keys=False) if collided else normalized
 
 
+def validate_seed_lockfile(repo: str, lockfile: str) -> None:
+    """Refuse a lockfile the image's `pnpm fetch --frozen-lockfile` cannot use.
+
+    The seed is only exercised when the runner image is built, so a bad
+    lockfile committed here surfaces as a failed publication of every later
+    runner-image change (#2084 emptied them all; #2151 left stale patch
+    hashes). Reject it before anything is written instead.
+    """
+    try:
+        # pnpm 11 writes a leading config-dependency document when a project
+        # has one; the last document is the project's dependency graph.
+        documents = [doc for doc in yaml.safe_load_all(lockfile) if doc is not None]
+    except yaml.YAMLError as error:
+        raise ValueError(f"{repo} seed lockfile is not YAML: {error}") from error
+    parsed = documents[-1] if documents else None
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{repo} seed lockfile is empty")
+    version = str(parsed.get("lockfileVersion", ""))
+    if not version.startswith("9."):
+        raise ValueError(
+            f"{repo} seed lockfile has lockfileVersion {version!r}; the seed needs pnpm 11's 9.x"
+        )
+    packages = parsed.get("packages")
+    if not isinstance(packages, dict) or not packages:
+        raise ValueError(f"{repo} seed lockfile locks no packages")
+    if "patchedDependencies" in parsed or "(patch_hash=" in lockfile:
+        raise ValueError(f"{repo} seed lockfile still references patches")
+
+
 def sync_repository(repo: str, destination: Path) -> str:
     owner = repo.split("/", 1)[0]
     branch = gh(owner, f"repos/{repo}", "--jq", ".default_branch").strip()
@@ -123,6 +152,10 @@ def sync_repository(repo: str, destination: Path) -> str:
     package_manager = manifest.get("packageManager", "")
     if not package_manager.startswith("pnpm@"):
         raise ValueError(f"{repo} does not declare a pnpm packageManager")
+    if not package_manager.startswith("pnpm@11."):
+        raise ValueError(
+            f"{repo} uses {package_manager}; the image seeds only the pnpm 11 (v11) store"
+        )
     lockfile = raw_file(repo, owner, "pnpm-lock.yaml", commit)
     if lockfile is None:
         raise ValueError(f"{repo} has no pnpm-lock.yaml at {commit}")
@@ -130,11 +163,13 @@ def sync_repository(repo: str, destination: Path) -> str:
         raw_file(repo, owner, "pnpm-workspace.yaml", commit) or "{}"
     ) or {}
     seed_workspace = {key: workspace[key] for key in WORKSPACE_KEYS if key in workspace}
+    seed_lockfile = without_patched_dependencies(lockfile)
+    validate_seed_lockfile(repo, seed_lockfile)
 
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True)
-    (destination / "pnpm-lock.yaml").write_text(without_patched_dependencies(lockfile))
+    (destination / "pnpm-lock.yaml").write_text(seed_lockfile)
     (destination / "package.json").write_text(
         json.dumps(
             {

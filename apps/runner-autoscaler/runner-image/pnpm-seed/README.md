@@ -28,6 +28,13 @@ it (#2082).
 `tools/sync-runner-pnpm-seed.py` writes `fleet/`, and
 `.github/workflows/refresh-runner-pnpm-seed.yml` runs it weekly and opens an
 auto-merged bot PR when anything changed. Do not edit `fleet/` by hand.
+The sync refuses an empty, non-pnpm-11, or still-patched lockfile before
+writing anything, and the required `Runner image pnpm-store seed` check
+(`pnpm-store-seed.test.sh`) fetches the committed seed through the
+Dockerfile's own `pnpm-store-seed` stage, so a seed the publisher cannot
+build fails before merge instead of blocking every later runner-image
+publication. The stage carries git because a consumer may lock a git-hosted
+package (`type: git`), which pnpm clones.
 Every listed repository must use pnpm 11 (the `v11` store layout); the
 seed test fails otherwise.
 
