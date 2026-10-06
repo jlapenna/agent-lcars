@@ -67,6 +67,32 @@ jobs:
             "https://raw.githubusercontent.com/jlapenna/repo-tools/$sha/bin/check-runner-labels.mjs"
           node "$RUNNER_TEMP/check-runner-labels.mjs"
 
+  # A timer or cron firing more often than hourly usually means the design
+  # should react to an event instead of polling. Every such schedule in this
+  # repository (systemd timers, workflow crons, Kubernetes CronJobs) must carry
+  # an adjacent `# schedule-justification:` comment; the check scans every
+  # tracked file, so `git grep schedule-justification` is the inventory. Like
+  # the runner-label check, it runs the dependency-free script from
+  # @jlapenna/repo-tools at the commit the lockfile pins.
+  schedules:
+    name: Schedule justifications
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Reject unjustified sub-hourly schedules
+        run: |
+          sha="$(grep -oE 'codeload\.github\.com/jlapenna/repo-tools/tar\.gz/[0-9a-f]{40}' pnpm-lock.yaml | head -n 1)"
+          sha="${sha##*/}"
+          if [ -z "$sha" ]; then
+            echo "::error::pnpm-lock.yaml does not pin @jlapenna/repo-tools to a commit."
+            exit 1
+          fi
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/check-schedules.mjs" \
+            "https://raw.githubusercontent.com/jlapenna/repo-tools/$sha/bin/check-schedules.mjs"
+          node "$RUNNER_TEMP/check-schedules.mjs" --list
+
   verify-full:
     name: Full verification
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -415,7 +441,7 @@ jobs:
   # events start `verify-full` and this gate then requires its real result.
   verify:
     name: Verify
-    needs: [verify-full, runner-labels]
+    needs: [verify-full, runner-labels, schedules]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -440,6 +466,15 @@ jobs:
         run: |
           if [ "$RUNNER_LABELS_RESULT" != 'success' ]; then
             echo "::error::Runner label combinations concluded '$RUNNER_LABELS_RESULT'."
+            exit 1
+          fi
+
+      - name: Require justified schedules
+        env:
+          SCHEDULES_RESULT: ${{ needs.schedules.result }}
+        run: |
+          if [ "$SCHEDULES_RESULT" != 'success' ]; then
+            echo "::error::Schedule justifications concluded '$SCHEDULES_RESULT'."
             exit 1
           fi
 

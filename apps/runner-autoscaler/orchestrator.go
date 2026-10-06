@@ -141,7 +141,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 							idToken: func() (string, error) { return idTokenFromSource(tokenSource) },
 							reserve: func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
 							recover: queue.recover, cleanup: queue.cleanup, draining: queueDraining.Load,
-						}, 15*time.Second, logger)
+						}, queueClaimPollInterval, logger)
 					}
 				} else {
 					queueExecutorResolved, preflightErr := directRunnerPreflightHosts(ctx, resolved, newDockerClient, logger)
@@ -172,7 +172,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 							cleanup: func(cleanupCtx context.Context) error {
 								return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved.resolvedOrchestratorConfig, newDockerClient, time.Now())
 							},
-						}, 15*time.Second, logger)
+						}, queueClaimPollInterval, logger)
 					}
 				}
 			}

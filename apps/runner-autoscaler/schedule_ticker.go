@@ -16,6 +16,8 @@ import (
 // GitHub's best-effort scheduler. The Work API determines whether a slot is
 // due and mints deterministic item ids, so an autoscaler restart or a second
 // healthy autoscaler can safely call it again.
+//
+// schedule-justification: the only clock for native schedule slots and run maintenance (expired leases become lost, the outbox drains); repeated ticks are idempotent.
 const scheduleTickInterval = 5 * time.Minute
 
 // scheduleTickResponseBodyLimit prevents an unexpected proxy or server
