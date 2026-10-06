@@ -1,14 +1,14 @@
-name: Request homelab merge-to-live
+name: Request Homelab rollout
 
-# Homelab's merge-to-live publishes and deploys the runner, telemetry, and
-# exporter images built from this repository. It used to poll this
-# repository's main every three minutes; it now runs when asked. After CI's
-# Verify job passes on a push to main, dispatch homelab's
-# merge-to-live-request.yml, which can only create merge-to-live's request
-# file over its restricted forced-command key. merge-to-live still fetches and
-# admits its own sources, so the SHA sent here is provenance, not an input.
-# A lost request is recovered by homelab's daily backstop timer
-# (jlapenna/homelab docs/deployments.md, "Triggering merge-to-live").
+# Homelab owns this repository's image publication and rollout
+# (merge-to-live). After CI's Verify job passes on a push to main, ask Homelab
+# to reconcile now instead of Homelab polling this repository. This is the
+# same route every Homelab-owned source uses (nx-cache-server's
+# homelab-rollout.yml): jlapenna/homelab's source-reconcile.yml with
+# source=agent-lcars, which starts merge-to-live through its restricted
+# trigger and reports the result there. Homelab still fetches and admits its
+# own sources, so the SHA is provenance, and its daily backstop timer covers a
+# lost request.
 on:
   workflow_run:
     workflows: [CI]
@@ -21,8 +21,8 @@ permissions:
 
 # Deliberately no concurrency group: every CI completion on main would join
 # it before the Verify gate runs, so a later failed run could replace a
-# passing run's pending request. Duplicate requests are harmless; homelab
-# coalesces them into one pending cycle.
+# passing run's pending request. source-reconcile.yml already keeps one
+# request in flight per source on the Homelab side.
 
 jobs:
   request:
@@ -49,7 +49,9 @@ jobs:
       - uses: actions/checkout@v7
         if: steps.verify.outputs.passed == 'true'
 
-      - name: Mint homelab dispatch token
+      # Scoped to dispatching workflows on jlapenna/homelab only: no
+      # contents, issues, or pull-request access there.
+      - name: Mint Homelab dispatch token
         id: token
         if: steps.verify.outputs.passed == 'true'
         uses: ./.github/actions/mint-agent-token
@@ -60,13 +62,17 @@ jobs:
           repositories: homelab
           permission-actions: write
 
-      - name: Request one merge-to-live cycle
+      - name: Dispatch the Homelab source reconciler
         if: steps.verify.outputs.passed == 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          gh workflow run merge-to-live-request.yml \
-            --repo jlapenna/homelab --ref main -f source_sha="$SOURCE_SHA"
-          echo "Requested homelab merge-to-live for ${SOURCE_SHA}."
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gh workflow run source-reconcile.yml \
+            --repo jlapenna/homelab \
+            --ref main \
+            -f source=agent-lcars \
+            -f sha="$SOURCE_SHA"
+          echo "Requested Homelab rollout of agent-lcars ${SOURCE_SHA}: https://github.com/jlapenna/homelab/actions/workflows/source-reconcile.yml"
