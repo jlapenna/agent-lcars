@@ -49,43 +49,40 @@ function positiveIntegerClaim(value: unknown, name: string): number {
   return parsed;
 }
 
-// Sub-project 6 (2026-08-27-native-work-items-8-sessions, Task 8): the
-// session-pin-tick trigger for the session reaper sweep -- rewrites
-// expireAt forward on sessions belonging to still-open items so the
-// collection's Firestore TTL policy never reaps them out from under a
-// live item. One
-// canonical caller, pinned to the control-plane home, not the allow-list.
-const SESSION_PIN_TICK_OIDC_AUDIENCE = 'agent-lcars-session-pin-tick';
-const SESSION_PIN_TICK_WORKFLOW_PATH =
-  '.github/workflows/work-session-pin-tick.yml';
+// The session-expiry workflow: applies a native work item's lifecycle to
+// its telemetry session docs (no expireAt while open, close + retention
+// once closed). Dispatched by the console on item close or reopen, never
+// scheduled. One canonical caller, pinned to the control-plane home, not
+// the allow-list.
+const SESSION_EXPIRY_OIDC_AUDIENCE = 'agent-lcars-session-expiry';
+export const SESSION_EXPIRY_WORKFLOW_FILE = 'work-session-expiry.yml';
+const SESSION_EXPIRY_WORKFLOW_PATH = `.github/workflows/${SESSION_EXPIRY_WORKFLOW_FILE}`;
 
-export interface SessionPinTickOidcIdentity {
+export interface SessionExpiryOidcIdentity {
   repository: string;
   repositoryId: number;
   runId: number;
 }
 
-export function assertSessionPinTickOidcClaims(
+export function assertSessionExpiryOidcClaims(
   claims: JWTPayload,
   repository: string,
-): SessionPinTickOidcIdentity {
-  const expectedJobWorkflowRef = `${repository}/${SESSION_PIN_TICK_WORKFLOW_PATH}@refs/heads/main`;
+): SessionExpiryOidcIdentity {
+  const expectedJobWorkflowRef = `${repository}/${SESSION_EXPIRY_WORKFLOW_PATH}@refs/heads/main`;
   if (claims['repository'] !== repository) {
     throw new Error('OIDC repository claim does not match the control plane');
   }
   if (claims['job_workflow_ref'] !== expectedJobWorkflowRef) {
     throw new Error(
-      'OIDC job_workflow_ref claim is not the session pin tick workflow on main',
+      'OIDC job_workflow_ref claim is not the session expiry workflow on main',
     );
   }
   if (claims['ref'] !== 'refs/heads/main') {
     throw new Error('OIDC ref claim is not main');
   }
-  if (
-    !['schedule', 'workflow_dispatch'].includes(String(claims['event_name']))
-  ) {
+  if (claims['event_name'] !== 'workflow_dispatch') {
     throw new Error(
-      'OIDC event_name claim is not an allowed session-pin-tick event',
+      'OIDC event_name claim is not an allowed session-expiry event',
     );
   }
   return {
@@ -98,15 +95,15 @@ export function assertSessionPinTickOidcClaims(
   };
 }
 
-export async function verifySessionPinTickOidcToken(
+export async function verifySessionExpiryOidcToken(
   token: string,
   repository: string,
-): Promise<SessionPinTickOidcIdentity> {
+): Promise<SessionExpiryOidcIdentity> {
   const { payload } = await jwtVerify(token, githubActionsJwks, {
     issuer: GITHUB_ACTIONS_ISSUER,
-    audience: SESSION_PIN_TICK_OIDC_AUDIENCE,
+    audience: SESSION_EXPIRY_OIDC_AUDIENCE,
   });
-  return assertSessionPinTickOidcClaims(payload, repository);
+  return assertSessionExpiryOidcClaims(payload, repository);
 }
 
 /**

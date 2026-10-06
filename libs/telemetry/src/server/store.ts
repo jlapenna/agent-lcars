@@ -99,44 +99,70 @@ export async function upsertSession(write: SessionWrite): Promise<void> {
 }
 
 /**
- * Rewrites only `expireAt` on an existing session doc -- the
- * watermark-only write the session-pin reaper needs (sub-project 6), as
- * opposed to `upsertSession`'s full reduce-then-merge write. Same
- * Timestamp conversion `upsertSession` already applies to the same field,
- * for the same reason: the collection's native Firestore TTL policy only
- * recognizes a Timestamp, not the ISO string `SessionDoc` carries it as --
- * see `upsertSession`'s own doc comment for why it must be `AdminTimestamp`
- * (the `firebase-admin` re-export) rather than `@google-cloud/firestore`'s
- * own `Timestamp`.
+ * Sets or clears only `expireAt` on an existing session doc -- the write a
+ * native work item's lifecycle needs, as opposed to `upsertSession`'s full
+ * reduce-then-merge write. `expireAt: null` deletes the field, which keeps
+ * the doc out of the collection's Firestore TTL policy entirely (an open
+ * item's sessions); an ISO string stamps the horizon (a closed item's
+ * sessions). Same `AdminTimestamp` conversion `upsertSession` applies, for
+ * the reason its doc comment gives.
  *
- * This is an UNCONDITIONAL overwrite, not a clamp/max -- it never reads the
- * doc's current `expireAt` before writing, so a caller that ever passed an
- * earlier date would shrink the horizon, not extend it. "Extend-only" is
- * true in practice only because every caller today (the session-pin
- * reaper) computes `expireAt` as `now + ISSUE_AGENT_SESSION_RETENTION_DAYS`
- * with `lastActivityAt <= now`, so the computed value is always at or
- * after whatever a real activity write would already have set. A future
- * caller with a different horizon or a backdated `now` would silently
- * break that invariant -- this function itself does not enforce it.
+ * `.update`, not `.set(..., { merge: true })`: a doc that is already gone
+ * (TTL-deleted, or never written) must stay gone rather than be resurrected
+ * as a field-less ghost. Resolves `false` in that case, `true` otherwise.
  */
-export async function touchSessionExpiry(
+export async function setSessionExpiry(
   sessionId: string,
-  expireAt: string,
-): Promise<void> {
+  expireAt: string | null,
+): Promise<boolean> {
   const firestore = getAgentTelemetryWriterFirestore();
-  // `.set(..., { merge: true })`, not `.update(...)`: if the session doc
-  // were TTL-deleted by Firestore between the reaper's read (the items API
-  // call that produced this sessionId) and this write, `.update` would
-  // throw NOT_FOUND while `.set(..., { merge: true })` silently resurrects
-  // a field-less ghost document carrying only `expireAt`. Deliberate --
-  // see sub-project 6's design tradeoffs; do not change this to `.update`.
-  await firestore
-    .collection(SESSIONS_COLLECTION)
-    .doc(sessionId)
-    .set(
-      { expireAt: AdminTimestamp.fromDate(new Date(expireAt)) },
-      { merge: true },
-    );
+  try {
+    await firestore
+      .collection(SESSIONS_COLLECTION)
+      .doc(sessionId)
+      .update({
+        expireAt:
+          expireAt === null
+            ? AdminFieldValue.delete()
+            : AdminTimestamp.fromDate(new Date(expireAt)),
+      });
+    return true;
+  } catch (error) {
+    if (isNotFound(error)) return false;
+    throw error;
+  }
+}
+
+/**
+ * Session ids of every doc tagged with one of `intentIds` (the orchestrator
+ * run ids of one work item), read through the writer client. Unlike the
+ * console's read path, which degrades to an empty list, this propagates any
+ * read failure: the session-expiry workflow must fail loudly rather than
+ * succeed having touched nothing.
+ */
+export async function sessionIdsForIntents(
+  intentIds: readonly string[],
+): Promise<string[]> {
+  const firestore = getAgentTelemetryWriterFirestore();
+  const perIntent = await Promise.all(
+    intentIds.map((intentId) =>
+      firestore
+        .collection(SESSIONS_COLLECTION)
+        .where('intentId', '==', intentId)
+        .select()
+        .get(),
+    ),
+  );
+  return perIntent.flatMap((snapshot) => snapshot.docs.map((doc) => doc.id));
+}
+
+/** gRPC NOT_FOUND (5), as the Firestore SDKs report a missing doc. */
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 5
+  );
 }
 
 /** Default page size for `listSessionDocs` when the caller doesn't ask for a

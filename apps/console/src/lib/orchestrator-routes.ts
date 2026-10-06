@@ -37,6 +37,11 @@ export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
   drain: (limit?: number) => Promise<DrainOutboxResult>;
+  /** Dispatches `work-session-expiry.yml` for a native item whose open/
+   * closed state changed outside the outbox: a parked item's close (no run
+   * settles) or a closed item's reopen. The workflow applies whatever state
+   * it then reads. Never rejects. */
+  expireItemSessions?: (workId: string) => Promise<void>;
   /** Exact GitHub lifecycle read that fences a close delivery against a
    * reopen. A close webhook that is dropped entirely needs no sweep: the
    * claim route repeats this read before a closed anchor's queued

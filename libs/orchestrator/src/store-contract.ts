@@ -954,7 +954,7 @@ export function runOrchestratorStoreContract(
         // Issue #1546: `work-router.ts`'s `list` used to call this with
         // only `limit`, so anything past the newest `limit` native tasks
         // was invisible to every caller no matter how it filtered --
-        // including a caller (sub-project 6's session-pin tick) looking
+        // including a caller (the session-expiry open-item sweep) looking
         // for a specific still-open item that happened to predate a busy
         // stretch of newer ones. `before` is the fix: page by the last
         // `workId` of the previous page until the store itself is

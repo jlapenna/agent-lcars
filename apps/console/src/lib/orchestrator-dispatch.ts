@@ -11,6 +11,7 @@ import {
   type Task,
 } from '@agent-lcars/orchestrator';
 import { workPayloadSchema } from '@agent-lcars/work';
+import { deriveItemState } from '@agent-lcars/work/derive';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin, consoleUrl } from './deployment';
@@ -21,6 +22,7 @@ import {
   outcomeWebhookFor,
   type OutcomeWebhookPayload,
 } from './outcome-webhook';
+import { dispatchSessionExpiry, isClosedItemState } from './session-expiry';
 
 /**
  * The outbox drain: turns `@agent-lcars/orchestrator` decisions into real
@@ -574,6 +576,26 @@ async function deliverNativeOutcome(
     // no GitHub issue, which only happens for a native anchor.
     await settleClaim(deps, entry, 'done');
     return;
+  }
+
+  // A settle that closes the item (done, failed, or canceled -- not a park,
+  // and not a lost run that will be retried) is when its telemetry sessions
+  // start to expire. Best effort and deliberately not retried through this
+  // entry: a retry would re-deliver the outcome webhook below, and a failed
+  // dispatch only keeps the sessions longer (no expiry). The error log names
+  // the item so the workflow can be re-run for it. Idempotent if a webhook
+  // retry dispatches it again.
+  const itemState = deriveItemState(task, await deps.store.listRuns(run.task));
+  if (isClosedItemState(itemState)) {
+    try {
+      await dispatchSessionExpiry(deps, run.task.workId);
+    } catch (error) {
+      logger.error(
+        'agent-lcars: session expiry dispatch failed for work item %s; its sessions keep no expiry until work-session-expiry.yml runs for it:',
+        run.task.workId,
+        error,
+      );
+    }
   }
 
   const origin = workPayloadSchema.parse(task.work).origin;

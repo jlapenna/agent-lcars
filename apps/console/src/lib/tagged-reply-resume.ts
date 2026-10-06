@@ -23,7 +23,7 @@ type RouteResult = { status: number; body: Record<string, unknown> };
  * identity, it exists only to satisfy `requestReply`'s "every reply
  * carries a principal" invariant and to answer `forbiddenReason`'s
  * pipeline/repo check. Granted every pipeline directly, the same way
- * `pin:tick` (`work-auth.ts`) is a synthetic principal constructed inline
+ * `session:expiry` (`work-auth.ts`) is a synthetic principal constructed inline
  * rather than resolved through `AGENT_LCARS_WORK_GRANTS`: a tagged reply
  * explicitly selects its pipeline through the already-validated trigger,
  * against a repository the pure interpreter already confirmed is

@@ -315,6 +315,125 @@ describe('drainOutbox native outcome webhook delivery', () => {
   });
 });
 
+describe('drainOutbox native session expiry on item close', () => {
+  const WORK_ID = '01J5Z3K9QX8F0N2B4V6C8D1E4H';
+  const DISPATCH_URL = `https://api.github.com/repos/${process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY']}/actions/workflows/work-session-expiry.yml/dispatches`;
+  const origin = { principal: 'test:expiry', channel: 'api' } as const;
+
+  function recordingFetch(status = 204) {
+    const calls: { url: string; body: unknown; auth: string | null }[] = [];
+    const fetchImpl = vi.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        calls.push({
+          url: String(url),
+          body: JSON.parse(String(init?.body)),
+          auth: new Headers(init?.headers).get('authorization'),
+        });
+        return new Response(status === 204 ? null : 'nope', { status });
+      },
+    ) as typeof fetch;
+    return { calls, fetchImpl };
+  }
+
+  it.each([
+    ['done', { ok: true }],
+    ['failed', { ok: false }],
+  ] as const)(
+    'dispatches the expiry workflow for an item that settles %s',
+    async (_state, result) => {
+      const { store, orchestrator } = fixture();
+      const run = await requestedWithOrigin(orchestrator, origin, WORK_ID);
+      await orchestrator.report(run.runId, result);
+      const { calls, fetchImpl } = recordingFetch();
+
+      const drained = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+        now: () => NOW,
+      });
+
+      expect(drained.failed).toEqual([]);
+      expect(calls).toEqual([
+        {
+          url: DISPATCH_URL,
+          body: { ref: 'main', inputs: { item: WORK_ID } },
+          auth: 'Bearer test-token',
+        },
+      ]);
+    },
+  );
+
+  it('dispatches it when an operator cancels the live run', async () => {
+    const { store, orchestrator } = fixture();
+    const run = await requestedWithOrigin(orchestrator, origin, WORK_ID);
+    await orchestrator.cancel(run.runId, 'canceled by test');
+    const { calls, fetchImpl } = recordingFetch();
+
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => NOW,
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([DISPATCH_URL]);
+  });
+
+  it('leaves a parked item open: its sessions keep no expiry', async () => {
+    const { store, orchestrator } = fixture();
+    const run = await requestedWithOrigin(orchestrator, origin, WORK_ID);
+    await orchestrator.report(run.runId, { ok: true, summary: 'park' });
+    const { calls, fetchImpl } = recordingFetch();
+
+    const drained = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => NOW,
+    });
+
+    expect(calls).toEqual([]);
+    expect(drained.failed).toEqual([]);
+  });
+
+  it('never lets a failed dispatch hold back the outcome webhook', async () => {
+    process.env['AGENT_LCARS_OUTCOME_WEBHOOKS'] = JSON.stringify({
+      slack: { url: 'https://bot.example/outcome', audience: 'bot' },
+    });
+    try {
+      const { store, orchestrator } = fixture();
+      const run = await requestedWithOrigin(
+        orchestrator,
+        { principal: 'svc:bot', channel: 'slack', thread: 'T1/C1/1.2' },
+        WORK_ID,
+      );
+      await orchestrator.report(run.runId, { ok: true });
+      const failing = recordingFetch(503);
+      const deliverOutcomeWebhook = vi.fn().mockResolvedValue(undefined);
+
+      const drained = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl: failing.fetchImpl,
+        deliverOutcomeWebhook,
+        now: () => NOW,
+      });
+
+      expect(failing.calls.map((call) => call.url)).toEqual([DISPATCH_URL]);
+      expect(deliverOutcomeWebhook).toHaveBeenCalledOnce();
+      expect(drained.reported).toEqual([run.runId]);
+      expect(drained.failed).toEqual([]);
+    } finally {
+      delete process.env['AGENT_LCARS_OUTCOME_WEBHOOKS'];
+    }
+  });
+});
+
 /** A minimal, valid `Run`, none of `outcomeCommentBody`'s callers'
  *  machinery -- it is a pure function of a `Run`, so this fixture skips
  *  the orchestrator entirely. */

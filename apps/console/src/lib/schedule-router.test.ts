@@ -40,8 +40,8 @@ const executorOnly = {
   via: 'google' as const,
 };
 const reaperOnly = {
-  principal: 'pin:tick',
-  subject: 'pin:tick',
+  principal: 'session:expiry',
+  subject: 'session:expiry',
   scopes: new Set(['work.reaper'] as const),
   pipelines: [],
   via: 'oidc' as const,

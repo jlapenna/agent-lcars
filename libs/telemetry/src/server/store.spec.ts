@@ -12,7 +12,7 @@ import { SessionDoc, SessionWrite } from '../lib/types';
 import {
   _resetForTesting,
   getAgentTelemetryWriterFirestore,
-  touchSessionExpiry,
+  setSessionExpiry,
   upsertSession,
 } from './store';
 
@@ -171,47 +171,66 @@ describe('agent-telemetry store', () => {
     });
   });
 
-  describe('touchSessionExpiry', () => {
-    it('rewrites only expireAt, leaving other fields untouched', async () => {
+  describe('setSessionExpiry', () => {
+    it('stamps only expireAt, as a native Timestamp, leaving other fields untouched', async () => {
       await upsertSession(sessionWrite({ turns: 3 }));
       const future = new Date('2027-08-27T00:00:00.000Z').toISOString();
 
-      await touchSessionExpiry('session-1', future);
-
-      const snap = await fakeFirestore
-        .collection('sessions')
-        .doc('session-1')
-        .get();
-      expect(snap.data()?.['expireAt']).toEqual(
-        Timestamp.fromDate(new Date(future)),
-      );
-      expect(snap.data()?.['turns']).toBe(3);
-    });
-
-    it('writes expireAt as a native Firestore Timestamp, not the ISO string', async () => {
-      await upsertSession(sessionWrite());
-
-      await touchSessionExpiry('session-1', '2027-01-01T00:00:00.000Z');
+      expect(await setSessionExpiry('session-1', future)).toBe(true);
 
       const snap = await fakeFirestore
         .collection('sessions')
         .doc('session-1')
         .get();
       expect(snap.data()?.['expireAt']).toBeInstanceOf(Timestamp);
+      expect(snap.data()?.['expireAt']).toEqual(
+        Timestamp.fromDate(new Date(future)),
+      );
+      expect(snap.data()?.['turns']).toBe(3);
     });
 
-    it("overwrites expireAt unconditionally, even backward -- not a clamp/max (pins today's behavior)", async () => {
-      await upsertSession(sessionWrite());
-      await touchSessionExpiry('session-1', '2030-01-01T00:00:00.000Z');
+    it('clears expireAt with a field delete so the TTL policy ignores the doc', async () => {
+      // firestore-jest-mock's update() ignores delete sentinels, so assert
+      // the request itself.
+      const update = vi.fn().mockResolvedValue(undefined);
+      (getAdminFirestore as Mock).mockReturnValue({
+        collection: () => ({ doc: () => ({ update }) }),
+      });
+      _resetForTesting();
 
-      await touchSessionExpiry('session-1', '2020-01-01T00:00:00.000Z');
+      expect(await setSessionExpiry('session-1', null)).toBe(true);
 
-      const snap = await fakeFirestore
-        .collection('sessions')
-        .doc('session-1')
-        .get();
-      expect(snap.data()?.['expireAt']).toEqual(
-        Timestamp.fromDate(new Date('2020-01-01T00:00:00.000Z')),
+      expect(update).toHaveBeenCalledOnce();
+      const fields = update.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(Object.keys(fields)).toEqual(['expireAt']);
+      expect(
+        (fields['expireAt'] as FieldValue).isEqual(FieldValue.delete()),
+      ).toBe(true);
+    });
+
+    it('never resurrects a missing doc', async () => {
+      const update = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('gone'), { code: 5 }));
+      (getAdminFirestore as Mock).mockReturnValue({
+        collection: () => ({ doc: () => ({ update }) }),
+      });
+      _resetForTesting();
+
+      expect(await setSessionExpiry('missing', null)).toBe(false);
+    });
+
+    it('surfaces any other write failure', async () => {
+      const update = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('denied'), { code: 7 }));
+      (getAdminFirestore as Mock).mockReturnValue({
+        collection: () => ({ doc: () => ({ update }) }),
+      });
+      _resetForTesting();
+
+      await expect(setSessionExpiry('session-1', null)).rejects.toThrow(
+        'denied',
       );
     });
   });

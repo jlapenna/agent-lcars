@@ -1,6 +1,6 @@
 import { auth } from '@/auth';
 import { controlPlaneRepository } from '@/lib/deployment';
-import { verifySessionPinTickOidcToken } from '@/lib/github-actions-oidc';
+import { verifySessionExpiryOidcToken } from '@/lib/github-actions-oidc';
 import {
   createOrchestratorRuntime,
   createScheduleStore,
@@ -23,7 +23,7 @@ import {
  * console user, the same way `queue-workspace.tsx`'s server actions do, so
  * `authenticateWorkRequest` is handed a header-less request and only its
  * session fallback path (`work-auth.ts`) ever runs. The Google ID token and
- * session-pin-tick and GitHub Actions OIDC verifiers are still required by
+ * session-expiry and GitHub Actions OIDC verifiers are still required by
  * `WorkAuthDeps`'s shape but neither is invoked on this path.
  *
  * Deliberately not a `'use server'` module: this is a plain helper shared
@@ -37,8 +37,8 @@ export async function context(): Promise<WorkContext> {
     new Request('https://console.local/'),
     {
       verifyGoogleIdToken: googleIdTokenVerifier('unused'),
-      verifySessionPinTickOidcToken: (token) =>
-        verifySessionPinTickOidcToken(token, controlPlaneRepository()),
+      verifySessionExpiryOidcToken: (token) =>
+        verifySessionExpiryOidcToken(token, controlPlaneRepository()),
       verifyGithubActionsWorkOidcToken: async () => {
         throw new Error('console work context has no GitHub Actions bearer');
       },
