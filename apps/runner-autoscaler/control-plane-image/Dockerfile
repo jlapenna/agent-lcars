@@ -10,7 +10,7 @@
 # mirror instead (issue #1729). See runner-image/Dockerfile and
 # docs/image-publish-routing.md for the rationale and the homelab mirror
 # example -- this ARG is kept in lockstep with that one's digest.
-ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
+ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:4ffadc0002b2581327e06101fc8c06cd189232baf79fe561fac9caeb76f5e807
 
 FROM ${RUNNER_BASE}
 
