@@ -11,7 +11,8 @@ metadata rather than a full copy of the file.
 
 `fleet.json` lists the repositories. `fleet/<owner>__<repo>/` holds, as data,
 exactly what `pnpm fetch` needs from each at its default-branch head: its
-`pnpm-lock.yaml` without the `patchedDependencies` map, a `package.json`
+`pnpm-lock.yaml` without the `patchedDependencies` map or its patch-hash
+qualifiers (including dependency references and snapshot identities), a `package.json`
 carrying only `packageManager`, and its `supportedArchitectures`. No source,
 script, patch, or build context is copied (the store holds unpatched package
 content either way; pnpm applies patches when it links); the
