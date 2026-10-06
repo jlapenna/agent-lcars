@@ -1709,6 +1709,28 @@ describe('exit', () => {
     expect(response).toEqual({ status: 200, json: { runId, state: 'lost' } });
   });
 
+  it('settles the run once the claimant regains a temporarily revoked grant', async () => {
+    const { store, orchestrator, now, runId } = await claimedRun();
+    const base = { store, orchestrator, now, ...context };
+
+    const revoked = await call(
+      { ...base, principal: executorPrincipal(['opencode']) },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+    expect(revoked.status).toBe(403);
+    expect((await store.readRun(runId))?.state).toBe('running');
+
+    const restored = await call(
+      { ...base, principal: executorPrincipal(['claude']) },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+    expect(restored).toEqual({ status: 200, json: { runId, state: 'lost' } });
+  });
+
   it('answers a settled run only to its claimant', async () => {
     const { store, orchestrator, now, runId, token } = await claimedRun();
     await call(
@@ -1836,16 +1858,19 @@ describe('exit', () => {
         )
       ).status,
     ).toBe(401);
+    // The executor retries only this grant denial, so a temporarily revoked
+    // grant cannot strand the claimant's report until lease expiry.
     expect(
-      (
-        await call(
-          { ...base, principal: executorPrincipal(['opencode']) },
-          'POST',
-          runPath(runId, '/exit'),
-          body,
-        )
-      ).status,
-    ).toBe(403);
+      await call(
+        { ...base, principal: executorPrincipal(['opencode']) },
+        'POST',
+        runPath(runId, '/exit'),
+        body,
+      ),
+    ).toMatchObject({
+      status: 403,
+      json: { message: 'pipeline not granted to this executor' },
+    });
     // The executor only treats a 404 carrying this message as delivered.
     expect(
       await call(

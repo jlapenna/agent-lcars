@@ -95,6 +95,10 @@ const executor = os.use(async ({ context, next }) => {
   return next({ context: { principal: context.principal } });
 });
 
+/** `exit`'s answer when the caller lacks the run's pipeline grant. The
+ *  QueueExecutor matches this text to keep the report retryable. */
+const EXIT_PIPELINE_NOT_GRANTED = 'pipeline not granted to this executor';
+
 /** The authenticated identity a claim is bound to: the principal's
  *  verified subject, lower-cased because grants resolve subjects
  *  case-insensitively (`work-grants.ts`'s `resolvePrincipal`). Recorded at
@@ -552,10 +556,13 @@ export const runsRouter = os.router({
     // the run's pipeline grant AND be the authenticated principal that
     // claimed it, reporting under the same runner name. The ownership check
     // runs inside the settling transaction (`decide.ts`'s `executorExited`);
-    // every failure answers the same FORBIDDEN so a caller learns nothing
-    // about another executor's claim.
+    // every ownership failure answers the same FORBIDDEN so a caller learns
+    // nothing about another executor's claim. A missing grant is a fact about
+    // the caller's own (changeable) configuration, so it carries its own
+    // message: the executor retries it, while it never retries a claimant
+    // mismatch, which cannot change.
     if (!context.principal.pipelines.includes(run.pipeline)) {
-      throw errors.FORBIDDEN();
+      throw errors.FORBIDDEN({ message: EXIT_PIPELINE_NOT_GRANTED });
     }
     const settled = await context.orchestrator.executorExited(run.runId, {
       subject: claimantSubject(context.principal),

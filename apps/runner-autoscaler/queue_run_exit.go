@@ -106,7 +106,7 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy string) {
 		case state == "lost":
 			r.logger.Warn("Run worker exited without reporting; the Work API settled it lost", slog.String("runId", runID))
 		case state == stateNotClaimant:
-			r.logger.Warn("Run exit report refused: this executor did not claim the run or lacks its pipeline grant; not retried", slog.String("runId", runID), slog.String("runner", runner))
+			r.logger.Warn("Run exit report refused: this executor did not claim the run; not retried", slog.String("runId", runID), slog.String("runner", runner))
 		default:
 			r.logger.Debug("Run exit reported", slog.String("runId", runID), slog.String("state", state))
 		}
@@ -119,8 +119,8 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy string) {
 const stateNotClaimant = "not-claimant"
 
 // post reports one exit as runner. The route's own 404 (the run no longer
-// exists) and 403 (not this executor's claim) can never succeed on a later
-// attempt, so both count as delivered.
+// exists) and its claimant-mismatch 403 can never succeed on a later
+// attempt, so both count as delivered; a pipeline-grant 403 is retried.
 func (r *runExitReporter) post(runID, runner string) (string, error) {
 	token, err := r.idToken()
 	if err != nil {
@@ -167,8 +167,14 @@ func (r *runExitReporter) post(runID, runner string) (string, error) {
 		}
 		return "", fmt.Errorf("exit report returned 404 without the route's unknown-run answer")
 	case http.StatusForbidden:
-		// The run was claimed by another principal or runner name, or before
-		// claims recorded their principal. Retrying cannot change that.
+		// A missing pipeline grant is configuration that can be restored, so
+		// it stays retryable: a restored grant then settles the run without
+		// waiting for its lease. Any other 403 means another principal or
+		// runner name claimed the run (or it was claimed before claims
+		// recorded their principal); retrying cannot change that.
+		if bytes.Contains(respBody, []byte("pipeline not granted")) {
+			return "", fmt.Errorf("exit report refused: this executor is not granted the run's pipeline")
+		}
 		return stateNotClaimant, nil
 	default:
 		return "", fmt.Errorf("exit report returned %d", resp.StatusCode)

@@ -40,6 +40,9 @@ func (r *exitReportRecorder) server(t *testing.T) *httptest.Server {
 		case http.StatusOK:
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"runId":"x","state":"lost"}`))
+		case http.StatusConflict: // stands in for the route's pipeline-grant 403
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"defined":true,"code":"FORBIDDEN","status":403,"message":"pipeline not granted to this executor"}`))
 		case http.StatusNotFound:
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"defined":true,"code":"NOT_FOUND","status":404,"message":"unknown run"}`))
@@ -124,6 +127,21 @@ func TestRunExitReporterTreatsNotClaimant403AsFinal(t *testing.T) {
 	// only repeat the refusal; lease expiry settles such a run instead.
 	if got := recorder.requests(); len(got) != 1 {
 		t.Fatalf("exit reports = %v, want a 403 never retried", got)
+	}
+}
+
+func TestRunExitReporterRetriesAPipelineGrant403(t *testing.T) {
+	recorder := &exitReportRecorder{statuses: []int{http.StatusConflict}}
+	reporter := testExitReporter(recorder.server(t).URL)
+
+	for range 3 {
+		reporter.observeTerminated("run-grant-restored", "")
+		reporter.wg.Wait()
+	}
+
+	// A restored grant must still settle the run on a later observation.
+	if got := recorder.requests(); len(got) != 2 {
+		t.Fatalf("exit reports = %v, want the grant 403 retried until delivered", got)
 	}
 }
 
