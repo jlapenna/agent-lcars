@@ -1,0 +1,78 @@
+name: Request Homelab rollout
+
+# Homelab owns this repository's image publication and rollout
+# (merge-to-live). After CI's Verify job passes on a push to main, ask Homelab
+# to reconcile now instead of Homelab polling this repository. This is the
+# same route every Homelab-owned source uses (nx-cache-server's
+# homelab-rollout.yml): jlapenna/homelab's source-reconcile.yml with
+# source=agent-lcars, which starts merge-to-live through its restricted
+# trigger and reports the result there. Homelab still fetches and admits its
+# own sources, so the SHA is provenance, and its daily backstop timer covers a
+# lost request.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+# Deliberately no concurrency group: every CI completion on main would join
+# it before the Verify gate runs, so a later failed run could replace a
+# passing run's pending request. source-reconcile.yml already keeps one
+# request in flight per source on the Homelab side.
+
+jobs:
+  request:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ['lcars-default']
+    timeout-minutes: 5
+    steps:
+      # The run conclusion rolls up non-required jobs such as E2E; gate on the
+      # required Verify job itself, as deploy-console.yml does (#543).
+      - name: Check Verify job's conclusion
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" \
+            --paginate --jq '.jobs[] | select(.name == "Verify") | .conclusion')
+          echo "Verify job conclusion for run ${RUN_ID}: '${conclusion}'"
+          echo "passed=$([[ "$conclusion" == success ]] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        if: steps.verify.outputs.passed == 'true'
+
+      # Scoped to dispatching workflows on jlapenna/homelab only: no
+      # contents, issues, or pull-request access there.
+      - name: Mint Homelab dispatch token
+        id: token
+        if: steps.verify.outputs.passed == 'true'
+        uses: ./.github/actions/mint-agent-token
+        with:
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          owner: jlapenna
+          repositories: homelab
+          permission-actions: write
+
+      - name: Dispatch the Homelab source reconciler
+        if: steps.verify.outputs.passed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gh workflow run source-reconcile.yml \
+            --repo jlapenna/homelab \
+            --ref main \
+            -f source=agent-lcars \
+            -f sha="$SOURCE_SHA"
+          echo "Requested Homelab rollout of agent-lcars ${SOURCE_SHA}: https://github.com/jlapenna/homelab/actions/workflows/source-reconcile.yml"

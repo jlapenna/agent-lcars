@@ -233,7 +233,12 @@ Canonical `jlapenna/homelab` owns the internal registry endpoint, remote
 BuildKit endpoint, and publisher credential; see
 `docs/image-publish-routing.md` for the source-to-image map. A fork changes
 those trust decisions in its own canonical infrastructure, not through an
-Agent LCARS repository variable.
+Agent LCARS repository variable. The only signal this repository sends is a
+wake-up: `homelab-rollout.yml` dispatches homelab's
+`source-reconcile.yml` (`source=agent-lcars`, the route every Homelab-owned
+source uses) with a homelab-scoped fleet App token (`actions: write`) after
+CI's `Verify` passes on `main`. Homelab still fetches,
+admits, and publishes on its own; the dispatched SHA is provenance only.
 
 One further exception:
 
