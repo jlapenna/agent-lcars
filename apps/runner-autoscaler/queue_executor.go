@@ -366,6 +366,11 @@ const directRunnerCodexVolatileMountPath = "/run/agent-lcars-codex"
 // max_concurrent slot, so a burst of failures cannot accumulate unbounded Jobs
 // inside that window.
 const (
+	// queueClaimPollInterval is how often the executor reserves local
+	// capacity and asks the Work API for the next admitted run.
+	// schedule-justification: the executor pulls admitted runs from POST /api/work/v1/runs/claim, so this bounds how long admitted work waits to start. No event channel reaches the executor without new IAM, and a held long-poll would keep the request-billed console instance billable 100% of the time (measured 7.4% today) against a $5/month budget.
+	queueClaimPollInterval = 15 * time.Second
+
 	queueJobRetentionAge     = 24 * time.Hour
 	queueJobRetentionPerSlot = 5
 	// queueJobCleanupInterval is the garbage-collection backstop for the one
@@ -373,6 +378,7 @@ const (
 	// left behind when the executor died between creating the Job and its
 	// run-token Secret. Such a shell counts against max_concurrent until removed.
 	// This is a local Kubernetes API list, never a Work API call.
+	// schedule-justification: garbage collection for crash-orphaned suspended Job shells, which no Kubernetes controller or event reaps; a local API list, not a Work API call.
 	queueJobCleanupInterval = 15 * time.Minute
 	// queueJobCleanupSweepTimeout caps one cleanup sweep. It runs off the claim
 	// loop, so a slow API server never delays a claim.

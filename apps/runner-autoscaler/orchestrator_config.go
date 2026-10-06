@@ -14,7 +14,8 @@ import (
 // the ARC lanes it reports status for, and server basics (metrics bind, log
 // level/format).
 //
-// The retired fields below are decoded only so loadOrchestratorConfig can
+// The retired fields below are decoded (as raw nodes, so even an empty
+// `fleet:` counts as present) only so loadOrchestratorConfig can
 // reject them with an error naming the key, instead of the YAML decoder's
 // bare "field not found". Nothing reads them: the scale-set runner manager
 // (github, registrations, scale_sets, server.state_path) was retired by
@@ -27,10 +28,10 @@ type OrchestratorConfig struct {
 	ARCLanes   []arcLaneConfig        `yaml:"arc_lanes,omitempty"`
 	Kubernetes *queueKubernetesConfig `yaml:"kubernetes,omitempty"`
 
-	FleetRetired         any `yaml:"fleet,omitempty"`
-	GitHubRetired        any `yaml:"github,omitempty"`
-	RegistrationsRetired any `yaml:"registrations,omitempty"`
-	ScaleSetsRetired     any `yaml:"scale_sets,omitempty"`
+	FleetRetired         yaml.Node `yaml:"fleet,omitempty"`
+	GitHubRetired        yaml.Node `yaml:"github,omitempty"`
+	RegistrationsRetired yaml.Node `yaml:"registrations,omitempty"`
+	ScaleSetsRetired     yaml.Node `yaml:"scale_sets,omitempty"`
 }
 
 type OrchestratorServer struct {
@@ -40,7 +41,7 @@ type OrchestratorServer struct {
 
 	// StatePathRetired was the scale-set control plane's checkpoint file
 	// (homelab#487); see OrchestratorConfig's retired fields.
-	StatePathRetired any `yaml:"state_path,omitempty"`
+	StatePathRetired yaml.Node `yaml:"state_path,omitempty"`
 }
 
 type resolvedOrchestratorConfig struct {
@@ -102,11 +103,11 @@ func retiredConfigKeys(c *OrchestratorConfig) []string {
 		name string
 		set  bool
 	}{
-		{"fleet", c.FleetRetired != nil},
-		{"github", c.GitHubRetired != nil},
-		{"registrations", c.RegistrationsRetired != nil},
-		{"scale_sets", c.ScaleSetsRetired != nil},
-		{"server.state_path", c.Server.StatePathRetired != nil},
+		{"fleet", c.FleetRetired.Kind != 0},
+		{"github", c.GitHubRetired.Kind != 0},
+		{"registrations", c.RegistrationsRetired.Kind != 0},
+		{"scale_sets", c.ScaleSetsRetired.Kind != 0},
+		{"server.state_path", c.Server.StatePathRetired.Kind != 0},
 	} {
 		if key.set {
 			retired = append(retired, key.name)

@@ -12,7 +12,7 @@ import (
 // queue executor. It is intentionally separate from Run lifecycle state:
 // queued/claimed/running counts are server-authoritative orchestrator data,
 // while this source can truthfully report only whether this host-side worker
-// is ready, draining, and how many unfinished direct attempts the selected backend currently sees.
+// is ready, draining, and how many unfinished queue Jobs the Kubernetes inventory currently shows.
 type queueExecutorStatusSource struct {
 	ready         atomic.Bool
 	draining      func() bool

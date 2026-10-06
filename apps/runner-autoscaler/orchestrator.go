@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
-	"time"
 )
 
 // runOrchestrator runs the LCARS queue executor and schedule ticker -- the
@@ -128,7 +127,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 						idToken: func() (string, error) { return idTokenFromSource(tokenSource) },
 						reserve: func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
 						recover: queue.recover, cleanup: queue.cleanup, draining: queueDraining.Load,
-					}, 15*time.Second, logger)
+					}, queueClaimPollInterval, logger)
 				}
 			}
 		}

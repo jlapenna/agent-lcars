@@ -101,10 +101,11 @@ func TestOrchestratorConfigRejectsRetiredKeysByName(t *testing.T) {
 		"registrations":     "registrations:\n  - name: agent-lcars\n",
 		"scale_sets":        "scale_sets:\n  - name: homelab-autoscale\n",
 		"server.state_path": "server:\n  state_path: /state/checkpoint.json\n",
+		"fleet (empty)":     "fleet:\n",
 	} {
 		t.Run(key, func(t *testing.T) {
 			_, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML+snippet))
-			if err == nil || !strings.Contains(err.Error(), "retired keys") || !strings.Contains(err.Error(), key) {
+			if err == nil || !strings.Contains(err.Error(), "retired keys") || !strings.Contains(err.Error(), strings.TrimSuffix(key, " (empty)")) {
 				t.Fatalf("expected a retired-key error naming %s, got %v", key, err)
 			}
 		})
