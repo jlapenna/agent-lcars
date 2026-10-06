@@ -40,7 +40,7 @@
 # docs/image-publish-routing.md). Only the agent payload is copied out of it
 # -- none of its OS layers -- so the runtime environment stays exactly the
 # sandbox's.
-ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
+ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:4ffadc0002b2581327e06101fc8c06cd189232baf79fe561fac9caeb76f5e807
 ARG SANDBOX_IMAGE
 
 FROM ${RUNNER_BASE} AS agent
