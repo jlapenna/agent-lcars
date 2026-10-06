@@ -80,3 +80,21 @@ func TestARCLaneConfigurationRejectsDuplicateNamesAndUnsafeURLs(t *testing.T) {
 		t.Fatal("accepted credentials in URL")
 	}
 }
+
+func TestSplitPrometheusSample(t *testing.T) {
+	for _, tc := range []struct {
+		line, name, rest string
+		ok               bool
+	}{
+		{line: "gha_running_jobs 3", name: "gha_running_jobs", rest: "3", ok: true},
+		{line: `gha_running_jobs{name="lane"} 2 1700000000`, name: "gha_running_jobs", rest: " 2 1700000000", ok: true},
+		{line: `gha_running_jobs{reason="on 1 battery"} 0`, name: "gha_running_jobs", rest: " 0", ok: true},
+		{line: "gha_running_jobs", ok: false},
+		{line: `gha_running_jobs{name="unterminated 1`, ok: false},
+	} {
+		name, rest, ok := splitPrometheusSample(tc.line)
+		if ok != tc.ok || (ok && (name != tc.name || rest != tc.rest)) {
+			t.Errorf("splitPrometheusSample(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.line, name, rest, ok, tc.name, tc.rest, tc.ok)
+		}
+	}
+}

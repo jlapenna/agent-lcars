@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,19 +8,25 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	dockerclient "github.com/docker/docker/client"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // discardLogger matches this package's own test convention
 // (slog.New(slog.NewTextHandler(io.Discard, nil)), see checkpoint_test.go)
 // for a logger tests don't care to inspect.
+// reserveFor is a capacity reservation that always has room and launches
+// through launch, for tests that exercise the claim protocol rather than a
+// backend's capacity accounting.
+func reserveFor(launch func(directRunnerLaunch) error) func() (*directRunnerReservation, error) {
+	return func() (*directRunnerReservation, error) {
+		return &directRunnerReservation{release: func() {}, launch: launch}, nil
+	}
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -49,10 +54,10 @@ func TestPollOnceClaimsAndLaunches(t *testing.T) {
 		consoleURL: server.URL,
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
-		launch: func(l directRunnerLaunch) error {
+		reserve: reserveFor(func(l directRunnerLaunch) error {
 			launched = append(launched, l)
 			return nil
-		},
+		}),
 	}
 	if err := pollOnce(cfg); err != nil {
 		t.Fatalf("pollOnce: %v", err)
@@ -276,7 +281,7 @@ func TestPollOnceNoQueuedRunLaunchesNothing(t *testing.T) {
 				consoleURL: server.URL,
 				runnerName: "test-runner",
 				idToken:    func() (string, error) { return "fake-id-token", nil },
-				launch:     func(directRunnerLaunch) error { launchCount++; return nil },
+				reserve:    reserveFor(func(directRunnerLaunch) error { launchCount++; return nil }),
 			}
 			if err := pollOnce(cfg); err != nil {
 				t.Fatalf("pollOnce: %v", err)
@@ -303,7 +308,7 @@ func TestPollOnceWithOutcomeDistinguishesIdleClaimAndLaunchFailure(t *testing.T)
 		{name: "idle empty", status: http.StatusOK, wantOutcome: queuePollOutcomeIdleEmpty},
 		{name: "poll error", status: http.StatusUnauthorized, wantOutcome: queuePollOutcomePollError, wantErr: true},
 		{name: "claimed and launched", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude"}`, wantOutcome: queuePollOutcomeClaimed},
-		{name: "claimed launch error", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude"}`, launchErr: errors.New("docker unavailable"), wantOutcome: queuePollOutcomeLaunchErr, wantErr: true},
+		{name: "claimed launch error", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude"}`, launchErr: errors.New("job create failed"), wantOutcome: queuePollOutcomeLaunchErr, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -319,7 +324,7 @@ func TestPollOnceWithOutcomeDistinguishesIdleClaimAndLaunchFailure(t *testing.T)
 				consoleURL: server.URL,
 				runnerName: "test-runner",
 				idToken:    func() (string, error) { return "fake-id-token", nil },
-				launch:     func(directRunnerLaunch) error { return tc.launchErr },
+				reserve:    reserveFor(func(directRunnerLaunch) error { return tc.launchErr }),
 				draining: func() bool {
 					return tc.draining
 				},
@@ -398,7 +403,7 @@ func TestPollOnceMissingRequiredFieldsLaunchesNothing(t *testing.T) {
 		consoleURL: server.URL,
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
-		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
+		reserve:    reserveFor(func(directRunnerLaunch) error { launchCount++; return nil }),
 	}
 	if err := pollOnce(cfg); err != nil {
 		t.Fatalf("pollOnce: %v", err)
@@ -426,7 +431,7 @@ func TestPollOnceDrainingSkipsClaim(t *testing.T) {
 		consoleURL: server.URL,
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
-		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
+		reserve:    reserveFor(func(directRunnerLaunch) error { launchCount++; return nil }),
 		draining:   func() bool { return true },
 	}
 	if err := pollOnce(cfg); err != nil {
@@ -455,7 +460,7 @@ func TestPollOnceUnauthorizedIsError(t *testing.T) {
 		consoleURL: server.URL,
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
-		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
+		reserve:    reserveFor(func(directRunnerLaunch) error { launchCount++; return nil }),
 	}
 	err := pollOnce(cfg)
 	if err == nil {
@@ -486,7 +491,7 @@ func TestPollOnceClaimRequestBodyShape(t *testing.T) {
 		consoleURL: server.URL,
 		runnerName: "runner-a",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
-		launch:     func(directRunnerLaunch) error { return nil },
+		reserve:    reserveFor(func(directRunnerLaunch) error { return nil }),
 	}
 	if err := pollOnce(cfg); err != nil {
 		t.Fatalf("pollOnce: %v", err)
@@ -530,7 +535,7 @@ func TestPollOnceClaimResponseTooLargeIsError(t *testing.T) {
 		consoleURL: server.URL,
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
-		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
+		reserve:    reserveFor(func(directRunnerLaunch) error { launchCount++; return nil }),
 	}
 	err := pollOnce(cfg)
 	if err == nil {
@@ -560,101 +565,25 @@ func TestDirectRunnerImage(t *testing.T) {
 	})
 }
 
-func TestDirectRunnerMaxConcurrent(t *testing.T) {
-	for _, tc := range []struct {
-		raw  string
-		want int
-		bad  bool
-	}{{"", 1, false}, {"3", 3, false}, {"0", 0, true}, {"-1", 0, true}, {"many", 0, true}} {
-		t.Run(tc.raw, func(t *testing.T) {
-			t.Setenv("LCARS_QUEUE_MAX_CONCURRENT", tc.raw)
-			got, err := directRunnerMaxConcurrent()
-			if got != tc.want || (err != nil) != tc.bad {
-				t.Fatalf("got %d, %v", got, err)
-			}
-		})
-	}
-}
-
-func testQueueResolved(t *testing.T, raw resolvedOrchestratorConfig) queueExecutorResolved {
-	t.Helper()
-	for key, value := range map[string]string{"LCARS_QUEUE_RUNNER_IMAGE": "registry/direct-runner:test", "LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH": "/secrets/telemetry-writer.json", "LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH": "/secrets/claude-token", "LCARS_QUEUE_OPENCODE_KEY_HOST_PATH": "/secrets/opencode-key"} {
-		if os.Getenv(key) == "" {
-			t.Setenv(key, value)
-		}
-	}
-	q, err := resolveQueueExecutor(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return q
-}
-
-// TestQueueExecutorStartupDecision proves durable startup depends on the
-// connection and credential configuration it actually consumes, never a local
-// pipeline allowlist. The authenticated work.executor grant supplies that
-// capability to every claim request.
-func TestQueueExecutorStartupDecision(t *testing.T) {
-	cases := []struct {
-		name       string
-		consoleURL string
-		keyPath    string
-		writerKey  string
-		wantStart  bool
-		wantReason bool
-	}{
-		{"complete configuration", "https://lcars.example", "/run/writer.json", "/host/writer.json", true, false},
-		{"missing console URL", "", "/run/writer.json", "/host/writer.json", false, true},
-		{"missing ID-token credentials", "https://lcars.example", "", "/host/writer.json", false, true},
-		{"missing Docker writer credential", "https://lcars.example", "/run/writer.json", "", false, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			start, reason := queueExecutorStartupDecision(tc.consoleURL, tc.keyPath, tc.writerKey)
-			if start != tc.wantStart {
-				t.Errorf("start = %v, want %v", start, tc.wantStart)
-			}
-			if (reason != "") != tc.wantReason {
-				t.Errorf("reason = %q, want non-empty: %v", reason, tc.wantReason)
-			}
-		})
-	}
-}
-
 func TestQueueExecutorStartupStatusDistinguishesDisabledFromMisconfigured(t *testing.T) {
 	cases := []struct {
 		name       string
 		consoleURL string
 		keyPath    string
-		writerKey  string
 		wantStart  bool
 		wantState  queueExecutorStartupState
 	}{
-		{"no queue deployment", "", "/run/writer.json", "/host/writer.json", false, queueExecutorStateDisabled},
-		{"incomplete queue deployment", "https://lcars.example", "", "/host/writer.json", false, queueExecutorStateMisconfigured},
-		{"ready", "https://lcars.example", "/run/writer.json", "/host/writer.json", true, queueExecutorStateReady},
+		{"no queue deployment", "", "/run/writer.json", false, queueExecutorStateDisabled},
+		{"incomplete queue deployment", "https://lcars.example", "", false, queueExecutorStateMisconfigured},
+		{"ready", "https://lcars.example", "/run/writer.json", true, queueExecutorStateReady},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			start, state, _ := queueExecutorStartupStatus(tc.consoleURL, tc.keyPath, tc.writerKey)
+			start, state, _ := queueExecutorStartupStatus(tc.consoleURL, tc.keyPath)
 			if start != tc.wantStart || state != tc.wantState {
 				t.Fatalf("queueExecutorStartupStatus() = (%v, %q), want (%v, %q)", start, state, tc.wantStart, tc.wantState)
 			}
 		})
-	}
-}
-
-// A Codex-only executor has no Claude credential by design: a provider's
-// host secret is resolved only when that provider is launched. Startup must
-// therefore depend on the queue's shared transport credentials alone.
-func TestQueueExecutorStartupAllowsCodexOnlyDeployment(t *testing.T) {
-	start, state, reason := queueExecutorStartupStatus(
-		"https://lcars.example",
-		"/run/telemetry-writer.json",
-		"/host/telemetry-writer.json",
-	)
-	if !start || state != queueExecutorStateReady || reason != "" {
-		t.Fatalf("Codex-only queue startup = (%v, %q, %q), want (true, %q, empty)", start, state, reason, queueExecutorStateReady)
 	}
 }
 
@@ -703,98 +632,6 @@ func TestQueueExecutorRunnerName(t *testing.T) {
 	}
 }
 
-func TestDirectRunnerTelemetryWriterHostPath(t *testing.T) {
-	t.Run("required", func(t *testing.T) {
-		t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "")
-		if _, err := directRunnerTelemetryWriterHostPath(); err == nil {
-			t.Fatalf("expected an error when the host path env var is unset")
-		}
-	})
-	t.Run("passes through a configured path", func(t *testing.T) {
-		t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
-		got, err := directRunnerTelemetryWriterHostPath()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "/secrets/telemetry-writer.json" {
-			t.Errorf("got %q", got)
-		}
-	})
-}
-
-func TestDirectRunnerClaudeTokenHostPath(t *testing.T) {
-	t.Run("required", func(t *testing.T) {
-		t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "")
-		if _, err := directRunnerClaudeTokenHostPath(); err == nil {
-			t.Fatalf("expected an error when the host path env var is unset")
-		}
-	})
-	t.Run("passes through a configured path", func(t *testing.T) {
-		t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
-		got, err := directRunnerClaudeTokenHostPath()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "/secrets/claude-code-oauth-token" {
-			t.Errorf("got %q", got)
-		}
-	})
-}
-
-func TestDirectRunnerOpenCodeTokenHostPath(t *testing.T) {
-	t.Run("required", func(t *testing.T) {
-		t.Setenv("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH", "")
-		if _, err := directRunnerOpenCodeTokenHostPath(); err == nil {
-			t.Fatalf("expected an error when the host path env var is unset")
-		}
-	})
-	t.Run("passes through a configured path", func(t *testing.T) {
-		t.Setenv("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH", "/secrets/opencode-llm-api-key")
-		got, err := directRunnerOpenCodeTokenHostPath()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "/secrets/opencode-llm-api-key" {
-			t.Errorf("got %q", got)
-		}
-	})
-}
-
-func TestDirectRunnerProviderCredentialBinds(t *testing.T) {
-	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
-	t.Setenv("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH", "/secrets/opencode-llm-api-key")
-
-	claude, err := directRunnerProviderCredentialBinds("claude")
-	if err != nil {
-		t.Fatalf("claude binds: %v", err)
-	}
-	wantClaude := "/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"
-	if len(claude) != 1 || claude[0] != wantClaude {
-		t.Fatalf("claude binds = %v, want [%s]", claude, wantClaude)
-	}
-
-	codex, err := directRunnerProviderCredentialBinds("codex")
-	if err != nil {
-		t.Fatalf("codex binds: %v", err)
-	}
-	if len(codex) != 0 {
-		t.Fatalf("codex must receive no provider credential mounts, got %v", codex)
-	}
-
-	opencode, err := directRunnerProviderCredentialBinds("opencode")
-	if err != nil {
-		t.Fatalf("opencode binds: %v", err)
-	}
-	wantOpenCode := "/secrets/opencode-llm-api-key:" + directRunnerOpenCodeTokenMountPath + ":ro"
-	if len(opencode) != 1 || opencode[0] != wantOpenCode {
-		t.Fatalf("opencode binds = %v, want [%s]", opencode, wantOpenCode)
-	}
-
-	if _, err := directRunnerProviderCredentialBinds("unknown"); err == nil {
-		t.Fatal("expected an unknown provider adapter to fail closed")
-	}
-}
-
 // TestNewDirectRunnerIDTokenSourceErrors pins the plumbing runOrchestrator
 // relies on to disable the queue poller (rather than start it and fail
 // every poll) when the credentials file is missing or unreadable: a bad
@@ -804,346 +641,6 @@ func TestNewDirectRunnerIDTokenSourceErrors(t *testing.T) {
 	_, err := newDirectRunnerIDTokenSource(context.Background(), "/nonexistent/telemetry-writer.json", "agent-lcars-work")
 	if err == nil {
 		t.Fatalf("expected an error building an id token source from a nonexistent key file")
-	}
-}
-
-// TestLaunchDirectRunnerOnHostLogsPlacementWithoutToken proves a successful
-// launch logs the run id and host (so an operator can find "which run
-// landed where" without grepping Docker), and proves the run token -- a
-// live credential -- never appears in that log line.
-func TestLaunchDirectRunnerOnHostLogsPlacementWithoutToken(t *testing.T) {
-	f := newFakeDockerServer(t)
-	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-
-	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
-
-	l := directRunnerLaunch{
-		runID:    "work:01QUEUEEXECUTORTESTFIX06/r1",
-		runToken: "super-secret-run-token",
-		pipeline: "claude",
-	}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, logger)
-	if err != nil {
-		t.Fatalf("launchDirectRunnerOnHost: %v", err)
-	}
-
-	logged := logBuf.String()
-	if !strings.Contains(logged, "Placed direct runner") {
-		t.Errorf("expected a placement log line, got %q", logged)
-	}
-	if !strings.Contains(logged, l.runID) {
-		t.Errorf("expected the log line to name the run id, got %q", logged)
-	}
-	if !strings.Contains(logged, "host-a") {
-		t.Errorf("expected the log line to name the host, got %q", logged)
-	}
-	if strings.Contains(logged, l.runToken) {
-		t.Fatalf("run token must never be logged, got %q", logged)
-	}
-}
-
-// TestLaunchDirectRunnerOnHostCreatesAndStartsWithEnv is the "fake launcher
-// interface asserting the docker-run env" case: it exercises
-// launchDirectRunnerOnHost against fakeDockerServer end to end and checks
-// exactly what a real docker daemon would have received -- image, the
-// RUNNER_MODE=direct/LCARS_RUN_ID/LCARS_RUN_TOKEN/LCARS_CONSOLE_URL env,
-// the telemetry-writer bind mount, and that ContainerStart was called.
-func TestLaunchDirectRunnerOnHostCreatesAndStartsWithEnv(t *testing.T) {
-	f := newFakeDockerServer(t)
-	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-
-	l := directRunnerLaunch{
-		runID:      "work:01QUEUEEXECUTORTESTFIX01/r1",
-		runToken:   "super-secret-run-token",
-		pipeline:   "claude",
-		consoleURL: "https://lcars.test",
-	}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
-	if err != nil {
-		t.Fatalf("launchDirectRunnerOnHost: %v", err)
-	}
-	if f.createCount() != 1 {
-		t.Fatalf("expected exactly one ContainerCreate, got %d", f.createCount())
-	}
-	if f.startCount() != 1 {
-		t.Fatalf("expected exactly one ContainerStart, got %d", f.startCount())
-	}
-
-	created := f.getLastCreate()
-	if created.Image != "registry/claude-image:latest" {
-		t.Errorf("expected image %q, got %q", "registry/claude-image:latest", created.Image)
-	}
-	if created.User != "runner" {
-		t.Errorf("expected user %q, got %q", "runner", created.User)
-	}
-	wantEnv := map[string]bool{
-		"RUNNER_MODE=direct":                            true,
-		"LCARS_RUN_ID=work:01QUEUEEXECUTORTESTFIX01/r1": true,
-		"LCARS_RUN_TOKEN=super-secret-run-token":        true,
-		"LCARS_CONSOLE_URL=https://lcars.test":          true,
-	}
-	if len(created.Env) != len(wantEnv) {
-		t.Fatalf("expected %d env entries, got %v", len(wantEnv), created.Env)
-	}
-	for _, e := range created.Env {
-		if !wantEnv[e] {
-			t.Errorf("unexpected env entry %q", e)
-		}
-	}
-	if created.Labels[directRunnerRunIDLabelKey] != l.runID {
-		t.Errorf("expected run-id label %q, got %q", l.runID, created.Labels[directRunnerRunIDLabelKey])
-	}
-	// Exactly two binds: the telemetry-writer key and the claude OAuth
-	// token file -- CLAUDE_CODE_OAUTH_TOKEN must never appear in Env above
-	// (asserted by the exact wantEnv count), only as this second file bind
-	// direct-runner.sh reads and exports at runtime.
-	wantBinds := map[string]bool{
-		"/secrets/telemetry-writer.json:" + directRunnerTelemetryWriterMountPath + ":ro": true,
-		"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro":   true,
-	}
-	if len(created.HostConfig.Binds) != len(wantBinds) {
-		t.Fatalf("expected %d binds, got %v", len(wantBinds), created.HostConfig.Binds)
-	}
-	for _, b := range created.HostConfig.Binds {
-		if !wantBinds[b] {
-			t.Errorf("unexpected bind %q", b)
-		}
-	}
-}
-
-func TestLaunchCodexDirectRunnerMountsNoProviderCredential(t *testing.T) {
-	f := newFakeDockerServer(t)
-	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-
-	l := directRunnerLaunch{
-		runID:      "work:01QUEUEEXECUTORTESTCODEX1/r1",
-		runToken:   "super-secret-run-token",
-		pipeline:   "codex",
-		consoleURL: "https://lcars.test",
-	}
-	if err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/codex-image:latest", "/secrets/telemetry-writer.json", nil, 1, l, discardLogger()); err != nil {
-		t.Fatalf("launchDirectRunnerOnHost: %v", err)
-	}
-	created := f.getLastCreate()
-	want := "/secrets/telemetry-writer.json:" + directRunnerTelemetryWriterMountPath + ":ro"
-	if len(created.HostConfig.Binds) != 1 || created.HostConfig.Binds[0] != want {
-		t.Fatalf("codex binds = %v, want only %q", created.HostConfig.Binds, want)
-	}
-	if got := created.HostConfig.Tmpfs[directRunnerCodexVolatileMountPath]; got != "rw,noexec,nosuid,nodev,mode=1777,size=64m" {
-		t.Fatalf("codex tmpfs = %q, want hardened volatile mount", got)
-	}
-	volatileEnv := "LCARS_CODEX_VOLATILE_DIR=" + directRunnerCodexVolatileMountPath
-	volatileEnvFound := false
-	for _, env := range created.Env {
-		if env == volatileEnv {
-			volatileEnvFound = true
-			break
-		}
-	}
-	if !volatileEnvFound {
-		t.Fatalf("codex volatile dir was not passed to the container: %v", created.Env)
-	}
-	for _, env := range created.Env {
-		if strings.Contains(strings.ToLower(env), "codex") && strings.Contains(strings.ToLower(env), "auth") {
-			t.Fatalf("Codex auth must not appear in container env: %q", env)
-		}
-	}
-}
-
-func TestLaunchOpenCodeDirectRunnerMountsOnlyProviderCredential(t *testing.T) {
-	f := newFakeDockerServer(t)
-	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-
-	l := directRunnerLaunch{
-		runID:      "work:01QUEUEEXECUTORTESTOPENCODE1/r1",
-		runToken:   "super-secret-run-token",
-		pipeline:   "opencode",
-		consoleURL: "https://lcars.test",
-	}
-	opencodeBind := "/secrets/opencode-llm-api-key:" + directRunnerOpenCodeTokenMountPath + ":ro"
-	if err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/opencode-image:latest", "/secrets/telemetry-writer.json", []string{opencodeBind}, 1, l, discardLogger()); err != nil {
-		t.Fatalf("launchDirectRunnerOnHost: %v", err)
-	}
-
-	created := f.getLastCreate()
-	wantBinds := map[string]bool{
-		"/secrets/telemetry-writer.json:" + directRunnerTelemetryWriterMountPath + ":ro": true,
-		opencodeBind: true,
-	}
-	if len(created.HostConfig.Binds) != len(wantBinds) {
-		t.Fatalf("opencode binds = %v, want %v", created.HostConfig.Binds, wantBinds)
-	}
-	for _, bind := range created.HostConfig.Binds {
-		if !wantBinds[bind] {
-			t.Fatalf("unexpected OpenCode bind %q", bind)
-		}
-	}
-	if len(created.HostConfig.Tmpfs) != 0 {
-		t.Fatalf("opencode must not receive Codex's auth tmpfs, got %v", created.HostConfig.Tmpfs)
-	}
-	for _, env := range created.Env {
-		if strings.Contains(env, "OPENCODE_LLM_API_KEY") {
-			t.Fatalf("OpenCode credential must not appear in Docker env: %q", env)
-		}
-	}
-}
-
-// TestLaunchDirectRunnerOnHostAtCapacity proves the concurrency cap refuses
-// to create a container at all once a host already has maxConcurrent
-// direct-runner containers running -- the queue-executor equivalent of
-// Scaler.checkHostRunnerLimit.
-func TestLaunchDirectRunnerOnHostAtCapacity(t *testing.T) {
-	f := newFakeDockerServer(t)
-	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-
-	// Simulate one already-running direct-runner container by making
-	// ContainerList report one match for the label filter.
-	f.mu.Lock()
-	f.containers = append(f.containers, container.Summary{ID: "existing", Labels: map[string]string{directRunnerLabelKey: "1"}})
-	f.mu.Unlock()
-
-	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX02/r1", runToken: "t", pipeline: "claude"}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
-	if err == nil {
-		t.Fatalf("expected an error when the host is already at its direct-runner cap")
-	}
-	if f.createCount() != 0 {
-		t.Fatalf("expected no ContainerCreate when at capacity, got %d", f.createCount())
-	}
-}
-
-func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits(t *testing.T) {
-	f := newFakeDockerServer(t)
-	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
-	owned := func(id string, created time.Time, state string) container.Summary {
-		return container.Summary{
-			ID:      id,
-			Created: created.Unix(),
-			State:   state,
-			Labels: map[string]string{
-				directRunnerLabelKey:      "1",
-				directRunnerRunIDLabelKey: "work:" + id + "/r1",
-			},
-		}
-	}
-
-	containers := []container.Summary{
-		// Six recent owned exits: retain the five newest and remove the sixth
-		// to keep an immediate per-host bound during a failure burst. Their
-		// creation times intentionally disagree with their exit times: a
-		// long-running newer failure must rank by FinishedAt, not Created.
-		owned("new-1", now.Add(-72*time.Hour), container.StateExited),
-		owned("new-2", now.Add(-48*time.Hour), container.StateExited),
-		owned("new-3", now.Add(-36*time.Hour), container.StateExited),
-		owned("new-4", now.Add(-24*time.Hour), container.StateExited),
-		owned("new-5", now.Add(-12*time.Hour), container.StateExited),
-		owned("over-limit", now.Add(-10*time.Minute), container.StateExited),
-		// A separately aged exit is removed by its actual finished time.
-		owned("aged", now.Add(-48*time.Hour), container.StateExited),
-		// A running direct runner must never be removed.
-		owned("active", now.Add(-48*time.Hour), container.StateRunning),
-		// Neither an Actions runner nor a malformed/foreign direct label is
-		// queue-executor ownership, regardless of age or state.
-		{ID: "actions-runner", Created: now.Add(-72 * time.Hour).Unix(), State: container.StateExited, Labels: map[string]string{"agent-lcars.scale-set": "claude"}},
-		{ID: "missing-run-id", Created: now.Add(-72 * time.Hour).Unix(), State: container.StateExited, Labels: map[string]string{directRunnerLabelKey: "1"}},
-		{ID: "wrong-owner", Created: now.Add(-72 * time.Hour).Unix(), State: container.StateExited, Labels: map[string]string{directRunnerLabelKey: "other", directRunnerRunIDLabelKey: "work:foreign/r1"}},
-	}
-	f.setContainers(containers)
-	for id, finishedAt := range map[string]time.Time{
-		"new-1":      now.Add(-1 * time.Hour),
-		"new-2":      now.Add(-2 * time.Hour),
-		"new-3":      now.Add(-3 * time.Hour),
-		"new-4":      now.Add(-4 * time.Hour),
-		"new-5":      now.Add(-5 * time.Hour),
-		"over-limit": now.Add(-6 * time.Hour),
-		"aged":       now.Add(-25 * time.Hour),
-	} {
-		f.setInspect(id, http.StatusOK, &container.State{Status: container.StateExited, FinishedAt: finishedAt.Format(time.RFC3339Nano)})
-	}
-	resolved := resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}
-	if err := cleanupExitedDirectRunners(context.Background(), resolved, newClient, now); err != nil {
-		t.Fatalf("cleanupExitedDirectRunners: %v", err)
-	}
-	removed := f.removedIDs()
-	if strings.Join(removed, ",") != "over-limit,aged" {
-		t.Fatalf("removed = %v, want only over-limit and aged owned exits", removed)
-	}
-	for i, forced := range f.removalsForced() {
-		if forced {
-			t.Fatalf("removal %d was forced; retention must let Docker refuse an active-state race", i)
-		}
-	}
-}
-
-func TestCleanupExitedDirectRunnersRetainsMalformedOrChangedExitState(t *testing.T) {
-	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
-	ownedExit := func(id string) container.Summary {
-		return container.Summary{
-			ID:      id,
-			Created: now.Add(-48 * time.Hour).Unix(),
-			State:   container.StateExited,
-			Labels:  map[string]string{directRunnerLabelKey: "1", directRunnerRunIDLabelKey: "work:" + id + "/r1"},
-		}
-	}
-	cases := []struct {
-		name       string
-		inspect    *container.State
-		wantErr    bool
-		wantRemove bool
-	}{
-		{
-			name:    "malformed FinishedAt is retained",
-			inspect: &container.State{Status: container.StateExited, FinishedAt: "not-a-timestamp"},
-			wantErr: true,
-		},
-		{
-			name:    "state changed after list is retained",
-			inspect: &container.State{Status: container.StateRunning},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newFakeDockerServer(t)
-			f.setContainers([]container.Summary{ownedExit("candidate")})
-			f.setInspect("candidate", http.StatusOK, tc.inspect)
-			newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-			err := cleanupExitedDirectRunners(context.Background(), resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}, newClient, now)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("cleanup error = %v, want error=%v", err, tc.wantErr)
-			}
-			if got := len(f.removedIDs()) > 0; got != tc.wantRemove {
-				t.Fatalf("removed=%v, want removed=%v", f.removedIDs(), tc.wantRemove)
-			}
-		})
-	}
-}
-
-func TestCleanupExitedDirectRunnersDeadlineBoundsStalledInspect(t *testing.T) {
-	f := newFakeDockerServer(t)
-	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
-	f.setContainers([]container.Summary{{
-		ID:      "stalled",
-		Created: now.Add(-48 * time.Hour).Unix(),
-		State:   container.StateExited,
-		Labels:  map[string]string{directRunnerLabelKey: "1", directRunnerRunIDLabelKey: "work:stalled/r1"},
-	}})
-	f.setInspect("stalled", http.StatusOK, &container.State{Status: container.StateExited, FinishedAt: now.Add(-25 * time.Hour).Format(time.RFC3339Nano)})
-	f.setInspectDelay(100 * time.Millisecond)
-	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	err := cleanupExitedDirectRunners(ctx, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}, newClient, now)
-	if err == nil {
-		t.Fatal("expected stalled inspection to hit the sweep deadline")
-	}
-	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
-		t.Fatalf("cleanup took %s after a 15ms deadline; inspection must be deadline-bounded", elapsed)
-	}
-	if removed := f.removedIDs(); len(removed) != 0 {
-		t.Fatalf("stalled inspection removed %v; uncertain exits must be retained", removed)
 	}
 }
 
@@ -1166,7 +663,7 @@ func TestQueueExecutorPollerCleanupDoesNotBlockClaims(t *testing.T) {
 		consoleURL: server.URL,
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "token", nil },
-		launch:     func(directRunnerLaunch) error { return nil },
+		reserve:    reserveFor(func(directRunnerLaunch) error { return nil }),
 		cleanup: func(cleanupCtx context.Context) error {
 			close(cleanupStarted)
 			<-cleanupCtx.Done()
@@ -1241,106 +738,6 @@ func TestPollOnceLeavesClaimQueuedUntilReservedCapacityIsAvailable(t *testing.T)
 	}
 }
 
-func TestPollOnceReservedCapacityLaunchesExactlyOnce(t *testing.T) {
-	t.Setenv("LCARS_QUEUE_MAX_CONCURRENT", "1")
-	t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
-	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
-
-	docker := newFakeDockerServer(t)
-	docker.setContainers([]container.Summary{{
-		ID:     "existing-direct-runner",
-		State:  container.StateRunning,
-		Labels: map[string]string{directRunnerLabelKey: "1"},
-	}})
-	newClient := func(target string) (*dockerclient.Client, error) {
-		if target != "fake-target" {
-			t.Fatalf("unexpected docker target %q", target)
-		}
-		return docker.client(t), nil
-	}
-	reservations := newDirectRunnerCapacityReservations(
-		testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}),
-		newClient,
-		discardLogger(),
-	)
-
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"runId":"work:01RESERVEDLAUNCH/r1","token":"token","pipeline":"codex"}`)
-	}))
-	defer server.Close()
-
-	cfg := queueExecutorConfig{
-		consoleURL: server.URL,
-		runnerName: "test-runner",
-		idToken:    func() (string, error) { return "token", nil },
-		reserve:    func() (*directRunnerReservation, error) { return reservations.reserve(context.Background()) },
-	}
-	outcome, err := pollOnceWithOutcome(cfg)
-	if err != nil || outcome != queuePollOutcomeCapacityWait {
-		t.Fatalf("full-fleet poll = (%q, %v), want capacity_wait", outcome, err)
-	}
-	if requests != 0 || docker.createCount() != 0 {
-		t.Fatalf("full-fleet poll side effects: requests=%d creates=%d, want 0 each", requests, docker.createCount())
-	}
-
-	docker.setContainers(nil)
-	outcome, err = pollOnceWithOutcome(cfg)
-	if err != nil || outcome != queuePollOutcomeClaimed {
-		t.Fatalf("reserved poll = (%q, %v), want claimed", outcome, err)
-	}
-	if requests != 1 || docker.createCount() != 1 {
-		t.Fatalf("reserved poll side effects: requests=%d creates=%d, want 1 each", requests, docker.createCount())
-	}
-}
-
-func TestDirectRunnerCapacityReservationsDoNotDoubleReserveOneSlot(t *testing.T) {
-	t.Setenv("LCARS_QUEUE_MAX_CONCURRENT", "1")
-	docker := newFakeDockerServer(t)
-	reservations := newDirectRunnerCapacityReservations(
-		testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}),
-		func(string) (*dockerclient.Client, error) { return docker.client(t), nil },
-		discardLogger(),
-	)
-
-	start := make(chan struct{})
-	results := make(chan *directRunnerReservation, 2)
-	errs := make(chan error, 2)
-	for range 2 {
-		go func() {
-			<-start
-			reservation, err := reservations.reserve(context.Background())
-			results <- reservation
-			errs <- err
-		}()
-	}
-	close(start)
-
-	var held *directRunnerReservation
-	available := 0
-	for range 2 {
-		if err := <-errs; err != nil {
-			t.Fatalf("reserve: %v", err)
-		}
-		reservation := <-results
-		if reservation != nil {
-			available++
-			held = reservation
-		}
-	}
-	if available != 1 {
-		t.Fatalf("concurrent reservations available = %d, want exactly 1", available)
-	}
-	held.release()
-	afterRelease, err := reservations.reserve(context.Background())
-	if err != nil || afterRelease == nil {
-		t.Fatalf("reserve after release = (%v, %v), want capacity", afterRelease, err)
-	}
-	afterRelease.release()
-}
-
 func TestPollOnceReleasesReservationOnEveryExit(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1354,7 +751,7 @@ func TestPollOnceReleasesReservationOnEveryExit(t *testing.T) {
 		{name: "idle empty", status: http.StatusOK, body: `{}`},
 		{name: "authentication error", tokenErr: errors.New("no identity"), wantError: true},
 		{name: "claim rejected", status: http.StatusUnauthorized, wantError: true},
-		{name: "launch error", status: http.StatusOK, body: `{"runId":"work:01RELEASE/r1","token":"token","pipeline":"codex"}`, launchErr: errors.New("docker start failed"), wantError: true},
+		{name: "launch error", status: http.StatusOK, body: `{"runId":"work:01RELEASE/r1","token":"token","pipeline":"codex"}`, launchErr: errors.New("job create failed"), wantError: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1392,113 +789,18 @@ func TestPollOnceDoesNotClaimWhenCapacityInventoryFails(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	reservations := newDirectRunnerCapacityReservations(
-		testQueueResolved(t, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=unreachable"}}),
-		func(string) (*dockerclient.Client, error) { return nil, errors.New("docker unavailable") },
-		discardLogger(),
-	)
-
 	outcome, err := pollOnceWithOutcome(queueExecutorConfig{
 		consoleURL: server.URL,
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "token", nil },
-		reserve:    func() (*directRunnerReservation, error) { return reservations.reserve(context.Background()) },
+		reserve: func() (*directRunnerReservation, error) {
+			return nil, errors.New("listing queue Jobs: apiserver unavailable")
+		},
 	})
 	if err == nil || outcome != queuePollOutcomePollError {
 		t.Fatalf("inventory-failed poll = (%q, %v), want poll_error", outcome, err)
 	}
 	if requests != 0 {
 		t.Fatalf("inventory failure made %d claim requests, want 0", requests)
-	}
-}
-
-// TestLaunchDirectRunnerRoundRobinsPastAFullHost exercises the whole
-// launchDirectRunner round-robin: the first configured host is at capacity,
-// so the container must land on the second.
-func TestLaunchDirectRunnerRoundRobinsPastAFullHost(t *testing.T) {
-	t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
-	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
-	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
-
-	full := newFakeDockerServer(t)
-	full.mu.Lock()
-	full.containers = append(full.containers, container.Summary{ID: "existing", Labels: map[string]string{directRunnerLabelKey: "1"}})
-	full.mu.Unlock()
-
-	spare := newFakeDockerServer(t)
-
-	resolved := resolvedOrchestratorConfig{
-		DockerHosts: []string{"full=fake-target-full", "spare=fake-target-spare"},
-	}
-	newClient := func(target string) (*dockerclient.Client, error) {
-		switch target {
-		case "fake-target-full":
-			return full.client(t), nil
-		case "fake-target-spare":
-			return spare.client(t), nil
-		default:
-			t.Fatalf("unexpected docker target %q", target)
-			return nil, nil
-		}
-	}
-	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX03/r1", runToken: "t", pipeline: "claude"}
-
-	if err := launchDirectRunnerWithClient(context.Background(), testQueueResolved(t, resolved), l, newClient, discardLogger()); err != nil {
-		t.Fatalf("launchDirectRunnerWithClient: %v", err)
-	}
-	if full.createCount() != 0 {
-		t.Errorf("expected the full host to receive no create, got %d", full.createCount())
-	}
-	if spare.createCount() != 1 {
-		t.Errorf("expected the spare host to receive exactly one create, got %d", spare.createCount())
-	}
-}
-
-func TestLaunchDirectRunnerCodexDoesNotRequireClaudeTokenPath(t *testing.T) {
-	t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
-	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "")
-	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
-
-	f := newFakeDockerServer(t)
-	resolved := resolvedOrchestratorConfig{
-		DockerHosts: []string{"host-a=fake-target"},
-	}
-	newClient := func(target string) (*dockerclient.Client, error) {
-		if target != "fake-target" {
-			t.Fatalf("unexpected docker target %q", target)
-		}
-		return f.client(t), nil
-	}
-	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTCODEX2/r1", runToken: "t", pipeline: "codex"}
-
-	snapshot := testQueueResolved(t, resolved)
-	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "")
-	if err := launchDirectRunnerWithClient(context.Background(), snapshot, l, newClient, discardLogger()); err != nil {
-		t.Fatalf("launchDirectRunnerWithClient: %v", err)
-	}
-	if f.createCount() != 1 {
-		t.Fatalf("expected one Codex container, got %d", f.createCount())
-	}
-}
-
-// TestLaunchDirectRunnerOnHostRemovesContainerOnStartFailure mirrors
-// Scaler.startRunner's own cleanup-on-start-failure: a container that was
-// created but never started must not be left behind as a stopped ghost.
-func TestLaunchDirectRunnerOnHostRemovesContainerOnStartFailure(t *testing.T) {
-	f := newFakeDockerServer(t)
-	f.setStartFailures(http.StatusInternalServerError)
-	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
-
-	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX04/r1", runToken: "t", pipeline: "claude"}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
-	if err == nil {
-		t.Fatalf("expected an error when ContainerStart fails")
-	}
-	if f.createCount() != 1 {
-		t.Fatalf("expected exactly one ContainerCreate, got %d", f.createCount())
-	}
-	removed := f.removedIDs()
-	if len(removed) != 1 || removed[0] != "created-container" {
-		t.Fatalf("expected the failed-to-start container to be removed, got %v", removed)
 	}
 }

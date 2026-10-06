@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only direct-runner evidence, executed on the configured SSH bastion."""
+"""Read-only QueueExecutor Job evidence, executed on the configured SSH bastion."""
 import json
 import os
 from pathlib import Path
@@ -8,7 +8,6 @@ import shlex
 import subprocess
 import sys
 import time
-from urllib.parse import urlsplit
 
 
 class ProbeError(Exception):
@@ -52,21 +51,6 @@ def deployment_config(config):
         raise ProbeError('cannot read queue deployment configuration') from error
 
 
-def hosts(config):
-    """Use the running autoscaler's fleet inventory, not a copied host list."""
-    try:
-        inventory = deployment_config(config)['fleet']['hosts']
-        selected = config.get('hosts', '').split()
-        available = {h['name']: h['docker'] for h in inventory}
-        unknown = set(selected) - available.keys()
-        if unknown:
-            raise ProbeError('unknown configured hosts: ' + ', '.join(sorted(unknown)))
-        return [(name, endpoint) for name, endpoint in available.items()
-                if not selected or name in selected]
-    except (KeyError, TypeError) as error:
-        raise ProbeError('cannot read fleet host inventory') from error
-
-
 def kubernetes_context(config, deployment):
     queue = deployment['kubernetes']
     namespace = queue['namespace']
@@ -86,8 +70,6 @@ def kubernetes_context(config, deployment):
 
 
 def probe_kubernetes(config, deployment):
-    if config.get('hosts'):
-        raise ProbeError('DEBUG_RUN_HOSTS is Docker-only; select an exact Kubernetes run instead')
     base = kubernetes_context(config, deployment)
     jobs = json.loads(command(base + ['get', 'jobs', '-l', 'agent-lcars.queue-job=true', '-o', 'json']))['items']
     pods = json.loads(command(base + ['get', 'pods', '-l', 'agent-lcars.queue-job=true', '-o', 'json']))['items']
@@ -147,20 +129,6 @@ def probe_kubernetes(config, deployment):
     return 1 if failures else 0
 
 
-def host_command(endpoint, args, config):
-    if endpoint == 'local':
-        return command(args)
-    address = urlsplit(endpoint)
-    if address.scheme != 'ssh' or not address.hostname or address.password:
-        raise ProbeError('unsupported Docker endpoint; expected local or ssh')
-    target = (address.username + '@' if address.username else '') + address.hostname
-    ssh = ['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6',
-           '-i', os.path.expanduser(config.get('key', '~/p/homelab/ansible/ssh_key/id_ed25519'))]
-    if address.port:
-        ssh += ['-p', str(address.port)]
-    return command(ssh + [target, shlex.join(args)])
-
-
 def matches(run_id, selector):
     if not selector:
         return True
@@ -170,9 +138,6 @@ def matches(run_id, selector):
     return run_id == selector or run_id.startswith(selector + '/r')
 
 
-INSPECT = ('[{{json .Name}},{{json .State.Status}},{{json .State.ExitCode}},'
-           '{{json (index .Config.Labels "agent-lcars.direct-runner.run-id")}},'
-           '{{json .State.StartedAt}},{{json .State.FinishedAt}}]')
 WORKTREES = r'''
 found=0
 for root in /tmp/agent-lcars-direct/checkout /home/runner/_work/*/*; do
@@ -200,58 +165,11 @@ done
 '''
 
 
-def probe_host(name, endpoint, config):
-    run = lambda args: host_command(endpoint, args, config)
-    ids = run(['docker', 'ps', '-a', '--filter', 'label=agent-lcars.direct-runner',
-               '--format', '{{.ID}}']).splitlines()
-    count = 0
-    failures = 0
-    deadline = time.monotonic() + 30
-    # Retention is bounded by the autoscaler; also bound pathological inventories.
-    if len(ids) > 100:
-        print(f'[{name}] inventory truncated to 100 containers')
-    for container_id in ids[:100]:
-        if time.monotonic() >= deadline:
-            print(f'[{name}] host inspection exceeded 30 seconds; results incomplete')
-            return count, failures + 1
-        try:
-            container, state, exit_code, run_id, started, finished = json.loads(
-                run(['docker', 'inspect', '--format', INSPECT, container_id]))
-            if not isinstance(run_id, str) or not matches(run_id, config.get('selector', '')):
-                continue
-            if config.get('selector', '').isdecimal() and not run_id.startswith(config['repo'] + '#'):
-                continue
-            count += 1
-            print(f'[{name}] {container.lstrip("/")} run={run_id} state={state} '
-                  f'exit={exit_code} started={started} finished={finished}', flush=True)
-            if state == 'running':
-                print(run(['docker', 'exec', container_id, 'sh', '-c', WORKTREES]), end='')
-        except (ProbeError, ValueError) as error:
-            failures += 1
-            print(f'[{name}] container {container_id}: {error}')
-    return count, failures
-
-
 def probe(config):
     deployment = deployment_config(config)
-    if deployment.get('kubernetes') is not None:
-        return probe_kubernetes(config, deployment)
-    count = 0
-    failures = 0
-    deadline = time.monotonic() + 240
-    for name, endpoint in hosts(config):
-        if time.monotonic() >= deadline:
-            print('Scan exceeded 240 seconds; remaining hosts were not inspected')
-            return 1
-        try:
-            found, incomplete = probe_host(name, endpoint, config)
-            count += found
-            failures += incomplete
-        except (ProbeError, ValueError) as error:
-            failures += 1
-            print(f'[{name}] unavailable: {error}', flush=True)
-    print(f'Matching direct runners: {count}; incomplete probes: {failures}')
-    return 1 if failures else 0
+    if deployment.get('kubernetes') is None:
+        raise ProbeError('queue deployment has no kubernetes section; Kubernetes Jobs are the only backend')
+    return probe_kubernetes(config, deployment)
 
 
 def main():
@@ -266,8 +184,8 @@ def main():
         return 2
     config = {'selector': sys.argv[1] if len(sys.argv) == 2 else '',
               'repo': os.environ.get('DEBUG_RUN_REPO', 'jlapenna/agent-lcars')}
-    for key in ('config', 'hosts', 'key', 'autoscaler', 'kubeconfig', 'kube_worktrees'):
-        value = os.environ.get('DEBUG_RUN_' + ('FLEET_KEY' if key == 'key' else key.upper()))
+    for key in ('config', 'autoscaler', 'kubeconfig', 'kube_worktrees'):
+        value = os.environ.get('DEBUG_RUN_' + key.upper())
         if value:
             config[key] = value
     bastion = os.environ.get('DEBUG_RUN_BASTION', 'homelab@homelab.lan.jlapenna.net')

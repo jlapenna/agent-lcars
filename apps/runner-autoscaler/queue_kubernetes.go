@@ -569,11 +569,11 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 		}
 	}
 	sort.Slice(completed, func(i, j int) bool { return queueJobFinishedAt(completed[i]).After(queueJobFinishedAt(completed[j])) })
-	// The Docker backend retained at most five exited containers per capacity
-	// slot/host. Keep the aggregate evidence bound after Kubernetes cutover.
+	// Keep a bounded number of recent finished Jobs (and their Pod logs) per
+	// capacity slot; the Job TTL controller removes the rest after a day.
 	for i, j := range completed {
 		finished := queueJobFinishedAt(j)
-		if finished.IsZero() || (i < q.config.MaxConcurrent*directRunnerExitedRetentionLimit && time.Since(finished) < directRunnerExitedRetentionAge) {
+		if finished.IsZero() || (i < q.config.MaxConcurrent*queueJobRetentionPerSlot && time.Since(finished) < queueJobRetentionAge) {
 			continue
 		}
 		uid, rv := j.UID, j.ResourceVersion
@@ -582,15 +582,6 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// Startup's third required value is a Secret name for Kubernetes, a Docker
-// host path for the compatibility backend. Neither exposes secret contents.
-func queueWriterRequirement(resolved resolvedOrchestratorConfig) string {
-	if resolved.Raw.Kubernetes != nil {
-		return resolved.Raw.Kubernetes.CredentialsSecret
-	}
-	return os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH")
 }
 
 func queueJobFinishedAt(job batch.Job) time.Time {

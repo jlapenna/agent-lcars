@@ -16,8 +16,8 @@ import (
 // runExitReportedRetention bounds the reporter's memory of runs it already
 // reported. It only has to outlive the queue's own evidence retention: a
 // terminal Job older than this has been deleted (TTL and cleanup both stop
-// at directRunnerExitedRetentionAge), so it can never be observed again.
-const runExitReportedRetention = 2 * directRunnerExitedRetentionAge
+// at queueJobRetentionAge), so it can never be observed again.
+const runExitReportedRetention = 2 * queueJobRetentionAge
 
 // runExitReporter tells the Work API the moment a claimed run's worker
 // terminates, so a worker that died without reporting its outcome (OOM,

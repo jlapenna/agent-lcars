@@ -262,7 +262,7 @@ func TestKubernetesRetentionBoundsExitedEvidenceWithoutTouchingActiveJob(t *test
 	q, c := kubeQueueFixture()
 	ctx := context.Background()
 	q.config.MaxConcurrent = 1
-	for i := range directRunnerExitedRetentionLimit + 2 {
+	for i := range queueJobRetentionPerSlot + 2 {
 		j := &batch.Job{ObjectMeta: meta.ObjectMeta{Name: fmt.Sprintf("finished-%02d", i), Namespace: q.config.Namespace, Labels: map[string]string{queueJobLabel: "true"}}, Status: batch.JobStatus{Conditions: []batch.JobCondition{{Type: batch.JobFailed, Status: core.ConditionTrue, LastTransitionTime: meta.NewTime(time.Now().Add(-time.Duration(i) * time.Minute))}}}}
 		if err := c.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), j, q.config.Namespace); err != nil {
 			t.Fatal(err)
@@ -276,7 +276,7 @@ func TestKubernetesRetentionBoundsExitedEvidenceWithoutTouchingActiveJob(t *test
 		t.Fatal(err)
 	}
 	jobs, _ := c.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{})
-	if len(jobs.Items) != directRunnerExitedRetentionLimit+1 {
+	if len(jobs.Items) != queueJobRetentionPerSlot+1 {
 		t.Fatal("exited retention did not enforce capacity bound")
 	}
 	if _, err := c.BatchV1().Jobs(q.config.Namespace).Get(ctx, "running", meta.GetOptions{}); err != nil {

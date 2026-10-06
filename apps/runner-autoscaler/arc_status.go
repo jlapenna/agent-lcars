@@ -164,3 +164,26 @@ func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPubli
 		}
 	}
 }
+
+// splitPrometheusSample splits one exposition line into its metric name and
+// everything after it (the value, and an optional trailing timestamp).
+// Splitting the whole line on whitespace would misparse a labeled sample whose
+// label value itself contains a space followed by a number: in
+// `metric{reason="on 1 battery"} 0` the second whitespace field is "1", not
+// the real value "0". Treating everything after the last '}' as the value
+// avoids that, and a line with no labels falls back to the first whitespace.
+func splitPrometheusSample(line string) (name, rest string, ok bool) {
+	braceIdx := strings.IndexByte(line, '{')
+	spaceIdx := strings.IndexAny(line, " \t")
+	if braceIdx < 0 || (spaceIdx >= 0 && spaceIdx < braceIdx) {
+		if spaceIdx < 0 {
+			return "", "", false
+		}
+		return line[:spaceIdx], line[spaceIdx+1:], true
+	}
+	closeIdx := strings.LastIndexByte(line, '}')
+	if closeIdx < braceIdx {
+		return "", "", false
+	}
+	return line[:braceIdx], line[closeIdx+1:], true
+}
