@@ -207,7 +207,9 @@ routing for fork pull requests. Secret scanning can use the same setup action
 without changing its check name, commit range, redaction or repository config.
 
 `repo-validation.yml` also runs repo-tools' `repo-check-runner-labels` at a
-pinned commit. It fails when a job's `runs-on` pairs `self-hosted` with a label
+pinned commit, in its own GitHub-hosted `runner label combinations` job so it
+still reports when the caller's validation pool is itself misrouted; the
+required `repository validation` job fails unless that job succeeded. It fails when a job's `runs-on` pairs `self-hosted` with a label
 the caller declares under `self-hosted-runner.labels` in
 `.github/actionlint.yaml`: fleet labels are runner scale sets, which match only
 their own name, so that combination never schedules. Declaring the repo's pool
