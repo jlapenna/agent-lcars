@@ -63,7 +63,11 @@ instruction contract; do not vendor fleet execution implementation.
 
 - Add the thin `agent-automerge` and `repo-validation` callers. Keep
   repository validation runnable on GitHub-hosted runners so it can establish
-  a baseline before self-hosted capacity is healthy.
+  a baseline before self-hosted capacity is healthy. Declare the repository's
+  runner scale-set labels under `self-hosted-runner.labels` in
+  `.github/actionlint.yaml`; repository validation uses that list to reject
+  `self-hosted` paired with a scale-set label. Give App-enabled
+  `agent-automerge` callers event triggers and at most a daily backstop.
 - Add `.github/workflows/gitleaks.yml` before making the `gitleaks` context
   required. Start from homelab's pinned, full-history scanner shape: read-only
   `contents` and `pull-requests` permissions, `fetch-depth: 0`, a named
