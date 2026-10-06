@@ -30,27 +30,21 @@ func main() {
 
 var cmd = &cobra.Command{
 	Use:   "runner-orchestrator",
-	Short: "Run the LCARS queue executor, launching direct workers through Kubernetes or Docker",
+	Short: "Run the LCARS queue executor, launching direct workers as Kubernetes Jobs",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		resolved, err := loadOrchestratorConfig(orchestratorConfigPath)
 		if err != nil {
 			return err
 		}
-		for _, warning := range resolved.Warnings {
-			slog.Default().Warn(warning)
-		}
 		if err := validateQueueExecutorEnvironment(resolved); err != nil {
 			return err
 		}
 		if checkOrchestratorConfig {
-			if resolved.Raw.Kubernetes != nil {
-				// Use the same non-mutating fleet preflight as startup before a
-				// deployment stops its old controller. SSAR checks permissions;
-				// no Job, Secret or worker is created here.
-				_, err := newKubernetesQueue(cmd.Context(), *resolved.Raw.Kubernetes, slog.Default())
-				return err
-			}
-			return nil
+			// Use the same non-mutating preflight as startup before a
+			// deployment stops its old controller. SSAR checks permissions;
+			// no Job, Secret or worker is created here.
+			_, err := newKubernetesQueue(cmd.Context(), *resolved.Raw.Kubernetes, slog.Default())
+			return err
 		}
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()

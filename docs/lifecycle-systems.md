@@ -65,12 +65,13 @@ management was retired in that issue's Phase 3. What remains:
 
 - `agent-lcars` owns the LCARS QueueExecutor's provider configuration and
   direct-runner image (not a GitHub-registered runner).
-- Homelab owns the Docker fleet (`orchestrator.yml`'s `fleet.hosts`),
-  credentials, and the running queue-executor process, plus the separate
-  ARC `AutoscalingRunnerSet` configuration for GitHub Actions runner lanes.
-- A Homelab configuration change requires its supported reload (Docker
-  hosts) or restart (queue executor settings); an Agent LCARS change cannot
-  provision missing capacity.
+- Homelab owns the queue's Kubernetes deployment (`orchestrator.yml`'s
+  `kubernetes` stanza: namespace, RBAC, node labels, Secret values, and
+  sizing), credentials, and the running queue-executor process, plus the
+  separate ARC `AutoscalingRunnerSet` configuration for GitHub Actions runner
+  lanes. Kubernetes Jobs are the queue executor's only backend.
+- A Homelab configuration change requires a queue-executor restart; an Agent
+  LCARS change cannot provision missing capacity.
 
 ## Worker runtime boundary
 

@@ -105,8 +105,8 @@ maintenance ticker calls `/api/work/v1/maintenance/tick` using its existing
   this; any other executor gets 403. Runs that already reported are left
   unchanged, so the executor reports every exit. The 2-hour lease (`decide.ts`'s
   `RUN_LEASE_MS`), extended by dispatch, claim, or renewal, remains the
-  backstop for what the executor cannot see -- a failed launch, an executor
-  outage, or the Docker compatibility backend: once the lease is past due,
+  backstop for what the executor cannot see -- a failed launch or an
+  executor outage: once the lease is past due,
   the maintenance tick marks the run `lost` and releases the task's mutex.
   There is nothing for you to hand-repair here; you do not need to
   reconstruct or edit any state.

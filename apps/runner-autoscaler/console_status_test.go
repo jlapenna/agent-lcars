@@ -10,9 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/docker/docker/api/types/container"
-	dockerclient "github.com/docker/docker/client"
 )
 
 func TestQueueExecutorStatusSnapshotReportsOnlyTruthfulWorkerHealth(t *testing.T) {
@@ -40,29 +37,10 @@ func TestQueueExecutorStatusSnapshotReportsOnlyTruthfulWorkerHealth(t *testing.T
 		t.Fatalf("unexpected ready queue status: %#v", ready)
 	}
 
-	source.activeRuns = func(context.Context) (int, error) { return 0, errors.New("docker unavailable") }
+	source.activeRuns = func(context.Context) (int, error) { return 0, errors.New("apiserver unavailable") }
 	unknownActive := source.snapshot(context.Background(), now)
 	if unknownActive.ActiveRuns != nil {
-		t.Fatalf("active runs = %v, want omitted when host read fails", *unknownActive.ActiveRuns)
-	}
-}
-
-func TestActiveDirectRunnerCountCountsOnlyOwnedRunningContainers(t *testing.T) {
-	f := newFakeDockerServer(t)
-	f.setContainers([]container.Summary{
-		{ID: "owned-running", Labels: map[string]string{directRunnerLabelKey: "1", directRunnerRunIDLabelKey: "work:abc/r1"}},
-		{ID: "missing-run-id", Labels: map[string]string{directRunnerLabelKey: "1"}},
-		{ID: "unrelated", Labels: map[string]string{"other": "1"}},
-	})
-	newClient := func(string) (*dockerclient.Client, error) { return f.client(t), nil }
-	resolved := resolvedOrchestratorConfig{DockerHosts: []string{"host-a=local"}}
-
-	active, err := activeDirectRunnerCount(context.Background(), resolved, newClient)
-	if err != nil {
-		t.Fatalf("activeDirectRunnerCount: %v", err)
-	}
-	if active != 1 {
-		t.Fatalf("active direct runners = %d, want 1", active)
+		t.Fatalf("active runs = %v, want omitted when the inventory read fails", *unknownActive.ActiveRuns)
 	}
 }
 

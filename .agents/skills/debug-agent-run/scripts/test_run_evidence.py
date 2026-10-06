@@ -15,34 +15,6 @@ spec.loader.exec_module(evidence)
 
 
 class EvidenceTest(unittest.TestCase):
-    def test_filter_and_retained_exit_never_exec_stopped_container(self):
-        calls = []
-        def run(endpoint, args, config):
-            calls.append(args)
-            if args[1] == 'ps':
-                return 'live\nstopped\nother\notherrepo\n'
-            if args[1] == 'inspect':
-                cid = args[-1]
-                run_id = {'other': 'jlapenna/agent-lcars#1902/r1',
-                          'otherrepo': 'someone/else#1901/r1'}.get(cid, 'jlapenna/agent-lcars#1901/r2')
-                return json.dumps([cid, 'exited' if cid == 'stopped' else 'running',
-                                   22 if cid == 'stopped' else 0, run_id, 'start', 'finish'])
-            return '    worktree=/tmp/task commits=2 dirty=3\n'
-        output = io.StringIO()
-        with patch.object(evidence, 'host_command', side_effect=run), contextlib.redirect_stdout(output):
-            count = evidence.probe_host('pike', 'local', {'selector': '1901', 'repo': 'jlapenna/agent-lcars'})
-        self.assertEqual(count, (2, 0))
-        self.assertIn('state=exited exit=22', output.getvalue())
-        self.assertIn('commits=2 dirty=3', output.getvalue())
-        self.assertEqual([a[2] for a in calls if a[1] == 'exec'], ['live'])
-        self.assertNotIn('1902', output.getvalue())
-        self.assertNotIn('someone/else', output.getvalue())
-
-    def test_container_inspection_failure_is_not_a_successful_empty_scan(self):
-        with patch.object(evidence, 'host_command', side_effect=['vanished\n', evidence.ProbeError('inspect failed')]), \
-             contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(evidence.probe_host('pike', 'local', {}), (0, 1))
-
     def test_full_run_and_anchor_selectors(self):
         run = 'work:01ABC/r2'
         self.assertTrue(evidence.matches(run, 'work:01ABC'))
@@ -50,15 +22,10 @@ class EvidenceTest(unittest.TestCase):
         self.assertFalse(evidence.matches(run, 'work:01ABC/r1'))
         self.assertFalse(evidence.matches('repo#19010/r1', '1901'))
 
-    def test_unavailable_host_keeps_other_evidence_and_returns_failure(self):
-        output = io.StringIO()
-        with patch.object(evidence, 'deployment_config', return_value={'fleet': {}}), \
-             patch.object(evidence, 'hosts', return_value=[('down', 'local'), ('up', 'local')]), \
-             patch.object(evidence, 'probe_host', side_effect=[evidence.ProbeError('timed out'), (1, 0)]), \
-             contextlib.redirect_stdout(output):
-            self.assertEqual(evidence.probe({}), 1)
-        self.assertIn('[down] unavailable: timed out', output.getvalue())
-        self.assertIn('Matching direct runners: 1; incomplete probes: 1', output.getvalue())
+    def test_deployment_without_kubernetes_is_refused(self):
+        with patch.object(evidence, 'deployment_config', return_value={'fleet': {}}):
+            with self.assertRaisesRegex(evidence.ProbeError, 'no kubernetes section'):
+                evidence.probe({})
 
     def test_worktree_probe_reports_edits_outside_clean_primary(self):
         with tempfile.TemporaryDirectory() as directory:

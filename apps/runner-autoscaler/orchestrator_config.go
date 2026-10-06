@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 
@@ -11,28 +10,28 @@ import (
 )
 
 // OrchestratorConfig is the configuration surface for the LCARS queue
-// executor: which Docker hosts it may launch direct runners on, plus server
-// basics (metrics bind, log level/format).
+// executor: the Kubernetes Job backend it launches direct runners through,
+// the ARC lanes it reports status for, and server basics (metrics bind, log
+// level/format).
 //
-// GitHub, Registrations, and ScaleSets are retired scale-set runner
-// management (homelab#1623 Phase 3 deleted that code; see
-// apps/runner-autoscaler/README.md). They are decoded into `any` -- not
-// removed from the struct -- purely so the still-live homelab
-// orchestrator.yml (which has not yet had its own follow-up cleanup PR, see
-// that file's own retirement notes) keeps parsing under this decoder's
-// KnownFields(true) instead of refusing to start. resolve's legacyWarnings
-// logs a warning naming every ignored section so the file's dead weight is
-// visible rather than silent; nothing under them is read.
+// The retired fields below are decoded (as raw nodes, so even an empty
+// `fleet:` counts as present) only so loadOrchestratorConfig can
+// reject them with an error naming the key, instead of the YAML decoder's
+// bare "field not found". Nothing reads them: the scale-set runner manager
+// (github, registrations, scale_sets, server.state_path) was retired by
+// homelab#1623 Phase 3, and the Docker execution backend (every fleet.* key:
+// SSH/Docker host inventory, per-host readiness gates, and the scale-set
+// placement knobs) was removed once Kubernetes Jobs became the only backend.
 type OrchestratorConfig struct {
 	Version    int                    `yaml:"version"`
 	Server     OrchestratorServer     `yaml:"server"`
-	Fleet      OrchestratorFleet      `yaml:"fleet"`
 	ARCLanes   []arcLaneConfig        `yaml:"arc_lanes,omitempty"`
 	Kubernetes *queueKubernetesConfig `yaml:"kubernetes,omitempty"`
 
-	GitHubLegacy        any `yaml:"github,omitempty"`
-	RegistrationsLegacy any `yaml:"registrations,omitempty"`
-	ScaleSetsLegacy     any `yaml:"scale_sets,omitempty"`
+	FleetRetired         yaml.Node `yaml:"fleet,omitempty"`
+	GitHubRetired        yaml.Node `yaml:"github,omitempty"`
+	RegistrationsRetired yaml.Node `yaml:"registrations,omitempty"`
+	ScaleSetsRetired     yaml.Node `yaml:"scale_sets,omitempty"`
 }
 
 type OrchestratorServer struct {
@@ -40,92 +39,13 @@ type OrchestratorServer struct {
 	LogLevel    string `yaml:"log_level,omitempty"`
 	LogFormat   string `yaml:"log_format,omitempty"`
 
-	// StatePathLegacy was the scale-set control plane's checkpoint file
-	// (homelab#487). The queue executor's own restart story is a Docker-label
-	// scan (queue_recovery.go's recoverCreatedDirectRunners), which needs no
-	// checkpoint, so this is retired along with the rest of the scale-set
-	// runtime -- see this file's package doc.
-	StatePathLegacy string `yaml:"state_path,omitempty"`
-}
-
-type OrchestratorFleet struct {
-	// Hosts is almost all of fleet.* the queue executor actually reads: the
-	// host name, Docker transport (newDockerClient's "local" / "ssh://..."
-	// target, via resolvedOrchestratorConfig.DockerHosts), and each host's
-	// optional per-launch readiness gate (resolvedOrchestratorConfig.Readiness
-	// -- see FleetHostConfig.ReadinessURL). direct_runner_preflight.go's own
-	// startup preflight -- not any of the legacy per-host keys below --
-	// decides which configured hosts ever enter the launch pool; readiness is
-	// evaluated separately, per launch, by directRunnerCapacityReservations.
-	Hosts []FleetHostConfig `yaml:"hosts"`
-
-	MaxRunnersLegacy         any `yaml:"max_runners,omitempty"`
-	PlacementLegacy          any `yaml:"placement,omitempty"`
-	FileMountAllowlistLegacy any `yaml:"file_mount_allowlist,omitempty"`
-}
-
-type FleetHostConfig struct {
-	Name   string `yaml:"name"`
-	Docker string `yaml:"docker"`
-
-	// ReadinessURL, when set, is a Prometheus-exposition HTTP endpoint (for
-	// example a node-exporter textfile collector) this host's eligibility for
-	// a direct-runner launch is gated on -- see
-	// directRunnerCapacityReservations.reserve in queue_executor.go and
-	// fetchHostReadiness in host_readiness.go. It deliberately carries no
-	// opinion about what produces the metric (Tailscale presence, mains
-	// power, anything else): that knowledge belongs to the deployment that
-	// sets this value, never to this binary (AGENTS.md's cross-repository
-	// independence rule). A host with no ReadinessURL is always eligible --
-	// today's behavior for every existing deployment.
-	ReadinessURL string `yaml:"readiness_url,omitempty"`
-	// ReadinessMetric is the metric name fetched from ReadinessURL; the host
-	// is eligible only when a fresh fetch returns that metric with value 1.
-	// Defaults to "host_ready" (defaultReadinessMetric) when ReadinessURL is
-	// set and this is empty. Ignored when ReadinessURL is empty.
-	ReadinessMetric string `yaml:"readiness_metric,omitempty"`
-
-	// Legacy scale-set placement knobs (fleet-wide scheduling: runner limits,
-	// readiness/role gating, memory/inference load awareness) -- retired by
-	// homelab#1623 Phase 3 along with the Scaler that read them. See this
-	// file's package doc for why they are decoded rather than removed.
-	RequireMainsLegacy        bool    `yaml:"require_mains,omitempty"`
-	MetricsViaSSHLegacy       bool    `yaml:"metrics_via_ssh,omitempty"`
-	MetricsTimeoutLegacy      string  `yaml:"metrics_timeout,omitempty"`
-	RequireReadinessLegacy    bool    `yaml:"require_readiness,omitempty"`
-	RunnerLimitLegacy         *int    `yaml:"runner_limit,omitempty"`
-	MemoryOvercommitLegacy    float64 `yaml:"memory_overcommit,omitempty"`
-	MemorySafetyMarginLegacy  float64 `yaml:"memory_safety_margin,omitempty"`
-	RoleLegacy                string  `yaml:"role,omitempty"`
-	InferenceMetricsURLLegacy string  `yaml:"inference_metrics_url,omitempty"`
-	InferenceIdleWattsLegacy  float64 `yaml:"inference_idle_watts,omitempty"`
-}
-
-// hasLegacyFields reports whether any retired per-host scale-set placement
-// key is set on this host entry.
-func (h FleetHostConfig) hasLegacyFields() bool {
-	return h.RequireMainsLegacy || h.MetricsViaSSHLegacy || h.MetricsTimeoutLegacy != "" ||
-		h.RequireReadinessLegacy || h.RunnerLimitLegacy != nil || h.MemoryOvercommitLegacy != 0 ||
-		h.MemorySafetyMarginLegacy != 0 || h.RoleLegacy != "" || h.InferenceMetricsURLLegacy != "" ||
-		h.InferenceIdleWattsLegacy != 0
+	// StatePathRetired was the scale-set control plane's checkpoint file
+	// (homelab#487); see OrchestratorConfig's retired fields.
+	StatePathRetired yaml.Node `yaml:"state_path,omitempty"`
 }
 
 type resolvedOrchestratorConfig struct {
 	Raw OrchestratorConfig
-	// DockerHosts is every configured fleet.hosts[] entry rendered as
-	// "name=target", the shape ParseDockerHosts/newDockerClient consume. This
-	// is the one piece of fleet config the queue executor actually uses.
-	DockerHosts []string
-	// Readiness holds one hostReadinessConfig per fleet.hosts[] entry that set
-	// readiness_url, keyed by host name. A host absent from this map has no
-	// readiness gate and is always eligible for a launch -- see
-	// FleetHostConfig.ReadinessURL and directRunnerCapacityReservations.reserve.
-	Readiness map[string]hostReadinessConfig
-	// Warnings collects non-fatal compatibility notices produced while
-	// resolving the config (today: retired sections the file still carries),
-	// surfaced by the caller (which holds the logger resolve itself does not)
-	// once loadOrchestratorConfig returns successfully.
-	Warnings []string
 }
 
 func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
@@ -147,6 +67,9 @@ func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
 
 func (r *resolvedOrchestratorConfig) resolve() error {
 	c := &r.Raw
+	if retired := retiredConfigKeys(c); len(retired) > 0 {
+		return fmt.Errorf("retired keys are no longer accepted; delete them: %s (the Docker execution backend and the scale-set runner manager were removed; kubernetes is the only queue backend)", strings.Join(retired, ", "))
+	}
 	if err := validateARCLanes(c.ARCLanes); err != nil {
 		return err
 	}
@@ -166,89 +89,29 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	if c.Server.LogFormat == "" {
 		c.Server.LogFormat = "text"
 	}
-	if c.Kubernetes != nil {
-		if err := c.Kubernetes.validate(); err != nil {
-			return err
-		}
+	if c.Kubernetes == nil {
+		return fmt.Errorf("kubernetes is required: it is the queue executor's only backend")
 	}
-	if len(c.Fleet.Hosts) == 0 && c.Kubernetes == nil {
-		return fmt.Errorf("fleet.hosts must not be empty")
-	}
-
-	seenHosts := map[string]bool{}
-	for i, h := range c.Fleet.Hosts {
-		name, docker := strings.TrimSpace(h.Name), strings.TrimSpace(h.Docker)
-		if name == "" || docker == "" {
-			return fmt.Errorf("fleet.hosts[%d] requires name and docker", i)
-		}
-		if seenHosts[name] {
-			return fmt.Errorf("duplicate fleet host %q", name)
-		}
-		seenHosts[name] = true
-		r.DockerHosts = append(r.DockerHosts, name+"="+docker)
-
-		if readinessURL := strings.TrimSpace(h.ReadinessURL); readinessURL != "" {
-			parsed, err := url.ParseRequestURI(readinessURL)
-			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-				return fmt.Errorf("fleet.hosts[%d] readiness_url must be an absolute HTTP(S) URL", i)
-			}
-			metric := strings.TrimSpace(h.ReadinessMetric)
-			if metric == "" {
-				metric = defaultReadinessMetric
-			}
-			if r.Readiness == nil {
-				r.Readiness = map[string]hostReadinessConfig{}
-			}
-			r.Readiness[name] = hostReadinessConfig{url: readinessURL, metric: metric}
-		} else if strings.TrimSpace(h.ReadinessMetric) != "" {
-			// readiness_metric only means anything alongside readiness_url; a
-			// lone readiness_metric is a likely typo (e.g. readiness_url
-			// misspelled or left out) that would otherwise silently leave the
-			// host ungated instead of failing to parse.
-			r.Warnings = append(r.Warnings, fmt.Sprintf("fleet.hosts[%d] (%s) sets readiness_metric without readiness_url; readiness_metric is ignored and this host remains always eligible", i, name))
-		}
-	}
-
-	r.Warnings = append(r.Warnings, legacyConfigWarnings(c)...)
-	return nil
+	return c.Kubernetes.validate()
 }
 
-// legacyConfigWarnings names every retired scale-set section this config
-// still carries, so an operator sees the dead weight in the logs instead of
-// it just silently decoding into nothing. It never fails resolve: a
-// still-live orchestrator.yml predating its own cleanup PR must keep
-// starting the queue executor.
-func legacyConfigWarnings(c *OrchestratorConfig) []string {
-	var ignored []string
-	if c.GitHubLegacy != nil {
-		ignored = append(ignored, "github")
-	}
-	if c.RegistrationsLegacy != nil {
-		ignored = append(ignored, "registrations")
-	}
-	if c.ScaleSetsLegacy != nil {
-		ignored = append(ignored, "scale_sets")
-	}
-	if c.Fleet.MaxRunnersLegacy != nil {
-		ignored = append(ignored, "fleet.max_runners")
-	}
-	if c.Fleet.PlacementLegacy != nil {
-		ignored = append(ignored, "fleet.placement")
-	}
-	if c.Fleet.FileMountAllowlistLegacy != nil {
-		ignored = append(ignored, "fleet.file_mount_allowlist")
-	}
-	if c.Server.StatePathLegacy != "" {
-		ignored = append(ignored, "server.state_path")
-	}
-	for _, h := range c.Fleet.Hosts {
-		if h.hasLegacyFields() {
-			ignored = append(ignored, "fleet.hosts[].{require_mains,require_readiness,metrics_via_ssh,metrics_timeout,runner_limit,memory_overcommit,memory_safety_margin,role,inference_metrics_url,inference_idle_watts}")
-			break
+// retiredConfigKeys names every removed top-level or server key the file
+// still sets.
+func retiredConfigKeys(c *OrchestratorConfig) []string {
+	var retired []string
+	for _, key := range []struct {
+		name string
+		set  bool
+	}{
+		{"fleet", c.FleetRetired.Kind != 0},
+		{"github", c.GitHubRetired.Kind != 0},
+		{"registrations", c.RegistrationsRetired.Kind != 0},
+		{"scale_sets", c.ScaleSetsRetired.Kind != 0},
+		{"server.state_path", c.Server.StatePathRetired.Kind != 0},
+	} {
+		if key.set {
+			retired = append(retired, key.name)
 		}
 	}
-	if len(ignored) == 0 {
-		return nil
-	}
-	return []string{"orchestrator config contains retired scale-set runner management sections, accepted but ignored (homelab#1623 Phase 3 retired that code; a follow-up change should remove them from the file): " + strings.Join(ignored, ", ")}
+	return retired
 }
