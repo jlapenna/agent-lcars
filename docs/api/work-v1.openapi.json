@@ -4240,7 +4240,7 @@
             }
           },
           "403": {
-            "description": "pipeline not granted to this executor",
+            "description": "run not claimed by this executor",
             "content": {
               "application/json": {
                 "schema": {

@@ -62,9 +62,12 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 
 // observeTerminated records that the worker for runID is no longer running
 // and reports it asynchronously, unless it was already reported or a report
-// is in flight. It never blocks the caller (a claim admission or a status
-// read) on the Work API.
-func (r *runExitReporter) observeTerminated(runID string) {
+// is in flight. claimedBy is the runner name the run was claimed under (from
+// its Job); the Work API accepts the report only from the claiming principal
+// under that name. Empty falls back to this process's own runner name, for
+// Jobs created before the name was recorded. It never blocks the caller (a
+// claim admission or a status read) on the Work API.
+func (r *runExitReporter) observeTerminated(runID, claimedBy string) {
 	if r == nil || runID == "" {
 		return
 	}
@@ -86,7 +89,11 @@ func (r *runExitReporter) observeTerminated(runID string) {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		state, err := r.post(runID)
+		runner := claimedBy
+		if runner == "" {
+			runner = r.runnerName
+		}
+		state, err := r.post(runID, runner)
 		r.mu.Lock()
 		delete(r.inflight, runID)
 		if err == nil {
@@ -98,20 +105,28 @@ func (r *runExitReporter) observeTerminated(runID string) {
 			r.logger.Warn("Run exit report failed; retrying on the next observation", slog.String("runId", runID), slog.String("error", err.Error()))
 		case state == "lost":
 			r.logger.Warn("Run worker exited without reporting; the Work API settled it lost", slog.String("runId", runID))
+		case state == stateNotClaimant:
+			r.logger.Warn("Run exit report refused: this executor is not the run's claimant; its lease expiry will settle it", slog.String("runId", runID), slog.String("runner", runner))
 		default:
 			r.logger.Debug("Run exit reported", slog.String("runId", runID), slog.String("state", state))
 		}
 	}()
 }
 
-// post reports one exit. Only the route's own 404 (the run no longer
-// exists) can never succeed on a later attempt, so it counts as delivered.
-func (r *runExitReporter) post(runID string) (string, error) {
+// stateNotClaimant is post's answer for the route's 403: this principal and
+// runner name did not claim the run. Claim ownership never changes, so the
+// refusal is final and is not retried; lease expiry remains the backstop.
+const stateNotClaimant = "not-claimant"
+
+// post reports one exit as runner. The route's own 404 (the run no longer
+// exists) and 403 (not this executor's claim) can never succeed on a later
+// attempt, so both count as delivered.
+func (r *runExitReporter) post(runID, runner string) (string, error) {
 	token, err := r.idToken()
 	if err != nil {
 		return "", fmt.Errorf("minting exit report id token: %w", err)
 	}
-	body, err := json.Marshal(map[string]string{"runner": r.runnerName})
+	body, err := json.Marshal(map[string]string{"runner": runner})
 	if err != nil {
 		return "", err
 	}
@@ -152,9 +167,9 @@ func (r *runExitReporter) post(runID string) (string, error) {
 		}
 		return "", fmt.Errorf("exit report returned 404 without the route's unknown-run answer")
 	case http.StatusForbidden:
-		// The server-side grant can change between observations; stay
-		// retryable so a restored grant settles the run without a restart.
-		return "", fmt.Errorf("exit report refused: this executor is not granted the run's pipeline")
+		// The run was claimed by another principal or runner name, or before
+		// claims recorded their principal. Retrying cannot change that.
+		return stateNotClaimant, nil
 	default:
 		return "", fmt.Errorf("exit report returned %d", resp.StatusCode)
 	}

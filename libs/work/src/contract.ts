@@ -772,8 +772,10 @@ export const runsContract = {
   /** The executor's own report that the container or Job it launched for
    *  a claimed run has terminated. Authenticated like `claim` (the
    *  executor's `work.executor` bearer, not the run token, which lives only
-   *  inside the worker). A still-live run is settled `lost` immediately and
-   *  auto-retried; an already-settled run is returned unchanged, so the
+   *  inside the worker), and only by the principal that claimed the run,
+   *  reporting the same `runner` name it claimed with -- anything else is
+   *  403. A still-live run is settled `lost` immediately and auto-retried;
+   *  an already-settled run is returned unchanged to its claimant, so the
    *  executor may report every exit it observes. */
   exit: runBase
     .meta(
@@ -788,7 +790,7 @@ export const runsContract = {
     )
     .errors({
       UNAUTHORIZED: { message: 'work.executor scope required' },
-      FORBIDDEN: { message: 'pipeline not granted to this executor' },
+      FORBIDDEN: { message: 'run not claimed by this executor' },
       NOT_FOUND: { message: 'unknown run' },
     })
     .input(

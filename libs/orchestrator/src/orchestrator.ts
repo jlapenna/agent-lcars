@@ -5,6 +5,7 @@ import {
   decidedRun,
   type Decision,
   executorExitedAndRetry,
+  type ExitClaimant,
   expireLeaseAndRetry,
   isRefusal,
   type Refusal,
@@ -296,9 +297,12 @@ export class Orchestrator {
    * that already settled (the usual case: the worker reported, then exited)
    * is refused and left untouched, so reporting every exit is safe.
    */
-  async executorExited(runId: string): Promise<Decision | Refusal> {
+  async executorExited(
+    runId: string,
+    claimant: ExitClaimant,
+  ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
-      executorExitedAndRetry({ now: this.clock.now(), task, run }),
+      executorExitedAndRetry({ now: this.clock.now(), task, run, claimant }),
     );
   }
 

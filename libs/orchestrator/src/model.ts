@@ -237,7 +237,14 @@ export const runQueueSchema = z.strictObject({
    * instant so one broken GitHub anchor cannot block its whole pipeline. */
   deferredUntil: isoUtc.optional(),
   claimedAt: isoUtc.optional(),
+  /** The executor's self-reported runner name. Unauthenticated: it labels
+   * the claim and must match a later exit report, but grants nothing alone. */
   claimedBy: z.string().min(1).max(256).optional(),
+  /** The authenticated subject (lower-cased verified identity) of the
+   * executor principal that claimed this run. Only that principal may report
+   * the run's worker exit; a claim recorded without it (written before this
+   * field existed) can only be settled by its outcome report or lease expiry. */
+  claimedBySubject: z.string().min(1).max(256).optional(),
   tokenHash: z
     .string()
     .length(64)

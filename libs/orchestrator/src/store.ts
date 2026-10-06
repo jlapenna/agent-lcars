@@ -334,6 +334,10 @@ export interface OrchestratorStore {
     pipelines: readonly string[];
     now: string;
     claimedBy: string;
+    /** The claiming principal's authenticated subject, recorded as
+     *  `queue.claimedBySubject`. Omitted only by fixtures; a claim without
+     *  it can never be settled through an executor exit report. */
+    claimedBySubject?: string;
     tokenHash: string;
   }): Promise<Run | undefined>;
 

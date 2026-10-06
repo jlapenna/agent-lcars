@@ -525,6 +525,7 @@ export class MemoryStore implements OrchestratorStore {
     pipelines: readonly string[];
     now: string;
     claimedBy: string;
+    claimedBySubject?: string;
     tokenHash: string;
   }): Promise<Run | undefined> {
     const runs = [...this.#runs.values()];
@@ -544,6 +545,9 @@ export class MemoryStore implements OrchestratorStore {
         state: 'claimed',
         claimedAt: input.now,
         claimedBy: input.claimedBy,
+        ...(input.claimedBySubject === undefined
+          ? {}
+          : { claimedBySubject: input.claimedBySubject }),
         tokenHash: input.tokenHash,
       },
       updatedAt: input.now,

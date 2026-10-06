@@ -569,14 +569,23 @@ describe('auto-retry on loss', () => {
 });
 
 describe('executor-reported exit', () => {
-  async function claimed(f = fixture()) {
+  const CLAIMANT = {
+    subject: 'executor@example.iam.gserviceaccount.com',
+    runner: 'executor',
+  };
+
+  async function claimed(
+    f = fixture(),
+    claimedBySubject: string | null = CLAIMANT.subject,
+  ) {
     const { run } = await started(f.orchestrator);
     await f.store.enqueueRun({ runId: run.runId, now: T0 });
     await f.orchestrator.confirmDispatch(run.runId);
     const claim = await f.store.claimQueuedRun({
       pipelines: ['claude'],
       now: T0,
-      claimedBy: 'executor',
+      claimedBy: CLAIMANT.runner,
+      ...(claimedBySubject === null ? {} : { claimedBySubject }),
       tokenHash: 'a'.repeat(64),
     });
     expect(claim?.runId).toBe(run.runId);
@@ -587,7 +596,7 @@ describe('executor-reported exit', () => {
     const { clock, store, orchestrator, run } = await claimed();
     clock.advanceMinutes(3); // far inside the two-hour lease
 
-    const outcome = await orchestrator.executorExited(run.runId);
+    const outcome = await orchestrator.executorExited(run.runId, CLAIMANT);
 
     if (isRefusal(outcome)) throw new Error(outcome.reason);
     const lost = decidedRun(outcome);
@@ -616,7 +625,9 @@ describe('executor-reported exit', () => {
     const { store, orchestrator, run } = await claimed();
     await orchestrator.report(run.runId, { ok: true });
 
-    expect(await orchestrator.executorExited(run.runId)).toMatchObject({
+    expect(
+      await orchestrator.executorExited(run.runId, CLAIMANT),
+    ).toMatchObject({
       refused: true,
       reason: 'run-not-live',
     });
@@ -628,13 +639,55 @@ describe('executor-reported exit', () => {
 
   it('is idempotent: a repeated report neither re-settles nor double-retries', async () => {
     const { store, orchestrator, run } = await claimed();
-    await orchestrator.executorExited(run.runId);
+    await orchestrator.executorExited(run.runId, CLAIMANT);
 
-    expect(await orchestrator.executorExited(run.runId)).toMatchObject({
+    expect(
+      await orchestrator.executorExited(run.runId, CLAIMANT),
+    ).toMatchObject({
       refused: true,
       reason: 'run-not-live',
     });
     expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
+
+  it.each([
+    ['another principal', { ...CLAIMANT, subject: 'other@example.com' }],
+    ['another runner name', { ...CLAIMANT, runner: 'other-runner' }],
+  ])('refuses %s and leaves the healthy run running', async (_, claimant) => {
+    const { store, orchestrator, run } = await claimed();
+
+    expect(
+      await orchestrator.executorExited(run.runId, claimant),
+    ).toMatchObject({ refused: true, reason: 'not-claimant' });
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'running',
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+  });
+
+  it('refuses every reporter for a claim recorded without a principal', async () => {
+    // Claims written before claimedBySubject existed have no provable
+    // owner; only their outcome report or lease expiry may settle them.
+    const { store, orchestrator, run } = await claimed(fixture(), null);
+
+    expect(
+      await orchestrator.executorExited(run.runId, CLAIMANT),
+    ).toMatchObject({ refused: true, reason: 'not-claimant' });
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'running',
+    });
+  });
+
+  it('answers a settled run only to its claimant', async () => {
+    const { orchestrator, run } = await claimed();
+    await orchestrator.report(run.runId, { ok: true });
+
+    expect(
+      await orchestrator.executorExited(run.runId, {
+        ...CLAIMANT,
+        subject: 'other@example.com',
+      }),
+    ).toMatchObject({ refused: true, reason: 'not-claimant' });
   });
 
   it('refuses a run the executor never claimed', async () => {
@@ -643,9 +696,11 @@ describe('executor-reported exit', () => {
     await store.enqueueRun({ runId: run.runId, now: T0 });
     await orchestrator.confirmDispatch(run.runId);
 
-    expect(await orchestrator.executorExited(run.runId)).toMatchObject({
+    expect(
+      await orchestrator.executorExited(run.runId, CLAIMANT),
+    ).toMatchObject({
       refused: true,
-      reason: 'stale-lease',
+      reason: 'not-claimant',
     });
     expect(await store.readRun(run.runId)).toMatchObject({
       queue: { state: 'queued' },
@@ -654,7 +709,9 @@ describe('executor-reported exit', () => {
 
   it('refuses an unknown run', async () => {
     const { orchestrator } = fixture();
-    expect(await orchestrator.executorExited('no-such-run')).toMatchObject({
+    expect(
+      await orchestrator.executorExited('no-such-run', CLAIMANT),
+    ).toMatchObject({
       refused: true,
       reason: 'unknown-run',
     });

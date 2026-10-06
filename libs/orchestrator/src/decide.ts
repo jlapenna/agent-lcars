@@ -48,7 +48,8 @@ export interface Refusal {
     | 'missing-work' // strict Task documents always carry the Work payload
     | 'work-spec-mismatch' // caller's immutable Work validation rejected it
     | 'unknown-task' // close on a task that was never created
-    | 'not-native'; // closeTask on a GitHub anchor: closedAt is native-only
+    | 'not-native' // closeTask on a GitHub anchor: closedAt is native-only
+    | 'not-claimant'; // exit report from a principal/runner that did not claim the run
   /** For `duplicate-request`, the run the request already maps to. */
   readonly existingRun?: Run;
 }
@@ -313,22 +314,44 @@ export function expireLease(input: {
   return settleLost(input, 'expiry');
 }
 
+/** Who is reporting an exit: the authenticated principal's subject and the
+ * runner name it claimed with. Both must equal what the claim recorded. */
+export interface ExitClaimant {
+  readonly subject: string;
+  readonly runner: string;
+}
+
 /**
  * The QueueExecutor observed the claimed run's container or Job terminate
  * while the run was still live: the worker is gone without having reported
  * an outcome (a killed, evicted, out-of-memory, or deadline-exceeded
  * runner -- a runner that fails on its own reports `runner-failed` itself).
  * This is the same judgement lease expiry makes, delivered when the loss
- * happens instead of when the lease runs out. A run the executor never
- * claimed has no worker to lose and is refused.
+ * happens instead of when the lease runs out.
+ *
+ * Only the executor that claimed the run may report it: a pipeline grant
+ * alone would let any executor kill another's healthy worker by settling
+ * its run lost. Ownership is judged first, so even an already-settled run
+ * answers its idempotent refusal only to its own claimant. A claim recorded
+ * without an authenticated subject (written before subjects were recorded)
+ * has no provable owner; only its outcome report or lease expiry settles it.
  */
 export function executorExited(input: {
   now: string;
   task: Task;
   run: Run;
+  claimant: ExitClaimant;
 }): Decision | Refusal {
+  const queue = input.run.queue;
+  if (
+    queue?.state !== 'claimed' ||
+    queue.claimedBySubject === undefined ||
+    queue.claimedBySubject !== input.claimant.subject ||
+    queue.claimedBy !== input.claimant.runner
+  ) {
+    return refused('not-claimant');
+  }
   if (!isLive(input.run.state)) return refused('run-not-live');
-  if (input.run.queue?.state !== 'claimed') return refused('stale-lease');
   if (input.task.activeRunId !== input.run.runId) return refused('stale-lease');
   return settleLost(input, 'executor');
 }
@@ -387,6 +410,7 @@ export function executorExitedAndRetry(input: {
   now: string;
   task: Task;
   run: Run;
+  claimant: ExitClaimant;
 }): Decision | Refusal {
   return settleLostAndRetry(input, executorExited(input));
 }

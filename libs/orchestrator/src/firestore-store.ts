@@ -670,6 +670,7 @@ export class FirestoreStore implements OrchestratorStore {
     pipelines: readonly string[];
     now: string;
     claimedBy: string;
+    claimedBySubject?: string;
     tokenHash: string;
   }): Promise<Run | undefined> {
     return this.#firestore.runTransaction(async (tx) => {
@@ -733,6 +734,9 @@ export class FirestoreStore implements OrchestratorStore {
           state: 'claimed',
           claimedAt: input.now,
           claimedBy: input.claimedBy,
+          ...(input.claimedBySubject === undefined
+            ? {}
+            : { claimedBySubject: input.claimedBySubject }),
           tokenHash: input.tokenHash,
         },
         updatedAt: input.now,
