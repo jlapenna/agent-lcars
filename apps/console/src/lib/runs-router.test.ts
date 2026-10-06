@@ -1571,6 +1571,8 @@ describe('heartbeat', () => {
 });
 
 describe('exit', () => {
+  /** Claims through the real `claim` route, so every exit test exercises
+   *  the binding `claim` records, not a hand-written queue record. */
   async function claimedRun(pipeline = 'claude') {
     const f = fixture();
     const runId = await seedQueuedRun(f.store, f.orchestrator, {
@@ -1578,15 +1580,177 @@ describe('exit', () => {
       pipeline,
       now: NOW,
     });
-    const token = mintRunToken();
-    await f.store.claimQueuedRun({
-      pipelines: [pipeline],
+    const claim = await call(
+      {
+        store: f.store,
+        orchestrator: f.orchestrator,
+        now: f.now,
+        ...context,
+        principal: executorPrincipal([pipeline]),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    const claimed = claim.json as { runId: string; token: string };
+    expect(claimed.runId).toBe(runId);
+    return { ...f, runId, token: claimed.token };
+  }
+
+  /** A second executor holding the same pipeline grant: the attacker the
+   *  claimant binding exists to stop. */
+  function otherExecutor(pipelines: readonly string[] = ['claude']) {
+    return {
+      ...executorPrincipal(pipelines),
+      principal: 'svc:other-executor',
+      subject: 'google:other-executor@example.iam.gserviceaccount.com',
+    };
+  }
+
+  it('records the authenticated claimant subject on the claim', async () => {
+    const { store, runId } = await claimedRun();
+    expect((await store.readRun(runId))?.queue).toMatchObject({
+      state: 'claimed',
+      claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+    });
+  });
+
+  it.each([
+    [
+      'another principal with the same pipeline grant',
+      otherExecutor(),
+      'runner-1',
+    ],
+    [
+      'the claiming principal under another runner name',
+      executorPrincipal(['claude']),
+      'runner-2',
+    ],
+    [
+      'another principal reusing the claimant runner name',
+      otherExecutor(),
+      'runner-1',
+    ],
+  ])(
+    'refuses %s with 403 and leaves the healthy run running',
+    async (_, principal, runner) => {
+      const { store, orchestrator, now, runId } = await claimedRun();
+      const drain = vi.fn(context.drain);
+
+      const response = await call(
+        { store, orchestrator, now, ...context, drain, principal },
+        'POST',
+        runPath(runId, '/exit'),
+        { runner },
+      );
+
+      expect(response).toMatchObject({
+        status: 403,
+        json: { message: 'executor may not report this run' },
+      });
+      expect((await store.readRun(runId))?.state).toBe('running');
+      expect(await store.listRuns({ workId: wid('exit-claude') })).toHaveLength(
+        1,
+      );
+      expect(drain).not.toHaveBeenCalled();
+    },
+  );
+
+  it('refuses every reporter for a claim recorded without a claimant subject', async () => {
+    // Claims made before `claimedBySubject` existed have no provable owner:
+    // only their own outcome report or lease expiry may settle them.
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('exit-legacy'),
+      now: NOW,
+    });
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
-      tokenHash: hashRunToken(token),
+      tokenHash: hashRunToken(mintRunToken()),
     });
-    return { ...f, runId, token };
-  }
+
+    const response = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+
+    expect(response.status).toBe(403);
+    expect((await store.readRun(runId))?.state).toBe('running');
+  });
+
+  it('matches the claimant subject case-insensitively, as grants do', async () => {
+    const { store, orchestrator, now, runId } = await claimedRun();
+    const principal = executorPrincipal(['claude']);
+
+    const response = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: { ...principal, subject: principal.subject.toUpperCase() },
+      },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+
+    expect(response).toEqual({ status: 200, json: { runId, state: 'lost' } });
+  });
+
+  it('settles the run once the claimant regains a temporarily revoked grant', async () => {
+    const { store, orchestrator, now, runId } = await claimedRun();
+    const base = { store, orchestrator, now, ...context };
+
+    const revoked = await call(
+      { ...base, principal: executorPrincipal(['opencode']) },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+    expect(revoked.status).toBe(403);
+    expect((await store.readRun(runId))?.state).toBe('running');
+
+    const restored = await call(
+      { ...base, principal: executorPrincipal(['claude']) },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1' },
+    );
+    expect(restored).toEqual({ status: 200, json: { runId, state: 'lost' } });
+  });
+
+  it('answers a settled run only to its claimant', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedRun();
+    await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'POST',
+      runPath(runId, '/complete'),
+      { outcome: 'no-op' },
+    );
+
+    expect(
+      (
+        await call(
+          { store, orchestrator, now, ...context, principal: otherExecutor() },
+          'POST',
+          runPath(runId, '/exit'),
+          { runner: 'runner-1' },
+        )
+      ).status,
+    ).toBe(403);
+  });
 
   it('settles a still-live claimed run lost at once, retries it, and drains', async () => {
     const { store, orchestrator, now, runId } = await claimedRun();
@@ -1694,16 +1858,19 @@ describe('exit', () => {
         )
       ).status,
     ).toBe(401);
+    // The executor retries only this grant denial, so a temporarily revoked
+    // grant cannot strand the claimant's report until lease expiry.
     expect(
-      (
-        await call(
-          { ...base, principal: executorPrincipal(['opencode']) },
-          'POST',
-          runPath(runId, '/exit'),
-          body,
-        )
-      ).status,
-    ).toBe(403);
+      await call(
+        { ...base, principal: executorPrincipal(['opencode']) },
+        'POST',
+        runPath(runId, '/exit'),
+        body,
+      ),
+    ).toMatchObject({
+      status: 403,
+      json: { message: 'pipeline not granted to this executor' },
+    });
     // The executor only treats a 404 carrying this message as delivered.
     expect(
       await call(

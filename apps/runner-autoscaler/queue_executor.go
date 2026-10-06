@@ -35,6 +35,11 @@ type directRunnerLaunch struct {
 	runToken   string
 	pipeline   string
 	consoleURL string
+	// runner is the name this executor claimed the run under. The Work API
+	// accepts the run's exit report only under that same name, so the
+	// Kubernetes queue records it on the Job: a restarted executor (whose
+	// hostname-derived name changed) still reports as the claimant.
+	runner string
 }
 
 // queueExecutorConfig is the poller's whole dependency surface, kept
@@ -219,6 +224,7 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		runToken:   claimed.Token,
 		pipeline:   claimed.Pipeline,
 		consoleURL: cfg.consoleURL,
+		runner:     cfg.runnerName,
 	})
 	if err != nil {
 		return queuePollOutcomeLaunchErr, err

@@ -1149,6 +1149,26 @@ export function runOrchestratorStoreContract(
         });
       });
 
+      it('records the claiming principal subject durably with the claim', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q-subject');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+
+        await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: T0,
+          claimedBy: 'runner-1',
+          claimedBySubject: 'executor@example.iam.gserviceaccount.com',
+          tokenHash: 'c'.repeat(64),
+        });
+
+        expect((await store.readRun(run.runId))?.queue).toMatchObject({
+          state: 'claimed',
+          claimedBy: 'runner-1',
+          claimedBySubject: 'executor@example.iam.gserviceaccount.com',
+        });
+      });
+
       it('gives exactly one of two concurrent claimants the queued run', async () => {
         const { store, orchestrator } = await fixture();
         const run = await queuedRun(orchestrator, 'q1');

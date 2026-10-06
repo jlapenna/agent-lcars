@@ -95,6 +95,19 @@ const executor = os.use(async ({ context, next }) => {
   return next({ context: { principal: context.principal } });
 });
 
+/** `exit`'s answer when the caller lacks the run's pipeline grant. The
+ *  QueueExecutor matches this text to keep the report retryable. */
+const EXIT_PIPELINE_NOT_GRANTED = 'pipeline not granted to this executor';
+
+/** The authenticated identity a claim is bound to: the principal's
+ *  verified subject, lower-cased because grants resolve subjects
+ *  case-insensitively (`work-grants.ts`'s `resolvePrincipal`). Recorded at
+ *  `claim` as `queue.claimedBySubject` and required again by `exit`, so only
+ *  the claiming executor can declare a run's worker gone. */
+function claimantSubject(principal: WorkPrincipal): string {
+  return principal.subject.toLowerCase();
+}
+
 /** Loads the run named by the path, verifies the bearer's hash against
  *  `run.queue.tokenHash` in constant time, that the run is still live
  *  (`isLive(run.state)`), and that its lease has not already expired --
@@ -348,6 +361,7 @@ export const runsRouter = os.router({
         pipelines: context.principal.pipelines,
         now: context.now().toISOString(),
         claimedBy: input.runner,
+        claimedBySubject: claimantSubject(context.principal),
         tokenHash: hashRunToken(token),
       });
       if (claimed === undefined) return undefined;
@@ -537,12 +551,32 @@ export const runsRouter = os.router({
   exit: executor.exit.handler(async ({ input, context, errors }) => {
     const run = await context.store.readRun(input.runId);
     if (run === undefined) throw errors.NOT_FOUND();
-    // The same server-side grant that let this executor claim the run is
-    // the only authority to declare its worker gone.
+    // Declaring a worker gone kills the run and dispatches a retry, so it
+    // needs ownership, not just capability: the executor must still hold
+    // the run's pipeline grant AND be the authenticated principal that
+    // claimed it, reporting under the same runner name. The ownership check
+    // runs inside the settling transaction (`decide.ts`'s `executorExited`);
+    // every ownership failure answers the same FORBIDDEN so a caller learns
+    // nothing about another executor's claim. A missing grant is a fact about
+    // the caller's own (changeable) configuration, so it carries its own
+    // message: the executor retries it, while it never retries a claimant
+    // mismatch, which cannot change.
     if (!context.principal.pipelines.includes(run.pipeline)) {
+      throw errors.FORBIDDEN({ message: EXIT_PIPELINE_NOT_GRANTED });
+    }
+    const settled = await context.orchestrator.executorExited(run.runId, {
+      subject: claimantSubject(context.principal),
+      runner: input.runner,
+    });
+    if (isRefusal(settled) && settled.reason === 'not-claimant') {
+      logger.warn(
+        'agent-lcars: refused exit report for run %s from %s (runner %s): not its claimant',
+        run.runId,
+        context.principal.principal,
+        input.runner,
+      );
       throw errors.FORBIDDEN();
     }
-    const settled = await context.orchestrator.executorExited(run.runId);
     if (isRefusal(settled)) {
       // The usual case: the worker reported its outcome, then exited.
       const current = await context.store.readRun(run.runId);

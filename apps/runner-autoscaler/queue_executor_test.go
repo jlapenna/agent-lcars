@@ -72,6 +72,11 @@ func TestPollOnceClaimsAndLaunches(t *testing.T) {
 	if gotBody["runner"] != "test-runner" {
 		t.Fatalf("expected runner in claim body, got %v", gotBody)
 	}
+	// The exit report must repeat the claim's runner name, so the launch
+	// carries the exact name the claim body sent.
+	if launched[0].runner != "test-runner" {
+		t.Fatalf("expected the claim's runner name on the launch, got %+v", launched[0])
+	}
 }
 
 func TestTickSchedulesOnceUsesWorkAPIAndGoogleBearer(t *testing.T) {

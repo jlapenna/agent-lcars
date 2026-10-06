@@ -31,6 +31,10 @@ import (
 const queueJobLabel = "agent-lcars.queue-job"
 const queueRunAnnotation = "agent-lcars.run-id"
 
+// queueRunnerAnnotation records the runner name the run was claimed under,
+// which its exit report must repeat (see directRunnerLaunch.runner).
+const queueRunnerAnnotation = "agent-lcars.claimed-by"
+
 type queueToleration struct {
 	Key      string                  `yaml:"key"`
 	Operator core.TolerationOperator `yaml:"operator"`
@@ -217,7 +221,7 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 		// until its lease expires. Only a Job whose name is derived from its
 		// own run annotation identifies a run.
 		if runID := j.Annotations[queueRunAnnotation]; runID != "" && j.Name == queueJobName(runID) {
-			q.exits.observeTerminated(runID)
+			q.exits.observeTerminated(runID, j.Annotations[queueRunnerAnnotation])
 		}
 	}
 	return n, nil
@@ -425,13 +429,17 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 		volumes = append(volumes, core.Volume{Name: "codex-volatile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{Medium: core.StorageMediumMemory, SizeLimit: &size}}})
 		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
 	}
+	annotations := map[string]string{queueRunAnnotation: l.runID}
+	if l.runner != "" {
+		annotations[queueRunnerAnnotation] = l.runner
+	}
 	// Suspend until the run-token Secret exists. Recovery only unsuspends the
 	// same never-started Job; it never recreates or restarts an exited attempt.
 	return &batch.Job{
 		ObjectMeta: meta.ObjectMeta{
 			Name: name, Namespace: q.config.Namespace,
 			Labels:      map[string]string{queueJobLabel: "true"},
-			Annotations: map[string]string{queueRunAnnotation: l.runID},
+			Annotations: annotations,
 		},
 		Spec: batch.JobSpec{
 			Suspend: &yes, BackoffLimit: &zero, Completions: &one, Parallelism: &one,

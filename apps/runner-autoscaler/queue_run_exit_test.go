@@ -40,6 +40,9 @@ func (r *exitReportRecorder) server(t *testing.T) *httptest.Server {
 		case http.StatusOK:
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"runId":"x","state":"lost"}`))
+		case http.StatusConflict: // stands in for the route's pipeline-grant 403
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"defined":true,"code":"FORBIDDEN","status":403,"message":"pipeline not granted to this executor"}`))
 		case http.StatusNotFound:
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"defined":true,"code":"NOT_FOUND","status":404,"message":"unknown run"}`))
@@ -70,7 +73,7 @@ func TestRunExitReporterReportsEachRunOnceWithExecutorIdentity(t *testing.T) {
 
 	// A native run id contains a slash; it must stay one escaped segment.
 	for range 3 {
-		reporter.observeTerminated("work:01QUEUEEXITREPORT00000001/r1")
+		reporter.observeTerminated("work:01QUEUEEXITREPORT00000001/r1", "")
 		reporter.wg.Wait()
 	}
 
@@ -88,7 +91,7 @@ func TestRunExitReporterRetriesAFailedReportOnTheNextObservation(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 3 {
-		reporter.observeTerminated("run-retry")
+		reporter.observeTerminated("run-retry", "")
 		reporter.wg.Wait()
 	}
 
@@ -102,7 +105,7 @@ func TestRunExitReporterTreatsUnknownRunAsDelivered(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 2 {
-		reporter.observeTerminated("run-gone")
+		reporter.observeTerminated("run-gone", "")
 		reporter.wg.Wait()
 	}
 
@@ -111,17 +114,48 @@ func TestRunExitReporterTreatsUnknownRunAsDelivered(t *testing.T) {
 	}
 }
 
-func TestRunExitReporterRetriesAPipelineGrant403(t *testing.T) {
+func TestRunExitReporterTreatsNotClaimant403AsFinal(t *testing.T) {
 	recorder := &exitReportRecorder{statuses: []int{http.StatusForbidden}}
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 3 {
-		reporter.observeTerminated("run-grant-restored")
+		reporter.observeTerminated("run-claimed-elsewhere", "")
 		reporter.wg.Wait()
 	}
 
+	// Claim ownership never changes, so retrying every inventory read would
+	// only repeat the refusal; lease expiry settles such a run instead.
+	if got := recorder.requests(); len(got) != 1 {
+		t.Fatalf("exit reports = %v, want a 403 never retried", got)
+	}
+}
+
+func TestRunExitReporterRetriesAPipelineGrant403(t *testing.T) {
+	recorder := &exitReportRecorder{statuses: []int{http.StatusConflict}}
+	reporter := testExitReporter(recorder.server(t).URL)
+
+	for range 3 {
+		reporter.observeTerminated("run-grant-restored", "")
+		reporter.wg.Wait()
+	}
+
+	// A restored grant must still settle the run on a later observation.
 	if got := recorder.requests(); len(got) != 2 {
-		t.Fatalf("exit reports = %v, want the 403 retried until delivered", got)
+		t.Fatalf("exit reports = %v, want the grant 403 retried until delivered", got)
+	}
+}
+
+func TestRunExitReporterReportsUnderTheClaimedRunnerName(t *testing.T) {
+	recorder := &exitReportRecorder{}
+	reporter := testExitReporter(recorder.server(t).URL)
+
+	// A Job claimed by an earlier executor process (another container
+	// hostname) must be reported under that claim's name, not this one's.
+	reporter.observeTerminated("run-from-previous-process", "executor-0")
+	reporter.wg.Wait()
+
+	if len(recorder.runners) != 1 || recorder.runners[0] != "executor-0" {
+		t.Fatalf("runners = %v, want the claim's runner name", recorder.runners)
 	}
 }
 
@@ -130,7 +164,7 @@ func TestRunExitReporterRetriesARouteMissing404(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 2 {
-		reporter.observeTerminated("run-before-console-rollout")
+		reporter.observeTerminated("run-before-console-rollout", "")
 		reporter.wg.Wait()
 	}
 
@@ -145,10 +179,10 @@ func TestRunExitReporterForgetsRunsPastEvidenceRetention(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	reporter.now = func() time.Time { return now }
 
-	reporter.observeTerminated("run-old")
+	reporter.observeTerminated("run-old", "")
 	reporter.wg.Wait()
 	now = now.Add(runExitReportedRetention + time.Minute)
-	reporter.observeTerminated("run-new")
+	reporter.observeTerminated("run-new", "")
 	reporter.wg.Wait()
 
 	reporter.mu.Lock()
@@ -161,7 +195,7 @@ func TestRunExitReporterForgetsRunsPastEvidenceRetention(t *testing.T) {
 
 func TestNilRunExitReporterIsANoOp(t *testing.T) {
 	var reporter *runExitReporter
-	reporter.observeTerminated("run")
+	reporter.observeTerminated("run", "")
 }
 
 func queueJobFor(runID string, condition batch.JobConditionType) *batch.Job {
@@ -175,6 +209,34 @@ func queueJobFor(runID string, condition batch.JobConditionType) *batch.Job {
 		job.Status.Conditions = []batch.JobCondition{{Type: condition, Status: core.ConditionTrue}}
 	}
 	return job
+}
+
+func TestKubernetesQueueRecordsTheClaimingRunnerOnTheJob(t *testing.T) {
+	q, _ := kubeQueueFixture()
+	job, err := q.job(directRunnerLaunch{runID: "work:claimant/r1", pipeline: "claude", runner: "executor-0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Annotations[queueRunnerAnnotation] != "executor-0" || job.Annotations[queueRunAnnotation] != "work:claimant/r1" {
+		t.Fatalf("annotations = %v", job.Annotations)
+	}
+}
+
+func TestKubernetesInventoryReportsUnderTheJobsClaimingRunner(t *testing.T) {
+	claimed := queueJobFor("run-claimed", batch.JobFailed)
+	claimed.Annotations[queueRunnerAnnotation] = "executor-0"
+	q, _ := kubeQueueFixture(claimed)
+	recorder := &exitReportRecorder{}
+	q.exits = testExitReporter(recorder.server(t).URL)
+
+	if _, err := q.activeCount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	q.exits.wg.Wait()
+
+	if len(recorder.runners) != 1 || recorder.runners[0] != "executor-0" {
+		t.Fatalf("runners = %v, want the Job's recorded claimant", recorder.runners)
+	}
 }
 
 func TestKubernetesInventoryReportsEveryTerminatedJobOnce(t *testing.T) {

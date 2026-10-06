@@ -4240,7 +4240,7 @@
             }
           },
           "403": {
-            "description": "pipeline not granted to this executor",
+            "description": "executor may not report this run",
             "content": {
               "application/json": {
                 "schema": {
