@@ -436,6 +436,10 @@ const (
 	// containers per Docker host even under a burst of failures. The bound is
 	// per host because containers and their logs are host-local.
 	directRunnerExitedRetentionLimit = 5
+	// queueClaimPollInterval is how often the executor reserves local host
+	// capacity and asks the Work API for the next admitted run.
+	// schedule-justification: the executor pulls admitted runs from POST /api/work/v1/runs/claim, so this bounds how long admitted work waits to start.
+	queueClaimPollInterval = 15 * time.Second
 	// directRunnerCleanupInterval bounds host-side accumulation even while
 	// queue work is idle. The initial sweep in runQueueExecutorPoller handles
 	// any backlog present when the daemon starts.
