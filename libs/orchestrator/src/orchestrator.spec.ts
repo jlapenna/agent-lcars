@@ -678,6 +678,15 @@ describe('executor-reported exit', () => {
     });
   });
 
+  it('answers a settled legacy claim idempotently to any reporter', async () => {
+    const { orchestrator, run } = await claimed(fixture(), null);
+    await orchestrator.report(run.runId, { ok: true });
+
+    expect(
+      await orchestrator.executorExited(run.runId, CLAIMANT),
+    ).toMatchObject({ refused: true, reason: 'run-not-live' });
+  });
+
   it('answers a settled run only to its claimant', async () => {
     const { orchestrator, run } = await claimed();
     await orchestrator.report(run.runId, { ok: true });

@@ -106,7 +106,7 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy string) {
 		case state == "lost":
 			r.logger.Warn("Run worker exited without reporting; the Work API settled it lost", slog.String("runId", runID))
 		case state == stateNotClaimant:
-			r.logger.Warn("Run exit report refused: this executor is not the run's claimant; its lease expiry will settle it", slog.String("runId", runID), slog.String("runner", runner))
+			r.logger.Warn("Run exit report refused: this executor did not claim the run or lacks its pipeline grant; not retried", slog.String("runId", runID), slog.String("runner", runner))
 		default:
 			r.logger.Debug("Run exit reported", slog.String("runId", runID), slog.String("state", state))
 		}

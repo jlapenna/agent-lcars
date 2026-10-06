@@ -1647,7 +1647,7 @@ describe('exit', () => {
 
       expect(response).toMatchObject({
         status: 403,
-        json: { message: 'run not claimed by this executor' },
+        json: { message: 'executor may not report this run' },
       });
       expect((await store.readRun(runId))?.state).toBe('running');
       expect(await store.listRuns({ workId: wid('exit-claude') })).toHaveLength(

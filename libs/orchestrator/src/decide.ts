@@ -334,7 +334,8 @@ export interface ExitClaimant {
  * its run lost. Ownership is judged first, so even an already-settled run
  * answers its idempotent refusal only to its own claimant. A claim recorded
  * without an authenticated subject (written before subjects were recorded)
- * has no provable owner; only its outcome report or lease expiry settles it.
+ * has no provable owner: while live, only its outcome report or lease
+ * expiry settles it; once settled, any report gets the idempotent answer.
  */
 export function executorExited(input: {
   now: string;
@@ -343,6 +344,16 @@ export function executorExited(input: {
   claimant: ExitClaimant;
 }): Decision | Refusal {
   const queue = input.run.queue;
+  // A legacy claim (no recorded subject) that already settled changes
+  // nothing whoever asks, so answer it idempotently: the executor that
+  // claimed it before subjects were recorded stops retrying its report.
+  if (
+    queue?.state === 'claimed' &&
+    queue.claimedBySubject === undefined &&
+    !isLive(input.run.state)
+  ) {
+    return refused('run-not-live');
+  }
   if (
     queue?.state !== 'claimed' ||
     queue.claimedBySubject === undefined ||

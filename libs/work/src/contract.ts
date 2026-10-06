@@ -790,7 +790,7 @@ export const runsContract = {
     )
     .errors({
       UNAUTHORIZED: { message: 'work.executor scope required' },
-      FORBIDDEN: { message: 'run not claimed by this executor' },
+      FORBIDDEN: { message: 'executor may not report this run' },
       NOT_FOUND: { message: 'unknown run' },
     })
     .input(
