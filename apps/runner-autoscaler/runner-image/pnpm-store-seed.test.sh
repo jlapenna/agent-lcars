@@ -61,7 +61,7 @@ done
 # lacks: Sprinkles' git+https fleet-runtime/repo-tools locks failed every
 # publication with ERR_PNPM_GIT_FETCHER_GIT_NOT_FOUND after #2136.
 seed_stage="$(awk '/ AS pnpm-store-seed$/ { in_stage = 1 } in_stage && /^FROM / && !/ AS pnpm-store-seed$/ { exit } in_stage' "$dockerfile")"
-if grep -lq 'type: git}' "$seed_dir"/fleet/*/pnpm-lock.yaml &&
+if grep -Eq 'type: git([},]|$)' "$seed_dir"/fleet/*/pnpm-lock.yaml &&
   ! grep -Eq 'apt-get install .*\bgit\b' <<<"$seed_stage"; then
   echo 'a fleet seed locks a git-hosted package; the pnpm-store-seed stage must install git' >&2
   exit 1

@@ -80,6 +80,9 @@ jobs:
           GH_TOKEN: ${{ steps.mint.outputs.token }}
           GH_TOKEN_SUPERSPRINKLESRACING: ${{ steps.read-token.outputs.token }}
         run: |
+          # pipefail: a sync that refuses a lockfile must fail the job, not
+          # be hidden by tee and commit whatever it wrote before it stopped.
+          set -o pipefail
           python3 tools/sync-runner-pnpm-seed.py | tee "$RUNNER_TEMP/sources"
           git add -A apps/runner-autoscaler/runner-image/pnpm-seed/fleet
           if git diff --cached --quiet; then
