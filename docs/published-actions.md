@@ -31,7 +31,7 @@ their operating constraints.
 | ------------------------------ | ---------------------------------------------- |
 | `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token. |
 | `agent-automerge-reusable.yml` | Arm and reconcile agent PR auto-merge.         |
-| `repo-validation.yml`          | Run actionlint and the runner-label check.     |
+| `repo-validation.yml`          | Run actionlint, runner-label, schedule checks. |
 | `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job. |
 
 Hosted provider workflows are retired; providers execute through the Console
@@ -215,6 +215,14 @@ the caller declares under `self-hosted-runner.labels` in
 their own name, so that combination never schedules. Declaring the repo's pool
 labels there is the opt-in; a caller with no declared labels gets a no-op. Set
 `check-runner-labels: false` only for classic runners that carry both labels.
+
+It runs repo-tools' `repo-check-schedules` the same way, in a GitHub-hosted
+`schedule justifications` job that the required `repository validation` job
+also requires. Every systemd timer, workflow cron or Kubernetes CronJob in the
+caller's tracked files that fires more often than hourly needs an adjacent
+`# schedule-justification: <reason>` comment; frequent polling usually means
+the design should react to an event instead. The job prints the caller's full
+inventory of sub-hourly schedules. `check-schedules: false` turns it off.
 
 ## Contract verification
 

@@ -25,6 +25,13 @@ name: Repo Validation
 # queues forever (homelab, 2026-10-04). A repo that declares no labels makes
 # the check a no-op; a repo whose classic runners really carry both labels
 # sets check-runner-labels: false.
+#
+# The schedule check makes every sub-hourly schedule an explicit decision: a
+# timer or cron firing more often than hourly usually means the design should
+# react to an event instead of polling. Each such systemd timer, workflow cron
+# or Kubernetes CronJob in the caller's tracked files needs an adjacent
+# `# schedule-justification: <reason>` comment, so
+# `git grep schedule-justification` is the caller's inventory.
 
 on:
   workflow_call:
@@ -57,6 +64,14 @@ on:
         required: false
         type: boolean
         default: true
+      check-schedules:
+        description: >-
+          Reject any systemd timer, workflow cron, or Kubernetes CronJob that
+          fires more often than hourly without an adjacent
+          `# schedule-justification:` comment.
+        required: false
+        type: boolean
+        default: true
 
 permissions: {}
 
@@ -84,12 +99,35 @@ jobs:
             "https://raw.githubusercontent.com/jlapenna/repo-tools/$REPO_TOOLS_SHA/bin/check-runner-labels.mjs"
           node "$RUNNER_TEMP/check-runner-labels.mjs"
 
+  # Same shape as runner-labels: GitHub-hosted with no `needs`, so it reports
+  # even when the caller misroutes repository validation, and pinned to an
+  # exact repo-tools commit.
+  schedules:
+    name: schedule justifications
+    if: inputs.check-schedules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Reject unjustified sub-hourly schedules
+        env:
+          REPO_TOOLS_SHA: d86ebbe227374078096d29332b52ec0b54c58511
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/check-schedules.mjs" \
+            "https://raw.githubusercontent.com/jlapenna/repo-tools/$REPO_TOOLS_SHA/bin/check-schedules.mjs"
+          # --list prints the caller's whole inventory, justified or not, and
+          # fails when any entry is missing its justification.
+          node "$RUNNER_TEMP/check-schedules.mjs" --list
+
   validate:
     name: repository validation
     # The required check every caller's ruleset names. It gates on the label
-    # job's real result: `always()` keeps a failed or cancelled label check
-    # from turning this job into a skipped (and therefore passing) check.
-    needs: runner-labels
+    # and schedule jobs' real results: `always()` keeps a failed or cancelled
+    # check from turning this job into a skipped (and therefore passing) one.
+    needs: [runner-labels, schedules]
     if: always()
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
@@ -103,6 +141,16 @@ jobs:
         run: |
           if [ "$CHECK_ENABLED" = true ] && [ "$RUNNER_LABELS_RESULT" != success ]; then
             echo "::error::Runner label combinations concluded '$RUNNER_LABELS_RESULT'."
+            exit 1
+          fi
+
+      - name: Require justified sub-hourly schedules
+        env:
+          CHECK_ENABLED: ${{ inputs.check-schedules }}
+          SCHEDULES_RESULT: ${{ needs.schedules.result }}
+        run: |
+          if [ "$CHECK_ENABLED" = true ] && [ "$SCHEDULES_RESULT" != success ]; then
+            echo "::error::Schedule justifications concluded '$SCHEDULES_RESULT'."
             exit 1
           fi
 
