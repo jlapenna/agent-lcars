@@ -56,8 +56,8 @@
       "enabled": false
     },
     {
-      "description": "Match pnpm 11's own default 24-hour minimumReleaseAge install-time policy, for every pnpm 11 consumer. Without this, Renovate can open and auto-merge an npm bump for a package published hours ago, landing a lockfile entry that pnpm itself then rejects on the very next install (agent-lcars#1345/#1391). Consumers without npm packages are unaffected.",
-      "matchManagers": ["npm"],
+      "description": "Match pnpm 11's own default 24-hour minimumReleaseAge install-time policy, for every pnpm 11 consumer. Without this, Renovate can open and auto-merge an npm bump for a package published hours ago, landing a lockfile entry that pnpm itself then rejects on the very next install (agent-lcars#1345/#1391). It matches the npm datasource, not the npm manager, so a custom manager that tracks an npm version elsewhere (agent-lcars' Playwright sandbox tag) waits with its package. Consumers without npm packages are unaffected.",
+      "matchDatasources": ["npm"],
       "minimumReleaseAge": "1 day"
     }
   ]

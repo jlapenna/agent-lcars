@@ -8,7 +8,7 @@
   ],
   "customManagers": [
     {
-      "description": "The E2E sandbox's Playwright base tag must equal the @playwright/test version in pnpm-lock.yaml (tools/contract-tests/baked-ci-tools.test.ts). Tracking the tag through the npm package, not the docker datasource, puts both in the same update and under the npm release-age rule. Tracked as a docker image, the tag moved a day before the package could (renovate/all-minor-patch, #2170).",
+      "description": "The E2E sandbox's Playwright base tag must equal the @playwright/test version in pnpm-lock.yaml (tools/contract-tests/baked-ci-tools.test.ts). Tracking the tag through the npm package, not the docker datasource, puts both in the same update and under the preset's npm release-age rule. Tracked as a docker image, the tag moved a day before the package could (renovate/all-minor-patch, #2170).",
       "customType": "regex",
       "managerFilePatterns": ["/^tools/e2e/Dockerfile$/"],
       "matchStrings": [
@@ -54,12 +54,6 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["mcr.microsoft.com/playwright"],
       "enabled": false
-    },
-    {
-      "description": "Apply the npm release age to the custom manager's Playwright tag too; the preset's rule matches only the npm manager.",
-      "matchDatasources": ["npm"],
-      "matchPackageNames": ["@playwright/test"],
-      "minimumReleaseAge": "1 day"
     }
   ],
   "vulnerabilityAlerts": {
