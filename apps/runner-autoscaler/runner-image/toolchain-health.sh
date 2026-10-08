@@ -26,7 +26,7 @@ pinned_pnpm_runs_offline() (
   resolves() {
     [ -n "$2" ] && [ "$(cd "$1" && COREPACK_ENABLE_NETWORK=0 pnpm --version 2>/dev/null)" = "$2" ]
   }
-  version_of() { sed -nE 's/^pnpm@([0-9]+\.[0-9]+\.[0-9]+)([+].*)?$/\1/p' <<<"$1"; }
+  version_of() { printf '%s\n' "$1" | sed -nE 's/^pnpm@([0-9]+\.[0-9]+\.[0-9]+)([+].*)?$/\1/p'; }
 
   default_pin="$(node -p "require('$dir/package.json').packageManager" 2>/dev/null)"
   resolves "$scratch" "$(version_of "$default_pin")" || return 1
