@@ -182,6 +182,14 @@ RUN set -eu; \
     done; \
     rm -f /pnpm-cache/lockfile-verified.jsonl; \
     test -d /pnpm-cache/v11/metadata
+# The fetches above made Corepack download every fleet-pinned pnpm into
+# /root/.cache/node/corepack. Record which ones, so the final image can ship
+# that cache to the runner user and prove each pin resolves offline: a job's
+# own `pnpm` (Corepack, or the setup actions' baked-toolchain detection) then
+# never re-downloads its pinned release from the registry.
+RUN node -e 'for (const f of process.argv.slice(1)) console.log(require(`/seed/${f}`).packageManager)' \
+      */package.json | sort -u > /fleet-pnpm-pins; \
+    test -s /fleet-pnpm-pins
 
 # Measurement-only targets: `FROM scratch` ensures their OCI output contains
 # only the compressed store payload, not the Node base or fetch-stage virtual
@@ -654,6 +662,20 @@ RUN claude plugin marketplace add /opt/repo-tools && \
 # pnpm command still depends on registry.npmjs.org (#467). Running from the
 # copied manifest resolves the exact repo-pinned version, and deliberately
 # leaves the cache under /home/runner for offline job startup.
+#
+# The other fleet repositories pin their own pnpm (Sprinkles lags a patch
+# release behind, for one), so ship the seed stage's Corepack downloads too:
+# each pin recorded in fleet-pnpm-pins then resolves from this cache instead
+# of costing every job a registry download. Outside any project Corepack
+# would otherwise resolve `pnpm` to the registry's latest release (12.x
+# today); making this repo's pin the global default, with
+# COREPACK_DEFAULT_TO_LATEST=0, keeps that offline and on the fleet's line.
+COPY --from=pnpm-store-seed --chown=runner:runner \
+    /root/.cache/node/corepack/v1/pnpm/ /home/runner/.cache/node/corepack/v1/pnpm/
+COPY --from=pnpm-store-seed /fleet-pnpm-pins \
+    /usr/local/share/agent-lcars-corepack/fleet-pnpm-pins
+ENV COREPACK_DEFAULT_TO_LATEST=0
+RUN corepack install --global "$(node -p 'require("./package.json").packageManager')"
 RUN pnpm --version
 
 # Layer-1 skills (#1269) are image content: install them into the job user's

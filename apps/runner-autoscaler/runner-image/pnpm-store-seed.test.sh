@@ -77,7 +77,9 @@ grep -Fqx '    rm -f /pnpm-cache/lockfile-verified.jsonl; \' "$dockerfile"
 grep -Fqx '    /pnpm-cache/ /home/runner/.cache/pnpm/' "$dockerfile"
 grep -Fqx 'COPY --from=pnpm-store-seed /pnpm-cache/ /pnpm-cache/' "$dockerfile"
 grep -Fqx '    /pnpm-store/ /home/runner/.local/share/pnpm/store/' "$dockerfile"
-if ! grep -Fq 'COPY --from=pnpm-store-seed --chown=runner:runner \' "$dockerfile"; then
+# Match the store COPY itself: the Corepack-cache COPY uses the same prefix.
+if ! grep -Fx -A1 'COPY --from=pnpm-store-seed --chown=runner:runner \' "$dockerfile" |
+  grep -Fqx '    /pnpm-store/ /home/runner/.local/share/pnpm/store/'; then
   echo 'runner image must copy the isolated pnpm store seed into the final image' >&2
   exit 1
 fi

@@ -32,7 +32,12 @@ write_exe() {
 }
 write_exe "$tmp/externals/node20/bin/node" 'exit 0'
 write_exe "$tmp/externals/node24/bin/node" 'exit 0'
-write_exe "$bin/pnpm" 'exit 0'
+# Corepack shim fixture: resolves a project's pinned version, or the image
+# default outside one, only from the versions listed in $tmp/corepack/cached.
+write_exe "$bin/pnpm" 'v="$(sed -nE "s/.*\"pnpm@([0-9.]+)[^\"]*\".*/\1/p" package.json 2>/dev/null)"; grep -qx "${v:-11.28.5}" "'"$tmp"'/corepack/cached" && echo "${v:-11.28.5}"'
+printf '{"packageManager": "pnpm@11.28.5"}\n' > "$tmp/corepack/package.json"
+printf '%s\n' pnpm@11.28.2 pnpm@11.28.5 > "$tmp/corepack/fleet-pnpm-pins"
+printf '%s\n' 11.28.2 11.28.5 > "$tmp/corepack/cached"
 write_exe "$bin/terraform" 'exit 0'
 write_exe "$bin/python314" 'exit 0'
 write_exe "$bin/uv" 'command -v python314'
@@ -106,6 +111,10 @@ rm -f "$home/.codex/auth.json"
 rmdir "$tmp/archive"
 expect_failure "archive cache" "action-archive cache is baked"
 mkdir "$tmp/archive"
+
+printf '%s\n' 11.28.5 > "$tmp/corepack/cached"
+expect_failure "uncached fleet pnpm" "every fleet-pinned pnpm and the default resolve offline"
+printf '%s\n' 11.28.2 11.28.5 > "$tmp/corepack/cached"
 
 rm "$bin/lcars"
 expect_failure "lcars" "lcars CLI is executable"

@@ -25,6 +25,15 @@ its supply-chain policies on each install and caches the metadata it reads;
 without the baked cache each job re-downloaded and re-wrote about 590 MiB of
 it (#2082).
 
+Each `fleet/*/package.json` `packageManager` pin is also the image's list of
+pnpm releases to serve offline. Fetching makes Corepack download each one; the
+image copies that Corepack cache to the runner user, records the pins in
+`/usr/local/share/agent-lcars-corepack/fleet-pnpm-pins`, and makes this
+repository's own pin the default outside any project
+(`COREPACK_DEFAULT_TO_LATEST=0`). `verify-image-invariants.sh` refuses an image
+in which any of them needs the registry, so a job whose repository pin matches
+the seed starts pnpm without a download.
+
 `tools/sync-runner-pnpm-seed.py` writes `fleet/`, and
 `.github/workflows/refresh-runner-pnpm-seed.yml` runs it weekly and opens an
 auto-merged bot PR when anything changed. Do not edit `fleet/` by hand.

@@ -44,6 +44,7 @@ check() {
 
 check "Actions node20/node24 runtimes run" required_node_runtimes_run
 check "Corepack pnpm runs offline" pnpm_runs
+check "every fleet-pinned pnpm and the default resolve offline" pinned_pnpm_runs_offline
 check "Java 21+ runs" java_21_runs
 check "Terraform CLI runs as runner" terraform version -json
 check "managed Python 3.14 runs as runner" bash -c '"$(uv python find --managed-python 3.14)" --version'

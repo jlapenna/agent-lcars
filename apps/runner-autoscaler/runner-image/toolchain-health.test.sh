@@ -154,6 +154,44 @@ if AGENT_LCARS_COREPACK_DIR="$tmp/absent-corepack-dir" PATH="$tmp/healthy" pnpm_
   exit 1
 fi
 
+# Fake Corepack shim: answers only with the registry disabled, only for a
+# version present in FAKE_CACHED, and resolves FAKE_DEFAULT outside a project.
+mkdir -p "$tmp/pinned" "$tmp/fleet-corepack"
+cat > "$tmp/pinned/pnpm" <<'PNPM'
+#!/bin/sh
+[ "$COREPACK_ENABLE_NETWORK" = 0 ] || exit 2
+if [ -f package.json ]; then
+  version="$(sed -nE 's/.*"pnpm@([0-9.]+)[^"]*".*/\1/p' package.json)"
+else
+  version="$FAKE_DEFAULT"
+fi
+case " $FAKE_CACHED " in *" $version "*) echo "$version" ;; *) exit 1 ;; esac
+PNPM
+chmod +x "$tmp/pinned/pnpm"
+printf '{"packageManager": "pnpm@11.28.5+sha512.abc"}\n' > "$tmp/fleet-corepack/package.json"
+printf '%s\n' 'pnpm@11.28.2' 'pnpm@11.28.5+sha512.abc' > "$tmp/fleet-corepack/fleet-pnpm-pins"
+pinned() {
+  AGENT_LCARS_COREPACK_DIR="$tmp/fleet-corepack" PATH="$tmp/pinned:$(dirname "$(command -v node)"):/usr/bin:/bin" \
+    FAKE_CACHED="$1" FAKE_DEFAULT="$2" pinned_pnpm_runs_offline
+}
+pinned "11.28.2 11.28.5" 11.28.5 || {
+  echo "every fleet pin cached offline was rejected" >&2
+  exit 1
+}
+if pinned "11.28.5" 11.28.5; then
+  echo "a fleet pin missing from the Corepack cache was accepted" >&2
+  exit 1
+fi
+if pinned "11.28.2 11.28.5 12.9.1" 12.9.1; then
+  echo "an out-of-project default other than this repo's pin was accepted" >&2
+  exit 1
+fi
+: > "$tmp/fleet-corepack/fleet-pnpm-pins"
+if pinned "11.28.2 11.28.5" 11.28.5; then
+  echo "an empty fleet pin list was accepted" >&2
+  exit 1
+fi
+
 cat > "$tmp/java21/java" <<'JAVA'
 #!/bin/sh
 printf '%s\n' 'openjdk version "21.0.8" 2025-07-15' >&2
