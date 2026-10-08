@@ -51,7 +51,7 @@ cp -a "$standalone_src" "$smoke_dir/standalone"
 # missing from the trace fails here rather than on its first production route.
 copied_server_dir="$smoke_dir/standalone/dist/apps/console/.next/server"
 cp tools/console-standalone-externals.mjs "$copied_server_dir/"
-env -u NODE_PATH node "$copied_server_dir/console-standalone-externals.mjs"
+timeout 60 env -u NODE_PATH node "$copied_server_dir/console-standalone-externals.mjs"
 
 smoke_port="$((43000 + RANDOM % 10000))"
 smoke_url="http://127.0.0.1:${smoke_port}"
@@ -59,6 +59,7 @@ smoke_url="http://127.0.0.1:${smoke_port}"
 # Generate an unregistered key solely for the boot parser; never persist it.
 smoke_app_key="$(node -e 'process.stdout.write(require("node:crypto").generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } }).privateKey)')"
 
+env -u NODE_PATH \
 AGENT_LCARS_APP_CLIENT_ID=standalone-smoke-app \
 AGENT_LCARS_APP_PRIVATE_KEY="$smoke_app_key" \
 AGENT_LCARS_WORK_AUDIENCE=agent-lcars-work \

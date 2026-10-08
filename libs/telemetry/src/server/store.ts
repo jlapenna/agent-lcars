@@ -72,9 +72,10 @@ export function getAgentTelemetryWriterFirestore(): AdminFirestore {
  * #2762 ("not a valid Firestore document") hit that for `Timestamp`, and
  * #1257 applied the same rule to `FieldValue`, when Next bundled
  * `@google-cloud/firestore` into server chunks while `firebase-admin` stayed
- * external. Both now load the one external package
- * (apps/console/next.config.js `serverExternalPackages`), so the classes are
- * identical today. Taking them from the client's own SDK keeps writes
+ * external. The console now externalizes `@google-cloud/firestore` too
+ * (apps/console/next.config.js `serverExternalPackages`; `firebase-admin` is
+ * on Next's default external list), and both resolve to the same physical
+ * package, so the classes are identical today. Taking them from the client's own SDK keeps writes
  * correct regardless of how a consumer bundles the two imports.
  *
  * Takes a {@link SessionWrite}, never a bare `SessionDoc` plus extra

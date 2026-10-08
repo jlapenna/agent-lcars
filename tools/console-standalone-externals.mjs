@@ -11,8 +11,10 @@
 // starts inside the copy and cannot fall back to the workspace node_modules.
 //
 // Each specifier passes if either require() or import() loads it, because a
-// chunk may use either and packages such as @google-cloud/storage only ship
-// the build that the chunk's form needs.
+// chunk may use either and the trace ships only the build that form needs
+// (@google-cloud/storage and tasks have no traced CommonJS build). This
+// deliberately does not parse Turbopack's minified loader calls to pick the
+// form, so a package whose other build alone was traced would still pass.
 import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
