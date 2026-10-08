@@ -6,6 +6,18 @@
     "monorepo:nextjs",
     "monorepo:react"
   ],
+  "customManagers": [
+    {
+      "description": "The E2E sandbox's Playwright base tag must equal the @playwright/test version in pnpm-lock.yaml (tools/contract-tests/baked-ci-tools.test.ts). Tracking the tag through the npm package, not the docker datasource, puts both in the same update and under the npm release-age rule. Tracked as a docker image, the tag moved a day before the package could (renovate/all-minor-patch, #2170).",
+      "customType": "regex",
+      "managerFilePatterns": ["/^tools/e2e/Dockerfile$/"],
+      "matchStrings": [
+        "FROM mcr\\.microsoft\\.com/playwright:v(?<currentValue>\\d+\\.\\d+\\.\\d+)-"
+      ],
+      "depNameTemplate": "@playwright/test",
+      "datasourceTemplate": "npm"
+    }
+  ],
   "packageRules": [
     {
       "description": "pnpm majors change install/lockfile semantics for the whole workspace at once (packageManager pins the exact version, currently 11.x); hold them for a deliberate toolchain upgrade rather than a bot PR",
@@ -36,6 +48,18 @@
       "description": "oRPC is exact-pinned on the v2 beta line and sits on the console's server-function boundary, where unit tests and typecheck miss breakage. Upgrade it by deliberate PR, as sprinkles does, not inside the auto-merged weekly group (#1971's beta bump changed the generated OpenAPI document and failed Verify). Disabling lookups also removes the dashboard's standing '@orpc/next deprecated' row, which is npm's flag on the mistaken 1.14.11 publish, not on the beta line in use.",
       "enabled": false,
       "matchPackageNames": ["@orpc/**"]
+    },
+    {
+      "description": "The Playwright sandbox tag is updated through the @playwright/test custom manager above.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["mcr.microsoft.com/playwright"],
+      "enabled": false
+    },
+    {
+      "description": "Apply the npm release age to the custom manager's Playwright tag too; the preset's rule matches only the npm manager.",
+      "matchDatasources": ["npm"],
+      "matchPackageNames": ["@playwright/test"],
+      "minimumReleaseAge": "1 day"
     }
   ],
   "vulnerabilityAlerts": {
