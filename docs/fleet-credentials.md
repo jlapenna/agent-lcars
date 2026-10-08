@@ -231,7 +231,7 @@ scoped key rather than reusing the master key:
 ```bash
 # The master key lives only on the homelab host; read it without echoing:
 LITELLM_MASTER_KEY=$(ssh homelab@homelab \
-  "grep '^LITELLM_MASTER_KEY=' /home/homelab/p/homelab/litellm/.env" | cut -d= -f2-)
+  "grep '^LITELLM_MASTER_KEY=' /home/homelab/homelab/litellm/.env" | cut -d= -f2-)
 curl -sS https://llm.jlapenna.net/key/generate \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H 'Content-Type: application/json' \
