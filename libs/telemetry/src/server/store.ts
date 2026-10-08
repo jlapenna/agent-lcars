@@ -61,18 +61,21 @@ export function getAgentTelemetryWriterFirestore(): AdminFirestore {
  * Upserts a session write at `sessions/{sessionId}` in the telemetry
  * database. `expireAt` is written as a Firestore `Timestamp` (not the ISO
  * string `SessionDoc` carries it as) because the collection's TTL policy —
- * see issue #2708 — only recognizes a native Timestamp field. Built via
- * `AdminTimestamp` (the `firebase-admin`
- * re-export), not the plain `@google-cloud/firestore` `Timestamp` used
- * below for `listSessionDocs`: `getAgentTelemetryWriterFirestore` is a
- * `firebase-admin` client, and Next's bundler otherwise emits the two
- * `Timestamp` classes into separate chunks, so the SDK's `instanceof` check
- * on write fails with "not a valid Firestore document" (#2762). The exact
- * same reasoning is why `write.clearFields` is mapped to `AdminFieldValue
- * .delete()` (the `firebase-admin` re-export) rather than
- * `@google-cloud/firestore`'s own `FieldValue` (issue #1257) — mixing the
- * two SDKs' sentinel classes on a `firebase-admin` client risks the same
- * cross-chunk `instanceof` failure #2762 already hit for `Timestamp`.
+ * see issue #2708 — only recognizes a native Timestamp field.
+ *
+ * `getAgentTelemetryWriterFirestore` is a `firebase-admin` client, so the
+ * `Timestamp` and the `write.clearFields` delete sentinel come from the
+ * `firebase-admin/firestore` re-exports (`AdminTimestamp`,
+ * `AdminFieldValue`), not from the direct `@google-cloud/firestore` import
+ * `listSessionDocs` uses. The SDK validates writes with `instanceof`, so a
+ * value must come from the same loaded copy of the package as the client.
+ * #2762 ("not a valid Firestore document") hit that for `Timestamp`, and
+ * #1257 applied the same rule to `FieldValue`, when Next bundled
+ * `@google-cloud/firestore` into server chunks while `firebase-admin` stayed
+ * external. Both now load the one external package
+ * (apps/console/next.config.js `serverExternalPackages`), so the classes are
+ * identical today. Taking them from the client's own SDK keeps writes
+ * correct regardless of how a consumer bundles the two imports.
  *
  * Takes a {@link SessionWrite}, never a bare `SessionDoc` plus extra
  * arguments — see that type's doc comment in `types.ts` for why a caller
