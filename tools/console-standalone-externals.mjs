@@ -10,11 +10,14 @@
 // into the copied `.next/server` directory and runs it there, so resolution
 // starts inside the copy and cannot fall back to the workspace node_modules.
 //
-// Each specifier passes if either require() or import() loads it, because a
-// chunk may use either and the trace ships only the build that form needs
-// (@google-cloud/storage and tasks have no traced CommonJS build). This
-// deliberately does not parse Turbopack's minified loader calls to pick the
-// form, so a package whose other build alone was traced would still pass.
+// Each specifier is loaded the way the chunks load it. A required external
+// appears as `require("<link>")` (Turbopack's externalRequire fallback); an
+// imported one as Turbopack's externalImport call `.y("<link>")`. The trace
+// ships only the build that form needs (@google-cloud/storage has no traced
+// CommonJS build), and accepting either form would let a broken require pass
+// on a working ESM entry. A reference in neither form fails the probe, so a
+// Turbopack change to its loader calls surfaces here instead of silently
+// skipping packages.
 import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -42,14 +45,25 @@ const collect = (dir) => {
 collect(serverDir);
 
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-const specifiers = new Set();
+// specifier -> Set of 'require' | 'import' | 'unknown'
+const specifiers = new Map();
 for (const link of links) {
-  const pattern = new RegExp(`["'](${escape(link)}(?:/[^"']*)?)["']`, 'g');
+  const pattern = new RegExp(
+    `(\\brequire\\(|\\.y\\()?["'](${escape(link)}(?:/[^"']*)?)["']`,
+    'g',
+  );
   for (const source of chunkSources) {
-    for (const match of source.matchAll(pattern)) specifiers.add(match[1]);
+    for (const [, call, specifier] of source.matchAll(pattern)) {
+      const form = !call
+        ? 'unknown'
+        : call.startsWith('.')
+          ? 'import'
+          : 'require';
+      if (!specifiers.has(specifier)) specifiers.set(specifier, new Set());
+      specifiers.get(specifier).add(form);
+    }
   }
 }
-
 if (specifiers.size === 0) {
   console.error(`No external package references found under ${linkDir}.`);
   process.exit(1);
@@ -57,16 +71,26 @@ if (specifiers.size === 0) {
 
 const requireFromServer = createRequire(join(serverDir, 'noop.cjs'));
 const failures = [];
-for (const specifier of [...specifiers].sort()) {
-  try {
-    requireFromServer(specifier);
-  } catch {
+for (const [specifier, seen] of [...specifiers].sort(([a], [b]) =>
+  a.localeCompare(b),
+)) {
+  // The externalRequire call (`.x("<link>", () => require("<link>"))`) also
+  // names the specifier outside a require(); the require() covers it.
+  const forms = [...seen].filter((form) => form !== 'unknown');
+  if (forms.length === 0) {
+    failures.push(`${specifier}: referenced, but not as require() or import`);
+    continue;
+  }
+  for (const form of forms) {
     try {
+      if (form === 'require') requireFromServer(specifier);
       // The specifiers are discovered at runtime from the built chunks.
       // eslint-disable-next-line no-restricted-syntax
-      await import(specifier);
+      else await import(specifier);
     } catch (error) {
-      failures.push(`${specifier}: ${String(error.message).split('\n')[0]}`);
+      failures.push(
+        `${specifier} (${form}): ${String(error.message).split('\n')[0]}`,
+      );
     }
   }
 }
