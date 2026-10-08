@@ -58,7 +58,20 @@ const nextConfig = {
   // The generated Cloud Tasks client loads its GAPIC JSON at runtime with a
   // dynamic require. Keep it as a Node dependency in the standalone server;
   // Turbopack cannot statically bundle that generated lookup.
-  serverExternalPackages: ['@google-cloud/tasks'],
+  //
+  // The other Google Cloud clients are externalized for build cost, not
+  // correctness. Next externalizes firebase-admin by default but not the
+  // libraries it wraps, and the telemetry/orchestrator stores import
+  // @google-cloud/firestore directly. Turbopack then bundled the whole
+  // firestore -> google-gax -> grpc-js -> protobufjs stack (~19 MB of source)
+  // into three separate server chunks. Loading them from node_modules keeps
+  // one copy, traced into the standalone output like @google-cloud/tasks.
+  serverExternalPackages: [
+    '@google-cloud/tasks',
+    '@google-cloud/firestore',
+    '@google-cloud/storage',
+    'google-auth-library',
+  ],
   // The generated JSON loader above resolves this file dynamically, so
   // Next's standalone trace sees protos.js but misses its sibling JSON file.
   // Pin the runtime asset from the exact package Node resolves; dependency
