@@ -6,18 +6,6 @@
     "monorepo:nextjs",
     "monorepo:react"
   ],
-  "customManagers": [
-    {
-      "description": "The E2E sandbox's Playwright base tag must equal the @playwright/test version in pnpm-lock.yaml (tools/contract-tests/baked-ci-tools.test.ts). Tracking the tag through the npm package, not the docker datasource, puts both in the same update and under the preset's npm release-age rule. Tracked as a docker image, the tag moved a day before the package could (renovate/all-minor-patch, #2170).",
-      "customType": "regex",
-      "managerFilePatterns": ["/^tools/e2e/Dockerfile$/"],
-      "matchStrings": [
-        "FROM mcr\\.microsoft\\.com/playwright:v(?<currentValue>\\d+\\.\\d+\\.\\d+)-"
-      ],
-      "depNameTemplate": "@playwright/test",
-      "datasourceTemplate": "npm"
-    }
-  ],
   "packageRules": [
     {
       "description": "pnpm majors change install/lockfile semantics for the whole workspace at once (packageManager pins the exact version, currently 11.x); hold them for a deliberate toolchain upgrade rather than a bot PR",
@@ -50,10 +38,16 @@
       "matchPackageNames": ["@orpc/**"]
     },
     {
-      "description": "The Playwright sandbox tag is updated through the @playwright/test custom manager above.",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["mcr.microsoft.com/playwright"],
-      "enabled": false
+      "description": "The tools/e2e/Dockerfile mcr.microsoft.com/playwright tag must match the resolved @playwright/test version (tools/contract-tests/baked-ci-tools.test.ts), so they move in one group. The image has no release timestamp, so it is proposed immediately while the npm package waits out its 1-day release age; minimumGroupSize 2 holds the branch until both are ready instead of opening a tag-only PR that fails CI (#2170). Same rule as sprinkles' playwright group.",
+      "matchPackageNames": [
+        "@playwright/test",
+        "playwright",
+        "playwright-core",
+        "mcr.microsoft.com/playwright"
+      ],
+      "groupName": "playwright",
+      "groupSlug": "playwright",
+      "minimumGroupSize": 2
     }
   ],
   "vulnerabilityAlerts": {

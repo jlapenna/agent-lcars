@@ -61,7 +61,7 @@ describe('shared Renovate preset', () => {
 
     expect(preset.packageRules).toContainEqual({
       description: expect.stringContaining('minimumReleaseAge'),
-      matchDatasources: ['npm'],
+      matchManagers: ['npm'],
       minimumReleaseAge: '1 day',
     });
     expect(localConfig.packageRules).not.toContainEqual(
