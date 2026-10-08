@@ -5,9 +5,15 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+standalone_src=dist/apps/console/.next/standalone
+if [ ! -f "$standalone_src/apps/console/server.js" ]; then
+  echo "No standalone bundle at $standalone_src; run ./tools/nx run @agent-lcars/console:bundle first." >&2
+  exit 1
+fi
+
 shopt -s nullglob
 proto_files=(
-  dist/apps/console/.next/standalone/node_modules/.pnpm/@google-cloud+tasks@*/node_modules/@google-cloud/tasks/build/protos/protos.json
+  "$standalone_src"/node_modules/.pnpm/@google-cloud+tasks@*/node_modules/@google-cloud/tasks/build/protos/protos.json
 )
 if [ "${#proto_files[@]}" -ne 1 ]; then
   echo "Expected exactly one Cloud Tasks protos.json in the standalone bundle; found ${#proto_files[@]}." >&2
@@ -25,12 +31,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Boot a copy of the bundle from outside the repository. Run in place, Node's
+# module resolution walks up from dist/ into the workspace node_modules, so a
+# package that the standalone trace failed to copy (a dynamic require, or a
+# serverExternalPackages entry) still loads and the smoke passes while the
+# deployed artifact crashes. App Hosting ships only the standalone directory,
+# so the copy is what production actually runs.
+repo_root="$(pwd -P)"
+case "$(cd "$smoke_dir" && pwd -P)/" in
+  "$repo_root"/*)
+    echo "Smoke directory $smoke_dir is inside the repository; set TMPDIR outside $repo_root." >&2
+    exit 1
+    ;;
+esac
+cp -a "$standalone_src" "$smoke_dir/standalone"
+
+# The webhook probe below only loads the modules that route touches. Load
+# every external package the server chunks reference as well, so a package
+# missing from the trace fails here rather than on its first production route.
+copied_server_dir="$smoke_dir/standalone/dist/apps/console/.next/server"
+cp tools/console-standalone-externals.mjs "$copied_server_dir/"
+timeout 60 env -u NODE_PATH node "$copied_server_dir/console-standalone-externals.mjs"
+
 smoke_port="$((43000 + RANDOM % 10000))"
 smoke_url="http://127.0.0.1:${smoke_port}"
 
 # Generate an unregistered key solely for the boot parser; never persist it.
 smoke_app_key="$(node -e 'process.stdout.write(require("node:crypto").generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } }).privateKey)')"
 
+env -u NODE_PATH \
 AGENT_LCARS_APP_CLIENT_ID=standalone-smoke-app \
 AGENT_LCARS_APP_PRIVATE_KEY="$smoke_app_key" \
 AGENT_LCARS_WORK_AUDIENCE=agent-lcars-work \
@@ -53,7 +82,7 @@ AGENT_LCARS_CONTROL_PLANE_REPOSITORY=standalone-smoke/standalone-smoke \
 AGENT_LCARS_CONTROL_PLANE_REPOSITORIES=standalone-smoke/standalone-smoke \
 AGENT_LCARS_WATCHED_REPOS='[{"owner":"standalone-smoke","name":"standalone-smoke","alias":"standalone-smoke"}]' \
 AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT=standalone-smoke/standalone-smoke/auth.json \
-node dist/apps/console/.next/standalone/apps/console/server.js \
+node "$smoke_dir/standalone/apps/console/server.js" \
   >"$smoke_dir/server.log" 2>&1 &
 server_pid=$!
 
@@ -83,4 +112,4 @@ if [ "$status" != 401 ]; then
   exit 1
 fi
 
-echo 'Standalone webhook bundle loaded Cloud Tasks and rejected the invalid signature (HTTP 401).'
+echo 'Standalone webhook bundle, booted from an isolated copy, loaded its traced dependencies and rejected the invalid signature (HTTP 401).'
