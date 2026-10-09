@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+// Unlike a small claim response, a brief includes the description in both
+// spec and anchor, the latest reply and context. Leave bounded headroom for
+// valid multibyte content rather than applying the claim's 64 KiB limit.
+const queueRunBriefBodyLimit = 1 << 20
+
 // The brief route is already read-only and requires this exact run's token,
 // liveness and unexpired lease. It grants no new credential or Work authority.
 // The worker checks it again at bootstrap, fencing a settlement that races
@@ -31,8 +36,8 @@ func queueRunFence(consoleURL string) func(context.Context, string, string) erro
 		if response.StatusCode != http.StatusOK {
 			return fmt.Errorf("queue run-token fence returned HTTP %d", response.StatusCode)
 		}
-		body, err := io.ReadAll(io.LimitReader(response.Body, claimResponseBodyLimit+1))
-		if err != nil || len(body) > claimResponseBodyLimit {
+		body, err := io.ReadAll(io.LimitReader(response.Body, queueRunBriefBodyLimit+1))
+		if err != nil || len(body) > queueRunBriefBodyLimit {
 			return fmt.Errorf("queue run-token fence brief unavailable")
 		}
 		var brief struct {

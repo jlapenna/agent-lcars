@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,28 @@ func TestQueueRunFenceUsesOriginalCredentialAndIdentity(t *testing.T) {
 	defer server.Close()
 	if err := queueRunFence(server.URL+"/")(context.Background(), runID, "private-token"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQueueRunFenceAcceptsValidLargeMultibyteBrief(t *testing.T) {
+	// Native briefs repeat a permitted description in spec and anchor; a
+	// valid latest reply may use 16,384 multibyte characters on top of it.
+	body, err := json.Marshal(map[string]any{
+		"intentId": "work:startup/r1",
+		"spec":     map[string]string{"description": strings.Repeat("d", 16384)},
+		"anchor":   map[string]string{"body": strings.Repeat("d", 16384)},
+		"reply":    strings.Repeat("界", 16384),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) <= claimResponseBodyLimit {
+		t.Fatal("fixture does not cross old claim-response bound")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
+	defer server.Close()
+	if err := queueRunFence(server.URL)(context.Background(), "work:startup/r1", "private-token"); err != nil {
+		t.Fatal("valid brief rejected:", err)
 	}
 }
 
@@ -45,7 +68,7 @@ func TestQueueRunFenceFailsClosedWithoutLeakingCredentials(t *testing.T) {
 				case "malformed":
 					_, _ = io.WriteString(w, "private-token")
 				case "oversized":
-					_, _ = io.WriteString(w, strings.Repeat("x", claimResponseBodyLimit+1))
+					_, _ = io.WriteString(w, strings.Repeat("x", queueRunBriefBodyLimit+1))
 				case "redirect":
 					http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 				}
