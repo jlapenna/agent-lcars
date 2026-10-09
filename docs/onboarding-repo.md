@@ -20,7 +20,9 @@ underlying system changes:
 A repository is onboarded only when all of the following are true:
 
 1. The fleet and autoscaler GitHub Apps can access the repository.
-2. A matching self-hosted runner scale set accepts jobs.
+2. QueueExecutor's shared direct-runner pool has capacity for its agent
+   runs, and, if its own CI uses self-hosted runners, a Homelab-owned ARC
+   runner scale set accepts those jobs.
 3. The repository has its label and local-instruction contract.
 4. The console knows to watch the repository and QueueExecutor can report its
    telemetry.
@@ -122,7 +124,8 @@ repository to both installations:
 
 - **Fleet App**: QueueExecutor dispatch authorization, claims, comments, pull
   requests, labels, and console reads.
-- **Autoscaler App**: runner registration and scale-set listener.
+- **Autoscaler App**: ARC runner registration and scale-set listener
+  (deployed by Homelab).
 
 Use least privilege: add the target repository while retaining the
 installation's other approved repositories. The selected-repository list is

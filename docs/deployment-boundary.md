@@ -155,19 +155,20 @@ admitted provider; its cron scope only permits the server-owned schedule tick.
 
 #### Queue executor routing
 
-QueueExecutor is the server route. The App Hosting flag is required to be
-`true` before any request enters the orchestrator, and the same selected
-executor reaches every entry point. The
-autoscaler's matching console URL and credentials claim and run the durable
+QueueExecutor is the only execution route; there is no App Hosting flag or
+per-request executor selection, and every entry point reaches the same
+durable queue. The
+autoscaler's matching console URL and credentials claim and run that
 queue, and the same process ticks native schedules every five minutes through
 the Work API. Every healthy autoscaler replica may tick; deterministic
 schedule item ids and the Work API's durable orchestrator coalesce a shared
 due slot to one item/run. Its image and mounts are documented in
-`apps/runner-autoscaler/README.md`. This repository owns server routing and
-executor/scheduler grants and the optional Kubernetes Job backend; Homelab owns
-autoscaler deployment, Kubernetes namespace/RBAC, provider Secrets, node
-readiness taints and backend cutover. Backend configuration changes the worker
-launch transport, never server admission or provider credential authorization.
+`apps/runner-autoscaler/README.md`. This repository owns server routing,
+executor/scheduler grants, and the Kubernetes Job backend (the queue
+executor's only backend); Homelab owns autoscaler deployment, Kubernetes
+namespace/RBAC, provider Secrets, node readiness taints, and sizing. Executor
+configuration changes how workers launch, never server admission or provider
+credential authorization.
 
 ### 4. Workflows — repo variables
 

@@ -41,6 +41,13 @@ Use this index to retrieve the smallest current contract for a task.
 | Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)           |
 | OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                     |
 
+## Product specification
+
+| Need                                      | Document                                                                                     |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Console product spec (part 1)             | [`product/console-product-spec.md`](product/console-product-spec.md)                         |
+| Fleet orchestration product spec (part 2) | [`product/fleet-orchestration-product-spec.md`](product/fleet-orchestration-product-spec.md) |
+
 ## Plans, evidence, and generated contracts
 
 - `superpowers/specs/` and `superpowers/plans/` record scoped designs and
