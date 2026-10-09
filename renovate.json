@@ -48,6 +48,12 @@
       "groupName": "playwright",
       "groupSlug": "playwright",
       "minimumGroupSize": 2
+    },
+    {
+      "description": "A republished Playwright image (same tag, new digest) has no npm counterpart to group with, so exempt digest-only updates from the playwright group's minimumGroupSize; Renovate applies the highest minimumGroupSize in a branch, so a version bump still waits for both.",
+      "matchPackageNames": ["mcr.microsoft.com/playwright"],
+      "matchUpdateTypes": ["digest"],
+      "minimumGroupSize": 1
     }
   ],
   "vulnerabilityAlerts": {
