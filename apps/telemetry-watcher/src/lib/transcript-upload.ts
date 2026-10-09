@@ -80,3 +80,52 @@ export async function downloadTranscript(
     .download();
   return contents.toString('utf-8');
 }
+
+/** CLI archives require an operator-owned bucket with bounded physical retention.
+ * The runner bucket's archived-version-only lifecycle is insufficient. */
+export async function uploadCliTranscript(
+  options: UploadTranscriptOptions & { writerKeyJson?: string },
+): Promise<void> {
+  const storage = new Storage({
+    projectId: options.projectId,
+    ...(options.writerKeyJson && {
+      credentials: JSON.parse(options.writerKeyJson),
+    }),
+    retryOptions: { totalTimeout: 30, maxRetries: 1 },
+  });
+  const bucket = storage.bucket(options.bucket);
+  const [metadata] = await bucket.getMetadata();
+  const rules = metadata.lifecycle?.rule ?? [];
+  const hasBoundedDelete = rules.some((rule) => {
+    const condition = rule.condition;
+    return (
+      rule.action?.type === 'Delete' &&
+      condition &&
+      typeof condition.age === 'number' &&
+      condition.age >= 0 &&
+      condition.age <= 30 &&
+      // Conditions combine with AND: only unconditional age (plus cli prefix) qualifies.
+      Object.keys(condition).every(
+        (key) => key === 'age' || key === 'matchesPrefix',
+      ) &&
+      (!condition.matchesPrefix ||
+        condition.matchesPrefix.some((prefix) => 'cli/'.startsWith(prefix)))
+    );
+  });
+  if (
+    !hasBoundedDelete ||
+    metadata.iamConfiguration?.uniformBucketLevelAccess?.enabled !== true ||
+    metadata.iamConfiguration?.publicAccessPrevention !== 'enforced' ||
+    metadata.versioning?.enabled ||
+    metadata.retentionPolicy ||
+    Number(metadata.softDeletePolicy?.retentionDurationSeconds) !== 0
+  ) {
+    throw new Error(
+      'CLI archive bucket requires private uniform access, Delete age <= 30, no versioning, retention lock, or soft delete',
+    );
+  }
+  await bucket.file(options.object).save(options.contents, {
+    contentType: 'application/x-ndjson',
+    timeout: 30_000,
+  });
+}

@@ -1,8 +1,12 @@
+import { Readable } from 'node:stream';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockDownload = vi.fn();
+const mockCreateReadStream = vi.fn();
 const mockFile = vi.fn().mockImplementation(() => ({
   download: mockDownload,
+  createReadStream: mockCreateReadStream,
 }));
 const mockBucket = vi.fn().mockImplementation(() => ({
   file: mockFile,
@@ -75,5 +79,29 @@ describe('fetchSessionTranscript', () => {
     await expect(
       fetchSessionTranscript('gs://bucket/runs/1/session.jsonl'),
     ).rejects.toThrow('storage: object not found');
+  });
+});
+
+describe('bounded CLI storage reads', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetTranscriptStoreForTesting();
+  });
+  it('decodes the stream at the bound without downloading an unbounded object', async () => {
+    mockCreateReadStream.mockReturnValue(
+      Readable.from([Buffer.from('abc'), Buffer.from('def')]),
+    );
+    expect(await fetchSessionTranscript('gs://bucket/cli/a.jsonl', 6)).toBe(
+      'abcdef',
+    );
+    expect(mockDownload).not.toHaveBeenCalled();
+  });
+  it('aborts an oversized stream rather than rendering partial or unbounded content', async () => {
+    const stream = Readable.from([Buffer.from('abcdefg')]);
+    mockCreateReadStream.mockReturnValue(stream);
+    await expect(
+      fetchSessionTranscript('gs://bucket/cli/a.jsonl', 6),
+    ).rejects.toThrow('size limit');
+    expect(stream.destroyed).toBe(true);
   });
 });

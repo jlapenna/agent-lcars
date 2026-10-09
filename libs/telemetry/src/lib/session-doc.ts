@@ -171,9 +171,25 @@ export function buildSessionDoc(
     return issueAgentBase;
   }
 
+  if (
+    options.cliTranscriptArchive?.status === 'available' &&
+    (!options.transcriptGcsUri ||
+      !options.cliTranscriptArchive.expiresAt ||
+      !Number.isFinite(Date.parse(options.cliTranscriptArchive.expiresAt)))
+  ) {
+    throw new Error('CLI archive requires a transcript URI and valid expiry');
+  }
   return {
     ...base,
     source: 'cli',
+    ...(options.cliTranscriptArchive && {
+      cliTranscriptArchive: options.cliTranscriptArchive,
+    }),
+    ...(options.cliTranscriptArchive?.status === 'available' &&
+      options.transcriptGcsUri && {
+        transcriptGcsUri: options.transcriptGcsUri,
+        renderable: isRenderableTranscriptAgent(agent),
+      }),
     ...(options.observedAt && { observedAt: options.observedAt }),
     ...(summary.host && { host: summary.host }),
     ...(summary.cwd && { cwd: summary.cwd }),
@@ -248,6 +264,40 @@ export function parseSessionDoc(value: unknown): SessionDoc {
       );
     }
   }
+  if (source === 'cli') {
+    const archive = value['cliTranscriptArchive'];
+    if (
+      archive !== undefined &&
+      (!isStoredDocument(archive) ||
+        ![
+          'pending',
+          'available',
+          'failed',
+          'too-large',
+          'expired',
+          'unsupported',
+        ].includes(String(archive['status'])))
+    ) {
+      throw new Error('Persisted CLI session has an invalid archive outcome');
+    }
+    const uri = value['transcriptGcsUri'];
+    if (isStoredDocument(archive) && archive['status'] === 'available') {
+      if (
+        !hasNonEmptyTranscript(uri) ||
+        typeof value['renderable'] !== 'boolean' ||
+        typeof archive['expiresAt'] !== 'string' ||
+        !Number.isFinite(Date.parse(archive['expiresAt']))
+      ) {
+        throw new Error(
+          'Persisted CLI archive requires URI, renderability and expiry',
+        );
+      }
+    } else if (uri !== undefined || value['renderable'] !== undefined) {
+      throw new Error(
+        'Persisted CLI transcript requires explicit available archive consent',
+      );
+    }
+  }
   return value as unknown as SessionDoc;
 }
 
@@ -282,6 +332,11 @@ export function buildSessionWrite(
   }
   if (summary.agent === 'opencode' && summary.resolvedModel === undefined) {
     clearFields.push('resolvedModel');
+  }
+  if (doc.source === 'cli') {
+    if (!doc.cliTranscriptArchive) clearFields.push('cliTranscriptArchive');
+    if (!doc.transcriptGcsUri)
+      clearFields.push('transcriptGcsUri', 'renderable');
   }
   return { doc, clearFields };
 }

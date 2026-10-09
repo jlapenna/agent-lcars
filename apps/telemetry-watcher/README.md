@@ -1,7 +1,7 @@
 # Agent LCARS Telemetry Watcher
 
 Per-host daemon (issue #2540) that watches interactive Claude Code and Codex
-CLI sessions on a workstation and reports summary-only telemetry to the
+CLI sessions on a workstation and reports summary telemetry to the
 `agent-telemetry` Firestore store the [Agent LCARS](../console)
 reads from.
 
@@ -77,7 +77,7 @@ changes in between), the daemon:
 2. Skips re-reading any file whose mtime/size hasn't changed since the last
    tick, and reduces the rest via `@agent-lcars/telemetry`'s
    `reduceTranscripts` into counters/deliverables/timeline summaries —
-   **never** message bodies.
+   Message bodies stay local unless the explicit CLI archive policy below consents to that individual session.
 3. Resolves liveness (`live` / `idle` / `stale` / `ended`) from transcript
    recency, whether a process is still running against the session's `cwd`,
    and whether the watcher itself has kept rediscovering the file within
@@ -93,6 +93,76 @@ changes in between), the daemon:
 Every step fails soft and logs rather than crashing — a single broken
 transcript, reducer error, or store write failure never takes down
 telemetry for the daemon's other tracked sessions.
+
+## Opt-in CLI transcript archives
+
+CLI archival is **off by default**. Summary discovery and its existing project-dir
+and cwd allowlists remain the privacy owner. No production upload policy is set
+by this repository change. Consent to one session does not authorize uploading
+other sessions in the same file or widening a watch root.
+
+The host-only `AGENT_TELEMETRY_CLI_ARCHIVE_POLICY` accepts an explicit JSON object:
+
+```json
+{
+  "bucket": "operator-owned-cli-archives",
+  "sessionIds": ["specific-cli-session-id"],
+  "enabledAfter": "2026-10-09T00:00:00.000Z"
+}
+```
+
+The operator selects at most 100 exact safe session IDs; globs are rejected.
+`enabledAfter` is a deliberate consent cutoff: sessions started before it are
+never archived. The normal discovery gate must still accept the session, and
+at least one of that root's project-dir/cwd allowlists must be restrictive.
+Only file-backed Claude Code and Codex sessions support console transcripts.
+Antigravity summary-DB rows never upload local history. A live/idle session is
+pending; an ended session uploads its own bounded file through the existing
+provider adapter. Changed bytes are revalidated before upload; mixed-session
+files, malformed records, escaped/symlink paths, and excluded cwd are rejected.
+
+Limits and failure behavior:
+
+- Maximum archive and console download: **5 MiB**. Oversized sessions retain
+  their summary and show a size-limit state; no partial transcript is uploaded.
+- Console access expires at last activity + **30 days**, matching CLI ledger
+  retention. The destination must have a Delete lifecycle age of **30 days or
+  less** applying to all objects or the `cli/` prefix, no versioning, no
+  retention lock, and explicit zero soft-delete retention. It must enforce
+  uniform bucket-level access and public-access prevention. The writer checks
+  these properties before each upload and refuses the runner bucket's
+  archived-version-only lifecycle. GCS lifecycle deletion is asynchronous:
+  objects become eligible by 30 days after upload; console access is blocked
+  at the earlier ledger expiry. Re-uploading changed transcripts resets object
+  age, not the console's last-activity retention rule.
+- Upload/bucket-policy failures preserve summary reporting and show unavailable;
+  retries are limited to once per minute per unchanged session. Storage retries
+  have a 30-second budget. A missing/denied/expired archive never hides the
+  session header or becomes a page error.
+- The admin-only detail route uses the existing server storage reader, provider
+  timeline parser, elision and safe Markdown renderer. Raw HTML and dangerous
+  URL schemes are not executed. Raw transcript bodies never enter ledger docs.
+- Removing consent and restarting the watcher clears the CLI archive reference
+  on the next discovered-session write. Previously stored objects remain subject
+  to the bucket lifecycle; this is not an immediate object-erasure operation.
+
+### Operator handoff (separate approved operation)
+
+Homelab owns host configuration, bucket provisioning and credentials. Before
+activation, review the selected sessions/cutoff and the destination's private
+retention policy. The existing host writer identity needs object creation and
+bucket-metadata read access there; the console's runtime identity needs object
+read access. The host upload path uses `AGENT_TELEMETRY_WRITER_KEY_JSON` (or
+ambient ADC when absent), never a new committed credential. Any Terraform/IAM
+change, secret delivery, image publication, host restart or production activation
+requires its separately scoped approved operation.
+
+Supply the policy through an operator-owned Compose environment override for
+`agent-lcars-telemetry-watcher`; the checked-in deployment intentionally does not
+enable it. Keep the existing read-only mounts and allowlists. Verify the bucket
+policy, archive a specifically consented session, inspect its `/sessions/<id>`
+detail and an excluded session, and record the deployed image digest. To disable,
+remove that policy override and restart through the approved host workflow.
 
 ## Session titles (issue #1212)
 

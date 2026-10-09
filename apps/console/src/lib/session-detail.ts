@@ -1,7 +1,10 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
-import type { SessionDoc } from '@agent-lcars/telemetry';
+import {
+  CLI_TRANSCRIPT_MAX_BYTES,
+  type SessionDoc,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   getSessionDoc,
@@ -19,7 +22,7 @@ export type SessionDetailResult =
 
 /**
  * Loads everything the /sessions/[id] detail page needs: the doc itself,
- * plus - for an issue-agent doc that has one - its archived transcript.
+ * plus its renderable archived transcript (CLI archives require unexpired consent).
  *
  * Two distinct failure modes are kept separate (see `SessionDetailResult`)
  * because the page treats them differently: a genuinely-missing doc is a
@@ -63,10 +66,28 @@ export async function getSessionDetail(
     return { status: 'not-found' };
   }
 
+  const cliArchive =
+    doc.source === 'cli' ? doc.cliTranscriptArchive : undefined;
+  const cliAvailable =
+    doc.source !== 'cli' ||
+    (cliArchive?.status === 'available' &&
+      cliArchive.expiresAt &&
+      Date.parse(cliArchive.expiresAt) > Date.now());
   const transcript =
-    doc.source === 'issue-agent' && doc.transcriptGcsUri && doc.renderable
-      ? await getSessionTranscript(doc.transcriptGcsUri, doc.agent)
-      : undefined;
+    doc.transcriptGcsUri && doc.renderable && cliAvailable
+      ? doc.source === 'cli'
+        ? await getSessionTranscript(doc.transcriptGcsUri, doc.agent, {
+            maxBytes: CLI_TRANSCRIPT_MAX_BYTES,
+          })
+        : await getSessionTranscript(doc.transcriptGcsUri, doc.agent)
+      : doc.source === 'cli' &&
+          cliArchive?.status === 'available' &&
+          !cliAvailable
+        ? {
+            events: [],
+            warning: 'Transcript unavailable (archive retention expired).',
+          }
+        : undefined;
 
   return { status: 'ok', doc, ...(transcript && { transcript }) };
 }

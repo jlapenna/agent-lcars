@@ -149,3 +149,68 @@ describe('ArchivedSessionTranscript', () => {
     expect(screen.queryByTestId('transcript-timeline')).toBeNull();
   });
 });
+
+describe('CLI archive detail rendering', () => {
+  const cli = (
+    overrides: Partial<import('@agent-lcars/telemetry').CliSessionDoc> = {},
+  ): import('@agent-lcars/telemetry').CliSessionDoc => ({
+    ...agentDoc(),
+    source: 'cli',
+    ...overrides,
+  });
+  it('shows that default CLI transcript archival is not enabled', () => {
+    renderWithProvider(<ArchivedSessionTranscript doc={cli()} />);
+    expect(screen.getByTestId('cli-transcript-state')).toHaveTextContent(
+      'not enabled',
+    );
+  });
+  it('renders consented CLI transcript events through the existing safe timeline', () => {
+    renderWithProvider(
+      <ArchivedSessionTranscript
+        doc={cli({
+          transcriptGcsUri: 'gs://cli-archives/cli/a.jsonl',
+          renderable: true,
+          cliTranscriptArchive: {
+            status: 'available',
+            expiresAt: '2099-01-01T00:00:00Z',
+          },
+        })}
+        transcript={{
+          events: [
+            {
+              kind: 'text',
+              role: 'user',
+              timestamp: '2026-10-09T10:00:00Z',
+              text: '<script>alert(1)</script>',
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByTestId('transcript-timeline')).toBeInTheDocument();
+    expect(document.querySelector('script')).toBeNull();
+  });
+  it('shows a missing-storage warning instead of losing the CLI detail', () => {
+    renderWithProvider(
+      <ArchivedSessionTranscript
+        doc={cli({
+          transcriptGcsUri: 'gs://cli-archives/cli/a.jsonl',
+          renderable: true,
+          cliTranscriptArchive: {
+            status: 'available',
+            expiresAt: '2099-01-01T00:00:00Z',
+          },
+        })}
+        transcript={{
+          events: [],
+          warning: 'Transcript unavailable (failed to fetch from storage).',
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        'Transcript unavailable (failed to fetch from storage).',
+      ),
+    ).toBeInTheDocument();
+  });
+});

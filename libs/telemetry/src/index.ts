@@ -1,3 +1,4 @@
+export * from './lib/cli-transcript-archive';
 export * from './lib/codex-transcript-adapter';
 export * from './lib/liveness';
 export * from './lib/opencode-transcript-adapter';
