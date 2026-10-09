@@ -107,7 +107,9 @@ func TestKubernetesRetiresSettledOriginalAndDrainsPendingPods(t *testing.T) {
 				job.Generation = 2
 				job.Status.StartTime = ptr(meta.Now())
 				job.Status.Active = 1
-				pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "owned", Namespace: q.config.Namespace, OwnerReferences: []meta.OwnerReference{{Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr(true)}}}, Status: core.PodStatus{Phase: core.PodPending}}
+				pod := &core.Pod{ObjectMeta: *job.Spec.Template.ObjectMeta.DeepCopy(), Status: core.PodStatus{Phase: core.PodPending}}
+				pod.Name, pod.Namespace = "owned", q.config.Namespace
+				pod.OwnerReferences = []meta.OwnerReference{{Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr(true)}}
 				if kind == "Running" {
 					pod.Status.Phase = core.PodRunning
 					pod.Spec.NodeName = "node"

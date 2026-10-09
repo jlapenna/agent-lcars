@@ -374,6 +374,11 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
 		}
 	}
 	for _, pod := range pods.Items {
+		// Job names are not an ownership boundary. The queue puts this label
+		// on every runner Pod; unrelated Jobs may use the same name prefix.
+		if pod.Labels[queueJobLabel] != "true" {
+			continue
+		}
 		if pod.DeletionTimestamp == nil && (pod.Status.Phase == core.PodSucceeded || pod.Status.Phase == core.PodFailed) {
 			continue
 		}

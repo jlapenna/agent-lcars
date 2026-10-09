@@ -99,6 +99,61 @@ func TestKubernetesCapacityIncludesPendingAndHeldJobs(t *testing.T) {
 		t.Fatal("an existing pending Job must prevent a second pending claim")
 	}
 }
+
+func TestKubernetesOrphanPlacementRequiresQueueOwnership(t *testing.T) {
+	for _, kind := range []string{"unrelated Job", "false queue label", "queue Pending", "queue Running", "queue Succeeded", "queue Failed", "deleting queue Succeeded", "deleting unrelated Job"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			q, c := kubeQueueFixture(queueReadyNode())
+			job, err := q.job(directRunnerLaunch{runID: "work:orphan/r1", pipeline: "codex"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Use metadata produced by the actual queue Job template, as the
+			// Job controller does. Its Job has disappeared except unrelated
+			// jobs, which the queue's label-scoped inventory must not adopt.
+			pod := &core.Pod{ObjectMeta: *job.Spec.Template.ObjectMeta.DeepCopy(), Status: core.PodStatus{Phase: core.PodPending}}
+			pod.Name, pod.Namespace = "orphan", q.config.Namespace
+			pod.OwnerReferences = []meta.OwnerReference{{Kind: "Job", Name: job.Name, UID: "absent-job", Controller: ptr(true)}}
+			wantBlocked := true
+			switch kind {
+			case "unrelated Job", "deleting unrelated Job", "false queue label":
+				pod.Labels = nil
+				job.Labels = nil
+				job.UID = "absent-job"
+				if kind == "false queue label" {
+					pod.Labels = map[string]string{queueJobLabel: "false"}
+				}
+				if err := c.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), job, q.config.Namespace); err != nil {
+					t.Fatal(err)
+				}
+				wantBlocked = false
+			case "queue Running":
+				pod.Status.Phase = core.PodRunning
+				pod.Spec.NodeName = "node"
+			case "queue Succeeded", "deleting queue Succeeded":
+				pod.Status.Phase = core.PodSucceeded
+				wantBlocked = kind == "deleting queue Succeeded"
+			case "queue Failed":
+				pod.Status.Phase = core.PodFailed
+				wantBlocked = false
+			}
+			if strings.HasPrefix(kind, "deleting ") {
+				pod.DeletionTimestamp = ptr(meta.Now())
+			}
+			if _, err := c.CoreV1().Pods(q.config.Namespace).Create(ctx, pod, meta.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			reservation, err := q.reserve(ctx)
+			if err != nil || (reservation == nil) != wantBlocked {
+				t.Fatalf("reservation=%v err=%v, want blocked=%v", reservation, err, wantBlocked)
+			}
+			if reservation != nil {
+				reservation.release()
+			}
+		})
+	}
+}
 func TestKubernetesLaunchProviderIsolationAndSingleAttempt(t *testing.T) {
 	for _, provider := range []string{"claude", "codex", "opencode"} {
 		t.Run(provider, func(t *testing.T) {
