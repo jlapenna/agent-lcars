@@ -1,8 +1,8 @@
 # Agent LCARS product spec, part 1: the console
 
-- **Status:** Product specification of record for the console. It is written
-  from `main` at `608500a` (2026-10-09) and fact-checked against that
-  source. Part 2 is
+- **Status:** Product specification of record for the console. Originally written
+  from `main` at `608500a`; E2E coverage and mute behavior were
+  reviewed against `e4b1baa` (2026-10-09). Part 2 is
   [fleet management and orchestration](fleet-orchestration-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -274,7 +274,12 @@ the work that has stopped, and the work in flight.
   Inbox list".
 - **FE-IN-7 [Partial]** Mute is stored per browser in localStorage
   (`agent-lcars:muted-queue-items`). It is not shared across devices.
-  **Proposed:** a server-side snooze with an expiry.
+  New mutes expire when the signature of `updatedAt`, sorted `actionTypes`,
+  or `ciRunning` changes; migrated legacy mutes retain no-expiry behavior.
+  The owner is [`use-muted-items.ts`](../../apps/console/src/app/use-muted-items.ts),
+  with regression coverage in `use-muted-items.test.ts`.
+  **Proposed:** a server-side snooze with a time-based expiry shared across
+  devices.
 
 ### 6.3 Agents (`/agents`)
 
@@ -475,7 +480,10 @@ console Reply action.
 - Edit issue.
 - URL-addressed selection and repo scope.
 - Keyboard Inbox.
-- The phone list-to-detail flow.
+- The phone list-to-detail flow, including Inbox reply input visibility and
+  reply control touch-target size in
+  [`populated-dashboard.spec.ts`](../../apps/console-e2e/src/populated-dashboard.spec.ts).
+  This is partial reply coverage, not a submitted reply or dispatch journey.
 - Agents and Sessions at every viewport.
 - The Costs ledger.
 - Shuttlebay page structure (heading and copy only; the stream is not
@@ -492,7 +500,7 @@ console Reply action.
   edit.
 - `/work/schedules`: create, enable, and disable.
 - `/task/...` beyond the "Open task" navigation.
-- Inbox Reply and hand-off.
+- Inbox reply submission, trigger selection, and dispatch hand-off.
 - Merge and rebase end to end.
 - Unstick.
 - Shuttlebay live updates and SSE reconnect.
@@ -501,20 +509,20 @@ console Reply action.
 
 Priorities assume the single-maintainer design center.
 
-| #   | Item                                                                                                                                  | Why                                                                   | Priority |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------- |
-| R1  | Live updates on Bridge, Inbox, and Agents over SSE, as Shuttlebay already does (FE-LIVE-4)                                            | The queue is the product, and a stale queue costs decisions           | P0       |
-| R2  | E2E coverage for the Work list and detail actions, schedules, task detail, Inbox reply, merge/rebase, and Unstick                     | These mutating paths currently have no journey proof                  | P0       |
-| R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker to replace the URL-only `?repo=`                  | The lists silently truncate                                           | P1       |
-| R4  | One item view for GitHub-anchored and native tasks (FE-TK-2)                                                                          | One `Task` model, so one UI; removes duplicated surfaces              | P1       |
-| R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6)                                                                            | Grants already model this; sign-in blocks it                          | P1       |
-| R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI | P1       |
-| R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                         | P2       |
-| R8  | Schedule edit and delete, and a time-zone display                                                                                     | Schedules can currently only be toggled                               | P2       |
-| R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                      | P2       |
-| R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                       | P2       |
-| R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                    | P3       |
-| R12 | Re-point the fleet chip at the queue-executor and ARC lane documents, or remove it, and drop the legacy scale-set row from Shuttlebay | Both read status documents that are no longer published               | P2       |
+| #   | Item                                                                                                                                  | Why                                                                        | Priority |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------- |
+| R1  | Live updates on Bridge, Inbox, and Agents over SSE, as Shuttlebay already does (FE-LIVE-4)                                            | The queue is the product, and a stale queue costs decisions                | P0       |
+| R2  | E2E coverage for the Work list and detail actions, schedules, task detail, Inbox reply submission/dispatch, merge/rebase, and Unstick | Reply layout has partial coverage; these mutating journeys remain unproven | P0       |
+| R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker to replace the URL-only `?repo=`                  | The lists silently truncate                                                | P1       |
+| R4  | One item view for GitHub-anchored and native tasks (FE-TK-2)                                                                          | One `Task` model, so one UI; removes duplicated surfaces                   | P1       |
+| R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6)                                                                            | Grants already model this; sign-in blocks it                               | P1       |
+| R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI      | P1       |
+| R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                              | P2       |
+| R8  | Schedule edit and delete, and a time-zone display                                                                                     | Schedules can currently only be toggled                                    | P2       |
+| R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                           | P2       |
+| R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                            | P2       |
+| R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                         | P3       |
+| R12 | Re-point the fleet chip at the queue-executor and ARC lane documents, or remove it, and drop the legacy scale-set row from Shuttlebay | Both read status documents that are no longer published                    | P2       |
 
 ## 11. Success metrics
 

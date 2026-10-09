@@ -1,8 +1,8 @@
 # Agent LCARS product spec, part 2: fleet management and orchestration
 
 - **Status:** Product specification of record for the agent fleet control
-  plane. It is written from `main` at `608500a` (2026-10-09) and
-  fact-checked against that source. Part 1 is
+  plane. Originally written from `main` at `608500a`; conversation proof status and
+  published-interface claims were reviewed against `e4b1baa` (2026-10-09). Part 1 is
   [the console](console-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -409,14 +409,36 @@ consumed by every dispatched run in every member repository.
   Sub-projects 1–4 have shipped. On GitHub, a resume requires the reply
   trigger tag (`lib/tagged-reply-resume.ts`). The design doc's mention of an
   `AGENT_LCARS_IMPLICIT_REPLY_REPOS` gate is stale; that variable no longer
-  exists.
+  exists. Historical session-identity proof is recorded in the
+  [canonical smoke ledger](../native-work-smoke-runbook.md#tagged-gate-re-gating-three-live-proofs-2026-09-06):
+  Claude [#1794](https://github.com/jlapenna/agent-lcars/issues/1794#issuecomment-5557261018)
+  archived `6c2030cb-cebc-4d3d-953c-13b8fd390cd1` in both rounds;
+  OpenCode [#1797](https://github.com/jlapenna/agent-lcars/issues/1797)
+  archived `ses_f8ab9b701ffeQe92wumRW83s16` in both rounds on 2026-09-06.
+  [#1798](https://github.com/jlapenna/agent-lcars/issues/1798#issuecomment-5557319183)
+  proved Codex capture only before hitting quota; the
+  [2026-09-07 real-work proof](../native-work-smoke-runbook.md#2026-09-07-pass--restore-and-codex-exec-resume-on-real-work)
+  on sprinkles#5177 restored and resumed
+  `01a07c4c-1c40-7221-8afb-68e1b4c4b582`, observed in both archives,
+  `codex exec resume`, and `thread.started`. Recalling a codeword visible
+  in anchor comments is not independent evidence of continuity.
+  These are pre-cutover direct-container proofs, not verification of the
+  current Kubernetes Job backend; repeat verification there remains a gate.
 - **FL-RC-4 [Shipped]** A reply may name a different pipeline. That replaces
   an unclaimed queued run and always starts a fresh session, because provider
   sessions cannot cross providers.
-- **FL-RC-3 [Proposed]** Slack threads (sub-project 5) are not started. In
-  this design `/lcars` creates the thread root, the agent's park question
-  returns to the thread, and a thread reply resumes the session. All live
-  proofs for resumable conversations are still outstanding. See R5.
+- **FL-RC-3 [Partial]** Slack threads (sub-project 5) have historical inbound
+  and outbound proof: the
+  [2026-09-06 ledger](../native-work-smoke-runbook.md#slack-threads-sub-project-5-2026-09-06--inbound-and-outbound-pass-one-hop-unproven)
+  records a mention creating item `01M1W3T2X7KR5Z482XVK5C3837` in six
+  seconds and the parked agent question reaching its originating thread.
+  The remaining Slack gate is a **genuine human thread reply** reaching
+  `POST /items/{id}/reply`, minting a resume run, and demonstrating provider
+  session identity. App-authored messages carry `bot_id` and are correctly
+  rejected by `isEligibleThreadReply`; preserve that anti-bot gate.
+  This historical ledger does not prove the current Kubernetes backend.
+  R5 requires the remaining human hop and current-backend verification;
+  this correction authorizes no Slack messages or token changes.
 
 ## 10. Telemetry and observability
 
@@ -509,18 +531,26 @@ consumed by every dispatched run in every member repository.
 
 ## 12. Gaps and roadmap
 
-| #   | Item                                                                                                                                                | Why                                                                                                         | Priority |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------- |
-| R1  | Unify the "needs a human" surface: native parks and GitHub `status:needs-human` in one queue (see part 1, open question 1)                          | Native parks currently surface only on the Bridge                                                           | P0       |
-| R2  | Graduate worker-policy enforcement (FL-WP-11), provider by provider, behind a measured rollout                                                      | The protocol's hard limits are currently honor-system at runtime                                            | P0       |
-| R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline, such as 10 minutes, that settles `lost` early                           | A failed launch can stall a task for about 2h                                                               | P1       |
-| R4  | A priority field on runs (for example `urgent`, `normal`, `background`), honored inside provider-fair selection                                     | Scheduled maintenance work and urgent fixes currently share one FIFO                                        | P1       |
-| R5  | Slack thread conversations (FL-RC-3) and the outstanding live proofs for resumable conversations                                                    | The design promises this; sub-project 5 has not started                                                     | P1       |
-| R6  | Anchor-level label consistency: reject or resolve multiple `agent:*` labels, and clean up stale routing labels after an outcome                     | Per-delivery evaluation can leave labels that contradict state                                              | P2       |
-| R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task                | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit | P2       |
-| R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                                     | The singleton is a single point of failure                                                                  | P2       |
-| R9  | Restore the contract test for hand-synced YAML copies of `AGENT_BOT_LOGINS` and run-name derivation (#1298)                                         | Prevents silent auto-merge drift                                                                            | P2       |
-| R10 | Resolve the `ci:run-functional-e2e` mismatch: add the label to the manifest for the repositories that use it, or remove it from the worker protocol | The protocol names a label the label contract does not declare                                              | P3       |
+| #   | Item                                                                                                                                                | Why                                                                                                                               | Priority |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R1  | Unify the "needs a human" surface: native parks and GitHub `status:needs-human` in one queue (see part 1, open question 1)                          | Native parks currently surface only on the Bridge                                                                                 | P0       |
+| R2  | Graduate worker-policy enforcement (FL-WP-11), provider by provider, behind a measured rollout                                                      | The protocol's hard limits are currently honor-system at runtime                                                                  | P0       |
+| R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline, such as 10 minutes, that settles `lost` early                           | A failed launch can stall a task for about 2h                                                                                     | P1       |
+| R4  | A priority field on runs (for example `urgent`, `normal`, `background`), honored inside provider-fair selection                                     | Scheduled maintenance work and urgent fixes currently share one FIFO                                                              | P1       |
+| R5  | Verify the genuine human Slack reply hop (FL-RC-3) and session continuity on the current Kubernetes backend                                         | Historical three-provider continuity and Slack inbound/outbound proofs exist; human Slack reply and current-backend proofs remain | P1       |
+| R6  | Anchor-level label consistency: reject or resolve multiple `agent:*` labels, and clean up stale routing labels after an outcome                     | Per-delivery evaluation can leave labels that contradict state                                                                    | P2       |
+| R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task                | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit                       | P2       |
+| R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                                     | The singleton is a single point of failure                                                                                        | P2       |
+| R10 | Resolve the `ci:run-functional-e2e` mismatch: add the label to the manifest for the repositories that use it, or remove it from the worker protocol | The protocol names a label the label contract does not declare                                                                    | P3       |
+
+R9 is retired: [#1298](https://github.com/jlapenna/agent-lcars/issues/1298)
+is closed, and the hosted provider workflows whose YAML copies it concerned
+no longer exist. Surviving interface owners are the
+[published actions](../published-actions.md#contract-verification),
+[dispatch registry](../../libs/dispatch-contracts/README.md), and generated
+[Work OpenAPI](../api/work-v1.openapi.json). This is not a requirement to
+restore deleted workers or their run-name tests. The live `AGENT_BOT_LOGINS`
+variable remains configuration; registry tests do not validate its live value.
 
 ## 13. Success metrics and SLOs
 
