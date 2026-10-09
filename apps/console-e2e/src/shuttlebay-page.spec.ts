@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Route, test } from '@playwright/test';
 
+import { usePopulatedFixtures } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
@@ -85,5 +86,98 @@ test.describe('/shuttlebay workspace', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
+  });
+});
+
+// Use real browser EventSource parsing/reconnection, with controlled HTTP
+// boundaries. No fake EventSource or dependency on producer heartbeat timing.
+test.describe('Shuttlebay live stream', () => {
+  usePopulatedFixtures();
+
+  test('renders the initial snapshot, updates, expires while denied, and recovers after reconnect', async ({
+    page,
+  }) => {
+    const pending: Array<Promise<Route>> = [];
+    const accept: Array<(route: Route) => void> = [];
+    for (let i = 0; i < 3; i++) {
+      pending.push(new Promise<Route>((resolve) => accept.push(resolve)));
+    }
+    let connections = 0;
+    await page.route('**/api/runner-status/stream', async (route) => {
+      const resolve = accept[connections++];
+      if (resolve) resolve(route);
+      else await route.abort();
+    });
+    await page.clock.install();
+    await page.goto('/shuttlebay');
+    const fleet = page.getByTestId('autoscaler-scale-set-e2e-fixture-runners');
+    await expect(fleet).toContainText('0 queued · 1 busy · 1 idle · 2 max');
+    await expect(
+      page.getByTestId('autoscaler-runner-e2e-fixture-runner-1'),
+    ).toBeVisible();
+
+    const snapshot = (activeRuns: number, updatedAt: string) => ({
+      statuses: [],
+      warnings: [],
+      queueExecutor: {
+        schemaVersion: 2,
+        kind: 'queue-executor',
+        executor: 'queue',
+        ready: true,
+        draining: false,
+        activeRuns,
+        maxConcurrent: 4,
+        updatedAt,
+      },
+    });
+    const send = async (route: Route, activeRuns: number) => {
+      const updatedAt = await page.evaluate(() => new Date().toISOString());
+      await route.fulfill({
+        contentType: 'text/event-stream',
+        body: `retry: 1000\n\nevent: runner-status\ndata: ${JSON.stringify(snapshot(activeRuns, updatedAt))}\n\n`,
+      });
+    };
+    await send(await pending[0], 2);
+    const executor = page.getByTestId('queue-executor-status');
+    await expect(executor).toContainText('2 active · 4 max');
+    await expect(fleet).toHaveCount(0);
+
+    // EOF above makes the browser reconnect. Serve the actual route's auth
+    // refusal to that connection (the document remains authenticated).
+    const denied = await pending[1];
+    const response = await denied.fetch({
+      headers: { ...denied.request().headers(), 'X-e2e-auth-user': 'unauthed' },
+    });
+    expect(response.status()).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Unauthorized' });
+    const refusal = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/runner-status/stream') &&
+        response.status() === 401,
+    );
+    await denied.fulfill({ response });
+    await refusal;
+    await expect(executor).toContainText('2 active · 4 max');
+
+    // A stopped stream cannot leave capacity looking live forever. Advance
+    // only the browser clock beyond the three-heartbeat expiry; no sleep.
+    const recovery = await pending[2];
+    await page.clock.fastForward(190_000);
+    const warnings = page.getByTestId('data-warnings');
+    await expect(warnings).toBeVisible();
+    await warnings.locator('summary').click();
+    await expect(
+      page.getByText('Runner capacity status is stale.'),
+    ).toBeVisible();
+    await expect(executor).toHaveCount(0);
+
+    // HTTP denial closes EventSource permanently; the application's bounded
+    // retry must open a new one and replace the stale view with fresh data.
+    await send(recovery, 3);
+    await expect(executor).toContainText('3 active · 4 max');
+    await expect(executor.getByText('ready', { exact: true })).toBeVisible();
+    await expect(
+      page.getByText('Runner capacity status is stale.'),
+    ).toHaveCount(0);
   });
 });
