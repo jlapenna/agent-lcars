@@ -36,6 +36,24 @@
       "description": "oRPC is exact-pinned on the v2 beta line and sits on the console's server-function boundary, where unit tests and typecheck miss breakage. Upgrade it by deliberate PR, as sprinkles does, not inside the auto-merged weekly group (#1971's beta bump changed the generated OpenAPI document and failed Verify). Disabling lookups also removes the dashboard's standing '@orpc/next deprecated' row, which is npm's flag on the mistaken 1.14.11 publish, not on the beta line in use.",
       "enabled": false,
       "matchPackageNames": ["@orpc/**"]
+    },
+    {
+      "description": "The tools/e2e/Dockerfile mcr.microsoft.com/playwright tag must match the resolved @playwright/test version (tools/contract-tests/baked-ci-tools.test.ts), so they move in one group. The image has no release timestamp, so it is proposed immediately while the npm package waits out its 1-day release age; minimumGroupSize 2 holds the branch until both are ready instead of opening a tag-only PR that fails CI (#2170). Same rule as sprinkles' playwright group.",
+      "matchPackageNames": [
+        "@playwright/test",
+        "playwright",
+        "playwright-core",
+        "mcr.microsoft.com/playwright"
+      ],
+      "groupName": "playwright",
+      "groupSlug": "playwright",
+      "minimumGroupSize": 2
+    },
+    {
+      "description": "A republished Playwright image (same tag, new digest) has no npm counterpart to group with, so exempt digest-only updates from the playwright group's minimumGroupSize; Renovate applies the highest minimumGroupSize in a branch, so a version bump still waits for both.",
+      "matchPackageNames": ["mcr.microsoft.com/playwright"],
+      "matchUpdateTypes": ["digest"],
+      "minimumGroupSize": 1
     }
   ],
   "vulnerabilityAlerts": {

@@ -79,13 +79,11 @@ RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 
 # Nothing else is INSTALLED here. tools/e2e/Dockerfile already bakes the JRE
 # (Firebase emulators) and `corepack enable`; Node ships in the Playwright
-# base underneath it. Unlike sprinkles' own e2e-runner image, this repo's
-# sandbox never runs `corepack prepare pnpm@<pinned> --activate` as root --
-# it only enables the shims, deferring version resolution to whichever
-# repo's packageManager field is read at first `pnpm` invocation (see
-# tools/e2e/Dockerfile's own comment) -- so there is no root-owned pinned
-# pnpm cache here for the `runner` user to be locked out of, and no
-# COREPACK_HOME relocation is needed the way sprinkles' image requires.
+# base underneath it. The sandbox deliberately leaves pnpm's version to
+# whichever repo is mounted, so this pool's own image warms the runner user's
+# Corepack cache below with this repo's pinned pnpm. Without it,
+# setup-node-pnpm's offline probe failed and every E2E job downloaded pnpm
+# through pnpm/action-setup and actions/setup-node.
 #
 # gh CLI and Git LFS remain deliberately absent because this repo's
 # console-e2e suite reads neither live PR state nor committed pixel goldens.
@@ -95,7 +93,17 @@ RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 COPY tools/e2e-runner/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Read the pin from package.json rather than restating it here.
+COPY package.json /usr/local/share/agent-lcars-corepack/package.json
+
 USER runner
+# The default COREPACK_HOME (~/.cache/node/corepack) is the runner user's, so
+# no root-owned cache can lock that user out. The offline smoke runs where
+# setup-node-pnpm's detect-baked.sh probes: a checkout with the same pin.
+RUN cd /usr/local/share/agent-lcars-corepack \
+  && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack install --global \
+    "$(node -p 'require("./package.json").packageManager')" \
+  && COREPACK_ENABLE_NETWORK=0 pnpm --version
 WORKDIR /home/runner
 
 ENTRYPOINT ["/entrypoint.sh"]
