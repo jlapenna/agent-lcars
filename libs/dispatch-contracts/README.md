@@ -15,12 +15,17 @@ and invisible in others.
 This package is where those definitions live now. **Import it; do not
 re-derive it.**
 
-Covered today:
+Covered today (reviewed against `e4b1baa`, 2026-10-09):
 
-| Contract                               | Previously hand-copied in                                                                                                                                   |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pipeline identity registry             | `normalize.mjs`, `github-api.mjs` (twice), `broker.mjs`, console `watched-repo.ts`, console `action-items.ts`, and the four worker workflows' `env:` blocks |
-| Dispatch marker `[dispatch:g<n>:<id>]` | `main.mjs`, `github-api.mjs`, console `agent-activity.ts`, and four `run-name:` YAML strings                                                                |
+| Contract                                                  | Current owner and consumers                                                                              |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Pipeline identity, labels, reply commands, and bot logins | `src/pipelines.ts`; console intake, admission, activity, and runner integration derive from the registry |
+| Dispatch marker and exact attempt claim                   | `src/marker.ts`; dispatch identity and deliverable verification                                          |
+| Outcome and Quick Task formats                            | `src/outcomes.ts` and `src/quick-task.ts`; shared completion and request-binding consumers               |
+
+[`pipelines.spec.ts`](src/pipelines.spec.ts) and
+[`marker.spec.ts`](src/marker.spec.ts) protect the registry and marker formats.
+Historical broker and worker-workflow copies are retired, not current consumers.
 
 `recovery-observation.ts` (the `recovery/v1:<domain>:...` operation-key
 contract) was removed in #1015 Wave 4: its only consumer,
@@ -58,22 +63,35 @@ dependencies**, including node builtins. The console imports it from
 `watched-repo.ts`, which is deliberately client-safe; one server-only import
 would break a `'use client'` bundle.
 
-## What cannot import it
+## Published interfaces and configuration
 
-GitHub Actions YAML and repo variables cannot import JavaScript. Two things
-must therefore be edited alongside this package by hand:
+Member repositories consume the [published actions and reusable workflows](../../docs/published-actions.md),
+shared [worker protocol](../../agents/shared/skills/agent-protocol/reference/agent-protocol.md),
+and runner image. They do not import this repository's source. GitHub-anchor
+intake uses the Work API; its [generated OpenAPI contract](../../docs/api/work-v1.openapi.json)
+owns the dispatch payload and response.
 
-- the three worker workflows' `run-name:` and per-lane `env:` values —
-  formerly pinned by `apps/dispatch-broker/src/workflow-contract.spec.ts`,
-  deleted with the broker in #1199; #1298 tracks restoring that derivation
-  as a standalone contract test;
-- the `AGENT_BOT_LOGINS` repo variable that `agent-automerge.yml` reads, which
-  must equal this package's `AGENT_BOT_LOGINS`.
+GitHub Actions YAML and repository variables cannot import TypeScript. The
+`AGENT_BOT_LOGINS` repository variable used by auto-merge must match this
+package's exported bot logins. Registry unit tests pin the expected identities;
+they do **not** read or validate the live repository variable. The old
+`pipelines.contract.test.mjs` reference is not a current check.
+
+Hosted provider worker workflows and their `run-name:`/per-lane `env:` copies
+are retired; providers execute via QueueExecutor and the direct runner.
+[#1298](https://github.com/jlapenna/agent-lcars/issues/1298) is closed and
+must not be used as an outstanding requirement to restore deleted workers.
+Supported action input/output contracts are checked by
+`published-actions.contract.test.mjs` as documented by the published-interface
+policy; reusable
+workflow manifests and actionlint own their YAML surfaces. See the
+[published-interface verification policy](../../docs/published-actions.md#contract-verification).
 
 ## Adding a pipeline
 
-Add one entry to `PIPELINE_CONTRACTS` in `src/pipelines.ts`, then add the
-worker workflow itself and update the `AGENT_BOT_LOGINS` repo variable if the
-new pipeline pushes under a login no existing pipeline uses. Everything else —
-labels, reply commands, reconcile discovery, deliverable author exclusion,
-console integrations — derives.
+Add an entry to `PIPELINE_CONTRACTS` in `src/pipelines.ts`, update its public
+`AgentPipeline` type and registry tests, and implement provider execution and
+telemetry support in the direct runner. Update `AGENT_BOT_LOGINS` configuration
+if the pipeline uses a new login, through its authorized configuration owner.
+Labels, reply commands, discovery, author exclusion, and console integrations
+derive from the registry. Do not add a hosted worker workflow.
