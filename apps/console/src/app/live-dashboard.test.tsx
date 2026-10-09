@@ -113,6 +113,50 @@ describe('live dashboard invalidations', () => {
     expect(Source.instances).toHaveLength(3);
   });
 
+  it('caps repeated failures at a 30-second reconnect interval', async () => {
+    const view = mount();
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+      const count = Source.instances.length;
+      act(() => Source.instances[count - 1].onerror?.());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(delay - 1);
+      });
+      expect(Source.instances).toHaveLength(count);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(Source.instances).toHaveLength(count + 1);
+    }
+    view.unmount();
+  });
+
+  it('serializes refreshes and catches a change received during an in-flight action', async () => {
+    let finish = () => undefined as void;
+    mocks.refresh.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const view = mount();
+    act(() => Source.instances[0].signal());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    act(() => Source.instances[0].signal());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+    await act(async () => {
+      finish();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
   it('keeps a refresh failure visible across healthy heartbeats', async () => {
     mocks.refresh.mockRejectedValue(new Error('Unauthorized'));
     mount();

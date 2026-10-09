@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import { type NativeDecisionCard, nativeDecisionQuestion } from './inbox-card';
 import { actionTypeMeta } from './queue-reason';
@@ -80,15 +80,23 @@ export function NativeDecisionDetail({
   card,
   replyToWorkItem,
   onReplyAdmitted,
+  onReplyDraftChange,
 }: {
   card: NativeDecisionCard;
   replyToWorkItem?: ReplyAction;
   onReplyAdmitted?: (message: string) => void;
+  onReplyDraftChange?: (hasDraft: boolean) => void;
 }) {
   const { work, canReply } = card;
   const [text, setText] = useState('');
   const [feedback, setFeedback] = useState<string>();
   const [pending, startTransition] = useTransition();
+  const notifyDraft = useEffectEvent((hasDraft: boolean) =>
+    onReplyDraftChange?.(hasDraft),
+  );
+  useEffect(() => {
+    notifyDraft(Boolean(text) || pending);
+  }, [text, pending]);
   const router = useRouter();
   const reply = () =>
     startTransition(async () => {
@@ -133,7 +141,7 @@ export function NativeDecisionDetail({
       <Anchor component={Link} href={`/work/${work.anchor.workId}`}>
         Full history
       </Anchor>
-      {canReply && replyToWorkItem ? (
+      {replyToWorkItem && (canReply || text || pending) ? (
         <>
           <Textarea
             style={{ width: '100%' }}
@@ -147,7 +155,7 @@ export function NativeDecisionDetail({
           <Button
             onClick={reply}
             loading={pending}
-            disabled={pending || !text.trim()}
+            disabled={!canReply || pending || !text.trim()}
           >
             Reply
           </Button>

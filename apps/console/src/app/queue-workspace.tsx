@@ -115,6 +115,7 @@ export function QueueWorkspace({
     title: string;
     message: string;
   }>();
+  const [draftCard, setDraftCard] = useState<InboxCard>();
   const [loadingItemKey, setLoadingItemKey] = useState<string>();
   const { isMuted, mute, unmute } = useMutedItems();
   const router = useRouter();
@@ -199,12 +200,32 @@ export function QueueWorkspace({
     .filter(({ item }) =>
       isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)),
     );
-  const selectedCard = selectedItemKey
+  const currentCard = selectedItemKey
     ? resolvedSelectedCard &&
       inboxCardKey(resolvedSelectedCard) === selectedItemKey
       ? resolvedSelectedCard
       : cards.find((card) => inboxCardKey(card) === selectedItemKey)
     : visibleCards[0];
+  // A live update may remove/reorder the default decision while a reply is
+  // being typed or admitted. Keep that identity mounted until the draft is
+  // cleared; never silently transfer the reply to the new first row.
+  const retainedDraft =
+    draftCard &&
+    (selectedItemKey === undefined ||
+      selectedItemKey === inboxCardKey(draftCard));
+  const selectedCard = retainedDraft
+    ? ((resolvedSelectedCard &&
+      inboxCardKey(resolvedSelectedCard) === inboxCardKey(draftCard)
+        ? resolvedSelectedCard
+        : cards.find(
+            (card) => inboxCardKey(card) === inboxCardKey(draftCard),
+          )) ?? draftCard)
+    : currentCard;
+  const draftLeftQueue =
+    retainedDraft &&
+    !cards.some((card) => inboxCardKey(card) === inboxCardKey(draftCard));
+  const onReplyDraftChange = (hasDraft: boolean) =>
+    setDraftCard(hasDraft ? selectedCard : undefined);
   const explicitDetail = selectedItemKey !== undefined;
   const backHref = queueSelectionHref(currentSearch);
 
@@ -507,6 +528,11 @@ export function QueueWorkspace({
       </div>
 
       <div className="queue-workspace__detail">
+        {draftLeftQueue && (
+          <Text role="status" size="sm">
+            The selected item left the queue. Your pending reply is preserved.
+          </Text>
+        )}
         {replyConfirmation && (
           <Stack p="md" gap="xs" data-testid="native-reply-confirmation">
             <Text fw={600}>{replyConfirmation.title}</Text>
@@ -521,7 +547,12 @@ export function QueueWorkspace({
         {selectedCard && 'work' in selectedCard ? (
           <NativeDecisionDetail
             key={selectedCard.work.id}
-            card={selectedCard}
+            card={
+              draftLeftQueue
+                ? { ...selectedCard, canReply: false }
+                : selectedCard
+            }
+            onReplyDraftChange={onReplyDraftChange}
             replyToWorkItem={replyToWorkItem}
             onReplyAdmitted={(message) =>
               setReplyConfirmation({
@@ -544,6 +575,7 @@ export function QueueWorkspace({
               )
             }
             variant="workspace"
+            onReplyDraftChange={onReplyDraftChange}
           />
         ) : explicitDetail ? (
           <div className="queue-detail-state" role="status">
