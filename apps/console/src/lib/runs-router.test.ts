@@ -1572,6 +1572,110 @@ describe('heartbeat', () => {
   });
 });
 
+describe('claimStatus', () => {
+  async function claimed() {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('claim-status'),
+      now: NOW,
+    });
+    const principal = executorPrincipal();
+    const response = await call(
+      { ...f, ...context, principal },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    const token = (response.json as { token: string }).token;
+    const fingerprint = hashRunToken(token);
+    const path =
+      runPath(runId, '/claim-status') +
+      '?' +
+      new URLSearchParams({
+        runner: 'runner-1',
+        claimFingerprint: fingerprint,
+      });
+    return { ...f, runId, token, fingerprint, path, principal };
+  }
+
+  it('reads only its exact claim, preserving expired live runs until settlement', async () => {
+    const f = await claimed();
+    f.setNow('2026-08-26T10:16:00.000Z');
+    const before = await f.store.readRun(f.runId);
+    const drain = vi.fn(context.drain);
+    const r = await call({ ...f, ...context, drain }, 'GET', f.path);
+    expect(r).toMatchObject({
+      status: 200,
+      json: {
+        runId: f.runId,
+        runner: 'runner-1',
+        claimFingerprint: f.fingerprint,
+        status: 'live',
+      },
+    });
+    expect(await f.store.readRun(f.runId)).toEqual(before);
+    expect(drain).not.toHaveBeenCalled();
+    await f.orchestrator.executorExited(f.runId, {
+      subject: f.principal.subject,
+      runner: 'runner-1',
+    });
+    const settled = await call({ ...f, ...context }, 'GET', f.path);
+    expect(settled).toMatchObject({
+      status: 200,
+      json: { status: 'settled', claimFingerprint: f.fingerprint },
+    });
+  });
+
+  it.each(['scope', 'pipeline', 'subject', 'runner', 'fingerprint', 'missing'])(
+    'fails closed for %s without mutations',
+    async (kind) => {
+      const f = await claimed();
+      let principal: RunsContext['principal'] = f.principal;
+      let path = f.path;
+      if (kind === 'scope') principal = undefined;
+      if (kind === 'pipeline') principal = executorPrincipal(['codex']);
+      if (kind === 'subject')
+        principal = { ...f.principal, subject: 'google:other@example.com' };
+      if (kind === 'runner') path = path.replace('runner-1', 'runner-2');
+      if (kind === 'fingerprint')
+        path = path.replace(f.fingerprint, 'a'.repeat(64));
+      if (kind === 'missing')
+        path =
+          runPath('work:' + wid('missing') + '/r1', '/claim-status') +
+          '?' +
+          new URLSearchParams({
+            runner: 'runner-1',
+            claimFingerprint: f.fingerprint,
+          });
+      const before = await f.store.readRun(f.runId);
+      const r = await call({ ...f, ...context, principal }, 'GET', path);
+      expect(r.status).toBe(
+        kind === 'scope' ? 401 : kind === 'missing' ? 404 : 403,
+      );
+      expect(await f.store.readRun(f.runId)).toEqual(before);
+    },
+  );
+
+  it('refuses an old fingerprint after a same-millisecond release/reclaim', async () => {
+    const f = await claimed();
+    const before = await f.store.readRun(f.runId);
+    await f.store.releaseQueuedRunClaim({
+      runId: f.runId,
+      claimedBy: 'runner-1',
+      tokenHash: f.fingerprint,
+      now: NOW,
+    });
+    const fresh = await call({ ...f, ...context }, 'POST', '/runs/claim', {
+      runner: 'runner-1',
+    });
+    const current = await f.store.readRun(f.runId);
+    expect(current?.queue?.claimedAt).toBe(before?.queue?.claimedAt);
+    expect(current?.queue?.tokenHash).not.toBe(f.fingerprint);
+    expect(fresh.status).toBe(200);
+    expect((await call({ ...f, ...context }, 'GET', f.path)).status).toBe(403);
+  });
+});
+
 describe('exit', () => {
   /** Claims through the real `claim` route, so every exit test exercises
    *  the binding `claim` records, not a hand-written queue record. */

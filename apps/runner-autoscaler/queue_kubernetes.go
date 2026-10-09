@@ -31,6 +31,7 @@ import (
 
 const queueJobLabel = "agent-lcars.queue-job"
 const queueRunAnnotation = "agent-lcars.run-id"
+const queueClaimAnnotation = "agent-lcars.claim-fingerprint"
 
 // queueRunnerAnnotation records the runner name the run was claimed under,
 // which its exit report must repeat (see directRunnerLaunch.runner).
@@ -163,7 +164,8 @@ type kubernetesQueue struct {
 	held                  int
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
-	verifyRun func(context.Context, string, string) error
+	verifyRun    func(context.Context, string, string) error
+	claimSettled func(context.Context, string, string, string) (bool, error)
 	// exits receives every terminated queue Job this executor's inventory
 	// reads observe (nil disables reporting). See runExitReporter.
 	exits *runExitReporter
@@ -360,6 +362,25 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// Foreground retirement must drain owned Pods before another claim can
+	// enter. Also fail closed if a removed Job still has an orphaned Pod.
+	known := map[string]bool{}
+	for _, job := range jobs.Items {
+		known[string(job.UID)] = true
+		if job.DeletionTimestamp != nil {
+			return true, nil
+		}
+	}
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp == nil && (pod.Status.Phase == core.PodSucceeded || pod.Status.Phase == core.PodFailed) {
+			continue
+		}
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == "Job" && owner.Controller != nil && *owner.Controller && strings.HasPrefix(owner.Name, "lcars-work-") && !known[string(owner.UID)] {
+				return true, nil
+			}
+		}
+	}
 	for _, job := range jobs.Items {
 		if queueJobTerminal(job) {
 			continue
@@ -469,6 +490,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
 	}
 	annotations := map[string]string{queueRunAnnotation: l.runID}
+	if l.runToken != "" {
+		annotations[queueClaimAnnotation] = queueClaimFingerprint(l.runToken)
+	}
 	if l.runner != "" {
 		annotations[queueRunnerAnnotation] = l.runner
 	}
@@ -527,7 +551,7 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 			return fmt.Errorf("creating queue Job: %w", err)
 		}
 	}
-	if job.Annotations[queueRunAnnotation] != l.runID || job.Labels[queueJobLabel] != "true" {
+	if job.Annotations[queueRunAnnotation] != l.runID || job.Labels[queueJobLabel] != "true" || job.Annotations[queueRunnerAnnotation] != l.runner || job.Annotations[queueClaimAnnotation] != queueClaimFingerprint(l.runToken) {
 		return fmt.Errorf("queue Job identity conflict")
 	}
 	if job.Spec.Suspend == nil || !*job.Spec.Suspend || queueJobAttempted(job) {
@@ -554,7 +578,7 @@ func (q *kubernetesQueue) resume(ctx context.Context, job *batch.Job) error {
 			return err
 		}
 		runID := job.Annotations[queueRunAnnotation]
-		if job.UID == "" || current.UID != job.UID || runID == "" || current.Name != queueJobName(runID) || current.Labels[queueJobLabel] != "true" || current.Annotations[queueRunAnnotation] != runID || current.Annotations[queueRunnerAnnotation] != job.Annotations[queueRunnerAnnotation] {
+		if job.UID == "" || current.UID != job.UID || runID == "" || current.Name != queueJobName(runID) || current.Labels[queueJobLabel] != "true" || current.Annotations[queueRunAnnotation] != runID || current.Annotations[queueRunnerAnnotation] != job.Annotations[queueRunnerAnnotation] || current.Annotations[queueClaimAnnotation] != job.Annotations[queueClaimAnnotation] {
 			return fmt.Errorf("queue Job identity conflict")
 		}
 		if current.DeletionTimestamp != nil || current.Spec.Suspend == nil || !*current.Spec.Suspend || queueJobAttempted(current) {
@@ -589,6 +613,9 @@ func (q *kubernetesQueue) resume(ctx context.Context, job *batch.Job) error {
 		}
 		if !owned || secret.Immutable == nil || !*secret.Immutable || len(secret.Data["run-token"]) == 0 {
 			return fmt.Errorf("queue run credential identity conflict")
+		}
+		if fingerprint := current.Annotations[queueClaimAnnotation]; fingerprint != "" && fingerprint != queueClaimFingerprint(string(secret.Data["run-token"])) {
+			return fmt.Errorf("queue run credential claim conflict")
 		}
 		if q.verifyRun == nil {
 			return fmt.Errorf("queue run-token fence unavailable")
@@ -626,6 +653,17 @@ func (q *kubernetesQueue) recover(ctx context.Context) error {
 	}
 	var errs []error
 	for _, j := range jobs.Items {
+		if queueJobTerminal(j) {
+			continue
+		}
+		retired, err := q.retireSettledClaim(ctx, &j)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("retiring settled queue claim: %w", err))
+			continue
+		}
+		if retired {
+			continue
+		}
 		if time.Since(j.CreationTimestamp.Time) > 2*time.Hour {
 			continue
 		}
@@ -653,7 +691,39 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 			completed = append(completed, j)
 			continue
 		}
-		if j.Spec.Suspend == nil || !*j.Spec.Suspend || j.Status.StartTime != nil || time.Since(j.CreationTimestamp.Time) < 2*time.Hour {
+		retired, retireErr := q.retireSettledClaim(ctx, &j)
+		if retireErr != nil {
+			return retireErr
+		}
+		if retired {
+			continue
+		}
+		if j.Spec.Suspend == nil || !*j.Spec.Suspend || j.Generation != 1 || queueJobAttempted(&j) || j.Annotations[queueClaimAnnotation] != "" || time.Since(j.CreationTimestamp.Time) < 2*time.Hour {
+			continue
+		}
+		// Only legacy Secret-less, never-started shells use the age backstop.
+		if j.UID == "" || j.ResourceVersion == "" || j.Name != queueJobName(j.Annotations[queueRunAnnotation]) || j.Annotations[queueRunAnnotation] == "" {
+			continue
+		}
+		if _, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
+		if err != nil {
+			return err
+		}
+		ownedPod := false
+		for _, pod := range pods.Items {
+			for _, owner := range pod.OwnerReferences {
+				if owner.Kind == "Job" && owner.UID == j.UID {
+					ownedPod = true
+				}
+			}
+		}
+		if ownedPod {
 			continue
 		}
 		uid := j.UID

@@ -4169,6 +4169,135 @@
         ]
       }
     },
+    "/runs/{runId}/claim-status": {
+      "get": {
+        "operationId": "getRunClaimStatus",
+        "summary": "Read the authenticated executor's exact claim liveness",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
+          {
+            "in": "query",
+            "name": "runner",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true,
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "claimFingerprint",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true,
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 175
+                    },
+                    "runner": {
+                      "type": "string"
+                    },
+                    "claimFingerprint": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["live", "settled"]
+                    }
+                  },
+                  "required": ["runId", "runner", "claimFingerprint", "status"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "work.executor scope required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "executor may not inspect this claim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/runs/{runId}/exit": {
       "post": {
         "operationId": "reportRunExit",

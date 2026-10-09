@@ -219,6 +219,8 @@ func TestKubernetesCleanupPreservesExecutingJob(t *testing.T) {
 	ctx := context.Background()
 	for _, active := range []bool{false, true} {
 		j, _ := q.job(directRunnerLaunch{runID: fmt.Sprintf("work:%v/r1", active), pipeline: "codex"})
+		// Tracker bypasses API-assigned metadata required by guarded cleanup.
+		j.UID, j.ResourceVersion, j.Generation = types.UID(fmt.Sprintf("job-%v", active)), "1", 1
 		j.CreationTimestamp = meta.NewTime(time.Now().Add(-3 * time.Hour))
 		if active {
 			j.Spec.Suspend = ptr(false)

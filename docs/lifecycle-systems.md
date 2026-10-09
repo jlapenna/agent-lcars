@@ -28,7 +28,10 @@ available through Git history.
    settled `lost` at once; reconciliation settles expired leases as the
    backstop. Claims that never deliver a first heartbeat have a separate
    fifteen-minute startup deadline (normally settled within twenty minutes
-   by the five-minute maintenance tick), followed by the same bounded retry. Both perform bounded retry; an exhausted retry budget parks the
+   by the five-minute maintenance tick), followed by the same bounded retry.
+   Normal executor recovery retires the exact settled claim's original Job
+   with guarded foreground deletion; admission waits for its owned Pods to
+   drain. Expiry alone is not deletion authority. Both perform bounded retry; an exhausted retry budget parks the
    task for manual action.
 
 ## Code map

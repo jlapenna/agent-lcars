@@ -552,6 +552,30 @@ export const runsRouter = os.router({
     };
   }),
 
+  claimStatus: executor.claimStatus.handler(
+    async ({ input, context, errors }) => {
+      const run = await context.store.readRun(input.runId);
+      if (run === undefined) throw errors.NOT_FOUND();
+      if (
+        !context.principal.pipelines.includes(run.pipeline) ||
+        run.queue?.claimedBySubject !== claimantSubject(context.principal) ||
+        run.queue.claimedBy !== input.runner ||
+        run.queue.tokenHash !== input.claimFingerprint
+      ) {
+        throw errors.FORBIDDEN();
+      }
+      // Expiry is not retirement: a heartbeat admitted before its deadline may
+      // still commit. Only irreversible settlement permits executor cleanup.
+      // The fingerprint also distinguishes same-millisecond release/reclaims.
+      return {
+        runId: run.runId,
+        runner: input.runner,
+        claimFingerprint: input.claimFingerprint,
+        status: isLive(run.state) ? ('live' as const) : ('settled' as const),
+      };
+    },
+  ),
+
   exit: executor.exit.handler(async ({ input, context, errors }) => {
     const run = await context.store.readRun(input.runId);
     if (run === undefined) throw errors.NOT_FOUND();
