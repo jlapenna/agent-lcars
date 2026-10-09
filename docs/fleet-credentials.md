@@ -35,7 +35,8 @@ Two GitHub Apps exist and are easy to confuse:
   this App; see "Autoscaler App key" below). Its
   scope is **asymmetric and measured, not assumed**: the jlapenna installation
   is "Only select repositories" (5), the supersprinklesracing one is still
-  "All repositories" (6, three of them non-fleet). Narrowing the second is
+  "All repositories" (7, four of them non-fleet, including `design`, which
+  joined automatically when it was created). Narrowing the second is
   proposed in #1381.
   Installations `154210710` (jlapenna) / `154210731` (supersprinklesracing).
 
