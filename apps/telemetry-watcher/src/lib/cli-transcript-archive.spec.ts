@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import {
   CLI_TRANSCRIPT_MAX_BYTES,
   getTranscriptAdapter,
@@ -331,6 +332,51 @@ describe('host daemon CLI archive path', () => {
       expect(upload).not.toHaveBeenCalled();
       for (const write of writes)
         expect(write.doc.transcriptGcsUri).toBeUndefined();
+    }
+  });
+
+  it('keeps malformed private transcript excerpts out of daemon logs', async () => {
+    const privateMarker = 'PII42';
+    const contents = transcript() + '\n' + privateMarker;
+    const upload = vi.fn().mockResolvedValue(undefined);
+    const archive = vi.fn<typeof archiveCliTranscript>((options) =>
+      archiveCliTranscript({ ...options, read: () => contents, upload }),
+    );
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    try {
+      const { watcher, writes } = daemon({ contents, upload: archive });
+      await watcher.tick();
+      expect(archive).toHaveBeenCalledTimes(1);
+      expect(upload).not.toHaveBeenCalled();
+      expect(writes[0].doc).toMatchObject({
+        sessionId: 'consented',
+        source: 'cli',
+        liveness: 'ended',
+        cliTranscriptArchive: { status: 'failed' },
+      });
+      expect(writes[0].doc.transcriptGcsUri).toBeUndefined();
+      expect(warn).toHaveBeenCalled();
+      for (const call of warn.mock.calls) {
+        for (const argument of call) {
+          const logged =
+            argument instanceof Error
+              ? {
+                  name: argument.name,
+                  message: argument.message,
+                  stack: argument.stack,
+                  cause: argument.cause,
+                }
+              : argument;
+          expect(JSON.stringify(logged)).not.toContain(privateMarker);
+        }
+      }
+      for (const error of warn.mock.calls
+        .flat()
+        .filter((argument) => argument instanceof Error)) {
+        expect(error.cause).toBeUndefined();
+      }
+    } finally {
+      warn.mockRestore();
     }
   });
 

@@ -145,7 +145,13 @@ export async function archiveCliTranscript(options: {
   if (Buffer.byteLength(contents) > CLI_TRANSCRIPT_MAX_BYTES)
     return { cliTranscriptArchive: { status: 'too-large' } };
   for (const line of contents.split('\n').filter((line) => line.trim())) {
-    const entry = JSON.parse(line) as Record<string, unknown>;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      // Native parse errors quote private input; the daemon logs this error.
+      throw new Error('Archive contains an invalid JSON record');
+    }
     if (!entry || typeof entry !== 'object' || Array.isArray(entry))
       throw new Error('Archive contains an invalid record');
     const payload = entry['payload'] as Record<string, unknown> | undefined;
