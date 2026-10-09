@@ -100,6 +100,18 @@ test.describe('native Work mutation journeys', () => {
           .filter({ hasText: `work:${ID}/r2` })
           .getByRole('cell', { name: 'running', exact: true }),
       ).toBeVisible();
+      const confirmation = page.getByTestId('work-reply-confirmation');
+      await expect(confirmation).toContainText(TITLE);
+      await expect(confirmation.getByRole('status')).toHaveText(
+        resume
+          ? 'Reply admitted with a saved transcript. Resume will be attempted when the agent starts.'
+          : 'Reply admitted for a fresh session — no resumable transcript.',
+      );
+      await expect(page.getByPlaceholder('Reply to the agent...')).toHaveCount(
+        0,
+      );
+      // The acknowledgement survives the Server Action refresh above. A full
+      // document reload then proves the round itself is durable independently.
       await page.reload();
       await expect(
         page.getByText('Use Firestore and retain the audit trail.', {
@@ -179,7 +191,10 @@ test.describe('native Work mutation journeys', () => {
     ).toHaveCount(0);
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(
-      page.getByText('canceled', { exact: true }).first(),
+      page
+        .getByRole('row')
+        .filter({ hasText: `work:${ID}/r2` })
+        .getByRole('cell', { name: 'canceled', exact: true }),
     ).toBeVisible();
     await page.reload();
     await expect(
@@ -228,6 +243,7 @@ test.describe('native Work mutation journeys', () => {
     ).toBeVisible();
     await page.getByRole('button', { name: 'Reply', exact: true }).click();
     await expect(page.getByText('task-busy', { exact: true })).toHaveCount(2);
+    await expect(page.getByTestId('work-reply-confirmation')).toHaveCount(0);
     await expect(page.getByPlaceholder('Reply to the agent...')).toHaveValue(
       'Keep this refused reply.',
     );

@@ -17,6 +17,7 @@ import { useState, useTransition } from 'react';
 import { type NativeDecisionCard, nativeDecisionQuestion } from './inbox-card';
 import { actionTypeMeta } from './queue-reason';
 import { RelativeTime } from './relative-time';
+import { replyAdmissionMessage } from './reply-admission-message';
 import type { ReplyAction } from './work/work-actions';
 
 export function NativeDecisionRow({
@@ -102,9 +103,7 @@ export function NativeDecisionDetail({
         return;
       }
       setText('');
-      const message = result?.resumed
-        ? 'Reply admitted with a saved transcript. Resume will be attempted when the agent starts.'
-        : 'Reply admitted for a fresh session — no resumable transcript.';
+      const message = replyAdmissionMessage(result?.resumed === true);
       if (onReplyAdmitted) {
         setFeedback(undefined);
         onReplyAdmitted(message);

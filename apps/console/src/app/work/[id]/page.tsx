@@ -223,6 +223,7 @@ export function WorkDetailViewContent({ detail }: WorkDetailContentProps) {
       <Conversation item={item} />
       <WorkActions
         id={item.id}
+        latestRunId={item.runs.at(-1)?.runId}
         state={item.state}
         cancel={cancelItem}
         redispatch={redispatchItem}

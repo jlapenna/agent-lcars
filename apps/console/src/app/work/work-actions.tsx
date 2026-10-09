@@ -6,6 +6,7 @@ import { notifications } from '@mantine/notifications';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
+import { replyAdmissionMessage } from '../reply-admission-message';
 import { showErrorToast } from '../show-error-toast';
 
 /**
@@ -34,10 +35,28 @@ export type ReplyAction = (input: {
   text: string;
 }) => Promise<ReplyActionResult>;
 
+/** Work detail needs the accepted round's identity as well as the admission
+ * mode so its confirmation cannot follow a different item or later round. */
+type WorkDetailReplyAction = (input: { id: string; text: string }) => Promise<
+  readonly [
+    { code: string; message: string } | null,
+    (
+      | {
+          id: string;
+          spec: { title: string };
+          runs: readonly { runId: string }[];
+          resumed: boolean;
+        }
+      | undefined
+    ),
+  ]
+>;
+
 export function WorkActions({
   id,
   state,
   label,
+  latestRunId,
   cancel,
   redispatch,
   reply,
@@ -53,17 +72,23 @@ export function WorkActions({
    *  button. Omitted on a detail page, where the page itself is the
    *  subject. */
   label?: string;
+  latestRunId?: string;
   cancel: WorkAction;
   redispatch: RedispatchAction;
   /** Optional: the dashboard's `ParkedWorkPanel` renders `WorkActions`
    *  without a reply channel (it has no per-item conversation view to
    *  return to) and keeps its existing Cancel/Redispatch-only behavior. */
-  reply?: ReplyAction;
+  reply?: WorkDetailReplyAction;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [replyText, setReplyText] = useState('');
-  const [freshSessionNote, setFreshSessionNote] = useState(false);
+  const [admission, setAdmission] = useState<{
+    id: string;
+    runId: string;
+    title: string;
+    resumed: boolean;
+  }>();
 
   const canCancel = state !== 'done' && state !== 'canceled';
   const canRedispatch = state === 'parked' || state === 'failed';
@@ -111,7 +136,17 @@ export function WorkActions({
         showErrorToast(err.message);
         return;
       }
-      setFreshSessionNote(result?.resumed === false);
+      const runId = result?.runs.at(-1)?.runId;
+      setAdmission(
+        result && runId
+          ? {
+              id: result.id,
+              runId,
+              title: result.spec.title,
+              resumed: result.resumed,
+            }
+          : undefined,
+      );
       setReplyText('');
       notifications.show({ message: 'Replied', color: 'green' });
       router.refresh();
@@ -120,6 +155,18 @@ export function WorkActions({
 
   return (
     <Stack gap="xs">
+      {admission?.id === id &&
+        admission.runId === latestRunId &&
+        state === 'running' && (
+          <Stack gap={2} data-testid="work-reply-confirmation">
+            <Text size="xs" c="dimmed">
+              {admission.title}
+            </Text>
+            <Text role="status" size="sm">
+              {replyAdmissionMessage(admission.resumed)}
+            </Text>
+          </Stack>
+        )}
       {canReply && (
         <Stack gap={4}>
           <Textarea
@@ -129,11 +176,6 @@ export function WorkActions({
             autosize
             minRows={2}
           />
-          {freshSessionNote && (
-            <Text size="xs" c="dimmed">
-              started a fresh session — no resumable transcript
-            </Text>
-          )}
         </Stack>
       )}
       <Group gap="xs">
