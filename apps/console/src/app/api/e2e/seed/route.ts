@@ -234,6 +234,7 @@ interface SeedRequest {
    * GitHub fixture mode remains only for issue/PR metadata. `reset` clears all
    * hermetic fixture state. */
   action?: 'seed' | 'seed-populated' | 'seed-inbox' | 'reset';
+  resume?: boolean;
 }
 
 /**
@@ -330,6 +331,19 @@ export async function POST(req: NextRequest) {
           ...fixtureArchiveIssueSessions(),
         ]
       : fixtureSessions();
+    if (body.action === 'seed-inbox' && body.resume === true) {
+      const runId = 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1';
+      docs.push({
+        ...fixtureIssueAgentSession(),
+        sessionId: 'e2e-native-resume-session',
+        runId,
+        intentId: runId,
+        issueNumber: 0,
+        transcriptGcsUri:
+          'gs://demo-no-project/e2e-native-resume-session.jsonl',
+        renderable: false,
+      });
+    }
     // Full-fixture writes, not a status update - nothing to clear. See
     // SessionWrite's doc comment (@agent-lcars/telemetry): upsertSession
     // takes the complete write description rather than a bare doc, so

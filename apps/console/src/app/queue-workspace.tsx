@@ -505,6 +505,13 @@ export function QueueWorkspace({
             key={selectedCard.work.id}
             card={selectedCard}
             replyToWorkItem={replyToWorkItem}
+            onReplyStart={() => {
+              if (!selectedItemKey)
+                router.replace(
+                  queueSelectionHref(currentSearch, inboxCardKey(selectedCard)),
+                  { scroll: false },
+                );
+            }}
           />
         ) : selectedCard ? (
           <ActionItemCard

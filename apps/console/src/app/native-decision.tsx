@@ -14,7 +14,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
-import type { NativeDecisionCard } from './inbox-card';
+import { type NativeDecisionCard, nativeDecisionQuestion } from './inbox-card';
 import { actionTypeMeta } from './queue-reason';
 import { RelativeTime } from './relative-time';
 import type { ReplyAction } from './work/work-actions';
@@ -65,10 +65,7 @@ export function NativeDecisionRow({
             {work.spec.title}
           </Text>
           <Text size="xs" lineClamp={2}>
-            {[...work.runs]
-              .reverse()
-              .find((run) => run.result?.summary === 'park')?.result?.message ??
-              'Agent parked without a question. Open full history for context.'}
+            {nativeDecisionQuestion(work)}
           </Text>
           <Text size="xs" c="dimmed">
             <RelativeTime iso={work.updatedAt} variant="compact" />
@@ -82,9 +79,11 @@ export function NativeDecisionRow({
 export function NativeDecisionDetail({
   card,
   replyToWorkItem,
+  onReplyStart,
 }: {
   card: NativeDecisionCard;
   replyToWorkItem?: ReplyAction;
+  onReplyStart?: () => void;
 }) {
   const { work, canReply } = card;
   const [text, setText] = useState('');
@@ -93,7 +92,8 @@ export function NativeDecisionDetail({
   const router = useRouter();
   const reply = () =>
     startTransition(async () => {
-      if (!replyToWorkItem) return;
+      if (!replyToWorkItem || !canReply || !text.trim()) return;
+      onReplyStart?.();
       const [error, result] = await replyToWorkItem({
         id: work.anchor.workId,
         text: text.trim(),
@@ -127,9 +127,7 @@ export function NativeDecisionDetail({
         <RelativeTime iso={work.updatedAt} />
       </Text>
       <Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-        {[...work.runs].reverse().find((run) => run.result?.summary === 'park')
-          ?.result?.message ??
-          'Agent parked without a question. Open full history for context.'}
+        {nativeDecisionQuestion(work)}
       </Text>
       <Anchor component={Link} href={`/work/${work.anchor.workId}`}>
         Full history

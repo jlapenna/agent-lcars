@@ -1,14 +1,11 @@
 import 'server-only';
 
-import type {
-  OrchestratorStore,
-  TaskListCursor,
-} from '@agent-lcars/orchestrator';
+import type { OrchestratorStore } from '@agent-lcars/orchestrator';
+import { toWorkSummary } from '@agent-lcars/work/derive';
 
 import type { NativeDecisionCard } from '../app/inbox-card';
 import type { WorkPrincipal } from './work-auth';
 import { forbiddenReason } from './work-mint';
-import { listWorkSummaries } from './work-summary';
 
 /** Scan bounded datastore pages so older human decisions never disappear
  * behind newer completed work. GitHub parks use their existing projection,
@@ -19,10 +16,18 @@ export async function getNativeInboxCards(
   selectedItemKey?: string,
 ): Promise<NativeDecisionCard[]> {
   const cards: NativeDecisionCard[] = [];
-  let cursor: TaskListCursor | undefined;
+  let cursor: string | undefined;
   do {
-    const page = await listWorkSummaries(store, { limit: 200, cursor });
-    for (const work of page.items) {
+    const tasks = await store.listNativeTasks(200, cursor);
+    const summaries = await Promise.all(
+      tasks.map(async ({ task }) =>
+        toWorkSummary({
+          task,
+          runs: await store.listRuns(task.task),
+        }),
+      ),
+    );
+    for (const work of summaries) {
       if (
         !('workId' in work.anchor) ||
         (work.state !== 'parked' && work.id !== selectedItemKey)
@@ -40,7 +45,11 @@ export async function getNativeInboxCards(
           }) === undefined,
       });
     }
-    cursor = page.nextCursor;
+    const last = tasks.at(-1)?.task.task;
+    cursor =
+      tasks.length === 200 && last && 'workId' in last
+        ? last.workId
+        : undefined;
   } while (cursor !== undefined);
   return cards;
 }

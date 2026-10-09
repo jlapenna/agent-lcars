@@ -17,23 +17,29 @@ export function inboxCardKey(card: InboxCard): string {
     : repoItemKey(card.item.repo, card.item.number);
 }
 
+export function nativeDecisionQuestion(
+  work: NativeDecisionCard['work'],
+): string {
+  return (
+    [...work.runs].reverse().find((run) => run.result?.summary === 'park')
+      ?.result?.message ??
+    'Agent parked without a question. Open full history for context.'
+  );
+}
+
 export function inboxCardMetadata(card: InboxCard) {
   if ('work' in card) {
     const [owner, name] = card.work.spec.target.repo.split('/');
     return {
-      title: card.work.spec.title,
       repo: { owner, name },
-      identity: card.work.id,
       updatedAt: card.work.updatedAt,
       actionTypes: ['needs-human'] as const,
       rank: 0,
-      search: `${card.work.id} ${card.work.spec.title} ${card.work.spec.target.repo} ${card.work.runs.at(-1)?.result?.message ?? ''}`,
+      search: `${card.work.id} ${card.work.spec.title} ${card.work.spec.target.repo} ${nativeDecisionQuestion(card.work)}`,
     };
   }
   return {
-    title: card.item.title,
     repo: card.item.repo,
-    identity: `#${card.item.number}`,
     updatedAt: card.item.updatedAt,
     actionTypes: card.item.actionTypes,
     rank: queueReasonFor(card.item)?.rank ?? Number.MAX_SAFE_INTEGER,

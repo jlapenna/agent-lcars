@@ -47,7 +47,7 @@ async function seed(
   if ('refused' in admitted) throw new Error(admitted.reason);
   await orchestrator.confirmDispatch(admitted.run.runId);
   await orchestrator.report(admitted.run.runId, {
-    ok: true,
+    ok: summary === 'park' || summary === 'done',
     summary,
     message: 'Which storage should I use?',
   });
@@ -73,7 +73,7 @@ describe('native human decisions', () => {
     for (let issue = 1; issue <= 201; issue++) {
       await seed(
         store,
-        { repo: 'jlapenna/agent-lcars', issue },
+        { workId: `02${String(issue).padStart(24, '0')}` },
         'done',
         '2026-10-03T00:00:00Z',
       );
