@@ -233,7 +233,7 @@ interface SeedRequest {
    * adds the issue-agent session plus authoritative broker Work/Run records;
    * GitHub fixture mode remains only for issue/PR metadata. `reset` clears all
    * hermetic fixture state. */
-  action?: 'seed' | 'seed-populated' | 'reset';
+  action?: 'seed' | 'seed-populated' | 'seed-inbox' | 'reset';
 }
 
 /**
@@ -319,7 +319,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    const populated = body.action === 'seed-populated';
+    const populated =
+      body.action === 'seed-populated' || body.action === 'seed-inbox';
     setPopulatedFixtures(populated);
     revalidateDashboardCache();
     const docs = populated
@@ -341,7 +342,7 @@ export async function POST(req: NextRequest) {
     await Promise.all(writes.map((write) => upsertSession(write)));
     if (populated) {
       await Promise.all([
-        seedPopulatedE2eOrchestratorFixtures(),
+        seedPopulatedE2eOrchestratorFixtures(body.action === 'seed-inbox'),
         seedRunnerStatus(),
       ]);
     }

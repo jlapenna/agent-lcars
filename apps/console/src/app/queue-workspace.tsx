@@ -20,11 +20,14 @@ import type { WatchedRepo } from '../lib/watched-repo';
 import { repoItemKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import type { BoardCard } from './board-card';
+import { type InboxCard, inboxCardKey, inboxCardMetadata } from './inbox-card';
 import { InboxMobileCommandDeck } from './inbox-mobile-command-deck';
+import { NativeDecisionDetail, NativeDecisionRow } from './native-decision';
 import { PersistedDetails } from './persisted-details';
 import { QueueItemRow } from './queue-item-row';
-import { INBOX_FILTER_REASONS, queueReasonFor } from './queue-reason';
+import { INBOX_FILTER_REASONS } from './queue-reason';
 import { muteSignatureFor, useMutedItems } from './use-muted-items';
+import type { ReplyAction } from './work/work-actions';
 
 type QueueFilter = 'all' | ActionType;
 type QueueSort = 'priority' | 'newest' | 'oldest';
@@ -82,15 +85,17 @@ export function QueueWorkspace({
   watchedRepos,
   mobileDataFreshness,
   mobileScopeLabel,
+  replyToWorkItem,
 }: {
-  cards: BoardCard[];
+  cards: InboxCard[];
   /** The URL-selected item resolved from the server's full loaded item set.
    * It may no longer belong to the visible decision queue (#1173). */
-  selectedCard?: BoardCard;
+  selectedCard?: InboxCard;
   selectedItemKey?: string;
   watchedRepos: WatchedRepo[];
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
+  replyToWorkItem?: ReplyAction;
 }) {
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
@@ -158,46 +163,40 @@ export function QueueWorkspace({
 
   const visibleCards = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    const matchesSearch = (item: BoardCard['item']) =>
-      !needle ||
-      item.title.toLowerCase().includes(needle) ||
-      String(item.number).includes(needle.replace(/^#/, '')) ||
-      (item.author ?? '').toLowerCase().includes(needle) ||
-      item.labels.some((label) => label.toLowerCase().includes(needle));
-    const filtered = cards.filter(({ item }) => {
-      if (isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)))
+    const filtered = cards.filter((card) => {
+      const meta = inboxCardMetadata(card);
+      if (
+        !('work' in card) &&
+        isMuted(inboxCardKey(card), muteSignatureFor(card.item))
+      )
         return false;
-      if (!matchesSearch(item)) return false;
-      return filter === 'all' || item.actionTypes.includes(filter);
+      if (needle && !meta.search.toLowerCase().includes(needle)) return false;
+      return (
+        filter === 'all' || meta.actionTypes.some((type) => type === filter)
+      );
     });
 
     return [...filtered].sort((a, b) => {
       if (sort === 'newest' || sort === 'oldest') {
         const delta =
-          new Date(b.item.updatedAt).getTime() -
-          new Date(a.item.updatedAt).getTime();
+          new Date(inboxCardMetadata(b).updatedAt).getTime() -
+          new Date(inboxCardMetadata(a).updatedAt).getTime();
         return sort === 'newest' ? delta : -delta;
       }
-      return (
-        (queueReasonFor(a.item)?.rank ?? Number.MAX_SAFE_INTEGER) -
-        (queueReasonFor(b.item)?.rank ?? Number.MAX_SAFE_INTEGER)
-      );
+      return inboxCardMetadata(a).rank - inboxCardMetadata(b).rank;
     });
   }, [cards, filter, isMuted, search, sort]);
 
-  const mutedCards = cards.filter(({ item }) =>
-    isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)),
-  );
+  const mutedCards = cards
+    .filter((card): card is BoardCard => !('work' in card))
+    .filter(({ item }) =>
+      isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)),
+    );
   const selectedCard = selectedItemKey
     ? resolvedSelectedCard &&
-      repoItemKey(
-        resolvedSelectedCard.item.repo,
-        resolvedSelectedCard.item.number,
-      ) === selectedItemKey
+      inboxCardKey(resolvedSelectedCard) === selectedItemKey
       ? resolvedSelectedCard
-      : cards.find(
-          ({ item }) => repoItemKey(item.repo, item.number) === selectedItemKey,
-        )
+      : cards.find((card) => inboxCardKey(card) === selectedItemKey)
     : visibleCards[0];
   const explicitDetail = selectedItemKey !== undefined;
   const backHref = queueSelectionHref(currentSearch);
@@ -230,11 +229,9 @@ export function QueueWorkspace({
       if ((!isNext && !isPrev) || visibleCards.length === 0) return;
       const currentKey =
         pendingItemKey.current ??
-        (selectedCard
-          ? repoItemKey(selectedCard.item.repo, selectedCard.item.number)
-          : undefined);
+        (selectedCard ? inboxCardKey(selectedCard) : undefined);
       const index = visibleCards.findIndex(
-        ({ item }) => repoItemKey(item.repo, item.number) === currentKey,
+        (card) => inboxCardKey(card) === currentKey,
       );
       const nextIndex =
         index === -1
@@ -246,10 +243,7 @@ export function QueueWorkspace({
       if (nextIndex === index) return;
       event.preventDefault();
       keyboardNavigated.current = true;
-      const nextKey = repoItemKey(
-        visibleCards[nextIndex].item.repo,
-        visibleCards[nextIndex].item.number,
-      );
+      const nextKey = inboxCardKey(visibleCards[nextIndex]);
       pendingItemKey.current = nextKey;
       // replace, not push: holding j shouldn't bury the back button under
       // one history entry per row skimmed.
@@ -288,7 +282,16 @@ export function QueueWorkspace({
     >
       <InboxMobileCommandDeck
         view={explicitDetail ? 'detail' : 'list'}
-        selectedItem={selectedCard?.item}
+        selectedItem={
+          selectedCard && !('work' in selectedCard)
+            ? selectedCard.item
+            : undefined
+        }
+        selectedIdentity={
+          selectedCard && 'work' in selectedCard
+            ? `${selectedCard.work.spec.target.repo} / ${selectedCard.work.id}`
+            : undefined
+        }
         backHref={backHref}
         scopeLabel={mobileScopeLabel}
         dataFreshness={mobileDataFreshness}
@@ -433,7 +436,20 @@ export function QueueWorkspace({
             </div>
           ) : (
             visibleCards.map((card) => {
-              const key = repoItemKey(card.item.repo, card.item.number);
+              const key = inboxCardKey(card);
+              if ('work' in card)
+                return (
+                  <NativeDecisionRow
+                    key={key}
+                    card={card}
+                    href={queueSelectionHref(currentSearch, key)}
+                    selected={
+                      selectedCard !== undefined &&
+                      inboxCardKey(selectedCard) === key
+                    }
+                    onNavigate={() => setLoadingItemKey(key)}
+                  />
+                );
               return (
                 <QueueItemRow
                   key={key}
@@ -441,10 +457,7 @@ export function QueueWorkspace({
                   href={queueSelectionHref(currentSearch, key)}
                   selected={
                     selectedCard !== undefined &&
-                    repoItemKey(
-                      selectedCard.item.repo,
-                      selectedCard.item.number,
-                    ) === key
+                    inboxCardKey(selectedCard) === key
                   }
                   loading={loadingItemKey === key}
                   onNavigate={() => setLoadingItemKey(key)}
@@ -487,7 +500,13 @@ export function QueueWorkspace({
       </div>
 
       <div className="queue-workspace__detail">
-        {selectedCard ? (
+        {selectedCard && 'work' in selectedCard ? (
+          <NativeDecisionDetail
+            key={selectedCard.work.id}
+            card={selectedCard}
+            replyToWorkItem={replyToWorkItem}
+          />
+        ) : selectedCard ? (
           <ActionItemCard
             item={selectedCard.item}
             primaryAction={selectedCard.primaryAction}
@@ -495,7 +514,7 @@ export function QueueWorkspace({
             muted={false}
             onToggleMute={() =>
               mute(
-                repoItemKey(selectedCard.item.repo, selectedCard.item.number),
+                inboxCardKey(selectedCard),
                 muteSignatureFor(selectedCard.item),
               )
             }

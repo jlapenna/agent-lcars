@@ -7,8 +7,10 @@ import { RepoBadge } from './agent-activity-panel';
 import type { BoardCard } from './board-card';
 import { BridgePaneLink } from './bridge-pane-link';
 import { bridgeSelectionHref, itemKey } from './bridge-selection';
+import type { InboxCard } from './inbox-card';
 import { QueueWorkspace } from './queue-workspace';
 import { SectionHeading } from './section-heading';
+import type { ReplyAction } from './work/work-actions';
 
 export type { BoardCard } from './board-card';
 
@@ -19,12 +21,14 @@ export function DecisionInbox({
   selectedItemKey,
   mobileDataFreshness,
   mobileScopeLabel,
+  replyToWorkItem,
 }: {
-  yourQueue: BoardCard[];
-  selectedCard?: BoardCard;
+  yourQueue: InboxCard[];
+  selectedCard?: InboxCard;
   selectedItemKey?: string;
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
+  replyToWorkItem?: ReplyAction;
 }) {
   const watchedRepos = getWatchedRepos();
 
@@ -36,6 +40,7 @@ export function DecisionInbox({
       watchedRepos={watchedRepos}
       mobileDataFreshness={mobileDataFreshness}
       mobileScopeLabel={mobileScopeLabel}
+      replyToWorkItem={replyToWorkItem}
     />
   );
 }

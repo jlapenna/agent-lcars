@@ -333,9 +333,58 @@ export async function resetE2eOrchestratorFixtures(): Promise<void> {
   );
 }
 
-export async function seedPopulatedE2eOrchestratorFixtures(): Promise<void> {
+export async function seedPopulatedE2eOrchestratorFixtures(
+  inbox = false,
+): Promise<void> {
   const firestore = fixtureFirestore();
   const { tasks, runs } = populatedFixture();
+  if (inbox) {
+    const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+    const at = minutesAgo(30);
+    tasks.push({
+      task: { workId },
+      runCount: 1,
+      consecutiveLost: 0,
+      updatedAt: at,
+      work: {
+        origin: { principal: 'user:e2e-agent-lcars-admin', channel: 'console' },
+        spec: {
+          title: 'Choose native decision storage',
+          description: 'Implement durable storage.',
+          pipeline: 'claude',
+          target: { repo: REPOSITORY },
+        },
+      },
+    });
+    runs.push({
+      ...runFor({
+        runId: `work:${workId}/r1`,
+        issue: 0,
+        pipeline: 'claude',
+        state: 'finished',
+        createdAt: at,
+        updatedAt: at,
+        result: true,
+      }),
+      task: { workId },
+      result: {
+        ok: true,
+        summary: 'park',
+        message: 'Should native decisions use Firestore or GitHub?',
+      },
+    });
+    // The human-needed GitHub anchor is deliberately represented in both
+    // durable task state and the label projection, exercising deduplication.
+    const githubPark = runs.find(
+      (run) => run.runId === E2E_ORCHESTRATOR_RUN_IDS.failed,
+    );
+    if (githubPark)
+      githubPark.result = {
+        ok: true,
+        summary: 'park',
+        message: 'Which retention window?',
+      };
+  }
   const anchors = populatedGithubAnchorProjections();
   const batch = firestore.batch();
   for (const task of tasks) {
