@@ -182,7 +182,7 @@ when a caller omits or empties the legacy override variables.
 
 | Variable                          | This deployment                                                                  | Used by                                                                                                             |
 | --------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `DEFAULT_RUNNER_LABEL`            | `lcars-default`                                                                  | agent-automerge, label-contract-audit, deploy-console gate — small, fast glue jobs only (#451)                      |
+| `DEFAULT_RUNNER_LABEL`            | `lcars-default`                                                                  | agent-automerge, label-contract-audit — small, fast glue jobs only (#451)                                           |
 | `CI_RUNNER_LABEL`                 | `lcars-ci`                                                                       | ci (verify, e2e), local App Hosting build/deploy — long work kept off the latency-sensitive glue pool (#451, #1030) |
 | `E2E_ENABLED`                     | `true`                                                                           | CI E2E operational kill switch; only the exact value `true` enables the job                                         |
 | `GCP_PROJECT_ID`                  | `agent-lcars`                                                                    | Console credential brokering                                                                                        |
