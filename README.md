@@ -82,6 +82,47 @@ pnpm install
 pnpm verify
 ```
 
+For iterative console work, start the complete credential-free development
+stack instead of rebuilding the standalone production bundle:
+
+```sh
+pnpm dev
+```
+
+This starts the Next.js development server with hot reload, the Firebase Auth
+and Firestore emulators, the Firebase emulator UI, local-only authentication,
+and populated synthetic fixtures. It listens only on loopback: the console is
+at `http://127.0.0.1:4300` and the emulator UI is at
+`http://127.0.0.1:4301`. No production credential is loaded or required.
+
+Use `pnpm dev:reset` to restore the synthetic data without restarting the
+server and `pnpm dev:status` for a quick health check. A second worktree can use
+an independent seven-port range:
+
+```sh
+pnpm dev -- --port-base 4310
+pnpm dev:reset -- --port-base 4310
+```
+
+Run `pnpm dev:test` against the running stack for the existing native Work
+edit/save/reload journey. Select another existing browser journey using
+Playwright's usual arguments, without rebuilding or restarting:
+
+```sh
+pnpm dev:test -- native-work.spec.ts --grep 'reply persists'
+pnpm dev:test -- --port-base 4310 native-work.spec.ts --grep 'opens populated'
+```
+
+Browser tests reset the stack's synthetic data, then restore the populated
+fixture set afterward. Failure traces and screenshots are saved to the
+temporary diagnostics directory printed by the command. Auth-cookie and
+production-cache tests still use the hermetic standalone E2E entrypoint; the
+development stack injects the fixture administrator for ordinary browser
+requests, while preserving explicit E2E identity headers from tests.
+
+Stop the foreground stack with Ctrl-C. The supervisor shuts down the Next.js
+server and its Firebase emulator processes together.
+
 Start with the focused document that matches your task. This README intentionally
 does not duplicate deployment steps, runner topology, credential setup, or
 migration history; those operational contracts live with their owning systems
