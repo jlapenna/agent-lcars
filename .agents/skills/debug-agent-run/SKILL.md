@@ -174,6 +174,20 @@ which has the measured history and the bounds.
    capacity errors, in that order.
 5. Only after the run ends, pull the transcript for compaction/step counts.
 
+## Feed a supported lesson back to its owner
+
+Keep run identity, revision, query window, observed tool result, and useful-work
+evidence with the diagnosis. Separate a missing capability from poor discovery,
+an unavailable observation, and external contention. An agent's explanation is
+a candidate cause until those observations support it.
+
+For a recurring failure, follow
+[harness maintenance](../../../docs/harness-engineering.md#repair-an-observed-harness-gap)
+to locate the earliest owning boundary and search for sibling cases. A request
+to diagnose a run authorizes a finding; implement a harness repair only within
+the user's authorized scope. Keep raw logs and credentials out of maintained
+guidance, and state which outcome still needs proof.
+
 ## Related
 
 - **oncall** (homelab) — bastion access, the fleet's alert pipeline, and Picard

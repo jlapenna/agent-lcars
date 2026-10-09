@@ -98,3 +98,6 @@ domain-owned documentation, executable contracts, explicit authority, and
 outcome-matched proof. This direction is informed by Ryan Lopopolo's
 [Harness Engineering](https://github.com/lopopolo/harness-engineering) field
 guide and adapted to Agent LCARS's existing control-plane and fleet contracts.
+The local [harness maintenance workflow](docs/harness-engineering.md) owns
+context placement, feedback promotion, documentation gardening, and the
+evidence needed to claim an improvement in later agent runs.
