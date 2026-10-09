@@ -1145,3 +1145,37 @@ describe('capacity-wait lease recovery', () => {
     expect(await store.readRun(run.runId)).toMatchObject({ state: 'canceled' });
   });
 });
+
+describe('startup deadline sweep race', () => {
+  it('rechecks a valid first heartbeat committed after the expiry query snapshot', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await store.enqueueRun({ runId: run.runId, now: T0 });
+    await orchestrator.confirmDispatch(run.runId);
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: T0,
+      claimedBy: 'executor',
+      tokenHash: 'a'.repeat(64),
+    });
+    clock.advanceMinutes(15);
+    const listExpired = store.listExpiredRuns.bind(store);
+    vi.spyOn(store, 'listExpiredRuns').mockImplementationOnce(async (now) => {
+      const snapshot = await listExpired(now);
+      // A heartbeat request admitted just before the cutoff commits while
+      // maintenance is reading its candidates. The transaction must use
+      // the updated run rather than the expired snapshot.
+      clock.set('2026-08-15T12:14:59.999Z');
+      await orchestrator.renew(run.runId);
+      clock.set(now);
+      return snapshot;
+    });
+    expect(await orchestrator.sweepExpired()).toEqual({
+      lost: [],
+      retried: [],
+    });
+    expect(await store.readTask(TASK)).toMatchObject({
+      task: { activeRunId: run.runId, consecutiveLost: 0 },
+    });
+  });
+});

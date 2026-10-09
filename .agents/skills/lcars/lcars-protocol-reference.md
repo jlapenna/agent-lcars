@@ -91,8 +91,9 @@ maintenance ticker calls `/api/work/v1/maintenance/tick` using its existing
   host capacity before requesting a claim. A full fleet produces the bounded
   `capacity_wait` poll outcome without claiming work. Queued runs do not expire
   or consume execution retries; claiming atomically starts a fresh two-hour
-  execution lease. A failed launch after claiming still uses lease recovery,
-  because the launch may have had side effects. Process-local reservations do
+  execution lease. A failed launch after claiming uses a fifteen-minute first-heartbeat
+  deadline, because the launch may have had side effects. The first accepted
+  heartbeat switches recovery to the ordinary renewable execution lease. Process-local reservations do
   not coordinate separately running executor generations.
 - **Executor-reported exit, then lease expiry.** A worker that fails on
   its own reports `runner-failed` through its run token. One that dies

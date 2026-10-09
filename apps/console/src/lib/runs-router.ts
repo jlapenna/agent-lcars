@@ -14,6 +14,7 @@ import {
   type Orchestrator,
   type OrchestratorStore,
   type Run,
+  runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
 import { runsContract, workPayloadSchema } from '@agent-lcars/work';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
@@ -136,7 +137,10 @@ async function requireRunToken(
   if (!isLive(run.state)) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run is no longer live' });
   }
-  if (Date.parse(run.leaseExpiresAt) <= context.now().getTime()) {
+  if (
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+    context.now().getTime()
+  ) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
   }
   return run;
@@ -536,7 +540,7 @@ export const runsRouter = os.router({
     const run = await requireRunToken(context, input.runId);
     const renewed = await context.orchestrator.renew(run.runId);
     if (isRefusal(renewed)) {
-      return { runId: run.runId, expiresAt: run.leaseExpiresAt };
+      throw new ORPCError('UNAUTHORIZED', { message: 'Run heartbeat refused' });
     }
     const expiresAt = renewed.run?.leaseExpiresAt ?? run.leaseExpiresAt;
     if (run.pipeline === 'codex') {

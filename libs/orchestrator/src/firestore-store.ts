@@ -13,6 +13,7 @@ import {
   isRefusal,
   type Refusal,
   runLeaseExpiresAt,
+  runStartDeadlineAt,
 } from './decide';
 import {
   byOutboxClaimFairness,
@@ -25,6 +26,7 @@ import {
   outboxEntrySchema,
   type RequestSource,
   type Run,
+  runRecoveryDeadline,
   runSchema,
   runStateSchema,
   taskDocumentSchema,
@@ -626,11 +628,10 @@ export class FirestoreStore implements OrchestratorStore {
     // than require one, reuse the per-live-state equality queries
     // `listLiveRuns` already runs (each covered by Firestore's automatic
     // single-field index) and apply the lease-expiry filter client-side.
-    return (await this.listLiveRuns()).filter(
-      (run) =>
-        run.queue?.state !== 'queued' &&
-        Date.parse(run.leaseExpiresAt) <= cutoff,
-    );
+    return (await this.listLiveRuns()).filter((run) => {
+      const deadline = runRecoveryDeadline(run);
+      return deadline !== undefined && Date.parse(deadline) <= cutoff;
+    });
   }
 
   async listLiveRuns(): Promise<Run[]> {
@@ -739,6 +740,7 @@ export class FirestoreStore implements OrchestratorStore {
         queue: {
           state: 'claimed',
           claimedAt: input.now,
+          startDeadlineAt: runStartDeadlineAt(input.now),
           claimedBy: input.claimedBy,
           ...(input.claimedBySubject === undefined
             ? {}

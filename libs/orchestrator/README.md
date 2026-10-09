@@ -58,6 +58,25 @@ read → decide → apply, with one retry on a lost compare-and-set.
 
 ## Leases, loss, and bounded auto-retry
 
+A QueueExecutor claim records `queue.startDeadlineAt`, fifteen minutes after
+`claimedAt`, separately from the two-hour execution lease. Placement, image
+pull, bootstrap, and the worker's initial five-minute heartbeat interval must
+fit inside that window. The first accepted heartbeat records
+`queue.firstHeartbeatAt`; later heartbeats renew the ordinary execution lease
+without moving the startup deadline. A short worker may complete before its
+first heartbeat, provided it reports before the startup deadline.
+
+A claimed run with no heartbeat becomes eligible for loss settlement at that
+deadline. The five-minute maintenance tick normally settles it within twenty
+minutes of claim, using the existing atomic deterministic retry and maximum
+of two automatic retries. A maintenance outage delays settlement, but token
+routes and decisions reject late first heartbeats and completions immediately
+at the deadline, even before the sweep. The executor's startup recovery checks
+that same token fence before unsuspending a Job. Queued capacity/cooldown or
+lifecycle-read waits never consume this window: release removes claim
+bookkeeping and reclaim grants a new window. Older persisted claims without
+`startDeadlineAt` retain lease-only recovery; no data migration is required.
+
 A live run must renew its lease (2 hours) or be presumed `lost` —
 `expireLease` is the only judgement the orchestrator makes about execution,
 and its only meaning is that the task's lock is released so it isn't wedged

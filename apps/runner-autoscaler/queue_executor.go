@@ -51,7 +51,7 @@ type queueExecutorConfig struct {
 	//
 	// A launch failure leaves the run claimed on the control plane -- there
 	// is no un-claim callback, by design. Safe startup handoffs are retried
-	// under the original token; unrecoverable launches still expire (`LEASE_MS`),
+	// under the original token; unrecoverable launches expire at the first-heartbeat deadline (15 minutes),
 	// `expireLease` settles this exact run to `lost`, and the orchestrator's
 	// own bounded auto-retry (`Orchestrator.sweepExpired`,
 	// `MAX_AUTO_RETRIES`, then parked) mints a brand new run for the same
@@ -238,7 +238,7 @@ func idTokenFromSource(source oauth2.TokenSource) (string, error) {
 // runQueueExecutorPoller ticks pollOnce on cfg's interval until ctx is
 // done. A single failed claim is logged and never fatal: the next tick tries
 // again. Startup recovery retries original eligible suspended Jobs without
-// blocking claims; unrecoverable attempts retain ordinary lease recovery.
+// blocking claims; unrecoverable attempts retain bounded first-heartbeat deadline recovery.
 func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interval time.Duration, logger *slog.Logger) {
 	recoveryRunning := make(chan struct{}, 1)
 	recoverStartup := func() {

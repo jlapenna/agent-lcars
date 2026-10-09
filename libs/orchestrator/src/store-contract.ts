@@ -864,6 +864,7 @@ export function runOrchestratorStoreContract(
         });
         expect(await store.listExpiredRuns(clock.now())).toEqual([]);
 
+        await orchestrator.renew(queued.run.runId);
         clock.advanceMinutes(119);
         expect(await orchestrator.sweepExpired()).toEqual({
           lost: [],
@@ -876,6 +877,156 @@ export function runOrchestratorStoreContract(
         expect(await store.readTask(TASK)).toMatchObject({
           task: { consecutiveLost: 1 },
         });
+      });
+    });
+
+    describe('first heartbeat recovery', () => {
+      async function claimedFixture() {
+        const f = await fixture();
+        const { run } = await started(f.orchestrator);
+        await f.store.enqueueRun({ runId: run.runId, now: f.clock.now() });
+        await f.orchestrator.confirmDispatch(run.runId);
+        const claim = await f.store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: f.clock.now(),
+          claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
+          tokenHash: 'a'.repeat(64),
+        });
+        expect(claim?.queue?.startDeadlineAt).toBe('2026-08-15T12:15:00.000Z');
+        return { ...f, run };
+      }
+
+      it('settles a launch with no callback at the startup deadline and atomically retries only twice', async () => {
+        const f = await claimedFixture();
+        let runId = f.run.runId;
+        f.clock.advanceMinutes(14);
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        f.clock.advanceMinutes(1);
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          const [a, b] = await Promise.all([
+            f.orchestrator.sweepExpired(),
+            f.orchestrator.sweepExpired(),
+          ]);
+          const lost = [...a.lost, ...b.lost];
+          const retries = [...a.retried, ...b.retried];
+          expect(lost.map((run) => run.runId)).toEqual([runId]);
+          expect(lost[0]?.events.at(-1)).toMatchObject({
+            by: 'expiry',
+            note: 'first heartbeat deadline exceeded',
+          });
+          expect(await f.orchestrator.renew(runId)).toMatchObject({
+            refused: true,
+          });
+          expect(
+            await f.orchestrator.report(runId, { ok: true }),
+          ).toMatchObject({ refused: true });
+          if (attempt === 3) {
+            expect(retries).toEqual([]);
+            expect(await f.store.readTask(TASK)).toMatchObject({
+              task: { consecutiveLost: 3, runCount: 3 },
+            });
+            expect(
+              (await f.store.readTask(TASK))?.task.activeRunId,
+            ).toBeUndefined();
+            break;
+          }
+          expect(retries).toHaveLength(1);
+          const next = retries[0]?.newRunId as string;
+          expect(await f.store.readRun(next)).toMatchObject({
+            requestId: `retry:${runId}`,
+            requestSource: 'auto-retry',
+          });
+          await f.store.enqueueRun({ runId: next, now: f.clock.now() });
+          await f.orchestrator.confirmDispatch(next);
+          await f.store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: f.clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'b'.repeat(64),
+          });
+          runId = next;
+          f.clock.advanceMinutes(15);
+        }
+      });
+
+      it.each([1, 14])(
+        'accepts a heartbeat after %i minutes of bootstrap and then uses the renewable lease',
+        async (bootstrapMinutes) => {
+          const f = await claimedFixture();
+          f.clock.advanceMinutes(bootstrapMinutes);
+          const firstHeartbeatAt = f.clock.now();
+          expect(await f.orchestrator.renew(f.run.runId)).not.toHaveProperty(
+            'refused',
+          );
+          expect(
+            (await f.store.readRun(f.run.runId))?.queue?.firstHeartbeatAt,
+          ).toBe(f.clock.now());
+          f.clock.advanceMinutes(100);
+          expect(await f.orchestrator.sweepExpired()).toEqual({
+            lost: [],
+            retried: [],
+          });
+          await f.orchestrator.renew(f.run.runId);
+          expect(
+            (await f.store.readRun(f.run.runId))?.queue?.firstHeartbeatAt,
+          ).toBe(firstHeartbeatAt);
+          f.clock.advanceMinutes(121);
+          expect((await f.orchestrator.sweepExpired()).lost).toHaveLength(1);
+        },
+      );
+
+      it('fences a first heartbeat and completion at the deadline even before the sweep runs', async () => {
+        const f = await claimedFixture();
+        f.clock.advanceMinutes(15);
+        expect(await f.orchestrator.renew(f.run.runId)).toMatchObject({
+          refused: true,
+          reason: 'stale-lease',
+        });
+        expect(
+          await f.orchestrator.report(f.run.runId, { ok: true }),
+        ).toMatchObject({ refused: true, reason: 'stale-lease' });
+        expect((await f.orchestrator.sweepExpired()).retried).toHaveLength(1);
+      });
+
+      it('drops startup bookkeeping when a lifecycle read releases the claim and grants a fresh deadline on reclaim', async () => {
+        const f = await claimedFixture();
+        expect(
+          await f.store.releaseQueuedRunClaim({
+            runId: f.run.runId,
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+            now: f.clock.now(),
+            deferredUntil: '2026-08-15T16:00:00.000Z',
+          }),
+        ).toBe(true);
+        f.clock.advanceMinutes(180);
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        expect(
+          await f.store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: f.clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'b'.repeat(64),
+          }),
+        ).toBeUndefined();
+        f.clock.advanceMinutes(60);
+        const claimed = await f.store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: f.clock.now(),
+          claimedBy: 'executor',
+          tokenHash: 'b'.repeat(64),
+        });
+        expect(claimed?.queue?.startDeadlineAt).toBe(
+          '2026-08-15T16:15:00.000Z',
+        );
+        expect(claimed?.queue?.firstHeartbeatAt).toBeUndefined();
       });
     });
 

@@ -3,6 +3,7 @@ import {
   isRefusal,
   type Refusal,
   runLeaseExpiresAt,
+  runStartDeadlineAt,
 } from './decide';
 import type {
   GithubAnchorProjection,
@@ -18,6 +19,7 @@ import {
   isLive,
   isWorkAnchor,
   requestHistoryKey,
+  runRecoveryDeadline,
   taskKey,
 } from './model';
 import {
@@ -485,11 +487,10 @@ export class MemoryStore implements OrchestratorStore {
   async listExpiredRuns(now: string): Promise<Run[]> {
     const cutoff = Date.parse(now);
     return structuredClone(
-      (await this.listLiveRuns()).filter(
-        (run) =>
-          run.queue?.state !== 'queued' &&
-          Date.parse(run.leaseExpiresAt) <= cutoff,
-      ),
+      (await this.listLiveRuns()).filter((run) => {
+        const deadline = runRecoveryDeadline(run);
+        return deadline !== undefined && Date.parse(deadline) <= cutoff;
+      }),
     );
   }
 
@@ -544,6 +545,7 @@ export class MemoryStore implements OrchestratorStore {
       queue: {
         state: 'claimed',
         claimedAt: input.now,
+        startDeadlineAt: runStartDeadlineAt(input.now),
         claimedBy: input.claimedBy,
         ...(input.claimedBySubject === undefined
           ? {}

@@ -5,8 +5,10 @@ import {
   requestHistoryKey,
   type RequestSource,
   type Run,
+  runRecoveryDeadline,
   runRequestHistoryKey,
   type RunResult,
+  startDeadlineElapsed,
   type Task,
   type TaskId,
   taskKey,
@@ -70,6 +72,15 @@ export function decidedRun(decision: Decision): Run {
     throw new Error('decision unexpectedly carries no run');
   }
   return decision.run;
+}
+
+/** Fifteen minutes includes placement, image pull, bootstrap, and the
+ * worker's five-minute initial heartbeat interval. Maintenance runs every
+ * five minutes, so an unstarted claim normally settles within twenty. */
+export const RUN_START_TIMEOUT_MS = 15 * 60_000;
+
+export function runStartDeadlineAt(now: string): string {
+  return new Date(Date.parse(now) + RUN_START_TIMEOUT_MS).toISOString();
 }
 
 export const RUN_LEASE_MS = 2 * 60 * 60 * 1_000;
@@ -220,9 +231,18 @@ export function renewLease(input: {
   const { now, task, run } = input;
   if (!isLive(run.state)) return refused('run-not-live');
   if (task.activeRunId !== run.runId) return refused('stale-lease');
+  if (startDeadlineElapsed(run, now)) return refused('stale-lease');
   return {
     task,
-    run: { ...run, leaseExpiresAt: runLeaseExpiresAt(now), updatedAt: now },
+    run: {
+      ...run,
+      ...(run.queue?.state === 'claimed' &&
+      run.queue.firstHeartbeatAt === undefined
+        ? { queue: { ...run.queue, firstHeartbeatAt: now } }
+        : {}),
+      leaseExpiresAt: runLeaseExpiresAt(now),
+      updatedAt: now,
+    },
     outbox: [],
   };
 }
@@ -243,6 +263,7 @@ export function reportResult(input: {
   if (run.state === 'finished') return refused('run-not-live', run);
   if (!isLive(run.state)) return refused('run-not-live');
   if (task.activeRunId !== run.runId) return refused('stale-lease');
+  if (startDeadlineElapsed(run, now)) return refused('stale-lease');
   const settled: Run = {
     ...run,
     state: 'finished',
@@ -307,10 +328,11 @@ export function expireLease(input: {
   // QueueExecutor capacity waits are not execution attempts. A queued run
   // may wait past its original request lease without consuming the task's
   // lost-run retry budget; the atomic claim refreshes the execution lease.
-  if (run.queue?.state === 'queued') return refused('stale-lease');
-  if (Date.parse(run.leaseExpiresAt) > Date.parse(now)) {
+  const deadline = runRecoveryDeadline(run);
+  if (deadline === undefined || Date.parse(deadline) > Date.parse(now)) {
     return refused('stale-lease'); // not actually expired
   }
+  if (input.task.activeRunId !== run.runId) return refused('stale-lease');
   return settleLost(input, 'expiry');
 }
 
@@ -375,7 +397,17 @@ function settleLost(
   const settled: Run = {
     ...run,
     state: 'lost',
-    events: [...run.events, { at: now, to: 'lost', by }],
+    events: [
+      ...run.events,
+      {
+        at: now,
+        to: 'lost',
+        by,
+        ...(by === 'expiry' && startDeadlineElapsed(run, now)
+          ? { note: 'first heartbeat deadline exceeded' }
+          : {}),
+      },
+    ],
     updatedAt: now,
   };
   return settle(

@@ -1509,6 +1509,7 @@ describe('heartbeat', () => {
     // not so far that this shared fixture clock (now also
     // `requireRunToken`'s own clock, via `RunsContext.now`) would expire
     // the very token this call is renewing before it got there.
+    await orchestrator.renew(runId);
     setNow('2026-08-26T11:00:00.000Z');
     const r = await call(
       { store, orchestrator, now, ...context, bearerToken: token },
@@ -1536,6 +1537,7 @@ describe('heartbeat', () => {
       tokenHash: hashRunToken(token),
     });
     const takeLease = vi.fn(async () => undefined);
+    await orchestrator.renew(runId);
     setNow('2026-08-26T11:00:00.000Z');
 
     const r = await call(
@@ -2638,4 +2640,45 @@ describe('codexAuth', () => {
       expectedGeneration: '22',
     });
   });
+});
+
+describe('startup deadline run-token fence', () => {
+  it.each([false, true])(
+    'rejects late bootstrap, heartbeat and completion (swept=%s)',
+    async (swept) => {
+      const { store, orchestrator, now, setNow } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid('launch-no-callback'),
+        now: NOW,
+      });
+      const token = mintRunToken();
+      await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: NOW,
+        claimedBy: 'runner-1',
+        tokenHash: hashRunToken(token),
+      });
+      const ctx = { store, orchestrator, now, ...context, bearerToken: token };
+      setNow('2026-08-26T10:14:59.999Z');
+      expect((await call(ctx, 'GET', runPath(runId, '/brief'))).status).toBe(
+        200,
+      );
+      setNow('2026-08-26T10:15:00.000Z');
+      if (swept) await orchestrator.sweepExpired();
+      expect((await call(ctx, 'GET', runPath(runId, '/brief'))).status).toBe(
+        401,
+      );
+      expect(
+        (await call(ctx, 'POST', runPath(runId, '/heartbeat'))).status,
+      ).toBe(401);
+      expect(
+        (
+          await call(ctx, 'POST', runPath(runId, '/complete'), {
+            outcome: 'pull-request',
+            outcomeReference: { kind: 'pull-request', number: 1 },
+          })
+        ).status,
+      ).toBe(401);
+    },
+  );
 });

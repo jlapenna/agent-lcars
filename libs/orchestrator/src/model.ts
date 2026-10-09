@@ -237,6 +237,11 @@ export const runQueueSchema = z.strictObject({
    * instant so one broken GitHub anchor cannot block its whole pipeline. */
   deferredUntil: isoUtc.optional(),
   claimedAt: isoUtc.optional(),
+  /** Claim-time bootstrap budget, independent of the renewable execution
+   * lease. Absent on older claims, which retain lease-only recovery. */
+  startDeadlineAt: isoUtc.optional(),
+  /** First accepted worker heartbeat; dispatch/claim alone is not liveness. */
+  firstHeartbeatAt: isoUtc.optional(),
   /** The executor's self-reported runner name. Unauthenticated: it labels
    * the claim and must match a later exit report, but grants nothing alone. */
   claimedBy: z.string().min(1).max(256).optional(),
@@ -469,5 +474,28 @@ export type LeasedOutboxEntry = Extract<OutboxEntry, { state: 'leased' }>;
 export function byOutboxClaimFairness(a: OutboxEntry, b: OutboxEntry): number {
   return (
     a.attempts - b.attempts || Date.parse(a.createdAt) - Date.parse(b.createdAt)
+  );
+}
+
+/** Effective recovery deadline. Unclaimed queue waits never expire. Older
+ * claims without startup bookkeeping retain their original lease behavior. */
+export function runRecoveryDeadline(run: Run): string | undefined {
+  if (run.queue?.state === 'queued') return undefined;
+  const start =
+    run.queue?.state === 'claimed' && run.queue.firstHeartbeatAt === undefined
+      ? run.queue.startDeadlineAt
+      : undefined;
+  return start !== undefined &&
+    Date.parse(start) < Date.parse(run.leaseExpiresAt)
+    ? start
+    : run.leaseExpiresAt;
+}
+
+export function startDeadlineElapsed(run: Run, now: string): boolean {
+  return (
+    run.queue?.state === 'claimed' &&
+    run.queue.firstHeartbeatAt === undefined &&
+    run.queue.startDeadlineAt !== undefined &&
+    Date.parse(run.queue.startDeadlineAt) <= Date.parse(now)
   );
 }
