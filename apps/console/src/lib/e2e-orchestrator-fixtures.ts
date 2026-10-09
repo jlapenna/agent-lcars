@@ -335,9 +335,14 @@ export async function resetE2eOrchestratorFixtures(): Promise<void> {
 
 export async function seedPopulatedE2eOrchestratorFixtures(
   inbox = false,
+  nativeOnly = false,
 ): Promise<void> {
   const firestore = fixtureFirestore();
   const { tasks, runs } = populatedFixture();
+  if (nativeOnly) {
+    tasks.length = 0;
+    runs.length = 0;
+  }
   if (inbox) {
     const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
     const at = minutesAgo(30);
@@ -373,39 +378,44 @@ export async function seedPopulatedE2eOrchestratorFixtures(
         message: 'Should native decisions use Firestore or GitHub?',
       },
     });
-    const otherWorkId = '01J5Z3K9QX8F0N2B4V6C8D1E3H';
-    tasks.push({
-      task: { workId: otherWorkId },
-      runCount: 1,
-      consecutiveLost: 0,
-      updatedAt: at,
-      work: {
-        origin: { principal: 'user:e2e-agent-lcars-admin', channel: 'console' },
-        spec: {
-          title: 'Other repository native decision',
-          description: 'An older parked conversation.',
-          pipeline: 'claude',
-          target: { repo: 'jlapenna/agent-lcars' },
+    if (!nativeOnly) {
+      const otherWorkId = '01J5Z3K9QX8F0N2B4V6C8D1E3H';
+      tasks.push({
+        task: { workId: otherWorkId },
+        runCount: 1,
+        consecutiveLost: 0,
+        updatedAt: minutesAgo(45),
+        work: {
+          origin: {
+            principal: 'user:e2e-agent-lcars-admin',
+            channel: 'console',
+          },
+          spec: {
+            title: 'Other repository native decision',
+            description: 'An older parked conversation.',
+            pipeline: 'claude',
+            target: { repo: 'jlapenna/agent-lcars' },
+          },
         },
-      },
-    });
-    runs.push({
-      ...runFor({
-        runId: `work:${otherWorkId}/r1`,
-        issue: 0,
-        pipeline: 'claude',
-        state: 'finished',
-        createdAt: at,
-        updatedAt: at,
-        result: true,
-      }),
-      task: { workId: otherWorkId },
-      result: {
-        ok: true,
-        summary: 'park',
-        message: 'Which repository policy should I use?',
-      },
-    });
+      });
+      runs.push({
+        ...runFor({
+          runId: `work:${otherWorkId}/r1`,
+          issue: 0,
+          pipeline: 'claude',
+          state: 'finished',
+          createdAt: minutesAgo(45),
+          updatedAt: minutesAgo(45),
+          result: true,
+        }),
+        task: { workId: otherWorkId },
+        result: {
+          ok: true,
+          summary: 'park',
+          message: 'Which repository policy should I use?',
+        },
+      });
+    }
     // The human-needed GitHub anchor is deliberately represented in both
     // durable task state and the label projection, exercising deduplication.
     const githubPark = runs.find(
@@ -418,7 +428,7 @@ export async function seedPopulatedE2eOrchestratorFixtures(
         message: 'Which retention window?',
       };
   }
-  const anchors = populatedGithubAnchorProjections();
+  const anchors = nativeOnly ? [] : populatedGithubAnchorProjections();
   const batch = firestore.batch();
   for (const task of tasks) {
     batch.set(

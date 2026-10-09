@@ -233,7 +233,8 @@ interface SeedRequest {
    * adds the issue-agent session plus authoritative broker Work/Run records;
    * GitHub fixture mode remains only for issue/PR metadata. `reset` clears all
    * hermetic fixture state. */
-  action?: 'seed' | 'seed-populated' | 'seed-inbox' | 'reset';
+  action?:
+    'seed' | 'seed-populated' | 'seed-inbox' | 'seed-inbox-only' | 'reset';
   resume?: boolean;
 }
 
@@ -320,9 +321,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    const populated =
-      body.action === 'seed-populated' || body.action === 'seed-inbox';
-    setPopulatedFixtures(populated);
+    const inbox =
+      body.action === 'seed-inbox' || body.action === 'seed-inbox-only';
+    const populated = body.action === 'seed-populated' || inbox;
+    setPopulatedFixtures(populated && body.action !== 'seed-inbox-only');
     revalidateDashboardCache();
     const docs = populated
       ? [
@@ -331,7 +333,7 @@ export async function POST(req: NextRequest) {
           ...fixtureArchiveIssueSessions(),
         ]
       : fixtureSessions();
-    if (body.action === 'seed-inbox' && body.resume === true) {
+    if (inbox && body.resume === true) {
       const runId = 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1';
       docs.push({
         ...fixtureIssueAgentSession(),
@@ -356,7 +358,10 @@ export async function POST(req: NextRequest) {
     await Promise.all(writes.map((write) => upsertSession(write)));
     if (populated) {
       await Promise.all([
-        seedPopulatedE2eOrchestratorFixtures(body.action === 'seed-inbox'),
+        seedPopulatedE2eOrchestratorFixtures(
+          inbox,
+          body.action === 'seed-inbox-only',
+        ),
         seedRunnerStatus(),
       ]);
     }

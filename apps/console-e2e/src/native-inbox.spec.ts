@@ -77,9 +77,9 @@ test.describe('native and GitHub human decisions', () => {
       .getByRole('textbox', { name: 'Reply to the agent' })
       .fill('Use Firestore.');
     await detail.getByRole('button', { name: 'Reply', exact: true }).click();
-    await expect(detail.getByRole('status')).toHaveText(
-      /Reply admitted for a fresh session/,
-    );
+    await expect(
+      page.getByTestId('native-reply-confirmation').getByRole('status'),
+    ).toHaveText(/Reply admitted for a fresh session/);
     await expect(page.getByTestId(`queue-row-${KEY}`)).toHaveCount(0);
     await expect(detail.getByRole('textbox')).toHaveCount(0);
     await detail.getByRole('link', { name: 'Full history' }).click();
@@ -96,24 +96,80 @@ test.describe('native and GitHub human decisions', () => {
       data: { action: 'seed-inbox', resume: true },
     });
     expect(seeded.ok()).toBe(true);
-    await page.goto('/inbox');
-    await page
-      .getByRole('textbox', { name: 'Search the Inbox' })
-      .fill('Choose native');
+    await page.goto('/inbox?q=native+decision&sort=newest');
+    await expect(page).not.toHaveURL(/item=/);
+    await expect(page.getByTestId(`queue-row-${OTHER_KEY}`)).toBeVisible();
     const detail = page.getByTestId('native-decision-detail');
     await detail
       .getByRole('textbox', { name: 'Reply to the agent' })
       .fill('Use GitHub.');
     await detail.getByRole('button', { name: 'Reply', exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`item=work%3A${ID}`));
-    await expect(detail.getByRole('status')).toHaveText(
-      /Resume will be attempted when the agent starts/,
-    );
+    await expect(
+      page.getByTestId('native-reply-confirmation').getByRole('status'),
+    ).toHaveText(/Resume will be attempted when the agent starts/);
     await expect(page.getByTestId(`queue-row-${KEY}`)).toHaveCount(0);
+    await expect(page.getByTestId(`queue-row-${OTHER_KEY}`)).toBeVisible();
+    await expect(detail).toContainText('Other repository native decision');
+    await expect(page.getByTestId('native-reply-confirmation')).toContainText(
+      'Choose native decision storage',
+    );
+  });
+
+  test('keeps admitted confirmation when the default selection empties the queue', async ({
+    page,
+    request,
+  }) => {
+    expect(
+      (await request.post('/api/e2e/seed', { data: { action: 'reset' } })).ok(),
+    ).toBe(true);
+    expect(
+      (
+        await request.post('/api/e2e/seed', {
+          data: { action: 'seed-inbox-only' },
+        })
+      ).ok(),
+    ).toBe(true);
+    await page.goto('/inbox');
+    await expect(page).not.toHaveURL(/item=/);
+    await page
+      .getByRole('textbox', { name: 'Reply to the agent' })
+      .fill('Use Firestore.');
+    await page.getByRole('button', { name: 'Reply', exact: true }).click();
+    await expect(page.getByTestId(`queue-row-${KEY}`)).toHaveCount(0);
+    await expect(page.getByTestId('native-decision-detail')).toHaveCount(0);
+    await expect(page.getByTestId('native-reply-confirmation')).toContainText(
+      'Reply admitted for a fresh session',
+    );
+    await expect(page.getByTestId('native-reply-confirmation')).toContainText(
+      'Choose native decision storage',
+    );
+  });
+
+  test('keeps a refused reply editable when another operator admitted a run', async ({
+    page,
+    request,
+  }) => {
+    await page.goto('/inbox?q=native+decision&sort=newest');
+    await expect(page).not.toHaveURL(/item=/);
+    const detail = page.getByTestId('native-decision-detail');
+    const draft = detail.getByRole('textbox', { name: 'Reply to the agent' });
+    await draft.fill('Keep this refused draft.');
+    const admitted = await request.post(`/api/work/v1/items/${ID}/reply`, {
+      headers: { 'X-e2e-auth-user': 'e2e-agent-lcars-admin' },
+      data: { text: 'Other operator reply' },
+    });
+    expect(admitted.ok()).toBe(true);
+    await detail.getByRole('button', { name: 'Reply', exact: true }).click();
+    await expect(detail.getByRole('status')).toContainText('task-busy');
+    await expect(draft).toHaveValue('Keep this refused draft.');
+    await draft.fill('Revised refused draft.');
+    await expect(draft).toHaveValue('Revised refused draft.');
+    await expect(page.getByTestId('native-reply-confirmation')).toHaveCount(0);
   });
 
   test('withholds Reply from an admin without a Work operator grant and rejects direct admission', async ({
     page,
+    request,
   }) => {
     await page.route('**/*', async (route) => {
       await route.continue({
@@ -144,6 +200,14 @@ test.describe('native and GitHub human decisions', () => {
       return response.status;
     }, ID);
     expect(status).toBe(401);
+    const unchanged = await request.get(`/api/work/v1/items/${ID}`, {
+      headers: { 'X-e2e-auth-user': 'e2e-agent-lcars-admin' },
+    });
+    expect(unchanged.ok()).toBe(true);
+    const work = await unchanged.json();
+    expect(work.state).toBe('parked');
+    expect(work.runs).toHaveLength(1);
+    expect(JSON.stringify(work)).not.toContain('Try to bypass the grant');
   });
 
   for (const width of [320, 390]) {

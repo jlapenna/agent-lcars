@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type { OrchestratorStore } from '@agent-lcars/orchestrator';
 import { toWorkSummary } from '@agent-lcars/work/derive';
 
@@ -52,4 +53,34 @@ export async function getNativeInboxCards(
         : undefined;
   } while (cursor !== undefined);
   return cards;
+}
+
+/** Optional Bridge evidence must not reject its GitHub rendering boundary. */
+export async function getNativeInboxEvidence(
+  load: () => Promise<{
+    store: OrchestratorStore;
+    principal: WorkPrincipal | undefined;
+  }>,
+): Promise<{
+  cards: NativeDecisionCard[];
+  available: boolean;
+  warnings: string[];
+}> {
+  try {
+    const { store, principal } = await load();
+    return {
+      cards: await getNativeInboxCards(store, principal),
+      available: true,
+      warnings: [],
+    };
+  } catch (error) {
+    logger.error('agent-lcars: native Inbox count unavailable:', error);
+    return {
+      cards: [],
+      available: false,
+      warnings: [
+        'Native decisions unavailable; the Inbox count includes GitHub decisions only.',
+      ],
+    };
+  }
 }

@@ -2,6 +2,7 @@
 
 import {
   ActionIcon,
+  Anchor,
   Button,
   Group,
   Menu,
@@ -11,6 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconAdjustments, IconSearch, IconX } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -108,6 +110,11 @@ export function QueueWorkspace({
   const [search, setSearch] = useState(
     () => searchParams.get(SEARCH_PARAM) ?? '',
   );
+  const [replyConfirmation, setReplyConfirmation] = useState<{
+    workId: string;
+    title: string;
+    message: string;
+  }>();
   const [loadingItemKey, setLoadingItemKey] = useState<string>();
   const { isMuted, mute, unmute } = useMutedItems();
   const router = useRouter();
@@ -500,18 +507,29 @@ export function QueueWorkspace({
       </div>
 
       <div className="queue-workspace__detail">
+        {replyConfirmation && (
+          <Stack p="md" gap="xs" data-testid="native-reply-confirmation">
+            <Text fw={600}>{replyConfirmation.title}</Text>
+            <Text role="status" size="sm">
+              {replyConfirmation.message}
+            </Text>
+            <Anchor component={Link} href={`/work/${replyConfirmation.workId}`}>
+              Full history of the answered work
+            </Anchor>
+          </Stack>
+        )}
         {selectedCard && 'work' in selectedCard ? (
           <NativeDecisionDetail
             key={selectedCard.work.id}
             card={selectedCard}
             replyToWorkItem={replyToWorkItem}
-            onReplyStart={() => {
-              if (!selectedItemKey)
-                router.replace(
-                  queueSelectionHref(currentSearch, inboxCardKey(selectedCard)),
-                  { scroll: false },
-                );
-            }}
+            onReplyAdmitted={(message) =>
+              setReplyConfirmation({
+                workId: selectedCard.work.anchor.workId,
+                title: selectedCard.work.spec.title,
+                message,
+              })
+            }
           />
         ) : selectedCard ? (
           <ActionItemCard

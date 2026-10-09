@@ -79,11 +79,11 @@ export function NativeDecisionRow({
 export function NativeDecisionDetail({
   card,
   replyToWorkItem,
-  onReplyStart,
+  onReplyAdmitted,
 }: {
   card: NativeDecisionCard;
   replyToWorkItem?: ReplyAction;
-  onReplyStart?: () => void;
+  onReplyAdmitted?: (message: string) => void;
 }) {
   const { work, canReply } = card;
   const [text, setText] = useState('');
@@ -93,7 +93,6 @@ export function NativeDecisionDetail({
   const reply = () =>
     startTransition(async () => {
       if (!replyToWorkItem || !canReply || !text.trim()) return;
-      onReplyStart?.();
       const [error, result] = await replyToWorkItem({
         id: work.anchor.workId,
         text: text.trim(),
@@ -103,11 +102,13 @@ export function NativeDecisionDetail({
         return;
       }
       setText('');
-      setFeedback(
-        result?.resumed
-          ? 'Reply admitted with a saved transcript. Resume will be attempted when the agent starts.'
-          : 'Reply admitted for a fresh session — no resumable transcript.',
-      );
+      const message = result?.resumed
+        ? 'Reply admitted with a saved transcript. Resume will be attempted when the agent starts.'
+        : 'Reply admitted for a fresh session — no resumable transcript.';
+      if (onReplyAdmitted) {
+        setFeedback(undefined);
+        onReplyAdmitted(message);
+      } else setFeedback(message);
       router.refresh();
     });
   return (

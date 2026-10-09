@@ -25,7 +25,7 @@ import {
   repoKey,
   type WatchedRepo,
 } from '../lib/github-client';
-import { getNativeInboxCards } from '../lib/native-inbox';
+import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
 import { indexSessionsByRunId } from '../lib/run-classification';
@@ -124,16 +124,17 @@ async function IndexBody({
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
     { items: parkedWorkItems, hasMoreTasks: hasMoreParkedTasks },
-    nativeDecisionCards,
+    nativeInbox,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
     getParkedWork(),
-    workContext().then((context) =>
-      getNativeInboxCards(context.runtime.store, context.principal),
-    ),
+    getNativeInboxEvidence(async () => {
+      const context = await workContext();
+      return { store: context.runtime.store, principal: context.principal };
+    }),
   ]);
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
@@ -142,6 +143,7 @@ async function IndexBody({
       ...activity.warnings,
       ...cliSessionWarnings,
       ...runnerSessionWarnings,
+      ...nativeInbox.warnings,
     ]),
   );
 
@@ -244,10 +246,11 @@ async function IndexBody({
             count={
               queueView.yourQueue.filter((item) => matchesFilter(item.repo))
                 .length +
-              nativeDecisionCards.filter((card) =>
+              nativeInbox.cards.filter((card) =>
                 matchesFilter(inboxCardMetadata(card).repo),
               ).length
             }
+            nativeAvailable={nativeInbox.available}
             inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
           />
 
