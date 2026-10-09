@@ -200,6 +200,21 @@ when a caller omits or empties the legacy override variables.
 | `AGENT_BOT_LOGINS`                | `["claude[bot]","agent-lcars[bot]"]`                                             | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                                                   |
 | `NX_CACHE_URL`                    | homelab Nx cache                                                                 | CI jobs                                                                                                             |
 
+`deploy-console.yml` runs its GitHub-only Verify admission check on
+`ubuntu-latest`. Only admitted main/manual deployments enter the shared
+deployment lock. Inside that lock, an automatic source must still equal the
+current main tip before checkout, credential setup, build or rollout. This
+also applies to automatic `recovered-ci` dispatches.
+Superseded sources skip every subsequent step; failed or unreadable main
+lookups fail closed. Explicit manual source requests retain their existing
+semantics and use the same lock.
+
+An older green source can therefore be skipped while a newer main tip waits
+for CI or has failed CI. The workflow does not deploy that unverified tip or
+fall back to the older source. A successful superseded workflow performed no
+rollout: delivery evidence must include the actual rollout and serving
+verification, rather than only its aggregate workflow conclusion.
+
 `DISPATCH_FIRESTORE_DATABASE_ID` is deliberately absent from this table: it
 is not a repo variable. It is an App Hosting environment value
 (`apps/console/apphosting.yaml`) read by the hosted orchestrator runtime
