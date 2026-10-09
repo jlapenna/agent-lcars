@@ -2,7 +2,11 @@ import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 
-import { type ItemsContract, itemsContract } from '@agent-lcars/work';
+import {
+  type ItemsContract,
+  itemsContract,
+  itemStateSchema,
+} from '@agent-lcars/work';
 import { createORPCClient } from '@orpc/client';
 import type { RouterContractClient } from '@orpc/contract';
 import { OpenAPILink } from '@orpc/openapi/fetch';
@@ -20,7 +24,9 @@ export interface WorkCommandDeps {
 
 export const WORK_CLI_USAGE =
   'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> --title "<text>" (--description "<text>" | --description-file <path>)\n' +
-  '       work status <id> [--watch] | work list [--state <s>] [--repo <owner/name>] | work cancel <id> | work redispatch <id>';
+  '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id>\n' +
+  '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
+  '       status exits 1 for failed work (with or without --watch); other states exit 0.';
 
 const execFileAsync = promisify(execFile);
 
@@ -74,7 +80,7 @@ function flag(argv: string[], name: string): string | undefined {
   return value === undefined || value.startsWith('--') ? undefined : value;
 }
 
-const SETTLED = new Set(['done', 'parked', 'canceled']);
+const SETTLED = new Set(['done', 'parked', 'failed', 'canceled']);
 
 interface ItemSummary {
   id: string;
@@ -142,11 +148,15 @@ export async function executeWorkCommand(
             deps.stdout(line(current));
           }
         }
-        return { ok: true };
+        return { ok: current.state !== 'failed' };
       }
       case 'list': {
-        const state = flag(rest, '--state') as
-          'running' | 'done' | 'parked' | 'canceled' | undefined;
+        const rawState = flag(rest, '--state');
+        const parsedState = itemStateSchema.safeParse(rawState);
+        if (rest.includes('--state') && !parsedState.success) {
+          return usageFailure(deps);
+        }
+        const state = parsedState.success ? parsedState.data : undefined;
         const repo = flag(rest, '--repo');
         const { items } = await c.list({
           ...(state ? { state } : {}),

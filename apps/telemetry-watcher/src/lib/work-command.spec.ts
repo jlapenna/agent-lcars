@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { executeWorkCommand, type WorkCommandDeps } from './work-command';
 
@@ -8,6 +8,7 @@ function deps(
   const calls: string[] = [];
   const out: string[] = [];
   const err: string[] = [];
+  let sleeps = 0;
   return {
     calls,
     out,
@@ -15,7 +16,10 @@ function deps(
     origin: 'https://lcars.test',
     token: async () => 'tok',
     now: () => new Date('2026-08-26T10:00:00.000Z'),
-    sleep: async () => undefined,
+    sleep: vi.fn(async () => {
+      // Bound a broken watch loop so regression failures remain diagnosable.
+      if (++sleeps > 3) throw new Error('unexpected additional watch sleep');
+    }),
     stdout: (l) => out.push(l),
     stderr: (l) => err.push(l),
     fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
@@ -79,19 +83,106 @@ describe('lcars work', () => {
     );
     expect(d.out.join('\n')).toMatch(/running/);
   });
-  it('status --watch polls until settled', async () => {
+  it.each(['done', 'parked', 'failed', 'canceled'])(
+    'status --watch stops when running work becomes %s',
+    async (state) => {
+      let n = 0;
+      const d = deps({
+        'GET /api/work/v1/items/{id}': () =>
+          item(n++ === 0 ? 'running' : state),
+      });
+      const r = await executeWorkCommand(
+        ['status', item(state).id, '--watch'],
+        d,
+      );
+      expect(r).toEqual({ ok: state !== 'failed' });
+      expect(d.calls).toEqual(
+        Array(2).fill(`GET /api/work/v1/items/${item(state).id}`),
+      );
+      expect(d.sleep).toHaveBeenCalledExactlyOnceWith(15_000);
+      expect(d.out).toHaveLength(2);
+      expect(d.out.at(-1)).toContain(state);
+      expect(d.err).toEqual([]);
+    },
+  );
+  it.each(['done', 'parked', 'failed', 'canceled'])(
+    'status --watch stops immediately for initially %s work',
+    async (state) => {
+      const d = deps({ 'GET /api/work/v1/items/{id}': () => item(state) });
+      const r = await executeWorkCommand(
+        ['status', item(state).id, '--watch'],
+        d,
+      );
+      expect(r).toEqual({ ok: state !== 'failed' });
+      expect(d.calls).toEqual([`GET /api/work/v1/items/${item(state).id}`]);
+      expect(d.sleep).not.toHaveBeenCalled();
+      expect(d.out).toHaveLength(1);
+      expect(d.out[0]).toContain(state);
+    },
+  );
+  it('reports failed status without watch as unsuccessful', async () => {
+    const d = deps({ 'GET /api/work/v1/items/{id}': () => item('failed') });
+    expect(await executeWorkCommand(['status', item('failed').id], d)).toEqual({
+      ok: false,
+    });
+    expect(d.calls).toHaveLength(1);
+    expect(d.sleep).not.toHaveBeenCalled();
+    expect(d.out[0]).toContain('failed');
+  });
+  it('keeps watching a lost run awaiting retry and the replacement run', async () => {
     let n = 0;
     const d = deps({
-      'GET /api/work/v1/items/{id}': () => item(n++ < 2 ? 'running' : 'done'),
+      'GET /api/work/v1/items/{id}': () => ({
+        ...item(n < 2 ? 'running' : 'done'),
+        runs: [
+          {
+            runId: n === 0 ? 'r1' : 'r2',
+            state: ['lost', 'running', 'finished'][n++],
+            pipeline: 'claude',
+            createdAt: 't',
+            updatedAt: 't',
+          },
+        ],
+      }),
     });
-    const r = await executeWorkCommand(
-      ['status', '01J5Z3K9QX8F0N2B4V6C8D1E3G', '--watch'],
-      d,
+    expect(
+      await executeWorkCommand(['status', item('running').id, '--watch'], d),
+    ).toEqual({ ok: true });
+    expect(d.calls).toEqual(
+      Array(3).fill(`GET /api/work/v1/items/${item('running').id}`),
     );
-    expect(r.ok).toBe(true);
-    expect(d.calls.filter((c) => c.startsWith('GET')).length).toBe(3);
-    expect(d.out.at(-1)).toMatch(/done/);
+    expect(d.sleep).toHaveBeenCalledTimes(2);
+    expect(d.sleep).toHaveBeenNthCalledWith(1, 15_000);
+    expect(d.sleep).toHaveBeenNthCalledWith(2, 15_000);
+    expect(d.out.at(-1)).toContain('done');
   });
+  it.each(['running', 'done', 'parked', 'failed', 'canceled'])(
+    'list accepts the %s state filter and sends it to the API',
+    async (state) => {
+      const d = deps({
+        'GET /api/work/v1/items': ({ url }) => {
+          expect(new URL(url).searchParams.get('state')).toBe(state);
+          return { items: [item(state)] };
+        },
+      });
+      expect(await executeWorkCommand(['list', '--state', state], d)).toEqual({
+        ok: true,
+      });
+      expect(d.calls).toEqual(['GET /api/work/v1/items']);
+      expect(d.out[0]).toContain(state);
+    },
+  );
+  it.each([['--state', 'lost'], ['--state'], ['--state', '--repo', 'o/r']])(
+    'rejects an invalid or missing list state before HTTP: %j',
+    async (...args) => {
+      const d = deps({});
+      const r = await executeWorkCommand(['list', ...args], d);
+      expect(r.ok).toBe(false);
+      expect(r.usage).toContain('running|done|parked|failed|canceled');
+      expect(d.calls).toEqual([]);
+      expect(d.err).toHaveLength(1);
+    },
+  );
   it('prints usage for an unknown subcommand', async () => {
     const d = deps({});
     const r = await executeWorkCommand(['bogus'], d);
