@@ -445,6 +445,12 @@ counterpart of the Work destination.
   `cancel <id>`, and `redispatch <id>`
 - `lcars session title "<text>" | --clear` and `lcars session status "<text>" | --clear`
 
+`status --watch` polls every 15 seconds while the item is `running`, including
+lost runs awaiting automatic retry. It stops on `done`, `parked`, `failed`, or
+`canceled` without another sleep or request. `status` prints the final state and
+exits 1 for `failed` work, with or without `--watch`; other item states exit 0.
+`list --state` accepts `running`, `done`, `parked`, `failed`, and `canceled`.
+
 The CLI authenticates with `LCARS_TOKEN`, or with `LCARS_SERVICE_ACCOUNT` and
 `LCARS_AUDIENCE` through impersonation. A bearer token that fails never falls
 back to cookies. **Proposed:** add `lcars work reply` for parity with the
