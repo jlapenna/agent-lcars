@@ -63,6 +63,16 @@ snapshot expires after three minutes. Pending jobs mean
 runners retain ARC's own semantics. They are separate from Kubernetes Pending
 pods and from QueueExecutor's native Work capacity.
 
+Each successful lane snapshot repeats `expectedLanes`: the sorted,
+comma-separated DNS-label names from the validated `arc_lanes` configuration.
+This bounded inventory uses the existing change/heartbeat write gate, with no
+extra Firestore writes. Fleet totals require a consistent inventory and one
+fresh snapshot per configured lane, including lanes that never published or
+whose documents have been removed by TTL. During producer rollout, older
+snapshots without inventory remain visible as individual Shuttlebay lanes but
+cannot establish complete fleet totals; Bridge and Agents report unavailable
+until the current producer contract arrives. Homelab owns producer delivery.
+
 `orchestrator.yml`'s whole schema is:
 
 ```yaml

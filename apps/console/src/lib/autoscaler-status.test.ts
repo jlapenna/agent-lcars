@@ -2,8 +2,10 @@ import { getAgentTelemetryReaderFirestore } from '@agent-lcars/telemetry/server'
 import { Timestamp } from 'firebase-admin/firestore';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
+import { fleetFromAutoscalerStatuses } from './agent-activity';
 import {
   getAutoscalerStatuses,
+  projectAutoscalerStatuses,
   subscribeAutoscalerStatuses,
 } from './autoscaler-status';
 
@@ -29,6 +31,7 @@ const lane = {
   schemaVersion: 3,
   kind: 'arc-lane',
   lane: 'lcars-ci',
+  expectedLanes: 'lcars-ci',
   registrationUrl: 'https://github.com/jlapenna/agent-lcars',
   assignedJobs: 3,
   runningJobs: 1,
@@ -120,6 +123,75 @@ describe('getAutoscalerStatuses', () => {
     expect((await getAutoscalerStatuses()).warnings[0]).toContain(
       'unavailable',
     );
+  });
+});
+
+describe('authoritative ARC inventory', () => {
+  const now = Date.parse('2026-10-09T20:00:00Z');
+  const fresh = {
+    ...lane,
+    updatedAt: new Date(now).toISOString(),
+    expectedLanes: 'lcars-ci,lcars-e2e',
+  };
+
+  it('suppresses totals when a configured lane never published or disappeared after TTL', () => {
+    const result = projectAutoscalerStatuses([fresh], now);
+    expect(result.lanes).toEqual([fresh]);
+    expect(result.lanesIncomplete).toBe(true);
+    expect(result.warnings).toContain('Configured ARC lane status is missing.');
+    expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('online');
+    expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('busy');
+  });
+
+  it('requires every configured lane before publishing complete or zero totals', () => {
+    const second = {
+      ...fresh,
+      lane: 'lcars-e2e',
+      registeredRunners: 0,
+      runningJobs: 0,
+    };
+    const complete = projectAutoscalerStatuses([fresh, second], now);
+    expect(complete.lanesIncomplete).toBeUndefined();
+    expect(fleetFromAutoscalerStatuses(complete)).toMatchObject({
+      online: 2,
+      busy: 1,
+    });
+    const zero = projectAutoscalerStatuses(
+      [{ ...fresh, registeredRunners: 0, runningJobs: 0 }, second],
+      now,
+    );
+    expect(fleetFromAutoscalerStatuses(zero)).toMatchObject({
+      online: 0,
+      busy: 0,
+    });
+  });
+
+  it.each([
+    undefined,
+    '',
+    'lcars-ci,lcars-ci',
+    'lcars-ci,INVALID',
+    Array.from({ length: 65 }, (_, i) => `lane-${i}`).join(','),
+  ])('fails closed on missing or malformed inventory %s', (expectedLanes) => {
+    const result = projectAutoscalerStatuses(
+      [{ ...fresh, expectedLanes }],
+      now,
+    );
+    expect(result.lanesIncomplete).toBe(true);
+    expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('online');
+  });
+
+  it('rejects conflicting inventories and duplicate or unexpected producer records', () => {
+    const second = { ...fresh, lane: 'lcars-e2e' };
+    for (const records of [
+      [fresh, { ...second, expectedLanes: 'lcars-e2e' }],
+      [fresh, fresh],
+      [fresh, second, { ...fresh, lane: 'unconfigured' }],
+    ]) {
+      const result = projectAutoscalerStatuses(records, now);
+      expect(result.lanesIncomplete).toBe(true);
+      expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('busy');
+    }
   });
 });
 

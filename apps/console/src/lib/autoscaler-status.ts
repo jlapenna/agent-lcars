@@ -26,7 +26,7 @@ export interface QueueExecutorStatus {
 
 export interface AutoscalerStatusResult {
   lanes?: ArcLaneStatus[];
-  /** At least one known ARC producer is stale or invalid; totals are partial. */
+  /** A configured lane is missing/stale/invalid, or its inventory is unknown. */
   lanesIncomplete?: boolean;
   queueExecutor?: QueueExecutorStatus;
   warnings: string[];
@@ -36,6 +36,8 @@ export interface ArcLaneStatus {
   schemaVersion: 3;
   kind: 'arc-lane';
   lane: string;
+  /** Authoritative deployment inventory, repeated by each surviving producer. */
+  expectedLanes?: string;
   registrationUrl: string;
   assignedJobs: number;
   runningJobs: number;
@@ -78,6 +80,9 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     schemaVersion: 3,
     kind: 'arc-lane',
     lane: status['lane'],
+    ...(typeof status['expectedLanes'] === 'string'
+      ? { expectedLanes: status['expectedLanes'] }
+      : {}),
     registrationUrl: status['registrationUrl'],
     assignedJobs: status['assignedJobs'] as number,
     runningJobs: status['runningJobs'] as number,
@@ -157,13 +162,37 @@ export function projectAutoscalerStatuses(
   ).length;
   const stale = laneRecords.length > lanes.length;
   const invalid = arcRecordCount > laneRecords.length;
+  // Do not infer configured capacity from the documents that happened to
+  // survive. Every fresh lane must attest the same bounded inventory, with
+  // exactly one fresh record per expected lane. Old producers fail closed.
+  const inventory = lanes[0]?.expectedLanes;
+  const expected = inventory?.split(',') ?? [];
+  const inventoryValid =
+    expected.length > 0 &&
+    expected.length <= 64 &&
+    expected.every((name) =>
+      /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name),
+    ) &&
+    new Set(expected).size === expected.length &&
+    lanes.every((lane) => lane.expectedLanes === inventory);
+  const missing =
+    inventoryValid &&
+    (expected.length !== lanes.length ||
+      expected.some((name) => !lanes.some((lane) => lane.lane === name)));
+  const inventoryUnknown = lanes.length > 0 && !inventoryValid;
   return {
     lanes,
-    ...(stale || invalid ? { lanesIncomplete: true } : {}),
+    ...(stale || invalid || missing || inventoryUnknown
+      ? { lanesIncomplete: true }
+      : {}),
     ...(queueExecutor === undefined ? {} : { queueExecutor }),
     warnings: [
       ...(stale ? ['ARC lane status is stale.'] : []),
       ...(invalid ? ['ARC lane status is invalid.'] : []),
+      ...(inventoryUnknown
+        ? ['ARC lane inventory is unavailable or inconsistent.']
+        : []),
+      ...(missing ? ['Configured ARC lane status is missing.'] : []),
     ],
   };
 }

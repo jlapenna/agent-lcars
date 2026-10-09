@@ -45,6 +45,7 @@ function records(now = T0, registered = 5) {
     schemaVersion: 3,
     kind: 'arc-lane',
     lane: 'standard',
+    expectedLanes: 'older-zero,standard',
     registrationUrl: 'https://github.com/jlapenna',
     assignedJobs: 2,
     runningJobs: registered === 0 ? 0 : 2,
@@ -219,7 +220,7 @@ describe('producer freshness in Bridge and Agents', () => {
       .map((record) =>
         record.kind === 'queue-executor'
           ? { ...record, updatedAt: new Date(T0 - 60_000).toISOString() }
-          : record,
+          : { ...record, expectedLanes: 'standard' },
       );
     render(
       view(

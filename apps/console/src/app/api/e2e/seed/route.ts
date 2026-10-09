@@ -277,6 +277,7 @@ async function seedRunnerStatus() {
       schemaVersion: 3,
       kind: 'arc-lane',
       lane: 'e2e-fixture-runners',
+      expectedLanes: 'e2e-fixture-runners',
       registrationUrl: 'https://github.com/supersprinklesracing/sprinkles',
       assignedJobs: 1,
       runningJobs: 1,

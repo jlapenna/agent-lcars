@@ -236,6 +236,10 @@ the work that has stopped, and the work in flight.
     projection and expire independently on the client, even during unchanged
     healthy heartbeats or disconnected/reconnecting streams. Re-delivering
     the same snapshot never renews freshness.
+    Complete totals also require each fresh producer's authoritative
+    `expectedLanes` inventory to agree and every configured lane to be present.
+    A never-published or TTL-deleted lane, an unknown inventory, and a rolling
+    inventory disagreement cannot masquerade as complete or zero capacity.
 - **FE-BR-4 [Shipped]** The "Waiting on Deploy" (`post-deploy-action`) and
   "Blocked" (`blocked`) sections hold waiting items. These are intentionally
   kept out of the decision queue.
