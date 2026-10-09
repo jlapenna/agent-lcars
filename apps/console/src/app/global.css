@@ -2781,3 +2781,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   flex: 1 1 100%;
   min-width: 0;
 }
+.work-workspace__toolbar {
+  flex-wrap: wrap;
+}

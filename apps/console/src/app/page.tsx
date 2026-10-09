@@ -110,9 +110,8 @@ async function getParkedWork(
     };
   } catch (error) {
     // The Bridge must never fall to error.tsx because this panel's fetch
-    // failed - matches runner-sessions.ts's defensive contract (degrade to
-    // nothing rendered, not a crashed page) rather than 500ing the whole
-    // Bridge over an optional slot.
+    // failed. Keep the rest of the Bridge available and disclose the failed
+    // read with a reset link rather than presenting it as an empty queue.
     logger.error('agent-lcars: parked work panel unavailable:', error);
     return {
       items: [],

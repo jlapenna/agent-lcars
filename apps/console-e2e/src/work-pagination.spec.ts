@@ -90,6 +90,32 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await expect(page.getByTestId('parked-work-panel')).toContainText(
     'Pagination fixture 1',
   );
+  await page.goto('/?stoppedCursor=invalid');
+  await expect(page.getByRole('alert')).toContainText(
+    'Could not load stopped work',
+  );
+  await page
+    .getByRole('link', { name: 'Reset stopped-work page', exact: true })
+    .click();
+  await expect(page).not.toHaveURL(/stoppedCursor=/);
+  await page.route('**/*', (route) =>
+    route.continue({
+      headers: {
+        ...route.request().headers(),
+        'X-e2e-auth-user': 'ungranted-admin',
+      },
+    }),
+  );
+  await page.goto('/work?principal=user%3Apagination-fixture');
+  await expect(
+    page.getByText('Your GitHub login has no work grant.'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Apply filters', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('link', { name: /^Pagination fixture / }),
+  ).toHaveCount(0);
 });
 
 test('repository selection and clearing remain reachable on phones across Bridge, Inbox and Agents', async ({
