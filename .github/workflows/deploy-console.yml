@@ -36,10 +36,6 @@ permissions:
   id-token: write
   pull-requests: write
 
-concurrency:
-  group: deploy-console
-  cancel-in-progress: false
-
 jobs:
   # CI's workflow_run conclusion is a rollup of every job in that run,
   # including E2E (timeout-minutes: 30, not a required merge gate) -- a
@@ -86,6 +82,11 @@ jobs:
   deploy:
     needs: gate
     if: needs.gate.outputs.verify_passed == 'true'
+    # Ineligible CI completions must not replace a pending main deployment
+    # before gate.if runs. Serialize only deployments admitted by the gate.
+    concurrency:
+      group: deploy-console
+      cancel-in-progress: false
     # The optional prebuilt path runs the console's production Nx graph
     # locally. Keep that long-running diagnostic work off lcars-default's
     # latency-sensitive glue pool.
