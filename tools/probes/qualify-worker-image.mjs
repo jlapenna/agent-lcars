@@ -9,6 +9,7 @@ import {
   artifactHashes,
   evaluateImageEvidence,
 } from './qualification-evidence.mjs';
+import { imageVersion } from './qualification-version.mjs';
 
 const [provider, imageId, outputPath, ...extra] = process.argv.slice(2);
 if (
@@ -81,18 +82,19 @@ const isolation = [
   '--pids-limit',
   '256',
 ];
-const [binary, providerVersion, ...unexpected] = command('docker', [
-  'run',
-  '--rm',
-  ...isolation,
-  '--entrypoint',
-  '/bin/bash',
-  imageId,
-  '-c',
-  'command -v "$1"; "$1" --version',
-  'qualification-version',
-  provider,
-]).split('\n');
+const [binary, providerVersion, ...unexpected] = imageVersion(
+  [
+    ...isolation,
+    '--entrypoint',
+    '/bin/bash',
+    imageId,
+    '-c',
+    'command -v "$1"; "$1" --version',
+    'qualification-version',
+    provider,
+  ],
+  output,
+).split('\n');
 if (!binary?.startsWith('/') || !providerVersion || unexpected.length)
   throw new Error('Cannot establish exact image-baked CLI identity');
 const expected = {
@@ -196,6 +198,11 @@ for (const scenario of ['native', 'setup-negative']) {
     reports.push(report);
     copied = true;
   } finally {
+    // A failed log write/collection must not orphan a still-running probe.
+    const current = JSON.parse(
+      command('docker', ['inspect', '--format', '{{json .State}}', container]),
+    );
+    if (current.Running) command('docker', ['kill', container]);
     // Keep a failed container when its diagnostics could not be collected.
     if (copied) command('docker', ['rm', container]);
     else

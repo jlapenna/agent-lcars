@@ -8,6 +8,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import { codexProbeCatalog } from './codex-model-fixture.mjs';
 import {
   claudeRunnerToolArgs,
   delegationFixture,
@@ -565,10 +566,13 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
     ...workflow?.env,
   };
   const completionBefore = workflow?.completion(context, env, 'before');
+  const modelCatalog = join(home, '.codex', 'probe-models.json');
+  writeFileSync(modelCatalog, JSON.stringify(codexProbeCatalog));
   writeFileSync(
     join(home, '.codex', 'config.toml'),
     `model = "${fileProbe || workflow ? 'gpt-5.4' : 'probe'}"
 model_provider = "probe"
+model_catalog_json = ${JSON.stringify(modelCatalog)}
 [model_providers.probe]
 name = "Local deterministic probe"
 base_url = "${base}/v1"
