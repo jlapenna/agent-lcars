@@ -2,6 +2,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -64,6 +65,8 @@ export function parseArguments(argv, environment = process.env) {
   );
   let seed = true;
   let help = false;
+  let fqdn = environment.FQDN || undefined;
+  let lan = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -81,6 +84,16 @@ export function parseArguments(argv, environment = process.env) {
       index += 1;
     } else if (argument.startsWith('--port-base=')) {
       portBase = Number(argument.slice('--port-base='.length));
+    } else if (argument === '--fqdn') {
+      lan = true;
+      fqdn = argv[++index];
+      if (!fqdn) throw new Error('--fqdn requires a value');
+    } else if (argument.startsWith('--fqdn=')) {
+      lan = true;
+      fqdn = argument.slice('--fqdn='.length);
+      if (!fqdn) throw new Error('--fqdn requires a value');
+    } else if (argument === '--lan') {
+      lan = true;
     } else if (argument === '--no-seed') {
       seed = false;
     } else if (argument === '--help' || argument === '-h') {
@@ -93,7 +106,72 @@ export function parseArguments(argv, environment = process.env) {
   if (command !== 'start' && !seed) {
     throw new Error('--no-seed is valid only with start');
   }
-  return { command, help, ports: buildPorts(portBase), seed };
+  if (lan && !fqdn) {
+    throw new Error(
+      'LAN preview requires FQDN or --fqdn (a fully qualified DNS name)',
+    );
+  }
+  fqdn = lan ? validatePreviewFqdn(fqdn) : undefined;
+  return { command, fqdn, help, lan, ports: buildPorts(portBase), seed };
+}
+
+export function validatePreviewFqdn(value) {
+  const fqdn = value.toLowerCase();
+  const label = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+  if (
+    fqdn.length > 253 ||
+    !fqdn.includes('.') ||
+    net.isIP(fqdn) ||
+    !fqdn.split('.').every((part) => label.test(part))
+  ) {
+    throw new Error(
+      'preview FQDN must be a fully qualified DNS name, not an IP or URL',
+    );
+  }
+  return fqdn;
+}
+
+async function resolvePreviewAddress(fqdn) {
+  if (!fqdn) return undefined;
+  const addresses = await lookup(fqdn, { all: true, family: 4 });
+  const local = Object.values(os.networkInterfaces()).flat().filter(Boolean);
+  const address = addresses.find((record) =>
+    local.some(
+      (network) =>
+        !network.internal &&
+        network.family === 'IPv4' &&
+        network.address === record.address,
+    ),
+  )?.address;
+  if (!address)
+    throw new Error(
+      `preview FQDN ${fqdn} does not resolve to this host's LAN interface`,
+    );
+  const octets = address.split('.').map(Number);
+  const privateAddress =
+    octets[0] === 10 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168) ||
+    (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127);
+  if (!privateAddress)
+    throw new Error(
+      'fixture-authenticated preview requires a private LAN address',
+    );
+  return address;
+}
+
+export function isPreviewRequestAllowed(request, ports, fqdn) {
+  const authorities = new Set([`${LOOPBACK}:${ports.console}`]);
+  if (fqdn) authorities.add(`${fqdn}:${ports.console}`);
+  if (!authorities.has(request.headers.host?.toLowerCase())) return false;
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && authorities.has(url.host);
+  } catch {
+    return false;
+  }
 }
 
 export function createDevEnvironment({
@@ -102,8 +180,9 @@ export function createDevEnvironment({
   ports,
   privateKey,
   tempHome,
+  fqdn,
 }) {
-  const publicUrl = `http://${LOOPBACK}:${ports.console}`;
+  const publicUrl = `http://${fqdn ?? LOOPBACK}:${ports.console}`;
   const projectId = 'demo-no-project';
   const safeAmbientKeys = [
     'JAVA_HOME',
@@ -129,6 +208,7 @@ export function createDevEnvironment({
     NODE_ENV: 'development',
     NODE_OPTIONS: '--max-old-space-size=8192',
     NEXT_TELEMETRY_DISABLED: '1',
+    ...(fqdn ? { FQDN: fqdn } : {}),
     // The emulator SDKs otherwise spend seconds probing the cloud metadata
     // service for ambient credentials on every fresh development process.
     METADATA_SERVER_DETECTION: 'none',
@@ -139,7 +219,7 @@ export function createDevEnvironment({
     FIRESTORE_EMULATOR_HOST: `${LOOPBACK}:${ports.firestore}`,
     FIREBASE_AUTH_EMULATOR_HOST: `${LOOPBACK}:${ports.auth}`,
     FIREBASE_EMULATOR_HUB: `${LOOPBACK}:${ports.hub}`,
-    AGENT_CONSOLE_GITHUB_API_BASE_URL: `${publicUrl}/api/e2e/github`,
+    AGENT_CONSOLE_GITHUB_API_BASE_URL: `http://${LOOPBACK}:${ports.console}/api/e2e/github`,
     AGENT_LCARS_CONSOLE_URL: publicUrl,
     AGENT_LCARS_ARTIFACT_SHARE_BASE_URL: `${publicUrl}/dummy-share`,
     AGENT_LCARS_APP_PRIVATE_KEY: privateKey,
@@ -155,6 +235,7 @@ function usage() {
 
 Usage:
   pnpm dev [-- --port-base 4300] [--no-seed]
+  FQDN=<host.example.net> pnpm dev:lan [-- --port-base 4300]
   pnpm dev:reset [-- --port-base 4300]
   pnpm dev:status [-- --port-base 4300]
 
@@ -166,7 +247,7 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function assertPortAvailable(port) {
+async function assertPortAvailable(port, host = LOOPBACK) {
   await new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.once('error', (error) => {
@@ -177,7 +258,7 @@ async function assertPortAvailable(port) {
         ),
       );
     });
-    probe.listen(port, LOOPBACK, () => probe.close(resolve));
+    probe.listen(port, host, () => probe.close(resolve));
   });
 }
 
@@ -259,7 +340,7 @@ async function waitForFirebase(ports, child, ownedProcesses) {
   throw new Error('Firebase emulators did not become ready within 120 seconds');
 }
 
-async function inspectStack(ports) {
+export async function inspectStack(ports, fqdn) {
   const response = await fetch(
     `http://${LOOPBACK}:${ports.console}/__dev/health`,
     { signal: AbortSignal.timeout(5_000) },
@@ -270,15 +351,16 @@ async function inspectStack(ports) {
   if (
     health.service !== 'agent-lcars-dev' ||
     health.worktree !== root ||
-    health.portBase !== ports.console
+    health.portBase !== ports.console ||
+    (fqdn && health.fqdn !== fqdn)
   ) {
     throw new Error("port is not serving this worktree's development stack");
   }
   return health;
 }
 
-export async function updateFixtures(ports, actions) {
-  await inspectStack(ports);
+export async function updateFixtures(ports, actions, fqdn) {
+  await inspectStack(ports, fqdn);
   for (const action of actions) {
     const response = await fetch(
       `http://${LOOPBACK}:${ports.console}/api/e2e/seed`,
@@ -300,10 +382,11 @@ export async function updateFixtures(ports, actions) {
   }
 }
 
-async function status(ports) {
-  const url = `http://${LOOPBACK}:${ports.console}`;
+async function status(ports, fqdn) {
+  let url = `http://${LOOPBACK}:${ports.console}`;
   try {
-    const health = await inspectStack(ports);
+    const health = await inspectStack(ports, fqdn);
+    url = `http://${health.fqdn ?? LOOPBACK}:${ports.console}`;
     if (!health.ready)
       throw new Error('still warming routes and seeding fixtures');
     console.log(`ready ${url}`);
@@ -334,10 +417,12 @@ export function validateDevelopmentEnvironment(nextRoot = consoleRoot) {
   }
 }
 
-async function start(ports, seed) {
+async function start(ports, seed, fqdn) {
   const startedAt = Date.now();
+  const previewAddress = await resolvePreviewAddress(fqdn);
   const checkedPorts = Object.values(ports);
   await Promise.all(checkedPorts.map((port) => assertPortAvailable(port)));
+  if (previewAddress) await assertPortAvailable(ports.console, previewAddress);
   validateDevelopmentEnvironment();
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-lcars-dev-'));
@@ -361,6 +446,7 @@ async function start(ports, seed) {
     ports,
     privateKey,
     tempHome,
+    fqdn,
   });
 
   for (const key of Object.keys(process.env)) delete process.env[key];
@@ -390,6 +476,7 @@ async function start(ports, seed) {
   let cleanup;
   let app;
   let server;
+  let previewServer;
   let ready = false;
   const sockets = new Set();
   const ownedEmulatorProcesses = new Map();
@@ -397,9 +484,9 @@ async function start(ports, seed) {
     if (shuttingDown) return cleanup;
     shuttingDown = true;
     cleanup = (async () => {
-      if (server) {
-        const closed = new Promise((resolve) => server.close(resolve));
-        server.closeAllConnections();
+      for (const listener of [previewServer, server].filter(Boolean)) {
+        const closed = new Promise((resolve) => listener.close(resolve));
+        listener.closeAllConnections();
         for (const socket of sockets) socket.destroy();
         await Promise.race([closed, wait(2_000)]);
       }
@@ -454,19 +541,25 @@ async function start(ports, seed) {
     // replacing ambient credentials with the validated fixture environment.
     // eslint-disable-next-line no-restricted-syntax
     const next = (await import('next')).default;
+    server = http.createServer();
     app = next({
       dev: true,
       dir: consoleRoot,
-      hostname: LOOPBACK,
+      hostname: fqdn ?? LOOPBACK,
       port: ports.console,
+      httpServer: server,
     });
     await app.prepare();
     const handle = app.getRequestHandler();
-    const upgrade = app.getUpgradeHandler();
     const authenticate = (request) => {
       request.headers['x-e2e-auth-user'] ??= LOCAL_USER;
     };
-    server = http.createServer((request, response) => {
+    const handleRequest = (request, response) => {
+      if (!isPreviewRequestAllowed(request, ports, fqdn)) {
+        response.writeHead(403);
+        response.end('Preview host or origin is not allowed');
+        return;
+      }
       if (request.url === '/__dev/health') {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(
@@ -474,6 +567,7 @@ async function start(ports, seed) {
             service: 'agent-lcars-dev',
             worktree: root,
             portBase: ports.console,
+            fqdn,
             ready,
           }),
         );
@@ -481,21 +575,61 @@ async function start(ports, seed) {
       }
       authenticate(request);
       void handle(request, response);
-    });
-    server.on('connection', (socket) => {
+    };
+    const trackSocket = (socket) => {
       sockets.add(socket);
       socket.once('close', () => sockets.delete(socket));
-    });
-    server.on('upgrade', (request, socket, head) => {
+    };
+    const handleUpgrade = (listener, request, socket, head) => {
+      if (!isPreviewRequestAllowed(request, ports, fqdn)) {
+        socket.destroy();
+        return;
+      }
       authenticate(request);
-      void upgrade(request, socket, head);
-    });
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(ports.console, LOOPBACK, resolve);
-    });
+      if (listener !== server) {
+        // Next installs its development websocket handler on httpServer.
+        // The LAN listener must use that same handler for HMR and hydration.
+        server.emit('upgrade', request, socket, head);
+      }
+    };
+    const listen = async (listener, address) => {
+      listener.on('connection', trackSocket);
+      listener.on('upgrade', (request, socket, head) =>
+        handleUpgrade(listener, request, socket, head),
+      );
+      await new Promise((resolve, reject) => {
+        listener.once('error', reject);
+        listener.listen(ports.console, address, resolve);
+      });
+    };
+    server.on('request', handleRequest);
+    await listen(server, LOOPBACK);
+    if (previewAddress) {
+      previewServer = http.createServer((request, response) => {
+        let pathname;
+        try {
+          pathname = decodeURIComponent(
+            new URL(request.url, `http://${fqdn}:${ports.console}`).pathname,
+          );
+        } catch {
+          response.writeHead(400);
+          response.end('Invalid preview path');
+          return;
+        }
+        if (
+          pathname === '/api/e2e/github' ||
+          pathname.startsWith('/api/e2e/github/')
+        ) {
+          response.writeHead(404);
+          response.end('Not Found');
+          return;
+        }
+        handleRequest(request, response);
+      });
+      await listen(previewServer, previewAddress);
+    }
 
-    if (seed) await updateFixtures(ports, ['seed-populated']);
+    if (seed) await updateFixtures(ports, ['seed-populated'], fqdn);
     const warm = await fetch(`http://${LOOPBACK}:${ports.console}`, {
       headers: { 'x-e2e-auth-user': LOCAL_USER },
       signal: AbortSignal.timeout(STARTUP_TIMEOUT_MS),
@@ -512,7 +646,7 @@ async function start(ports, seed) {
         1_000
       ).toFixed(1)}s`,
     );
-    console.log(`  Console:     http://${LOOPBACK}:${ports.console}`);
+    console.log(`  Console:     http://${fqdn ?? LOOPBACK}:${ports.console}`);
     console.log(`  Emulator UI: http://${LOOPBACK}:${ports.ui}`);
     console.log(`  Fixtures:    ${seed ? 'populated' : 'not seeded'}`);
     console.log('  Stop:        Ctrl-C');
@@ -529,14 +663,23 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
   if (options.command === 'status') {
-    await status(options.ports);
+    await status(options.ports, options.fqdn);
   } else if (options.command === 'reset') {
-    await updateFixtures(options.ports, ['reset', 'seed-populated']);
+    const health = await inspectStack(options.ports, options.fqdn);
+    await updateFixtures(
+      options.ports,
+      ['reset', 'seed-populated'],
+      options.fqdn,
+    );
     console.log(
-      `reset synthetic fixtures at http://${LOOPBACK}:${options.ports.console}`,
+      `reset synthetic fixtures at http://${health.fqdn ?? LOOPBACK}:${options.ports.console}`,
     );
   } else {
-    await start(options.ports, options.seed);
+    await start(
+      options.ports,
+      options.seed,
+      options.lan ? options.fqdn : undefined,
+    );
   }
 }
 

@@ -9,7 +9,9 @@ import {
   buildPorts,
   createDevEnvironment,
   DEFAULT_PORT_BASE,
+  inspectStack,
   updateFixtures,
+  validatePreviewFqdn,
 } from './dev-console.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,6 +29,9 @@ async function main() {
     } else args.push(argument);
   }
   const ports = buildPorts(base);
+  const health = await inspectStack(ports);
+  if (!health.ready) throw new Error('development stack is still warming');
+  const fqdn = health.fqdn ? validatePreviewFqdn(health.fqdn) : undefined;
   const artifactRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), 'lcars-dev-test-'),
   );
@@ -40,8 +45,9 @@ async function main() {
     ports,
     privateKey: '',
     tempHome,
+    fqdn,
   });
-  environment.BASE_URL = `http://127.0.0.1:${ports.console}`;
+  environment.BASE_URL = environment.AUTH_URL;
   environment.LCARS_DEV_TEST_OUTPUT = artifactRoot;
   environment.PLAYWRIGHT_BROWSERS_PATH =
     process.env.PLAYWRIGHT_BROWSERS_PATH ??
@@ -69,7 +75,7 @@ async function main() {
   let fixturesTouched = false;
   try {
     fixturesTouched = true;
-    await updateFixtures(ports, ['reset', 'seed-populated']);
+    await updateFixtures(ports, ['reset', 'seed-populated'], fqdn);
     const child = spawn(
       process.execPath,
       [
@@ -91,7 +97,7 @@ async function main() {
   } finally {
     try {
       if (fixturesTouched)
-        await updateFixtures(ports, ['reset', 'seed-populated']);
+        await updateFixtures(ports, ['reset', 'seed-populated'], fqdn);
     } finally {
       fs.rmSync(tempHome, { recursive: true, force: true });
       console.log(`Browser diagnostics: ${artifactRoot}`);

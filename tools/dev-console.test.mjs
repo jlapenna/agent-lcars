@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,7 @@ import {
   buildPorts,
   createDevEnvironment,
   DEFAULT_PORT_BASE,
+  isPreviewRequestAllowed,
   parseArguments,
   stopEmulatorProcesses,
   trackEmulatorProcesses,
@@ -20,6 +22,114 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 describe('local development stack contract', () => {
+  it('discovers a loopback stack for status despite an ambient LAN FQDN', async () => {
+    const server = http.createServer((_request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end(
+        JSON.stringify({
+          service: 'agent-lcars-dev',
+          worktree: root,
+          portBase: server.address().port,
+          ready: true,
+        }),
+      );
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const port = server.address().port;
+      const child = spawn(
+        process.execPath,
+        [
+          path.join(root, 'tools/dev-console.mjs'),
+          'status',
+          '--port-base',
+          String(port),
+        ],
+        {
+          env: { ...process.env, FQDN: 'unrelated.example.net' },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+      let stdout = '';
+      child.stdout.on('data', (data) => {
+        stdout += data;
+      });
+      const code = await new Promise((resolve, reject) => {
+        child.once('exit', resolve);
+        child.once('error', reject);
+      });
+      expect(code).toBe(0);
+      expect(stdout).toContain(`ready http://127.0.0.1:${port}`);
+      expect(stdout).not.toContain('unrelated.example.net');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('requires a real DNS FQDN for a LAN preview', () => {
+    expect(
+      parseArguments(['start'], { FQDN: 'dev.example.net' }),
+    ).toMatchObject({ lan: false });
+    expect(parseArguments(['--fqdn', 'dev.example.net'], {})).toMatchObject({
+      lan: true,
+    });
+    expect(
+      parseArguments(['start', '--lan'], { FQDN: 'dev.example.net' }),
+    ).toMatchObject({ fqdn: 'dev.example.net' });
+    expect(() => parseArguments(['start', '--lan'], {})).toThrow(
+      /requires FQDN/u,
+    );
+    for (const fqdn of [
+      'localhost',
+      '192.168.1.2',
+      'https://dev.example.net',
+      'dev.example.net:4300',
+      'dev.example.net/path',
+    ]) {
+      expect(() => parseArguments(['--fqdn', fqdn], {})).toThrow(
+        /fully qualified/u,
+      );
+    }
+  });
+
+  it('rejects DNS rebinding and cross-origin requests before fixture authentication', () => {
+    const ports = buildPorts(4300);
+    const allowed = (host, origin) =>
+      isPreviewRequestAllowed(
+        { headers: { host, origin } },
+        ports,
+        'dev.example.net',
+      );
+    expect(allowed('dev.example.net:4300', 'http://dev.example.net:4300')).toBe(
+      true,
+    );
+    expect(allowed('127.0.0.1:4300')).toBe(true);
+    expect(allowed('attacker.example:4300')).toBe(false);
+    expect(allowed('dev.example.net:4300', 'https://attacker.example')).toBe(
+      false,
+    );
+    expect(allowed('dev.example.net:4300', 'null')).toBe(false);
+    expect(allowed('dev.example.net:4300', 'http://dev.example.net:4301')).toBe(
+      false,
+    );
+  });
+
+  it('uses the FQDN for browser URLs but keeps backend emulators and fixtures private', () => {
+    const environment = createDevEnvironment({
+      ambient: {},
+      fixture: {},
+      ports: buildPorts(4300),
+      privateKey: '',
+      tempHome: '/tmp/dev-home',
+      fqdn: 'dev.example.net',
+    });
+    expect(environment).toMatchObject({
+      FQDN: 'dev.example.net',
+      AUTH_URL: 'http://dev.example.net:4300',
+      AGENT_CONSOLE_GITHUB_API_BASE_URL: 'http://127.0.0.1:4300/api/e2e/github',
+      FIRESTORE_EMULATOR_HOST: '127.0.0.1:4302',
+    });
+  });
   it('cleans up a detached emulator that ignores graceful shutdown', async () => {
     const child = spawn(
       process.execPath,

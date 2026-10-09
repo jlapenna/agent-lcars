@@ -82,11 +82,14 @@ pnpm install
 pnpm verify
 ```
 
-For iterative console work, start the complete credential-free development
-stack instead of rebuilding the standalone production bundle:
+For iterative console/control-plane work, use the credential-free development
+stack instead of rebuilding the standalone production bundle. The commands are
+Nx targets (with uncached runtime operations and no production-build prerequisite),
+following Sprinkles' `serve-emulator` / `serve-lan` target convention:
 
 ```sh
 pnpm dev
+# Equivalent: ./tools/nx run @agent-lcars/console:serve-emulator
 ```
 
 This starts the Next.js development server with hot reload, the Firebase Auth
@@ -95,9 +98,25 @@ and populated synthetic fixtures. It listens only on loopback: the console is
 at `http://127.0.0.1:4300` and the emulator UI is at
 `http://127.0.0.1:4301`. No production credential is loaded or required.
 
+For feedback from another machine, use the host's fully qualified DNS name:
+
+```sh
+FQDN=dev.example.net pnpm dev:lan
+# Equivalent: FQDN=dev.example.net ./tools/nx run @agent-lcars/console:serve-lan
+```
+
+The console is then at `http://dev.example.net:4300`. Its FQDN must resolve to
+a private IPv4 interface on the serving host; only that interface and loopback
+are bound. Next.js receives the same `FQDN` for hot-reload origins. Emulators
+remain private on loopback because LCARS accesses them server-side. Host/origin
+checks reject DNS rebinding and cross-origin requests before injecting the
+synthetic administrator. This is a trusted-LAN fixture preview, not a public
+authenticated service. No secrets or dotenv files are changed.
+
 Use `pnpm dev:reset` to restore the synthetic data without restarting the
-server and `pnpm dev:status` for a quick health check. A second worktree can use
-an independent seven-port range:
+server and `pnpm dev:status` for a quick health check. These commands and
+`pnpm dev:test` discover the running stack's FQDN automatically; there is no
+need to repeat `FQDN`. A second worktree can use an independent seven-port range:
 
 ```sh
 pnpm dev -- --port-base 4310
@@ -111,6 +130,7 @@ Playwright's usual arguments, without rebuilding or restarting:
 ```sh
 pnpm dev:test -- native-work.spec.ts --grep 'reply persists'
 pnpm dev:test -- --port-base 4310 native-work.spec.ts --grep 'opens populated'
+FQDN=dev.example.net pnpm dev:test
 ```
 
 Browser tests reset the stack's synthetic data, then restore the populated
@@ -122,6 +142,13 @@ requests, while preserving explicit E2E identity headers from tests.
 
 Stop the foreground stack with Ctrl-C. The supervisor shuts down the Next.js
 server and its Firebase emulator processes together.
+
+The real Orchestrator runs in-process with the Work API and writes durable
+task/run/outbox/queue state to the Firestore emulator. External GitHub calls use
+local fixtures. This stack does not launch QueueExecutor, direct runners,
+provider processes, the telemetry watcher, or periodic reconcile/schedule ticks;
+queued work will not execute by itself. It is a control-plane integration SUT,
+not a complete fleet execution SUT.
 
 Start with the focused document that matches your task. This README intentionally
 does not duplicate deployment steps, runner topology, credential setup, or
