@@ -25,9 +25,9 @@ const policy = {
 const root: WatchRootConfig = {
   path: '/transcripts',
   adapter: 'claude-code',
-  projectDirAllowlist: ['allowed'],
+  projectDirAllowlist: ['-work-allowed*'],
 };
-const file = '/transcripts/allowed/consented.jsonl';
+const file = '/transcripts/-work-allowed/consented.jsonl';
 function transcript(
   id = 'consented',
   cwd = '/work/allowed',
@@ -79,7 +79,11 @@ describe('CLI archive consent and boundaries', () => {
       ),
     ).toBe(false);
     expect(
-      isCliArchiveAllowed(root, '/outside/allowed/consented.jsonl', summary()),
+      isCliArchiveAllowed(
+        root,
+        '/outside/-work-allowed/consented.jsonl',
+        summary(),
+      ),
     ).toBe(false);
     expect(
       isCliArchiveAllowed(
@@ -141,6 +145,82 @@ describe('CLI archive consent and boundaries', () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
+  it('rejects earlier excluded cwd and relocation contexts even when the last cwd is allowed', async () => {
+    const upload = vi.fn();
+    for (const earlier of [
+      transcript('consented', '/work/excluded'),
+      JSON.stringify({
+        type: 'system',
+        sessionId: 'consented',
+        relocatedCwd: '/work/excluded',
+      }),
+    ]) {
+      await expect(
+        archiveCliTranscript({
+          policy,
+          root,
+          file,
+          summary: summary(),
+          now,
+          read: () => earlier + '\n' + transcript(),
+          upload,
+        }),
+      ).rejects.toThrow('excluded cwd context');
+    }
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('validates both Codex session metadata aliases and every turn context', async () => {
+    const codexRoot: WatchRootConfig = {
+      path: '/transcripts',
+      adapter: 'codex',
+      recursive: true,
+      cwdAllowlist: ['/work/allowed*'],
+    };
+    const meta = (fields: Record<string, string>) =>
+      JSON.stringify({
+        type: 'session_meta',
+        timestamp: '2026-10-09T09:00:00Z',
+        payload: { cwd: '/work/allowed', ...fields },
+      });
+    const accepted = meta({ id: 'consented' });
+    const codexSummary = getTranscriptAdapter('codex')!.reduce([accepted])[0]!;
+    const upload = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      archiveCliTranscript({
+        policy,
+        root: codexRoot,
+        file,
+        summary: codexSummary,
+        now,
+        read: () => accepted,
+        upload,
+      }),
+    ).resolves.toMatchObject({ cliTranscriptArchive: { status: 'available' } });
+    upload.mockClear();
+    for (const earlier of [
+      meta({ session_id: 'excluded' }),
+      meta({ id: 'consented', session_id: 'excluded' }),
+      JSON.stringify({
+        type: 'turn_context',
+        payload: { cwd: '/work/excluded' },
+      }),
+    ]) {
+      await expect(
+        archiveCliTranscript({
+          policy,
+          root: codexRoot,
+          file,
+          summary: codexSummary,
+          now,
+          read: () => earlier + '\n' + accepted,
+          upload,
+        }),
+      ).rejects.toThrow(/another session|excluded cwd context/);
+    }
+    expect(upload).not.toHaveBeenCalled();
+  });
+
   it('bounds descriptor reads and rejects both leaf and parent symlink escapes', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-archive-'));
     directories.push(directory);
@@ -152,6 +232,13 @@ describe('CLI archive consent and boundaries', () => {
     expect(readCliArchive(local, scopedRoot)).toBe(transcript());
     fs.truncateSync(local, CLI_TRANSCRIPT_MAX_BYTES + 1);
     expect(() => readCliArchive(local, scopedRoot)).toThrow('size limit');
+    const excluded = path.join(watch, 'excluded');
+    fs.mkdirSync(excluded);
+    fs.writeFileSync(path.join(excluded, 'session.jsonl'), transcript());
+    fs.symlinkSync(excluded, path.join(watch, 'allowed'));
+    expect(() =>
+      readCliArchive(path.join(watch, 'allowed', 'session.jsonl'), scopedRoot),
+    ).toThrow('symlinked directory');
     const outside = path.join(directory, 'outside.jsonl');
     fs.writeFileSync(outside, transcript());
     fs.symlinkSync(outside, path.join(watch, 'link.jsonl'));

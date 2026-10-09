@@ -1,4 +1,5 @@
 import {
+  claudeProjectSlugFor,
   CLI_TRANSCRIPT_MAX_BYTES,
   CLI_TRANSCRIPT_RETENTION_DAYS,
   CliTranscriptArchive,
@@ -58,8 +59,10 @@ export function isCliArchiveAllowed(
   const projectPatterns = root.projectDirAllowlist;
   const cwdPatterns = root.cwdAllowlist;
   const scoped =
-    (projectPatterns?.length && !projectPatterns.includes('*')) ||
-    (cwdPatterns?.length && !cwdPatterns.includes('*'));
+    (projectPatterns?.length &&
+      !projectPatterns.some((pattern) => /^\*+$/.test(pattern))) ||
+    (cwdPatterns?.length &&
+      !cwdPatterns.some((pattern) => /^\*+$/.test(pattern)));
   return (
     Boolean(scoped) &&
     (!projectPatterns ||
@@ -79,6 +82,9 @@ export function readCliArchive(file: string, root: WatchRootConfig): string {
   const relative = path.relative(realRoot, realFile);
   if (relative.startsWith('..') || path.isAbsolute(relative))
     throw new Error('Archive path escapes watch root');
+  if (relative !== path.relative(path.resolve(root.path), path.resolve(file))) {
+    throw new Error('Archive path contains a symlinked directory');
+  }
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
     // Bind containment to the opened inode, including symlinked parent directories.
@@ -140,14 +146,37 @@ export async function archiveCliTranscript(options: {
     return { cliTranscriptArchive: { status: 'too-large' } };
   for (const line of contents.split('\n').filter((line) => line.trim())) {
     const entry = JSON.parse(line) as Record<string, unknown>;
-    if (!entry || typeof entry !== 'object')
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry))
       throw new Error('Archive contains an invalid record');
     const payload = entry['payload'] as Record<string, unknown> | undefined;
-    const id =
-      entry['sessionId'] ??
-      (entry['type'] === 'session_meta' ? payload?.['id'] : undefined);
-    if (id !== undefined && id !== summary.sessionId)
+    const ids = [
+      entry['sessionId'],
+      ...(entry['type'] === 'session_meta'
+        ? [payload?.['id'], payload?.['session_id']]
+        : []),
+    ];
+    if (ids.some((id) => id !== undefined && id !== summary.sessionId)) {
       throw new Error('Archive contains another session');
+    }
+    // The reducer keeps the final context, but consent must cover every
+    // context represented in the bytes, including an earlier relocation.
+    const cwds = [entry['cwd'], entry['relocatedCwd'], payload?.['cwd']];
+    for (const cwd of cwds) {
+      if (cwd === undefined) continue;
+      if (
+        typeof cwd !== 'string' ||
+        !path.isAbsolute(cwd) ||
+        (root.cwdAllowlist && !isAllowedProjectDir(cwd, root.cwdAllowlist)) ||
+        (root.adapter === 'claude-code' &&
+          root.projectDirAllowlist &&
+          !isAllowedProjectDir(
+            claudeProjectSlugFor(cwd),
+            root.projectDirAllowlist,
+          ))
+      ) {
+        throw new Error('Archive contains an excluded cwd context');
+      }
+    }
   }
   const summaries = getTranscriptAdapter(root.adapter)?.reduce(
     contents.split('\n'),
