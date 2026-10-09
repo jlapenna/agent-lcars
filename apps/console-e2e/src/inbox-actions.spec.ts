@@ -380,6 +380,8 @@ test.describe('Inbox authorized action journeys', () => {
             ]
           : []),
       ];
+      // A successful merge also awaits the bounded server reconciliation sweep.
+      const noticeTimeout = action === 'merge' && !rejected ? 20_000 : 5_000;
       const expectedState = action === 'merge' && !rejected ? 'closed' : 'open';
       const expectedMergeable =
         action !== 'merge' && !rejected ? 'clean' : mergeableState;
@@ -396,7 +398,9 @@ test.describe('Inbox authorized action journeys', () => {
         });
         const url = await selectItem(page, number);
         await click(page, request);
-        await expect(page.getByText(message, { exact: true })).toBeVisible();
+        await expect(page.getByText(message, { exact: true })).toBeVisible({
+          timeout: noticeTimeout,
+        });
         expect(await journal(request)).toEqual(expectedEffects);
         const issue = await request.get(
           `${GITHUB}/${pathFor(`issues/${number}`)}`,
