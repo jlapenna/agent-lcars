@@ -32,6 +32,21 @@ export type CreateScheduleAction = (input: {
   enabled: boolean;
 }) => Promise<CreateResult>;
 
+export interface EditableSchedule {
+  id: string;
+  cron: string;
+  spec?: WorkSpec;
+  enabled: boolean;
+  revision: number;
+}
+export type UpdateScheduleAction = (input: {
+  id: string;
+  expectedRevision: number;
+  cron: string;
+  spec: WorkSpec;
+  enabled: boolean;
+}) => Promise<CreateResult>;
+
 const REFUSALS: Record<string, string> = {
   FORBIDDEN: 'no grant for that pipeline or repository',
 };
@@ -48,20 +63,28 @@ export function ScheduleCreateForm({
   create,
   defaultRepo,
   pipelines = PIPELINES,
+  initial,
+  onSaved,
+  onPendingChange,
 }: {
   create: CreateScheduleAction;
   defaultRepo: string;
   pipelines?: readonly WorkSpec['pipeline'][];
+  initial?: EditableSchedule;
+  onSaved?: () => void;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const [isPending, startTransition] = useTransition();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [repo, setRepo] = useState(defaultRepo);
-  const [pipeline, setPipeline] = useState<WorkSpec['pipeline']>(
-    pipelines[0] ?? 'claude',
+  const [title, setTitle] = useState(initial?.spec?.title ?? '');
+  const [description, setDescription] = useState(
+    initial?.spec?.description ?? '',
   );
-  const [cron, setCron] = useState('0 * * * *');
-  const [enabled, setEnabled] = useState(true);
+  const [repo, setRepo] = useState(initial?.spec?.target.repo ?? defaultRepo);
+  const [pipeline, setPipeline] = useState<WorkSpec['pipeline']>(
+    initial?.spec?.pipeline ?? pipelines[0] ?? 'claude',
+  );
+  const [cron, setCron] = useState(initial?.cron ?? '0 * * * *');
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [error, setError] = useState<string | undefined>();
 
   function submit(event: React.FormEvent) {
@@ -81,26 +104,44 @@ export function ScheduleCreateForm({
       return;
     }
     const id = ulid();
+    onPendingChange?.(true);
     startTransition(async () => {
-      const [err] = await create({
-        id,
-        cron,
-        spec: { title, description, pipeline, target: { repo } },
-        enabled,
-      });
-      if (err) {
-        setError(REFUSALS[err.code] ?? err.message);
-        return;
+      try {
+        const [err] = await create({
+          id,
+          cron,
+          spec: { title, description, pipeline, target: { repo } },
+          enabled,
+        });
+        if (err) {
+          setError(REFUSALS[err.code] ?? err.message);
+          return;
+        }
+        if (initial === undefined) {
+          setTitle('');
+          setDescription('');
+        }
+        onSaved?.();
+      } catch (error) {
+        setError(
+          error instanceof Error
+            ? error.message
+            : 'Could not save schedule. Please retry.',
+        );
+      } finally {
+        onPendingChange?.(false);
       }
-      setTitle('');
-      setDescription('');
     });
   }
 
   return (
-    <form onSubmit={submit} aria-label="Create schedule">
+    <form
+      onSubmit={submit}
+      aria-label={initial ? 'Edit schedule' : 'Create schedule'}
+    >
       <Stack gap="xs">
         <TextInput
+          disabled={isPending}
           label="Title"
           required
           maxLength={256}
@@ -108,6 +149,7 @@ export function ScheduleCreateForm({
           onChange={(e) => setTitle(e.currentTarget.value)}
         />
         <Textarea
+          disabled={isPending}
           label="Description"
           required
           autosize
@@ -118,12 +160,14 @@ export function ScheduleCreateForm({
         />
         <Group grow>
           <TextInput
+            disabled={isPending}
             label="Repository"
             required
             value={repo}
             onChange={(e) => setRepo(e.currentTarget.value)}
           />
           <Select
+            disabled={isPending}
             label="Pipeline"
             data={[...pipelines]}
             value={pipeline}
@@ -134,12 +178,14 @@ export function ScheduleCreateForm({
           />
         </Group>
         <TextInput
+          disabled={isPending}
           label="Cron (UTC, 5-field: min hour dom mon dow)"
           required
           value={cron}
           onChange={(e) => setCron(e.currentTarget.value)}
         />
         <Switch
+          disabled={isPending}
           label="Enabled"
           checked={enabled}
           onChange={(e) => setEnabled(e.currentTarget.checked)}
@@ -150,8 +196,8 @@ export function ScheduleCreateForm({
           </Text>
         ) : null}
         <Group justify="flex-end">
-          <Button type="submit" loading={isPending}>
-            Create schedule
+          <Button type="submit" loading={isPending} disabled={isPending}>
+            {initial ? 'Save changes' : 'Create schedule'}
           </Button>
         </Group>
       </Stack>

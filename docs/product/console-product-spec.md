@@ -375,18 +375,28 @@ GitHub issues, and manage recurring work.
     fields, UTC, default `0 * * * *`, validated on the client), and Enabled.
     The server also rejects a cron expression that never fires within a
     year.
-  - The list has columns Title, Cron, Pipeline, Repo, Enabled, and Last item,
-    and supports enable and disable.
-  - The API and store record a `disabledReason` (`grant-revoked`, `operator`,
-    or `invalid`), but the list does not show it.
+  - The list shows Title, Cron, Pipeline, Repo, Enabled, Next occurrence,
+    and Last item. It explains `disabledReason` (`grant-revoked`, `operator`,
+    or `invalid`), pending settlement, and closed occurrences.
+  - Enable, disable, edit, and delete submit the selected configuration
+    revision. Stale changes fail visibly without overwriting a newer edit.
+    Delete requires explicit confirmation and stops future recurrence;
+    work admitted earlier may still finish.
+  - The next occurrence includes UTC and an explicitly labeled browser-local
+    time zone. Cron evaluation remains UTC; local display does not change it.
+  - API/store regression tests cover authorization, invalid/revoked recovery,
+    concurrent operator/tick decisions, deletion and durable mint retries.
+    Browser edit/delete journeys are included; CI and production verification
+    remain required before treating those journeys as qualified.
 - **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
   and cursor-based next-page navigation in the URL. Each page examines up to
   200 native tasks; an empty filtered page can still lead to older matches.
   Bridge stopped work pages over the authoritative all-anchor task feed with
   the same explicit 200-task bound. Bridge, Inbox, and Agents have a repository
   selector and clear action, with scope preserved across their navigation.
-  Schedules still have no edit or delete in the UI or the API (a `PUT` accepts
-  only a new or identical schedule), and no time zone other than UTC. See R8.
+  Schedules support revision-checked editing/deletion in the UI and API,
+  with UTC evaluation and labeled local display. `PUT` remains an idempotent
+  create; `PATCH` edits and `DELETE` stops future recurrence. See R8.
 
 ### 6.6 Task detail (`/task/[owner]/[repo]/[issue]`)
 
@@ -517,7 +527,8 @@ console Reply action.
 
 - `/work` list content, and `/work/[id]` reply, redispatch, cancel, and
   edit.
-- `/work/schedules`: create, enable, and disable.
+- `/work/schedules`: create, enable, disable, edit, and confirmed delete;
+  edit/delete browser journeys still require passing CI qualification.
 - `/task/...` beyond the "Open task" navigation.
 - Inbox reply submission, trigger selection, and dispatch hand-off.
 - Merge and rebase end to end.
@@ -537,7 +548,7 @@ Priorities assume the single-maintainer design center.
 | R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6, implemented)                                                               | Operator grants admit sign-in without granting admin authority             | P1       |
 | R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI      | P1       |
 | R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                              | P2       |
-| R8  | Schedule edit and delete, and a time-zone display                                                                                     | Schedules can currently only be toggled                                    | P2       |
+| R8  | Schedule edit/delete and UTC/local next-occurrence qualification                                                                      | Implemented; required browser CI and production evidence remain            | P2       |
 | R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                           | P2       |
 | R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                            | P2       |
 | R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                         | P3       |

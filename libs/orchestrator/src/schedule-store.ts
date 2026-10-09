@@ -9,6 +9,26 @@ const isoUtc = z.iso.datetime({ offset: false });
  *  so it must fit inside the same budget a one-shot item's payload does. */
 export const SCHEDULE_SPEC_MAX_BYTES = 32_768;
 
+const scheduleSpecSchema = z
+  .record(z.string().max(64), z.unknown())
+  .refine(
+    (value) =>
+      new TextEncoder().encode(JSON.stringify(value)).length <=
+      SCHEDULE_SPEC_MAX_BYTES,
+    { message: `schedule spec exceeds ${SCHEDULE_SPEC_MAX_BYTES} bytes` },
+  );
+
+/** A tick admitted atomically before an edit/disable/delete may finish with
+ * this frozen configuration. Retained until mint settles, so a crash cannot
+ * consume a watermark without creating its deterministic item. */
+export const pendingScheduleTickSchema = z.strictObject({
+  slotAt: isoUtc,
+  itemId: z.string().regex(WORK_ID_RE),
+  revision: z.number().int().nonnegative(),
+  spec: scheduleSpecSchema,
+  createdBy: z.string().min(1).max(128),
+});
+
 export const scheduleSchema = z.strictObject({
   scheduleId: z.string().regex(WORK_ID_RE),
   /** 5-field UTC cron expression; opaque here -- `@agent-lcars/work`'s
@@ -19,14 +39,7 @@ export const scheduleSchema = z.strictObject({
    *  see `model.ts`'s `workPayloadSchema` for the identical pattern.
    *  `@agent-lcars/work`'s schedule router parses it with `workSpecSchema`
    *  on every read and write. */
-  spec: z
-    .record(z.string().max(64), z.unknown())
-    .refine(
-      (value) =>
-        new TextEncoder().encode(JSON.stringify(value)).length <=
-        SCHEDULE_SPEC_MAX_BYTES,
-      { message: `schedule spec exceeds ${SCHEDULE_SPEC_MAX_BYTES} bytes` },
-    ),
+  spec: scheduleSpecSchema,
   enabled: z.boolean(),
   /** LCARS-native principal that created the schedule -- the identity
    *  grants are checked against at every tick, not the scheduler service
@@ -34,10 +47,22 @@ export const scheduleSchema = z.strictObject({
   createdBy: z.string().min(1).max(128),
   createdAt: isoUtc,
   updatedAt: isoUtc,
+  /** Configuration revision; missing historical revisions are zero. Ticks
+   * preserve it. Operator changes and auto-disable decisions increment it. */
+  revision: z.number().int().nonnegative().optional(),
+  /** Deletion tombstone prevents reusing the id or reviving a stale tick.
+   * A previously admitted pending occurrence is still retried to settlement. */
+  deletedAt: isoUtc.optional(),
+  pendingTick: pendingScheduleTickSchema.optional(),
   /** The latest due slot a tick has already minted for. Absent means
    *  "never ticked". */
   lastSlotAt: isoUtc.optional(),
   lastItemId: z.string().regex(WORK_ID_RE).optional(),
+  /** Admission floor for a terminal invalid/revoked occurrence. Prevents
+   * reusing its deterministic slot under a later configuration, while work
+   * admitted concurrently before closure may still finish. This is separate
+   * from lastSlotAt/lastItemId, which describe successful mint settlement. */
+  lastClosedSlotAt: isoUtc.optional(),
   /** Set by a tick that auto-disables the schedule once its creator's
    *  grant no longer covers it ('grant-revoked'), by a tick that finds the
    *  stored `cron` or `spec` no longer parses ('invalid' -- a schema
@@ -47,22 +72,21 @@ export const scheduleSchema = z.strictObject({
 });
 export type Schedule = z.infer<typeof scheduleSchema>;
 
-/**
- * Durability boundary for schedules, parallel to `OrchestratorStore` but
- * deliberately a separate interface: a schedule is not a `Task`, has no
- * mutex, and the tick's read/mint/write-back cycle needs nothing an
- * `OrchestratorStore` implementation provides.
- */
+/** Schedule configuration and pending-slot admission share one atomic owner.
+ * The callback is synchronous/pure and may be retried by Firestore; it must
+ * never mint work or perform external effects. undefined means no write. */
 export interface ScheduleStore {
   readSchedule(scheduleId: string): Promise<Schedule | undefined>;
-  /** Create-or-replace. No version/updatedAt guard -- every writer
-   *  (create, enable/disable, a tick's `lastSlotAt` advance) starts from
-   *  its own `readSchedule` in the same request, and a schedule is
-   *  configuration plus a watermark, not a mutex over live work. */
+  mutateSchedule(
+    scheduleId: string,
+    change: (current: Schedule | undefined) => Schedule | undefined,
+  ): Promise<Schedule | undefined>;
+  /** Low-level fixture/import writer. Runtime mutations use mutateSchedule. */
   writeSchedule(schedule: Schedule): Promise<void>;
-  /** Newest first -- `scheduleId` is a ULID, so descending lexicographic
-   *  order on it is descending creation order (matches
-   *  `OrchestratorStore.listNativeTasks`). */
+  /** Newest first; deleted schedules are hidden. */
   listSchedules(limit?: number): Promise<Schedule[]>;
   listEnabledSchedules(): Promise<Schedule[]>;
+  /** Enabled schedules plus durable pending occurrences, including deleted
+   * schedules whose tick was admitted before deletion. */
+  listTickSchedules(): Promise<Schedule[]>;
 }

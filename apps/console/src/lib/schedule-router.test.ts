@@ -100,6 +100,21 @@ async function call(
   path: string,
   body?: unknown,
 ) {
+  // Existing toggle cases act as a version-aware client: read the API view
+  // before submitting. Explicit bodies are never patched, so stale/missing
+  // revision regressions exercise the actual validation boundary.
+  if (
+    body === undefined &&
+    method === 'POST' &&
+    /\/(enable|disable)$/u.test(path)
+  ) {
+    const current = await call(
+      ctx,
+      'GET',
+      path.replace(/\/(enable|disable)$/u, ''),
+    );
+    body = { expectedRevision: current.json?.revision ?? 0 };
+  }
   const handler = createWorkHandler();
   const { response } = await handler.handle(
     new Request(`https://lcars.test/api/work/v1${path}`, {
@@ -739,31 +754,26 @@ describe('tick', () => {
     });
   });
 
-  it('a tick write-back loses a race to an operator disable: re-reads and skips the write, recording nothing', async () => {
+  it('a stale tick snapshot loses admission to an operator disable', async () => {
     const ctx = context();
     await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
       cron: '* * * * *',
       spec,
     });
-
-    // Simulate an operator's `disable` landing between the tick's
-    // `listEnabledSchedules()` snapshot and its write-back: every
-    // `readSchedule` from here on reports the schedule disabled, exactly
-    // as a concurrent `POST /schedules/{id}/disable` would leave it.
-    vi.spyOn(ctx.scheduleStore, 'readSchedule').mockImplementation(
-      async () => ({
-        scheduleId: ID,
-        cron: '* * * * *',
-        spec,
-        enabled: false,
-        disabledReason: 'operator',
-        createdBy: 'user:jlapenna',
-        createdAt: CREATE_NOW.toISOString(),
-        updatedAt: NOW.toISOString(),
-      }),
+    const real = ctx.scheduleStore.listTickSchedules.bind(ctx.scheduleStore);
+    vi.spyOn(ctx.scheduleStore, 'listTickSchedules').mockImplementationOnce(
+      async () => {
+        const snapshot = await real();
+        expect(
+          (
+            await call(ctx, 'POST', `/schedules/${ID}/disable`, {
+              expectedRevision: 1,
+            })
+          ).status,
+        ).toBe(200);
+        return snapshot;
+      },
     );
-    const writeSpy = vi.spyOn(ctx.scheduleStore, 'writeSchedule');
-
     const r = await call(
       withPrincipal(ctx, cronTick),
       'POST',
@@ -772,6 +782,590 @@ describe('tick', () => {
     );
     expect(r.json.minted).toEqual([]);
     expect(r.json.disabled).toEqual([]);
-    expect(writeSpy).not.toHaveBeenCalled();
+    expect((await ctx.scheduleStore.readSchedule(ID))?.disabledReason).toBe(
+      'operator',
+    );
+    expect(await ctx.runtime.store.listNativeTasks()).toHaveLength(0);
+  });
+  it('edits only the current revision and preserves successful tick watermarks', async () => {
+    const ctx = context();
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+    await call(withPrincipal(ctx, cronTick), 'POST', '/schedules/tick', {});
+    const before = await ctx.scheduleStore.readSchedule(ID);
+    const changed = await call(ctx, 'PATCH', `/schedules/${ID}`, {
+      expectedRevision: 1,
+      cron: '0 * * * *',
+      spec: { ...spec, title: 'Edited' },
+      enabled: false,
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.json).toMatchObject({
+      revision: 2,
+      cron: '0 * * * *',
+      enabled: false,
+      disabledReason: 'operator',
+      lastSlotAt: before!.lastSlotAt,
+      lastItemId: before!.lastItemId,
+    });
+    for (const [method, path, body] of [
+      [
+        'PATCH',
+        `/schedules/${ID}`,
+        { expectedRevision: 1, cron: '* * * * *', spec, enabled: true },
+      ],
+      ['DELETE', `/schedules/${ID}`, { expectedRevision: 1 }],
+      ['POST', `/schedules/${ID}/enable`, { expectedRevision: 1 }],
+      ['POST', `/schedules/${ID}/disable`, { expectedRevision: 1 }],
+    ] as const)
+      expect((await call(ctx, method, path, body)).status).toBe(409);
+    expect((await ctx.scheduleStore.readSchedule(ID))?.spec.title).toBe(
+      'Edited',
+    );
+  });
+
+  it('requires revision checks for every destructive or configuration mutation', async () => {
+    const ctx = context();
+    await call(ctx, 'PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec });
+    for (const [method, path, body] of [
+      ['PATCH', `/schedules/${ID}`, { cron: '0 * * * *', spec, enabled: true }],
+      ['DELETE', `/schedules/${ID}`, {}],
+      ['POST', `/schedules/${ID}/enable`, {}],
+      ['POST', `/schedules/${ID}/disable`, {}],
+    ] as const)
+      expect((await call(ctx, method, path, body)).status).toBe(400);
+    expect((await ctx.scheduleStore.readSchedule(ID))?.revision).toBe(1);
+  });
+
+  it('enforces scope and grants for edits/deletion while permitting a revoked creator to delete', async () => {
+    const ctx = context();
+    await call(ctx, 'PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec });
+    for (const principal of [undefined, cronTick, executorOnly, reaperOnly]) {
+      for (const method of ['PATCH', 'DELETE']) {
+        const body =
+          method === 'PATCH'
+            ? { expectedRevision: 1, cron: '0 * * * *', spec, enabled: false }
+            : { expectedRevision: 1 };
+        expect(
+          (
+            await call(
+              withPrincipal(ctx, principal),
+              method,
+              `/schedules/${ID}`,
+              body,
+            )
+          ).status,
+        ).toBe(401);
+      }
+    }
+    const stranger = { ...operator, principal: 'user:stranger', pipelines: [] };
+    expect(
+      (
+        await call(withPrincipal(ctx, stranger), 'DELETE', `/schedules/${ID}`, {
+          expectedRevision: 1,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await call(ctx, 'PATCH', `/schedules/${ID}`, {
+          expectedRevision: 1,
+          cron: '0 * * * *',
+          spec: { ...spec, pipeline: 'codex' },
+          enabled: true,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await call(
+          { ...ctx, grants: () => [] },
+          'POST',
+          `/schedules/${ID}/enable`,
+          { expectedRevision: 1 },
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await call(
+          {
+            ...ctx,
+            principal: { ...operator, pipelines: [] },
+            grants: () => [],
+          },
+          'DELETE',
+          `/schedules/${ID}`,
+          { expectedRevision: 1 },
+        )
+      ).status,
+    ).toBe(200);
+  });
+
+  it('rejects impossible edit cron and lets the creator repair an invalid configuration', async () => {
+    const ctx = context();
+    await ctx.scheduleStore.writeSchedule({
+      scheduleId: ID,
+      cron: 'not a cron',
+      spec: { title: 'invalid' },
+      enabled: false,
+      disabledReason: 'invalid',
+      createdBy: operator.principal,
+      createdAt: CREATE_NOW.toISOString(),
+      updatedAt: CREATE_NOW.toISOString(),
+    });
+    expect(
+      (await call(ctx, 'GET', `/schedules/${ID}`)).json,
+    ).not.toHaveProperty('spec');
+    expect(
+      (
+        await call(ctx, 'POST', `/schedules/${ID}/enable`, {
+          expectedRevision: 0,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await call(ctx, 'PATCH', `/schedules/${ID}`, {
+          expectedRevision: 0,
+          cron: '0 0 31 2 *',
+          spec,
+          enabled: true,
+        })
+      ).status,
+    ).toBe(400);
+    const repaired = await call(ctx, 'PATCH', `/schedules/${ID}`, {
+      expectedRevision: 0,
+      cron: '* * * * *',
+      spec,
+      enabled: true,
+    });
+    expect(repaired.status).toBe(200);
+    expect(repaired.json).toMatchObject({ spec, revision: 1, enabled: true });
+    expect(repaired.json).not.toHaveProperty('disabledReason');
+  });
+
+  it('hides a deleted schedule, prevents id resurrection, and blocks stale tick admission', async () => {
+    const ctx = context();
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+    const realList = ctx.scheduleStore.listTickSchedules.bind(
+      ctx.scheduleStore,
+    );
+    vi.spyOn(ctx.scheduleStore, 'listTickSchedules').mockImplementationOnce(
+      async () => {
+        const snapshot = await realList();
+        expect(
+          (
+            await call(ctx, 'DELETE', `/schedules/${ID}`, {
+              expectedRevision: 1,
+            })
+          ).json,
+        ).toEqual({ id: ID, deleted: true });
+        return snapshot;
+      },
+    );
+    expect(
+      (await call(withPrincipal(ctx, cronTick), 'POST', '/schedules/tick', {}))
+        .json.minted,
+    ).toEqual([]);
+    expect((await call(ctx, 'GET', `/schedules/${ID}`)).status).toBe(404);
+    expect((await call(ctx, 'GET', '/schedules')).json.schedules).toEqual([]);
+    expect(
+      (await call(ctx, 'PUT', `/schedules/${ID}`, { cron: '* * * * *', spec }))
+        .status,
+    ).toBe(409);
+    expect(await ctx.runtime.store.listNativeTasks()).toHaveLength(0);
+  });
+
+  it.each(['edit', 'delete'] as const)(
+    'finishes the frozen occurrence admitted before %s, preserving new operator intent',
+    async (action) => {
+      const ctx = context();
+      await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+        cron: '* * * * *',
+        spec,
+      });
+      const request = ctx.runtime.orchestrator.request.bind(
+        ctx.runtime.orchestrator,
+      );
+      vi.spyOn(ctx.runtime.orchestrator, 'request').mockImplementationOnce(
+        async (input) => {
+          const pending = (await ctx.scheduleStore.readSchedule(ID))!
+            .pendingTick!;
+          const changed =
+            action === 'delete'
+              ? await call(ctx, 'DELETE', `/schedules/${ID}`, {
+                  expectedRevision: 1,
+                })
+              : await call(ctx, 'PATCH', `/schedules/${ID}`, {
+                  expectedRevision: 1,
+                  cron: '0 * * * *',
+                  spec: { ...spec, title: 'Future edited' },
+                  enabled: false,
+                });
+          expect(changed.status).toBe(200);
+          expect(changed.json).toMatchObject(
+            action === 'delete'
+              ? { id: ID, deleted: true, pendingItemId: pending.itemId }
+              : {
+                  revision: 2,
+                  enabled: false,
+                  spec: { title: 'Future edited' },
+                },
+          );
+          return request(input);
+        },
+      );
+      const result = await call(
+        withPrincipal(ctx, cronTick),
+        'POST',
+        '/schedules/tick',
+        {},
+      );
+      expect(result.json.minted).toHaveLength(1);
+      const item = await call(
+        ctx,
+        'GET',
+        `/items/${result.json.minted[0].itemId}`,
+      );
+      expect(item.json.spec).toEqual(spec);
+      const after = (await ctx.scheduleStore.readSchedule(ID))!;
+      expect(after).toMatchObject({
+        revision: 2,
+        enabled: false,
+        disabledReason: 'operator',
+        lastSlotAt: NOW.toISOString(),
+      });
+      expect(after.pendingTick).toBeUndefined();
+      expect(after).toMatchObject(
+        action === 'delete'
+          ? { deletedAt: NOW.toISOString() }
+          : { spec: { title: 'Future edited' } },
+      );
+    },
+  );
+
+  it('retries a transient admitted mint failure after deletion without consuming the watermark', async () => {
+    const ctx = context();
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+    vi.spyOn(ctx.runtime.store, 'readTask').mockRejectedValueOnce(
+      new Error('temporary outage'),
+    );
+    const first = await call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(first.json.errors).toEqual([
+      { scheduleId: ID, message: 'temporary outage' },
+    ]);
+    const failed = (await ctx.scheduleStore.readSchedule(ID))!;
+    expect(failed.lastSlotAt).toBe(CREATE_NOW.toISOString());
+    expect(failed.pendingTick).toBeDefined();
+    await call(ctx, 'DELETE', `/schedules/${ID}`, { expectedRevision: 1 });
+    const retry = await call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(retry.json.minted).toEqual([
+      { scheduleId: ID, itemId: failed.pendingTick!.itemId },
+    ]);
+    expect(await ctx.runtime.store.listNativeTasks()).toHaveLength(1);
+    expect(
+      (await ctx.scheduleStore.readSchedule(ID))?.pendingTick,
+    ).toBeUndefined();
+  });
+
+  it('reconciles work already minted by an overlapping tick with a revoked grant snapshot', async () => {
+    const ctx = context();
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    ctx.runtime.drain = async () => {
+      enter();
+      await barrier;
+      return { dispatched: [], failed: [] };
+    };
+    const oldTick = call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    await entered;
+    const reconciled = await call(
+      { ...ctx, principal: cronTick, grants: () => [] },
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(reconciled.json.errors).toEqual([]);
+    expect(reconciled.json.minted).toHaveLength(1);
+    expect((await ctx.scheduleStore.readSchedule(ID))?.lastSlotAt).toBe(
+      NOW.toISOString(),
+    );
+    expect(
+      (
+        await call(ctx, 'PATCH', `/schedules/${ID}`, {
+          expectedRevision: 1,
+          cron: '* * * * *',
+          spec: { ...spec, title: 'Future' },
+          enabled: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await call(withPrincipal(ctx, cronTick), 'POST', '/schedules/tick', {}))
+        .json.minted,
+    ).toEqual([]);
+    release();
+    expect((await oldTick).json.minted).toEqual([]);
+    expect((await ctx.scheduleStore.readSchedule(ID))?.spec.title).toBe(
+      'Future',
+    );
+    expect(await ctx.runtime.store.listNativeTasks()).toHaveLength(1);
+  });
+
+  it('closes a denied old slot before mint commits, admits a newly granted next slot, and fences late settlement', async () => {
+    const ctx = context({
+      principal: { ...operator, pipelines: ['claude', 'codex'] },
+      grants: () => [{ ...GRANTS[0], pipelines: ['claude', 'codex'] }],
+    });
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+    let enterOld!: () => void, releaseOld!: () => void;
+    const oldEntered = new Promise<void>((r) => {
+      enterOld = r;
+    });
+    const oldBarrier = new Promise<void>((r) => {
+      releaseOld = r;
+    });
+    const request = ctx.runtime.orchestrator.request.bind(
+      ctx.runtime.orchestrator,
+    );
+    vi.spyOn(ctx.runtime.orchestrator, 'request').mockImplementationOnce(
+      async (input) => {
+        enterOld();
+        await oldBarrier;
+        return request(input);
+      },
+    );
+    const oldTick = call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    await oldEntered;
+    expect(
+      (
+        await call(
+          { ...ctx, principal: cronTick, grants: () => [] },
+          'POST',
+          '/schedules/tick',
+          {},
+        )
+      ).json.disabled,
+    ).toEqual([ID]);
+    const closed = (await ctx.scheduleStore.readSchedule(ID))!;
+    expect(closed).toMatchObject({
+      revision: 2,
+      lastClosedSlotAt: NOW.toISOString(),
+      lastSlotAt: CREATE_NOW.toISOString(),
+    });
+    const repaired = {
+      ...ctx,
+      principal: { ...operator, pipelines: ['codex'] },
+      grants: () => [{ ...GRANTS[0], pipelines: ['codex'] }],
+    };
+    expect(
+      (
+        await call(repaired, 'PATCH', `/schedules/${ID}`, {
+          expectedRevision: 2,
+          cron: '* * * * *',
+          spec: { ...spec, pipeline: 'codex' },
+          enabled: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await call(
+          withPrincipal(repaired, cronTick),
+          'POST',
+          '/schedules/tick',
+          {},
+        )
+      ).json.minted,
+    ).toEqual([]);
+    let enterNew!: () => void,
+      releaseNew!: () => void,
+      drains = 0;
+    const newEntered = new Promise<void>((r) => {
+      enterNew = r;
+    });
+    const newBarrier = new Promise<void>((r) => {
+      releaseNew = r;
+    });
+    ctx.runtime.drain = async () => {
+      if (++drains === 1) {
+        enterNew();
+        await newBarrier;
+      }
+      return { dispatched: [], failed: [] };
+    };
+    const later = new Date(NOW.getTime() + 60_000);
+    const newTick = call(
+      withNow(withPrincipal(repaired, cronTick), later),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    await newEntered;
+    const newerPending = (await ctx.scheduleStore.readSchedule(ID))!
+      .pendingTick;
+    releaseOld();
+    expect((await oldTick).json.minted).toEqual([]);
+    expect((await ctx.scheduleStore.readSchedule(ID))!.pendingTick).toEqual(
+      newerPending,
+    );
+    releaseNew();
+    expect((await newTick).json.minted).toHaveLength(1);
+    const after = (await ctx.scheduleStore.readSchedule(ID))!;
+    expect(after).toMatchObject({
+      revision: 3,
+      enabled: true,
+      lastClosedSlotAt: NOW.toISOString(),
+      lastSlotAt: later.toISOString(),
+    });
+    expect(after.pendingTick).toBeUndefined();
+    expect(after.spec.pipeline).toBe('codex');
+    expect(await ctx.runtime.store.listNativeTasks()).toHaveLength(2);
+    expect(
+      (
+        await call(
+          withNow(withPrincipal(repaired, cronTick), later),
+          'POST',
+          '/schedules/tick',
+          {},
+        )
+      ).json.minted,
+    ).toEqual([]);
+  });
+
+  it.each([false, true])(
+    'recovers invalid pending work without poisoning an operator repair (repair first: %s)',
+    async (repairFirst) => {
+      const ctx = context();
+      const pending = {
+        slotAt: NOW.toISOString(),
+        itemId: OTHER_ID,
+        revision: 1,
+        spec: { title: 'invalid' },
+        createdBy: operator.principal,
+      };
+      await ctx.scheduleStore.writeSchedule({
+        scheduleId: ID,
+        cron: '* * * * *',
+        spec,
+        enabled: true,
+        createdBy: operator.principal,
+        createdAt: CREATE_NOW.toISOString(),
+        updatedAt: CREATE_NOW.toISOString(),
+        lastSlotAt: CREATE_NOW.toISOString(),
+        revision: 1,
+        pendingTick: pending,
+      });
+      const patch = async (revision: number) =>
+        call(ctx, 'PATCH', `/schedules/${ID}`, {
+          expectedRevision: revision,
+          cron: '* * * * *',
+          spec: { ...spec, title: 'Repaired' },
+          enabled: true,
+        });
+      const earlyRepair = repairFirst ? await patch(1) : undefined;
+      expect(earlyRepair?.status).toBe(repairFirst ? 200 : undefined);
+      const tick = await call(
+        withPrincipal(ctx, cronTick),
+        'POST',
+        '/schedules/tick',
+        {},
+      );
+      expect(tick.json.errors[0].message).toMatch(/Invalid admitted/);
+      expect(tick.json.disabled).toEqual(repairFirst ? [] : [ID]);
+      const closed = (await ctx.scheduleStore.readSchedule(ID))!;
+      expect(closed.pendingTick).toBeUndefined();
+      expect(closed.lastClosedSlotAt).toBe(NOW.toISOString());
+      expect(closed.lastSlotAt).toBe(CREATE_NOW.toISOString());
+      const lateRepair = !repairFirst ? await patch(2) : undefined;
+      expect(lateRepair?.status).toBe(!repairFirst ? 200 : undefined);
+      expect(
+        (
+          await call(
+            withPrincipal(ctx, cronTick),
+            'POST',
+            '/schedules/tick',
+            {},
+          )
+        ).json.minted,
+      ).toEqual([]);
+      const next = await call(
+        withNow(withPrincipal(ctx, cronTick), new Date(NOW.getTime() + 60_000)),
+        'POST',
+        '/schedules/tick',
+        {},
+      );
+      expect(next.json.minted).toHaveLength(1);
+      expect((await ctx.scheduleStore.readSchedule(ID))!).toMatchObject({
+        enabled: true,
+        spec: { title: 'Repaired' },
+      });
+    },
+  );
+
+  it('computes UTC next occurrence strictly beyond both settled and closed slots', async () => {
+    const ctx = context();
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+    await call(withPrincipal(ctx, cronTick), 'POST', '/schedules/tick', {});
+    expect((await call(ctx, 'GET', `/schedules/${ID}`)).json.nextDueAt).toBe(
+      '2026-08-27T10:23:00.000Z',
+    );
+    await ctx.scheduleStore.mutateSchedule(ID, (current) => ({
+      ...current!,
+      lastClosedSlotAt: '2026-08-27T10:24:00.000Z',
+    }));
+    expect((await call(ctx, 'GET', `/schedules/${ID}`)).json.nextDueAt).toBe(
+      '2026-08-27T10:25:00.000Z',
+    );
+    await call(ctx, 'POST', `/schedules/${ID}/disable`, {
+      expectedRevision: 1,
+    });
+    expect(
+      (await call(ctx, 'GET', `/schedules/${ID}`)).json,
+    ).not.toHaveProperty('nextDueAt');
   });
 });

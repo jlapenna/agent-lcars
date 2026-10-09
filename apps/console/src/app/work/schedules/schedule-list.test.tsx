@@ -22,6 +22,7 @@ function schedule(over: Partial<ScheduleView> = {}): ScheduleView {
       target: { repo: 'jlapenna/agent-lcars' },
     },
     enabled: true,
+    revision: 1,
     ...over,
   };
 }
@@ -29,7 +30,13 @@ function schedule(over: Partial<ScheduleView> = {}): ScheduleView {
 function renderList(schedules: ScheduleView[]) {
   render(
     <MantineProvider>
-      <ScheduleList schedules={schedules} enable={vi.fn()} disable={vi.fn()} />
+      <ScheduleList
+        schedules={schedules}
+        enable={vi.fn()}
+        disable={vi.fn()}
+        update={vi.fn()}
+        remove={vi.fn()}
+      />
     </MantineProvider>,
   );
 }
@@ -54,4 +61,37 @@ describe('ScheduleList', () => {
     renderList([schedule({ enabled: false })]);
     expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument();
   });
+  it('shows disabled reasons and labeled UTC/local next occurrence without changing cron', async () => {
+    renderList([
+      schedule({
+        disabledReason: 'grant-revoked',
+        nextDueAt: '2026-08-27T10:23:00.000Z',
+        lastClosedSlotAt: '2026-08-27T10:22:00.000Z',
+      }),
+    ]);
+    expect(
+      screen.getByText('Creator grant revoked or repository unavailable'),
+    ).toBeVisible();
+    expect(screen.getByText('UTC: 2026-08-27T10:23:00.000Z')).toBeVisible();
+    expect(await screen.findByText(/^Local \(/)).toBeVisible();
+    expect(screen.getByText('0 * * * *')).toBeVisible();
+    expect(
+      screen.getByText(/Work admitted earlier may still finish/),
+    ).toBeVisible();
+  });
+  it.each([
+    ['invalid', 'Invalid schedule; edit to repair'],
+    ['operator', 'Disabled by an operator'],
+  ] as const)(
+    'explains %s and offers repair/deletion',
+    (disabledReason, message) => {
+      renderList([
+        schedule({ enabled: false, disabledReason, spec: undefined }),
+      ]);
+      expect(screen.getByText(message)).toBeVisible();
+      expect(screen.getByText('No next occurrence')).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Edit' })).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeVisible();
+    },
+  );
 });

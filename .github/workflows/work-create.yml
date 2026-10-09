@@ -232,10 +232,19 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               ;;
             schedule-disable)
-              status="$(call POST "$schedules_api/$ITEM_ID/disable")"
+              # Bind the operator's intent to the configuration we actually read.
+              status="$(call GET "$schedules_api/$ITEM_ID")"
+              echo "GET /api/work/v1/schedules/$ITEM_ID -> $status"; show
+              [ "$status" = "200" ] || { echo "::error::work API returned $status reading schedule"; exit 1; }
+              if ! revision="$(jq -er '.revision | select(type == "number" and . >= 0 and floor == .)' "$response")"; then
+                echo "::error::schedule response has no valid configuration revision"; exit 1
+              fi
+              body="$(jq -cn --argjson r "$revision" '{expectedRevision: $r}')"
+              status="$(call POST "$schedules_api/$ITEM_ID/disable" "$body")"
               echo "POST /api/work/v1/schedules/$ITEM_ID/disable -> $status"; show
               case "$status" in
-                200|409) echo "- schedule-disable $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
+                200) echo "- schedule-disable $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
+                409) echo "::error::schedule changed after it was read; reload and retry, no disable was applied"; exit 1 ;;
                 *) echo "::error::work API returned $status"; exit 1 ;;
               esac
               ;;
