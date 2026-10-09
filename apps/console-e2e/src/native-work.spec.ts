@@ -209,6 +209,7 @@ test.describe('native Work mutation journeys', () => {
       page.getByRole('heading', { name: TITLE, exact: true }),
     ).toBeVisible();
     await page.getByRole('button', { name: 'Reply', exact: true }).click();
+    await expect(page.getByText('task-busy', { exact: true })).toHaveCount(2);
     await expect(page.getByPlaceholder('Reply to the agent...')).toHaveValue(
       'Keep this refused reply.',
     );
