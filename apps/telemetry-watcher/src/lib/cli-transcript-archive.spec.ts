@@ -172,7 +172,7 @@ describe('host daemon CLI archive path', () => {
       configured?: boolean;
       live?: boolean;
       size?: number;
-      upload?: ReturnType<typeof vi.fn>;
+      upload?: ReturnType<typeof vi.fn<typeof archiveCliTranscript>>;
       watchRoot?: WatchRootConfig;
       at?: () => string;
     } = {},
@@ -251,12 +251,12 @@ describe('host daemon CLI archive path', () => {
     const oversized = daemon({ size: CLI_TRANSCRIPT_MAX_BYTES + 1 });
     await oversized.watcher.tick();
     expect(oversized.upload).not.toHaveBeenCalled();
-    expect(oversized.writes[0].doc.cliTranscriptArchive.status).toBe(
-      'too-large',
-    );
+    expect(oversized.writes[0].doc).toMatchObject({
+      cliTranscriptArchive: { status: 'too-large' },
+    });
     let at = now;
     const upload = vi
-      .fn()
+      .fn<typeof archiveCliTranscript>()
       .mockRejectedValueOnce(new Error('denied'))
       .mockResolvedValue({
         cliTranscriptArchive: {
@@ -268,14 +268,16 @@ describe('host daemon CLI archive path', () => {
       });
     const failed = daemon({ upload, at: () => at });
     await failed.watcher.tick();
-    expect(failed.writes[0].doc.cliTranscriptArchive.status).toBe('failed');
+    expect(failed.writes[0].doc).toMatchObject({
+      cliTranscriptArchive: { status: 'failed' },
+    });
     await failed.watcher.tick();
     expect(upload).toHaveBeenCalledTimes(1);
     at = '2026-10-09T10:01:01Z';
     await failed.watcher.tick();
     expect(upload).toHaveBeenCalledTimes(2);
-    expect(failed.writes.at(-1).doc.cliTranscriptArchive.status).toBe(
-      'available',
-    );
+    expect(failed.writes.at(-1)?.doc).toMatchObject({
+      cliTranscriptArchive: { status: 'available' },
+    });
   });
 });
