@@ -160,3 +160,46 @@ describe('RunsSection', () => {
     expect(rows.map((el) => el.textContent)).toEqual(['g2', 'g1']);
   });
 });
+
+it.each([
+  ['comment', 'https://github.com/octo/example/issues/42#issuecomment-99'],
+  ['review', 'https://github.com/octo/example/pull/42#pullrequestreview-100'],
+  ['no-op', 'https://github.com/octo/example/issues/42#issuecomment-99'],
+  ['park', 'https://github.com/octo/example/issues/42#issuecomment-99'],
+])('renders the exact %s result permalink', (summary, ref) => {
+  renderRuns([
+    makeRun({ state: 'finished', result: { ok: true, summary, ref } }),
+  ]);
+  expect(screen.getByRole('link', { name: ref })).toHaveAttribute('href', ref);
+});
+it('renders both partial PR and blocker links while guarding every related value', () => {
+  const ref = 'https://github.com/octo/example/pull/12';
+  const blocker = 'https://github.com/octo/example/issues/42#issuecomment-99';
+  renderRuns([
+    makeRun({
+      state: 'finished',
+      result: { ok: true, summary: 'park', ref, relatedRefs: [blocker] },
+    }),
+  ]);
+  expect(screen.getByRole('link', { name: ref })).toHaveAttribute('href', ref);
+  expect(screen.getByRole('link', { name: blocker })).toHaveAttribute(
+    'href',
+    blocker,
+  );
+});
+it('keeps a dangerous related reference inert', () => {
+  renderRuns([
+    makeRun({
+      state: 'finished',
+      result: {
+        ok: true,
+        summary: 'park',
+        relatedRefs: ['javascript:alert(1)'],
+      },
+    }),
+  ]);
+  expect(screen.getByText('javascript:alert(1)')).toBeInTheDocument();
+  expect(
+    screen.queryByRole('link', { name: 'javascript:alert(1)' }),
+  ).toBeNull();
+});

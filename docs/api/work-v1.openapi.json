@@ -465,6 +465,14 @@
                                 "type": "string",
                                 "maxLength": 1024
                               },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
+                              },
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
@@ -746,6 +754,14 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
                               },
                               "message": {
                                 "type": "string",
@@ -1034,6 +1050,14 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
                               },
                               "message": {
                                 "type": "string",
@@ -1374,6 +1398,14 @@
                                       "type": "string",
                                       "maxLength": 1024
                                     },
+                                    "relatedRefs": {
+                                      "maxItems": 1,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "maxLength": 1024
+                                      }
+                                    },
                                     "message": {
                                       "type": "string",
                                       "maxLength": 16384
@@ -1642,6 +1674,14 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
                               },
                               "message": {
                                 "type": "string",
@@ -1942,6 +1982,14 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
                               },
                               "message": {
                                 "type": "string",
@@ -2285,6 +2333,14 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
                               },
                               "message": {
                                 "type": "string",

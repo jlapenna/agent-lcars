@@ -24,10 +24,37 @@ export const WORK_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
 export const workIdSchema = z.string().regex(WORK_ID_PATTERN);
 
+const githubArtifactIdSchema = z.number().int().positive();
+const githubArtifactReferenceSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('pull-request'),
+    number: githubArtifactIdSchema,
+  }),
+  z.strictObject({
+    kind: z.enum(['comment', 'review']),
+    number: githubArtifactIdSchema,
+    id: githubArtifactIdSchema,
+    url: z.string().max(1_024),
+  }),
+]);
+
+/** Trusted runner metadata from the exact-marker verifier, never parsed from
+ * the agent's final message. A parked partial PR can retain its blocker link. */
+export const outcomeReferenceSchema = z.discriminatedUnion('kind', [
+  githubArtifactReferenceSchema.options[0].extend({
+    related: z.array(githubArtifactReferenceSchema).max(1).optional(),
+  }),
+  githubArtifactReferenceSchema.options[1].extend({
+    related: z.array(githubArtifactReferenceSchema).max(1).optional(),
+  }),
+]);
+
 const runResultSchema = z.strictObject({
   ok: z.boolean(),
   summary: z.string().max(4_096).optional(),
   ref: z.string().max(1_024).optional(),
+  /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
+  relatedRefs: z.array(z.string().max(1_024)).max(1).optional(),
   /** The agent's final message for this round, e.g. its question when it
    *  parked. Mirrors `@agent-lcars/orchestrator`'s `runResultSchema`. */
   message: z.string().max(16_384).optional(),

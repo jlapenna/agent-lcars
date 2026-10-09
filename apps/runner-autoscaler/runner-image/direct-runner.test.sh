@@ -268,6 +268,32 @@ FAKE
   cat > "$bindir/gh" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s' "${GH_TOKEN:-}" > "$GH_INVOCATION_TOKEN_LOG"
+if [[ "$*" == *"--slurp"* ]]; then
+  if [[ "$*" == *"pulls?state=all"* ]]; then
+    [ "${FAKE_GH_LOOKUP_FAIL:-}" != 1 ] || exit 1
+    match=1
+    if [ -n "${FAKE_GH_MATCH_AFTER_WORKER_RUNS:-}" ]; then
+      [ -f "${WORKER_RUN_COUNT_FILE:-/nonexistent}" ] && [ "$(cat "$WORKER_RUN_COUNT_FILE")" -ge "$FAKE_GH_MATCH_AFTER_WORKER_RUNS" ] || match=0
+    elif [ -n "${FAKE_GH_MATCH_AFTER_OPENCODE_RUNS:-}" ]; then
+      [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ] && [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -ge "$FAKE_GH_MATCH_AFTER_OPENCODE_RUNS" ] || match=0
+    elif [ "${FAKE_GH_NO_MATCH:-}" = 1 ]; then match=0; fi
+    if [ "$match" = 1 ]; then
+      jq -cn --arg marker "<!-- attempt-claim:${ATTEMPT_ID} -->" '[[{number:12,user:{type:"Bot"},body:$marker}]]'
+    else echo '[[]]'; fi
+  elif [[ "$*" == *"issues/42/comments"* ]]; then
+    if [ "${FAKE_GH_MARKER_COMMENT:-}" = 1 ]; then
+      body="<!-- attempt-claim:${ATTEMPT_ID} -->"
+      [ "${FAKE_GH_MARKER_PARK:-}" != 1 ] || body="$body <!-- agent-result:v1:park -->"
+      [ "${FAKE_GH_MARKER_NO_OP:-}" != 1 ] || body="$body <!-- agent-result:v1:no-op -->"
+      jq -cn --arg body "$body" '[[{id:99,user:{type:"Bot"},body:$body,html_url:"https://github.com/octo/example/issues/42#issuecomment-99"}]]'
+    else echo '[[]]'; fi
+  elif [[ "$*" == *"pulls/42/reviews"* ]]; then
+    if [ "${FAKE_GH_MARKER_REVIEW:-}" = 1 ]; then
+      jq -cn --arg marker "<!-- attempt-claim:${ATTEMPT_ID} -->" '[[{id:100,user:{type:"Bot"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]'
+    else echo '[[]]'; fi
+  else exit 1; fi
+  exit 0
+fi
 if [[ "$*" == *"pulls?state=all"* ]]; then
   if [ "${FAKE_GH_LOOKUP_FAIL:-}" = 1 ]; then
     exit 1
@@ -1461,7 +1487,7 @@ context_path="$scenario_runner_temp/agent-dispatch/context.json"
 jq -e '.anchor.type == "issue" and .anchor.number == 42 and .mode == "reply" and .reply == "/opencode report the current status" and .runbook == "status-runbook" and .context == "from a GitHub comment"' \
   "$context_path" >/dev/null ||
   fail "github reply: prepare context lost the anchor or dispatch parameters ($(cat "$context_path"))"
-jq -e '.outcome == "comment" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "comment" and .outcomeReference == {kind:"comment",number:42,id:99,url:"https://github.com/octo/example/issues/42#issuecomment-99"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github reply: marker-bound comment was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-reply: OK"
@@ -1478,7 +1504,7 @@ run_scenario github-reply-no-op opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GH_NO_MATCH FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_NO_OP
 
 [ "$rc" -eq 0 ] || fail "github reply no-op: expected exit 0, got $rc"
-jq -e '.outcome == "no-op" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "no-op" and .outcomeReference == {kind:"comment",number:42,id:99,url:"https://github.com/octo/example/issues/42#issuecomment-99"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github reply no-op: marker-bound no-op was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-reply-no-op: OK"
@@ -1492,7 +1518,7 @@ run_scenario github-reply-park opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GH_NO_MATCH FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_PARK
 
 [ "$rc" -eq 0 ] || fail "github reply park: expected exit 0, got $rc"
-jq -e '.outcome == "park" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "park" and .outcomeReference == {kind:"comment",number:42,id:99,url:"https://github.com/octo/example/issues/42#issuecomment-99"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github reply park: marker-bound park was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-reply-park: OK"
@@ -1507,7 +1533,7 @@ run_scenario github-pr-park opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_PARK
 
 [ "$rc" -eq 0 ] || fail "github PR park: expected exit 0, got $rc"
-jq -e '.outcome == "park" and .outcomeReference == {kind: "pull-request", number: 12}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "park" and .outcomeReference == {kind:"pull-request",number:12,related:[{kind:"comment",number:42,id:99,url:"https://github.com/octo/example/issues/42#issuecomment-99"}]}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github PR park: park did not override the PR while retaining its reference ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-pr-park: OK"
@@ -1527,7 +1553,7 @@ context_path="$scenario_runner_temp/agent-dispatch/context.json"
 jq -e '.anchor.type == "pull-request" and .anchor.number == 42 and .mode == "review"' \
   "$context_path" >/dev/null ||
   fail "github review: prepare context lost the PR anchor or review mode ($(cat "$context_path"))"
-jq -e '.outcome == "review" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "review" and .outcomeReference == {kind:"review",number:42,id:100,url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github review: marker-bound review was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-review: OK"
@@ -1931,3 +1957,6 @@ for provider in claude codex opencode; do
 done
 
 echo "direct-runner.sh: OK"
+
+# Exact-reference verification is part of this required runner contract gate.
+bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
