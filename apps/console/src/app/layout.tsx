@@ -12,7 +12,9 @@ import type { Viewport } from 'next';
 import { cookies, headers } from 'next/headers';
 import { Suspense } from 'react';
 
+import { auth } from '../auth';
 import { consoleDescription } from '../lib/deployment';
+import { ConsoleNavigationProvider } from './console-navigation-context';
 import { bodyFont, displayFont, monoFont } from './fonts';
 import { Providers } from './providers';
 
@@ -76,10 +78,20 @@ async function DynamicShell({ children }: { children: React.ReactNode }) {
       ? cookieValue
       : 'dark';
 
+  const session = await auth();
+
   return (
     <>
       <BrowserErrorReporter traceId={traceId} />
-      <Providers colorScheme={colorScheme}>{children}</Providers>
+      <Providers colorScheme={colorScheme}>
+        <ConsoleNavigationProvider
+          navigationKeys={
+            session?.user.isAdmin ? undefined : session ? ['work'] : []
+          }
+        >
+          {children}
+        </ConsoleNavigationProvider>
+      </Providers>
     </>
   );
 }

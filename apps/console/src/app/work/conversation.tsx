@@ -41,10 +41,12 @@ function AgentTurn({
   message,
   resultRef,
   sessionId,
+  canViewSessions,
 }: {
   message: string;
   resultRef: string | undefined;
   sessionId: string | undefined;
+  canViewSessions: boolean;
 }) {
   return (
     <Stack gap={2} data-testid="agent-turn">
@@ -54,7 +56,7 @@ function AgentTurn({
       <Text>{message}</Text>
       <Group gap="xs">
         <TurnRef value={resultRef} />
-        {sessionId !== undefined && (
+        {canViewSessions && sessionId !== undefined && (
           <Anchor href={`/sessions/${encodeURIComponent(sessionId)}`} size="xs">
             session
           </Anchor>
@@ -76,7 +78,13 @@ function AgentTurn({
  * is joined by `runId` for the agent turn's session link, same join key
  * `page.tsx`'s existing `SessionsList` uses.
  */
-export function Conversation({ item }: { item: ItemView }) {
+export function Conversation({
+  item,
+  canViewSessions = true,
+}: {
+  item: ItemView;
+  canViewSessions?: boolean;
+}) {
   return (
     <Stack gap="md">
       {item.runs.map((run, index) => {
@@ -103,6 +111,7 @@ export function Conversation({ item }: { item: ItemView }) {
                 message={run.result.message}
                 resultRef={run.result.ref}
                 sessionId={session?.sessionId}
+                canViewSessions={canViewSessions}
               />
             )}
           </Stack>

@@ -6,7 +6,8 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
-import { CONSOLE_DESTINATIONS, type NavKey } from './console-navigation';
+import { consoleDestinations, type NavKey } from './console-navigation';
+import { useConsoleNavigationKeys } from './console-navigation-context';
 import { useItemOverflowMenu } from './item-overflow-menu';
 import { ThemeToggle } from './theme-toggle';
 
@@ -28,6 +29,7 @@ export function QueueUtilityMenu({
   item?: ActionItem;
 }) {
   const itemActions = useItemOverflowMenu(item);
+  const allowedKeys = useConsoleNavigationKeys();
 
   return (
     <Menu position="bottom-end" withinPortal>
@@ -54,7 +56,7 @@ export function QueueUtilityMenu({
         {includeNavigation && (
           <>
             <Menu.Label>Navigate</Menu.Label>
-            {CONSOLE_DESTINATIONS.map((destination) => (
+            {consoleDestinations(allowedKeys).map((destination) => (
               <Menu.Item
                 key={destination.key}
                 component={Link}

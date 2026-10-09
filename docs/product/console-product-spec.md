@@ -43,7 +43,7 @@ GitHub from the browser.
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Maintainer (admin)**        | Logins in the sign-in allowlist `AGENT_LCARS_ADMIN_GITHUB_LOGINS` (currently `jlapenna` and `lizsprinkles`)                                                                             | Clear decisions such as merging, replying, or retriggering. Dispatch new work. Notice stuck or failed agents. Audit sessions and spend. Do all of this from a phone. |
 | **Production verifier**       | Login `agent-lcars-production-verifier`. It is not on the allowlist; its admin session JWT is minted directly with `AUTH_SECRET`, and it holds the Work grant `svc:production-verifier` | Run authenticated live-UI verification and Work API operations within an approved task                                                                               |
-| **Work operator (non-admin)** | Modeled by Work grants, but blocked in practice because sign-in is limited to admins                                                                                                    | Issue and follow native work without access to the decision queue                                                                                                    |
+| **Work operator (non-admin)** | GitHub logins with an effective `work.operator` grant                                                                                                                                   | Issue and follow native work without access to the decision queue                                                                                                    |
 | **Machine callers**           | Agents, the `lcars` CLI, CI workflows, the Slack bot                                                                                                                                    | Call the Work API. They are not console UI users, but `/work` must render what they create                                                                           |
 
 **Design center:** a small set of expert maintainers supervising many concurrent agents,
@@ -106,8 +106,9 @@ Shared URL state:
 
 - **FE-AUTH-1 [Shipped]** Sign-in uses Auth.js with GitHub OAuth (scopes
   `repo read:user user:email`). The session is a JWT cookie encrypted with
-  `AUTH_SECRET`. The `signIn` callback rejects any login not in
-  `AGENT_LCARS_ADMIN_GITHUB_LOGINS`. A rejected login is sent to
+  `AUTH_SECRET`. The `signIn` callback admits logins in
+  `AGENT_LCARS_ADMIN_GITHUB_LOGINS` or with an effective `work.operator` grant;
+  all other logins are rejected. A rejected login is sent to
   `/login?error=AccessDenied` with an explanatory message. Sessions minted
   outside OAuth, such as the production verifier's, skip this check.
 - **FE-AUTH-2 [Shipped]** `proxy.ts` gates every path behind a session cookie.
@@ -132,9 +133,12 @@ Shared URL state:
 - **FE-AUTH-5 [Shipped]** The user's GitHub OAuth token stays server-side. It is
   used so that the human, not the bot, is recorded as the author where
   authorship matters, such as evidence-backed work.
-- **FE-AUTH-6 [Proposed]** Allow non-admin sign-in for logins that hold a Work
-  grant. Restrict them to `/work*` and hide admin destinations from their
-  navigation. See [§10](#10-gaps-and-roadmap) R5.
+- **FE-AUTH-6 [Shipped]** Non-admin logins with `work.operator` can sign in
+  and land on `/work`. Work, Schedules, and native detail views restrict
+  desktop and mobile navigation to Work. Admin routes, APIs, and queue
+  actions still enforce admin authority server-side. Each Work operation
+  resolves the current grant again, so revocation denies existing sessions;
+  operator grants never confer admin or production-verifier authority.
 
 ### 5.2 Freshness and live data
 
@@ -530,7 +534,7 @@ Priorities assume the single-maintainer design center.
 | R2  | E2E coverage for the Work list and detail actions, schedules, task detail, Inbox reply submission/dispatch, merge/rebase, and Unstick | Reply layout has partial coverage; these mutating journeys remain unproven | P0       |
 | R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker (implemented)                                     | Bounded raw pages retain cursors even when filters find no matches         | P1       |
 | R4  | One item view for GitHub-anchored and native tasks (FE-TK-2, implemented)                                                             | One `Task` model, so one UI; removes duplicated surfaces                   | P1       |
-| R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6)                                                                            | Grants already model this; sign-in blocks it                               | P1       |
+| R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6, implemented)                                                               | Operator grants admit sign-in without granting admin authority             | P1       |
 | R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI      | P1       |
 | R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                              | P2       |
 | R8  | Schedule edit and delete, and a time-zone display                                                                                     | Schedules can currently only be toggled                                    | P2       |

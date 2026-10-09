@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { auth, signIn, signOut } from '../../auth';
+import { consoleLandingPath } from '../../lib/console-access';
 import { consoleDescription } from '../../lib/deployment';
 import { PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
@@ -13,13 +14,13 @@ async function LoginContent({
   searchParams: Promise<{ error?: string }>;
 }) {
   const session = await auth();
-  if (session?.user?.isAdmin) {
-    redirect('/');
-  }
+  const landing = consoleLandingPath(session);
+  if (landing) redirect(landing);
 
   // Two ways to be unauthorized, both previously rendered as a bare
   // sign-in button that read like a redirect loop:
-  // - auth.ts's signIn callback rejects non-admin GitHub logins before a
+  // - auth.ts's signIn callback rejects logins with neither admin nor Work
+  //   operator authority before a
   //   session exists; Auth.js then lands here with ?error=AccessDenied -
   //   the production-path signal (Codex review on #491).
   // - A session can exist without isAdmin (e.g. the configured admin

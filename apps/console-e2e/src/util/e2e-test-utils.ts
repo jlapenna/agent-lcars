@@ -1,12 +1,7 @@
 import { Page, test } from '@playwright/test';
 
-/**
- * agent-lcars is a single-admin app gated by `assertAdmin()` (see
- * `apps/console/src/app/page.tsx`), so there's no non-admin persona to
- * distinguish; every test needs the same injected admin identity. Uses the
- * `X-e2e-auth-user` header read by `apps/console/src/auth.ts`'s
- * `getMockSession` and forwarded by `apps/console/src/proxy.ts`.
- */
+/** Explicit admin identity for existing maintainer journeys. Operator tests
+ * use non-admin identities or encrypted Auth.js cookies instead. */
 // A GitHub-login-shaped identity, not a serialized profile: the console's
 // strict Work admission records the authenticated actor in immutable Work.
 // This header is admitted only by the non-Cloud-Run E2E adapter.
