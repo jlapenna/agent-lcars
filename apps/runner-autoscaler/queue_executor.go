@@ -215,6 +215,19 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 // token itself (ordinary oauth2.TokenSource semantics) -- callers just call
 // .Token() per poll, which is what queueExecutorConfig.idToken does.
 func newDirectRunnerIDTokenSource(ctx context.Context, keyPath, audience string) (oauth2.TokenSource, error) {
+	// The source caches tokens across claim, schedule, exit and retirement
+	// callers. Its service-account refresh uses this context HTTP client;
+	// the root lifecycle alone would allow a stalled refresh to pin all of
+	// those callers indefinitely, including bounded recovery sweeps.
+	client := &http.Client{Timeout: 10 * time.Second}
+	if existing, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && existing != nil {
+		copy := *existing
+		client = &copy
+		if client.Timeout <= 0 || client.Timeout > 10*time.Second {
+			client.Timeout = 10 * time.Second
+		}
+	}
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, client)
 	source, err := idtoken.NewTokenSource(ctx, audience, idtoken.WithCredentialsFile(keyPath))
 	if err != nil {
 		return nil, fmt.Errorf("building id token source: %w", err)
@@ -286,8 +299,8 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 		}
 	}
 	// Sweep a finite pre-existing backlog immediately rather than waiting for
-	// the first interval. This never touches an active Job and has no claim
-	// side effect.
+	// the first interval. Only exact settled claims or legacy never-started
+	// shells may retire; this has no durable claim side effect.
 	cleanup()
 	for {
 		select {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	batch "k8s.io/api/batch/v1"
@@ -25,8 +26,9 @@ func queueClaimFingerprint(token string) string {
 // deleting a Job. The route grants no new credential or mutation capability.
 func queueClaimStatus(consoleURL string, idToken func() (string, error)) func(context.Context, string, string, string) (bool, error) {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	acquireToken := queueClaimTokenAcquisition(idToken)
 	return func(ctx context.Context, runID, runner, fingerprint string) (bool, error) {
-		token, err := idToken()
+		token, err := acquireToken(ctx)
 		if err != nil {
 			return false, fmt.Errorf("queue claim status identity unavailable")
 		}
@@ -58,6 +60,46 @@ func queueClaimStatus(consoleURL string, idToken func() (string, error)) func(co
 			return false, fmt.Errorf("queue claim status identity conflict")
 		}
 		return status.Status == "settled", nil
+	}
+}
+
+// OAuth's cached source cannot take a per-call context and may be waiting on
+// another caller's refresh mutex. Cancel the sweep promptly while sharing
+// one outstanding acquisition across subsequent sweeps. Its underlying real
+// HTTP refresh is bounded in newDirectRunnerIDTokenSource; canceled callers
+// neither accumulate goroutines nor wait for that refresh to finish.
+func queueClaimTokenAcquisition(idToken func() (string, error)) func(context.Context) (string, error) {
+	type acquisition struct {
+		done  chan struct{}
+		token string
+		err   error
+	}
+	var mu sync.Mutex
+	var pending *acquisition
+	return func(ctx context.Context) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		mu.Lock()
+		if pending == nil {
+			pending = &acquisition{done: make(chan struct{})}
+			current := pending
+			go func() {
+				current.token, current.err = idToken()
+				mu.Lock()
+				pending = nil
+				close(current.done)
+				mu.Unlock()
+			}()
+		}
+		current := pending
+		mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-current.done:
+			return current.token, current.err
+		}
 	}
 }
 

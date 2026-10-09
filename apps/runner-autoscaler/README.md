@@ -261,7 +261,11 @@ admission stays closed while the deleting Job or nonterminal owned Pods remain.
 Executed or re-suspended Jobs are never resumed. A Secret-less legacy shell
 without claim proof uses only the two-hour backstop, with original generation,
 identity, no-attempt and no-owned-Pod checks. Recovery remains single-flight,
-with its 20-second sweep deadline, off the reservation/claim path.
+with its 20-second sweep deadline, off the reservation/claim path. Independent
+rotating recovery/cleanup cursors resume after the last attempted Job so slow
+early lookups cannot indefinitely hide a later settled claim. Status token
+acquisition shares one outstanding callback, returns promptly on sweep
+cancellation, and uses the real shared source's bounded OAuth HTTP refresh.
 
 A full process restart is required for backend, credentials, topology or
 resource configuration changes. `--check-config` performs the environment

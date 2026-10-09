@@ -162,6 +162,8 @@ type kubernetesQueue struct {
 	logger                *slog.Logger
 	mu                    sync.Mutex
 	held                  int
+	recoveryCursor        queueSweepCursor
+	cleanupCursor         queueSweepCursor
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
 	verifyRun    func(context.Context, string, string) error
@@ -652,7 +654,12 @@ func (q *kubernetesQueue) recover(ctx context.Context) error {
 		return err
 	}
 	var errs []error
-	for _, j := range jobs.Items {
+	for _, j := range q.recoveryCursor.ordered(jobs.Items) {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		q.recoveryCursor.visit(j.Name)
 		if queueJobTerminal(j) {
 			continue
 		}
@@ -686,7 +693,11 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 		return err
 	}
 	var completed []batch.Job
-	for _, j := range jobs.Items {
+	for _, j := range q.cleanupCursor.ordered(jobs.Items) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		q.cleanupCursor.visit(j.Name)
 		if queueJobTerminal(j) {
 			completed = append(completed, j)
 			continue
