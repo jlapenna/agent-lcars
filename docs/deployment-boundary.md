@@ -209,6 +209,15 @@ Superseded sources skip every subsequent step; failed or unreadable main
 lookups fail closed. Explicit manual source requests retain their existing
 semantics and use the same lock.
 
+The admitted deployment queue retains up to 100 waiting jobs with GitHub's
+`queue: max`, so a delayed older eligible source cannot replace a waiting
+newer source. Jobs acquire the lock in order of queue arrival; the in-lock
+source check still prevents stale rollout. If the queue is full, GitHub
+cancels additional jobs. Active deployments are never canceled by this
+queue policy. The pinned actionlint predates this supported queue property;
+a diagnostic exception is restricted to this workflow and this key, and
+required source-fence contracts validate its values and cancellation rules.
+
 An older green source can therefore be skipped while a newer main tip waits
 for CI or has failed CI. The workflow does not deploy that unverified tip or
 fall back to the older source. A successful superseded workflow performed no
