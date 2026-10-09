@@ -87,6 +87,15 @@ runs it against both implementations:
   Collections default to `orchestrator-{tasks,runs,outbox}` (configurable
   prefix, used by tests to avoid collisions in a shared emulator).
 
+Accepted GitHub anchor projection writes also retain a Firestore commit
+watermark, `streamChangedAt`, including when the projection is removed. The
+console's bounded change feed orders by this field rather than GitHub's source
+update time, so a late delivery or removal of an old anchor still invalidates an
+open dashboard. It is datastore notification metadata, outside the domain
+projection schema; existing documents need no backfill because each newly
+accepted write enters the feed. Stream health and refresh/cache authorization
+belong to `apps/console/src/lib/dashboard-stream.ts` and the console route/action.
+
 Explicit quota failures also record a provider admission hold in
 `orchestrator-provider-cooldowns`, atomically with the failed run. Claims read
 that hold inside their selection transaction. A recognized Claude UTC reset

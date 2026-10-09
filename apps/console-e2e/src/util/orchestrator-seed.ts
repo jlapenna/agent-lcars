@@ -1,4 +1,4 @@
-import { FirestoreStore } from '@agent-lcars/orchestrator';
+import { FirestoreStore, Orchestrator } from '@agent-lcars/orchestrator';
 
 /**
  * Seeds `@agent-lcars/orchestrator` task/run documents directly against the
@@ -59,4 +59,43 @@ export async function readActiveOrchestratorRun(params: {
   return run === undefined
     ? undefined
     : { pipeline: run.pipeline, state: run.state };
+}
+
+/** A real durable webhook-projection write, with no fixture route/cache bust. */
+export async function updateDashboardAnchor(params: {
+  issue: number;
+  title?: string;
+  remove?: boolean;
+}) {
+  const store = firestoreStore();
+  const anchor = { repo: E2E_FIXTURE_REPOSITORY, issue: params.issue };
+  const current = await store.readGithubAnchorProjection(anchor);
+  if (!current) throw new Error('Missing seeded anchor');
+  const generation = await store.beginGithubAnchorProjectionRefresh(anchor);
+  await store.applyGithubAnchorProjectionRefresh({
+    anchor,
+    generation,
+    ...(params.remove
+      ? {}
+      : {
+          projection: {
+            ...current,
+            title: params.title ?? current.title,
+            observedAt: new Date().toISOString(),
+          },
+        }),
+  });
+}
+
+/** Changes the same broker lifecycle the worker completion path owns. */
+export async function finishDashboardRun() {
+  const orchestrator = new Orchestrator(firestoreStore(), {
+    now: () => new Date().toISOString(),
+  });
+  const result = await orchestrator.cancel(
+    `${E2E_FIXTURE_REPOSITORY}#9009/r1`,
+    'Console live-update contract',
+  );
+  if ('refused' in result)
+    throw new Error(`Cannot settle fixture run: ${result.reason}`);
 }

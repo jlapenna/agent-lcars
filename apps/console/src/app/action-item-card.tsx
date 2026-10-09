@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { useState, useTransition } from 'react';
+import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import type { ActionItem, MergeableState } from '../lib/action-items';
 import {
@@ -198,6 +198,7 @@ export function ActionItemCard({
   muted,
   onToggleMute,
   variant = 'card',
+  onReplyDraftChange,
 }: {
   item: ActionItem;
   primaryAction?: PrimaryAction;
@@ -213,6 +214,7 @@ export function ActionItemCard({
   /** Workspace mode keeps the existing action behavior but presents it as
    * the selected item's detail pane instead of another card in a card list. */
   variant?: 'card' | 'workspace';
+  onReplyDraftChange?: (hasDraft: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -235,6 +237,12 @@ export function ActionItemCard({
     Pipeline | undefined
   >(supportedAgentPipelines(item.repo)[0]);
   const [isPending, startTransition] = useTransition();
+  const notifyDraft = useEffectEvent((hasDraft: boolean) =>
+    onReplyDraftChange?.(hasDraft),
+  );
+  useEffect(() => {
+    notifyDraft(Boolean(replyBody) || isPending);
+  }, [replyBody, isPending]);
 
   // The Inbox detail pane (variant="workspace") reuses one ActionItemCard
   // instance across selections rather than remounting it per item, so these

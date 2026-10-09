@@ -26,6 +26,7 @@ import { DataWarnings } from '../console-header';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { inboxCardKey, inboxCardMetadata } from '../inbox-card';
+import { LiveDashboard } from '../live-dashboard';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
 import { withConsolePageShell } from '../with-console-page-shell';
@@ -139,13 +140,16 @@ function InboxViewContent({
   subtitle,
 }: InboxViewProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} header={false} />}>
-      <InboxBody
-        repoFilter={repoFilter}
-        selectedItemKey={selectedItemKey}
-        mobileScopeLabel={subtitle}
-      />
-    </Suspense>
+    <>
+      <LiveDashboard />
+      <Suspense fallback={<PageLoading rows={6} header={false} />}>
+        <InboxBody
+          repoFilter={repoFilter}
+          selectedItemKey={selectedItemKey}
+          mobileScopeLabel={subtitle}
+        />
+      </Suspense>
+    </>
   );
 }
 

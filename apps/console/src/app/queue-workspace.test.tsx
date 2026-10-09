@@ -189,6 +189,34 @@ describe('QueueWorkspace native Reply refresh', () => {
       );
     },
   );
+  it('retains a draft and focus when live props remove or reorder the default decision', () => {
+    const workspace = (cards: InboxCard[]) => (
+      <MantineProvider>
+        <QueueWorkspace
+          cards={cards}
+          watchedRepos={[]}
+          replyToWorkItem={vi.fn()}
+        />
+      </MantineProvider>
+    );
+    const view = render(workspace([nativeCard]));
+    const input = screen.getByRole('textbox', { name: 'Reply to the agent' });
+    input.focus();
+    fireEvent.change(input, { target: { value: 'Keep my draft here' } });
+    view.rerender(workspace([makeCard()]));
+    expect(input).toHaveValue('Keep my draft here');
+    expect(input).toHaveFocus();
+    expect(
+      screen.getByRole('button', { name: 'Reply', exact: true }),
+    ).toBeDisabled();
+    expect(screen.getByText(/Your pending reply is preserved/)).toBeVisible();
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.queryByTestId('native-decision-detail')).toBeNull();
+    expect(screen.getByTestId('selected-detail')).toHaveTextContent(
+      'Detail #249',
+    );
+  });
+
   it('keeps refused replies editable without an admitted confirmation', async () => {
     render(
       <MantineProvider>

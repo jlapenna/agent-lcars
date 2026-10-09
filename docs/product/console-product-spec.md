@@ -148,9 +148,18 @@ Shared URL state:
 - **FE-LIVE-3 [Shipped]** Shuttlebay streams runner status over SSE
   (`/api/runner-status/stream`, backed by a Firestore `onSnapshot`). The client
   reconnects with exponential backoff. Status older than 180s is labeled stale.
-- **FE-LIVE-4 [Proposed]** Push queue and agent changes to Bridge, Inbox, and
-  Agents using the same SSE pattern. Today those pages update only on
-  navigation or Refresh.
+- **FE-LIVE-4 [Shipped]** Bridge, Inbox, and Agents receive admin-authorized
+  invalidations from `/api/dashboard/stream`. Bounded Firestore listeners watch
+  accepted anchor changes, tasks, runs, and telemetry; frames contain only
+  health and invalidation signals. Bursts coalesce over five seconds, then the
+  authenticated refresh action expires `AUTHORITATIVE_QUEUE_TAG` and returns
+  the existing route's new RSC tree. Repository scope, selection, reply drafts,
+  and focus survive; a drafted decision that leaves the queue stays mounted
+  with a warning. Health heartbeats do not refresh data. A missing heartbeat
+  is stale after 45 seconds; reconnect backoff caps at 30 seconds. Requests
+  expire after four minutes and release listeners on abort or expiry.
+  The implementation owners are `lib/dashboard-stream.ts`,
+  `app/api/dashboard/stream/route.ts`, and `app/live-dashboard.tsx`.
 
 ### 5.3 Visual system
 
@@ -511,7 +520,7 @@ Priorities assume the single-maintainer design center.
 
 | #   | Item                                                                                                                                  | Why                                                                        | Priority |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------- |
-| R1  | Live updates on Bridge, Inbox, and Agents over SSE, as Shuttlebay already does (FE-LIVE-4)                                            | The queue is the product, and a stale queue costs decisions                | P0       |
+| R1  | Live updates on Bridge, Inbox, and Agents over SSE (FE-LIVE-4, implemented)                                                           | The queue is the product, and a stale queue costs decisions                | P0       |
 | R2  | E2E coverage for the Work list and detail actions, schedules, task detail, Inbox reply submission/dispatch, merge/rebase, and Unstick | Reply layout has partial coverage; these mutating journeys remain unproven | P0       |
 | R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker to replace the URL-only `?repo=`                  | The lists silently truncate                                                | P1       |
 | R4  | One item view for GitHub-anchored and native tasks (FE-TK-2)                                                                          | One `Task` model, so one UI; removes duplicated surfaces                   | P1       |

@@ -47,6 +47,7 @@ import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
 import { inboxCardMetadata } from './inbox-card';
+import { LiveDashboard } from './live-dashboard';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
@@ -314,14 +315,17 @@ function IndexViewContent({
   multiRepo,
 }: IndexViewProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} header={false} />}>
-      <IndexBody
-        repoFilter={repoFilter}
-        repoFilterKey={repoFilterKey}
-        selectedKey={selectedKey}
-        multiRepo={multiRepo}
-      />
-    </Suspense>
+    <>
+      <LiveDashboard />
+      <Suspense fallback={<PageLoading rows={6} header={false} />}>
+        <IndexBody
+          repoFilter={repoFilter}
+          repoFilterKey={repoFilterKey}
+          selectedKey={selectedKey}
+          multiRepo={multiRepo}
+        />
+      </Suspense>
+    </>
   );
 }
 

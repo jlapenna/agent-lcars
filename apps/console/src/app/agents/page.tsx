@@ -36,6 +36,7 @@ import { DataWarnings } from '../console-header';
 import { repoScopedConsoleHrefs } from '../console-hrefs';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
+import { LiveDashboard } from '../live-dashboard';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
@@ -278,9 +279,12 @@ interface AgentsViewProps {
 
 function AgentsViewContent({ repoFilter }: AgentsViewProps) {
   return (
-    <Suspense fallback={<PageLoading rows={5} header={false} />}>
-      <AgentsPageBody repoFilter={repoFilter} />
-    </Suspense>
+    <>
+      <LiveDashboard />
+      <Suspense fallback={<PageLoading rows={5} header={false} />}>
+        <AgentsPageBody repoFilter={repoFilter} />
+      </Suspense>
+    </>
   );
 }
 
