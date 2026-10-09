@@ -1869,7 +1869,7 @@ for provider in claude codex; do
     fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
   fi
 
-  for refusal in heartbeat lookup native exit deadline; do
+  for refusal in heartbeat lookup native exit deadline budget; do
     export FAKE_GH_NO_MATCH=1
     case "$refusal" in
       heartbeat) export FAKE_HEARTBEAT_FAIL=1 ;;
@@ -1877,10 +1877,17 @@ for provider in claude codex; do
       native) export FAKE_NATIVE_OUTCOME=no-op ;;
       exit) export FAKE_WORKER_EXIT=1 ;;
       deadline) export FAKE_WORKER_SLEEP=2 CLAUDE_TIMEOUT_SECONDS=1 CODEX_TIMEOUT_SECONDS=1 ;;
+      # A round that exits cleanly having used its whole budget leaves no
+      # time for a correction; only the shared helper's deadline can say so.
+      budget) export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=5 CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5 ;;
     esac
     run_scenario "$provider-correction-refused-$refusal" "$provider"
-    unset FAKE_GH_NO_MATCH FAKE_HEARTBEAT_FAIL FAKE_GH_LOOKUP_FAIL FAKE_NATIVE_OUTCOME FAKE_WORKER_EXIT FAKE_WORKER_SLEEP CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS
+    unset FAKE_GH_NO_MATCH FAKE_HEARTBEAT_FAIL FAKE_GH_LOOKUP_FAIL FAKE_NATIVE_OUTCOME FAKE_WORKER_EXIT FAKE_WORKER_SLEEP CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS FAKE_CLOCK FAKE_WORKER_ELAPSED
     [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "$provider incorrectly corrected after $refusal"
+    if [ "$refusal" = budget ]; then
+      jq -e '.outcome == "no-deliverable"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+        fail "$provider misreported an exhausted budget ($(tail -n1 "$COMPLETE_LOG"))"
+    fi
     if [ "$refusal" = native ]; then
       [ "$rc" -eq 0 ] || fail "$provider lost the native terminal outcome"
     else

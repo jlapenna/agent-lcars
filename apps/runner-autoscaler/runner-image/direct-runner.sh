@@ -137,14 +137,6 @@ CODEX_AUTH_WAIT_PID=''
 CHECKOUT_REFRESH_PID=''
 OPENCODE_PROXY_PID=''
 EARLY_FAILURE_MESSAGE=''
-# Run deadlines use the kernel's monotonic uptime, not bash's wall-clock
-# $SECONDS: a node clock step must neither grant nor take provider time.
-# DIRECT_RUNNER_UPTIME_FILE lets the test drive this clock exactly.
-monotonic_seconds() {
-  local uptime
-  read -r uptime _ < "${DIRECT_RUNNER_UPTIME_FILE:-/proc/uptime}"
-  printf '%s\n' "${uptime%%.*}"
-}
 cleanup_codex_material() {
   if [ -n "$CODEX_STDERR_TEE_PID" ]; then
     kill "$CODEX_STDERR_TEE_PID" 2>/dev/null || true
