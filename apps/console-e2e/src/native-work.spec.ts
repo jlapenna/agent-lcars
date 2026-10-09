@@ -94,7 +94,12 @@ test.describe('native Work mutation journeys', () => {
         .getByPlaceholder('Reply to the agent...')
         .fill('Use Firestore and retain the audit trail.');
       await reply.click();
-      await expect(page.getByText('running', { exact: true })).toBeVisible();
+      await expect(
+        page
+          .getByRole('row')
+          .filter({ hasText: `work:${ID}/r2` })
+          .getByRole('cell', { name: 'running', exact: true }),
+      ).toBeVisible();
       await page.reload();
       await expect(
         page.getByText('Use Firestore and retain the audit trail.', {
@@ -103,13 +108,17 @@ test.describe('native Work mutation journeys', () => {
       ).toBeVisible();
       await expect(
         page.getByRole('row').filter({ hasText: `work:${ID}/r2` }),
-      ).toContainText('pending');
+      ).toContainText('running');
       await expect(
         page.getByRole('button', { name: 'Reply', exact: true }),
       ).toHaveCount(0);
       const runs = await readNativeRuns();
       expect(runs).toHaveLength(2);
       const admitted = runs.find((run) => run.runId === `work:${ID}/r2`);
+      expect(admitted).toMatchObject({
+        state: 'running',
+        queue: { state: 'queued' },
+      });
       expect(admitted?.params).toMatchObject({
         mode: 'reply',
         reply: 'Use Firestore and retain the audit trail.',
@@ -155,11 +164,16 @@ test.describe('native Work mutation journeys', () => {
     } finally {
       release();
     }
-    await expect(page.getByText('running', { exact: true })).toBeVisible();
+    await expect(
+      page
+        .getByRole('row')
+        .filter({ hasText: `work:${ID}/r2` })
+        .getByRole('cell', { name: 'running', exact: true }),
+    ).toBeVisible();
     await page.reload();
     await expect(
       page.getByRole('row').filter({ hasText: `work:${ID}/r2` }),
-    ).toContainText('pending');
+    ).toContainText('running');
     await expect(
       page.getByRole('button', { name: 'Edit', exact: true }),
     ).toHaveCount(0);
@@ -178,7 +192,11 @@ test.describe('native Work mutation journeys', () => {
     await expect(
       page.getByRole('row').filter({ hasText: TITLE }),
     ).toContainText('canceled');
-    expect(await readNativeRuns()).toHaveLength(2);
+    const runs = await readNativeRuns();
+    expect(runs).toHaveLength(2);
+    expect(runs.find((run) => run.runId === `work:${ID}/r2`)).toMatchObject({
+      state: 'canceled',
+    });
   });
 
   test('keeps a refused edit and reply when a concurrent operator admits work', async ({
