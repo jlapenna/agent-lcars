@@ -118,8 +118,13 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await expect(olderRow).toHaveAttribute('href', /sel=parked/);
   await olderRow.click();
   await expect(page.getByTestId('bridge-detail')).toContainText(
-    'Pagination fixture 1',
+    'work:00000000000000000000000001/r1',
   );
+  await expect(
+    page
+      .getByTestId('bridge-detail')
+      .getByRole('link', { name: 'View full history ↗', exact: true }),
+  ).toHaveAttribute('href', '/work/00000000000000000000000001');
   const selectedUrl = page.url();
   expect(new URL(selectedUrl).searchParams.get('stoppedCursor')).toBe(
     stoppedCursor,
@@ -134,7 +139,7 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await page.goBack();
   await expect(page).toHaveURL(selectedUrl);
   await expect(page.getByTestId('bridge-detail')).toContainText(
-    'Pagination fixture 1',
+    'work:00000000000000000000000001/r1',
   );
   await page.goForward();
   await expect(page).toHaveURL(stoppedPageUrl);
