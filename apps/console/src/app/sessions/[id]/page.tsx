@@ -23,19 +23,10 @@ interface PageProps {
 }
 
 /**
- * The bottom half of an issue-agent session's detail view: either the real
- * turn-by-turn transcript timeline (the persisted `renderable` flag, see
- * `transcript-timeline.ts`'s `RENDERABLE_TRANSCRIPT_AGENTS`), or - for every
- * unsupported agent - a short note that the archive exists without attempting to
- * render it as a transcript. Rendering the latter as a transcript would
- * fail-soft into a scary warning on every one of those session pages for no
- * benefit, since an archive-first agent's raw shape may not even be one file
- * (see `types.ts`'s
- * `transcriptGcsUri` doc comment). This reads the same `renderable` field
- * `session-detail.ts`'s fetch gate does rather than re-deriving its own
- * opinion from the provider. Exported (not
- * inlined into the page below) so both branches are independently
- * unit-testable without rendering the whole async server page.
+ * The archive section renders supported capture-time transcripts and separately
+ * archived OpenCode full exports. Unsupported archive formats keep their URI
+ * note. OpenCode exports on older docs may predate the renderable flag; the
+ * server fetch result is used only alongside that explicit export capability.
  */
 export function ArchivedSessionTranscript({
   doc,
@@ -50,7 +41,10 @@ export function ArchivedSessionTranscript({
 
   const agent = doc.agent;
 
-  if (!doc.renderable) {
+  if (
+    !doc.renderable &&
+    !(doc.agent === 'opencode' && doc.resumeGcsUri && transcript)
+  ) {
     return (
       <Stack gap={4} data-testid="session-archive-note">
         <Text size="sm" c="dimmed">

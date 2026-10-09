@@ -320,7 +320,7 @@ describe('finalizeSidecar', () => {
       expect.objectContaining({
         sessionId: 'ses_opencode_final',
         agent: 'opencode',
-        renderable: false,
+        renderable: true,
         transcriptGcsUri:
           'gs://agent-lcars-session-transcripts/runs/42/opencode/ses_opencode_final.jsonl',
         resumeGcsUri:

@@ -78,6 +78,22 @@ describe('getSessionTranscript', () => {
     expect(result.warning).toContain('could not be parsed');
   });
 
+  it('distinguishes empty and malformed OpenCode archives', async () => {
+    (fetchSessionTranscript as Mock).mockResolvedValue(
+      JSON.stringify({ info: { id: 'ses_empty' }, messages: [] }),
+    );
+    expect(
+      await getSessionTranscript('gs://bucket/empty.export.json', 'opencode'),
+    ).toEqual({ events: [] });
+    (fetchSessionTranscript as Mock).mockResolvedValue('{}');
+    expect(
+      await getSessionTranscript('gs://bucket/bad.export.json', 'opencode'),
+    ).toMatchObject({
+      events: [],
+      warning: expect.stringContaining('malformed'),
+    });
+  });
+
   it('elides a very long transcript', async () => {
     const lines = Array.from({ length: 500 }, (_, i) =>
       JSON.stringify({
