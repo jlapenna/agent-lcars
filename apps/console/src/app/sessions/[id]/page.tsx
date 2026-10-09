@@ -61,7 +61,12 @@ export function ArchivedSessionTranscript({
 
   if (
     !doc.renderable &&
-    !(doc.agent === 'opencode' && doc.resumeGcsUri && transcript)
+    !(
+      doc.source === 'issue-agent' &&
+      doc.agent === 'opencode' &&
+      doc.resumeGcsUri &&
+      transcript
+    )
   ) {
     return (
       <Stack gap={4} data-testid="session-archive-note">
