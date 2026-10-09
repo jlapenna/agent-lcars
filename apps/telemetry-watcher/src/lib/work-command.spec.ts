@@ -204,7 +204,7 @@ describe('lcars work', () => {
           );
           expect(new Headers(init?.headers).has('cookie')).toBe(false);
           return Response.json(
-            { defined: true, code, status, message },
+            { defined: true, code, message },
             { status: Number(status) },
           );
         });
@@ -216,6 +216,11 @@ describe('lcars work', () => {
         ).toEqual({ ok: false });
         expect(d.fetchImpl).toHaveBeenCalledTimes(1);
         expect(d.err.join('\n')).toContain(message);
+        expect(d.err.join('\n')).toContain(
+          Number(status) === 409
+            ? 'check work status'
+            : 'check the bearer identity',
+        );
         expect(d.out).toEqual([]);
       },
     );

@@ -6,7 +6,14 @@ import {
   WORK_PAYLOAD_MAX_BYTES,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
+import {
+  type ItemsContract,
+  itemsContract,
+  WORK_DESCRIPTION_MAX,
+} from '@agent-lcars/work';
+import { createORPCClient } from '@orpc/client';
+import type { RouterContractClient } from '@orpc/contract';
+import { OpenAPILink } from '@orpc/openapi/fetch';
 import { describe, expect, it, vi } from 'vitest';
 
 import { controlPlaneRepository } from './deployment';
@@ -745,6 +752,41 @@ describe('items routes', () => {
   });
 
   describe('reply', () => {
+    it('round-trips the typed client through the actual HTTP handler for admission and conflict feedback', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      const handler = createWorkHandler();
+      const client: RouterContractClient<ItemsContract> = createORPCClient(
+        new OpenAPILink(itemsContract, {
+          origin: 'https://lcars.test',
+          url: '/api/work/v1',
+          fetch: async (input, init) => {
+            const { response } = await handler.handle(
+              new Request(input, init),
+              { prefix: '/api/work/v1', context: ctx },
+            );
+            if (response === undefined)
+              throw new Error('unmatched work request');
+            return response;
+          },
+        }),
+      );
+      const body = { id: ID, text: 'continue', requestId: 'typed-roundtrip' };
+      await expect(client.reply(body)).resolves.toMatchObject({
+        admittedRunId: `work:${ID}/r2`,
+        resumed: true,
+      });
+      await expect(client.reply(body)).resolves.toMatchObject({
+        admittedRunId: `work:${ID}/r2`,
+        resumed: true,
+      });
+      await expect(
+        client.reply({ ...body, text: 'changed' }),
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: 'request-id already used for a different reply',
+      });
+    });
     it('replays a caller key during execution and after later rounds without minting another run', async () => {
       const ctx = contextWithSession({
         principal: { ...operator, via: 'google' },
