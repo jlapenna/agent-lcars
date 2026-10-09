@@ -11,13 +11,17 @@ import {
   isStorageBackend,
   loadStorageState,
   normalizeOrigin,
-  savedSessionExpiration,
   secretNameForRole,
   SESSION_ROLES,
   STORAGE_BACKENDS,
   targetUrlFor,
   verificationStatus,
 } from './saved-session-lib.mjs';
+import {
+  readinessExitCode,
+  readinessMessage,
+  savedSessionReadiness,
+} from './session-readiness.mjs';
 
 function usage() {
   console.error(
@@ -94,23 +98,18 @@ async function main() {
     secretName,
   });
   const minimumValidDays = Number(values['minimum-valid-days']);
+  const readiness = savedSessionReadiness(storageState, minimumValidDays);
+  if (
+    readiness.status === 'expired' ||
+    (minimumValidDays > 0 && readiness.status !== 'ready')
+  ) {
+    console.error(readinessMessage(readiness));
+    return readinessExitCode(readiness.status);
+  }
   if (minimumValidDays > 0) {
-    const expiration = savedSessionExpiration(storageState);
-    if (expiration === undefined) {
-      console.error(
-        `SESSION_EXPIRY_UNKNOWN: ${source} has no persistent Auth.js cookie expiry, so rotation cannot be scheduled safely.`,
-      );
-      return 4;
-    }
-    const minimumExpiration = Date.now() / 1000 + minimumValidDays * 86_400;
-    if (expiration < minimumExpiration) {
-      console.error(
-        `SESSION_EXPIRING: ${source} expires before the required ${minimumValidDays}-day safety window. Re-run the @agent-lcars/console:mint-session target.`,
-      );
-      return 4;
-    }
     console.log(
-      `PASS: saved session remains valid for at least ${minimumValidDays} more days.`,
+      `PASS: saved session remains valid for at least ${minimumValidDays} more days. ` +
+        `expiresAt=${readiness.expiresAt} rotateBy=${readiness.rotateBy}`,
     );
   }
 
