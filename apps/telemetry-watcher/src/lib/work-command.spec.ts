@@ -155,7 +155,7 @@ describe('lcars work', () => {
       ['reply', id, '--text', 'hi', '--unknown'],
       ['reply', id, '--text'],
       ['reply', id, 'extra', '--text', 'hi'],
-    ])('rejects invalid input before HTTP (case %$)', async (args) => {
+    ])('rejects invalid input before HTTP (case %$)', async (...args) => {
       const d = deps({});
       expect((await executeWorkCommand(args, d)).ok).toBe(false);
       expect(d.calls).toEqual([]);
