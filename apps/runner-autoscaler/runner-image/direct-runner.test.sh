@@ -1032,15 +1032,19 @@ grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE
 # Fixture argv paths contain no whitespace. Check exact values per lifecycle
 # phase so a descendant path or duplicate phase cannot satisfy the receipt.
 for phase in sidecar finalize; do
-  sidecar_session_calls="$(awk -v expected="$codex_sessions_dir" -v phase="$phase" '
+  sidecar_session_valid="$(awk -v expected="$codex_sessions_dir" -v phase="$phase" '
     $2 == "runner" && $3 == phase {
-      for (i = 1; i < NF; i++) {
-        if ($i == "--codex-sessions-dir" && $(i + 1) == expected) count++
+      calls++
+      for (i = 1; i <= NF; i++) {
+        if ($i == "--codex-sessions-dir") {
+          flags++
+          if (i < NF && $(i + 1) == expected) correct++
+        }
       }
     }
-    END { print count + 0 }
+    END { print (calls == 1 && flags == 1 && correct == 1) ? 1 : 0 }
   ' "$NODE_ARGS_LOG")"
-  [ "$sidecar_session_calls" -eq 1 ] ||
+  [ "$sidecar_session_valid" -eq 1 ] ||
     fail "codex happy path: runner $phase did not receive exactly one correct Codex sessions root ($(cat "$NODE_ARGS_LOG"))"
 done
 [ -s "$CODEX_AUTH_PERSIST_LOG" ] || fail "codex happy path: auth.json was not persisted"
