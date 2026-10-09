@@ -97,6 +97,7 @@
           "account": "supersprinklesracing",
           "repositorySelection": "all",
           "repositories": [
+            "supersprinklesracing/design",
             "supersprinklesracing/ghost-theme-supersprinkles",
             "supersprinklesracing/girosf",
             "supersprinklesracing/pos",
@@ -104,7 +105,7 @@
             "supersprinklesracing/sprinkles",
             "supersprinklesracing/www"
           ],
-          "_note": "Still 'all'. #1381 decided to narrow this one to the three fleet repos (sprinkles, www, girosf), dropping ghost-theme-supersprinkles, pos and preem-machine - none of which hold a self-hosted runner or a workflow targeting one. Today's live value is modelled so the check is green now; when the maintainer makes the UI change this entry takes one edit (selection -> 'selected', three repositories)."
+          "_note": "Still 'all'. #1381 decided to narrow this one to the three fleet repos (sprinkles, www, girosf), dropping design, ghost-theme-supersprinkles, pos and preem-machine - none of which hold a self-hosted runner or a workflow targeting one. Today's live value is modelled so the check is green now; when the maintainer makes the UI change this entry takes one edit (selection -> 'selected', three repositories)."
         }
       ],
       "permissions": {
@@ -113,7 +114,7 @@
         "metadata": "read"
       },
       "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. It also carries actions:read (App settings UI, 2026-09-20) for the github-actions-exporter deployed on homelab: since jlapenna/agent-lcars#2024 the exporter authenticates as this App with a copy of the same key and reads /repos/{owner}/{repo}/actions/runs, which needs Actions read. Prose: docs/fleet-credentials.md ('Autoscaler App key').",
-      "_scopeNote": "This App holds administration:write, so an installation's scope is authority over every repository it covers. Scope is asymmetric today: jlapenna is 'selected' (5), supersprinklesracing is still 'all' (6). Recorded as observed, not endorsed - #1381 is the execution record for narrowing both to the fleet repos. The full repository lists are modelled deliberately even though an 'all' installation's list churns: for an administration:write App, a new repository silently gaining an admin-capable installation is exactly the change worth being told about."
+      "_scopeNote": "This App holds administration:write, so an installation's scope is authority over every repository it covers. Scope is asymmetric today: jlapenna is 'selected' (5), supersprinklesracing is still 'all' (7; design joined automatically when it was created on 2026-10-06). Recorded as observed, not endorsed - #1381 is the execution record for narrowing both to the fleet repos. The full repository lists are modelled deliberately even though an 'all' installation's list churns: for an administration:write App, a new repository silently gaining an admin-capable installation is exactly the change worth being told about."
     }
   ],
   "fleetCoverageExceptions": [],
