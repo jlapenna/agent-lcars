@@ -29,6 +29,7 @@ import { inboxCardKey, inboxCardMetadata } from '../inbox-card';
 import { LiveDashboard } from '../live-dashboard';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
+import { RepositorySelector } from '../repository-selector';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { replyToWorkItem } from '../work/actions';
 import { context as workContext } from '../work/context';
@@ -135,12 +136,18 @@ interface InboxViewProps {
 }
 
 function InboxViewContent({
+  watchedRepos,
   repoFilter,
   selectedItemKey,
   subtitle,
 }: InboxViewProps) {
   return (
     <>
+      <RepositorySelector
+        repos={watchedRepos}
+        selected={repoFilter ? repoKey(repoFilter) : undefined}
+        action="/inbox"
+      />
       <LiveDashboard />
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <InboxBody

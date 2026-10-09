@@ -54,10 +54,12 @@ export function parseBridgeSelection(
 export function bridgeSelectionHref(
   key: BridgeSelectionKey | undefined,
   repoFilterKey?: string,
+  stoppedCursor?: string,
 ): string {
   const params = new URLSearchParams();
   if (repoFilterKey) params.set('repo', repoFilterKey);
   if (key) params.set(SEL_PARAM, key);
+  if (stoppedCursor) params.set('stoppedCursor', stoppedCursor);
   const query = params.toString();
   return query ? `/?${query}` : '/';
 }

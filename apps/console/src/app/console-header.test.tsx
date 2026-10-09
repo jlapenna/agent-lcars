@@ -172,7 +172,7 @@ describe('ConsoleHeader nav rail', () => {
     ).toBe('/');
   });
 
-  it('preserves repository scope between Deck and Inbox', () => {
+  it('preserves repository scope between Bridge, Inbox and Agents', () => {
     render(
       <MantineProvider>
         <ConsoleHeader
@@ -194,7 +194,7 @@ describe('ConsoleHeader nav rail', () => {
     );
     expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute(
       'href',
-      '/agents',
+      '/agents?repo=example%2Fconsole',
     );
   });
 });

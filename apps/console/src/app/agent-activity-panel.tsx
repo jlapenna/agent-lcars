@@ -960,6 +960,7 @@ export function AgentActivityPanel({
   itemsByRunId = {},
   sessionsByRunId = {},
   repoFilter,
+  stoppedCursor,
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
@@ -970,6 +971,7 @@ export function AgentActivityPanel({
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   /** Keep the Bridge's active repository scope when opening full history. */
   repoFilter?: string;
+  stoppedCursor?: string;
 }) {
   const { liveRuns, recentRuns, fleet } = activity;
   const outcomesHref = repoFilter
@@ -983,7 +985,7 @@ export function AgentActivityPanel({
   // that row's detail without leaving the page. `repoFilter` is already the
   // active repo *key*, so selection links preserve the scope.
   const selectHrefFor = (run: AgentRun) =>
-    bridgeSelectionHref(runKey(run), repoFilter);
+    bridgeSelectionHref(runKey(run), repoFilter, stoppedCursor);
 
   return (
     <Card
@@ -1035,6 +1037,7 @@ export function AgentActivityPanel({
                       selectHref={bridgeSelectionHref(
                         sessionKey(session),
                         repoFilter,
+                        stoppedCursor,
                       )}
                     />
                   ))}
@@ -1059,7 +1062,11 @@ export function AgentActivityPanel({
                   run={run}
                   session={sessionsByRunId[run.id]}
                   variant="operations"
-                  selectHref={bridgeSelectionHref(runKey(run), repoFilter)}
+                  selectHref={bridgeSelectionHref(
+                    runKey(run),
+                    repoFilter,
+                    stoppedCursor,
+                  )}
                 />
               ))}
             </Stack>

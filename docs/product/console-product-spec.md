@@ -375,11 +375,14 @@ GitHub issues, and manage recurring work.
     and supports enable and disable.
   - The API and store record a `disabledReason` (`grant-revoked`, `operator`,
     or `invalid`), but the list does not show it.
-- **FE-WK-6 [Partial]** The UI has no paging past 200 items and no filters,
-  although the Work API already supports a cursor and state, principal, and
-  repo filters. Schedules have no edit or delete in the UI or the API (a
-  `PUT` accepts only a new or identical schedule), and no time zone other
-  than UTC. See R3 and R8.
+- **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
+  and cursor-based next-page navigation in the URL. Each page examines up to
+  200 native tasks; an empty filtered page can still lead to older matches.
+  Bridge stopped work pages over the authoritative all-anchor task feed with
+  the same explicit 200-task bound. Bridge, Inbox, and Agents have a repository
+  selector and clear action, with scope preserved across their navigation.
+  Schedules still have no edit or delete in the UI or the API (a `PUT` accepts
+  only a new or identical schedule), and no time zone other than UTC. See R8.
 
 ### 6.6 Task detail (`/task/[owner]/[repo]/[issue]`)
 
@@ -522,7 +525,7 @@ Priorities assume the single-maintainer design center.
 | --- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------- |
 | R1  | Live updates on Bridge, Inbox, and Agents over SSE (FE-LIVE-4, implemented)                                                           | The queue is the product, and a stale queue costs decisions                | P0       |
 | R2  | E2E coverage for the Work list and detail actions, schedules, task detail, Inbox reply submission/dispatch, merge/rebase, and Unstick | Reply layout has partial coverage; these mutating journeys remain unproven | P0       |
-| R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker to replace the URL-only `?repo=`                  | The lists silently truncate                                                | P1       |
+| R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker (implemented)                                     | Bounded raw pages retain cursors even when filters find no matches         | P1       |
 | R4  | One item view for GitHub-anchored and native tasks (FE-TK-2)                                                                          | One `Task` model, so one UI; removes duplicated surfaces                   | P1       |
 | R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6)                                                                            | Grants already model this; sign-in blocks it                               | P1       |
 | R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI      | P1       |

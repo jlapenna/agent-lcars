@@ -59,6 +59,7 @@ function IdleItemsSection({
   testId,
   rowTestIdPrefix,
   repoFilterKey,
+  stoppedCursor,
 }: {
   cards: BoardCard[];
   title: string;
@@ -67,6 +68,7 @@ function IdleItemsSection({
   testId: string;
   rowTestIdPrefix: string;
   repoFilterKey?: string;
+  stoppedCursor?: string;
 }) {
   if (cards.length === 0) return null;
 
@@ -102,7 +104,11 @@ function IdleItemsSection({
               <RepoBadge repo={item.repo} />
               <BridgePaneLink
                 mobileHref={item.url}
-                paneHref={bridgeSelectionHref(itemKey(item), repoFilterKey)}
+                paneHref={bridgeSelectionHref(
+                  itemKey(item),
+                  repoFilterKey,
+                  stoppedCursor,
+                )}
                 target="_blank"
                 rel="noreferrer"
                 size="sm"
@@ -117,7 +123,11 @@ function IdleItemsSection({
             </Group>
             <BridgePaneLink
               mobileHref={item.url}
-              paneHref={bridgeSelectionHref(itemKey(item), repoFilterKey)}
+              paneHref={bridgeSelectionHref(
+                itemKey(item),
+                repoFilterKey,
+                stoppedCursor,
+              )}
               target="_blank"
               rel="noreferrer"
               size="sm"
@@ -149,10 +159,12 @@ export function BridgeSections({
   waitingOnDeploy,
   blocked = [],
   repoFilterKey,
+  stoppedCursor,
 }: {
   waitingOnDeploy: BoardCard[];
   blocked?: BoardCard[];
   repoFilterKey?: string;
+  stoppedCursor?: string;
 }) {
   return (
     <>
@@ -164,6 +176,7 @@ export function BridgeSections({
         testId="waiting-on-deploy"
         rowTestIdPrefix="deploy-wait-item"
         repoFilterKey={repoFilterKey}
+        stoppedCursor={stoppedCursor}
       />
       <IdleItemsSection
         cards={blocked}
@@ -173,6 +186,7 @@ export function BridgeSections({
         testId="blocked-work"
         rowTestIdPrefix="blocked-item"
         repoFilterKey={repoFilterKey}
+        stoppedCursor={stoppedCursor}
       />
     </>
   );

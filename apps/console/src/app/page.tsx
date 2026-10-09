@@ -1,4 +1,5 @@
 import { logger } from '@agent-lcars/logging';
+import type { TaskListCursor } from '@agent-lcars/orchestrator';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Box } from '@mantine/core';
 import { Suspense } from 'react';
@@ -51,6 +52,8 @@ import { LiveDashboard } from './live-dashboard';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
+import { RepositorySelector } from './repository-selector';
+import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
 import { context as workContext } from './work/context';
@@ -74,9 +77,14 @@ function toCard(item: ActionItem): BoardCard {
  * `resolveBridgeDetail` - a "Stopped work" row's `?sel=` must resolve to the
  * *same* item the list renders, matching every other Bridge row kind.
  */
-async function getParkedWork(): Promise<{
+async function getParkedWork(
+  repo?: string,
+  rawCursor?: string,
+): Promise<{
   items: WorkSummary[];
   hasMoreTasks: boolean;
+  nextCursor?: TaskListCursor;
+  error?: string;
 }> {
   try {
     const work = await workContext();
@@ -85,35 +93,54 @@ async function getParkedWork(): Promise<{
     }
     const page = await listWorkSummaries(work.runtime.store, {
       limit: 200,
+      cursor: parseStoppedWorkCursor(rawCursor),
     });
     const items = await excludeClosedGithubAnchors(
       work.runtime.store,
-      page.items,
+      page.items.filter(
+        (item) =>
+          (item.state === 'parked' || item.state === 'failed') &&
+          (!repo || item.spec.target.repo === repo),
+      ),
     );
-    return { items, hasMoreTasks: page.nextCursor !== undefined };
+    return {
+      items,
+      hasMoreTasks: page.nextCursor !== undefined,
+      nextCursor: page.nextCursor,
+    };
   } catch (error) {
     // The Bridge must never fall to error.tsx because this panel's fetch
-    // failed - matches runner-sessions.ts's defensive contract (degrade to
-    // nothing rendered, not a crashed page) rather than 500ing the whole
-    // Bridge over an optional slot.
+    // failed. Keep the rest of the Bridge available and disclose the failed
+    // read with a reset link rather than presenting it as an empty queue.
     logger.error('agent-lcars: parked work panel unavailable:', error);
-    return { items: [], hasMoreTasks: false };
+    return {
+      items: [],
+      hasMoreTasks: false,
+      error:
+        'Could not load stopped work. Retry or reset the stopped-work page.',
+    };
   }
 }
 
 interface PageProps {
-  searchParams: Promise<{ repo?: string; sel?: string }>;
+  searchParams: Promise<{
+    repo?: string;
+    sel?: string;
+    stoppedCursor?: string;
+  }>;
 }
 
 async function IndexBody({
   repoFilter,
   repoFilterKey,
   selectedKey,
+  stoppedCursor,
   multiRepo,
 }: {
   repoFilter: WatchedRepo | undefined;
   repoFilterKey?: string;
   selectedKey?: string;
+  stoppedCursor?: string;
   multiRepo: boolean;
 }) {
   const [
@@ -124,14 +151,19 @@ async function IndexBody({
     { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
-    { items: parkedWorkItems, hasMoreTasks: hasMoreParkedTasks },
+    {
+      items: parkedWorkItems,
+      hasMoreTasks: hasMoreParkedTasks,
+      nextCursor: stoppedNextCursor,
+      error: stoppedError,
+    },
     nativeInbox,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
-    getParkedWork(),
+    getParkedWork(repoFilterKey, stoppedCursor),
     getNativeInboxEvidence(async () => {
       const context = await workContext();
       return { store: context.runtime.store, principal: context.principal };
@@ -177,10 +209,8 @@ async function IndexBody({
   // Applied last, after every cross-repo join above (itemsByRunId,
   // liveRunFor, silent-error diagnoses) already ran against the full,
   // unfiltered data - a repo filter should narrow what's *displayed*, never
-  // which items can see each other's runs/sessions. No filter chrome beyond
-  // the `?repo=` param itself (matching parseSessionArchiveQuery's "a
-  // maintainer edits the URL bar directly" philosophy, #2694/#3019) - the
-  // repo badges throughout the board link here.
+  // which items can see each other's runs/sessions. The repository selector
+  // and scoped navigation share this same `?repo=` state.
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
   const filteredActivity = repoFilter
@@ -258,9 +288,21 @@ async function IndexBody({
           <ParkedWorkPanel
             items={parkedWorkItems}
             hasMoreTasks={hasMoreParkedTasks}
+            error={stoppedError}
+            nextPageHref={
+              stoppedNextCursor
+                ? stoppedWorkHref(repoFilterKey, stoppedNextCursor)
+                : undefined
+            }
+            firstPageHref={
+              stoppedCursor || stoppedError
+                ? stoppedWorkHref(repoFilterKey)
+                : undefined
+            }
             cancel={cancelItem}
             redispatch={redispatchItem}
             repoFilterKey={repoFilterKey}
+            stoppedCursor={stoppedCursor}
           />
 
           <AgentActivityPanel
@@ -269,12 +311,14 @@ async function IndexBody({
             itemsByRunId={itemsByRunId}
             sessionsByRunId={sessionsByRunId}
             repoFilter={repoFilterKey}
+            stoppedCursor={stoppedCursor}
           />
 
           <BridgeSections
             waitingOnDeploy={deployCards}
             blocked={blockedCards}
             repoFilterKey={repoFilterKey}
+            stoppedCursor={stoppedCursor}
           />
         </div>
 
@@ -282,6 +326,7 @@ async function IndexBody({
           <BridgeDetail
             detail={detail}
             repoFilterKey={repoFilterKey}
+            stoppedCursor={stoppedCursor}
             cancel={cancelItem}
             redispatch={redispatchItem}
           />
@@ -304,24 +349,36 @@ interface IndexViewProps {
   repoFilter: ReturnType<typeof parseRepoFilterParam>;
   repoFilterKey?: string;
   selectedKey?: string;
+  stoppedCursor?: string;
   multiRepo: boolean;
   subtitle: string;
 }
 
 function IndexViewContent({
+  watchedRepos,
   repoFilter,
   repoFilterKey,
   selectedKey,
+  stoppedCursor,
   multiRepo,
 }: IndexViewProps) {
   return (
     <>
+      <RepositorySelector
+        repos={watchedRepos}
+        selected={repoFilter ? repoKey(repoFilter) : undefined}
+        action="/"
+      />
       <LiveDashboard />
-      <Suspense fallback={<PageLoading rows={6} header={false} />}>
+      <Suspense
+        key={`${repoFilterKey ?? ''}:${stoppedCursor ?? ''}`}
+        fallback={<PageLoading rows={6} header={false} />}
+      >
         <IndexBody
           repoFilter={repoFilter}
           repoFilterKey={repoFilterKey}
           selectedKey={selectedKey}
+          stoppedCursor={stoppedCursor}
           multiRepo={multiRepo}
         />
       </Suspense>
@@ -393,6 +450,7 @@ async function IndexShell({ searchParams }: PageProps) {
       repoFilter={repoFilter}
       repoFilterKey={repoFilterKey}
       selectedKey={selectedKey}
+      stoppedCursor={params.stoppedCursor}
       multiRepo={watchedRepos.length > 1}
       subtitle={subtitle}
     />

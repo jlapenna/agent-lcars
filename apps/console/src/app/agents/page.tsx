@@ -38,6 +38,7 @@ import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { LiveDashboard } from '../live-dashboard';
 import { NavPageLoading, PageLoading } from '../page-loading';
+import { RepositorySelector } from '../repository-selector';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
 import { AgentsWorkspace } from './agents-workspace';
@@ -277,9 +278,14 @@ interface AgentsViewProps {
   subtitle: string;
 }
 
-function AgentsViewContent({ repoFilter }: AgentsViewProps) {
+function AgentsViewContent({ repoFilter, watchedRepos }: AgentsViewProps) {
   return (
     <>
+      <RepositorySelector
+        repos={watchedRepos}
+        selected={repoFilter ? repoKey(repoFilter) : undefined}
+        action="/agents"
+      />
       <LiveDashboard />
       <Suspense fallback={<PageLoading rows={5} header={false} />}>
         <AgentsPageBody repoFilter={repoFilter} />

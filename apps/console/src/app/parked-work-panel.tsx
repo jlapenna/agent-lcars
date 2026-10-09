@@ -39,23 +39,32 @@ export function githubIssueHref(anchor: {
 export function ParkedWorkPanel({
   items,
   hasMoreTasks,
+  nextPageHref,
+  firstPageHref,
+  error,
   cancel,
   redispatch,
   repoFilterKey,
+  stoppedCursor,
 }: {
   items: WorkSummary[];
   hasMoreTasks: boolean;
+  nextPageHref?: string;
+  firstPageHref?: string;
+  error?: string;
   cancel: WorkAction;
   redispatch: WorkAction;
   /** Threaded through to `bridgeSelectionHref` so a row's selection link
    *  preserves the Bridge's active repo scope, matching every other
    *  selectable row (`IdleItemsSection`, the operational rows). */
   repoFilterKey?: string;
+  stoppedCursor?: string;
 }) {
   const parked = items
     .filter((item) => item.state === 'parked' || item.state === 'failed')
     .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-  if (parked.length === 0 && !hasMoreTasks) return null;
+  if (parked.length === 0 && !hasMoreTasks && !firstPageHref && !error)
+    return null;
   return (
     <Card
       withBorder
@@ -69,9 +78,9 @@ export function ParkedWorkPanel({
       <Title order={3} size="h5">
         Stopped work ({parked.length})
       </Title>
-      {parked.length === 0 ? (
+      {parked.length === 0 && !error ? (
         <Text size="sm" c="dimmed" mt="xs">
-          No stopped work in the 200 most recently updated tasks.
+          No stopped work on this page of up to 200 tasks.
         </Text>
       ) : (
         <Stack gap={0} mt="xs">
@@ -91,6 +100,7 @@ export function ParkedWorkPanel({
                     paneHref={bridgeSelectionHref(
                       parkedWorkKey(item),
                       repoFilterKey,
+                      stoppedCursor,
                     )}
                     size="sm"
                     fw={600}
@@ -132,6 +142,23 @@ export function ParkedWorkPanel({
           })}
         </Stack>
       )}
+      {error && (
+        <Text role="alert" size="sm">
+          {error}
+        </Text>
+      )}
+      <Group mt="xs" wrap="wrap">
+        {firstPageHref && (
+          <Anchor href={firstPageHref} size="sm">
+            Reset stopped-work page
+          </Anchor>
+        )}
+        {nextPageHref && (
+          <Anchor href={nextPageHref} size="sm">
+            Older stopped work →
+          </Anchor>
+        )}
+      </Group>
       {hasMoreTasks && (
         <Text size="xs" c="dimmed" mt="xs">
           Older tasks may contain stopped work.
