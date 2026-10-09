@@ -1,4 +1,8 @@
-import { FirestoreStore, Orchestrator } from '@agent-lcars/orchestrator';
+import {
+  decidedRun,
+  FirestoreStore,
+  Orchestrator,
+} from '@agent-lcars/orchestrator';
 
 /**
  * Seeds `@agent-lcars/orchestrator` task/run documents directly against the
@@ -176,8 +180,9 @@ export async function seedWorkPagination() {
     });
     if ('refused' in result) throw new Error(result.reason);
     if (index === 1) {
-      await orchestrator.confirmDispatch(result.run.runId);
-      await orchestrator.report(result.run.runId, {
+      const run = decidedRun(result);
+      await orchestrator.confirmDispatch(run.runId);
+      await orchestrator.report(run.runId, {
         ok: true,
         summary: 'park',
       });
