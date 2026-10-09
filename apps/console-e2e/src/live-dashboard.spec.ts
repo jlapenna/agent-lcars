@@ -182,6 +182,100 @@ test.describe('live authoritative dashboards', () => {
     ).toHaveCount(0);
   });
 
+  test('preserves the real GitHub reply editor across authoritative refreshes', async ({
+    page,
+  }) => {
+    await page.goto('/inbox?repo=supersprinklesracing%2Fsprinkles');
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`)
+      .getByRole('link')
+      .click();
+    await expect(page.getByTestId('live-dashboard-status')).toHaveText(
+      /Live updates connected/,
+      { timeout: 20_000 },
+    );
+    const selectedUrl = page.url();
+    const identity = page.locator('.queue-detail-identity');
+    await expect(identity).toContainText(`#${E2E_ITEM_NUMBERS.humanNeeded}`);
+    const draft = page
+      .locator('.queue-workspace__detail')
+      .getByPlaceholder(/Reply/);
+    await draft.fill('Keep this GitHub comment under its original identity.');
+    await updateDashboardAnchor({
+      issue: E2E_ITEM_NUMBERS.runFailed,
+      title: 'Another GitHub decision changed live',
+    });
+    await expect(
+      page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.runFailed}`),
+    ).toContainText('Another GitHub decision changed live', {
+      timeout: 20_000,
+    });
+    await expect(draft).toHaveValue(
+      'Keep this GitHub comment under its original identity.',
+    );
+    await expect(draft).toBeFocused();
+    await expect(identity).toContainText(`#${E2E_ITEM_NUMBERS.humanNeeded}`);
+    await expect(page).toHaveURL(selectedUrl);
+  });
+
+  test('retains a removed GitHub draft and clears it before selecting another decision', async ({
+    page,
+  }) => {
+    await page.goto('/inbox?repo=supersprinklesracing%2Fsprinkles');
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`)
+      .getByRole('link')
+      .click();
+    await expect(page.getByTestId('live-dashboard-status')).toHaveText(
+      /Live updates connected/,
+      { timeout: 20_000 },
+    );
+    const selectedUrl = page.url();
+    const detail = page.locator('.queue-workspace__detail');
+    const draft = detail.getByPlaceholder(/Reply/);
+    await draft.fill('Never transfer this GitHub draft.');
+    await updateDashboardAnchor({
+      issue: E2E_ITEM_NUMBERS.humanNeeded,
+      remove: true,
+    });
+    await expect(
+      page.getByText(
+        'The selected item left the queue. Your pending reply is preserved.',
+      ),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`),
+    ).toHaveCount(0);
+    await expect(page.locator('.queue-detail-identity')).toContainText(
+      `#${E2E_ITEM_NUMBERS.humanNeeded}`,
+    );
+    await expect(draft).toHaveValue('Never transfer this GitHub draft.');
+    await expect(draft).toBeFocused();
+    await expect(page).toHaveURL(selectedUrl);
+    // An authorized plain comment remains possible on the original GitHub issue;
+    // leaving this queue does not grant or require an agent dispatch.
+    await expect(
+      detail.getByRole('button', { name: 'Reply', exact: true }),
+    ).toBeEnabled();
+    await expect(
+      detail.getByRole('button', { name: 'Reply & dispatch', exact: true }),
+    ).toHaveCount(0);
+    await draft.fill('');
+    await expect(
+      page.getByText('Your pending reply is preserved.', { exact: false }),
+    ).toHaveCount(0);
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.runFailed}`)
+      .getByRole('link')
+      .click();
+    await expect(page.locator('.queue-detail-identity')).toContainText(
+      `#${E2E_ITEM_NUMBERS.runFailed}`,
+    );
+    await detail.getByRole('button', { name: 'Reply…', exact: true }).click();
+    await expect(detail.getByPlaceholder(/Reply/)).toHaveValue('');
+    await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
+  });
+
   test('denies stream access without the admin session', async ({
     request,
   }) => {
