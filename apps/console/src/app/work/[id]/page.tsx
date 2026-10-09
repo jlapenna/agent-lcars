@@ -1,19 +1,5 @@
 import { type ItemView, latestRun } from '@agent-lcars/work/derive';
-import {
-  Anchor,
-  Badge,
-  Group,
-  Stack,
-  Table,
-  TableScrollContainer,
-  TableTbody,
-  TableTd,
-  TableTh,
-  TableThead,
-  TableTr,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Stack, Text } from '@mantine/core';
 import { notFound, redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -24,6 +10,7 @@ import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
+import { TaskDetailHistory } from '../../task/task-detail-history';
 import { withConsolePageShell } from '../../with-console-page-shell';
 import {
   cancelItem,
@@ -32,141 +19,11 @@ import {
   replyToWorkItem,
   updateItem,
 } from '../actions';
-import { Conversation } from '../conversation';
 import { EditWork } from '../edit-work';
-import { safeHttpUrl } from '../safe-url';
 import { WorkActions } from '../work-actions';
 
 interface PageProps {
   params: Promise<{ id: string }>;
-}
-
-const STATE_COLORS: Record<ItemView['state'], string> = {
-  parked: 'yellow',
-  failed: 'red',
-  running: 'blue',
-  done: 'green',
-  canceled: 'gray',
-};
-
-/** `run.result.ref` is agent-reported and opaque (see `model.ts`'s
- *  `runResultSchema`); render it as a link only once `safeHttpUrl` confirms
- *  it is an absolute http(s) URL, otherwise as inert text. */
-function RunRef({ value }: { value: string | undefined }) {
-  const href = safeHttpUrl(value);
-  if (href) {
-    return (
-      <Anchor href={href} target="_blank" rel="noreferrer" size="xs">
-        ref
-      </Anchor>
-    );
-  }
-  if (value) {
-    return (
-      <Text size="xs" c="dimmed">
-        {value}
-      </Text>
-    );
-  }
-  return null;
-}
-
-export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
-  if (runs.length === 0) {
-    return (
-      <Text c="dimmed" size="sm">
-        No runs yet.
-      </Text>
-    );
-  }
-  return (
-    <TableScrollContainer minWidth={560} className="work-runs-table-scroll">
-      <Table verticalSpacing="xs" fz="sm">
-        <TableThead>
-          <TableTr>
-            <TableTh>Run</TableTh>
-            <TableTh>State</TableTh>
-            <TableTh>Executor</TableTh>
-            <TableTh>Result</TableTh>
-            <TableTh>Summary</TableTh>
-            <TableTh>Ref</TableTh>
-          </TableTr>
-        </TableThead>
-        <TableTbody>
-          {runs.map((run) => (
-            <TableTr key={run.runId}>
-              <TableTd>{run.runId}</TableTd>
-              <TableTd>{run.state}</TableTd>
-              <TableTd>
-                <Stack gap={0}>
-                  <Text size="xs">Queue executor</Text>
-                  {run.queue?.state === 'claimed' && run.queue.claimedBy && (
-                    <Text size="xs" c="dimmed">
-                      claimed by {run.queue.claimedBy}
-                    </Text>
-                  )}
-                </Stack>
-              </TableTd>
-              <TableTd>
-                {run.result && (
-                  <Badge
-                    variant="light"
-                    size="xs"
-                    color={run.result.ok ? 'green' : 'red'}
-                  >
-                    {run.result.ok ? 'ok' : 'not ok'}
-                  </Badge>
-                )}
-              </TableTd>
-              <TableTd>{run.result?.summary}</TableTd>
-              <TableTd>
-                <RunRef value={run.result?.ref} />
-              </TableTd>
-            </TableTr>
-          ))}
-        </TableTbody>
-      </Table>
-    </TableScrollContainer>
-  );
-}
-
-/** `pinned` reflects whether the item that owns these sessions is still
- *  open (`running`/`parked`) - derived from state already on hand, not a
- *  new fetch. */
-export function SessionsList({
-  sessions,
-  pinned,
-}: {
-  sessions: ItemView['sessions'];
-  pinned: boolean;
-}) {
-  if (sessions.length === 0) {
-    return (
-      <Text c="dimmed" size="sm">
-        No sessions yet.
-      </Text>
-    );
-  }
-  return (
-    <Stack gap={4}>
-      {sessions.map((session) => (
-        <Group key={session.sessionId} gap="xs">
-          <Anchor
-            href={`/sessions/${encodeURIComponent(session.sessionId)}`}
-            size="sm"
-          >
-            {session.title ?? session.sessionId}
-            {session.status ? ` · ${session.status}` : ''}
-          </Anchor>
-          {pinned && (
-            <Badge size="xs" variant="outline" color="teal">
-              pinned
-            </Badge>
-          )}
-        </Group>
-      ))}
-    </Stack>
-  );
 }
 
 /** Discriminated on `status` rather than an optional `item`/`message` pair,
@@ -198,21 +55,9 @@ export function WorkDetailViewContent({ detail }: WorkDetailContentProps) {
   }
 
   const { item } = detail;
-  const pinned =
-    item.state === 'running' ||
-    item.state === 'parked' ||
-    item.state === 'failed';
 
   return (
     <Stack gap="md">
-      <Group gap="xs">
-        <Badge color={STATE_COLORS[item.state]} size="lg">
-          {item.state}
-        </Badge>
-        <Text size="sm" c="dimmed">
-          {item.spec.target.repo} &middot; {item.spec.pipeline}
-        </Text>
-      </Group>
       <EditWork
         id={item.id}
         title={item.spec.title}
@@ -220,27 +65,20 @@ export function WorkDetailViewContent({ detail }: WorkDetailContentProps) {
         running={item.state === 'running'}
         update={updateItem}
       />
-      <Conversation item={item} />
-      <WorkActions
-        id={item.id}
-        latestRunId={latestRun(item.runs)?.runId}
-        state={item.state}
-        cancel={cancelItem}
-        redispatch={redispatchItem}
-        reply={replyToWorkItem}
+      <TaskDetailHistory
+        anchor={{ workId: item.id }}
+        item={item}
+        actions={
+          <WorkActions
+            id={item.id}
+            latestRunId={latestRun(item.runs)?.runId}
+            state={item.state}
+            cancel={cancelItem}
+            redispatch={redispatchItem}
+            reply={replyToWorkItem}
+          />
+        }
       />
-      <Stack gap="xs">
-        <Title order={2} size="h4">
-          Runs
-        </Title>
-        <RunsTable runs={item.runs} />
-      </Stack>
-      <Stack gap="xs">
-        <Title order={2} size="h4">
-          Sessions
-        </Title>
-        <SessionsList sessions={item.sessions} pinned={pinned} />
-      </Stack>
     </Stack>
   );
 }

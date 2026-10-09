@@ -57,6 +57,7 @@ let authoritativeResult = {
 vi.mock('./authoritative-task-state', () => ({
   readAuthoritativeTaskStates: vi.fn(async () => authoritativeResult),
 }));
+vi.mock('./work-sessions', () => ({ sessionsForRuns: vi.fn(async () => []) }));
 vi.mock('./orchestrator-runtime', () => ({
   createOrchestratorRuntime: () => ({
     store: { readGithubAnchorProjection },

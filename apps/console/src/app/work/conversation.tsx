@@ -30,7 +30,9 @@ function HumanTurn({
       <Text size="xs" c="dimmed">
         {principal} via {channel}
       </Text>
-      <Code block>{text}</Code>
+      <Code block style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {text}
+      </Code>
     </Stack>
   );
 }

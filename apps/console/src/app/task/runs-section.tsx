@@ -6,6 +6,7 @@ import { Anchor, Badge, Divider, Group, Stack, Text } from '@mantine/core';
 import type { AgentPipeline } from '../../lib/agent-activity';
 import { PipelineBadge } from '../agent-activity-panel';
 import { RelativeTime } from '../relative-time';
+import { safeHttpUrl } from '../work/safe-url';
 
 const RUN_STATE_LABELS: Record<RunState, string> = {
   pending: 'pending',
@@ -111,8 +112,13 @@ function RunResultView({ result }: { result: Run['result'] }) {
         </Text>
       )}
       {result.ref &&
-        (result.ref.startsWith('http') ? (
-          <Anchor href={result.ref} target="_blank" rel="noreferrer" size="xs">
+        (safeHttpUrl(result.ref) ? (
+          <Anchor
+            href={safeHttpUrl(result.ref)}
+            target="_blank"
+            rel="noreferrer"
+            size="xs"
+          >
             {result.ref}
           </Anchor>
         ) : (
