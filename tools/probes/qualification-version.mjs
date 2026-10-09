@@ -24,6 +24,6 @@ export function imageVersion(
         throw new Error('Image version probe did not complete successfully');
       return execution.stdout.trim();
     },
-    { docker, timeout, removeOnFailure: true, ...options },
+    { docker, timeout, ...options },
   );
 }

@@ -10,7 +10,6 @@ export async function runImageContainer(
     timeout = 30000,
     commandTimeout = 30000,
     cleanupTimeout = 15000,
-    removeOnFailure = false,
   } = {},
 ) {
   // A known name survives a disconnected create client too.
@@ -159,7 +158,7 @@ export async function runImageContainer(
       }
       if (!verified)
         throw new Error('Owned container stopped state is unproven');
-      if (collected || removeOnFailure) {
+      if (collected) {
         await cleanupCommand(['rm', container]);
         removed = true;
       }

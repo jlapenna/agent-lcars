@@ -26,6 +26,7 @@ for (const kind of ['version', 'scenario']) {
     'cleanup-only-failure',
     'create-disconnect',
     'copy-failure',
+    'log-write-failure',
     'missing-native-diagnostics',
   ])(
     'bounds ' + kind + ' container lifetime on %s',
@@ -55,7 +56,7 @@ case 'start':
   if (mode === 'hang' || mode === 'ignored-sigterm') await new Promise(() => setInterval(() => {}, 1000));
   if (mode === 'inherited-pipe') { spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }).unref(); process.exit(0); }
   if (mode === 'disconnect') process.exit(1);
-  if (!['inspect-failure','hung-inspect','partial-state','kill-no-effect','cleanup-inspect-failure','bad-json'].includes(mode)) state.Running = false;
+  if (!['log-write-failure','inspect-failure','hung-inspect','partial-state','kill-no-effect','cleanup-inspect-failure','bad-json'].includes(mode)) state.Running = false;
   save();
   console.log(mode === 'bad-json' && kind === 'scenario' ? '{partial' : kind === 'version' ? ${JSON.stringify(version)} : JSON.stringify({ passed: true, diagnosticsDirectory: '/tmp/lcars-image-probe-abc', nativeReport: mode === 'missing-native-diagnostics' ? {} : { evidenceDirectory: '/tmp/lcars-native-abc' } }));
   break;
@@ -79,16 +80,31 @@ default: process.exit(2);
         try {
           value =
             kind === 'version'
-              ? await imageVersion(['fixture'], root, 1000, docker, {
-                  commandTimeout: 1000,
-                  cleanupTimeout: 1500,
-                })
-              : await imageScenario(['fixture'], root, 'native', {
+              ? await imageVersion(
+                  ['fixture'],
+                  mode === 'log-write-failure'
+                    ? join(root, 'missing-output')
+                    : root,
+                  1000,
                   docker,
-                  timeout: 1000,
-                  cleanupTimeout: 1500,
-                  commandTimeout: 1000,
-                });
+                  {
+                    commandTimeout: 1000,
+                    cleanupTimeout: 1500,
+                  },
+                )
+              : await imageScenario(
+                  ['fixture'],
+                  mode === 'log-write-failure'
+                    ? join(root, 'missing-output')
+                    : root,
+                  'native',
+                  {
+                    docker,
+                    timeout: 1000,
+                    cleanupTimeout: 1500,
+                    commandTimeout: 1000,
+                  },
+                );
         } catch {
           failed = true;
         }
@@ -112,14 +128,7 @@ default: process.exit(2);
         );
         const state = JSON.parse(readFileSync(statePath, 'utf8'));
         expect(state.Running).toBe(mode === 'kill-no-effect');
-        const expectedRemoval =
-          kind === 'version'
-            ? ![
-                'kill-no-effect',
-                'cleanup-inspect-failure',
-                'cleanup-only-failure',
-              ].includes(mode)
-            : mode === 'success';
+        const expectedRemoval = !expectedFailure;
         expect(state.removed === true).toBe(expectedRemoval);
         const calls = readFileSync(callsPath, 'utf8')
           .trim()
@@ -209,13 +218,11 @@ try { await ${kind === 'version' ? `imageVersion(['fixture'], ${JSON.stringify(r
       expect(await exited).toEqual({ code: 1, signal: null });
       const state = JSON.parse(readFileSync(statePath, 'utf8'));
       expect(state.Running).toBe(false);
-      expect(state.removed === true).toBe(kind === 'version');
+      expect(state.removed === true).toBe(false);
       expect(stderr).toContain('failed to attach');
-      expect(
-        kind === 'scenario'
-          ? stderr
-          : 'Qualification container retained: ' + state.name,
-      ).toContain('Qualification container retained: ' + state.name);
+      expect(stderr).toContain(
+        'Qualification container retained: ' + state.name,
+      );
     } finally {
       child.kill('SIGKILL');
       rmSync(root, { recursive: true, force: true });
