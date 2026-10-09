@@ -1,4 +1,4 @@
-import { FirestoreStore } from '@agent-lcars/orchestrator';
+import { FirestoreStore, Orchestrator } from '@agent-lcars/orchestrator';
 
 /**
  * Seeds `@agent-lcars/orchestrator` task/run documents directly against the
@@ -85,4 +85,17 @@ export async function updateDashboardAnchor(params: {
           },
         }),
   });
+}
+
+/** Changes the same broker lifecycle the worker completion path owns. */
+export async function finishDashboardRun() {
+  const orchestrator = new Orchestrator(firestoreStore(), {
+    now: () => new Date().toISOString(),
+  });
+  const result = await orchestrator.cancel(
+    `${E2E_FIXTURE_REPOSITORY}#9009/r1`,
+    'Console live-update contract',
+  );
+  if ('refused' in result)
+    throw new Error(`Cannot settle fixture run: ${result.reason}`);
 }

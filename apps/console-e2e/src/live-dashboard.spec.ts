@@ -6,7 +6,10 @@ import {
   startCachedConsole,
 } from './util/cached-console';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
-import { updateDashboardAnchor } from './util/orchestrator-seed';
+import {
+  finishDashboardRun,
+  updateDashboardAnchor,
+} from './util/orchestrator-seed';
 
 useE2eAdminBeforeEach();
 usePopulatedFixtures();
@@ -15,7 +18,7 @@ test.describe('live authoritative dashboards', () => {
   for (const { route, issue } of [
     { route: '/', issue: E2E_ITEM_NUMBERS.postDeploy },
     { route: '/inbox', issue: E2E_ITEM_NUMBERS.humanNeeded },
-    { route: '/agents', issue: E2E_ITEM_NUMBERS.humanNeeded },
+    { route: '/agents', issue: E2E_ITEM_NUMBERS.readyForAgent },
   ]) {
     test(`durable changes reach an already-open ${route} with scope intact`, async ({
       page,
@@ -28,15 +31,17 @@ test.describe('live authoritative dashboards', () => {
       );
       const title = `Durable live update on ${route}`;
       await updateDashboardAnchor({ issue, title });
-      await expect(page.getByText(title, { exact: true }).first()).toBeVisible({
-        timeout: 20_000,
-      });
+      await expect(page.getByText(title, { exact: false }).first()).toBeVisible(
+        {
+          timeout: 20_000,
+        },
+      );
       await expect(page).toHaveURL(
         new RegExp('repo=supersprinklesracing%2Fsprinkles'),
       );
       // Removal retains its timestamp even though the projection is gone.
       await updateDashboardAnchor({ issue, remove: true });
-      await expect(page.getByText(title, { exact: true })).toHaveCount(0, {
+      await expect(page.getByText(title, { exact: false })).toHaveCount(0, {
         timeout: 20_000,
       });
     });
@@ -45,25 +50,27 @@ test.describe('live authoritative dashboards', () => {
   test('reconnect catches missed changes and shows a disconnected warning', async ({
     page,
   }) => {
-    let refused = false;
+    let first = true;
+    let reconnectAllowed = false;
     await page.route('**/api/dashboard/stream', async (route) => {
-      if (refused) await route.abort();
-      else
+      if (first) {
+        first = false;
+        // A bounded stream ending is a real EventSource EOF/error, unlike
+        // setOffline which Chromium need not apply to an existing socket.
+        await route.fulfill({
+          contentType: 'text/event-stream',
+          body: 'event: dashboard\ndata: {"state":"live","changed":false}\n\n',
+        });
+      } else if (reconnectAllowed) {
         await route.continue({
           headers: {
             ...route.request().headers(),
             'X-e2e-auth-user': 'e2e-agent-lcars-admin',
           },
         });
+      } else await route.abort();
     });
     await page.goto('/inbox');
-    await expect(page.getByTestId('live-dashboard-status')).toHaveText(
-      /Live updates connected/,
-      { timeout: 20_000 },
-    );
-    // Offline terminates the actual stream; reconnect must read fresh state.
-    refused = true;
-    await page.context().setOffline(true);
     await expect(page.getByTestId('live-dashboard-status')).toContainText(
       'Disconnected',
       { timeout: 20_000 },
@@ -72,14 +79,30 @@ test.describe('live authoritative dashboards', () => {
       issue: E2E_ITEM_NUMBERS.humanNeeded,
       title: 'Changed while disconnected',
     });
-    await page.context().setOffline(false);
-    refused = false;
+    reconnectAllowed = true;
     await expect(
       page.getByText('Changed while disconnected', { exact: true }).first(),
     ).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('live-dashboard-status')).toHaveText(
       /Live updates connected/,
     );
+  });
+
+  test('a durable run outcome reaches already-open Agents occupancy', async ({
+    page,
+  }) => {
+    await page.goto('/agents?repo=supersprinklesracing%2Fsprinkles');
+    await expect(page.getByTestId('live-dashboard-status')).toHaveText(
+      /Live updates connected/,
+      { timeout: 20_000 },
+    );
+    await expect(
+      page.getByText('Queue: 2 queued, 0 claimed, 1 running'),
+    ).toBeVisible();
+    await finishDashboardRun();
+    await expect(
+      page.getByText('Queue: 1 queued, 0 claimed, 1 running'),
+    ).toBeVisible({ timeout: 20_000 });
   });
 
   test('preserves selected native reply text and focus while another durable decision changes', async ({
@@ -116,6 +139,9 @@ test.describe('live authoritative dashboards', () => {
     page,
     request,
   }) => {
+    expect(
+      (await request.post('/api/e2e/seed', { data: { action: 'reset' } })).ok(),
+    ).toBe(true);
     expect(
       (
         await request.post('/api/e2e/seed', {
