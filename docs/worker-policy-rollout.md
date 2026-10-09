@@ -50,8 +50,8 @@ image reports, stdout/stderr and native fixture diagnostics. Retain the whole
 bundle in the operator's approved artifact store. Every Docker client has hard signal termination. Owned containers are named
 before creation, including disconnected-create paths; one monotonic 15-second
 cleanup budget reserves time for termination and stopped-state proof even when
-inspection hangs. SIGTERM/SIGINT interrupts the active client and awaits that
-cleanup; abrupt host/process death still requires operator inspection. Failed or unproven cleanup cannot report success. A failed
+inspection hangs. SIGTERM/SIGINT/SIGHUP interrupts the active client and awaits that
+cleanup without cancelling cleanup subprocesses on a second signal; abrupt host/process death still requires operator inspection. Failed or unproven cleanup cannot report success. A failed
 collection prints the retained container ID; collect its fixture diagnostics
 before removing it. Complete native fixture diagnostics are required, not
 optional.

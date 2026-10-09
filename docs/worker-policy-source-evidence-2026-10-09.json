@@ -51,7 +51,7 @@
   "activationAuthorized": false,
   "rawRetention": "Raw reports and fixture roots are temporary to this dispatch runner. This committed record retains sanitized observations (without stdout/stderr or host pressure), phase timing and raw-report hashes; it does not claim durable retention of those temporary directories. Future image qualification requires retaining the entire collector bundle in the approved operator store.",
   "contracts": {
-    "focusedCasesPassed": 78,
+    "focusedCasesPassed": 82,
     "generatedJobStartupBootstrapTestsPassed": true
   },
   "providers": {

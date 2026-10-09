@@ -27,12 +27,14 @@ export async function runImageContainer(
   };
   const interrupt = (signal) => {
     interrupted ??= new Error('Qualification interrupted by ' + signal);
-    hardKill(active);
+    if (!cleaning) hardKill(active);
   };
   const onTerm = () => interrupt('SIGTERM');
   const onInt = () => interrupt('SIGINT');
+  const onHup = () => interrupt('SIGHUP');
   process.on('SIGTERM', onTerm);
   process.on('SIGINT', onInt);
+  process.on('SIGHUP', onHup);
   try {
     const execute = (args, limit) =>
       new Promise((resolve) => {
@@ -181,5 +183,6 @@ export async function runImageContainer(
   } finally {
     process.removeListener('SIGTERM', onTerm);
     process.removeListener('SIGINT', onInt);
+    process.removeListener('SIGHUP', onHup);
   }
 }

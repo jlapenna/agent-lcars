@@ -151,13 +151,17 @@ default: process.exit(2);
 }
 
 it.each([
-  ['version', 'SIGTERM'],
-  ['scenario', 'SIGTERM'],
-  ['version', 'SIGINT'],
-  ['scenario', 'SIGINT'],
-])(
-  'stops an owned %s workload on collector %s',
-  async (kind, signal) => {
+  ['version', 'SIGTERM', false],
+  ['scenario', 'SIGTERM', false],
+  ['version', 'SIGINT', false],
+  ['scenario', 'SIGINT', false],
+  ['version', 'SIGHUP', false],
+  ['scenario', 'SIGHUP', false],
+  ['version', 'SIGTERM', true],
+  ['scenario', 'SIGTERM', true],
+] as const)(
+  'stops an owned %s workload on collector %s (interrupt cleanup: %s)',
+  async (kind, signal, interruptCleanup) => {
     const root = mkdtempSync(join(tmpdir(), 'policy-interruption-test-'));
     const statePath = join(root, 'state.json');
     const docker = join(root, 'docker.mjs');
@@ -173,7 +177,9 @@ switch (args[0]) {
 case 'create': save(); console.log(state.name); break;
 case 'start': state.Running = true; save(); process.on('SIGTERM', () => {}); await new Promise(() => setInterval(() => {}, 1000)); break;
 case 'inspect': console.log(JSON.stringify(state)); break;
-case 'kill': state.Running = false; save(); break;
+case 'kill':
+  if (${JSON.stringify(interruptCleanup)}) { state.killing = true; save(); await new Promise((resolve) => setTimeout(resolve, 200)); }
+  state.Running = false; save(); break;
 case 'rm': state.removed = true; save(); break;
 }
 `,
@@ -189,7 +195,7 @@ case 'rm': state.removed = true; save(); break;
     writeFileSync(
       probe,
       `import { ${kind === 'version' ? 'imageVersion' : 'imageScenario'} } from ${JSON.stringify(helper)};
-try { await ${kind === 'version' ? `imageVersion(['fixture'], ${JSON.stringify(root)}, 30000, ${JSON.stringify(docker)}, { cleanupTimeout: 1500 })` : `imageScenario(['fixture'], ${JSON.stringify(root)}, 'native', { docker: ${JSON.stringify(docker)}, cleanupTimeout: 1500 })`}; } catch(error) { console.error(error.message); process.exitCode = 1; }
+try { await ${kind === 'version' ? `imageVersion(['fixture'], ${JSON.stringify(root)}, 30000, ${JSON.stringify(docker)})` : `imageScenario(['fixture'], ${JSON.stringify(root)}, 'native', { docker: ${JSON.stringify(docker)} })`}; } catch(error) { console.error(error.message); for (const cause of error.errors ?? []) console.error(cause.message); process.exitCode = 1; }
 `,
     );
     const child = spawn(process.execPath, [probe], {
@@ -215,11 +221,24 @@ try { await ${kind === 'version' ? `imageVersion(['fixture'], ${JSON.stringify(r
       }
       expect(running).toBe(true);
       child.kill(signal);
+      if (interruptCleanup) {
+        let killing = false;
+        const cleanupDeadline = performance.now() + 1500;
+        while (!killing && performance.now() < cleanupDeadline) {
+          killing = JSON.parse(readFileSync(statePath, 'utf8')).killing;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        child.kill('SIGHUP');
+        // Assert outside the conditional, together with the daemon readback.
+        running = killing;
+      }
+      expect(running).toBe(true);
       expect(await exited).toEqual({ code: 1, signal: null });
       const state = JSON.parse(readFileSync(statePath, 'utf8'));
       expect(state.Running).toBe(false);
       expect(state.removed === true).toBe(false);
       expect(stderr).toContain('failed to attach');
+      expect(stderr).not.toContain('container cleanup also failed');
       expect(stderr).toContain(
         'Qualification container retained: ' + state.name,
       );
