@@ -97,58 +97,12 @@ These override any default behavior:
   (`apps/runner-autoscaler/runner-image/Dockerfile`), not a source-level
   dependency.
 
-- **Issue ownership — the assignee field**: the assignee records whose
-  court the ball is in, so agents and humans don't collide. `agent-lcars-bot` is
-  this fleet's claim identity across every repo it works, not specific to
-  `agent-lcars` (see the [lcars](../lcars/SKILL.md) skill).
-  - A **human assignee** owns the issue — do not start work on it unless
-    that human explicitly hands it off (adding an `agent:*` label or a
-    recognized reply trigger IS that handoff).
-  - **`agent-lcars-bot` assigned** means the agent fleet has claimed it. Before
-    touching such an issue, check for a live QueueExecutor run or recent
-    agent-session evidence; if neither exists the claim may be stale. Reconcile
-    recent PRs and comments before taking over; assignment alone is not
-    evidence that another session is still working.
-  - **Interactive maintainer sessions** act on the user's request. Reading,
-    triaging, or implementing explicitly requested work does not require a
-    fleet assignment or takeover comment. A direct request from the owning
-    maintainer is a handoff; do not ask them to repeat it through labels or
-    assignees. Check live ownership before implementation to avoid collisions,
-    but do not claim issues merely because you read them. This is an explicit
-    exception to the personal github-issue-workflow claim/comment defaults.
-  - **Headless LCARS dispatches** follow **agent-protocol**. The console owns
-    the anchor claim and takeover; workers do not post a second takeover.
-    The issue-workflow hook only runs when `LCARS_RUN_ID` or
-    `AGENT_DISPATCH_CONTEXT` is nonempty. Generic `CI`, a non-TTY, and provider
-    session IDs do not establish a fleet dispatch.
-  - **Blocked on the maintainer?** In an interactive session, ask in the
-    conversation. Headless workers use the agent-protocol parking contract.
-  - **Filing an issue yourself** requires session attribution. An
-    interactive session runs `gh` under the maintainer's login, so an issue
-    it invents is authored by `jlapenna` with no label, no marker, and no
-    comment distinguishing it from one he wrote by hand -- unlike a headless
-    run (authored by `agent-lcars[bot]`) or a Quick Task (`intake:quick-task`
-    plus the hidden request marker in
-    [docs/quick-task-identity.md](../../../docs/quick-task-identity.md)).
-    Name the session and its resume command in the body when the CLI supports
-    one. Skipping it is how a maintainer finds work
-    he never asked for under his own name: reconstructing who filed
-    `supersprinklesracing/sprinkles#5267` took `/proc` ancestry, two agent
-    rollout transcripts, and the timeline API to recover one line the body
-    should have carried.
-  - **Re-check a claimed issue before you finish, not only before you start.**
-    A claim records your intent; it does not stop anyone else. #1686 lost a
-    seven-task implementation that way: the issue was closed by someone else's
-    PR hours before, and the collision only surfaced when a rebase hit a
-    content conflict at the very end. The dispatched guardrail hook flags routing an
-    already-closed issue, but it only sees `gh` commands -- a long
-    implementation that does not touch `gh` for hours is invisible to it. So
-    on any run of that length, re-read the issue before opening the PR:
-    `gh issue view <N> --json state,stateReason` plus
-    `gh pr list --state all --search "<N>"`. If it closed under you, do not
-    rebase through the conflict -- diff against whatever merged and ship only
-    what survives.
-  - Agents only ever **add** assignees; removing one is a human act.
+- **Issue ownership**: before implementing an issue, read
+  [references/issue-work.md](references/issue-work.md) and check live ownership.
+  A maintainer's direct request is a handoff for interactive work; do not impose
+  headless claim or takeover requirements. Agents only add assignees; removing
+  one is a human act. The reference also owns issue-creation attribution and
+  the pre-delivery collision check.
 
 - **Interactive session tmux title**: on a workstation, the moment a
   session's first action identifies which issue it's working (e.g.
@@ -161,24 +115,19 @@ These override any default behavior:
   guidance, not an authorization boundary: the issue-workflow hook must never
   halt work because a title is missing, stale, mismatched, or unreadable.
 
-- **LCARS session title**: the console's session list shows a title taken
-  from the transcript, which for Claude Code is `aiTitle` — written once,
-  early, and never revised. A session that runs long and drifts therefore
-  advertises what it started as, not what it became. When the work moves on
-  from the prompt that opened it, say so:
-
-  ```bash
-  lcars session title "Land session titles end to end"
-  ```
-
-  No session id is needed — the CLI reads `CLAUDE_CODE_SESSION_ID` or
-  `CODEX_THREAD_ID` from its own environment. `lcars session title --clear`
-  removes the override and falls back to the transcript's own title; it does
-  not blank the entry. This is the same "make concurrent sessions
-  distinguishable at a glance" idea as the tmux title above, for the people
-  reading the console instead of the terminal.
+- **LCARS console visibility**: when the user asks for console session title
+  or status updates, use
+  [lcars-session-updates](../lcars-session-updates/SKILL.md). Interactive
+  progress belongs in the conversation; headless status obligations belong in
+  the dispatch protocol.
 
 ## Workflows
+
+Before implementation, identify the requested outcome, its acceptance boundary,
+and the relevant local quality requirements. Use [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+and the [documentation map](../../../docs/README.md) to retrieve their owners.
+For harness, documentation, or skill maintenance, follow
+[the harness maintenance workflow](../../../docs/harness-engineering.md).
 
 **Prove functionality with useful work.** During development, prefer real
 issues or work items over fabricated work units for end-to-end proof. Follow
@@ -190,6 +139,7 @@ Read the reference before starting the corresponding task:
 
 | Workflow                                    | When to use                                                                                          |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [issue-work.md](references/issue-work.md)   | Inspecting, implementing, or filing GitHub issues.                                                   |
 | [pr.md](references/pr.md)                   | Creating or updating a Pull Request.                                                                 |
 | [verify.md](references/verify.md)           | Definition of Done — run before declaring any change complete.                                       |
 | [stacked-prs.md](references/stacked-prs.md) | Multiple auto-merge-armed PRs racing a moving `main`, or a reviewed stacked chain ready to collapse. |

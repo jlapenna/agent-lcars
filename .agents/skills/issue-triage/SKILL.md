@@ -112,6 +112,14 @@ request and preserve the configured age policy rather than bypassing it.
 
 ## Finish the pass
 
+When repeated acceptance gaps expose missing context, capability, authority, or
+proof, name the first failed handoff and its owner using
+[harness maintenance](../../../docs/harness-engineering.md#repair-an-observed-harness-gap).
+Tie the finding to the ledger's evidence. A durable repair belongs in that
+owner; an extra issue checklist does not replace a missing contract. Include
+implementation only when the request authorizes it, and keep any improvement
+claim bounded by later observed use.
+
 Update issues only with new, requirement-linked evidence. Avoid duplicate
 status comments and do not close persistent dashboards or observation-gated
 issues merely because today's actionable implementation is complete. Read

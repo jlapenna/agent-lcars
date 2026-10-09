@@ -36,6 +36,27 @@ graph itself, where you want to see the affected-project computation
 directly. Otherwise: fast layer locally, push, let CI's `Verify` job carry
 the rest.
 
+## Evidence for the requested outcome
+
+Choose proof from the acceptance boundary in
+[ARCHITECTURE.md](../../../../ARCHITECTURE.md#authority-and-proof) and
+[the testing policy](../../../../docs/testing-policy.md). Before declaring
+completion, record the intended behavior, exact revision or artifact, checks
+and journeys that actually ran, their results, and material unproved behavior.
+Attach only evidence that helps assess that claim; a plan to test is not a
+test result. Required CI still gates delivery through the normal PR workflow.
+
+For documentation and skills, verify formatting, Markdown parsing, relative
+links and anchors, and consistency with the owning code or workflow. When
+claiming that an instruction changes worker behavior, a fresh run must retrieve
+and apply it; structural checks alone establish no such effect. Follow
+[harness maintenance](../../../../docs/harness-engineering.md) for comparisons.
+
+For runtime or UI claims, distinguish a build, a hermetic journey, the published
+artifact, and the deployed system. Record the environment and identity observed.
+Unavailable access leaves an explicit proof gap; it does not authorize deployment,
+credential creation, or production-data mutation.
+
 ## Console e2e
 
 `pnpm verify` does **not** run the console E2E suite locally. CI has the
