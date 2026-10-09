@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSave = vi.fn();
 const mockDownload = vi.fn();
+const mockGetMetadata = vi.fn();
 const mockFile = vi.fn().mockImplementation(() => ({
   save: mockSave,
   download: mockDownload,
 }));
 const mockBucket = vi.fn().mockImplementation(() => ({
   file: mockFile,
+  getMetadata: mockGetMetadata,
 }));
 // A plain recorder (not the `Storage` mock itself, which vi.mock's
 // hoisting requires to be constructed inline in the factory below) so
@@ -27,6 +29,7 @@ vi.mock('@google-cloud/storage', () => ({
 import {
   _resetTranscriptUploadForTesting,
   downloadTranscript,
+  uploadCliTranscript,
   uploadTranscript,
 } from './transcript-upload';
 
@@ -125,5 +128,90 @@ describe('downloadTranscript', () => {
     await expect(
       downloadTranscript('gs://bucket/runs/1/session.jsonl'),
     ).rejects.toThrow('storage: object not found');
+  });
+});
+
+describe('CLI physical retention gate', () => {
+  const options = {
+    bucket: 'cli-archives',
+    object: 'cli/host/claude-code/a.jsonl',
+    contents: '{}',
+  };
+  const metadata = {
+    iamConfiguration: {
+      uniformBucketLevelAccess: { enabled: true },
+      publicAccessPrevention: 'enforced',
+    },
+    lifecycle: {
+      rule: [
+        {
+          action: { type: 'Delete' },
+          condition: { age: 30, matchesPrefix: ['cli/'] },
+        },
+      ],
+    },
+    softDeletePolicy: { retentionDurationSeconds: '0' },
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetTranscriptUploadForTesting();
+    mockSave.mockResolvedValue(undefined);
+  });
+  it('uploads using the host writer identity only after verifying its bucket retention', async () => {
+    mockGetMetadata.mockResolvedValue([metadata]);
+    await uploadCliTranscript({
+      ...options,
+      projectId: 'project',
+      writerKeyJson: '{"client_email":"writer@example.test"}',
+    });
+    expect(mockStorageCtor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project',
+        credentials: { client_email: 'writer@example.test' },
+      }),
+    );
+    expect(mockSave).toHaveBeenCalled();
+  });
+  it('rejects missing, conditional, overlong, soft-deleted and versioned retention without uploading', async () => {
+    for (const bad of [
+      {},
+      {
+        ...metadata,
+        lifecycle: {
+          rule: [{ action: { type: 'Delete' }, condition: { age: 31 } }],
+        },
+      },
+      {
+        ...metadata,
+        lifecycle: {
+          rule: [
+            {
+              action: { type: 'Delete' },
+              condition: { age: 30, isLive: false },
+            },
+          ],
+        },
+      },
+      {
+        ...metadata,
+        lifecycle: {
+          rule: [
+            {
+              action: { type: 'Delete' },
+              condition: { age: 30, matchesPrefix: ['runs/'] },
+            },
+          ],
+        },
+      },
+      { ...metadata, versioning: { enabled: true } },
+      { ...metadata, retentionPolicy: { retentionPeriod: '86400' } },
+      { ...metadata, softDeletePolicy: { retentionDurationSeconds: '604800' } },
+    ]) {
+      mockGetMetadata.mockResolvedValue([bad]);
+      await expect(uploadCliTranscript(options)).rejects.toThrow(
+        'CLI archive bucket',
+      );
+    }
+    expect(mockSave).not.toHaveBeenCalled();
   });
 });

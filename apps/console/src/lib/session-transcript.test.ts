@@ -78,6 +78,21 @@ describe('getSessionTranscript', () => {
     expect(result.warning).toContain('could not be parsed');
   });
 
+  it('preserves the CLI archive byte limit through the combined fetch path', async () => {
+    (fetchSessionTranscript as Mock).mockResolvedValue('');
+    await getSessionTranscript(
+      'gs://cli-archives/cli/host/codex/a.jsonl',
+      'codex',
+      {
+        maxBytes: 5 * 1024 * 1024,
+      },
+    );
+    expect(fetchSessionTranscript).toHaveBeenCalledWith(
+      'gs://cli-archives/cli/host/codex/a.jsonl',
+      5 * 1024 * 1024,
+    );
+  });
+
   it('distinguishes empty and malformed OpenCode archives', async () => {
     (fetchSessionTranscript as Mock).mockResolvedValue(
       JSON.stringify({ info: { id: 'ses_empty' }, messages: [] }),
