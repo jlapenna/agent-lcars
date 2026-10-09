@@ -15,6 +15,7 @@ import {
 } from './delegation-fixture.mjs';
 import { recordNativeProcesses, runNativeProcess } from './native-process.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
+import { createProbeBudget } from './probe-budget.mjs';
 import {
   publicationBrief,
   publicationCaptureSource,
@@ -619,13 +620,13 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
     mode === 'resume' && provider === 'claude'
       ? ['--session-id', allocatedSession, ...args]
       : args;
-  const deadline = Date.now() + (workflow?.budgetMs ?? 60000);
+  const budget = createProbeBudget(workflow?.budgetMs ?? 60000);
   try {
     execution = await execute(
       initialArgs,
       workspace,
       env,
-      Math.max(1, deadline - Date.now()),
+      Math.max(1, budget.remainingMs()),
     );
     if (workflow && existsSync(receipt)) {
       const sessionId = JSON.parse(readFileSync(receipt, 'utf8')).session_id;
@@ -633,7 +634,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
         context,
         env,
         execution,
-        deadline,
+        budget,
         async (prompt, remaining) => {
           const continuedArgs = [...args.slice(0, -1), prompt];
           const resumeArgs =
@@ -670,7 +671,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
         resumeArgs,
         workspace,
         env,
-        Math.max(1, deadline - Date.now()),
+        Math.max(1, budget.remainingMs()),
       );
       writeFileSync(join(dir, 'resume-stdout.txt'), resumed.stdout);
       writeFileSync(join(dir, 'resume-stderr.txt'), resumed.stderr);
@@ -723,7 +724,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
   const workflowResult = workflow?.verify(
     context,
     nativeBinding?.sessionId,
-    deadline,
+    budget,
   );
   const delegatedResult = delegation?.verify(context, nativeBinding);
   const ownershipReadCount = existsSync(ownershipReads)

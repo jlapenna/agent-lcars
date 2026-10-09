@@ -18,6 +18,7 @@ import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
 import { delegationFixture } from './delegation-fixture.mjs';
 import { recordNativeProcesses, runNativeProcess } from './native-process.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
+import { createProbeBudget } from './probe-budget.mjs';
 import {
   publicationBrief,
   publicationCaptureSource,
@@ -256,10 +257,10 @@ export default async (context) => {
       recovery
         ? `
     const original = bridge.invoke;
-    const started = Date.now();
+    const started = performance.now();
     bridge.invoke = (_handler, payload, options) => original(${JSON.stringify(failedHandler)}, payload, options);
     try { await hooks['tool.execute.before'](input, output); }
-    finally { bridge.invoke = original; appendFileSync(${JSON.stringify(controlTiming)}, JSON.stringify({elapsedMs:Date.now()-started}) + '\\n'); }
+    finally { bridge.invoke = original; appendFileSync(${JSON.stringify(controlTiming)}, JSON.stringify({elapsedMs:performance.now()-started}) + '\\n'); }
     `
         : "await hooks['tool.execute.before'](input, output);"
     }
@@ -464,13 +465,13 @@ export default async (context) => {
   const completionBefore = workflow?.completion(context, env, 'before');
   let execution;
   let resumedSameSession = false;
-  const deadline = Date.now() + (workflow?.budgetMs ?? 60000);
+  const budget = createProbeBudget(workflow?.budgetMs ?? 60000);
   try {
     execution = await run(
       args,
       workspace,
       env,
-      Math.max(1, deadline - Date.now()),
+      Math.max(1, budget.remainingMs()),
     );
     if (workflow && existsSync(receipt)) {
       const sessionId = JSON.parse(
@@ -480,7 +481,7 @@ export default async (context) => {
         context,
         env,
         execution,
-        deadline,
+        budget,
         async (prompt, remaining) => {
           const resumed = await run(
             [...args.slice(0, -1), '--session', sessionId, prompt],
@@ -517,7 +518,7 @@ export default async (context) => {
         ],
         workspace,
         env,
-        Math.max(1, deadline - Date.now()),
+        Math.max(1, budget.remainingMs()),
       );
       writeFileSync(join(dir, 'resume-stdout.txt'), resumed.stdout);
       writeFileSync(join(dir, 'resume-stderr.txt'), resumed.stderr);
@@ -575,7 +576,7 @@ export default async (context) => {
   const workflowResult = workflow?.verify(
     context,
     nativeBinding?.sessionId,
-    deadline,
+    budget,
   );
   const delegatedResult = delegation?.verify(context, nativeBinding);
   const ownershipChangeVerified =

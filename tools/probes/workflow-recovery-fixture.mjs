@@ -87,7 +87,7 @@ export default async (context) => {
       if (replaced !== 1) throw new Error('Expected one installed evaluator');
       writeFileSync(configPath, JSON.stringify(config));
     },
-    verify(contextPath, attemptId, sessionId, deadline) {
+    verify(contextPath, attemptId, sessionId, budget) {
       try {
         const events = readFileSync(trace, 'utf8')
           .trim()
@@ -127,7 +127,7 @@ export default async (context) => {
               : receipt('recovery-succeeded') &&
                 !existsSync(`${contextPath}.control-failed`)),
           originalDeadlineRetained:
-            Number.isFinite(deadline) && Date.now() < deadline,
+            Number.isFinite(budget?.timeoutMs) && !budget.expired(),
         };
       } catch (error) {
         return { error: error.message };

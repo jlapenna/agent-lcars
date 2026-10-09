@@ -118,23 +118,23 @@ export function workflowFixture(directory, home, mode) {
         throw new Error('Invalid workflow tool sequence');
       pending = { name: steps[cursor].name, id };
     },
-    async correct(context, runtimeEnv, execution, deadline, resume) {
+    async correct(context, runtimeEnv, execution, budget, resume) {
       if (recoveryExhausted) {
         finalizationEvidence = await finalizeNativeFailure(
           directory,
           context,
           runtimeEnv,
-          deadline,
+          budget,
         );
         return;
       }
       if (!correction) return;
       const before = this.completion(context, runtimeEnv, 'premature');
-      // Let the original wall-clock budget actually expire. Do not substitute
-      // a fabricated timestamp or give a resumed process a fresh deadline.
+      // Let the original monotonic budget actually expire. Do not substitute
+      // a fabricated timestamp or give a resumed process a fresh budget.
       if (exhausted)
         await new Promise((done) =>
-          setTimeout(done, Math.max(1, deadline - Date.now() + 25)),
+          setTimeout(done, Math.max(1, budget.remainingMs() + 25)),
         );
       let heartbeats = 0;
       const lease = createServer((req, res) => {
@@ -145,7 +145,7 @@ export function workflowFixture(directory, home, mode) {
         res.end();
       });
       await new Promise((done) => lease.listen(0, '127.0.0.1', done));
-      const remaining = Math.floor((deadline - Date.now()) / 1000);
+      const remaining = Math.floor(budget.remainingMs() / 1000);
       const helperRoot = fileURLToPath(
         new URL(
           '../../apps/runner-autoscaler/runner-image/runtime/',
@@ -183,7 +183,7 @@ export function workflowFixture(directory, home, mode) {
               },
               // The short local decision read is allowed after expiration; no
               // native work is launched unless the real helper authorizes it.
-              timeout: exhausted ? 5000 : Math.max(1, deadline - Date.now()),
+              timeout: exhausted ? 5000 : Math.max(1, budget.remainingMs()),
             },
           );
           let stdout = '',
@@ -204,11 +204,11 @@ export function workflowFixture(directory, home, mode) {
         await new Promise((done) => lease.close(done));
       }
       let resumed;
-      if (decision.code === 0 && decision.stdout && Date.now() < deadline) {
+      if (decision.code === 0 && decision.stdout && !budget.expired()) {
         correcting = true;
         resumed = await resume(
           decision.stdout,
-          Math.max(1, deadline - Date.now()),
+          Math.max(1, budget.remainingMs()),
         );
       }
       correctionEvidence = {
@@ -218,8 +218,8 @@ export function workflowFixture(directory, home, mode) {
         resumed: !!resumed,
         resumedCode: resumed?.code,
         originalDeadlineRetained: exhausted
-          ? !resumed && Date.now() >= deadline
-          : !!resumed && !resumed.timedOut && Date.now() < deadline,
+          ? !resumed && budget.expired()
+          : !!resumed && !resumed.timedOut && !budget.expired(),
       };
       writeFileSync(
         join(directory, 'correction.json'),
@@ -276,12 +276,12 @@ if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] ===
       );
       return observed;
     },
-    verify(context, sessionId, deadline) {
+    verify(context, sessionId, budget) {
       const recoveryEvidence = recovery?.verify(
         join(directory, 'worker-policy-context.json'),
         context.attemptId,
         sessionId,
-        deadline,
+        budget,
       );
       let details;
       try {
