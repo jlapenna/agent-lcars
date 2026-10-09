@@ -110,8 +110,10 @@ export function LiveDashboard() {
           setRevision((value) => value + 1);
         }
       });
-      next.onerror = () =>
+      next.onerror = () => {
+        if (disposed || source !== next) return;
         retryConnection('Disconnected — data may be stale; reconnecting');
+      };
     };
     connect();
     return () => {

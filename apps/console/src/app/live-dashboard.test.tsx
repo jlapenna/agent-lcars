@@ -113,6 +113,26 @@ describe('live dashboard invalidations', () => {
     expect(Source.instances).toHaveLength(3);
   });
 
+  it('ignores queued events from a superseded connection', async () => {
+    const view = mount();
+    const old = Source.instances[0];
+    act(() => old.onerror?.());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    const recovered = Source.instances[1];
+    act(() => {
+      recovered.signal('live', false);
+      old.onerror?.();
+      old.signal('degraded', false);
+    });
+    expect(screen.getByTestId('live-dashboard-status')).toHaveTextContent(
+      'Live updates connected',
+    );
+    expect(recovered.close).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('caps repeated failures at a 30-second reconnect interval', async () => {
     const view = mount();
     for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
