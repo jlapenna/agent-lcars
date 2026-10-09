@@ -388,8 +388,8 @@ const outboxEntryBaseSchema = z.strictObject({
   firstFailedAt: isoUtc.optional(),
   /** #1548 follow-up: backoff. An entry that just failed a delivery
    *  attempt is not eligible to be reclaimed again until this instant, so
-   *  the fast dispatch/completion drain cadence (on top of the 30-minute
-   *  reconcile) can't hammer an entry that is currently failing -- see
+   *  the fast dispatch/completion drain cadence (on top of the 5-minute
+   *  maintenance tick) can't hammer an entry that is currently failing -- see
    *  `OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`. Additive/optional: absent means
    *  claimable immediately, which is every entry's state before its first
    *  delivery failure. */

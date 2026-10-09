@@ -1,7 +1,8 @@
 # Agent LCARS product spec, part 1: the console
 
 - **Status:** Product specification of record for the console. It is written
-  from `main` at `608500a` (2026-10-09). Part 2 is
+  from `main` at `608500a` (2026-10-09) and fact-checked against that
+  source. Part 2 is
   [fleet management and orchestration](fleet-orchestration-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -38,14 +39,14 @@ GitHub from the browser.
 
 ## 2. Users and jobs to be done
 
-| Persona                       | Today                                                                                | Primary jobs                                                                                                                                                         |
-| ----------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Maintainer (admin)**        | The only interactive user. Sign-in allowlist `AGENT_LCARS_ADMIN_GITHUB_LOGINS`       | Clear decisions such as merging, replying, or retriggering. Dispatch new work. Notice stuck or failed agents. Audit sessions and spend. Do all of this from a phone. |
-| **Production verifier**       | Service login `agent-lcars-production-verifier`, used through saved browser sessions | Run authenticated live-UI verification and Work API operations within an approved task                                                                               |
-| **Work operator (non-admin)** | Modeled by Work grants, but blocked in practice because sign-in is limited to admins | Issue and follow native work without access to the decision queue                                                                                                    |
-| **Machine callers**           | Agents, the `lcars` CLI, CI workflows, the Slack bot                                 | Call the Work API. They are not console UI users, but `/work` must render what they create                                                                           |
+| Persona                       | Today                                                                                                                                                                                   | Primary jobs                                                                                                                                                         |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Maintainer (admin)**        | Logins in the sign-in allowlist `AGENT_LCARS_ADMIN_GITHUB_LOGINS` (currently `jlapenna` and `lizsprinkles`)                                                                             | Clear decisions such as merging, replying, or retriggering. Dispatch new work. Notice stuck or failed agents. Audit sessions and spend. Do all of this from a phone. |
+| **Production verifier**       | Login `agent-lcars-production-verifier`. It is not on the allowlist; its admin session JWT is minted directly with `AUTH_SECRET`, and it holds the Work grant `svc:production-verifier` | Run authenticated live-UI verification and Work API operations within an approved task                                                                               |
+| **Work operator (non-admin)** | Modeled by Work grants, but blocked in practice because sign-in is limited to admins                                                                                                    | Issue and follow native work without access to the decision queue                                                                                                    |
+| **Machine callers**           | Agents, the `lcars` CLI, CI workflows, the Slack bot                                                                                                                                    | Call the Work API. They are not console UI users, but `/work` must render what they create                                                                           |
 
-**Design center:** one expert maintainer supervising many concurrent agents,
+**Design center:** a small set of expert maintainers supervising many concurrent agents,
 often from a phone. Every screen is optimized to get to a decision fast and to
 show trustworthy freshness, not to give a general project-management view.
 
@@ -67,8 +68,8 @@ show trustworthy freshness, not to give a general project-management view.
 
 - A general issue tracker or project board. GitHub remains the system of
   record for issues and PRs.
-- Multi-tenant SaaS. The console serves one maintainer's fleet and its
-  onboarded repositories.
+- Multi-tenant SaaS. The console serves one fleet, its allowlisted
+  maintainers, and its onboarded repositories.
 - Editing infrastructure, credentials, grants, or runner capacity from the UI.
   Those changes go through reviewed configuration and Homelab.
 
@@ -107,20 +108,27 @@ Shared URL state:
   `repo read:user user:email`). The session is a JWT cookie encrypted with
   `AUTH_SECRET`. The `signIn` callback rejects any login not in
   `AGENT_LCARS_ADMIN_GITHUB_LOGINS`. A rejected login is sent to
-  `/login?error=AccessDenied` with an explanatory message.
+  `/login?error=AccessDenied` with an explanatory message. Sessions minted
+  outside OAuth, such as the production verifier's, skip this check.
 - **FE-AUTH-2 [Shipped]** `proxy.ts` gates every path behind a session cookie.
   The exceptions are `/login`, `/api/logs/error`, the webhook routes, and the
   bearer- or capability-authenticated prefixes `/api/work/v1/`,
   `/api/quick-task-evidence/v1/`, and `/api/e2e/` (the last only in E2E mode).
-- **FE-AUTH-3 [Shipped]** Admin pages call `assertAdmin`, and every mutating
-  server action is wrapped by `createAdminAction`. Actions return
-  `{ok:true, note?} | {ok:false, message}` and never throw raw errors to the
-  client.
+- **FE-AUTH-3 [Shipped]** Admin pages call `assertAdmin`. Two kinds of
+  server action exist:
+  - Queue actions (`app/actions.ts`) check admin status and return
+    `{ok:true, note?} | {ok:false, message}`. The admin check runs before the
+    action body, so an unauthorized call throws `Unauthorized`.
+  - Work and schedule actions (`app/work/**/actions.ts`) are oRPC procedures
+    authorized by the caller's Work grant, not by admin status. They return
+    `[error, data]` tuples.
 - **FE-AUTH-4 [Shipped]** Work API authorization is separate from admin
   status. The session's `github:<login>` is mapped to a principal and scopes
-  through `AGENT_LCARS_WORK_GRANTS`. The UI offers creation controls only when
-  the principal holds `work.operator`, and shows "Your GitHub login has no work
-  grant" when it holds none.
+  through `AGENT_LCARS_WORK_GRANTS`. On `/work*` the UI offers creation
+  controls only when the principal holds `work.operator`, and shows "Your
+  GitHub login has no work grant" when it holds none. Admin destinations
+  always show New work in the header, and the server rejects the request
+  when no grant applies.
 - **FE-AUTH-5 [Shipped]** The user's GitHub OAuth token stays server-side. It is
   used so that the human, not the bot, is recorded as the author where
   authorship matters, such as evidence-backed work.
@@ -134,8 +142,8 @@ Shared URL state:
   with a 30s stale and revalidate window. Webhook processing invalidates the
   authoritative-queue tag, and server actions invalidate the dashboard after
   any mutation.
-- **FE-LIVE-2 [Shipped]** Every data page shows `DataFreshness` ("Updated Xs
-  ago", with a 30s tick) and `DataWarnings` when a source is degraded, such as
+- **FE-LIVE-2 [Shipped]** Bridge, Inbox, Agents, Sessions, and Costs show
+  `DataFreshness` ("Updated Xs ago", with a 30s tick) and `DataWarnings` when a source is degraded, such as
   a failed GitHub read. The header Refresh control forces revalidation.
 - **FE-LIVE-3 [Shipped]** Shuttlebay streams runner status over SSE
   (`/api/runner-status/stream`, backed by a Firestore `onSnapshot`). The client
@@ -178,8 +186,10 @@ product requirements.
 - **FE-RESP-2 [Shipped]** Layout is verified at 320, 390, 768, 1024, and
   1280px. The page never scrolls horizontally, and header actions never
   overflow.
-- **FE-A11Y-1 [Shipped]** WCAG AA text contrast holds on every route in both
-  color schemes. E2E specs enforce this.
+- **FE-A11Y-1 [Partial]** WCAG AA text contrast in both color schemes is
+  enforced by E2E on Bridge, Inbox, Agents, and Costs. The one-ground check
+  covers all seven destinations. **Proposed:** extend the contrast check to
+  Shuttlebay, Work, and Sessions.
 - **FE-A11Y-2 [Shipped]** Every menu and icon action has an aria-label. The
   Inbox can be worked entirely from the keyboard, Tab order across the rail is
   correct, and `prefers-reduced-motion` is honored.
@@ -194,8 +204,10 @@ the work that has stopped, and the work in flight.
 - **FE-BR-1 [Shipped]** `DeckInboxSummary` shows "No decisions waiting" or
   "Open N decisions" and links to `/inbox`.
 - **FE-BR-2 [Shipped]** `ParkedWorkPanel`, titled "Stopped work (N)", lists
-  native and GitHub-anchored tasks whose latest run is parked or failed. Each
-  row offers **Cancel** and **Redispatch**. The panel needs `work.operator`,
+  native and GitHub-anchored tasks whose latest run is parked or failed.
+  Native rows offer **Cancel** and **Redispatch**. GitHub-anchored rows link
+  out instead: "Redispatch on GitHub (remove and re-add its agent:\* label)".
+  The panel needs `work.operator`,
   reads up to 200 tasks, and shows a "more" indicator past that.
 - **FE-BR-3 [Shipped]** `AgentActivityPanel` ("Operations") shows:
   - In-flight runs, each with time and turn budget gauges (120 min and 200
@@ -203,7 +215,9 @@ the work that has stopped, and the work in flight.
     timeout).
   - Recent outcomes.
   - Active CLI sessions.
-  - A fleet chip.
+  - A fleet chip. It is vestigial: it counts runners from the retired
+    scale-set status documents, so it renders nothing in production unless
+    the status read fails ("Runner status unavailable"). See R12.
 - **FE-BR-4 [Shipped]** The "Waiting on Deploy" (`post-deploy-action`) and
   "Blocked" (`blocked`) sections hold waiting items. These are intentionally
   kept out of the decision queue.
@@ -232,16 +246,20 @@ the work that has stopped, and the work in flight.
   Tier-2 wait reasons are excluded from the Inbox and its filter.
 
 - **FE-IN-2 [Shipped] Primary action** (`lib/primary-action.ts`). Each card
-  shows exactly one primary action chosen from its state: **Approve & Merge**,
-  **Approve & Rebase**, **Reply**, or **Open failing check ↗**.
+  shows at most one primary action chosen from its state: **Approve & Merge**,
+  **Approve & Rebase**, **Reply**, or **Open failing check ↗**. The last
+  appears only on a `run-failed` item that has a failing check.
 - **FE-IN-3 [Shipped] Reply and hand-off.** "Reply…" opens a text field and a
-  segmented control with the choices _Comment only_, _claude_, _codex_, and
-  _opencode_. Choosing an agent posts the comment and dispatches that
-  pipeline, and the button then reads "Reply & dispatch".
+  segmented control. On an unassigned issue with no `agent:*` label the
+  choices are _Comment only_ plus each pipeline's reply trigger (`@claude`,
+  `/codex`, `/oc`). Choosing a trigger posts the comment as a reply command,
+  which dispatches that pipeline, and the button then reads "Reply &
+  dispatch".
 - **FE-IN-4 [Shipped] Secondary actions:**
-  - **Retrigger**, for issues, with an optional steering note. It goes through
-    server-owned Work admission with request ID `console-retry:<uuid>`.
-  - **Unstick PRs**, for `run-failed` PRs.
+  - **Retrigger**, for issues that already have a pipeline assignment, with
+    an optional steering note. It goes through server-owned Work admission
+    with request ID `console-retry:<uuid>`.
+  - **Unstick**, for `run-failed` PRs.
   - **Work locally**, which copies a takeover prompt for a local agent and
     posts nothing.
 - **FE-IN-5 [Shipped] Overflow menu:**
@@ -263,16 +281,18 @@ the work that has stopped, and the work in flight.
 **Purpose:** a live operational view of every agent and claim.
 
 - **FE-AG-1 [Shipped]** `FleetSnapshotBar` shows, per pipeline, live runs,
-  active CLI sessions, the fleet chip, and activity metrics.
+  active CLI sessions, the (vestigial) fleet chip, and activity metrics.
 - **FE-AG-2 [Shipped]** **Active Agents** shows runs classified as `running`,
   `succeeded`, `failed`, `timeout`, `cancelled`, or `silent-error`, each with a
   diagnosis string.
-- **FE-AG-3 [Shipped]** **Claimed but Idle (N)** lists issues assigned to
-  `agent-lcars-bot` with no live run. Each carries a reason: `never-dispatched`,
-  `finished`, `parked`, `failed`, `lost`, `canceled`, or `observing`. Claims
-  are suppressed when there is a human assignee, a `status:needs-human`,
-  `status:blocked`, `status:ledger`, or `bot:renovate` label, or an
-  `agent-lcars:observe-until` marker.
+- **FE-AG-3 [Shipped]** **Claimed but Idle (N)** lists claimed anchors with
+  no live run. An anchor counts as claimed when it is assigned to
+  `agent-lcars-bot` or has an orchestrator task record. Each row carries a
+  reason: `never-dispatched`, `finished`, `parked`, `failed`, `lost`,
+  `canceled`, or `observing`. The `observing` reason ("Observing until …")
+  comes from an `<!-- agent-lcars:observe-until <ISO> -->` marker. Claims are
+  suppressed when the anchor has a human assignee or a `status:needs-human`,
+  `status:blocked`, `status:ledger`, or `bot:renovate` label.
 - **FE-AG-4 [Shipped]** **Recent Outcomes** links each outcome to its task,
   session, and deliverable.
 - **FE-AG-5 [Shipped]** The logical work state comes from the authoritative
@@ -285,10 +305,12 @@ the work that has stopped, and the work in flight.
 **Purpose:** answer "is there capacity, and is the executor healthy?"
 
 - **FE-SB-1 [Shipped]** The queue executor shows a `ready` or `not ready`
-  badge and a `draining` badge.
-- **FE-SB-2 [Shipped]** Each ARC lane and scale set shows queued jobs, its
-  min/max runner counts, a `draining` badge, and each runner as `idle` or
-  `busy` with its job.
+  badge, a `draining` badge, and its active and maximum Job counts.
+- **FE-SB-2 [Shipped]** Each ARC lane (status documents published by the
+  executor) shows pending, running, idle, registered, desired, and maximum
+  runners. A legacy scale-set row (queued, busy, idle, max, draining, and a
+  runner list) still renders the retired v1 documents, which are no longer
+  published.
 - **FE-SB-3 [Shipped]** The data is live over SSE, and a staleness banner
   appears after 180s.
 - **FE-SB-4 [Proposed]** Show claim throughput and provider cooldowns:
@@ -304,8 +326,8 @@ GitHub issues, and manage recurring work.
   Pipeline, Repo, Principal, and Updated, showing up to 200 rows. State is one
   of `running`, `parked`, `done`, `failed`, or `canceled`. It is derived and
   never stored.
-- **FE-WK-2 [Shipped] Create work** ("New work", available from the header on
-  every page):
+- **FE-WK-2 [Shipped] Create work** ("New work" in the header; see FE-AUTH-4
+  for when it is shown):
   - Fields: Repo, Agent, Description, and an optional screenshot (paste or
     attach).
   - The work ID is a ULID minted on the client, so retries are idempotent.
@@ -318,8 +340,9 @@ GitHub issues, and manage recurring work.
 - **FE-WK-3 [Shipped] Item detail:**
   - A state badge (parked yellow, failed red, running blue, done green,
     canceled gray), with repo and pipeline.
-  - Editable title and description.
-  - The **Conversation**: the agent's final message for each round.
+  - Editable title and description, hidden while the item is running.
+  - The **Conversation**: for each round, the human turn (with its principal
+    and channel) and the agent's final message.
   - A runs table with Run, State, Executor (claimed by), Result, Summary, and
     Ref. The Ref link is guarded by `safeHttpUrl`.
   - Linked sessions, with a "pinned" badge while the item is still active.
@@ -332,12 +355,17 @@ GitHub issues, and manage recurring work.
 - **FE-WK-5 [Shipped] Schedules:**
   - The create form takes Title, Description, Repository, Pipeline, Cron (5
     fields, UTC, default `0 * * * *`, validated on the client), and Enabled.
-  - The list shows the last item each schedule created and supports
-    enable/disable.
-  - A schedule shows a `disabledReason` of `grant-revoked`, `operator`, or
-    `invalid`.
-- **FE-WK-6 [Partial]** There is no paging past 200 items, no filter UI, no
-  schedule edit or delete, and no time zone other than UTC. See R3 and R8.
+    The server also rejects a cron expression that never fires within a
+    year.
+  - The list has columns Title, Cron, Pipeline, Repo, Enabled, and Last item,
+    and supports enable and disable.
+  - The API and store record a `disabledReason` (`grant-revoked`, `operator`,
+    or `invalid`), but the list does not show it.
+- **FE-WK-6 [Partial]** The UI has no paging past 200 items and no filters,
+  although the Work API already supports a cursor and state, principal, and
+  repo filters. Schedules have no edit or delete in the UI or the API (a
+  `PUT` accepts only a new or identical schedule), and no time zone other
+  than UTC. See R3 and R8.
 
 ### 6.6 Task detail (`/task/[owner]/[repo]/[issue]`)
 
@@ -368,13 +396,16 @@ CLI sessions and dispatched runs.
   cost; timing; host, cwd, worktree, and branch; run and issue; deliverables;
   and resume notes.
 - **FE-SE-4 [Partial]** Transcripts render (`TranscriptTimelineView`, from GCS)
-  only for dispatched `issue-agent` sessions. Other sessions show "Session
-  archive stored ({agent} format) — not yet renderable". **Proposed:** render
-  Codex and OpenCode transcripts and CLI sessions through the existing
+  for dispatched `issue-agent` sessions whose agent is in
+  `RENDERABLE_TRANSCRIPT_AGENTS`, currently Claude Code and Codex. OpenCode
+  sessions show "Session archive stored ({agent} format) — not yet
+  renderable", and CLI sessions have no transcript view. **Proposed:** render
+  OpenCode transcripts and CLI sessions through the existing
   `libs/telemetry` adapters.
-- **FE-SE-5 [Shipped]** The session title and status come from
-  `lcars session title|status`, so a session that drifts from its opening
-  prompt can say what it has become.
+- **FE-SE-5 [Shipped]** A session's title is the transcript's own title
+  (Claude Code's `aiTitle`) unless `lcars session title` sets an override, and
+  `lcars session status` adds a status line. A session that drifts from its
+  opening prompt can therefore say what it has become.
 
 ### 6.8 Costs (`/costs`)
 
@@ -397,9 +428,11 @@ CLI sessions and dispatched runs.
 | `/api/logs/error`                           | public                                             | Browser error reporting                                                  |
 | `/api/e2e/*`                                | `E2E_TESTING` only                                 | Seeding and fake GitHub for hermetic E2E                                 |
 
-Boot invariants: the console refuses to start with a blank or malformed App
-key, a missing deployment identity, or `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`
-that differs from `AGENT_LCARS_WATCHED_REPOS`. The error names the variable but
+Boot invariants (`lib/startup-configuration.ts`): the console refuses to
+start with a blank required variable, a malformed App key, a missing
+deployment identity, invalid Work grants or outcome webhooks, or
+`AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` that differs from
+`AGENT_LCARS_WATCHED_REPOS`. The error names the variable but
 never prints the secret.
 
 ## 8. Companion CLI (`lcars`)
@@ -439,37 +472,43 @@ console Reply action.
 - The phone list-to-detail flow.
 - Agents and Sessions at every viewport.
 - The Costs ledger.
-- Shuttlebay live status.
+- Shuttlebay page structure (heading and copy only; the stream is not
+  exercised).
 - Creating native work through the New work modal.
 - Interaction states.
-- One ground and contrast on every route.
+- One ground on every destination, and contrast on Bridge, Inbox, Agents,
+  and Costs.
 - Header bounds at phone, tablet, and desktop widths.
 
 **Not covered:**
 
-- `/work/[id]` reply, redispatch, cancel, and edit.
-- Schedule create, enable, and disable.
+- `/work` list content, and `/work/[id]` reply, redispatch, cancel, and
+  edit.
+- `/work/schedules`: create, enable, and disable.
+- `/task/...` beyond the "Open task" navigation.
+- Inbox Reply and hand-off.
 - Merge and rebase end to end.
-- Unstick PRs.
-- Shuttlebay SSE reconnect.
+- Unstick.
+- Shuttlebay live updates and SSE reconnect.
 
 ## 10. Gaps and roadmap
 
 Priorities assume the single-maintainer design center.
 
-| #   | Item                                                                                                                 | Why                                                         | Priority |
-| --- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | -------- |
-| R1  | Live updates on Bridge, Inbox, and Agents over SSE, as Shuttlebay already does (FE-LIVE-4)                           | The queue is the product, and a stale queue costs decisions | P0       |
-| R2  | E2E coverage for the Work detail actions, schedules, merge/rebase, and Unstick                                       | These mutating paths currently have no journey proof        | P0       |
-| R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker to replace the URL-only `?repo=` | The lists silently truncate                                 | P1       |
-| R4  | One item view for GitHub-anchored and native tasks (FE-TK-2)                                                         | One `Task` model, so one UI; removes duplicated surfaces    | P1       |
-| R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6)                                                           | Grants already model this; sign-in blocks it                | P1       |
-| R6  | Render transcripts for Codex, OpenCode, and CLI sessions (FE-SE-4)                                                   | Two of the three pipelines cannot be audited in the UI      | P1       |
-| R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                      | Makes "why isn't my run starting?" answerable               | P2       |
-| R8  | Schedule edit and delete, and a time-zone display                                                                    | Schedules can currently only be toggled                     | P2       |
-| R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                            | Mute should follow the maintainer across devices            | P2       |
-| R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                             | Turns spend data into decisions                             | P2       |
-| R11 | Notifications: web push or digest for new `needs-human` items                                                        | The phone-first maintainer should not have to poll          | P3       |
+| #   | Item                                                                                                                                  | Why                                                                   | Priority |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------- |
+| R1  | Live updates on Bridge, Inbox, and Agents over SSE, as Shuttlebay already does (FE-LIVE-4)                                            | The queue is the product, and a stale queue costs decisions           | P0       |
+| R2  | E2E coverage for the Work list and detail actions, schedules, task detail, Inbox reply, merge/rebase, and Unstick                     | These mutating paths currently have no journey proof                  | P0       |
+| R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker to replace the URL-only `?repo=`                  | The lists silently truncate                                           | P1       |
+| R4  | One item view for GitHub-anchored and native tasks (FE-TK-2)                                                                          | One `Task` model, so one UI; removes duplicated surfaces              | P1       |
+| R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6)                                                                            | Grants already model this; sign-in blocks it                          | P1       |
+| R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI | P1       |
+| R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                         | P2       |
+| R8  | Schedule edit and delete, and a time-zone display                                                                                     | Schedules can currently only be toggled                               | P2       |
+| R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                      | P2       |
+| R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                       | P2       |
+| R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                    | P3       |
+| R12 | Re-point the fleet chip at the queue-executor and ARC lane documents, or remove it, and drop the legacy scale-set row from Shuttlebay | Both read status documents that are no longer published               | P2       |
 
 ## 11. Success metrics
 
@@ -488,7 +527,7 @@ Priorities assume the single-maintainer design center.
 1. Should the Inbox include native-work parks alongside GitHub `needs-human`
    items, so there is one queue? Today native parks appear only on the Bridge
    "Stopped work" panel.
-2. Will non-admin operators ever exist outside the maintainer, or is the Work
-   grant model only for machines?
+2. Will non-admin human operators ever exist, or is the Work grant model
+   only for maintainers and machines?
 3. Is a light theme a supported product mode, or a convenience? This decides
    whether visual baselines must hold in both schemes.

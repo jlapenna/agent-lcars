@@ -42,7 +42,7 @@ import { dispatchSessionExpiry, isClosedItemState } from './session-expiry';
  * bound keyed on claim *count* rather than failure *time* let normal fleet
  * traffic -- dispatches and completions each trigger a drain (#1799: true
  * of every mutating route including this one's own completion handler,
- * `runs-router.ts`'s `complete`), on top of the 30-minute reconcile --
+ * `runs-router.ts`'s `complete`), on top of the 5-minute maintenance tick --
  * burn through it in minutes during a transient GitHub outage, which is a
  * worse failure than the one being fixed).
  *
@@ -70,7 +70,7 @@ const GITHUB_API = 'https://api.github.com';
  * before it is retired (`failed`) instead of released back to `pending`
  * (#1548 follow-up). Deliberately a *time* budget, not a claim-count one:
  * drains fire on every dispatch and completion in addition to the
- * 30-minute reconcile heartbeat (#1799 closed the one gap in that: the
+ * 5-minute maintenance tick (#1799 closed the one gap in that: the
  * direct-runner completion route used to settle a run's outcome without
  * ever draining it, so its own outcome comment wasn't actually covered by
  * this "completions drain too" reasoning until then), so a count-based

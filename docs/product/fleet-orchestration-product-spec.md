@@ -1,7 +1,8 @@
 # Agent LCARS product spec, part 2: fleet management and orchestration
 
 - **Status:** Product specification of record for the agent fleet control
-  plane. It is written from `main` at `608500a` (2026-10-09). Part 1 is
+  plane. It is written from `main` at `608500a` (2026-10-09) and
+  fact-checked against that source. Part 1 is
   [the console](console-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -46,16 +47,19 @@ The core promises:
 
 ## 2. Actors
 
-| Actor              | Identity                                             | Interacts via                                                      |
-| ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------ |
-| Maintainer         | `jlapenna`, Work principal `user:jlapenna`           | GitHub labels and replies, the console, the `lcars` CLI            |
-| GitHub App (fleet) | `agent-lcars[bot]`; claim assignee `agent-lcars-bot` | Webhooks into the console; claim, react, and comment on anchors    |
-| Claude App         | `claude[bot]`                                        | Authors Claude pipeline deliverables                               |
-| QueueExecutor      | Grant with `work.executor` (`svc:telemetry-writer`)  | Claims runs, launches Kubernetes Jobs, reports exits, ticks        |
-| Dispatched worker  | Per-run token plus its own App token                 | Brief, checkout token, heartbeat, complete                         |
-| Member automation  | `workflow:member-automation` (GitHub Actions OIDC)   | `POST /dispatches/github` from member repositories                 |
-| Slack bot          | Sprinkles service account, channel `slack`           | Creates items; receives outcomes over webhook                      |
-| Homelab            | Platform operator                                    | Runs k3s, ARC, and the QueueExecutor deployment; holds credentials |
+| Actor                | Identity                                                                       | Interacts via                                                                              |
+| -------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Maintainers          | Console allowlist (`jlapenna`, `lizsprinkles`); Work principal `user:jlapenna` | GitHub labels and replies, the console, the `lcars` CLI                                    |
+| GitHub App (fleet)   | `agent-lcars[bot]`; claim assignee `agent-lcars-bot`                           | Webhooks into the console; claim, react, and comment on anchors                            |
+| Claude App           | `claude[bot]`                                                                  | Authors Claude pipeline deliverables                                                       |
+| QueueExecutor        | Grant with `work.executor` (`svc:telemetry-writer`)                            | Claims runs, launches Kubernetes Jobs, reports exits, ticks                                |
+| Dispatched worker    | Per-run token plus its own App token                                           | Brief, checkout token, heartbeat, complete                                                 |
+| Member automation    | `workflow:member-automation` (GitHub Actions OIDC, 7 repositories)             | `POST /dispatches/github` from member repositories                                         |
+| Work-create workflow | `workflow:work-create` (`codex-agent` service account)                         | `work-create.yml`: create, get, cancel, and redispatch items; create and disable schedules |
+| Slack bot            | Sprinkles App Hosting service account, channel `slack`                         | Creates items; receives outcomes over webhook                                              |
+| Production verifier  | `svc:production-verifier`                                                      | Authenticated live verification with `work.operator`                                       |
+| Session reaper       | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                  | Read-only item access (`work.reaper`) to expire sessions of closed items                   |
+| Homelab              | Platform operator                                                              | Runs k3s, ARC, and the QueueExecutor deployment; holds credentials                         |
 
 ## 3. Goals and non-goals
 
@@ -198,17 +202,18 @@ rule wins:
 
 ### 5.4 Run outcomes
 
-The wire vocabulary is in `apps/console/src/lib/run-result.ts`.
+- **Success** (`OK_OUTCOMES` in `apps/console/src/lib/run-result.ts`):
+  `pull-request`, `merged-deliverable`, `comment`, `review`, `no-op`, `park`,
+  `unknown-success`.
+- **Failure** (emitted by
+  `apps/runner-autoscaler/runner-image/direct-runner.sh`): `no-deliverable`,
+  `agent-timeout`, `agent-failed`, `verification-failed`, `provider-limit`,
+  `worker-control-failed`, `runner-failed`.
 
-- **Success:** `pull-request`, `merged-deliverable`, `comment`, `review`,
-  `no-op`, `park`, `unknown-success`.
-- **Failure:** `no-deliverable`, `agent-timeout`, `agent-failed`,
-  `verification-failed`, `provider-limit`, `worker-control-failed`,
-  `runner-failed`.
-
-`RunResult = {ok, summary ≤4 KiB, ref?, message ≤16 KiB}`. `ref` is the
-deliverable URL, and `message` is the agent's final turn, shown in the
-console Conversation.
+`RunResult = {ok, summary ≤4 KiB, ref?, message ≤16 KiB}`. `ref` is set only
+for pull-request outcomes (the PR URL); comment and review outcomes carry no
+ref. `message` is the agent's final turn, shown in the console
+Conversation.
 
 ## 6. Admission, queueing, and execution
 
@@ -258,21 +263,39 @@ console Conversation.
   - The Job is created suspended. A per-run token Secret is created, then the
     Job is resumed.
   - `restartPolicy: Never`, `backoffLimit: 0`, a 2h deadline, and a 1-day TTL.
-  - Orphaned suspended Jobs are garbage-collected every 15 minutes.
-- **FL-EX-3 [Shipped]** Operator controls: `SIGUSR1` drains (stops claiming)
-  and `SIGHUP` revalidates the config. Configuration lives in `orchestrator.yml`
-  (`server`, `kubernetes.{namespace, max_concurrent, node_selector,
-resources, tolerations, credentials_secret}`, `arc_lanes`) and is owned by
-  Homelab. Changes require a restart.
-- **FL-EX-4 [Shipped]** The executor publishes a status document (`kind:
-queue-executor`) to Firestore, which feeds the console's Shuttlebay. It also
-  exposes Prometheus metrics: `…_queue_executor_{ready,state,polls_total,
-claims_total,launches_total}` and `…_schedule_ticks_total`.
+  - A sweep every 15 minutes deletes orphaned suspended Jobs and prunes
+    finished Jobs, keeping at most five per `max_concurrent` slot within
+    the last 24h.
+- **FL-EX-3 [Shipped]** Operator controls: `SIGUSR1` toggles drain (stop or
+  resume claiming), and `SIGHUP` only revalidates the config. Configuration
+  lives in `orchestrator.yml` and is owned by Homelab:
+  - `server`.
+  - `kubernetes`: `namespace`, `kubeconfig`, `credentials_secret`,
+    `service_account`, `max_concurrent`, `node_selector`, `requests`,
+    `limits`, and `tolerations`.
+  - `arc_lanes`.
+
+  Changes require a restart. The retired keys of the Docker backend and the
+  scale-set manager (`fleet`, `github`, `registrations`, `scale_sets`,
+  `server.state_path`) are rejected by name at startup.
+
+- **FL-EX-4 [Shipped]** The executor publishes status documents to Firestore
+  for the console's Shuttlebay: `kind: queue-executor` and one
+  `kind: arc-lane` document per configured ARC lane. It also exposes
+  Prometheus metrics under the `github_runner_autoscaler_` prefix:
+  - `queue_executor_ready`, `queue_executor_state`,
+    `queue_executor_polls_total`, `queue_executor_claims_total`, and
+    `queue_executor_launches_total`.
+  - `schedule_ticks_total`, `maintenance_ticks_total`, and
+    `maintenance_last_success_timestamp_seconds`.
+
 - **FL-EX-5 [Shipped]** The direct runner (`runner-image/direct-runner.sh`)
   runs these steps in order:
   1. Fetch the brief.
   2. Get a checkout token.
-  3. Install the shared skills and the worker policy.
+  3. Install the shared skills, plus the worker-policy hooks when
+     `LCARS_WORKER_POLICY_PROVIDERS` names the pipeline (otherwise this step
+     is a no-op).
   4. Launch the provider, with a 7200s timeout per provider.
   5. Verify the outcome.
   6. Call `/complete`.
@@ -335,7 +358,8 @@ consumed by every dispatched run in every member repository.
 | **FL-WP-8 Budget discipline**   | One diagnosis, then one targeted action. Never self-apply `ci:*` labels, except an authorized `ci:run-functional-e2e`.                                                                               |
 | **FL-WP-9 Hard limits**         | No `--no-verify`, no plain force-push, no workflow edits, no deploys, and no IAM changes.                                                                                                            |
 
-- **FL-WP-10 [Shipped] Verifier.** `runtime/verify-outcome.sh` looks for the
+- **FL-WP-10 [Shipped] Verifier.**
+  `apps/runner-autoscaler/runner-image/runtime/verify-outcome.sh` looks for the
   exact marker on a bot-authored PR, comment, or (in review mode) review,
   using paginated REST reads. A failed lookup is reported as
   `verification-failed`, which is distinct from `no-deliverable`.
@@ -360,8 +384,11 @@ consumed by every dispatched run in every member repository.
   - A reconcile job re-arms missed PRs, updates BEHIND branches (at most 5,
     skipping Renovate and Dependabot), and dismisses stale bot
     `CHANGES_REQUESTED` reviews.
+  - Legacy jobs remain for callers that still use `GITHUB_TOKEN`:
+    `restore-main-checks`, `close-orphaned-anchors`, and a legacy-arm
+    migration.
 - **FL-CM-3 [Shipped]** Maintainer merge actions are available in the console:
-  Approve & Merge, Approve & Rebase, Rebase, Unstick PRs, Clear needs-human,
+  Approve & Merge, Approve & Rebase, Rebase, Unstick, Clear needs-human,
   Assign pipeline, and Close.
 - **FL-CM-4 [Shipped]** CI behavior is governed by repository variables:
   `<LANE>_ENABLED` (missing means on) and `<ACTION>_ARMED` (missing means off;
@@ -379,7 +406,13 @@ consumed by every dispatched run in every member repository.
   starts a fresh session and passes the reply text through, and the console
   says so. The design is
   [`2026-09-03-resumable-agent-conversations-design.md`](../superpowers/specs/2026-09-03-resumable-agent-conversations-design.md).
-  Sub-projects 1–4 have shipped.
+  Sub-projects 1–4 have shipped. On GitHub, a resume requires the reply
+  trigger tag (`lib/tagged-reply-resume.ts`). The design doc's mention of an
+  `AGENT_LCARS_IMPLICIT_REPLY_REPOS` gate is stale; that variable no longer
+  exists.
+- **FL-RC-4 [Shipped]** A reply may name a different pipeline. That replaces
+  an unclaimed queued run and always starts a fresh session, because provider
+  sessions cannot cross providers.
 - **FL-RC-3 [Proposed]** Slack threads (sub-project 5) are not started. In
   this design `/lcars` creates the thread root, the agent's park question
   returns to the thread, and a thread reply resumes the session. All live
@@ -404,9 +437,15 @@ consumed by every dispatched run in every member repository.
   metrics for workflow runs, jobs, durations, queue time, oldest queued job,
   and consecutive failures. Label cardinality is bounded.
 - **FL-OB-4 [Shipped]** Loki, Prometheus, and LiteLLM logs are owned by
-  Homelab and used by the `debug-agent-run` skill. Terraform declares a
-  Cloud Monitoring alert for a `dispatch-webhooks` backlog of more than 200
-  tasks.
+  Homelab and used by the `debug-agent-run` skill. Terraform
+  (`infra/terraform/monitoring.tf`) declares two Cloud Monitoring alerts on
+  `dispatch-webhooks`: a backlog of more than 200 tasks, and non-ok task
+  attempts above 0.05/s for 30 minutes.
+- **FL-OB-6 [Shipped] Session retention.** Sessions of an open native item
+  carry no expiry. When the item closes, the console dispatches
+  `work-session-expiry.yml`, which gives the item's telemetry sessions an
+  `expireAt` retention deadline (`lib/session-expiry.ts`,
+  `bin/session-expiry.ts`). Reopening the item clears it again.
 - **FL-OB-5 [Proposed]** Define fleet SLOs (§13) as recording rules and
   alerts, rather than leaving them to ad hoc investigation.
 
@@ -414,20 +453,27 @@ consumed by every dispatched run in every member repository.
 
 - **FL-FM-1 [Shipped] Onboarding**
   ([`onboarding-repo.md`](../onboarding-repo.md)):
-  1. Prepare the target repository.
-  2. Install both GitHub Apps.
-  3. Add the repository to `AGENT_LCARS_WATCHED_REPOS` and
-     `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (they must match exactly).
-  4. Add any grants.
-  5. Prove an end-to-end dispatch.
+  1. Bootstrap the target repository: labels, hooks, validation, and
+     instructions.
+  2. Give it runner capacity: QueueExecutor's shared pool, plus a
+     Homelab-owned ARC lane only when workload or isolation demands one.
+  3. Install both GitHub Apps.
+  4. Add it to Agent LCARS: the label manifest, `AGENT_LCARS_WATCHED_REPOS`
+     and `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (which must match exactly),
+     and the label-audit matrix. Member CI that dispatches through the Work
+     API also needs the repository in the `workflow:member-automation` grant.
+  5. Audit the setup (`onboarding-audit.yml`).
+  6. Prove the complete path with a real dispatch.
 
-  `onboarding-audit.yml` checks the setup.
-
-- **FL-FM-2 [Shipped] Labels.** `config/github-labels.json` is the manifest
-  for every fleet repository. It covers the `type:*`, `status:*`, `agent:*`,
-  `review:*`, `agent-option:*`, `ci:*`, `automation:*`, and `bot:*` families.
+- **FL-FM-2 [Shipped] Labels.** `config/github-labels.json` declares each
+  fleet repository's labels. Every repository uses the standard `type:*`,
+  `status:*`, `agent:*`, and `review:*` families. Other families are
+  declared per repository: `agent-option:*`, `intake:quick-task`,
+  `bot:renovate`, `app:*`, `planning`, and, for
+  `supersprinklesracing/sprinkles` only, `ci:*` and `automation:*`.
   `label-contract-audit.yml` and `tools/sync-github-labels.mjs` keep
-  repositories in sync daily.
+  repositories in sync daily. The `ci:run-functional-e2e` label named in the
+  worker protocol is not in the manifest.
 - **FL-FM-3 [Shipped] Published interfaces.**
   - Composite actions: `mint-agent-token`, `assert-repo-vars`,
     `merge-live-base`, `setup-nx-remote-cache`, `deploy-verify`, `oidc-post`,
@@ -438,7 +484,8 @@ consumed by every dispatched run in every member repository.
 - **FL-FM-4 [Shipped] Authority separation.** These authorities are
   deliberately distinct:
   - Work grants (`AGENT_LCARS_WORK_GRANTS`, with scopes `work.operator`,
-    `work.executor`, `work.cron`, and `work.reaper`).
+    `work.executor`, and `work.cron`). `work.reaper` is not a grantable
+    scope. It is fixed to the `session:expiry` identity.
   - The worker's App token.
   - The telemetry writer.
   - The QueueExecutor credential.
@@ -462,18 +509,18 @@ consumed by every dispatched run in every member repository.
 
 ## 12. Gaps and roadmap
 
-| #   | Item                                                                                                                                                                                   | Why                                                                                                         | Priority |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------- |
-| R1  | Unify the "needs a human" surface: native parks and GitHub `status:needs-human` in one queue (see part 1, open question 1)                                                             | Native parks currently surface only on the Bridge                                                           | P0       |
-| R2  | Graduate worker-policy enforcement (FL-WP-11), provider by provider, behind a measured rollout                                                                                         | The protocol's hard limits are currently honor-system at runtime                                            | P0       |
-| R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline, such as 10 minutes, that settles `lost` early                                                              | A failed launch can stall a task for about 2h                                                               | P1       |
-| R4  | A priority field on runs (for example `urgent`, `normal`, `background`), honored inside provider-fair selection                                                                        | Scheduled maintenance work and urgent fixes currently share one FIFO                                        | P1       |
-| R5  | Slack thread conversations (FL-RC-3) and the outstanding live proofs for resumable conversations                                                                                       | The design promises this; sub-project 5 has not started                                                     | P1       |
-| R6  | Anchor-level label consistency: reject or resolve multiple `agent:*` labels, and clean up stale routing labels after an outcome                                                        | Per-delivery evaluation can leave labels that contradict state                                              | P2       |
-| R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task                                                   | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit | P2       |
-| R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                                                                        | The singleton is a single point of failure                                                                  | P2       |
-| R9  | Restore the contract test for hand-synced YAML copies of `AGENT_BOT_LOGINS` and run-name derivation (#1298)                                                                            | Prevents silent auto-merge drift                                                                            | P2       |
-| R10 | Correct doc drift: the "30-minute reconcile" wording (the code ticks every 5 minutes), the "self-hosted runner scale set" step in onboarding, and the App Hosting "QueueExecutor flag" | Docs should describe the current system                                                                     | P3       |
+| #   | Item                                                                                                                                                | Why                                                                                                         | Priority |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------- |
+| R1  | Unify the "needs a human" surface: native parks and GitHub `status:needs-human` in one queue (see part 1, open question 1)                          | Native parks currently surface only on the Bridge                                                           | P0       |
+| R2  | Graduate worker-policy enforcement (FL-WP-11), provider by provider, behind a measured rollout                                                      | The protocol's hard limits are currently honor-system at runtime                                            | P0       |
+| R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline, such as 10 minutes, that settles `lost` early                           | A failed launch can stall a task for about 2h                                                               | P1       |
+| R4  | A priority field on runs (for example `urgent`, `normal`, `background`), honored inside provider-fair selection                                     | Scheduled maintenance work and urgent fixes currently share one FIFO                                        | P1       |
+| R5  | Slack thread conversations (FL-RC-3) and the outstanding live proofs for resumable conversations                                                    | The design promises this; sub-project 5 has not started                                                     | P1       |
+| R6  | Anchor-level label consistency: reject or resolve multiple `agent:*` labels, and clean up stale routing labels after an outcome                     | Per-delivery evaluation can leave labels that contradict state                                              | P2       |
+| R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task                | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit | P2       |
+| R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                                     | The singleton is a single point of failure                                                                  | P2       |
+| R9  | Restore the contract test for hand-synced YAML copies of `AGENT_BOT_LOGINS` and run-name derivation (#1298)                                         | Prevents silent auto-merge drift                                                                            | P2       |
+| R10 | Resolve the `ci:run-functional-e2e` mismatch: add the label to the manifest for the repositories that use it, or remove it from the worker protocol | The protocol names a label the label contract does not declare                                              | P3       |
 
 ## 13. Success metrics and SLOs
 
