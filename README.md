@@ -75,6 +75,9 @@ boundaries. Common entry points:
 
 ## Development
 
+For setup, FQDN sharing, fixture reset, browser journeys, and troubleshooting,
+use the [local console SUT playbook](docs/playbooks/local-console-sut.md).
+
 Use the Node and pnpm versions pinned in `package.json`:
 
 ```sh

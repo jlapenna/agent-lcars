@@ -32,6 +32,7 @@ async function main() {
   const health = await inspectStack(ports);
   if (!health.ready) throw new Error('development stack is still warming');
   const fqdn = health.fqdn ? validatePreviewFqdn(health.fqdn) : undefined;
+  const baseUrl = `http://${fqdn ?? '127.0.0.1'}:${ports.console}`;
   const artifactRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), 'lcars-dev-test-'),
   );
@@ -47,7 +48,7 @@ async function main() {
     tempHome,
     fqdn,
   });
-  environment.BASE_URL = environment.AUTH_URL;
+  environment.BASE_URL = baseUrl;
   environment.LCARS_DEV_TEST_OUTPUT = artifactRoot;
   environment.PLAYWRIGHT_BROWSERS_PATH =
     process.env.PLAYWRIGHT_BROWSERS_PATH ??
@@ -68,7 +69,7 @@ async function main() {
       'opens populated listing and saves title and description durably',
     );
   }
-  console.log(`Testing the running stack at ${environment.BASE_URL}`);
+  console.log(`Testing the running stack at ${baseUrl}`);
   console.log(
     'Tests reset synthetic data; populated fixtures are restored afterward.',
   );

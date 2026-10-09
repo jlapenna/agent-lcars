@@ -31,6 +31,9 @@ Use this index to retrieve the smallest current contract for a task.
 
 ## Development and fleet adoption
 
+Repeatable local procedures live in [`playbooks/`](playbooks/README.md), starting
+with the [local console/control-plane SUT](playbooks/local-console-sut.md).
+
 | Need                             | Canonical document                                                           |
 | -------------------------------- | ---------------------------------------------------------------------------- |
 | Repository onboarding            | [`onboarding-repo.md`](onboarding-repo.md)                                   |
