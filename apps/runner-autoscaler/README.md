@@ -146,6 +146,16 @@ GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
 LCARS_QUEUE_RUNNER_IMAGE=registry.example.com/homelab-runner:jit-node24
 ```
 
+The trusted autoscaler environment may set `LCARS_WORKER_POLICY_PROVIDERS` to a
+comma-separated subset of `claude,codex,opencode`, only after artifact-matched
+qualification and specific activation approval. Empty or unset is disabled.
+The executor validates and snapshots this selector before startup, then
+explicitly forwards it to every worker Job, including the empty value so image
+defaults cannot enable it. Run content cannot choose it. Changes require
+restarting the executor and affect newly created Jobs; existing attempts retain
+their launch configuration. See
+[worker policy rollout](../../docs/worker-policy-rollout.md) for gates and rollback.
+
 The poller starts only after the Kubernetes preflight below passes, then sends
 a claim body containing only its runner identity. The server derives
 claimable pipelines from the authenticated `work.executor` grant; no

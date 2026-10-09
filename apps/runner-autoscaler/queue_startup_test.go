@@ -53,7 +53,7 @@ func TestQueueEnvironmentAcceptsCompleteKubernetesDeployment(t *testing.T) {
 }
 
 func TestQueueEnvironmentRejectsStaticDefects(t *testing.T) {
-	for _, key := range []string{"LCARS_QUEUE_RUNNER_IMAGE", "GOOGLE_APPLICATION_CREDENTIALS", "LCARS_CONSOLE_URL"} {
+	for _, key := range []string{"LCARS_QUEUE_RUNNER_IMAGE", "GOOGLE_APPLICATION_CREDENTIALS", "LCARS_CONSOLE_URL", "LCARS_WORKER_POLICY_PROVIDERS"} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv("LCARS_CONSOLE_URL", "https://console.example")
 			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google.json")
@@ -61,6 +61,9 @@ func TestQueueEnvironmentRejectsStaticDefects(t *testing.T) {
 			bad := ""
 			if key == "LCARS_CONSOLE_URL" {
 				bad = "relative"
+			}
+			if key == "LCARS_WORKER_POLICY_PROVIDERS" {
+				bad = "unqualified-provider"
 			}
 			t.Setenv(key, bad)
 			if err := validateQueueExecutorEnvironment(testKubernetesResolved(t)); err == nil {

@@ -39,6 +39,7 @@ Use this index to retrieve the smallest current contract for a task.
 | Fleet testing policy             | [`testing-policy.md`](testing-policy.md)                                     |
 | E2E reliability and triage       | [`e2e-reliability.md`](e2e-reliability.md)                                   |
 | Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)           |
+| Worker qualification and rollout | [`worker-policy-rollout.md`](worker-policy-rollout.md)                       |
 | OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                     |
 
 ## Product specification

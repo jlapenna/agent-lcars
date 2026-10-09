@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -303,5 +307,89 @@ func TestKubernetesConfigurationRejectsAPIIlegalTolerationsBeforeClaim(t *testin
 				t.Fatalf("validation=%v valid=%v", err, tc.valid)
 			}
 		})
+	}
+}
+
+// Observe the emitted worker Job, including the off value that overrides image
+// defaults. A provider can be activated without activating the other two.
+func TestKubernetesWorkerPolicySelection(t *testing.T) {
+	for _, selection := range []struct {
+		raw, want string
+		invalid   bool
+	}{
+		{"", "", false}, {" ", "", false},
+		{"claude", "claude", false}, {"codex", "codex", false}, {"opencode", "opencode", false},
+		{" opencode,claude,claude ", "claude,opencode", false},
+		{"all", "", true}, {"codex,", "", true}, {"codex,,claude", "", true},
+	} {
+		t.Run(selection.raw, func(t *testing.T) {
+			t.Setenv("LCARS_WORKER_POLICY_PROVIDERS", selection.raw)
+			selected, err := directRunnerWorkerPolicyProviders()
+			if (err != nil) != selection.invalid || selected != selection.want {
+				t.Fatalf("selected=%q err=%v", selected, err)
+			}
+			if selection.invalid {
+				return
+			}
+			q, c := kubeQueueFixture()
+			q.workerPolicyProviders = selected
+			for _, provider := range []string{"claude", "codex", "opencode"} {
+				launch := directRunnerLaunch{runID: "work:policy-" + provider + "/r1", pipeline: provider, runToken: "fixture-token"}
+				if err := q.launch(context.Background(), launch); err != nil {
+					t.Fatal(err)
+				}
+				job, err := c.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), queueJobName(launch.runID), meta.GetOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := 0
+				for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+					if env.Name == "LCARS_WORKER_POLICY_PROVIDERS" {
+						found++
+						if env.Value != selection.want || env.ValueFrom != nil {
+							t.Fatal("worker policy selection changed at launch")
+						}
+					}
+				}
+				if found != 1 {
+					t.Fatal("worker policy selector must explicitly override image defaults")
+				}
+				assertWorkerPolicyBootstrap(t, job, provider, selection.want)
+			}
+		})
+	}
+}
+
+// Exercise the emitted environment through the actual bootstrap. A setup
+// receipt without control-smoke proof must block only selected providers.
+func assertWorkerPolicyBootstrap(t *testing.T, job *batch.Job, provider, selection string) {
+	t.Helper()
+	selected := false
+	for _, chosen := range strings.Split(selection, ",") {
+		selected = selected || chosen == provider
+	}
+	for _, smoke := range []bool{true, false} {
+		root := t.TempDir()
+		setup, invoked := filepath.Join(root, "setup.cjs"), filepath.Join(root, "invoked")
+		if err := os.WriteFile(setup, []byte(`require('node:fs').writeFileSync(process.env.PROBE_INVOKED, 'yes'); console.log(JSON.stringify({ controlSmokePassed: process.env.PROBE_SMOKE === 'true', executionSmokeRequired: false }));`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cmd := exec.CommandContext(ctx, "bash", "-c", `source "$1"; worker_policy_bootstrap "$2"`, "job-bootstrap-test", "runner-image/runtime/worker-policy-bootstrap.sh", filepath.Join(root, "config.json"))
+		cmd.Env = append(os.Environ(), "PIPELINE="+provider, "RUNNER_TEMP="+root, "WORKER_POLICY_SETUP="+setup, "AGENT_DISPATCH_CONTEXT="+filepath.Join(root, "brief.json"), "LCARS_RUN_ID=fixture-run", "ATTEMPT_ID=fixture-attempt", "PROBE_INVOKED="+invoked, fmt.Sprintf("PROBE_SMOKE=%t", smoke))
+		for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+			if env.Name == "LCARS_WORKER_POLICY_PROVIDERS" {
+				cmd.Env = append(cmd.Env, env.Name+"="+env.Value)
+			}
+		}
+		output, err := cmd.CombinedOutput()
+		cancel()
+		if (err != nil) != (selected && !smoke) {
+			t.Fatalf("bootstrap provider=%s smoke=%t error=%v output=%s", provider, smoke, err, output)
+		}
+		_, invocationErr := os.Stat(invoked)
+		if (invocationErr == nil) != selected {
+			t.Fatal("bootstrap setup invocation did not match emitted Job selection")
+		}
 	}
 }

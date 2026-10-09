@@ -8,18 +8,20 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import setup from '../../packages/fleet-tools/bin/worker-hook-setup.cjs';
 import policy from '../../packages/fleet-tools/bin/worker-policy.cjs';
+import { codexProbeCatalog } from './codex-model-fixture.mjs';
 import {
   claudeRunnerToolArgs,
   delegationFixture,
 } from './delegation-fixture.mjs';
 import { recordNativeProcesses, runNativeProcess } from './native-process.mjs';
 import { outcomeFixture } from './outcome-fixture.mjs';
+import { createProbeBudget } from './probe-budget.mjs';
 import {
   publicationBrief,
   publicationCaptureSource,
-  publicationDeliveryModes,
   publicationFixture,
 } from './publication-fixture.mjs';
+import { nativeModes } from './qualification-modes.mjs';
 import {
   reviewAcknowledgmentModes,
   reviewAllowed,
@@ -565,10 +567,13 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
     ...workflow?.env,
   };
   const completionBefore = workflow?.completion(context, env, 'before');
+  const modelCatalog = join(home, '.codex', 'probe-models.json');
+  writeFileSync(modelCatalog, JSON.stringify(codexProbeCatalog));
   writeFileSync(
     join(home, '.codex', 'config.toml'),
     `model = "${fileProbe || workflow ? 'gpt-5.4' : 'probe'}"
 model_provider = "probe"
+model_catalog_json = ${JSON.stringify(modelCatalog)}
 [model_providers.probe]
 name = "Local deterministic probe"
 base_url = "${base}/v1"
@@ -615,13 +620,13 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
     mode === 'resume' && provider === 'claude'
       ? ['--session-id', allocatedSession, ...args]
       : args;
-  const deadline = Date.now() + (workflow?.budgetMs ?? 60000);
+  const budget = createProbeBudget(workflow?.budgetMs ?? 60000);
   try {
     execution = await execute(
       initialArgs,
       workspace,
       env,
-      Math.max(1, deadline - Date.now()),
+      Math.max(1, budget.remainingMs()),
     );
     if (workflow && existsSync(receipt)) {
       const sessionId = JSON.parse(readFileSync(receipt, 'utf8')).session_id;
@@ -629,7 +634,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
         context,
         env,
         execution,
-        deadline,
+        budget,
         async (prompt, remaining) => {
           const continuedArgs = [...args.slice(0, -1), prompt];
           const resumeArgs =
@@ -666,7 +671,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
         resumeArgs,
         workspace,
         env,
-        Math.max(1, deadline - Date.now()),
+        Math.max(1, budget.remainingMs()),
       );
       writeFileSync(join(dir, 'resume-stdout.txt'), resumed.stdout);
       writeFileSync(join(dir, 'resume-stderr.txt'), resumed.stderr);
@@ -719,7 +724,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
   const workflowResult = workflow?.verify(
     context,
     nativeBinding?.sessionId,
-    deadline,
+    budget,
   );
   const delegatedResult = delegation?.verify(context, nativeBinding);
   const ownershipReadCount = existsSync(ownershipReads)
@@ -847,63 +852,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
 }
 
 const observations = [];
-const modes = [
-  'bootstrap-delegated-allow',
-  'bootstrap-delegated-review',
-  'bootstrap-workflow',
-  'bootstrap-workflow-recovery',
-  'bootstrap-workflow-recovery-exhausted',
-  'bootstrap-workflow-correction',
-  'bootstrap-workflow-exhausted',
-  'allow',
-  'deny',
-  'failure',
-  'missing',
-  'bridge-allow',
-  'bridge-failure',
-  'bridge-timeout',
-  'bridge-rewrite',
-  'bridge-marker',
-  'resume',
-  'bootstrap-marker',
-  'bridge-recovery-success',
-  'bridge-recovery-failure',
-  'bootstrap-file-allow',
-  'bootstrap-file-primary',
-  'bootstrap-file-symlink',
-  'bootstrap-file-review',
-  'bootstrap-file-ownership-absent',
-  'bootstrap-file-ownership-unreadable',
-  'bootstrap-file-ownership-changed',
-  'bootstrap-file-session-expected-mismatch',
-  'bootstrap-file-session-bound-mismatch',
-  'bootstrap-hold-draft-blocked',
-  'bootstrap-hold-draft-released',
-  'bootstrap-hold-merge-blocked',
-  'bootstrap-hold-merge-released',
-  'bootstrap-hold-draft-threads',
-  ...reviewAcknowledgmentModes,
-  'bootstrap-outcome-park-allow',
-  'bootstrap-outcome-no-op-allow',
-  'bootstrap-outcome-foreign',
-  'bootstrap-outcome-unrelated',
-  'bootstrap-outcome-parent-symlink',
-  ...(provider === 'codex' ? ['bootstrap-outcome-multi-target'] : []),
-  ...publicationDeliveryModes,
-  'bootstrap-publication-allow',
-  'bootstrap-publication-review',
-  'bootstrap-publication-ownership-absent',
-  'bootstrap-publication-ownership-unreadable',
-  'bootstrap-publication-ownership-changed',
-  'bootstrap-publication-marker-idempotent-allow',
-  'bootstrap-publication-marker-foreign',
-  'bootstrap-push-allow',
-  'bootstrap-push-review',
-  'bootstrap-push-primary',
-  'bootstrap-push-ownership-absent',
-  'bootstrap-push-ownership-unreadable',
-  'bootstrap-push-ownership-changed',
-];
+const modes = nativeModes(provider);
 if (
   scenario &&
   scenario !== 'review-acknowledgments' &&

@@ -28,7 +28,7 @@ function report() {
 
 describe('worker canary readiness evidence', () => {
   it.each(['claude', 'codex', 'opencode'])(
-    'graduates %s independently',
+    'accepts complete evidence for %s independently',
     (provider) => {
       expect(
         evaluate({ ...report(), provider }, { ...expected, provider }, now)

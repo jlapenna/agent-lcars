@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export async function finalizeNativeFailure(directory, context, env, deadline) {
+export async function finalizeNativeFailure(directory, context, env, budget) {
   const runnerRoot = fileURLToPath(
     new URL('../../apps/runner-autoscaler/runner-image/', import.meta.url),
   );
@@ -54,7 +54,7 @@ export async function finalizeNativeFailure(directory, context, env, deadline) {
             AUTH_HEADER: 'Authorization: Bearer local-fixture-only',
             CURL_TIMEOUT_CONFIG: 'connect-timeout = 2\nmax-time = 5',
           },
-          timeout: Math.max(1, Math.min(10000, deadline - Date.now())),
+          timeout: Math.max(1, Math.min(10000, budget.remainingMs())),
         },
       );
       let stdout = '',
@@ -87,7 +87,7 @@ export async function finalizeNativeFailure(directory, context, env, deadline) {
       payload.outcomeReference === null &&
       payload.message.includes('No human decision is requested.') &&
       !payload.message.includes('PARK') &&
-      Date.now() < deadline,
+      !budget.expired(),
     result,
     requests,
   };

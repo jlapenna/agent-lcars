@@ -1,0 +1,4949 @@
+{
+  "recordedAt": "2026-10-09",
+  "anchor": "jlapenna/agent-lcars#2181",
+  "nativeSourceCommit": "57413725e79f8a14c48d19c8118393e7ede602c4",
+  "sourceArtifactHashesAtNativeLaunch": {
+    "moduleHashes": {
+      "fleet-identity.cjs": "5b445792b4ed92d1da5e8e38f46a172e0934d18a039204c55f0f445d4e6bca80",
+      "worker-hook-bridge.cjs": "1ab8ba7618f8b4b3370ca80b0c0e86443738d2bff5b6ba317cac381979ab6ea2",
+      "worker-hook-setup.cjs": "9320b3fb3817c20f2b3192b2dbaae28153803d6d120786067321c0f18327deba",
+      "worker-opencode-plugin.mjs": "b18e9f9af4098bb50c8b3fb0ae14dc24d5b0b4b2cdad3e19a701e58cddcb7f1f",
+      "worker-opencode-session.mjs": "8c9f2b37e5aa6f63367f92cf41f3d87772d12b3512c0aa786fc3ff32ae78e681",
+      "worker-policy.cjs": "e61c7288e4d07d8ffd4e51bc527e89b52dc63de28cf70b704b069057ff404fcc",
+      "worker-readiness.cjs": "22e28621a90ea17db911898795e4cfbb4ef700f0263cd1d59bae53318683d02e",
+      "worker-review.cjs": "28eb450745b319b100d45dc0a248943b7920caf3015c0c553ab672420a4a25d6",
+      "worker-session.cjs": "dca219cbd51f1b474060999e9f415245613536f5f01320df9939ab7fc5d45601"
+    },
+    "probeHashes": {
+      "codex-model-fixture.mjs": "9f4cefd86426189935b04cd4940f381f71be758c59c39a635bbd720759f9fb55",
+      "command-hook-boundary.mjs": "741601b0ad4dd9707ed38dc568ac464d5eb591356bfb22a8ecc877472f4b4608",
+      "delegation-fixture.mjs": "263e76f9e0eb26d43557e82255b7a936b02f5297e82bee15094484a59635c878",
+      "in-runner-image.mjs": "1499d02f11e2945065dd522031377697d6d9bd465c3fff151a7e9996bbf649b7",
+      "native-process.mjs": "fe4be512204b689c53cce93e18b062f4693c219db6ad76a0ff39b6a23a8e6303",
+      "opencode-hook-boundary.mjs": "6dc1d959890b3288524ccf3bab2b4262e61539a1368c61555ada0251c072df2a",
+      "opencode-lineage-fixture.mjs": "7c2b984dd396725bfd15169b18dafea58f79015a9dddfe640eb4048949af55b2",
+      "outcome-fixture.mjs": "b901b3add6a355ddce507dea40d3e3afa3f606b5d0ea5e777b16ed90f25e9447",
+      "probe-budget.mjs": "6ccd38d5f6531f9d84f8d515311c354b0d9eb476e3db8debe3624117eaabf60c",
+      "publication-fixture.mjs": "30c066c157e21513ef1a654e766f242251dec4eaf5a9864c7cd2a2f8cc25e9d3",
+      "qualification-evidence.mjs": "4e146fe1dae9f3234cedeb431ea00bbf2ac5e034f91450ed0fab008694a644c6",
+      "qualification-modes.mjs": "36dcdadcd56ac6ef32b20f742dd780b3469322dc0780b432a0fbe16175693f0a",
+      "qualification-version.mjs": "2ebfb76ff228a38a1ceca01be901eb54a094d5b967eaa06af173d0b172f08c08",
+      "qualify-worker-image.mjs": "3f7a987749dc068ef970261d1b9118d2be7a1e7d233e7249318552b3b3b37c17",
+      "review-fixture.mjs": "d1f6e622d6608668d7e9e1ec6b5be2c4f83e2b3c7302141f8e9aa54bd734088f",
+      "runner-failure-fixture.mjs": "64ac152946413a6b6156c7087dcb867ed8686b46edb53bf007914b7e9397c967",
+      "scratch.mjs": "ee310bc8f61c598ea09811250b997834cbb804708b67650a6f18fbe77f7b9a65",
+      "scratch.test.mjs": "f18aed6f26ab8b20b79f5988a418a9c2761c26613696b7fa4d367d9c240debe7",
+      "setup-boundary.mjs": "3484d520f480b11caedb714f4a4d01e80250214cb0bde3c2ffea4e8d9c547a7e",
+      "workflow-fixture.mjs": "4996afefdcbb62d1bc05d2b14038596ed99dba5369731945d2a3c2f01462668f",
+      "workflow-recovery-fixture.mjs": "a8f46fe6e91d01f9edecb55ae1034c800f65d750c9fb65d9122cab970c0d06b4",
+      "worktree-fixture.mjs": "806122d15251a23c8d4f2d43e7afc2f89b1cf2ef58d801953fa00cad16588021"
+    },
+    "runtimeHashes": {
+      "worker-policy-bootstrap.sh": "e58e3602b86a91684fb42168fba7b8bc62e7f25bd2d2e85cabb8df93b82d4518",
+      "verify-outcome.sh": "61ea49af553d93e5153518bda414293a699e6991ad14c10925ab55a687afcc83",
+      "worker-completion.sh": "3f7205a4c6909ddde230367e2bddae696ac1631c9fce736aac09fc58e85744be"
+    },
+    "runnerHash": "c90d5276e111faca8f2d83458a4ebecfd36c477e12d4134e92d89be945a42d7e"
+  },
+  "boundary": "Source-native localhost model/local transports, not inspected-image or live-dispatch qualification. Native inputs were committed at launch; later collector-only edits do not change consumed native modules.",
+  "imageId": null,
+  "graduated": false,
+  "activationAuthorized": false,
+  "rawRetention": "Raw reports and fixture roots are temporary to this dispatch runner. This committed record retains sanitized observations (without stdout/stderr or host pressure), phase timing and raw-report hashes; it does not claim durable retention of those temporary directories. Future image qualification requires retaining the entire collector bundle in the approved operator store.",
+  "contracts": {
+    "focusedCasesPassed": 82,
+    "generatedJobStartupBootstrapTestsPassed": true
+  },
+  "providers": {
+    "claude": {
+      "native": {
+        "provider": "claude",
+        "providerVersion": "2.1.295 (Claude Code)",
+        "temporaryRawReportPath": "/tmp/policy-2181-source-claude/full-suite-monotonic.json",
+        "rawReportSha256": "1c87d9da5dee4ec8e65adb51b451dc6bdb0bcad36574b088d6955d1d1c0dab64",
+        "temporaryFixtureRoot": "/tmp/lcars-claude-hook-probe-5DKnY4",
+        "observations": [
+          {
+            "mode": "bootstrap-delegated-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:23.164Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5833,
+                "firstStderrMs": null,
+                "elapsedMs": 5938,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-delegated-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:31.899Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4415,
+                "firstStderrMs": null,
+                "elapsedMs": 4569,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-workflow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:38.567Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 8500,
+                "firstStderrMs": null,
+                "elapsedMs": 8606,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-recovery",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:48.021Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6464,
+                "firstStderrMs": null,
+                "elapsedMs": 6540,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true,
+              "recovery": {
+                "expectedFailures": true,
+                "usefulWorkRetained": true,
+                "sameNativeSession": true,
+                "boundedRecoverySequence": true,
+                "attemptBoundReceipts": true,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-recovery-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:56.337Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2836,
+                "firstStderrMs": null,
+                "elapsedMs": 2898,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage"],
+              "sameNativeSession": true,
+              "implementationRetained": true,
+              "stagingBlocked": true,
+              "commitAbsent": true,
+              "pushAbsent": true,
+              "preservedWork": true,
+              "publicationAbsent": true,
+              "recovery": {
+                "expectedFailures": true,
+                "usefulWorkRetained": true,
+                "sameNativeSession": true,
+                "boundedRecoverySequence": true,
+                "attemptBoundReceipts": true,
+                "originalDeadlineRetained": true
+              },
+              "finalization": {
+                "passed": true,
+                "result": {
+                  "code": 1,
+                  "signal": null
+                },
+                "requests": [
+                  {
+                    "method": "POST",
+                    "path": "/complete",
+                    "body": {
+                      "outcome": "worker-control-failed",
+                      "outcomeReference": null,
+                      "message": "Worker policy control failed without successful recovery. Infrastructure failure; preserve the session and unpublished work. No human decision is requested."
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-correction",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:01.259Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4753,
+                "firstStderrMs": null,
+                "elapsedMs": 4833,
+                "exitCode": 0,
+                "signal": null
+              },
+              {
+                "startedAt": "2026-10-09T12:09:06.621Z",
+                "timeoutMs": 54637,
+                "firstStdoutMs": 1745,
+                "firstStderrMs": null,
+                "elapsedMs": 1801,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true,
+              "correction": {
+                "before": {
+                  "code": 1,
+                  "missing": true
+                },
+                "decision": {
+                  "code": 0
+                },
+                "heartbeats": 1,
+                "resumed": true,
+                "resumedCode": 0,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:10.187Z",
+                "timeoutMs": 29999,
+                "firstStdoutMs": 4335,
+                "firstStderrMs": null,
+                "elapsedMs": 4392,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "publicationAbsent": true,
+              "correction": {
+                "before": {
+                  "code": 1,
+                  "missing": true
+                },
+                "decision": {
+                  "code": 1
+                },
+                "heartbeats": 0,
+                "resumed": false,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:39.012Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1574,
+                "firstStderrMs": null,
+                "elapsedMs": 1631,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "deny",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:40.651Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1750,
+                "firstStderrMs": null,
+                "elapsedMs": 1809,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "failure",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:42.470Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1755,
+                "firstStderrMs": null,
+                "elapsedMs": 1813,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "missing",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:42.883Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2052,
+                "firstStderrMs": null,
+                "elapsedMs": 2117,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:45.393Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3223,
+                "firstStderrMs": null,
+                "elapsedMs": 3319,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-failure",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:49.378Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3244,
+                "firstStderrMs": null,
+                "elapsedMs": 3376,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-timeout",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:53.311Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6953,
+                "firstStderrMs": null,
+                "elapsedMs": 7026,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-rewrite",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:00.753Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2540,
+                "firstStderrMs": null,
+                "elapsedMs": 2614,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-marker",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:03.791Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2513,
+                "firstStderrMs": null,
+                "elapsedMs": 2591,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "resume",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:06.389Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2150,
+                "firstStderrMs": null,
+                "elapsedMs": 2217,
+                "exitCode": 0,
+                "signal": null
+              },
+              {
+                "startedAt": "2026-10-09T12:10:08.607Z",
+                "timeoutMs": 57781,
+                "firstStdoutMs": 3712,
+                "firstStderrMs": null,
+                "elapsedMs": 3878,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-marker",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:13.356Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2929,
+                "firstStderrMs": null,
+                "elapsedMs": 3032,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-recovery-success",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:16.781Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3542,
+                "firstStderrMs": null,
+                "elapsedMs": 3796,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-recovery-failure",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:21.040Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1854,
+                "firstStderrMs": null,
+                "elapsedMs": 1911,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:24.819Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3588,
+                "firstStderrMs": null,
+                "elapsedMs": 3700,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-primary",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:30.955Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3921,
+                "firstStderrMs": null,
+                "elapsedMs": 4015,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-symlink",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:36.688Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2945,
+                "firstStderrMs": null,
+                "elapsedMs": 3042,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:41.197Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1577,
+                "firstStderrMs": null,
+                "elapsedMs": 1635,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:44.068Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1902,
+                "firstStderrMs": null,
+                "elapsedMs": 1962,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:46.115Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2524,
+                "firstStderrMs": null,
+                "elapsedMs": 2653,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:51.441Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4144,
+                "firstStderrMs": null,
+                "elapsedMs": 4266,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-session-expected-mismatch",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:58.651Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4262,
+                "firstStderrMs": null,
+                "elapsedMs": 4331,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-session-bound-mismatch",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:04.815Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2727,
+                "firstStderrMs": null,
+                "elapsedMs": 2798,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-blocked",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:09.381Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2669,
+                "firstStderrMs": null,
+                "elapsedMs": 2733,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-released",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:13.816Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3362,
+                "firstStderrMs": null,
+                "elapsedMs": 3471,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-blocked",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:17.735Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2829,
+                "firstStderrMs": null,
+                "elapsedMs": 2942,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-released",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:22.294Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2839,
+                "firstStderrMs": null,
+                "elapsedMs": 2915,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-threads",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:26.750Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2399,
+                "firstStderrMs": null,
+                "elapsedMs": 2462,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:30.840Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2351,
+                "firstStderrMs": null,
+                "elapsedMs": 2416,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:34.953Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2751,
+                "firstStderrMs": null,
+                "elapsedMs": 2822,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-stale-head",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:39.348Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2658,
+                "firstStderrMs": null,
+                "elapsedMs": 2727,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-foreign-author",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:43.950Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 8018,
+                "firstStderrMs": null,
+                "elapsedMs": 8233,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-before-hold",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:54.193Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2941,
+                "firstStderrMs": null,
+                "elapsedMs": 3016,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-empty",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:59.386Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3825,
+                "firstStderrMs": null,
+                "elapsedMs": 3918,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-threads",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:06.598Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4112,
+                "firstStderrMs": null,
+                "elapsedMs": 4192,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-changes-requested",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:12.945Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3128,
+                "firstStderrMs": null,
+                "elapsedMs": 3257,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-blocked-label",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:16.659Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2895,
+                "firstStderrMs": null,
+                "elapsedMs": 2970,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-self-release",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:21.180Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2659,
+                "firstStderrMs": null,
+                "elapsedMs": 2738,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-self-release",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:25.359Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1910,
+                "firstStderrMs": null,
+                "elapsedMs": 1979,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-park-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:28.792Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1888,
+                "firstStderrMs": null,
+                "elapsedMs": 2022,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-no-op-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:32.133Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2539,
+                "firstStderrMs": null,
+                "elapsedMs": 2630,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:36.576Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3593,
+                "firstStderrMs": null,
+                "elapsedMs": 3731,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-unrelated",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:42.429Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7000,
+                "firstStderrMs": null,
+                "elapsedMs": 7199,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-parent-symlink",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:50.685Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5228,
+                "firstStderrMs": null,
+                "elapsedMs": 5317,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:58.594Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4718,
+                "firstStderrMs": null,
+                "elapsedMs": 4881,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:06.376Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6327,
+                "firstStderrMs": null,
+                "elapsedMs": 6733,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:15.261Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2666,
+                "firstStderrMs": null,
+                "elapsedMs": 2721,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:19.662Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3652,
+                "firstStderrMs": null,
+                "elapsedMs": 3748,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:23.887Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2592,
+                "firstStderrMs": null,
+                "elapsedMs": 2653,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:28.097Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3160,
+                "firstStderrMs": null,
+                "elapsedMs": 3229,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:33.061Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2694,
+                "firstStderrMs": null,
+                "elapsedMs": 2771,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:37.571Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3831,
+                "firstStderrMs": null,
+                "elapsedMs": 3933,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:43.746Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5697,
+                "firstStderrMs": null,
+                "elapsedMs": 5958,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:50.567Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5040,
+                "firstStderrMs": null,
+                "elapsedMs": 5160,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:58.057Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5394,
+                "firstStderrMs": null,
+                "elapsedMs": 5490,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:05.452Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3080,
+                "firstStderrMs": null,
+                "elapsedMs": 3178,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:10.649Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3668,
+                "firstStderrMs": null,
+                "elapsedMs": 3818,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:16.499Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5651,
+                "firstStderrMs": null,
+                "elapsedMs": 5731,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:23.014Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2354,
+                "firstStderrMs": null,
+                "elapsedMs": 2426,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:26.988Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2594,
+                "firstStderrMs": null,
+                "elapsedMs": 2688,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:30.914Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1814,
+                "firstStderrMs": null,
+                "elapsedMs": 1882,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:34.202Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2120,
+                "firstStderrMs": null,
+                "elapsedMs": 2261,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:38.231Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2494,
+                "firstStderrMs": null,
+                "elapsedMs": 2557,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:42.228Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3130,
+                "firstStderrMs": null,
+                "elapsedMs": 3233,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:47.406Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4501,
+                "firstStderrMs": null,
+                "elapsedMs": 4600,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:52.566Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2809,
+                "firstStderrMs": null,
+                "elapsedMs": 2951,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:57.796Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3256,
+                "firstStderrMs": null,
+                "elapsedMs": 3367,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:03.222Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2756,
+                "firstStderrMs": null,
+                "elapsedMs": 2824,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-primary",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:07.998Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2630,
+                "firstStderrMs": null,
+                "elapsedMs": 2711,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:12.325Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3553,
+                "firstStderrMs": null,
+                "elapsedMs": 3716,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:17.934Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2589,
+                "firstStderrMs": null,
+                "elapsedMs": 2699,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:22.334Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3779,
+                "firstStderrMs": null,
+                "elapsedMs": 3935,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          }
+        ],
+        "passedObservations": 78
+      },
+      "setupNegative": {
+        "provider": "claude",
+        "providerVersion": "2.1.295 (Claude Code)",
+        "temporaryRawReportPath": "/tmp/policy-2181-source-claude/setup-negative.json",
+        "rawReportSha256": "067325b9561cd77d82c01b450fa066ce2acf7f83f3ba2631933e84da29a4ae3e",
+        "temporaryFixtureRoot": "/tmp/lcars-claude-setup-probe-14hMHl",
+        "observations": [
+          {
+            "mode": "malformed-config",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          },
+          {
+            "mode": "symlink-config",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          },
+          {
+            "mode": "missing-setup",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          }
+        ],
+        "passedObservations": 3
+      },
+      "setupReferenceCommit": "1397441da2fddcef7cb8db145be2664a8ebcc554"
+    },
+    "codex": {
+      "native": {
+        "provider": "codex",
+        "providerVersion": "codex-cli 0.162.0",
+        "temporaryRawReportPath": "/tmp/policy-2181-source-codex/full-suite-monotonic.json",
+        "rawReportSha256": "a3c9759213c93b0e565758b3eaa7643fcabf65fbdce220062c74e8c90ee4feec",
+        "temporaryFixtureRoot": "/tmp/lcars-codex-hook-probe-jplgbg",
+        "observations": [
+          {
+            "mode": "bootstrap-delegated-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:23.471Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5137,
+                "firstStderrMs": 176,
+                "elapsedMs": 5767,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-delegated-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:31.990Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3706,
+                "firstStderrMs": 152,
+                "elapsedMs": 4348,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-workflow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:38.564Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7939,
+                "firstStderrMs": 113,
+                "elapsedMs": 8318,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-recovery",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:47.773Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5712,
+                "firstStderrMs": 134,
+                "elapsedMs": 6104,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true,
+              "recovery": {
+                "expectedFailures": true,
+                "usefulWorkRetained": true,
+                "sameNativeSession": true,
+                "boundedRecoverySequence": true,
+                "attemptBoundReceipts": true,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-recovery-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:55.775Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2288,
+                "firstStderrMs": 118,
+                "elapsedMs": 2659,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage"],
+              "sameNativeSession": true,
+              "implementationRetained": true,
+              "stagingBlocked": true,
+              "commitAbsent": true,
+              "pushAbsent": true,
+              "preservedWork": true,
+              "publicationAbsent": true,
+              "recovery": {
+                "expectedFailures": true,
+                "usefulWorkRetained": true,
+                "sameNativeSession": true,
+                "boundedRecoverySequence": true,
+                "attemptBoundReceipts": true,
+                "originalDeadlineRetained": true
+              },
+              "finalization": {
+                "passed": true,
+                "result": {
+                  "code": 1,
+                  "signal": null
+                },
+                "requests": [
+                  {
+                    "method": "POST",
+                    "path": "/complete",
+                    "body": {
+                      "outcome": "worker-control-failed",
+                      "outcomeReference": null,
+                      "message": "Worker policy control failed without successful recovery. Infrastructure failure; preserve the session and unpublished work. No human decision is requested."
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-correction",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:00.478Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3971,
+                "firstStderrMs": 125,
+                "elapsedMs": 4360,
+                "exitCode": 0,
+                "signal": null
+              },
+              {
+                "startedAt": "2026-10-09T12:09:05.390Z",
+                "timeoutMs": 55088,
+                "firstStdoutMs": 1334,
+                "firstStderrMs": 126,
+                "elapsedMs": 1622,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true,
+              "correction": {
+                "before": {
+                  "code": 1,
+                  "missing": true
+                },
+                "decision": {
+                  "code": 0
+                },
+                "heartbeats": 1,
+                "resumed": true,
+                "resumedCode": 0,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:08.761Z",
+                "timeoutMs": 29999,
+                "firstStdoutMs": 3523,
+                "firstStderrMs": 114,
+                "elapsedMs": 3889,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "publicationAbsent": true,
+              "correction": {
+                "before": {
+                  "code": 1,
+                  "missing": true
+                },
+                "decision": {
+                  "code": 1
+                },
+                "heartbeats": 0,
+                "resumed": false,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:37.570Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 863,
+                "firstStderrMs": 78,
+                "elapsedMs": 1304,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "deny",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:38.879Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 976,
+                "firstStderrMs": 83,
+                "elapsedMs": 1664,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "failure",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:40.550Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1698,
+                "firstStderrMs": 134,
+                "elapsedMs": 2203,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "missing",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:42.760Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1296,
+                "firstStderrMs": 126,
+                "elapsedMs": 1785,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:43.554Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1944,
+                "firstStderrMs": 157,
+                "elapsedMs": 2553,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-failure",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:46.681Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2694,
+                "firstStderrMs": 189,
+                "elapsedMs": 3273,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-timeout",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:50.622Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7491,
+                "firstStderrMs": 244,
+                "elapsedMs": 7993,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-rewrite",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:58.969Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1622,
+                "firstStderrMs": 135,
+                "elapsedMs": 2159,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-marker",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:01.578Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2308,
+                "firstStderrMs": 135,
+                "elapsedMs": 2877,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "resume",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:04.462Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1618,
+                "firstStderrMs": 136,
+                "elapsedMs": 2193,
+                "exitCode": 0,
+                "signal": null
+              },
+              {
+                "startedAt": "2026-10-09T12:10:06.657Z",
+                "timeoutMs": 57805,
+                "firstStdoutMs": 1095,
+                "firstStderrMs": 129,
+                "elapsedMs": 1619,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-marker",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:10.144Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3812,
+                "firstStderrMs": 256,
+                "elapsedMs": 4414,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-recovery-success",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:13.738Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2573,
+                "firstStderrMs": 158,
+                "elapsedMs": 3185,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bridge-recovery-failure",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:17.367Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3442,
+                "firstStderrMs": 141,
+                "elapsedMs": 4083,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:22.794Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2285,
+                "firstStderrMs": 94,
+                "elapsedMs": 2843,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-primary",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:28.300Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2491,
+                "firstStderrMs": 177,
+                "elapsedMs": 3049,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-symlink",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:34.393Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2105,
+                "firstStderrMs": 220,
+                "elapsedMs": 2620,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:38.606Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2135,
+                "firstStderrMs": 155,
+                "elapsedMs": 2660,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:42.476Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1398,
+                "firstStderrMs": 102,
+                "elapsedMs": 2218,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:44.795Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1740,
+                "firstStderrMs": 112,
+                "elapsedMs": 2434,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:49.081Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3407,
+                "firstStderrMs": 156,
+                "elapsedMs": 4179,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-session-expected-mismatch",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:55.867Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2820,
+                "firstStderrMs": 164,
+                "elapsedMs": 3450,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-session-bound-mismatch",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:02.316Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2185,
+                "firstStderrMs": 252,
+                "elapsedMs": 2815,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-blocked",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:06.946Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2314,
+                "firstStderrMs": 170,
+                "elapsedMs": 2923,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-released",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:11.929Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2354,
+                "firstStderrMs": 140,
+                "elapsedMs": 3050,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-blocked",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:15.576Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2391,
+                "firstStderrMs": 139,
+                "elapsedMs": 2912,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-released",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:20.229Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2560,
+                "firstStderrMs": 175,
+                "elapsedMs": 3211,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-threads",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:25.166Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1867,
+                "firstStderrMs": 134,
+                "elapsedMs": 2420,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:29.209Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2344,
+                "firstStderrMs": 138,
+                "elapsedMs": 2821,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:33.453Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2341,
+                "firstStderrMs": 230,
+                "elapsedMs": 2928,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-stale-head",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:38.058Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2092,
+                "firstStderrMs": 133,
+                "elapsedMs": 2525,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-foreign-author",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:42.430Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3285,
+                "firstStderrMs": 144,
+                "elapsedMs": 4109,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-before-hold",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:50.143Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4548,
+                "firstStderrMs": 235,
+                "elapsedMs": 5129,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-empty",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:57.111Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2611,
+                "firstStderrMs": 173,
+                "elapsedMs": 3260,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-threads",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:02.712Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3999,
+                "firstStderrMs": 164,
+                "elapsedMs": 4738,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-changes-requested",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:10.143Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2591,
+                "firstStderrMs": 143,
+                "elapsedMs": 3281,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-blocked-label",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:15.752Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2754,
+                "firstStderrMs": 280,
+                "elapsedMs": 3219,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-self-release",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:19.311Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1948,
+                "firstStderrMs": 143,
+                "elapsedMs": 2547,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-self-release",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:23.680Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1777,
+                "firstStderrMs": 142,
+                "elapsedMs": 2215,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-park-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:27.218Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1721,
+                "firstStderrMs": 128,
+                "elapsedMs": 2321,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-no-op-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:30.846Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1925,
+                "firstStderrMs": 129,
+                "elapsedMs": 2479,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:35.030Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2233,
+                "firstStderrMs": 168,
+                "elapsedMs": 2786,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-unrelated",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:40.433Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4263,
+                "firstStderrMs": 234,
+                "elapsedMs": 5081,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-parent-symlink",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:47.820Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3681,
+                "firstStderrMs": 321,
+                "elapsedMs": 4658,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-multi-target",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:55.361Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3031,
+                "firstStderrMs": 288,
+                "elapsedMs": 3627,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:01.191Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4964,
+                "firstStderrMs": 260,
+                "elapsedMs": 5764,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:10.351Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4791,
+                "firstStderrMs": 202,
+                "elapsedMs": 5340,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:17.425Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2294,
+                "firstStderrMs": 146,
+                "elapsedMs": 3033,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:21.226Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2707,
+                "firstStderrMs": 195,
+                "elapsedMs": 3148,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:25.980Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2150,
+                "firstStderrMs": 130,
+                "elapsedMs": 2667,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:30.981Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1956,
+                "firstStderrMs": 148,
+                "elapsedMs": 2516,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:35.152Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2385,
+                "firstStderrMs": 131,
+                "elapsedMs": 3128,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:40.926Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3157,
+                "firstStderrMs": 134,
+                "elapsedMs": 3837,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:49.411Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3061,
+                "firstStderrMs": 234,
+                "elapsedMs": 3757,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:54.650Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3884,
+                "firstStderrMs": 283,
+                "elapsedMs": 4554,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:02.453Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3175,
+                "firstStderrMs": 456,
+                "elapsedMs": 3891,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:08.598Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2122,
+                "firstStderrMs": 153,
+                "elapsedMs": 2796,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:13.507Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3089,
+                "firstStderrMs": 155,
+                "elapsedMs": 3713,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:21.414Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2928,
+                "firstStderrMs": 174,
+                "elapsedMs": 3602,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:25.270Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1760,
+                "firstStderrMs": 136,
+                "elapsedMs": 9631,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:36.501Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2391,
+                "firstStderrMs": 144,
+                "elapsedMs": 3407,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:41.455Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2144,
+                "firstStderrMs": 127,
+                "elapsedMs": 2793,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:45.864Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2812,
+                "firstStderrMs": 144,
+                "elapsedMs": 3564,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:52.014Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2402,
+                "firstStderrMs": 141,
+                "elapsedMs": 2790,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:55.686Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3662,
+                "firstStderrMs": 160,
+                "elapsedMs": 4246,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:01.646Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2831,
+                "firstStderrMs": 165,
+                "elapsedMs": 3418,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:07.105Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1966,
+                "firstStderrMs": 182,
+                "elapsedMs": 2533,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:11.576Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4640,
+                "firstStderrMs": 124,
+                "elapsedMs": 5471,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:18.680Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2001,
+                "firstStderrMs": 226,
+                "elapsedMs": 2537,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-primary",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:22.867Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 2298,
+                "firstStderrMs": 142,
+                "elapsedMs": 2888,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:26.225Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1675,
+                "firstStderrMs": 131,
+                "elapsedMs": 2414,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:29.905Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 1304,
+                "firstStderrMs": 111,
+                "elapsedMs": 1913,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:33.265Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3112,
+                "firstStderrMs": 160,
+                "elapsedMs": 3922,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          }
+        ],
+        "passedObservations": 79
+      },
+      "setupNegative": {
+        "provider": "codex",
+        "providerVersion": "codex-cli 0.162.0",
+        "temporaryRawReportPath": "/tmp/policy-2181-source-codex/setup-negative.json",
+        "rawReportSha256": "3519722234cca209be4ddfb87b5852704a2a80877889ce8cdcd933393b8edada",
+        "temporaryFixtureRoot": "/tmp/lcars-codex-setup-probe-4meDC4",
+        "observations": [
+          {
+            "mode": "malformed-config",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          },
+          {
+            "mode": "symlink-config",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          },
+          {
+            "mode": "missing-setup",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          }
+        ],
+        "passedObservations": 3
+      },
+      "setupReferenceCommit": "1397441da2fddcef7cb8db145be2664a8ebcc554"
+    },
+    "opencode": {
+      "native": {
+        "provider": "opencode",
+        "providerVersion": "1.18.25",
+        "temporaryRawReportPath": "/tmp/policy-2181-source-opencode/full-suite-monotonic.json",
+        "rawReportSha256": "5a9deb1d0c128e26add32dc677d3bc1a26eb01f9469641ae0a87e7266aaf1d12",
+        "temporaryFixtureRoot": "/tmp/lcars-opencode-hook-probe-gCNag1",
+        "observations": [
+          {
+            "mode": "bootstrap-delegated-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:28.505Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 21413,
+                "firstStderrMs": 9836,
+                "elapsedMs": 22380,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-delegated-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:08:51.860Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 13118,
+                "firstStderrMs": 5925,
+                "elapsedMs": 13878,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-workflow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:07.860Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 13125,
+                "firstStderrMs": 5850,
+                "elapsedMs": 13533,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-recovery",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:21.617Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 10010,
+                "firstStderrMs": 2967,
+                "elapsedMs": 10514,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true,
+              "recovery": {
+                "expectedFailures": true,
+                "usefulWorkRetained": true,
+                "sameNativeSession": true,
+                "boundedRecoverySequence": true,
+                "attemptBoundReceipts": true,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-recovery-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:33.889Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6143,
+                "firstStderrMs": 2728,
+                "elapsedMs": 6788,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage"],
+              "sameNativeSession": true,
+              "implementationRetained": true,
+              "stagingBlocked": true,
+              "commitAbsent": true,
+              "pushAbsent": true,
+              "preservedWork": true,
+              "publicationAbsent": true,
+              "recovery": {
+                "expectedFailures": true,
+                "usefulWorkRetained": true,
+                "sameNativeSession": true,
+                "boundedRecoverySequence": true,
+                "attemptBoundReceipts": true,
+                "originalDeadlineRetained": true
+              },
+              "finalization": {
+                "passed": true,
+                "result": {
+                  "code": 1,
+                  "signal": null
+                },
+                "requests": [
+                  {
+                    "method": "POST",
+                    "path": "/complete",
+                    "body": {
+                      "outcome": "worker-control-failed",
+                      "outcomeReference": null,
+                      "message": "Worker policy control failed without successful recovery. Infrastructure failure; preserve the session and unpublished work. No human decision is requested."
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-correction",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:09:43.441Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 18911,
+                "firstStderrMs": 8703,
+                "elapsedMs": 19612,
+                "exitCode": 0,
+                "signal": null
+              },
+              {
+                "startedAt": "2026-10-09T12:10:02.296Z",
+                "timeoutMs": 39732,
+                "firstStdoutMs": 14804,
+                "firstStderrMs": 7042,
+                "elapsedMs": 15754,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push", "publish"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "exactMarkerOnce": true,
+              "correction": {
+                "before": {
+                  "code": 1,
+                  "missing": true
+                },
+                "decision": {
+                  "code": 0
+                },
+                "heartbeats": 1,
+                "resumed": true,
+                "resumedCode": 0,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "bootstrap-workflow-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:20.349Z",
+                "timeoutMs": 29999,
+                "firstStdoutMs": 21024,
+                "firstStderrMs": 7048,
+                "elapsedMs": 21577,
+                "exitCode": 0,
+                "signal": null
+              }
+            ],
+            "workflow": {
+              "passed": true,
+              "steps": ["edit", "stage", "commit", "push"],
+              "sameNativeSession": true,
+              "implementationCommitted": true,
+              "exactRemoteCommit": true,
+              "exactRemoteTree": true,
+              "preservedWork": true,
+              "publicationAbsent": true,
+              "correction": {
+                "before": {
+                  "code": 1,
+                  "missing": true
+                },
+                "decision": {
+                  "code": 1
+                },
+                "heartbeats": 0,
+                "resumed": false,
+                "originalDeadlineRetained": true
+              }
+            }
+          },
+          {
+            "mode": "allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:10:51.467Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 13293,
+                "firstStderrMs": 10092,
+                "elapsedMs": 13684,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "deny",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:06.437Z",
+                "timeoutMs": 59996,
+                "firstStdoutMs": 9796,
+                "firstStderrMs": 7324,
+                "elapsedMs": 10102,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "failure",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:16.309Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 8772,
+                "firstStderrMs": 7000,
+                "elapsedMs": 8977,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "missing",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:26.303Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 8110,
+                "firstStderrMs": 5847,
+                "elapsedMs": 8360,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "policy-marker",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:36.375Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 12925,
+                "firstStderrMs": 6424,
+                "elapsedMs": 13674,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "policy-deny",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:11:53.450Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 14045,
+                "firstStderrMs": 9103,
+                "elapsedMs": 14538,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "policy-failure",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:10.844Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 11240,
+                "firstStderrMs": 8840,
+                "elapsedMs": 11447,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-marker",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:23.079Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7901,
+                "firstStderrMs": 5606,
+                "elapsedMs": 8075,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "policy-recovery-success",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:32.773Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 17482,
+                "firstStderrMs": 8942,
+                "elapsedMs": 17944,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "policy-recovery-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:12:55.679Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 17774,
+                "firstStderrMs": 12823,
+                "elapsedMs": 18127,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "policy-timeout-success",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:16.147Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 16928,
+                "firstStderrMs": 7346,
+                "elapsedMs": 17191,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "policy-timeout-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:33.711Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 16118,
+                "firstStderrMs": 7634,
+                "elapsedMs": 16513,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:13:52.915Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 17626,
+                "firstStderrMs": 11187,
+                "elapsedMs": 18656,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-primary",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:15.004Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 14705,
+                "firstStderrMs": 10640,
+                "elapsedMs": 15545,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-symlink",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:31.117Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 10130,
+                "firstStderrMs": 5221,
+                "elapsedMs": 10736,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:14:44.356Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 15602,
+                "firstStderrMs": 9204,
+                "elapsedMs": 16611,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:02.734Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 13992,
+                "firstStderrMs": 7856,
+                "elapsedMs": 14803,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:20.344Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 10966,
+                "firstStderrMs": 7252,
+                "elapsedMs": 11412,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:32.101Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 10689,
+                "firstStderrMs": 6255,
+                "elapsedMs": 11315,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-session-expected-mismatch",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:45.949Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6602,
+                "firstStderrMs": 3895,
+                "elapsedMs": 7200,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-session-bound-mismatch",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:15:53.169Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5626,
+                "firstStderrMs": 3541,
+                "elapsedMs": 6009,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-blocked",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:16:00.429Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5369,
+                "firstStderrMs": 3122,
+                "elapsedMs": 5783,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-released",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:16:07.502Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6375,
+                "firstStderrMs": 3027,
+                "elapsedMs": 6919,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-blocked",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:16:16.135Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6465,
+                "firstStderrMs": 3135,
+                "elapsedMs": 7136,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-released",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:16:23.374Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 9219,
+                "firstStderrMs": 4476,
+                "elapsedMs": 9992,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-threads",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:16:34.861Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 8440,
+                "firstStderrMs": 4205,
+                "elapsedMs": 9129,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:16:45.791Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 8809,
+                "firstStderrMs": 5156,
+                "elapsedMs": 9226,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:16:54.977Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6576,
+                "firstStderrMs": 3364,
+                "elapsedMs": 7025,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-stale-head",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:17:04.396Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6818,
+                "firstStderrMs": 3824,
+                "elapsedMs": 7294,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-foreign-author",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:17:14.305Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 10078,
+                "firstStderrMs": 5240,
+                "elapsedMs": 10945,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-before-hold",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:17:26.842Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7230,
+                "firstStderrMs": 4138,
+                "elapsedMs": 7725,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-empty",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:17:36.560Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7920,
+                "firstStderrMs": 4227,
+                "elapsedMs": 8452,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-ack-threads",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:17:47.914Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 10001,
+                "firstStderrMs": 6480,
+                "elapsedMs": 10461,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-changes-requested",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:17:59.078Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7674,
+                "firstStderrMs": 4622,
+                "elapsedMs": 8246,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-ack-blocked-label",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:18:09.910Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 9770,
+                "firstStderrMs": 5515,
+                "elapsedMs": 10285,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-draft-self-release",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:18:21.681Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6305,
+                "firstStderrMs": 3526,
+                "elapsedMs": 6803,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-hold-merge-self-release",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:18:28.341Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5766,
+                "firstStderrMs": 3546,
+                "elapsedMs": 6181,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-park-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:18:35.722Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3333,
+                "firstStderrMs": 2553,
+                "elapsedMs": 3411,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-no-op-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:18:40.379Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 3867,
+                "firstStderrMs": 2562,
+                "elapsedMs": 4001,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:18:46.766Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6526,
+                "firstStderrMs": 4954,
+                "elapsedMs": 6662,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-unrelated",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:18:54.699Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4654,
+                "firstStderrMs": 3448,
+                "elapsedMs": 5120,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-outcome-parent-symlink",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:18:59.607Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5185,
+                "firstStderrMs": 3697,
+                "elapsedMs": 5320,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-lineage",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:19:06.288Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5066,
+                "firstStderrMs": 3342,
+                "elapsedMs": 5157,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-file-resume",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:19:12.496Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6054,
+                "firstStderrMs": 3151,
+                "elapsedMs": 6473,
+                "exitCode": 0,
+                "signal": null
+              },
+              {
+                "startedAt": "2026-10-09T12:19:18.969Z",
+                "timeoutMs": 53526,
+                "firstStdoutMs": 6858,
+                "firstStderrMs": 4104,
+                "elapsedMs": 7347,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-lineage-recovery-success",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:19:27.579Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5817,
+                "firstStderrMs": 3555,
+                "elapsedMs": 5948,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-lineage-recovery-exhausted",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:19:33.633Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5043,
+                "firstStderrMs": 3558,
+                "elapsedMs": 5178,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:19:40.500Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7633,
+                "firstStderrMs": 4170,
+                "elapsedMs": 8264,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:19:50.404Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 8956,
+                "firstStderrMs": 5053,
+                "elapsedMs": 9401,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-inline-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:19:59.938Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 12549,
+                "firstStderrMs": 7248,
+                "elapsedMs": 13551,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:20:15.243Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 12190,
+                "firstStderrMs": 6938,
+                "elapsedMs": 12874,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:20:29.812Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 8109,
+                "firstStderrMs": 4799,
+                "elapsedMs": 8821,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-create-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:20:38.715Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6643,
+                "firstStderrMs": 3914,
+                "elapsedMs": 7263,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:20:47.391Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7355,
+                "firstStderrMs": 4425,
+                "elapsedMs": 7823,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:20:56.634Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6796,
+                "firstStderrMs": 3779,
+                "elapsedMs": 7216,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-issue-comment-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:03.763Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5415,
+                "firstStderrMs": 3018,
+                "elapsedMs": 5872,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:10.850Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4925,
+                "firstStderrMs": 2949,
+                "elapsedMs": 5237,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:17.065Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5437,
+                "firstStderrMs": 2934,
+                "elapsedMs": 5871,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-comment-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:24.129Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5356,
+                "firstStderrMs": 2833,
+                "elapsedMs": 5801,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:31.011Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 4450,
+                "firstStderrMs": 2400,
+                "elapsedMs": 4807,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:35.514Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6257,
+                "firstStderrMs": 3649,
+                "elapsedMs": 6643,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-deliverable-pr-review-file-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:43.415Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6287,
+                "firstStderrMs": 3161,
+                "elapsedMs": 6714,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:51.540Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6292,
+                "firstStderrMs": 3339,
+                "elapsedMs": 6755,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:21:59.587Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5304,
+                "firstStderrMs": 3045,
+                "elapsedMs": 5671,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:22:05.151Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5915,
+                "firstStderrMs": 3516,
+                "elapsedMs": 6334,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:22:12.858Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6202,
+                "firstStderrMs": 3894,
+                "elapsedMs": 6522,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:22:20.514Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7201,
+                "firstStderrMs": 3003,
+                "elapsedMs": 7697,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-marker-idempotent-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:22:29.559Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6968,
+                "firstStderrMs": 3634,
+                "elapsedMs": 7380,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-publication-marker-foreign",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:22:36.910Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6568,
+                "firstStderrMs": 3621,
+                "elapsedMs": 7125,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-allow",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:22:45.791Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7579,
+                "firstStderrMs": 4492,
+                "elapsedMs": 8052,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-review",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:22:55.294Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 5583,
+                "firstStderrMs": 3541,
+                "elapsedMs": 6022,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-primary",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:23:02.642Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6840,
+                "firstStderrMs": 4134,
+                "elapsedMs": 7253,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-absent",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:23:09.734Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6175,
+                "firstStderrMs": 3413,
+                "elapsedMs": 6677,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-unreadable",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:23:17.795Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 6183,
+                "firstStderrMs": 3219,
+                "elapsedMs": 6711,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          },
+          {
+            "mode": "bootstrap-push-ownership-changed",
+            "observedExpectedPrimitive": true,
+            "code": 0,
+            "timedOut": false,
+            "executions": [
+              {
+                "startedAt": "2026-10-09T12:23:25.908Z",
+                "timeoutMs": 59999,
+                "firstStdoutMs": 7845,
+                "firstStderrMs": 3134,
+                "elapsedMs": 8249,
+                "exitCode": 0,
+                "signal": null
+              }
+            ]
+          }
+        ],
+        "passedObservations": 81
+      },
+      "setupNegative": {
+        "provider": "opencode",
+        "providerVersion": "1.18.25",
+        "temporaryRawReportPath": "/tmp/policy-2181-source-opencode/setup-negative.json",
+        "rawReportSha256": "2e844660dedda1665febb3cf9f26714963a59bb42ba15a57f94cfa81d96ce696",
+        "temporaryFixtureRoot": "/tmp/lcars-opencode-setup-probe-gMaGOn",
+        "observations": [
+          {
+            "mode": "malformed-config",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          },
+          {
+            "mode": "symlink-config",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          },
+          {
+            "mode": "missing-setup",
+            "observedExpectedPrimitive": true,
+            "code": 1,
+            "executions": [],
+            "preservedWork": true,
+            "launchReached": false
+          }
+        ],
+        "passedObservations": 3
+      },
+      "setupReferenceCommit": "1397441da2fddcef7cb8db145be2664a8ebcc554"
+    }
+  },
+  "priorFailures": [
+    {
+      "provider": "claude",
+      "providerVersion": "2.1.295 (Claude Code)",
+      "temporaryRawReportPath": "/tmp/policy-2181-source-claude/full-suite.json",
+      "rawReportSha256": "22f741caa582359f4c80236e8820e01c9f974443857b65408b94ef3d4fd63736",
+      "temporaryFixtureRoot": "/tmp/lcars-claude-hook-probe-G9a2oK",
+      "observations": [
+        {
+          "mode": "bootstrap-workflow-exhausted",
+          "requests": 5,
+          "issued": true,
+          "returnedToolResult": true,
+          "hookInvoked": true,
+          "effect": false,
+          "rewrittenEffect": false,
+          "markerRepaired": false,
+          "publicationBodyFilePreserved": true,
+          "resumedSameSession": false,
+          "recoveryVerified": false,
+          "ownershipReadCount": 4,
+          "ownershipChangeVerified": false,
+          "denialReasonObserved": true,
+          "sessionBindingVerified": true,
+          "reviewReadCount": 0,
+          "pushVerified": false,
+          "outcomeTargetsPreserved": true,
+          "workflow": {
+            "passed": false,
+            "steps": ["edit", "stage", "commit", "push"],
+            "sameNativeSession": true,
+            "implementationCommitted": true,
+            "exactRemoteCommit": true,
+            "exactRemoteTree": true,
+            "preservedWork": true,
+            "publicationAbsent": true,
+            "correction": {
+              "before": {
+                "code": 1,
+                "missing": true
+              },
+              "decision": {
+                "code": 1
+              },
+              "heartbeats": 0,
+              "resumed": false,
+              "originalDeadlineRetained": false
+            }
+          },
+          "completionBefore": {
+            "code": 1,
+            "missing": true
+          },
+          "completionAfter": {
+            "code": 1,
+            "missing": true
+          },
+          "code": 0,
+          "timedOut": false,
+          "exercised": true,
+          "observedExpectedPrimitive": false,
+          "executions": [
+            {
+              "launch": 1,
+              "code": 0,
+              "timedOut": false,
+              "startedAt": "2026-10-09T11:50:38.248Z",
+              "timeoutMs": 30000,
+              "firstStdoutMs": 3507,
+              "firstStderrMs": null,
+              "exit": {
+                "elapsedMs": 3556,
+                "code": 0,
+                "signal": null
+              },
+              "durationMs": 3556,
+              "closeSignal": null
+            }
+          ]
+        }
+      ],
+      "note": "Pre-monotonic-fixture source observation; failure retained, not converted to a passing qualification."
+    },
+    {
+      "provider": "codex",
+      "providerVersion": "codex-cli 0.162.0",
+      "temporaryRawReportPath": "/tmp/policy-2181-source-codex/full-suite.json",
+      "rawReportSha256": "34d194950f67468bf66901ee0b4df88a0c1ff6118833cd92da1ff8c5a0779612",
+      "temporaryFixtureRoot": "/tmp/lcars-codex-hook-probe-3U8DMj",
+      "observations": [
+        {
+          "mode": "bootstrap-workflow-exhausted",
+          "requests": 7,
+          "issued": true,
+          "returnedToolResult": true,
+          "hookInvoked": true,
+          "effect": true,
+          "rewrittenEffect": false,
+          "markerRepaired": true,
+          "publicationBodyFilePreserved": true,
+          "resumedSameSession": true,
+          "recoveryVerified": false,
+          "ownershipReadCount": 5,
+          "ownershipChangeVerified": false,
+          "denialReasonObserved": true,
+          "sessionBindingVerified": true,
+          "reviewReadCount": 0,
+          "pushVerified": false,
+          "outcomeTargetsPreserved": true,
+          "workflow": {
+            "passed": false,
+            "steps": ["edit", "stage", "commit", "push", "publish"],
+            "sameNativeSession": true,
+            "implementationCommitted": true,
+            "exactRemoteCommit": true,
+            "exactRemoteTree": true,
+            "preservedWork": true,
+            "publicationAbsent": false,
+            "correction": {
+              "before": {
+                "code": 1,
+                "missing": true
+              },
+              "decision": {
+                "code": 0
+              },
+              "heartbeats": 1,
+              "resumed": true,
+              "resumedCode": 0,
+              "originalDeadlineRetained": false
+            }
+          },
+          "completionBefore": {
+            "code": 1,
+            "missing": true
+          },
+          "completionAfter": {
+            "code": 0,
+            "missing": false
+          },
+          "code": 0,
+          "timedOut": false,
+          "exercised": true,
+          "observedExpectedPrimitive": false,
+          "executions": [
+            {
+              "launch": 1,
+              "code": 0,
+              "timedOut": false,
+              "startedAt": "2026-10-09T11:50:37.579Z",
+              "timeoutMs": 30000,
+              "firstStdoutMs": 3213,
+              "firstStderrMs": 105,
+              "exit": {
+                "elapsedMs": 3569,
+                "code": 0,
+                "signal": null
+              },
+              "durationMs": 3569,
+              "closeSignal": null
+            },
+            {
+              "launch": 2,
+              "code": 0,
+              "timedOut": false,
+              "startedAt": "2026-10-09T11:51:06.352Z",
+              "timeoutMs": 1227,
+              "firstStdoutMs": 914,
+              "firstStderrMs": 84,
+              "exit": {
+                "elapsedMs": 1224,
+                "code": 0,
+                "signal": null
+              },
+              "durationMs": 1224,
+              "closeSignal": null
+            }
+          ]
+        }
+      ],
+      "note": "Pre-monotonic-fixture source observation; failure retained, not converted to a passing qualification."
+    },
+    {
+      "provider": "codex",
+      "providerVersion": "codex-cli 0.162.0",
+      "temporaryRawReportPath": "/tmp/policy-2181-source-codex/valid-work.json",
+      "rawReportSha256": "bd033b375819069485271dd818f8d50a465dde98feebabc9e9d6ad675e78028f",
+      "temporaryFixtureRoot": "/tmp/lcars-codex-hook-probe-lX6kCA",
+      "observations": [
+        {
+          "mode": "bootstrap-workflow",
+          "requests": 1,
+          "issued": false,
+          "returnedToolResult": false,
+          "hookInvoked": false,
+          "effect": false,
+          "rewrittenEffect": false,
+          "markerRepaired": false,
+          "publicationBodyFilePreserved": true,
+          "resumedSameSession": false,
+          "recoveryVerified": false,
+          "ownershipReadCount": 0,
+          "ownershipChangeVerified": false,
+          "denialReasonObserved": true,
+          "sessionBindingVerified": false,
+          "reviewReadCount": 0,
+          "pushVerified": false,
+          "outcomeTargetsPreserved": true,
+          "workflow": {
+            "passed": false,
+            "error": "ENOENT: no such file or directory, open '/tmp/lcars-codex-hook-probe-lX6kCA/bootstrap-workflow/workflow-events.jsonl'"
+          },
+          "completionBefore": {
+            "code": 1,
+            "missing": true
+          },
+          "completionAfter": {
+            "code": 1,
+            "missing": true
+          },
+          "code": 0,
+          "timedOut": false,
+          "exercised": false,
+          "observedExpectedPrimitive": false,
+          "executions": [
+            {
+              "launch": 1,
+              "code": 0,
+              "timedOut": false,
+              "startedAt": "2026-10-09T11:42:57.893Z",
+              "timeoutMs": 60000,
+              "firstStdoutMs": 954,
+              "firstStderrMs": 96,
+              "exit": {
+                "elapsedMs": 1312,
+                "code": 0,
+                "signal": null
+              },
+              "durationMs": 1313,
+              "closeSignal": null
+            }
+          ]
+        }
+      ],
+      "note": "Initial localhost catalog qualification failure; retained before the supported fixture metadata correction."
+    },
+    {
+      "provider": "codex",
+      "providerVersion": "codex-cli 0.162.0",
+      "temporaryRawReportPath": "/tmp/policy-2181-source-codex/valid-work-catalog.json",
+      "rawReportSha256": "2b3ad17bed1c55d4fdbbd8adb9857bb392bdf63cd8ccf976e4cd476cc6be2e73",
+      "temporaryFixtureRoot": "/tmp/lcars-codex-hook-probe-Mwfflx",
+      "observations": [
+        {
+          "mode": "bootstrap-workflow",
+          "requests": 0,
+          "issued": false,
+          "returnedToolResult": false,
+          "hookInvoked": false,
+          "effect": false,
+          "rewrittenEffect": false,
+          "markerRepaired": false,
+          "publicationBodyFilePreserved": true,
+          "resumedSameSession": false,
+          "recoveryVerified": false,
+          "ownershipReadCount": 0,
+          "ownershipChangeVerified": false,
+          "denialReasonObserved": true,
+          "sessionBindingVerified": false,
+          "reviewReadCount": 0,
+          "pushVerified": false,
+          "outcomeTargetsPreserved": true,
+          "workflow": {
+            "passed": false,
+            "error": "ENOENT: no such file or directory, open '/tmp/lcars-codex-hook-probe-Mwfflx/bootstrap-workflow/workflow-events.jsonl'"
+          },
+          "completionBefore": {
+            "code": 1,
+            "missing": true
+          },
+          "completionAfter": {
+            "code": 1,
+            "missing": true
+          },
+          "code": 1,
+          "timedOut": false,
+          "exercised": false,
+          "observedExpectedPrimitive": false,
+          "executions": [
+            {
+              "launch": 1,
+              "code": 1,
+              "timedOut": false,
+              "startedAt": "2026-10-09T11:47:47.039Z",
+              "timeoutMs": 60000,
+              "firstStdoutMs": null,
+              "firstStderrMs": 67,
+              "exit": {
+                "elapsedMs": 113,
+                "code": 1,
+                "signal": null
+              },
+              "durationMs": 113,
+              "closeSignal": null
+            }
+          ]
+        }
+      ],
+      "note": "Initial localhost catalog qualification failure; retained before the supported fixture metadata correction."
+    }
+  ],
+  "remainingGates": [
+    "#2223 production clock authority and refreshed image proof",
+    "#2217 diagnostics and Homelab#2186 clock investigation",
+    "#2181 current inspected-image full suites and native failure consumer",
+    "#2181 useful normal policy-enabled per-provider dispatches",
+    "#2044 fresh interactive instruction acceptance and member adoption",
+    "Specific maintainer/Homelab publication, activation, observation and rollback approval"
+  ]
+}

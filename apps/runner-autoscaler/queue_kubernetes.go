@@ -105,6 +105,9 @@ func validateKubernetesQueueEnvironment(c *queueKubernetesConfig) error {
 	if err != nil {
 		return err
 	}
+	if _, err := directRunnerWorkerPolicyProviders(); err != nil {
+		return err
+	}
 	_, err = queueKubernetesRESTConfig(c)
 	return err
 }
@@ -124,13 +127,39 @@ func queueKubernetesRESTConfig(c *queueKubernetesConfig) (*rest.Config, error) {
 	return cfg, nil
 }
 
+// This selector comes only from the trusted executor deployment, never a run
+// brief. An empty value explicitly keeps even image-provided defaults disabled.
+func directRunnerWorkerPolicyProviders() (string, error) {
+	raw := strings.TrimSpace(os.Getenv("LCARS_WORKER_POLICY_PROVIDERS"))
+	if raw == "" {
+		return "", nil
+	}
+	seen := map[string]bool{}
+	providers := []string{}
+	for _, entry := range strings.Split(raw, ",") {
+		provider := strings.TrimSpace(entry)
+		switch provider {
+		case "claude", "codex", "opencode":
+		default:
+			return "", fmt.Errorf("LCARS_WORKER_POLICY_PROVIDERS must contain only claude, codex, or opencode")
+		}
+		if !seen[provider] {
+			seen[provider] = true
+			providers = append(providers, provider)
+		}
+	}
+	sort.Strings(providers)
+	return strings.Join(providers, ","), nil
+}
+
 type kubernetesQueue struct {
-	config queueKubernetesConfig
-	client kubernetes.Interface
-	image  string
-	logger *slog.Logger
-	mu     sync.Mutex
-	held   int
+	config                queueKubernetesConfig
+	client                kubernetes.Interface
+	workerPolicyProviders string
+	image                 string
+	logger                *slog.Logger
+	mu                    sync.Mutex
+	held                  int
 	// exits receives every terminated queue Job this executor's inventory
 	// reads observe (nil disables reporting). See runExitReporter.
 	exits *runExitReporter
@@ -149,7 +178,11 @@ func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *sl
 	if err != nil {
 		return nil, err
 	}
-	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger}
+	providers, err := directRunnerWorkerPolicyProviders()
+	if err != nil {
+		return nil, err
+	}
+	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers}
 	if err := q.preflight(ctx); err != nil {
 		return nil, err
 	}
@@ -421,6 +454,7 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	deadline := int64(7200)
 	one := int32(1)
 	env := []core.EnvVar{{Name: "RUNNER_MODE", Value: "direct"}, {Name: "LCARS_RUN_ID", Value: l.runID}, {Name: "LCARS_CONSOLE_URL", Value: l.consoleURL}, {Name: "LCARS_RUN_TOKEN", ValueFrom: &core.EnvVarSource{SecretKeyRef: &core.SecretKeySelector{LocalObjectReference: core.LocalObjectReference{Name: name}, Key: "run-token"}}}}
+	env = append(env, core.EnvVar{Name: "LCARS_WORKER_POLICY_PROVIDERS", Value: q.workerPolicyProviders})
 	volumes := []core.Volume{{Name: "credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: items, DefaultMode: &mode}}}, {Name: "work", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}}
 	mounts := []core.VolumeMount{{Name: "credentials", MountPath: "/run/secrets", ReadOnly: true}, {Name: "work", MountPath: "/home/runner/_work"}}
 	if l.pipeline == "codex" {
