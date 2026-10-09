@@ -992,6 +992,78 @@ export function runOrchestratorStoreContract(
         expect((await f.orchestrator.sweepExpired()).retried).toHaveLength(1);
       });
 
+      it('does not let expiry overwrite a claim released and reclaimed at its commit boundary', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator, 'startup-reclaim-race');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: T0,
+          claimedBy: 'old-executor',
+          tokenHash: 'a'.repeat(64),
+        });
+        clock.advanceMinutes(15);
+        let interleaved = false;
+        const reclaim = async () => {
+          if (interleaved) return;
+          interleaved = true;
+          expect(
+            await store.releaseQueuedRunClaim({
+              runId: run.runId,
+              claimedBy: 'old-executor',
+              tokenHash: 'a'.repeat(64),
+              now: clock.now(),
+            }),
+          ).toBe(true);
+          expect(
+            await store.claimQueuedRun({
+              pipelines: ['claude'],
+              now: clock.now(),
+              claimedBy: 'new-executor',
+              tokenHash: 'b'.repeat(64),
+            }),
+          ).toMatchObject({
+            runId: run.runId,
+            queue: { startDeadlineAt: '2026-08-15T12:30:00.000Z' },
+          });
+        };
+        // Pause at the store's commit boundary. The legacy read/decide/apply
+        // path has already made a stale decision here; an atomic run decision
+        // must instead observe the fresh claim inside its transaction.
+        const apply = store.apply.bind(store);
+        const transactRun = store.transactRun.bind(store);
+        store.apply = async (input) => {
+          if (input.decision.run?.state === 'lost') await reclaim();
+          return apply(input);
+        };
+        store.transactRun = async (input) => {
+          await reclaim();
+          return transactRun(input);
+        };
+        try {
+          expect(await orchestrator.sweepExpired()).toEqual({
+            lost: [],
+            retried: [],
+          });
+          expect(interleaved).toBe(true);
+          expect(await store.readRun(run.runId)).toMatchObject({
+            state: 'running',
+            queue: {
+              claimedBy: 'new-executor',
+              tokenHash: 'b'.repeat(64),
+              startDeadlineAt: '2026-08-15T12:30:00.000Z',
+            },
+          });
+          expect((await store.readTask(run.task))?.task.activeRunId).toBe(
+            run.runId,
+          );
+        } finally {
+          store.apply = apply;
+          store.transactRun = transactRun;
+        }
+      });
+
       it('drops startup bookkeeping when a lifecycle read releases the claim and grants a fresh deadline on reclaim', async () => {
         const f = await claimedFixture();
         expect(

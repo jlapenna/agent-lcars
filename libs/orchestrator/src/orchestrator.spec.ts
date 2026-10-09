@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { decidedRun, type Decision, isRefusal } from './decide';
+import { decidedRun, isRefusal } from './decide';
 import { MemoryStore } from './memory-store';
 import type { TaskId } from './model';
 import { Orchestrator } from './orchestrator';
@@ -36,15 +36,22 @@ function fixture() {
 class InterruptingStore extends MemoryStore {
   #interrupt = true;
 
-  override async apply(input: {
-    decision: Decision;
-    expectedRevision: number | undefined;
-  }): Promise<void> {
-    if (this.#interrupt && input.decision.additionalRuns !== undefined) {
-      this.#interrupt = false;
-      throw new Error('simulated process interruption before commit');
-    }
-    return super.apply(input);
+  override async transactRun(input: Parameters<MemoryStore['transactRun']>[0]) {
+    return super.transactRun({
+      ...input,
+      decide: (state) => {
+        const outcome = input.decide(state);
+        if (
+          this.#interrupt &&
+          !isRefusal(outcome) &&
+          outcome.additionalRuns !== undefined
+        ) {
+          this.#interrupt = false;
+          throw new Error('simulated process interruption before commit');
+        }
+        return outcome;
+      },
+    });
   }
 }
 
