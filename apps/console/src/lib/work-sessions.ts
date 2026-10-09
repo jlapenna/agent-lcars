@@ -10,10 +10,11 @@ import {
 import type { ItemSessionView } from '@agent-lcars/work/derive';
 
 /**
- * Joins a native work item's runs to the agent telemetry they produced.
+ * Joins a task's runs to the agent telemetry they produced, for both native
+ * work and GitHub anchors.
  *
  * The join key is `IssueAgentSessionDoc.intentId`, which the runner-mode
- * shipper writes as the orchestrator run id (`work:<ulid>/rN`) -- the same
+ * shipper writes as the orchestrator run id (`work:<ulid>/rN` or `owner/repo#number/rN`) -- the same
  * value the item view carries as `ItemRunView.runId`. One equality query
  * per run, deliberately: `intentId` alone is an automatic single-field
  * index, while an `in` query over many run ids plus the `source` filter

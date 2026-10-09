@@ -1,5 +1,6 @@
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import type { WorkSpec } from '@agent-lcars/work';
+import type { ItemView } from '@agent-lcars/work/derive';
 import {
   Alert,
   Anchor,
@@ -15,7 +16,9 @@ import type { ActionItem } from '../../lib/action-items';
 import type { LogicalWork, LogicalWorkState } from '../../lib/logical-work';
 import { PipelineBadge, RepoBadge } from '../agent-activity-panel';
 import { ItemOverflowMenu } from '../item-overflow-menu';
+import { GithubDetailReply } from './github-detail-reply';
 import { RunsSection } from './runs-section';
+import { TaskDetailHistory } from './task-detail-history';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
   unavailable: 'Unavailable',
@@ -45,6 +48,7 @@ export function LogicalWorkCard({
   anchorState,
   spec,
   item,
+  history,
 }: {
   work: LogicalWork;
   runs: OrchestratorRun[];
@@ -56,6 +60,7 @@ export function LogicalWorkCard({
    * deciding what to do with a task. Omitted by hosts without item state
    * (agents' claimed-idle section). */
   item?: ActionItem;
+  history?: ItemView;
 }) {
   return (
     <Card
@@ -93,14 +98,18 @@ export function LogicalWorkCard({
               </Anchor>
             </Title>
             <Group gap="xs" wrap="wrap">
-              <Badge
-                variant="filled"
-                color={STATE_COLORS[work.state]}
-                size="sm"
-                data-testid="logical-work-state"
-              >
-                {STATE_LABELS[work.state]}
-              </Badge>
+              {(!history ||
+                work.state === 'anomaly' ||
+                work.state === 'unavailable') && (
+                <Badge
+                  variant="filled"
+                  color={STATE_COLORS[work.state]}
+                  size="sm"
+                  data-testid="logical-work-state"
+                >
+                  {STATE_LABELS[work.state]}
+                </Badge>
+              )}
               <Badge variant="outline" color="gray" size="sm">
                 {anchorState}
               </Badge>
@@ -111,13 +120,15 @@ export function LogicalWorkCard({
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap" align="flex-start">
-            <Text size="xs" c="dimmed">
-              {work.provenance.kind === 'authoritative'
-                ? `authoritative state rev ${work.provenance.revision ?? 'unknown'}`
-                : work.provenance.kind === 'unavailable'
-                  ? 'authoritative lifecycle state unavailable'
-                  : 'no authoritative run history'}
-            </Text>
+            {!history && (
+              <Text size="xs" c="dimmed">
+                {work.provenance.kind === 'authoritative'
+                  ? `authoritative state rev ${work.provenance.revision ?? 'unknown'}`
+                  : work.provenance.kind === 'unavailable'
+                    ? 'authoritative lifecycle state unavailable'
+                    : 'no authoritative run history'}
+              </Text>
+            )}
             {item && <ItemOverflowMenu item={item} />}
           </Group>
         </Group>
@@ -132,7 +143,33 @@ export function LogicalWorkCard({
           </Stack>
         )}
 
-        {runs.length > 0 ? (
+        {history ? (
+          <TaskDetailHistory
+            anchor={
+              'issueNumber' in work.task
+                ? {
+                    repo: `${work.task.repository.owner}/${work.task.repository.name}`,
+                    issue: work.task.issueNumber,
+                  }
+                : { workId: work.task.workId }
+            }
+            item={history}
+            actions={
+              item && anchorState === 'open' ? (
+                <GithubDetailReply
+                  key={`${item.repo.owner}/${item.repo.name}#${item.number}`}
+                  item={item}
+                />
+              ) : undefined
+            }
+            revision={
+              work.provenance.kind === 'authoritative'
+                ? work.provenance.revision
+                : undefined
+            }
+            audit={runs.length > 0 ? <RunsSection runs={runs} /> : undefined}
+          />
+        ) : runs.length > 0 ? (
           <RunsSection runs={runs} />
         ) : (
           <Text size="sm" c="dimmed" data-testid="no-authoritative-runs">

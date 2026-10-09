@@ -3,6 +3,7 @@ import 'server-only';
 import { logger } from '@agent-lcars/logging';
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
+import { type ItemView, toItemView } from '@agent-lcars/work/derive';
 
 import { repoItemKey, repoKey } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -40,6 +41,7 @@ export interface AuthoritativeTaskState {
    * callers surface the authoritative-data warning rather than inventing a
    * GitHub compatibility view. */
   spec: WorkSpec;
+  item: ItemView;
 }
 
 export interface AuthoritativeTaskStateSet {
@@ -80,6 +82,11 @@ export async function readAuthoritativeTaskState({
       : { activeRunId: versioned.task.activeRunId }),
     runs,
     spec,
+    item: toItemView({
+      workId: `${repository}#${issue}`,
+      task: versioned.task,
+      runs,
+    }),
   };
 }
 

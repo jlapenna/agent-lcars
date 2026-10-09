@@ -389,9 +389,12 @@ GitHub issues, and manage recurring work.
 - **FE-TK-1 [Shipped]** "Task #N" shows the GitHub-anchored logical work card
   (state, provenance, actions) and the orchestrator's run history for that
   anchor.
-- **FE-TK-2 [Proposed]** Unify this page with `/work/[id]` so that both anchor
-  kinds share one item view: conversation, runs, sessions, and actions. The
-  orchestrator already stores them as the same `Task` type.
+- **FE-TK-2 [Shipped]** `/task/[owner]/[repo]/[issue]` and `/work/[id]`
+  share state/provenance, conversation rounds, runs, sessions, and safe
+  deliverable links from the durable Task/Run projection. GitHub replies use
+  the authenticated GitHub admission path; native edit, reply, cancel, and
+  redispatch controls retain their Work authorization and work-id rules.
+  Both URLs remain stable, including closed GitHub anchors.
 
 ### 6.7 Sessions (`/sessions`, `/sessions/[id]`)
 
@@ -526,7 +529,7 @@ Priorities assume the single-maintainer design center.
 | R1  | Live updates on Bridge, Inbox, and Agents over SSE (FE-LIVE-4, implemented)                                                           | The queue is the product, and a stale queue costs decisions                | P0       |
 | R2  | E2E coverage for the Work list and detail actions, schedules, task detail, Inbox reply submission/dispatch, merge/rebase, and Unstick | Reply layout has partial coverage; these mutating journeys remain unproven | P0       |
 | R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker (implemented)                                     | Bounded raw pages retain cursors even when filters find no matches         | P1       |
-| R4  | One item view for GitHub-anchored and native tasks (FE-TK-2)                                                                          | One `Task` model, so one UI; removes duplicated surfaces                   | P1       |
+| R4  | One item view for GitHub-anchored and native tasks (FE-TK-2, implemented)                                                             | One `Task` model, so one UI; removes duplicated surfaces                   | P1       |
 | R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6)                                                                            | Grants already model this; sign-in blocks it                               | P1       |
 | R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI      | P1       |
 | R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                              | P2       |

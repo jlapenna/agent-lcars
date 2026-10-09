@@ -4,6 +4,7 @@ import type {
   Run as OrchestratorRun,
 } from '@agent-lcars/orchestrator';
 import type { WorkSpec } from '@agent-lcars/work';
+import type { ItemView } from '@agent-lcars/work/derive';
 
 import {
   type ActionItem,
@@ -31,6 +32,7 @@ import {
 } from './logical-work';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { taskRefKey } from './watched-repo';
+import { sessionsForRuns } from './work-sessions';
 
 export type TaskDetailResult =
   | {
@@ -46,6 +48,7 @@ export type TaskDetailResult =
       /** The task's immutable Work specification, when this anchor has an
        * authoritative Task record. */
       spec?: WorkSpec;
+      history?: ItemView;
     }
   | { status: 'not-found' }
   | { status: 'error'; warning: string };
@@ -137,6 +140,14 @@ export async function getTaskDetail(
     anchorState: projection.state,
     generatedAt: projection.observedAt,
     ...(state?.spec === undefined ? {} : { spec: state.spec }),
+    ...(state?.item === undefined
+      ? {}
+      : {
+          history: {
+            ...state.item,
+            sessions: await sessionsForRuns(state.runs.map((run) => run.runId)),
+          },
+        }),
   };
 }
 

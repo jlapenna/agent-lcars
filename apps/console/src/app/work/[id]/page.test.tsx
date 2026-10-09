@@ -3,7 +3,8 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { RunsTable, SessionsList, WorkDetailViewContent } from './page';
+import { RunsTable, SessionsList } from '../../task/task-detail-history';
+import { WorkDetailViewContent } from './page';
 
 // `page.tsx` also imports `../actions`, a `'use server'` module built on
 // `@orpc/next`'s `createServerFunctionable` -- that package's own compiled

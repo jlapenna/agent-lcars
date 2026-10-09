@@ -57,7 +57,8 @@ function TaskDetailViewContent({ detail }: TaskDetailViewProps) {
           runs={detail.runs}
           anchorState={detail.anchorState}
           spec={detail.spec}
-          item={detail.item.kind === 'issue' ? detail.item : undefined}
+          history={detail.history}
+          item={detail.item}
         />
       )}
     </>

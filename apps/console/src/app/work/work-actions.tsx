@@ -168,6 +168,7 @@ export function WorkActions({
       {canReply && (
         <Stack gap={4}>
           <Textarea
+            label="Reply to the agent"
             value={replyText}
             onChange={(event) => setReplyText(event.currentTarget.value)}
             placeholder="Reply to the agent..."

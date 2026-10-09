@@ -30,18 +30,20 @@ function HumanTurn({
       <Text size="xs" c="dimmed">
         {principal} via {channel}
       </Text>
-      <Code block>{text}</Code>
+      <Code block style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {text}
+      </Code>
     </Stack>
   );
 }
 
 function AgentTurn({
   message,
-  ref,
+  resultRef,
   sessionId,
 }: {
   message: string;
-  ref: string | undefined;
+  resultRef: string | undefined;
   sessionId: string | undefined;
 }) {
   return (
@@ -51,7 +53,7 @@ function AgentTurn({
       </Text>
       <Text>{message}</Text>
       <Group gap="xs">
-        <TurnRef value={ref} />
+        <TurnRef value={resultRef} />
         {sessionId !== undefined && (
           <Anchor href={`/sessions/${encodeURIComponent(sessionId)}`} size="xs">
             session
@@ -99,7 +101,7 @@ export function Conversation({ item }: { item: ItemView }) {
             {run.result?.message !== undefined && (
               <AgentTurn
                 message={run.result.message}
-                ref={run.result.ref}
+                resultRef={run.result.ref}
                 sessionId={session?.sessionId}
               />
             )}

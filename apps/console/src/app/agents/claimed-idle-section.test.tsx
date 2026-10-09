@@ -50,6 +50,21 @@ function makeAuthoritativeState(
       pipeline: 'claude',
       target: { repo: 'supersprinklesracing/sprinkles' },
     },
+    item: {
+      id: 'supersprinklesracing/sprinkles#5',
+      state: 'running',
+      spec: {
+        title: 'Stale claim',
+        description: 'A stalled task.',
+        pipeline: 'claude',
+        target: { repo: 'supersprinklesracing/sprinkles' },
+      },
+      origin: { principal: 'github:jlapenna', channel: 'github' },
+      createdAt: '2026-07-18T00:00:00Z',
+      updatedAt: '2026-07-18T00:00:00Z',
+      runs: [],
+      sessions: [],
+    },
     runs: [],
     ...overrides,
   };
