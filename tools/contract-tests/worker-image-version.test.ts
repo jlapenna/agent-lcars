@@ -36,40 +36,52 @@ for (const kind of ['version', 'scenario']) {
       const statePath = join(root, 'state.json');
       const callsPath = join(root, 'calls.jsonl');
       const version = '/usr/local/bin/codex\ncodex-cli fixture';
+      // A shell fake starts in milliseconds even on a saturated runner; a Node
+      // fake costs hundreds there, the same order as the cleanup budgets
+      // under test, so a slow host could exhaust them before the fake ran.
       writeFileSync(
         docker,
-        `#!${process.execPath}
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-const args = process.argv.slice(2);
-const statePath = ${JSON.stringify(statePath)};
-appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + '\\n');
-const mode = ${JSON.stringify(mode)};
-const kind = ${JSON.stringify(kind)};
-let state = args[0] === 'create' ? { Running: false, ExitCode: 0, inspections: 0 } : JSON.parse(readFileSync(statePath, 'utf8'));
-const save = () => writeFileSync(statePath, JSON.stringify(state));
-switch (args[0]) {
-case 'create': save(); console.log(args[2]); if (mode === 'create-disconnect') process.exit(1); break;
-case 'start':
-  state.Running = true; save();
-  if (mode === 'ignored-sigterm') process.on('SIGTERM', () => {});
-  if (mode === 'hang' || mode === 'ignored-sigterm') await new Promise(() => setInterval(() => {}, 1000));
-  if (mode === 'inherited-pipe') { spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }).unref(); process.exit(0); }
-  if (mode === 'disconnect') process.exit(1);
-  if (!['log-write-failure','inspect-failure','hung-inspect','partial-state','kill-no-effect','cleanup-inspect-failure','bad-json'].includes(mode)) state.Running = false;
-  save();
-  console.log(mode === 'bad-json' && kind === 'scenario' ? '{partial' : kind === 'version' ? ${JSON.stringify(version)} : JSON.stringify({ passed: true, diagnosticsDirectory: '/tmp/lcars-image-probe-abc', nativeReport: mode === 'missing-native-diagnostics' ? {} : { evidenceDirectory: '/tmp/lcars-native-abc' } }));
-  break;
-case 'inspect':
-  state.inspections++; save();
-  if (mode === 'hung-inspect' && state.inspections <= 2) { process.on('SIGTERM', () => {}); await new Promise(() => setInterval(() => {}, 1000)); }
-  if ((mode === 'inspect-failure' && state.inspections <= 2) || mode === 'cleanup-inspect-failure' || (mode === 'cleanup-only-failure' && state.inspections > 1)) process.exit(1);
-  console.log((mode === 'partial-state' && state.inspections <= 2) || (mode === 'bad-json' && kind === 'version' && state.inspections === 1) ? '{partial' : JSON.stringify(state)); break;
-case 'kill': if (mode !== 'kill-no-effect') state.Running = false; save(); break;
-case 'cp': if (mode === 'copy-failure') process.exit(1); break;
-case 'rm': if (state.Running) process.exit(3); state.removed = true; save(); break;
-default: process.exit(2);
+        `#!/usr/bin/env bash
+mode=${JSON.stringify(mode)}
+kind=${JSON.stringify(kind)}
+state=${JSON.stringify(statePath)}
+json_args=$(printf ',"%s"' "$@")
+printf '[%s]\n' "\${json_args#,}" >> ${JSON.stringify(callsPath)}
+running=false; inspections=0; removed=false
+if [ "$1" != create ]; then . "$state.sh"; fi
+save() {
+  printf 'running=%s inspections=%s removed=%s\n' "$running" "$inspections" "$removed" > "$state.sh"
+  printf '{"Running":%s,"ExitCode":0,"inspections":%s,"removed":%s}' "$running" "$inspections" "$removed" > "$state"
 }
+hang() { while :; do sleep 1 & wait $!; done; }
+in_mode() { case " $* " in *" $mode "*) return 0 ;; esac; return 1; }
+case "$1" in
+create) save; echo "$3"; [ "$mode" != create-disconnect ] || exit 1 ;;
+start)
+  running=true; save
+  [ "$mode" != ignored-sigterm ] || trap '' TERM
+  if in_mode hang ignored-sigterm; then hang; fi
+  if [ "$mode" = inherited-pipe ]; then (trap '' TERM; hang) & exit 0; fi
+  [ "$mode" != disconnect ] || exit 1
+  in_mode log-write-failure inspect-failure hung-inspect partial-state kill-no-effect cleanup-inspect-failure bad-json || running=false
+  save
+  if [ "$mode" = bad-json ] && [ "$kind" = scenario ]; then echo '{partial'
+  elif [ "$kind" = version ]; then printf '%b\n' ${JSON.stringify(version)}
+  elif [ "$mode" = missing-native-diagnostics ]; then echo '{"passed":true,"diagnosticsDirectory":"/tmp/lcars-image-probe-abc","nativeReport":{}}'
+  else echo '{"passed":true,"diagnosticsDirectory":"/tmp/lcars-image-probe-abc","nativeReport":{"evidenceDirectory":"/tmp/lcars-native-abc"}}'
+  fi ;;
+inspect)
+  inspections=$((inspections + 1)); save
+  if [ "$mode" = hung-inspect ] && [ "$inspections" -le 2 ]; then trap '' TERM; hang; fi
+  if { [ "$mode" = inspect-failure ] && [ "$inspections" -le 2 ]; } || [ "$mode" = cleanup-inspect-failure ] || { [ "$mode" = cleanup-only-failure ] && [ "$inspections" -gt 1 ]; }; then exit 1; fi
+  if { [ "$mode" = partial-state ] && [ "$inspections" -le 2 ]; } || { [ "$mode" = bad-json ] && [ "$kind" = version ] && [ "$inspections" -eq 1 ]; }; then echo '{partial'
+  else cat "$state"; echo
+  fi ;;
+kill) [ "$mode" = kill-no-effect ] || running=false; save ;;
+cp) [ "$mode" != copy-failure ] || exit 1 ;;
+rm) [ "$running" = false ] || exit 3; removed=true; save ;;
+*) exit 2 ;;
+esac
 `,
         { mode: 0o700 },
       );
