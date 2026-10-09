@@ -16,6 +16,26 @@ function readFixture(name: string): string {
 }
 
 describe('parseTranscriptTimeline', () => {
+  it.each([null, [], 'invalid', 0])(
+    'rejects a present malformed OpenCode tool state (%j)',
+    (state) => {
+      expect(
+        parseTranscriptTimeline(
+          JSON.stringify({
+            info: { id: 'ses_malformed_tool' },
+            messages: [
+              {
+                info: { role: 'assistant' },
+                parts: [{ type: 'tool', tool: 'bash', state }],
+              },
+            ],
+          }),
+          'opencode',
+        ),
+      ).toEqual({ events: [], hadUnparseableLines: true });
+    },
+  );
+
   it('renders the full OpenCode export envelope, including completed and failed tools', () => {
     const parsed = parseTranscriptTimeline(
       readFixture('opencode-export.json'),

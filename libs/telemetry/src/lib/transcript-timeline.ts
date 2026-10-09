@@ -319,7 +319,10 @@ function parseOpenCodeTimeline(rawContent: string): ParsedTranscriptTimeline {
           events.push({ kind: 'text', role, text: truncate(text), timestamp });
       } else if (part['type'] === 'tool') {
         const name = asString(part['tool']);
-        const state = asRecord(part['state']);
+        // The metadata archive owner omits state when no timestamps exist,
+        // including pending tools. Keep those redacted events renderable.
+        const state =
+          part['state'] === undefined ? {} : asRecord(part['state']);
         if (!name || !state) {
           hadUnparseableLines = true;
           continue;
