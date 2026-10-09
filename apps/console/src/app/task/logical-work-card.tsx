@@ -98,14 +98,18 @@ export function LogicalWorkCard({
               </Anchor>
             </Title>
             <Group gap="xs" wrap="wrap">
-              <Badge
-                variant="filled"
-                color={STATE_COLORS[work.state]}
-                size="sm"
-                data-testid="logical-work-state"
-              >
-                {STATE_LABELS[work.state]}
-              </Badge>
+              {(!history ||
+                work.state === 'anomaly' ||
+                work.state === 'unavailable') && (
+                <Badge
+                  variant="filled"
+                  color={STATE_COLORS[work.state]}
+                  size="sm"
+                  data-testid="logical-work-state"
+                >
+                  {STATE_LABELS[work.state]}
+                </Badge>
+              )}
               <Badge variant="outline" color="gray" size="sm">
                 {anchorState}
               </Badge>
@@ -116,13 +120,15 @@ export function LogicalWorkCard({
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap" align="flex-start">
-            <Text size="xs" c="dimmed">
-              {work.provenance.kind === 'authoritative'
-                ? `authoritative state rev ${work.provenance.revision ?? 'unknown'}`
-                : work.provenance.kind === 'unavailable'
-                  ? 'authoritative lifecycle state unavailable'
-                  : 'no authoritative run history'}
-            </Text>
+            {!history && (
+              <Text size="xs" c="dimmed">
+                {work.provenance.kind === 'authoritative'
+                  ? `authoritative state rev ${work.provenance.revision ?? 'unknown'}`
+                  : work.provenance.kind === 'unavailable'
+                    ? 'authoritative lifecycle state unavailable'
+                    : 'no authoritative run history'}
+              </Text>
+            )}
             {item && <ItemOverflowMenu item={item} />}
           </Group>
         </Group>

@@ -182,10 +182,13 @@ export function TaskDetailHistory({
         <Text size="xs" c="dimmed">
           {native ? 'Native work' : `GitHub · ${anchor.repo}#${anchor.issue}`} ·{' '}
           {item.origin.principal} via {item.origin.channel}
-          {revision !== undefined
-            ? ` · authoritative state rev ${revision}`
-            : ''}
         </Text>
+        {revision !== undefined && (
+          <Text
+            size="xs"
+            c="dimmed"
+          >{`authoritative state rev ${revision}`}</Text>
+        )}
       </Group>
       <Stack gap="xs">
         <Title order={2} size="h4">

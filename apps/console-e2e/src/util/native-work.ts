@@ -53,3 +53,53 @@ export async function seedLastScheduleItem(scheduleId: string) {
   if (!schedule) throw new Error('Schedule fixture was not created');
   await store.writeSchedule({ ...schedule, lastItemId: NATIVE_WORK_ID });
 }
+
+/** Attach deterministic navigation evidence to an already parked fixture.
+ * All writes remain inside the explicitly guarded demo emulator. */
+export async function seedDetailNavigationEvidence(githubIssue?: number) {
+  const options = emulatorOptions();
+  const store = new FirestoreStore(options);
+  const anchor =
+    githubIssue === undefined
+      ? { workId: NATIVE_WORK_ID }
+      : { repo: 'supersprinklesracing/sprinkles', issue: githubIssue };
+  const runId =
+    githubIssue === undefined
+      ? `work:${NATIVE_WORK_ID}/r1`
+      : `supersprinklesracing/sprinkles#${githubIssue}/r1`;
+  const [versioned, run] = await Promise.all([
+    store.readTask(anchor),
+    store.readRun(runId),
+  ]);
+  if (!versioned || !run?.result)
+    throw new Error('Missing parked detail fixture');
+  const ref = 'https://github.com/supersprinklesracing/sprinkles/pull/9420';
+  await store.apply({
+    expectedRevision: versioned.revision,
+    decision: {
+      task: versioned.task,
+      run: { ...run, result: { ...run.result, ref } },
+      outbox: [],
+    },
+  });
+  const firestore = new Firestore({
+    ...options,
+    databaseId: process.env['AGENT_TELEMETRY_DATABASE_ID'] ?? '(default)',
+  });
+  const sessionId = 'e2e-native-resume-session';
+  try {
+    const doc = firestore.collection('sessions').doc(sessionId);
+    const session = (await doc.get()).data();
+    if (!session) throw new Error('Missing saved-session fixture');
+    await doc.set({
+      ...session,
+      runId,
+      intentId: runId,
+      issueNumber: githubIssue ?? 0,
+      title: 'Task detail audit session',
+    });
+  } finally {
+    await firestore.terminate();
+  }
+  return { ref, sessionId };
+}

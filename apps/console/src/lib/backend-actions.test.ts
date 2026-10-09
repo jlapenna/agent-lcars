@@ -453,6 +453,8 @@ describe('postComment (direct Work admission)', () => {
     expect(runs.at(-1)?.params).toEqual({
       mode: 'reply',
       reply: 'Use option 2',
+      replyChannel: 'console',
+      replyPrincipal: 'github:jlapenna',
     });
   });
 
@@ -481,6 +483,8 @@ describe('postComment (direct Work admission)', () => {
     expect((await store.listRuns(taskId)).at(-1)?.params).toEqual({
       mode: 'reply',
       reply: 'Please address this',
+      replyChannel: 'console',
+      replyPrincipal: 'github:jlapenna',
     });
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'status:needs-human' }),

@@ -261,6 +261,8 @@ export async function postComment(
           params: {
             mode: 'reply',
             reply: body,
+            replyChannel: 'console',
+            replyPrincipal: `github:${actorLogin}`,
             ...crossRepoParam(currentLabels),
           },
           work,
