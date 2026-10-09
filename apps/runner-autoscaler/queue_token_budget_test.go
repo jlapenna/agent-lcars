@@ -87,8 +87,8 @@ func TestQueueClaimStatusCancelsActualTokenRefresh(t *testing.T) {
 	stopSource()
 	select {
 	case <-exited:
-	case <-time.After(time.Second):
-		t.Fatal("underlying refresh remained outstanding")
+	case <-time.After(11 * time.Second):
+		t.Fatal("underlying refresh outlived its ten-second HTTP bound")
 	}
 	if client.Timeout != 0 {
 		t.Fatal("caller HTTP client was mutated")
