@@ -9,6 +9,7 @@ import {
   artifactHashes,
   evaluateImageEvidence,
 } from './qualification-evidence.mjs';
+import { imageScenario } from './qualification-scenario.mjs';
 import { imageVersion } from './qualification-version.mjs';
 
 const [provider, imageId, outputPath, ...extra] = process.argv.slice(2);
@@ -32,6 +33,7 @@ const command = (binary, args, timeout = 30000) => {
     cwd: source,
     encoding: 'utf8',
     timeout,
+    killSignal: 'SIGKILL',
     maxBuffer: 16 * 1024 * 1024,
   });
   if (result.error || result.status !== 0)
@@ -82,18 +84,20 @@ const isolation = [
   '--pids-limit',
   '256',
 ];
-const [binary, providerVersion, ...unexpected] = imageVersion(
-  [
-    ...isolation,
-    '--entrypoint',
-    '/bin/bash',
-    imageId,
-    '-c',
-    'command -v "$1"; "$1" --version',
-    'qualification-version',
-    provider,
-  ],
-  output,
+const [binary, providerVersion, ...unexpected] = (
+  await imageVersion(
+    [
+      ...isolation,
+      '--entrypoint',
+      '/bin/bash',
+      imageId,
+      '-c',
+      'command -v "$1"; "$1" --version',
+      'qualification-version',
+      provider,
+    ],
+    output,
+  )
 ).split('\n');
 if (!binary?.startsWith('/') || !providerVersion || unexpected.length)
   throw new Error('Cannot establish exact image-baked CLI identity');
@@ -125,91 +129,26 @@ const mounts = [
 ]);
 const reports = [];
 for (const scenario of ['native', 'setup-negative']) {
-  const container = command('docker', [
-    'create',
-    ...isolation,
-    ...mounts,
-    '-e',
-    'LCARS_PROBE_KEEP_EVIDENCE=1',
-    '--entrypoint',
-    'node',
-    imageId,
-    '/qualification/tools/probes/in-runner-image.mjs',
-    provider,
-    binary,
-    providerVersion,
-    imageId,
-    ...(scenario === 'native' ? [] : [scenario]),
-  ]);
-  let copied = false;
-  try {
-    const execution = spawnSync('docker', ['start', '--attach', container], {
-      encoding: 'utf8',
-      timeout: 50 * 60000,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    writeFileSync(
-      join(output, scenario + '.stdout.txt'),
-      execution.stdout ?? '',
-    );
-    writeFileSync(
-      join(output, scenario + '.stderr.txt'),
-      execution.stderr ?? '',
-    );
-    // docker start can disconnect on timeout while the container keeps running.
-    if (execution.error) command('docker', ['kill', container]);
-    const report = JSON.parse(execution.stdout);
-    const state = JSON.parse(
-      command('docker', ['inspect', '--format', '{{json .State}}', container]),
-    );
-    if (
-      execution.error ||
-      execution.status !== 0 ||
-      state.Running ||
-      state.ExitCode !== 0
-    )
-      report.passed = false;
-    if (
-      !/^\/tmp\/lcars-image-probe-[A-Za-z0-9]+$/.test(
-        report.diagnosticsDirectory ?? '',
-      )
-    )
-      throw new Error('Invalid image diagnostics directory');
-    command(
-      'docker',
-      [
-        'cp',
-        container + ':' + report.diagnosticsDirectory,
-        join(output, scenario),
-      ],
-      120000,
-    );
-    const nativeRoot = report.nativeReport?.evidenceDirectory;
-    if (/^\/tmp\/lcars-[A-Za-z0-9-]+$/.test(nativeRoot ?? ''))
-      command(
-        'docker',
-        [
-          'cp',
-          container + ':' + nativeRoot,
-          join(output, scenario + '-diagnostics'),
-        ],
-        120000,
-      );
-    reports.push(report);
-    copied = true;
-  } finally {
-    // A failed log write/collection must not orphan a still-running probe.
-    const current = JSON.parse(
-      command('docker', ['inspect', '--format', '{{json .State}}', container]),
-    );
-    if (current.Running) command('docker', ['kill', container]);
-    // Keep a failed container when its diagnostics could not be collected.
-    if (copied) command('docker', ['rm', container]);
-    else
-      process.stderr.write(
-        'Uncollected qualification container retained: ' + container + '\n',
-      );
-  }
+  const report = await imageScenario(
+    [
+      ...isolation,
+      ...mounts,
+      '-e',
+      'LCARS_PROBE_KEEP_EVIDENCE=1',
+      '--entrypoint',
+      'node',
+      imageId,
+      '/qualification/tools/probes/in-runner-image.mjs',
+      provider,
+      binary,
+      providerVersion,
+      imageId,
+      ...(scenario === 'native' ? [] : [scenario]),
+    ],
+    output,
+    scenario,
+  );
+  reports.push(report);
 }
 const result = evaluateImageEvidence(expected, ...reports);
 writeFileSync(
