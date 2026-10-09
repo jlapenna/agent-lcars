@@ -1,6 +1,11 @@
-import { expect, type Page, test } from '@playwright/test';
+import {
+  type APIRequestContext,
+  expect,
+  type Page,
+  test,
+} from '@playwright/test';
 
-import { usePopulatedFixtures } from './seed';
+import { E2E_CLI_SESSION_IDS, usePopulatedFixtures } from './seed';
 import { setE2eAdminUser } from './util/e2e-test-utils';
 
 /**
@@ -27,6 +32,12 @@ const ROUTES = [
   { name: 'Inbox', path: '/inbox' },
   { name: 'Agents', path: '/agents' },
   { name: 'Costs', path: '/costs' },
+  { name: 'Work', path: '/work' },
+  { name: 'Work edit', path: '/work/01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+  { name: 'Sessions', path: '/sessions' },
+  { name: 'Session detail', path: `/sessions/${E2E_CLI_SESSION_IDS.live}` },
+  { name: 'Shuttlebay', path: '/shuttlebay' },
+  { name: 'Shuttlebay create', path: '/shuttlebay' },
 ] as const;
 
 const SCHEMES = ['dark', 'light'] as const;
@@ -138,6 +149,74 @@ async function contrastFailures(page: Page): Promise<Failure[]> {
   });
 }
 
+async function seedContrastRoute(request: APIRequestContext, name: string) {
+  if (name === 'Work' || name === 'Work edit') {
+    const seed = await request.post('/api/e2e/seed', {
+      data: { action: 'seed-inbox' },
+    });
+    expect(seed.ok()).toBe(true);
+  }
+}
+
+async function prepareContrastState(page: Page, name: string) {
+  // Measure populated, resolved bodies and controls, not a transient
+  // Suspense skeleton that happens to contain no failing text.
+  if (name === 'Work') {
+    await expect(
+      page.getByRole('link', {
+        name: 'Choose native decision storage',
+        exact: true,
+      }),
+    ).toBeVisible();
+  } else if (name === 'Work edit') {
+    await expect(
+      page.getByRole('heading', {
+        name: 'Choose native decision storage',
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expect(
+      page.getByRole('textbox', { name: 'Title', exact: true }),
+    ).toBeVisible();
+    await page
+      .getByPlaceholder('Reply to the agent...')
+      .fill('Retain the audit trail.');
+    await expect(
+      page.getByRole('button', { name: 'Reply', exact: true }),
+    ).toBeEnabled();
+  } else if (name === 'Sessions') {
+    await page
+      .getByRole('button', { name: 'Expand No issue sessions' })
+      .click();
+    await expect(
+      page.getByRole('link', { name: 'E2E fixture: live CLI session' }),
+    ).toBeVisible();
+  } else if (name === 'Session detail') {
+    await expect(
+      page
+        .getByTestId('session-header')
+        .getByRole('button', { name: 'Preview report.md' }),
+    ).toBeVisible();
+  } else if (name === 'Shuttlebay' || name === 'Shuttlebay create') {
+    await expect(
+      page.getByTestId('autoscaler-scale-set-e2e-fixture-runners'),
+    ).toContainText('1 busy · 1 idle');
+    if (name === 'Shuttlebay create') {
+      await page.getByRole('button', { name: 'New work' }).click();
+      await expect(
+        page
+          .getByRole('dialog')
+          .getByRole('heading', { name: 'Create work item' }),
+      ).toBeVisible();
+      await page
+        .getByRole('dialog')
+        .getByLabel('Description')
+        .fill('Verify runner capacity');
+    }
+  }
+}
+
 usePopulatedFixtures();
 
 test.describe('text contrast @design-system', () => {
@@ -145,7 +224,9 @@ test.describe('text contrast @design-system', () => {
     for (const route of ROUTES) {
       test(`${route.name} clears WCAG AA in ${scheme} mode`, async ({
         page,
+        request,
       }) => {
+        await seedContrastRoute(request, route.name);
         await setE2eAdminUser(page);
         await page.goto(route.path);
         await page.context().addCookies([
@@ -165,6 +246,8 @@ test.describe('text contrast @design-system', () => {
           'data-mantine-color-scheme',
           scheme,
         );
+
+        await prepareContrastState(page, route.name);
 
         // Poll rather than sample once. A scheme flip repaints regions
         // independently, so a single read can catch the page mid-transition
