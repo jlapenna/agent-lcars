@@ -81,12 +81,12 @@ authority over every repository it covers. That scope is asymmetric today:
 | Installation | Account              | Selection  | Repos           |
 | ------------ | -------------------- | ---------- | --------------- |
 | `154210710`  | jlapenna             | `selected` | 5               |
-| `154210731`  | supersprinklesracing | `all`      | 6 (3 non-fleet) |
+| `154210731`  | supersprinklesracing | `all`      | 7 (4 non-fleet) |
 
 The jlapenna installation was narrowed from `all` (23 repositories) once this
 check measured it. #1381 is the execution record for narrowing the other one to
 `sprinkles`, `www` and `girosf` — the evidence is there too: none of
-`ghost-theme-supersprinkles`, `pos` or `preem-machine` holds a self-hosted
+`design`, `ghost-theme-supersprinkles`, `pos` or `preem-machine` holds a self-hosted
 runner, and no workflow in any of them targets a fleet runner label.
 
 The model records **today's** live values, so the check is green now rather
