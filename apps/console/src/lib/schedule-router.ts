@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { isDeepStrictEqual } from 'node:util';
+
 import { logger } from '@agent-lcars/logging';
 import type { Schedule } from '@agent-lcars/orchestrator';
 import {
@@ -50,7 +52,8 @@ function samePending(
     current.slotAt === admitted.slotAt &&
     current.revision === admitted.revision &&
     current.createdBy === admitted.createdBy &&
-    JSON.stringify(current.spec) === JSON.stringify(admitted.spec)
+    // Persistence may reorder map keys; reservation values define identity.
+    isDeepStrictEqual(current.spec, admitted.spec)
   );
 }
 function laterSlot(previous: string | undefined, slot: string): string {

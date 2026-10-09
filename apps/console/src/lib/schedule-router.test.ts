@@ -1087,6 +1087,122 @@ describe('tick', () => {
     ).toBeUndefined();
   });
 
+  it.each(['success', 'revoked'] as const)(
+    'settles a fresh %s occurrence after persisted spec keys reorder',
+    async (outcome) => {
+      const ctx = context();
+      await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+        cron: '* * * * *',
+        spec,
+      });
+      const mutate = ctx.scheduleStore.mutateSchedule.bind(ctx.scheduleStore);
+      // A datastore may return maps in a different insertion order from the
+      // admission proposal. Change representation only, at the read boundary.
+      vi.spyOn(ctx.scheduleStore, 'mutateSchedule').mockImplementation(
+        (id, change) =>
+          mutate(id, (current) => {
+            if (current?.pendingTick === undefined) return change(current);
+            return change({
+              ...current,
+              pendingTick: {
+                ...current.pendingTick,
+                spec: Object.fromEntries(
+                  Object.entries(current.pendingTick.spec).sort(([a], [b]) =>
+                    a.localeCompare(b),
+                  ),
+                ),
+              },
+            });
+          }),
+      );
+      const result = await call(
+        {
+          ...ctx,
+          principal: cronTick,
+          ...(outcome === 'revoked' ? { grants: () => [] } : {}),
+        },
+        'POST',
+        '/schedules/tick',
+        {},
+      );
+      expect(result.json.errors).toEqual([]);
+      const after = (await ctx.scheduleStore.readSchedule(ID))!;
+      expect(after.pendingTick).toBeUndefined();
+      const expected = {
+        success: {
+          minted: 1,
+          disabled: [],
+          tasks: 1,
+          schedule: { lastSlotAt: NOW.toISOString(), enabled: true },
+        },
+        revoked: {
+          minted: 0,
+          disabled: [ID],
+          tasks: 0,
+          schedule: {
+            enabled: false,
+            disabledReason: 'grant-revoked',
+            lastClosedSlotAt: NOW.toISOString(),
+          },
+        },
+      }[outcome];
+      expect(result.json.minted).toHaveLength(expected.minted);
+      expect(result.json.disabled).toEqual(expected.disabled);
+      expect(after).toMatchObject(expected.schedule);
+      expect(await ctx.runtime.store.listNativeTasks()).toHaveLength(
+        expected.tasks,
+      );
+    },
+  );
+
+  it.each(['success', 'revoked'] as const)(
+    'fences %s settlement when a persisted nested spec value changes',
+    async (outcome) => {
+      const ctx = context();
+      await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+        cron: '* * * * *',
+        spec,
+      });
+      const mutate = ctx.scheduleStore.mutateSchedule.bind(ctx.scheduleStore);
+      vi.spyOn(ctx.scheduleStore, 'mutateSchedule').mockImplementation(
+        (id, change) =>
+          mutate(id, (current) =>
+            change(
+              current?.pendingTick === undefined
+                ? current
+                : {
+                    ...current,
+                    pendingTick: {
+                      ...current.pendingTick,
+                      spec: {
+                        ...current.pendingTick.spec,
+                        target: { repo: 'jlapenna/other' },
+                      },
+                    },
+                  },
+            ),
+          ),
+      );
+      const result = await call(
+        {
+          ...ctx,
+          principal: cronTick,
+          ...(outcome === 'revoked' ? { grants: () => [] } : {}),
+        },
+        'POST',
+        '/schedules/tick',
+        {},
+      );
+      expect(result.json.minted).toEqual([]);
+      expect(result.json.disabled).toEqual([]);
+      const after = (await ctx.scheduleStore.readSchedule(ID))!;
+      expect(after.pendingTick).toBeDefined();
+      expect(after.lastSlotAt).toBe(CREATE_NOW.toISOString());
+      expect(after.lastClosedSlotAt).toBeUndefined();
+      expect(after.enabled).toBe(true);
+    },
+  );
+
   it('reconciles work already minted by an overlapping tick with a revoked grant snapshot', async () => {
     const ctx = context();
     await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
