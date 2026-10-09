@@ -467,6 +467,7 @@ counterpart of the Work destination.
 - `lcars work create --repo --pipeline --title (--description | --description-file)`
 - `lcars work status <id> [--watch]`, `list [--state] [--repo]`,
   `cancel <id>`, and `redispatch <id>`
+- `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]`
 - `lcars session title "<text>" | --clear` and `lcars session status "<text>" | --clear`
 
 `status --watch` polls every 15 seconds while the item is `running`, including
@@ -477,8 +478,11 @@ exits 1 for `failed` work, with or without `--watch`; other item states exit 0.
 
 The CLI authenticates with `LCARS_TOKEN`, or with `LCARS_SERVICE_ACCOUNT` and
 `LCARS_AUDIENCE` through impersonation. A bearer token that fails never falls
-back to cookies. **Proposed:** add `lcars work reply` for parity with the
-console Reply action.
+back to cookies. `work reply` prints its retry key before sending, then reports
+the immutable admitted run and its resume/fresh-session request. Reusing the
+key with the same input returns that round; changed input conflicts. Admission
+does not prove execution. Reply input, provenance, and retry semantics are
+defined in `libs/work/README.md` and the generated Work API contract.
 
 ## 9. Non-functional requirements
 

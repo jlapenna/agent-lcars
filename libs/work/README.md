@@ -25,6 +25,34 @@ Regenerate `docs/api/work-v1.openapi.json` with `pnpm work:openapi`; CI
 fails when it is stale. Design:
 `docs/superpowers/specs/2026-08-23-native-work-items-design.md`.
 
+## Replying from the CLI
+
+```bash
+lcars work reply <id> --text 'Continue with this design.' --request-id turn-2
+lcars work reply <id> --text-file ./reply.txt --pipeline codex --fresh
+```
+
+Supply exactly one of `--text` or `--text-file`. Replies are bounded to
+16,384 characters; file input must be a regular UTF-8 file and is read with
+a bounded buffer. `--pipeline` requests a provider allowed by the caller's
+current grant. `--fresh` disables resume; otherwise the server selects a
+resumable session from this item's own runs, or admits a fresh session.
+
+The CLI prints a request key before sending. Keep it and use `--request-id`
+with the same input to retry a lost response. Keys are scoped to the item
+and authenticated principal. A replay returns the original admitted run,
+even during execution or after newer rounds; changing text, an explicitly
+selected pipeline, or the fresh/resume choice under that key returns a
+conflict. Use a new key for a new human turn. Callers that omit a key get a
+generated ULID. The optional API field is `requestId`.
+
+Success prints the immutable `admittedRunId` and whether resume or a fresh
+session was requested. Admission does not prove an executor has started.
+The API records the verified principal and ingress channel, rather than
+accepting either from CLI input. Invalid input, busy work, and denied grants
+exit nonzero. Authentication uses the bearer transport described above;
+a failed bearer never falls back to a console cookie.
+
 ## Creating items from GitHub Actions
 
 `.github/workflows/work-create.yml` is a `workflow_dispatch` surface for

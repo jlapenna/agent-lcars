@@ -745,6 +745,170 @@ describe('items routes', () => {
   });
 
   describe('reply', () => {
+    it('replays a caller key during execution and after later rounds without minting another run', async () => {
+      const ctx = contextWithSession({
+        principal: { ...operator, via: 'google' },
+      });
+      await parkedItemWithSession(ctx);
+      const body = { text: 'fresh turn', requestId: 'my-turn', resume: false };
+      const first = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      expect(first.status).toBe(200);
+      expect(first.json).toMatchObject({
+        admittedRunId: `work:${ID}/r2`,
+        resumed: false,
+      });
+      const during = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      expect(during.status).toBe(200);
+      expect(during.json.admittedRunId).toBe(first.json.admittedRunId);
+      await ctx.runtime.orchestrator.report(first.json.admittedRunId, {
+        ok: true,
+        summary: 'park',
+      });
+      await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'later',
+        requestId: 'next-turn',
+      });
+      const later = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      expect(later.status).toBe(200);
+      expect(later.json).toMatchObject({
+        admittedRunId: `work:${ID}/r2`,
+        resumed: false,
+      });
+      expect(later.json.runs).toHaveLength(3);
+      const stored = await ctx.runtime.store.readRun(first.json.admittedRunId);
+      expect(stored?.params).toMatchObject({
+        replyPrincipal: 'user:jlapenna',
+        replyChannel: 'api',
+        replyRequestId: 'my-turn',
+      });
+    });
+
+    it.each([{ text: 'different' }, { resume: false }, { pipeline: 'codex' }])(
+      'refuses a caller key with changed input: %j',
+      async (change) => {
+        const ctx = contextWithSession({
+          principal: { ...operator, pipelines: ['claude', 'codex'] },
+        });
+        await parkedItemWithSession(ctx);
+        const body = { text: 'original', requestId: 'same-key' };
+        const first = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+        const changed = await call(ctx, 'POST', `/items/${ID}/reply`, {
+          ...body,
+          ...change,
+        });
+        expect(first.status).toBe(200);
+        expect(changed.status).toBe(409);
+        expect(changed.json.message).toContain('different reply');
+        expect(changed.json.message).not.toBe('task-busy');
+        expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(
+          2,
+        );
+      },
+    );
+
+    it('does not deduplicate another principal and rechecks current pipeline grants on replay', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      const body = { text: 'original', requestId: 'same-key' };
+      const first = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      ctx.principal = {
+        ...operator,
+        principal: 'user:other',
+        subject: 'github:other',
+      };
+      expect((await call(ctx, 'POST', `/items/${ID}/reply`, body)).status).toBe(
+        409,
+      );
+      await ctx.runtime.orchestrator.report(first.json.admittedRunId, {
+        ok: true,
+        summary: 'park',
+      });
+      const other = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      expect(other.status).toBe(200);
+      expect(other.json.admittedRunId).toBe(`work:${ID}/r3`);
+      ctx.principal = { ...operator, pipelines: [] };
+      expect((await call(ctx, 'POST', `/items/${ID}/reply`, body)).status).toBe(
+        403,
+      );
+      ctx.principal = undefined;
+      expect((await call(ctx, 'POST', `/items/${ID}/reply`, body)).status).toBe(
+        401,
+      );
+    });
+
+    it('deduplicates simultaneous same-key requests using the admitted resume binding', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      const body = { text: 'continue', requestId: 'concurrent-key' };
+      const both = await Promise.all([
+        call(ctx, 'POST', `/items/${ID}/reply`, body),
+        call(ctx, 'POST', `/items/${ID}/reply`, body),
+      ]);
+      for (const response of both) {
+        expect(response.status).toBe(200);
+        expect(response.json).toMatchObject({
+          admittedRunId: `work:${ID}/r2`,
+          resumed: true,
+        });
+      }
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
+    });
+
+    it('checks the actual pipeline of a concurrent duplicate winner against current grants', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      const request = ctx.runtime.orchestrator.request.bind(
+        ctx.runtime.orchestrator,
+      );
+      vi.spyOn(ctx.runtime.orchestrator, 'request').mockImplementationOnce(
+        async (input) => {
+          // The same principal can arrive through two credentials with different
+          // grants. Admit the permitted explicit switch after the contender has
+          // inferred claude, but before its atomic request reaches the store.
+          const winner = await call(
+            {
+              ...ctx,
+              principal: { ...operator, pipelines: ['claude', 'codex'] },
+            },
+            'POST',
+            `/items/${ID}/reply`,
+            {
+              text: 'continue',
+              requestId: 'pipeline-race',
+              pipeline: 'codex',
+            },
+          );
+          expect(winner.status).toBe(200);
+          expect(winner.json.resumed).toBe(false);
+          return request(input);
+        },
+      );
+      const contender = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'continue',
+        requestId: 'pipeline-race',
+      });
+      expect(contender.status).toBe(403);
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
+    });
+
+    it('refuses changed text even when two same-key requests race admission', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      const both = await Promise.all(
+        ['one', 'two'].map((text) =>
+          call(ctx, 'POST', `/items/${ID}/reply`, {
+            text,
+            requestId: 'racing-key',
+          }),
+        ),
+      );
+      expect(both.map((r) => r.status).sort()).toEqual([200, 409]);
+      expect(both.find((r) => r.status === 409)?.json.message).toContain(
+        'different reply',
+      );
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
+    });
+
     /** Parks `ID` with exactly one finished claude run carrying an
      *  archived session -- the precondition every "mints a reply run"
      *  case below shares. */

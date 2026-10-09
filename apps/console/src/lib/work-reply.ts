@@ -1,14 +1,21 @@
 import 'server-only';
 
+import { createHash } from 'node:crypto';
+
 import {
   decidedRun,
   isRefusal,
   isWorkAnchor,
+  type Run,
   type TaskId,
   taskKey,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
+import {
+  WORK_DESCRIPTION_MAX,
+  workPayloadSchema,
+  type WorkSpec,
+} from '@agent-lcars/work';
 import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
 import { isClosedItemState } from './session-expiry';
@@ -27,7 +34,7 @@ const RESUMABLE_PIPELINES: Record<string, string> = {
  *  prose an item's description is (spec decision 5). `runSchema.params`'s
  *  per-value bound (`libs/orchestrator/src/model.ts`) was raised to match
  *  so a full-length reply can actually be persisted on `Run.params.reply`. */
-export const REPLY_MAX = 16_384;
+export const REPLY_MAX = WORK_DESCRIPTION_MAX;
 
 export interface ReplyRequest {
   /** The orchestrator's own anchor union: `{ workId }` for a native item,
@@ -42,6 +49,8 @@ export interface ReplyRequest {
    *  derive an idempotent request id so a redelivered webhook or a
    *  double-clicked button maps back to the run it already minted. */
   ref?: string;
+  /** Optional native API retry key; scoped to task and verified principal. */
+  requestId?: string;
   pipeline?: string;
   resume?: boolean;
 }
@@ -53,6 +62,31 @@ export type ReplyOutcome =
       code: 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN';
       message: string;
     };
+
+function sameReply(run: Run, request: ReplyRequest): boolean {
+  return (
+    run.params?.['mode'] === 'reply' &&
+    run.params['reply'] === request.text.slice(0, REPLY_MAX) &&
+    run.params['replyRequestId'] === request.requestId &&
+    run.params['replyResumeRequested'] === String(request.resume ?? true) &&
+    (request.pipeline === undefined || request.pipeline === run.pipeline)
+  );
+}
+
+function replyReceipt(run: Run, request: ReplyRequest): ReplyOutcome {
+  if (request.requestId !== undefined && !sameReply(run, request)) {
+    return {
+      ok: false,
+      code: 'CONFLICT',
+      message: 'request-id already used for a different reply',
+    };
+  }
+  return {
+    ok: true,
+    runId: run.runId,
+    resumed: run.params?.['resumeSessionId'] !== undefined,
+  };
+}
 
 /** The artifact a resume actually restores from. Claude and Codex archive
  *  their raw session, so it is the transcript itself; OpenCode's transcript
@@ -131,6 +165,41 @@ export async function requestReply(
     return { ok: false, code: 'CONFLICT', message: 'task-closed' };
 
   const { spec } = workPayloadSchema.parse(task.task.work);
+  const authorizedReceipt = (run: Run): ReplyOutcome => {
+    const denied = forbiddenReason(principal, {
+      ...spec,
+      pipeline: run.pipeline as WorkSpec['pipeline'],
+    });
+    return denied === undefined
+      ? replyReceipt(run, request)
+      : { ok: false, code: 'FORBIDDEN', message: denied };
+  };
+  const requestId =
+    request.requestId === undefined
+      ? request.ref === undefined
+        ? `${taskKey(request.task)}:${task.task.runCount + 1}`
+        : `reply:${request.ref}`
+      : `reply:api:${createHash('sha256')
+          .update(
+            JSON.stringify([
+              taskKey(request.task),
+              principal.principal,
+              request.requestId,
+            ]),
+          )
+          .digest('hex')}`;
+  const replay =
+    request.requestId === undefined
+      ? undefined
+      : runs.find(
+          (run) =>
+            run.requestSource === 'caller' && run.requestId === requestId,
+        );
+  if (replay !== undefined) {
+    // A retry can arrive during execution or after later rounds. Check the
+    // caller's current grants before returning the original receipt.
+    return authorizedReceipt(replay);
+  }
   const latest = latestRun(runs);
   // Widened to `string` by `Run.pipeline`/`ReplyRequest.pipeline` (both
   // opaque routing data, not the enum `WorkSpec.pipeline` is) -- always one
@@ -177,10 +246,7 @@ export async function requestReply(
 
   const outcome = await context.runtime.orchestrator.request({
     taskId: request.task,
-    requestId:
-      request.ref === undefined
-        ? `${taskKey(request.task)}:${task.task.runCount + 1}`
-        : `reply:${request.ref}`,
+    requestId,
     pipeline,
     ...(replaceQueuedRunId === undefined ? {} : { replaceQueuedRunId }),
     params: {
@@ -189,11 +255,29 @@ export async function requestReply(
       replyChannel: request.channel,
       replyPrincipal: request.principal,
       ...(request.ref === undefined ? {} : { replyRef: request.ref }),
+      ...(request.requestId === undefined
+        ? {}
+        : {
+            replyRequestId: request.requestId,
+            replyResumeRequested: String(request.resume ?? true),
+          }),
       ...resumeParams,
     },
   });
-  if (isRefusal(outcome))
+  if (isRefusal(outcome)) {
+    if (
+      request.requestId !== undefined &&
+      outcome.reason === 'duplicate-request' &&
+      outcome.existingRun !== undefined
+    ) {
+      return authorizedReceipt(outcome.existingRun);
+    }
     return { ok: false, code: 'CONFLICT', message: outcome.reason };
+  }
+  // A concurrent request with the same key may have won admission. Use its
+  // immutable params, and reject changed input even across that race.
+  const receipt = authorizedReceipt(decidedRun(outcome));
+  if (!receipt.ok) return receipt;
   if (isWorkAnchor(request.task) && isClosedItemState(state)) {
     // Reopening a closed item: its close stamped every session's expiry,
     // and the sidecar never clears a stamp. The workflow re-reads the item
@@ -201,9 +285,5 @@ export async function requestReply(
     await context.runtime.expireItemSessions?.(request.task.workId);
   }
   await context.runtime.drain();
-  return {
-    ok: true,
-    runId: decidedRun(outcome).runId,
-    resumed: resumeParams['resumeSessionId'] !== undefined,
-  };
+  return receipt;
 }
