@@ -20,7 +20,6 @@ import type {
   AgentActivity,
   AgentPipeline,
   AgentRun,
-  FleetSummary,
 } from '../lib/agent-activity';
 import {
   duplicateLivePipelineGroups,
@@ -42,10 +41,13 @@ import { ArtifactPreviewToggle } from './artifact-viewer';
 import { BridgePaneLink } from './bridge-pane-link';
 import { bridgeSelectionHref, runKey, sessionKey } from './bridge-selection';
 import { Eyebrow } from './eyebrow';
+import { FleetChip } from './fleet-status';
 import { formatCost, formatDuration } from './format';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { SessionStatusLine } from './session-status-line';
+
+export { FleetChip } from './fleet-status';
 
 // Labels/colors are keyed by the run-status classifier's own output
 // (@agent-lcars/telemetry's classifyRunStatus, wrapped for this app by
@@ -295,33 +297,6 @@ export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
       repoKey={repoKey(configured ?? repo)}
       display={repoDisplayName(configured ?? repo)}
     />
-  );
-}
-
-/**
- * Separate current GitHub Actions capacity and direct-executor health;
- * fresh zero capacity remains visible. This is intentionally not direct
- * queue-executor occupancy: queued/claimed/running work comes from durable
- * orchestrator Run records elsewhere in the activity view.
- */
-export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
-  if (fleet === undefined) {
-    return (
-      <Text size="xs" c="dimmed" data-testid="fleet-chip">
-        Runner status unavailable
-      </Text>
-    );
-  }
-  return (
-    <Text size="xs" c="dimmed" data-testid="fleet-chip">
-      {fleet.online === undefined
-        ? 'GitHub runner status unavailable'
-        : `${fleet.online} GitHub runner${fleet.online === 1 ? '' : 's'} registered (${fleet.busy ?? 0} running)`}
-      {' · '}
-      {fleet.directExecutor === undefined
-        ? 'Direct executor status unavailable'
-        : `Direct executor ${fleet.directExecutor.ready ? 'ready' : 'not ready'}${fleet.directExecutor.draining ? ', draining' : ''} (limit ${fleet.directExecutor.maxConcurrent})`}
-    </Text>
   );
 }
 

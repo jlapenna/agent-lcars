@@ -162,7 +162,11 @@ describe('getAgentActivity', () => {
     expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
       finished.runId,
     ]);
-    expect(activity.fleet).toEqual({ online: 2, busy: 1 });
+    expect(activity.fleet).toEqual({
+      online: 2,
+      busy: 1,
+      githubExpiresAt: '2026-08-28T12:03:00.000Z',
+    });
     expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 1 });
     expect(store.listLiveRuns).toHaveBeenCalledTimes(1);
     expect(store.listRecentRuns).toHaveBeenCalledWith(24);
@@ -262,7 +266,12 @@ describe('fleetFromAutoscalerStatuses', () => {
       lanesIncomplete: true,
     };
     expect(fleetFromAutoscalerStatuses(status)).toEqual({
-      directExecutor: { ready: true, draining: false, maxConcurrent: 3 },
+      directExecutor: {
+        ready: true,
+        draining: false,
+        maxConcurrent: 3,
+        expiresAt: '2026-08-28T10:03:00.000Z',
+      },
     });
     expect(
       fleetFromAutoscalerStatuses({
@@ -289,7 +298,12 @@ describe('fleetFromAutoscalerStatuses', () => {
         },
       }),
     ).toEqual({
-      directExecutor: { ready: true, draining: false, maxConcurrent: 3 },
+      directExecutor: {
+        ready: true,
+        draining: false,
+        maxConcurrent: 3,
+        expiresAt: '2026-08-28T10:03:00.000Z',
+      },
     });
   });
 });

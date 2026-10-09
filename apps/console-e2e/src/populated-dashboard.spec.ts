@@ -26,6 +26,26 @@ useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
 test.describe('populated dashboard', () => {
+  for (const path of ['/', '/agents']) {
+    test(`expires projected fleet capacity locally on ${path} while dashboard streaming is denied`, async ({
+      page,
+    }) => {
+      await page.route('**/api/dashboard/stream', (route) =>
+        route.fulfill({ status: 401, body: 'denied' }),
+      );
+      await page.clock.install();
+      await page.goto(path);
+      await expect(page.getByTestId('fleet-chip')).toHaveText(
+        '2 GitHub runners registered (1 running) · Direct executor ready (limit 3)',
+      );
+      await page.clock.fastForward(195_000);
+      await expect(page.getByTestId('fleet-chip')).toHaveText(
+        'GitHub runner status unavailable · Direct executor status unavailable',
+      );
+      await expect(page.getByTestId('metric-runner-occupancy')).toHaveCount(0);
+    });
+  }
+
   test('renders each Inbox reason against real items', async ({ page }) => {
     await page.goto('/inbox');
 

@@ -12,6 +12,7 @@ import {
 } from './autoscaler-status';
 import { repoItemKey, type WatchedRepo } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { RUNNER_STATUS_STALENESS_MS } from './runner-status-contract';
 
 // Re-exported from github-client.ts, which owns the server-side watched-repo
 // boundary; the pure integration shape itself lives in watched-repo.ts.
@@ -72,7 +73,15 @@ export interface FleetSummary {
   /** Fresh ARC GitHub Actions capacity only; absent is not scaled-to-zero. */
   online?: number;
   busy?: number;
-  directExecutor?: { ready: boolean; draining: boolean; maxConcurrent: number };
+  /** Earliest ARC producer expiry; one stale lane invalidates the total. */
+  githubExpiresAt?: string;
+  directExecutor?: {
+    ready: boolean;
+    draining: boolean;
+    maxConcurrent: number;
+    /** Original producer deadline, never the dashboard fetch/heartbeat time. */
+    expiresAt: string;
+  };
 }
 
 export interface AgentActivity {
@@ -113,6 +122,10 @@ export function fleetFromAutoscalerStatuses(
             0,
           ),
           busy: lanes.reduce((count, lane) => count + lane.runningJobs, 0),
+          githubExpiresAt: new Date(
+            Math.min(...lanes.map((lane) => Date.parse(lane.updatedAt))) +
+              RUNNER_STATUS_STALENESS_MS,
+          ).toISOString(),
         }),
     ...(executor === undefined
       ? {}
@@ -121,6 +134,9 @@ export function fleetFromAutoscalerStatuses(
             ready: executor.ready,
             draining: executor.draining,
             maxConcurrent: executor.maxConcurrent,
+            expiresAt: new Date(
+              Date.parse(executor.updatedAt) + RUNNER_STATUS_STALENESS_MS,
+            ).toISOString(),
           },
         }),
   };

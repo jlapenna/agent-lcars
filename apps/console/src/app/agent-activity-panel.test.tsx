@@ -1024,21 +1024,42 @@ describe('AgentActivityPanel pipeline metadata', () => {
 
 describe('AgentActivityPanel fleet chip', () => {
   it('renders current GitHub capacity without implying direct Job occupancy', () => {
-    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 2, busy: 1 } });
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      fleet: {
+        online: 2,
+        busy: 1,
+        githubExpiresAt: new Date(Date.now() + 180_000).toISOString(),
+      },
+    });
     expect(screen.getByTestId('fleet-chip').textContent).toBe(
       '2 GitHub runners registered (1 running) · Direct executor status unavailable',
     );
   });
 
   it('renders singular wording for one idle GitHub runner', () => {
-    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 1, busy: 0 } });
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      fleet: {
+        online: 1,
+        busy: 0,
+        githubExpiresAt: new Date(Date.now() + 180_000).toISOString(),
+      },
+    });
     expect(screen.getByTestId('fleet-chip').textContent).toBe(
       '1 GitHub runner registered (0 running) · Direct executor status unavailable',
     );
   });
 
   it('shows fresh zero capacity rather than hiding it as if telemetry were absent', () => {
-    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 0, busy: 0 } });
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      fleet: {
+        online: 0,
+        busy: 0,
+        githubExpiresAt: new Date(Date.now() + 180_000).toISOString(),
+      },
+    });
     expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
       '0 GitHub runners registered (0 running)',
     );
@@ -1048,7 +1069,12 @@ describe('AgentActivityPanel fleet chip', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       fleet: {
-        directExecutor: { ready: true, draining: true, maxConcurrent: 3 },
+        directExecutor: {
+          ready: true,
+          draining: true,
+          maxConcurrent: 3,
+          expiresAt: new Date(Date.now() + 180_000).toISOString(),
+        },
       },
     });
     expect(screen.getByTestId('fleet-chip')).toHaveTextContent(

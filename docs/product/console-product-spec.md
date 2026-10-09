@@ -231,7 +231,11 @@ the work that has stopped, and the work in flight.
   - A fleet chip showing registered/running GitHub Actions runners from
     fresh ARC lane records separately from direct-executor readiness,
     draining state and concurrency limit. Missing capacity is unavailable,
-    not zero; fresh scaled-to-zero capacity remains visible.
+    not zero; fresh scaled-to-zero capacity remains visible. The earliest
+    ARC producer deadline and direct-executor producer deadline survive
+    projection and expire independently on the client, even during unchanged
+    healthy heartbeats or disconnected/reconnecting streams. Re-delivering
+    the same snapshot never renews freshness.
 - **FE-BR-4 [Shipped]** The "Waiting on Deploy" (`post-deploy-action`) and
   "Blocked" (`blocked`) sections hold waiting items. These are intentionally
   kept out of the decision queue.
@@ -302,6 +306,8 @@ the work that has stopped, and the work in flight.
 - **FE-AG-1 [Shipped]** `FleetSnapshotBar` shows, per pipeline, live runs,
   active CLI sessions, the current ARC/direct-executor fleet chip, and
   activity metrics. GitHub runner capacity is not direct agent Job occupancy.
+  Both the chip and runner-occupancy metric expire at the original producer
+  deadlines; stale capacity is unavailable, never a reported zero.
 - **FE-AG-2 [Shipped]** **Active Agents** shows runs classified as `running`,
   `succeeded`, `failed`, `timeout`, `cancelled`, or `silent-error`, each with a
   diagnosis string.

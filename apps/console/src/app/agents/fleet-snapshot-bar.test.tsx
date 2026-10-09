@@ -132,13 +132,24 @@ describe('FleetSnapshotBar', () => {
   });
 
   it('renders logical-task, queued-run, and running-run counts as visibly distinct numbers', () => {
-    renderBar(EMPTY_ACTIVITY, 0, {
-      logicalTaskCount: 2,
-      queuedRuns: 1,
-      runningRuns: 3,
-      onlineRunners: 5,
-      busyRunners: 2,
-    });
+    renderBar(
+      {
+        ...EMPTY_ACTIVITY,
+        fleet: {
+          online: 5,
+          busy: 2,
+          githubExpiresAt: new Date(Date.now() + 180_000).toISOString(),
+        },
+      },
+      0,
+      {
+        logicalTaskCount: 2,
+        queuedRuns: 1,
+        runningRuns: 3,
+        onlineRunners: 5,
+        busyRunners: 2,
+      },
+    );
 
     expect(screen.getByTestId('metric-logical-tasks').textContent).toBe(
       '2 logical tasks',
