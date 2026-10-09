@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { setupModes } from './qualification-modes.mjs';
 import { createProbeScratch } from './scratch.mjs';
 
 const [provider, binary, expectedVersion] = process.argv.slice(2);
@@ -29,7 +30,7 @@ if (version.status !== 0 || version.stdout.trim() !== expectedVersion)
   throw new Error('Pinned CLI version mismatch');
 
 const observations = [];
-for (const mode of ['malformed-config', 'symlink-config', 'missing-setup']) {
+for (const mode of setupModes) {
   const dir = mkdtempSync(join(root, `${mode}-`));
   const config = join(dir, 'provider.json');
   const original =

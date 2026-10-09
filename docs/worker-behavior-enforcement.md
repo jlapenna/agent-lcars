@@ -1,25 +1,45 @@
 # Dispatched-worker behavior enforcement
 
-Status: implementation in progress, **not enabled in production dispatch**. No provider
-has graduated. The offline readiness evaluator, native-hook boundary probes
-for all three providers, and a Claude/Codex failure-to-denial bridge are
-implemented. Idempotent Claude/Codex command registration is exercised by the
-native probes. The initial shared policy handles literal Git/PR mutations and
-native file-edit tools with mode, worktree and fresh GitHub ownership decisions.
-It repairs omitted attempt markers on supported new PR/comment/review commands;
-native probes check that the repaired body reaches the local transport.
-An OpenCode adapter translates tool events into the same shared policy, and
-setup installs its registration. Setup binds validated dispatch context once.
-Fresh readiness checks cover review threads, requested changes, blocking labels,
-and acknowledgments of external draft/auto-merge holds.
-Native session metadata is bound to the setup-owned attempt before tool actions;
-known Claude runner session IDs are also bound before launch.
-The direct runner now shares one bounded completion-correction rule across all
-three providers, verified by its executable runner harness. Hook setup is
-connected to all three launch paths behind provider-specific qualification.
-Bounded evaluator restart recovery and terminal infrastructure-failure
-classification are implemented; remaining policy coverage and full acceptance
-canaries remain to be built and verified.
+Status: implemented interception and isolated canary harnesses; **no provider is
+graduated and production activation is not authorized**. The source default for
+`LCARS_WORKER_POLICY_PROVIDERS` remains empty. Dated observations below are
+historical evidence, not a readback of current production configuration.
+
+## Current qualification boundary
+
+Track completion in [#2181](https://github.com/jlapenna/agent-lcars/issues/2181).
+The shared policy, provider adapters, setup smoke, attempt/session binding,
+marker repair, review-hold reader, evaluator recovery and runner classification
+exist. Native suites exercise useful edit/commit/push/publication, forbidden
+actions, correction and retained work with a localhost model and local
+transports. Those are isolated runtime observations, not real policy-enabled
+dispatches.
+
+| Evidence level   | Established                                                                                             | Remaining                                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source/contracts | Shared controls, provider launch integration, explicit disabled Job selector and failure classification | Ready-head CI and independent review for changed live contracts                                                                            |
+| Isolated image   | Historical ledger binds observed CLIs, baked modules/helpers/runner and harness hashes                  | Current candidate must rerun every native and setup-negative case; changed bytes invalidate historical evidence                            |
+| Real dispatch    | Normal Codex review of #2029 proves scoped execution-mode separation and delivery                       | Useful policy-enabled implementation/review dispatches with the candidate image, preserved work and exact-marker deliverables per provider |
+| Activation       | Default is off; no deployment or selector mutation is performed here                                    | Specific maintainer approval and Homelab-owned activation, observation and rollback                                                        |
+
+The source inventory contains 78 Claude, 79 Codex and 81 OpenCode native
+observations, plus three setup-negative cases per provider. Inventory lives in
+`tools/probes/qualification-modes.mjs`, consumed by execution and the evidence
+gate; selective passing reports cannot satisfy it. See the
+[qualification and bounded rollout artifact](worker-policy-rollout.md) for
+independent commands, provenance, metrics and approval targets.
+
+The provider budget still uses wall-clock-derived Bash `SECONDS`.
+[#2223](https://github.com/jlapenna/agent-lcars/issues/2223) owns the monotonic
+deadline/fence prerequisite; [#2217](https://github.com/jlapenna/agent-lcars/issues/2217)
+owns retained harness diagnostics. Three retained CI failures measured backward
+wall-clock readings. Descendant-main CI
+[37921531307](https://github.com/jlapenna/agent-lcars/actions/runs/37921531307)
+passed the unchanged deadline assertions; that counterexample does not repair
+the runtime authority. No fresh candidate may claim bounded execution across
+clock steps until #2223's deterministic acceptance and image refresh pass.
+The host-clock investigation remains independently owned by
+[Homelab #2186](https://github.com/jlapenna/homelab/issues/2186).
 
 ## Scope and decisions
 
@@ -35,13 +55,13 @@ replacement has passed runtime canaries.
 
 ## Requirement-to-enforcement matrix
 
-| Mandatory requirement                           | Existing implementation                                                                                             | Remaining enforcement                                                                                                                    |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Session/attempt identity and dispatch mode      | `direct-runner.sh` consumes the trusted brief and exports attempt identity; protocol defines mode-specific outcomes | Bind provider session to the trusted attempt; reject invalid context before launch; prevent mode-incompatible protected actions          |
-| Ownership before implementation and publication | Orchestrator task mutex and initial GitHub claim; lifecycle check at claim                                          | Fresh ownership check before first implementation and publication; reject uncertain or changed ownership with correction instructions    |
-| Worktree protection                             | repo-tools guards via repository Git hooks                                                                          | Verify guards in the actual worker checkout; probe allowed linked-worktree and rejected primary-checkout mutations                       |
-| Deliverable markers and completion              | Shared `verify-outcome.sh`, direct-runner finalization; OpenCode bounded continuation                               | Idempotent marker repair for supported artifact paths; reuse verifier for completion correction on all providers within remaining budget |
-| Explicit review holds before ready/auto-merge   | Protocol requires fresh feedback and hold satisfaction                                                              | Intercept supported ready/arm operations; require fresh hold evidence and explicit satisfaction, never automatically clear a hold        |
+| Mandatory requirement             | Implemented owner                                                                 | Qualification boundary                                                              |
+| --------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Attempt/session identity and mode | Setup context, native session/child binding, pre-action mode rejection            | Current image and real dispatch; child receipts do not permit background work       |
+| Fresh ownership                   | Supported edit/Git/publication interception reads current ownership               | Current image plus normal dispatch; indirect/API/MCP writes remain outside coverage |
+| Worktree protection               | Installed repo-tools guard; native primary/symlink denials and linked Git writes  | Current image guard and member/workstation acceptance                               |
+| Deliverable and completion        | Marker repair, actual verifier, one same-session correction, native Work outcomes | Monotonic shared budget (#2223) and normal control-plane dispatch                   |
+| Ready/auto-merge holds            | Paginated reader and event/head-bound acknowledgments                             | Current image and live holds; arbitrary human conditions still need judgment        |
 
 `packages/fleet-tools/bin/codex-issue-guardrail.cjs` returns PostToolUse
 context. It is advisory, not pre-action rejection. A passing configuration
@@ -479,7 +499,8 @@ original deadline. Reports: `/tmp/lcars-image-probe-BPyvQ8` (Codex),
 An explicit release-qualification consumer then feeds those exact captured
 payloads through the production Work API route, orchestrator, and outbox
 handling. It checks current source against the reports' baked module, runtime,
-and runner hashes and requires all three providers from one image. The same
+and runner hashes and accepts one to three distinct providers from one image. A provider can
+run its failure-chain qualification without waiting for another provider. The same
 GitHub anchor/run identity is admitted and claimed in memory; completion must
 settle as failed, release the Codex credential lease where applicable, deliver
 failure feedback through the local GitHub transport, and perform no assignee or
@@ -513,7 +534,7 @@ image-bound scenario. No row grants provider graduation on its own.
 | `premature-completion` | All-provider image-bound workflow correction resumes the same session within its original deadline; exhaustion preserves work without resuming                                                                | Production control-plane dispatch acceptance                                         |
 | `review-hold`          | Image-bound held/released actions plus all-provider current-head acknowledgments, invalid acknowledgment denials, independent review gates, and self-release rejection                                        | Separate live-dispatch acceptance; arbitrary human conditions are not machine-proven |
 | `missing-hook`         | Native bootstrap installs omitted registration; all nine image-bound negative setup cases refuse launch and preserve configuration/work                                                                       | Fresh workstation/member-repository convergence gates                                |
-| `hook-failure`         | Image-bound thrown failures and native timeouts deny; OpenCode ignores SIGTERM, is killed within the bound, and preserves work                                                                                | Combined native-to-control-plane infrastructure outcome                              |
+| `hook-failure`         | Image-bound thrown failures and native timeouts deny; OpenCode ignores SIGTERM, is killed within the bound, and preserves work                                                                                | Current candidate failure-chain consumer and live dispatch acceptance                |
 | `recovery-success`     | All-provider image-bound edit, evaluator crash, recovery smoke, action retry, real commit/push, publication, and completion verification retain the native session, useful work, and original deadline        | Separate live-dispatch acceptance                                                    |
 | `recovery-exhausted`   | All-provider image-bound native denial and retained work, actual runner infrastructure completion, and exact captured payloads through the Work API/outbox prove failed state without human-assignment writes | Separate live-dispatch acceptance                                                    |
 | `authorized-exception` | Image-bound park/no-op records allowed only at setup-bound path; foreign/unrelated, unsafe destination, and Codex multi-target writes denied without ownership reads                                          | Separate live-dispatch acceptance                                                    |
@@ -629,7 +650,8 @@ do not generalize a `gh` interceptor into coverage of every GitHub write.
 ## Offline evidence gate
 
 Run `node packages/fleet-tools/bin/worker-readiness.cjs report.json expected.json`.
-Exit 0 means the supplied evidence qualifies; exit 1 means it does not.
+Exit 0 means the supplied readiness report is internally complete and artifact-matched;
+exit 1 means it is not. This is not provider graduation or activation approval.
 This evaluates reports; it does **not** run provider probes, authenticate
 evidence, fetch artifacts, or replace setup's execution smoke.
 

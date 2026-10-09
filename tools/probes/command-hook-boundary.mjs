@@ -17,9 +17,9 @@ import { outcomeFixture } from './outcome-fixture.mjs';
 import {
   publicationBrief,
   publicationCaptureSource,
-  publicationDeliveryModes,
   publicationFixture,
 } from './publication-fixture.mjs';
+import { nativeModes } from './qualification-modes.mjs';
 import {
   reviewAcknowledgmentModes,
   reviewAllowed,
@@ -847,63 +847,7 @@ ${delegation ? '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 1
 }
 
 const observations = [];
-const modes = [
-  'bootstrap-delegated-allow',
-  'bootstrap-delegated-review',
-  'bootstrap-workflow',
-  'bootstrap-workflow-recovery',
-  'bootstrap-workflow-recovery-exhausted',
-  'bootstrap-workflow-correction',
-  'bootstrap-workflow-exhausted',
-  'allow',
-  'deny',
-  'failure',
-  'missing',
-  'bridge-allow',
-  'bridge-failure',
-  'bridge-timeout',
-  'bridge-rewrite',
-  'bridge-marker',
-  'resume',
-  'bootstrap-marker',
-  'bridge-recovery-success',
-  'bridge-recovery-failure',
-  'bootstrap-file-allow',
-  'bootstrap-file-primary',
-  'bootstrap-file-symlink',
-  'bootstrap-file-review',
-  'bootstrap-file-ownership-absent',
-  'bootstrap-file-ownership-unreadable',
-  'bootstrap-file-ownership-changed',
-  'bootstrap-file-session-expected-mismatch',
-  'bootstrap-file-session-bound-mismatch',
-  'bootstrap-hold-draft-blocked',
-  'bootstrap-hold-draft-released',
-  'bootstrap-hold-merge-blocked',
-  'bootstrap-hold-merge-released',
-  'bootstrap-hold-draft-threads',
-  ...reviewAcknowledgmentModes,
-  'bootstrap-outcome-park-allow',
-  'bootstrap-outcome-no-op-allow',
-  'bootstrap-outcome-foreign',
-  'bootstrap-outcome-unrelated',
-  'bootstrap-outcome-parent-symlink',
-  ...(provider === 'codex' ? ['bootstrap-outcome-multi-target'] : []),
-  ...publicationDeliveryModes,
-  'bootstrap-publication-allow',
-  'bootstrap-publication-review',
-  'bootstrap-publication-ownership-absent',
-  'bootstrap-publication-ownership-unreadable',
-  'bootstrap-publication-ownership-changed',
-  'bootstrap-publication-marker-idempotent-allow',
-  'bootstrap-publication-marker-foreign',
-  'bootstrap-push-allow',
-  'bootstrap-push-review',
-  'bootstrap-push-primary',
-  'bootstrap-push-ownership-absent',
-  'bootstrap-push-ownership-unreadable',
-  'bootstrap-push-ownership-changed',
-];
+const modes = nativeModes(provider);
 if (
   scenario &&
   scenario !== 'review-acknowledgments' &&

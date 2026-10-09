@@ -305,3 +305,52 @@ func TestKubernetesConfigurationRejectsAPIIlegalTolerationsBeforeClaim(t *testin
 		})
 	}
 }
+
+// Observe the emitted worker Job, including the off value that overrides image
+// defaults. A provider can be activated without activating the other two.
+func TestKubernetesWorkerPolicySelection(t *testing.T) {
+	for _, selection := range []struct {
+		raw, want string
+		invalid   bool
+	}{
+		{"", "", false}, {" ", "", false},
+		{"claude", "claude", false}, {"codex", "codex", false}, {"opencode", "opencode", false},
+		{" opencode,claude,claude ", "claude,opencode", false},
+		{"all", "", true}, {"codex,", "", true}, {"codex,,claude", "", true},
+	} {
+		t.Run(selection.raw, func(t *testing.T) {
+			t.Setenv("LCARS_WORKER_POLICY_PROVIDERS", selection.raw)
+			selected, err := directRunnerWorkerPolicyProviders()
+			if (err != nil) != selection.invalid || selected != selection.want {
+				t.Fatalf("selected=%q err=%v", selected, err)
+			}
+			if selection.invalid {
+				return
+			}
+			q, c := kubeQueueFixture()
+			q.workerPolicyProviders = selected
+			for _, provider := range []string{"claude", "codex", "opencode"} {
+				launch := directRunnerLaunch{runID: "work:policy-" + provider + "/r1", pipeline: provider, runToken: "fixture-token"}
+				if err := q.launch(context.Background(), launch); err != nil {
+					t.Fatal(err)
+				}
+				job, err := c.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), queueJobName(launch.runID), meta.GetOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := 0
+				for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+					if env.Name == "LCARS_WORKER_POLICY_PROVIDERS" {
+						found++
+						if env.Value != selection.want || env.ValueFrom != nil {
+							t.Fatal("worker policy selection changed at launch")
+						}
+					}
+				}
+				if found != 1 {
+					t.Fatal("worker policy selector must explicitly override image defaults")
+				}
+			}
+		})
+	}
+}
