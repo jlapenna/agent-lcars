@@ -17,17 +17,20 @@ import {
   repoKey,
   type WatchedRepo,
 } from '../../lib/github-client';
+import { getNativeInboxCards } from '../../lib/native-inbox';
 import { derivePrimaryAction } from '../../lib/primary-action';
 import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
-import { repoItemKey } from '../../lib/watched-repo';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
 import { DataWarnings } from '../console-header';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
+import { inboxCardKey, inboxCardMetadata } from '../inbox-card';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
 import { withConsolePageShell } from '../with-console-page-shell';
+import { replyToWorkItem } from '../work/actions';
+import { context as workContext } from '../work/context';
 
 interface PageProps {
   searchParams: Promise<{ repo?: string; item?: string }>;
@@ -56,10 +59,18 @@ async function InboxBody({
     },
     { data: activity, fetchedAt: activityFetchedAt },
     { sessionsByRunId, warnings: runnerSessionWarnings },
+    nativeCards,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
     getRunnerSessionsByRunId(),
+    workContext().then((context) =>
+      getNativeInboxCards(
+        context.runtime.store,
+        context.principal,
+        selectedItemKey,
+      ),
+    ),
   ]);
   const warnings = Array.from(
     new Set([...activity.warnings, ...runnerSessionWarnings]),
@@ -67,13 +78,18 @@ async function InboxBody({
   const queueView = buildQueueView(items, activity, sessionsByRunId);
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
+  const allCards = [...queueView.items.map(toCard), ...nativeCards];
   const selectedCard = selectedItemKey
-    ? queueView.items.find(
-        (item) =>
-          matchesFilter(item.repo) &&
-          repoItemKey(item.repo, item.number) === selectedItemKey,
+    ? allCards.find(
+        (card) =>
+          matchesFilter(inboxCardMetadata(card).repo) &&
+          inboxCardKey(card) === selectedItemKey,
       )
     : undefined;
+  const decisionCards = [
+    ...queueView.yourQueue.map(toCard),
+    ...nativeCards.filter((card) => card.work.state === 'parked'),
+  ].filter((card) => matchesFilter(inboxCardMetadata(card).repo));
 
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 
@@ -91,10 +107,9 @@ async function InboxBody({
         </Box>
       )}
       <DecisionInbox
-        yourQueue={queueView.yourQueue
-          .filter((item) => matchesFilter(item.repo))
-          .map(toCard)}
-        selectedCard={selectedCard ? toCard(selectedCard) : undefined}
+        yourQueue={decisionCards}
+        replyToWorkItem={replyToWorkItem}
+        selectedCard={selectedCard}
         selectedItemKey={selectedItemKey}
         mobileDataFreshness={
           <DataFreshness

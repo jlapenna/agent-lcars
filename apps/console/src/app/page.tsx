@@ -25,6 +25,7 @@ import {
   repoKey,
   type WatchedRepo,
 } from '../lib/github-client';
+import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
 import { indexSessionsByRunId } from '../lib/run-classification';
@@ -45,6 +46,7 @@ import { repoScopedConsoleHrefs } from './console-hrefs';
 import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
+import { inboxCardMetadata } from './inbox-card';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
@@ -122,12 +124,17 @@ async function IndexBody({
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
     { items: parkedWorkItems, hasMoreTasks: hasMoreParkedTasks },
+    nativeInbox,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
     getParkedWork(),
+    getNativeInboxEvidence(async () => {
+      const context = await workContext();
+      return { store: context.runtime.store, principal: context.principal };
+    }),
   ]);
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
@@ -136,6 +143,7 @@ async function IndexBody({
       ...activity.warnings,
       ...cliSessionWarnings,
       ...runnerSessionWarnings,
+      ...nativeInbox.warnings,
     ]),
   );
 
@@ -237,8 +245,12 @@ async function IndexBody({
           <DeckInboxSummary
             count={
               queueView.yourQueue.filter((item) => matchesFilter(item.repo))
-                .length
+                .length +
+              nativeInbox.cards.filter((card) =>
+                matchesFilter(inboxCardMetadata(card).repo),
+              ).length
             }
+            nativeAvailable={nativeInbox.available}
             inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
           />
 

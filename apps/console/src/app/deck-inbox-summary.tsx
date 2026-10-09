@@ -19,9 +19,11 @@ import Link from 'next/link';
 export function DeckInboxSummary({
   count,
   inboxHref,
+  nativeAvailable = true,
 }: {
   count: number;
   inboxHref: string;
+  nativeAvailable?: boolean;
 }) {
   // The signpost is about the Inbox, so it wears the Inbox's accent rather
   // than the Bridge's - the one block on the page that deliberately speaks
@@ -35,13 +37,17 @@ export function DeckInboxSummary({
       className="deck-inbox-summary lcars-panel"
       data-testid="deck-inbox-summary"
       data-accent="blue"
-      data-empty={count === 0 ? '' : undefined}
+      data-empty={count === 0 && nativeAvailable ? '' : undefined}
     >
       <Text component="span" fw={700} className="deck-inbox-summary__count">
         {count}
       </Text>
       <Text component="span" fw={600} className="deck-inbox-summary__label">
-        {count === 0 ? 'No decisions waiting' : 'Decisions waiting'}
+        {!nativeAvailable
+          ? 'GitHub decisions waiting · native unavailable'
+          : count === 0
+            ? 'No decisions waiting'
+            : 'Decisions waiting'}
       </Text>
       {/* Deliberately avoids the word "Inbox": Playwright role-name
           matching is substring-based, and the e2e suite addresses the nav
@@ -55,9 +61,11 @@ export function DeckInboxSummary({
         fw={700}
         className="deck-inbox-summary__action"
       >
-        {count === 0
+        {!nativeAvailable
           ? 'Review queue'
-          : `Open ${count} decision${count === 1 ? '' : 's'}`}
+          : count === 0
+            ? 'Review queue'
+            : `Open ${count} decision${count === 1 ? '' : 's'}`}
       </Anchor>
     </Group>
   );

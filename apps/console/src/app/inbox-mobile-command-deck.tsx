@@ -17,12 +17,14 @@ import type { ActionItem } from '../lib/action-items';
 export function InboxMobileCommandDeck({
   view,
   selectedItem,
+  selectedIdentity,
   backHref,
   scopeLabel,
   dataFreshness,
 }: {
   view: 'list' | 'detail';
   selectedItem?: Pick<ActionItem, 'repo' | 'number'>;
+  selectedIdentity?: string;
   backHref: string;
   scopeLabel?: string;
   dataFreshness?: ReactNode;
@@ -53,9 +55,10 @@ export function InboxMobileCommandDeck({
             truncate
             className="queue-mobile-detail-identity"
           >
-            {selectedItem
-              ? `${selectedItem.repo.name} / #${selectedItem.number}`
-              : 'Item unavailable'}
+            {selectedIdentity ??
+              (selectedItem
+                ? `${selectedItem.repo.name} / #${selectedItem.number}`
+                : 'Item unavailable')}
           </Text>
         </div>
       )}

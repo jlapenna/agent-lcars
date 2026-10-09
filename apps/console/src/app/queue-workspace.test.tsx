@@ -1,9 +1,16 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import type { BoardCard } from './board-card';
+import type { InboxCard, NativeDecisionCard } from './inbox-card';
 import {
   parseQueueFilter,
   parseQueueSort,
@@ -24,7 +31,7 @@ vi.mock('next/navigation', () => ({
     }
     return cachedParams[1];
   },
-  useRouter: () => ({ replace: mockReplace }),
+  useRouter: () => ({ replace: mockReplace, refresh: vi.fn() }),
 }));
 
 afterEach(() => {
@@ -110,6 +117,102 @@ describe('queueSelectionHref', () => {
     expect(queueSelectionHref('item=agent-lcars%2Fconsole%23249')).toBe(
       '/inbox',
     );
+  });
+});
+
+const nativeCard: NativeDecisionCard = {
+  canReply: true,
+  work: {
+    id: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G',
+    anchor: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+    state: 'parked',
+    createdAt: '2026-10-09T00:00:00Z',
+    updatedAt: '2026-10-09T00:30:00Z',
+    origin: { principal: 'user:maintainer', channel: 'console' },
+    spec: {
+      title: 'Choose storage',
+      description: 'Persist the result',
+      pipeline: 'claude',
+      target: { repo: 'owner/repo' },
+    },
+    runs: [
+      {
+        runId: 'r1',
+        state: 'finished',
+        pipeline: 'claude',
+        createdAt: '2026-10-09T00:00:00Z',
+        updatedAt: '2026-10-09T00:30:00Z',
+        result: {
+          ok: true,
+          summary: 'park',
+          message: 'Which storage should I use?',
+        },
+      },
+    ],
+  },
+};
+
+describe('QueueWorkspace native Reply refresh', () => {
+  it.each([true, false])(
+    'retains admission when another decision remains=%s',
+    async (another) => {
+      const reply = vi.fn().mockResolvedValue([null, { resumed: false }]);
+      const workspace = (cards: InboxCard[]) => (
+        <MantineProvider>
+          <QueueWorkspace
+            cards={cards}
+            watchedRepos={[]}
+            replyToWorkItem={reply}
+          />
+        </MantineProvider>
+      );
+      const view = render(workspace([nativeCard]));
+      fireEvent.change(
+        screen.getByRole('textbox', { name: 'Reply to the agent' }),
+        { target: { value: 'Use Firestore.' } },
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Reply', exact: true }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByTestId('native-reply-confirmation'),
+        ).toHaveTextContent('fresh session'),
+      );
+      view.rerender(workspace(another ? [makeCard()] : []));
+      expect(screen.queryByTestId('native-decision-detail')).toBeNull();
+      expect(screen.getByTestId('native-reply-confirmation')).toHaveTextContent(
+        'Choose storage',
+      );
+      expect(screen.getByTestId('native-reply-confirmation')).toHaveTextContent(
+        'Reply admitted',
+      );
+    },
+  );
+  it('keeps refused replies editable without an admitted confirmation', async () => {
+    render(
+      <MantineProvider>
+        <QueueWorkspace
+          cards={[nativeCard]}
+          watchedRepos={[]}
+          replyToWorkItem={vi
+            .fn()
+            .mockResolvedValue([{ message: 'run-live' }, undefined])}
+        />
+      </MantineProvider>,
+    );
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Reply to the agent' }),
+      { target: { value: 'Keep this draft' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reply', exact: true }));
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent('run-live'),
+    );
+    expect(
+      screen.getByRole('textbox', { name: 'Reply to the agent' }),
+    ).toHaveValue('Keep this draft');
+    expect(screen.queryByTestId('native-reply-confirmation')).toBeNull();
   });
 });
 
