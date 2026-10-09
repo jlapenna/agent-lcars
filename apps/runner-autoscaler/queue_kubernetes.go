@@ -693,13 +693,32 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 		return err
 	}
 	var completed []batch.Job
+	// Preserve terminal retention independently of active-claim authority:
+	// a denied/unavailable status must never pin finished logs until TTL.
+	for _, job := range jobs.Items {
+		if queueJobTerminal(job) {
+			completed = append(completed, job)
+		}
+	}
+	sort.Slice(completed, func(i, j int) bool { return queueJobFinishedAt(completed[i]).After(queueJobFinishedAt(completed[j])) })
+	// Keep a bounded number of recent finished Jobs (and their Pod logs) per
+	// capacity slot; the Job TTL controller removes the rest after a day.
+	for i, j := range completed {
+		finished := queueJobFinishedAt(j)
+		if finished.IsZero() || (i < q.config.MaxConcurrent*queueJobRetentionPerSlot && time.Since(finished) < queueJobRetentionAge) {
+			continue
+		}
+		uid, rv := j.UID, j.ResourceVersion
+		if err := q.client.BatchV1().Jobs(q.config.Namespace).Delete(ctx, j.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &uid, ResourceVersion: &rv}, PropagationPolicy: ptr(meta.DeletePropagationBackground)}); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
 	for _, j := range q.cleanupCursor.ordered(jobs.Items) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		q.cleanupCursor.visit(j.Name)
 		if queueJobTerminal(j) {
-			completed = append(completed, j)
 			continue
 		}
 		retired, retireErr := q.retireSettledClaim(ctx, &j)
@@ -741,19 +760,6 @@ func (q *kubernetesQueue) cleanup(ctx context.Context) error {
 		rv := j.ResourceVersion
 		err = q.client.BatchV1().Jobs(q.config.Namespace).Delete(ctx, j.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &uid, ResourceVersion: &rv}, PropagationPolicy: ptr(meta.DeletePropagationBackground)})
 		if err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-	}
-	sort.Slice(completed, func(i, j int) bool { return queueJobFinishedAt(completed[i]).After(queueJobFinishedAt(completed[j])) })
-	// Keep a bounded number of recent finished Jobs (and their Pod logs) per
-	// capacity slot; the Job TTL controller removes the rest after a day.
-	for i, j := range completed {
-		finished := queueJobFinishedAt(j)
-		if finished.IsZero() || (i < q.config.MaxConcurrent*queueJobRetentionPerSlot && time.Since(finished) < queueJobRetentionAge) {
-			continue
-		}
-		uid, rv := j.UID, j.ResourceVersion
-		if err := q.client.BatchV1().Jobs(q.config.Namespace).Delete(ctx, j.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &uid, ResourceVersion: &rv}, PropagationPolicy: ptr(meta.DeletePropagationBackground)}); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
 	}

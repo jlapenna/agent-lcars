@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/types"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
@@ -243,5 +245,57 @@ func TestKubernetesRetirementAdmissionWaitsForForegroundDeletion(t *testing.T) {
 	c.Tracker().Update(batch.SchemeGroupVersion.WithResource("jobs"), job, q.config.Namespace)
 	if r, err := q.reserve(ctx); err != nil || r != nil {
 		t.Fatal("terminal foreground Job released admission before drainage")
+	}
+}
+
+func TestKubernetesStatusFailurePreservesTerminalRetention(t *testing.T) {
+	q, c := kubeQueueFixture()
+	q.config.MaxConcurrent = 1
+	ctx := context.Background()
+	live, err := q.job(directRunnerLaunch{runID: "work:badclaim/r1", runner: "executor", pipeline: "codex", runToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live.UID = "live"
+	live.ResourceVersion = "1"
+	live.Generation = 2
+	live.Spec.Suspend = ptr(false)
+	live.Status.Active = 1
+	if err := c.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), live, q.config.Namespace); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		job, err := q.job(directRunnerLaunch{runID: fmt.Sprintf("work:finished%d/r1", i), pipeline: "codex"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		job.UID = types.UID(fmt.Sprintf("finished%d", i))
+		job.ResourceVersion = "1"
+		job.Status.Conditions = []batch.JobCondition{{Type: batch.JobComplete, Status: core.ConditionTrue, LastTransitionTime: meta.NewTime(time.Now().Add(-time.Hour + time.Duration(i)*time.Minute))}}
+		if err := c.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), job, q.config.Namespace); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q.claimSettled = func(context.Context, string, string, string) (bool, error) {
+		return false, fmt.Errorf("status unavailable")
+	}
+	if err := q.cleanup(ctx); err == nil {
+		t.Fatal("status authority error hidden")
+	}
+	jobs, err := c.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := 0
+	for _, job := range jobs.Items {
+		if queueJobTerminal(job) {
+			finished++
+		}
+	}
+	if finished != q.config.MaxConcurrent*queueJobRetentionPerSlot {
+		t.Fatalf("failed status prevented terminal retention: %d", finished)
+	}
+	if _, err := c.BatchV1().Jobs(q.config.Namespace).Get(ctx, live.Name, meta.GetOptions{}); err != nil {
+		t.Fatal("failed status retired active claim")
 	}
 }
