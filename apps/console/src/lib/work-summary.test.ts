@@ -66,6 +66,52 @@ describe('listWorkSummaries', () => {
     );
   });
 
+  it('visits 205 tasks exactly once and finds an older park after an empty filtered page', async () => {
+    const { store, orchestrator } = fixture();
+    const ids: string[] = [];
+    for (let issue = 1; issue <= 205; issue++) {
+      const result = await orchestrator.request({
+        taskId: { repo: 'jlapenna/agent-lcars', issue },
+        requestId: `page-${issue}`,
+        pipeline: 'claude',
+        work: payload,
+      });
+      if ('refused' in result) throw new Error(result.reason);
+      ids.push(`jlapenna/agent-lcars#${issue}`);
+      if (issue === 1) {
+        await orchestrator.confirmDispatch(result.run.runId);
+        await orchestrator.report(result.run.runId, {
+          ok: true,
+          summary: 'park',
+        });
+      }
+    }
+    const first = await listWorkSummaries(store, { limit: 200 });
+    const second = await listWorkSummaries(store, {
+      limit: 200,
+      cursor: first.nextCursor,
+    });
+    const visited = [...first.items, ...second.items].map((item) => item.id);
+    expect(visited).toHaveLength(205);
+    expect(new Set(visited).size).toBe(205);
+    expect(visited.sort()).toEqual(ids.sort());
+    expect(second.nextCursor).toBeUndefined();
+    const empty = await listWorkSummaries(store, {
+      limit: 200,
+      state: 'parked',
+    });
+    expect(empty.items).toEqual([]);
+    expect(empty.nextCursor).toBeDefined();
+    const older = await listWorkSummaries(store, {
+      limit: 200,
+      state: 'parked',
+      cursor: empty.nextCursor,
+    });
+    expect(older.items.map((item) => item.id)).toEqual([
+      'jlapenna/agent-lcars#1',
+    ]);
+  });
+
   it('keeps a stable cursor after an empty filtered page', async () => {
     const { store, orchestrator } = fixture();
     const parked = await orchestrator.request({

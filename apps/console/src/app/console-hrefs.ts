@@ -9,9 +9,14 @@ export function repoScopedConsoleHrefs(repoFilter?: string):
   | {
       deck: string;
       inbox: string;
+      agents: string;
     }
   | undefined {
   if (!repoFilter) return undefined;
   const query = new URLSearchParams({ repo: repoFilter }).toString();
-  return { deck: `/?${query}`, inbox: `/inbox?${query}` };
+  return {
+    deck: `/?${query}`,
+    inbox: `/inbox?${query}`,
+    agents: `/agents?${query}`,
+  };
 }

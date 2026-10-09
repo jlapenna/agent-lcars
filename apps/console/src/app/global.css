@@ -2772,3 +2772,12 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   padding: 8px 12px;
   border-radius: 4px;
 }
+
+.console-repository-selector {
+  margin-bottom: 16px;
+  min-width: 0;
+}
+.work-list-filters {
+  flex: 1 1 100%;
+  min-width: 0;
+}

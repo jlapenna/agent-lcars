@@ -151,3 +151,36 @@ export async function seedTaskDeliverableHistory() {
     },
   });
 }
+
+/** >200 durable tasks, with the only stopped item behind the first raw page. */
+export async function seedWorkPagination() {
+  const store = firestoreStore();
+  for (let index = 1; index <= 205; index++) {
+    const workId = String(index).padStart(26, '0');
+    const orchestrator = new Orchestrator(store, {
+      now: () => new Date(Date.UTC(2000, 0, 1) + index * 1000).toISOString(),
+    });
+    const result = await orchestrator.request({
+      taskId: { workId },
+      requestId: workId,
+      pipeline: 'codex',
+      work: {
+        origin: { principal: 'user:pagination-fixture', channel: 'console' },
+        spec: {
+          title: `Pagination fixture ${index}`,
+          description: 'Pagination regression fixture',
+          pipeline: 'codex',
+          target: { repo: E2E_FIXTURE_REPOSITORY },
+        },
+      },
+    });
+    if ('refused' in result) throw new Error(result.reason);
+    if (index === 1) {
+      await orchestrator.confirmDispatch(result.run.runId);
+      await orchestrator.report(result.run.runId, {
+        ok: true,
+        summary: 'park',
+      });
+    }
+  }
+}

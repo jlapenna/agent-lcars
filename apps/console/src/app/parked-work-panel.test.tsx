@@ -202,9 +202,7 @@ describe('ParkedWorkPanel', () => {
     renderPanel([], undefined, undefined, true);
     expect(screen.getByTestId('parked-work-panel')).toBeInTheDocument();
     expect(
-      screen.getByText(
-        'No stopped work in the 200 most recently updated tasks.',
-      ),
+      screen.getByText('No stopped work on this page of up to 200 tasks.'),
     ).toBeInTheDocument();
     expect(
       screen.getByText('Older tasks may contain stopped work.'),

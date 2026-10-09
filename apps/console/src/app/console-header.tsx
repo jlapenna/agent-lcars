@@ -37,7 +37,10 @@ function navHref(
   repoFilter: string | undefined,
 ): string {
   const repoScopedHrefs = repoScopedConsoleHrefs(repoFilter);
-  if (repoScopedHrefs && (item.key === 'deck' || item.key === 'inbox')) {
+  if (
+    repoScopedHrefs &&
+    (item.key === 'deck' || item.key === 'inbox' || item.key === 'agents')
+  ) {
     return repoScopedHrefs[item.key];
   }
 
