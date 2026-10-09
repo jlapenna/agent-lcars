@@ -81,9 +81,11 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
     ),
   ).toBe(true);
   await page.goto('/work?cursor=invalid');
-  await expect(page.getByRole('alert')).toContainText(
-    'Invalid Work filters or cursor',
-  );
+  await expect(
+    page
+      .getByRole('region', { name: 'Work items', exact: true })
+      .getByRole('alert'),
+  ).toContainText('Invalid Work filters or cursor');
   await page.getByRole('link', { name: 'Reset filters', exact: true }).click();
   await expect(page.getByLabel('State', { exact: true })).toHaveValue('');
 
@@ -140,9 +142,9 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await expect(olderRow).toBeVisible();
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto('/?stoppedCursor=invalid');
-  await expect(page.getByRole('alert')).toContainText(
-    'Could not load stopped work',
-  );
+  await expect(
+    page.getByTestId('parked-work-panel').getByRole('alert'),
+  ).toContainText('Could not load stopped work');
   await page
     .getByRole('link', { name: 'Reset stopped-work page', exact: true })
     .click();
