@@ -36,6 +36,11 @@ import {
   providerIsCoolingDown,
 } from './provider-cooldown';
 import {
+  parseProviderCooldown,
+  projectQueueAdmissionStatus,
+  QUEUE_ADMISSION_READ_LIMIT,
+} from './queue-admission-status';
+import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
@@ -655,6 +660,56 @@ export class FirestoreStore implements OrchestratorStore {
       .limit(limit)
       .get();
     return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+  }
+
+  async readQueueAdmissionStatus(input: {
+    pipelines: readonly string[];
+    now: string;
+  }) {
+    const pipelines = [...new Set(input.pipelines)];
+    return this.#firestore.runTransaction(
+      async (tx) => {
+        const [snapshots, cooldownSnapshots] = await Promise.all([
+          Promise.all(
+            LIVE_STATES.map((state) =>
+              tx.get(
+                this.#runs
+                  .where('state', '==', state)
+                  .limit(QUEUE_ADMISSION_READ_LIMIT + 1),
+              ),
+            ),
+          ),
+          Promise.all(
+            pipelines.map((pipeline) =>
+              tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+            ),
+          ),
+        ]);
+        if (
+          snapshots.some(
+            (snapshot) => snapshot.size > QUEUE_ADMISSION_READ_LIMIT,
+          )
+        )
+          throw new Error('Queue admission snapshot exceeds read bound');
+        const cooldowns = new Map();
+        for (const [index, pipeline] of pipelines.entries()) {
+          const cooldown = parseProviderCooldown(
+            cooldownSnapshots[index]?.data(),
+            pipeline,
+          );
+          if (cooldown !== undefined) cooldowns.set(pipeline, cooldown);
+        }
+        return projectQueueAdmissionStatus(
+          snapshots.flatMap((snapshot) =>
+            snapshot.docs.map((doc) => runSchema.parse(doc.data())),
+          ),
+          cooldowns,
+          pipelines,
+          input.now,
+        );
+      },
+      { readOnly: true },
+    );
   }
 
   async enqueueRun(input: { runId: string; now: string }): Promise<void> {

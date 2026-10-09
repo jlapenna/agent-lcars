@@ -18,9 +18,212 @@ describe('RunnerAutoscalerStatus', () => {
   afterEach(() => {
     FakeEventSource.instances = [];
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('renders quota provenance, exact recent claims, drain and unavailable updates', () => {
+    const now = new Date().toISOString();
+    const reset = new Date(Date.now() + 60_000).toISOString();
+    const executor = {
+      schemaVersion: 2 as const,
+      kind: 'queue-executor' as const,
+      executor: 'queue' as const,
+      ready: true,
+      draining: false,
+      activeRuns: 0,
+      maxConcurrent: 3,
+      updatedAt: now,
+      claims: {
+        claude: 3,
+        codex: 0,
+        opencode: 1,
+        windowStart: new Date(Date.now() - 60_000).toISOString(),
+        windowEnd: now,
+      },
+    };
+    const providerAdmission = {
+      observedAt: now,
+      provenance: 'orchestrator' as const,
+      providers: [
+        {
+          pipeline: 'claude',
+          queued: 2,
+          deferred: 0,
+          eligible: 0,
+          liveClaims: 0,
+          cooldown: {
+            pipeline: 'claude',
+            runId: 'quota/r1',
+            observedAt: now,
+            expiresAt: reset,
+          },
+        },
+        {
+          pipeline: 'codex',
+          queued: 1,
+          deferred: 0,
+          eligible: 1,
+          liveClaims: 0,
+        },
+      ],
+    };
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{
+            statuses: [],
+            warnings: [],
+            queueExecutor: executor,
+            providerAdmission,
+          }}
+        />
+      </MantineProvider>,
+    );
+    const claude = screen.getByTestId('provider-admission-claude');
+    const codex = screen.getByTestId('provider-admission-codex');
+    expect(claude).toHaveTextContent('cooling down');
+    expect(claude).toHaveTextContent(reset);
+    expect(claude).toHaveTextContent('quota/r1');
+    expect(claude).toHaveTextContent('3 claims from');
+    expect(codex).toHaveTextContent('1 eligible queued');
+    expect(codex).toHaveTextContent('0 claims from');
+    act(() =>
+      FakeEventSource.only().push({
+        statuses: [],
+        warnings: [],
+        queueExecutor: { ...executor, draining: true },
+        providerAdmission,
+      }),
+    );
+    expect(codex).toHaveTextContent('executor draining');
+    expect(codex).toHaveTextContent('0 eligible queued');
+    expect(codex).toHaveTextContent('1 queued');
+    act(() =>
+      FakeEventSource.only().push({
+        statuses: [],
+        warnings: [],
+        providerAdmission,
+      }),
+    );
+    expect(codex).toHaveTextContent('Eligible queue unavailable');
+    expect(codex).toHaveTextContent('Recent claims unavailable');
+    act(() => FakeEventSource.only().push({ statuses: [], warnings: [] }));
+    expect(codex).toHaveTextContent('admission unavailable');
+    expect(codex).not.toHaveTextContent('0 eligible queued');
+  });
+
+  it('invalidates pre-reset eligibility at the deadline and retains independent evidence until stale', () => {
+    const now = '2026-10-09T23:00:00.000Z';
+    const result = {
+      statuses: [],
+      warnings: [],
+      providerAdmission: {
+        observedAt: now,
+        provenance: 'orchestrator' as const,
+        providers: [
+          {
+            pipeline: 'claude',
+            queued: 2,
+            deferred: 0,
+            eligible: 0,
+            liveClaims: 0,
+            cooldown: {
+              pipeline: 'claude',
+              runId: 'quota/r1',
+              observedAt: now,
+              expiresAt: '2026-10-09T23:01:00.000Z',
+            },
+          },
+        ],
+      },
+    };
+    expect(
+      expireAutoscalerStatuses(result, Date.parse('2026-10-09T23:00:59.000Z')),
+    ).toBe(result);
+    expect(
+      expireAutoscalerStatuses(result, Date.parse('2026-10-09T23:01:00.000Z'))
+        .providerAdmission,
+    ).toBeUndefined();
+    const expiredCooldown = {
+      ...result,
+      providerAdmission: {
+        ...result.providerAdmission,
+        observedAt: '2026-10-09T23:01:01.000Z',
+        providers: [{ ...result.providerAdmission.providers[0], eligible: 2 }],
+      },
+    };
+    expect(
+      expireAutoscalerStatuses(
+        expiredCooldown,
+        Date.parse('2026-10-09T23:01:02.000Z'),
+      ).providerAdmission,
+    ).toBeDefined();
+    expect(
+      expireAutoscalerStatuses(
+        expiredCooldown,
+        Date.parse('2026-10-09T23:04:02.000Z'),
+      ).providerAdmission,
+    ).toBeUndefined();
+  });
+
+  it('rejects expired-on-arrival cooldown counts in both first paint and streamed frames', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-09T23:00:05.000Z'));
+      const provider = {
+        pipeline: 'claude',
+        queued: 2,
+        deferred: 0,
+        eligible: 0,
+        liveClaims: 0,
+        cooldown: {
+          pipeline: 'claude',
+          runId: 'quota/r1',
+          observedAt: '2026-10-09T23:00:00.000Z',
+          expiresAt: '2026-10-09T23:00:04.000Z',
+        },
+      };
+      const old = {
+        statuses: [],
+        warnings: [],
+        providerAdmission: {
+          observedAt: '2026-10-09T23:00:00.000Z',
+          provenance: 'orchestrator' as const,
+          providers: [provider],
+        },
+      };
+      render(
+        <MantineProvider>
+          <RunnerAutoscalerStatus initial={old} />
+        </MantineProvider>,
+      );
+      const row = screen.getByTestId('provider-admission-claude');
+      expect(row).toHaveTextContent('admission unavailable');
+      expect(row).not.toHaveTextContent('no active cooldown');
+      expect(row).not.toHaveTextContent('0 eligible queued');
+      act(() =>
+        FakeEventSource.only().push({
+          ...old,
+          providerAdmission: {
+            ...old.providerAdmission,
+            observedAt: new Date().toISOString(),
+            providers: [{ ...provider, eligible: 2 }],
+          },
+        }),
+      );
+      expect(row).toHaveTextContent('no active cooldown');
+      act(() => FakeEventSource.only().push(old));
+      expect(row).toHaveTextContent('admission unavailable');
+      expect(row).not.toHaveTextContent('no active cooldown');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows ARC lane capacity and expires it when the producer stops writing', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(
+      Date.parse('2026-10-03T01:00:00.000Z'),
+    );
     const lane = {
       schemaVersion: 3 as const,
       kind: 'arc-lane' as const,

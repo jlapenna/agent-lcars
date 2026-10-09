@@ -7,8 +7,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/auth', () => ({ auth: mocks.auth }));
-vi.mock('@/lib/autoscaler-status', () => ({
-  subscribeAutoscalerStatuses: mocks.subscribe,
+vi.mock('@/lib/shuttlebay-status', () => ({
+  subscribeShuttlebayStatus: mocks.subscribe,
 }));
 
 import { RUNNER_STATUS_STREAM_LIFETIME_MS } from '@/lib/runner-status-contract';

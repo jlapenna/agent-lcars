@@ -344,6 +344,16 @@ The metrics endpoint exposes the queue worker's own health:
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
 
+The existing v2 `runner-status` document carries an additive `claims` sample
+for Shuttlebay. It differences these same three provider counters over an
+exact `windowStart`–`windowEnd` interval, bounded to 15 minutes and 92 samples.
+The initial baseline, a metric error, counter reset, or gap beyond the status
+TTL is unavailable; a restart never invents a full preceding window. Changed
+counts publish immediately and unchanged counts follow the normal heartbeat.
+This is successful-claim throughput before launch, not provider execution or
+completed functionality. Durable cooldowns and provider queue eligibility are
+read separately from the orchestrator in a bounded, read-only transaction.
+
 ### Failed launches and pausing
 
 **A failed launch leaves the run claimed on the control plane.** There is no

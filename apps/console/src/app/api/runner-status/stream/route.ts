@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 
 import { auth } from '@/auth';
-import { subscribeAutoscalerStatuses } from '@/lib/autoscaler-status';
 import {
   RUNNER_STATUS_EVENT,
   RUNNER_STATUS_STREAM_LIFETIME_MS,
 } from '@/lib/runner-status-contract';
+import { subscribeShuttlebayStatus } from '@/lib/shuttlebay-status';
 
 /** Delay the browser waits before reconnecting after a stream ends. */
 const RECONNECT_DELAY_MS = 1000;
@@ -63,7 +63,7 @@ export async function GET(request: Request): Promise<Response> {
       // A failed listener reports the unavailable result and stays quiet;
       // the stream still lasts its full lifetime, so a broken store costs one
       // reconnect per lifetime rather than a tight reconnect loop.
-      const unsubscribe = await subscribeAutoscalerStatuses((result) => {
+      const unsubscribe = await subscribeShuttlebayStatus((result) => {
         if (!live.closed) controller.enqueue(frame(result));
       });
       if (live.closed) {

@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
+import type { QueueAdmissionStatus } from '@agent-lcars/orchestrator';
 import {
   forClient,
   getAgentTelemetryReaderFirestore,
@@ -42,12 +43,22 @@ export interface QueueExecutorStatus {
   activeRuns?: number;
   maxConcurrent: number;
   updatedAt: string;
+  claims?: QueueClaimWindow;
+}
+
+export interface QueueClaimWindow {
+  claude: number;
+  codex: number;
+  opencode: number;
+  windowStart: string;
+  windowEnd: string;
 }
 
 export interface AutoscalerStatusResult {
   statuses: AutoscalerScaleSetStatus[];
   lanes?: ArcLaneStatus[];
   queueExecutor?: QueueExecutorStatus;
+  providerAdmission?: QueueAdmissionStatus;
   warnings: string[];
 }
 
@@ -211,6 +222,45 @@ function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
       : {}),
     maxConcurrent: status['maxConcurrent'],
     updatedAt: status['updatedAt'],
+    ...(parseClaimWindow(status['claims'], status['updatedAt']) === undefined
+      ? {}
+      : { claims: parseClaimWindow(status['claims'], status['updatedAt']) }),
+  };
+}
+
+function parseClaimWindow(
+  value: unknown,
+  updatedAt: string,
+): QueueClaimWindow | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  const start = record['windowStart'];
+  const end = record['windowEnd'];
+  if (typeof start !== 'string' || typeof end !== 'string') return undefined;
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (
+    !Number.isFinite(startMs) ||
+    !Number.isFinite(endMs) ||
+    startMs >= endMs ||
+    endMs - startMs > 15 * 60_000 ||
+    endMs > Date.parse(updatedAt) ||
+    Date.parse(updatedAt) - endMs > RUNNER_STATUS_STALENESS_MS
+  )
+    return undefined;
+  if (
+    ['claude', 'codex', 'opencode'].some(
+      (key) =>
+        !Number.isSafeInteger(record[key]) || (record[key] as number) < 0,
+    )
+  )
+    return undefined;
+  return {
+    claude: record['claude'] as number,
+    codex: record['codex'] as number,
+    opencode: record['opencode'] as number,
+    windowStart: start,
+    windowEnd: end,
   };
 }
 

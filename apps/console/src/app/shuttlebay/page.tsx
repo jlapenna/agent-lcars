@@ -3,15 +3,15 @@ import { Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
-import { getAutoscalerStatuses } from '../../lib/autoscaler-status';
 import { getWatchedRepos } from '../../lib/github-client';
+import { getShuttlebayStatus } from '../../lib/shuttlebay-status';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { RunnerAutoscalerStatus } from '../runner-autoscaler-status';
 import { withConsolePageShell } from '../with-console-page-shell';
 
 async function ShuttlebayBody() {
-  const autoscaler = await getAutoscalerStatuses();
+  const autoscaler = await getShuttlebayStatus();
 
   return <RunnerAutoscalerStatus initial={autoscaler} />;
 }
