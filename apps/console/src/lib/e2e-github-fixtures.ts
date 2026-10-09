@@ -30,6 +30,134 @@ import { agentFleetLogin, maintainerLogin } from './deployment';
 // only reaches these fixtures at request time, behind `isE2eTesting()`.
 let fixtureItems: FixtureItem[] | undefined;
 
+interface FixtureMutation {
+  method: string;
+  path: string;
+  body: unknown;
+  rejected: boolean;
+}
+interface ActionFixture {
+  mutations: FixtureMutation[];
+  reject?: { method: string; path: string; message: string };
+  pr?: { number: number; mergeableState: string; requestedReviewers: string[] };
+  merged: number[];
+  updated: number[];
+  comments: Record<number, { author: string; body: string }[]>;
+  labels: Record<number, string[]>;
+  unstick?: { number: number; title: string; body: string };
+}
+const ACTION_FIXTURE_KEY = '__agentLcarsE2eGithubActions';
+
+/** Shared realm, like populated mode: Next bundles each route separately. */
+function actionFixture(): ActionFixture {
+  const bag = globalThis as Record<string, unknown>;
+  bag[ACTION_FIXTURE_KEY] ??= {
+    mutations: [],
+    merged: [],
+    updated: [],
+    comments: {},
+    labels: {},
+  };
+  return bag[ACTION_FIXTURE_KEY] as ActionFixture;
+}
+
+export function resetGithubActionFixture() {
+  delete (globalThis as Record<string, unknown>)[ACTION_FIXTURE_KEY];
+}
+
+/** Bounded controls for the existing hermetic GitHub endpoint, never live. */
+export function configureGithubActionFixture(input: {
+  reject?: ActionFixture['reject'];
+  pr?: ActionFixture['pr'];
+}) {
+  const state = actionFixture();
+  state.reject = input.reject;
+  state.pr = input.pr;
+}
+
+export function githubMutationJournal() {
+  return actionFixture().mutations;
+}
+
+export function recordGithubMutation(
+  method: string,
+  path: string,
+  body: unknown,
+) {
+  const state = actionFixture();
+  const rejected =
+    state.reject?.method === method && state.reject.path === path;
+  state.mutations.push({ method, path, body, rejected });
+  return rejected ? state.reject?.message : undefined;
+}
+
+export function mergeFixturePr(number: number) {
+  actionFixture().merged.push(number);
+}
+
+export function updateFixturePrBranch(number: number) {
+  actionFixture().updated.push(number);
+}
+
+export function fixtureUnstickAnchor() {
+  return actionFixture().unstick;
+}
+
+export function createFixtureUnstickAnchor(title: string, body: string) {
+  const anchor = { number: 9012, title, body };
+  actionFixture().unstick = anchor;
+  return issue(anchor.number);
+}
+
+export function addFixtureComment(number: number, body: string) {
+  const state = actionFixture();
+  (state.comments[number] ??= []).push({ author: maintainerLogin(), body });
+  return issueComments(number).at(-1);
+}
+
+export function setFixtureLabels(number: number, labels: string[]) {
+  actionFixture().labels[number] = labels;
+}
+
+function fixtureItem(number: number): FixtureItem | undefined {
+  const anchor = actionFixture().unstick;
+  const item =
+    anchor?.number === number
+      ? {
+          ...anchor,
+          isPr: false,
+          labels: ['automation:unstick-prs'],
+          assignees: [],
+          author: maintainerLogin(),
+          updatedAt: secondsAgo(0),
+        }
+      : getFixtureItems().find((candidate) => candidate.number === number);
+  if (!item) return undefined;
+  const state = actionFixture();
+  const pr = state.pr?.number === number ? state.pr : undefined;
+  return {
+    ...item,
+    labels: state.labels[number] ?? item.labels,
+    comments: [...(item.comments ?? []), ...(state.comments[number] ?? [])],
+    ...(item.pr
+      ? {
+          pr: {
+            ...item.pr,
+            ...(pr
+              ? {
+                  mergeableState: pr.mergeableState,
+                  requestedReviewers: pr.requestedReviewers,
+                }
+              : {}),
+            ...(state.updated.includes(number)
+              ? { mergeableState: 'clean', requestedReviewers: [] }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 /** The single repo explicitly configured by `tools/e2e/ci.env`. */
 export const E2E_FIXTURE_REPO = {
   owner: 'supersprinklesracing',
@@ -402,7 +530,7 @@ function issueFor(item: FixtureItem) {
     body: edited?.body ?? item.body,
     html_url: itemUrl(item.number, item.isPr ? 'pull' : 'issues'),
     user: { login: item.author },
-    state: 'open',
+    state: actionFixture().merged.includes(item.number) ? 'closed' : 'open',
     updated_at: item.updatedAt,
     labels: item.labels.map((name) => ({ name })),
     assignees: item.assignees.map((login) => ({ login })),
@@ -429,17 +557,13 @@ export function updateFixtureIssueContent(
 /** Exact issue read for rendered mutation flows and task detail pages. */
 export function issue(number: number) {
   if (!populatedFixturesEnabled()) return undefined;
-  const item = getFixtureItems().find(
-    (candidate) => candidate.number === number,
-  );
+  const item = fixtureItem(number);
   return item ? issueFor(item) : undefined;
 }
 
 /** `GET /repos/{owner}/{repo}/issues/{number}/comments` */
 export function issueComments(number: number) {
-  const item = getFixtureItems().find(
-    (candidate) => candidate.number === number,
-  );
+  const item = fixtureItem(number);
   return (item?.comments ?? []).map((comment, index) => ({
     id: number * 100 + index,
     user: { login: comment.author },
@@ -454,9 +578,7 @@ export function issueComments(number: number) {
  * already-known anchor and receive the same bounded detail GitHub returns. */
 export function githubAnchorGraphqlDetail(number: number) {
   if (!populatedFixturesEnabled()) return undefined;
-  const item = getFixtureItems().find(
-    (candidate) => candidate.number === number,
-  );
+  const item = fixtureItem(number);
   if (!item) return undefined;
   const edited = issueContentEdits().get(number);
   const comments = item.comments ?? [];
@@ -516,12 +638,11 @@ export function githubAnchorGraphqlDetail(number: number) {
 
 /** `GET /repos/{owner}/{repo}/pulls/{number}` */
 export function pullRequest(number: number) {
-  const item = getFixtureItems().find(
-    (candidate) => candidate.number === number,
-  );
+  const item = fixtureItem(number);
   if (!item?.pr) return undefined;
   return {
     number,
+    node_id: `PR_e2e_${number}`,
     title: item.title,
     body: item.body,
     html_url: itemUrl(number, 'pull'),

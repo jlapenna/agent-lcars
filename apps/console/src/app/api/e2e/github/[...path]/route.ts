@@ -2,16 +2,28 @@ import { logger } from '@agent-lcars/logging';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
-import { controlPlaneRepository } from '../../../../../lib/deployment';
 import {
+  agentFleetLogin,
+  controlPlaneRepository,
+} from '../../../../../lib/deployment';
+import {
+  addFixtureComment,
+  configureGithubActionFixture,
+  createFixtureUnstickAnchor,
   E2E_FIXTURE_REPO,
   E2E_FIXTURE_REPOSITORY_ID,
+  fixtureUnstickAnchor,
   githubAnchorGraphqlDetail,
+  githubMutationJournal,
   issue,
   issueComments,
+  mergeFixturePr,
   pullRequest,
+  recordGithubMutation,
   selfHostedRunners,
+  setFixtureLabels,
   updateFixtureIssueContent,
+  updateFixturePrBranch,
 } from '../../../../../lib/e2e-github-fixtures';
 import { SESSION_EXPIRY_WORKFLOW_FILE } from '../../../../../lib/github-actions-oidc';
 
@@ -40,6 +52,19 @@ export async function GET(
 
   const { path } = await params;
 
+  if (path.join('/') === '_fixture') {
+    return NextResponse.json(githubMutationJournal());
+  }
+  if (
+    path[0] === 'repos' &&
+    path.slice(1, 3).join('/') !==
+      `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`
+  ) {
+    return NextResponse.json(
+      { message: 'Unknown fixture repository' },
+      { status: 404 },
+    );
+  }
   // Everything below is repo-scoped: /repos/{owner}/{repo}/...
   if (path[0] === 'repos') {
     const rest = path.slice(3);
@@ -49,6 +74,17 @@ export async function GET(
       return NextResponse.json({ id: E2E_FIXTURE_REPOSITORY_ID });
     }
 
+    // Only the exact Unstick audit-anchor lookup, never queue discovery.
+    if (
+      rest.length === 1 &&
+      rest[0] === 'issues' &&
+      _req.nextUrl.searchParams.get('labels') === 'automation:unstick-prs' &&
+      _req.nextUrl.searchParams.get('state') === 'open' &&
+      _req.nextUrl.searchParams.get('per_page') === '1'
+    ) {
+      const anchor = fixtureUnstickAnchor();
+      return NextResponse.json(anchor ? [issue(anchor.number)] : []);
+    }
     // GET /repos/{o}/{r}/issues/{number}/comments
     if (rest[0] === 'issues' && rest[2] === 'comments') {
       return NextResponse.json(issueComments(Number(rest[1])));
@@ -88,6 +124,115 @@ export async function POST(
     return NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
   const { path } = await params;
+  const bodyForJournal = await req
+    .clone()
+    .json()
+    .catch(() => null);
+  if (path.join('/') === '_fixture') {
+    configureGithubActionFixture(bodyForJournal);
+    return NextResponse.json({ ok: true });
+  }
+  const rejection = recordGithubMutation(
+    req.method,
+    path.join('/'),
+    bodyForJournal,
+  );
+  if (rejection)
+    return NextResponse.json({ message: rejection }, { status: 422 });
+  if (
+    path[0] === 'repos' &&
+    path.slice(1, 3).join('/') !==
+      `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}` &&
+    !(
+      path[3] === 'actions' &&
+      path.slice(1, 3).join('/') === controlPlaneRepository()
+    )
+  ) {
+    return NextResponse.json(
+      { message: 'Unknown fixture repository' },
+      { status: 404 },
+    );
+  }
+  if (
+    path[0] === 'repos' &&
+    path.length === 6 &&
+    path[3] === 'issues' &&
+    issue(Number(path[4]))
+  ) {
+    if (path[5] === 'reactions' && bodyForJournal?.content === 'eyes') {
+      return NextResponse.json(
+        { id: Number(path[4]), content: 'eyes' },
+        { status: 201 },
+      );
+    }
+    if (
+      path[5] === 'assignees' &&
+      JSON.stringify(bodyForJournal?.assignees) ===
+        JSON.stringify([agentFleetLogin()])
+    ) {
+      const anchor = issue(Number(path[4]));
+      return NextResponse.json({
+        ...anchor,
+        assignees: [
+          ...(anchor?.assignees ?? []).filter(
+            ({ login }) => login !== agentFleetLogin(),
+          ),
+          { login: agentFleetLogin() },
+        ],
+      });
+    }
+  }
+  if (
+    path[0] === 'repos' &&
+    path[3] === 'pulls' &&
+    path[5] === 'reviews' &&
+    pullRequest(Number(path[4]))
+  ) {
+    return bodyForJournal?.event === 'APPROVE'
+      ? NextResponse.json(
+          { id: Number(path[4]), state: 'APPROVED' },
+          { status: 201 },
+        )
+      : NextResponse.json(
+          { message: 'Expected APPROVE review' },
+          { status: 422 },
+        );
+  }
+  if (
+    path[0] === 'repos' &&
+    path.length === 4 &&
+    path[3] === 'issues' &&
+    bodyForJournal?.labels?.length === 1 &&
+    bodyForJournal.labels[0] === 'automation:unstick-prs' &&
+    typeof bodyForJournal.title === 'string' &&
+    typeof bodyForJournal.body === 'string'
+  ) {
+    return NextResponse.json(
+      createFixtureUnstickAnchor(bodyForJournal.title, bodyForJournal.body),
+      { status: 201 },
+    );
+  }
+  if (
+    path.join('/') === 'graphql' &&
+    bodyForJournal?.query?.includes('mutation EnableAutoMerge')
+  ) {
+    const variables = bodyForJournal.variables ?? bodyForJournal;
+    const valid =
+      variables.mergeMethod === 'SQUASH' &&
+      /^PR_e2e_\d+$/.test(variables.pullRequestId ?? '') &&
+      pullRequest(
+        Number(String(variables.pullRequestId).replace('PR_e2e_', '')),
+      ) !== undefined;
+    return valid
+      ? NextResponse.json({
+          data: { enablePullRequestAutoMerge: { clientMutationId: null } },
+        })
+      : NextResponse.json(
+          { message: 'Invalid auto-merge fixture request' },
+          { status: 422 },
+        );
+  }
+
   // Exact control-plane refreshes use GitHub GraphQL for presentation fields
   // that REST issue detail omits. This accepts only explicitly aliased anchor
   // reads; it is not a queue/list discovery fixture.
@@ -177,17 +322,17 @@ export async function POST(
   if (
     path[0] === 'repos' &&
     path.length === 6 &&
-    path.slice(1, 3).join('/') === controlPlaneRepository() &&
+    path.slice(1, 3).join('/') ===
+      `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}` &&
     path[3] === 'issues' &&
     path[5] === 'comments'
   ) {
     const body = (await req.json()) as { body?: unknown };
     const fixtureIssue = issue(Number(path[4]));
     return fixtureIssue && typeof body.body === 'string' && body.body.length > 0
-      ? NextResponse.json(
-          { id: Number(path[4]) * 1000, body: body.body },
-          { status: 201 },
-        )
+      ? NextResponse.json(addFixtureComment(Number(path[4]), body.body), {
+          status: 201,
+        })
       : NextResponse.json(
           { message: 'Invalid issue comment fixture request' },
           { status: 422 },
@@ -208,6 +353,32 @@ export async function PATCH(
     return NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
   const { path } = await params;
+  const bodyForJournal = await req
+    .clone()
+    .json()
+    .catch(() => null);
+  const rejection = recordGithubMutation(
+    req.method,
+    path.join('/'),
+    bodyForJournal,
+  );
+  if (rejection)
+    return NextResponse.json({ message: rejection }, { status: 422 });
+  if (
+    path[0] === 'repos' &&
+    path.slice(1, 3).join('/') !==
+      `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}` &&
+    !(
+      path[3] === 'actions' &&
+      path.slice(1, 3).join('/') === controlPlaneRepository()
+    )
+  ) {
+    return NextResponse.json(
+      { message: 'Unknown fixture repository' },
+      { status: 404 },
+    );
+  }
+
   if (path[0] === 'repos' && path.length === 5 && path[3] === 'issues') {
     const body = (await req.json()) as { title?: unknown; body?: unknown };
     if (typeof body.title !== 'string' || typeof body.body !== 'string') {
@@ -239,6 +410,53 @@ export async function PUT(
     return NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
   const { path } = await params;
+  const bodyForJournal = await req
+    .clone()
+    .json()
+    .catch(() => null);
+  const rejection = recordGithubMutation(
+    req.method,
+    path.join('/'),
+    bodyForJournal,
+  );
+  if (rejection)
+    return NextResponse.json({ message: rejection }, { status: 422 });
+  if (
+    path[0] === 'repos' &&
+    path.slice(1, 3).join('/') !==
+      `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}` &&
+    !(
+      path[3] === 'actions' &&
+      path.slice(1, 3).join('/') === controlPlaneRepository()
+    )
+  ) {
+    return NextResponse.json(
+      { message: 'Unknown fixture repository' },
+      { status: 404 },
+    );
+  }
+  if (
+    path[0] === 'repos' &&
+    path[3] === 'pulls' &&
+    pullRequest(Number(path[4]))
+  ) {
+    if (path[5] === 'merge' && bodyForJournal?.merge_method === 'squash') {
+      mergeFixturePr(Number(path[4]));
+      return NextResponse.json({
+        merged: true,
+        sha: 'e2e-merged',
+        message: 'Pull Request successfully merged',
+      });
+    }
+    if (path[5] === 'update-branch') {
+      updateFixturePrBranch(Number(path[4]));
+      return NextResponse.json(
+        { message: 'Updating pull request branch', url: '' },
+        { status: 202 },
+      );
+    }
+  }
+
   if (
     path[0] === 'repos' &&
     path.length === 6 &&
@@ -251,7 +469,7 @@ export async function PUT(
       .map((label) => label.name)
       .filter(
         (label) =>
-          !label.startsWith('agent:') && label !== 'status:needs-human',
+          !label.startsWith('agent:') && label !== 'status:ready-for-agent',
       );
     const agentLabels = (body.labels ?? []).filter((label) =>
       label.startsWith('agent:'),
@@ -273,6 +491,7 @@ export async function PUT(
         { status: 422 },
       );
     }
+    setFixtureLabels(Number(path[4]), body.labels ?? []);
     return NextResponse.json((body.labels ?? []).map((name) => ({ name })));
   }
   logger.error(
@@ -283,13 +502,39 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
   if (!isE2eTesting()) {
     return NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
   const { path } = await params;
+  const bodyForJournal = await req
+    .clone()
+    .json()
+    .catch(() => null);
+  const rejection = recordGithubMutation(
+    req.method,
+    path.join('/'),
+    bodyForJournal,
+  );
+  if (rejection)
+    return NextResponse.json({ message: rejection }, { status: 422 });
+  if (
+    path[0] === 'repos' &&
+    path.slice(1, 3).join('/') !==
+      `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}` &&
+    !(
+      path[3] === 'actions' &&
+      path.slice(1, 3).join('/') === controlPlaneRepository()
+    )
+  ) {
+    return NextResponse.json(
+      { message: 'Unknown fixture repository' },
+      { status: 404 },
+    );
+  }
+
   if (
     path[0] === 'repos' &&
     path.length === 7 &&
@@ -298,6 +543,12 @@ export async function DELETE(
     path[6] === 'status:needs-human' &&
     issue(Number(path[4]))
   ) {
+    setFixtureLabels(
+      Number(path[4]),
+      (issue(Number(path[4]))?.labels ?? [])
+        .map(({ name }) => name)
+        .filter((name) => name !== 'status:needs-human'),
+    );
     return new NextResponse(null, { status: 204 });
   }
   logger.error(

@@ -39,6 +39,13 @@ import { FirestoreStore, Orchestrator } from '@agent-lcars/orchestrator';
 export const E2E_FIXTURE_REPOSITORY = 'supersprinklesracing/sprinkles';
 
 function firestoreStore(): FirestoreStore {
+  if (
+    process.env['E2E_HERMETIC'] !== '1' ||
+    process.env['PROJECT_ID'] !== 'demo-no-project' ||
+    !process.env['FIRESTORE_EMULATOR_HOST']
+  ) {
+    throw new Error('Orchestrator fixtures require the hermetic emulator');
+  }
   return new FirestoreStore({
     projectId: process.env['PROJECT_ID'] ?? 'demo-no-project',
     databaseId: process.env['DISPATCH_FIRESTORE_DATABASE_ID'] ?? '(default)',
@@ -66,6 +73,8 @@ export async function updateDashboardAnchor(params: {
   issue: number;
   title?: string;
   remove?: boolean;
+  mergeableState?: 'clean' | 'behind';
+  requestedReviewerLogins?: string[];
 }) {
   const store = firestoreStore();
   const anchor = { repo: E2E_FIXTURE_REPOSITORY, issue: params.issue };
@@ -81,6 +90,12 @@ export async function updateDashboardAnchor(params: {
           projection: {
             ...current,
             title: params.title ?? current.title,
+            ...(params.mergeableState
+              ? { mergeableState: params.mergeableState }
+              : {}),
+            ...(params.requestedReviewerLogins
+              ? { requestedReviewerLogins: params.requestedReviewerLogins }
+              : {}),
             observedAt: new Date().toISOString(),
           },
         }),
@@ -98,4 +113,41 @@ export async function finishDashboardRun() {
   );
   if ('refused' in result)
     throw new Error(`Cannot settle fixture run: ${result.reason}`);
+}
+
+/** Observe actual Work admission rather than a browser success notification. */
+export async function readTaskAdmission(issue: number) {
+  const store = firestoreStore();
+  const taskId = { repo: E2E_FIXTURE_REPOSITORY, issue };
+  const task = await store.readTask(taskId);
+  const run = await store.readActiveRun(taskId);
+  return { task: task?.task, run };
+}
+
+/** A finished delivery alongside the existing duplicate live-run anomaly. */
+export async function seedTaskDeliverableHistory() {
+  const store = firestoreStore();
+  const prior = await store.readRun(`${E2E_FIXTURE_REPOSITORY}#9003/r1`);
+  if (!prior) throw new Error('Missing finished fixture run');
+  const task = { repo: E2E_FIXTURE_REPOSITORY, issue: 9008 };
+  const runId = `${E2E_FIXTURE_REPOSITORY}#9008/r0`;
+  const current = await store.readTask(task);
+  if (!current) throw new Error('Missing task fixture');
+  await store.apply({
+    expectedRevision: current.revision,
+    decision: {
+      task: { ...current.task, runCount: 3 },
+      run: {
+        ...prior,
+        task,
+        runId,
+        result: {
+          ok: true,
+          summary: 'Delivered the repo filter chips',
+          ref: `https://github.com/${E2E_FIXTURE_REPOSITORY}/pull/9420`,
+        },
+      },
+      outbox: [],
+    },
+  });
 }
