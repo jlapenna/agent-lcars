@@ -44,7 +44,7 @@ type WorkDetailReplyAction = (input: { id: string; text: string }) => Promise<
       | {
           id: string;
           spec: { title: string };
-          runs: readonly { runId: string }[];
+          admittedRunId: string;
           resumed: boolean;
         }
       | undefined
@@ -99,6 +99,7 @@ export function WorkActions({
     (state === 'parked' || state === 'failed' || state === 'done') &&
     reply !== undefined;
 
+  // Canceled items have no controls or admission feedback.
   if (!canCancel && !canRedispatch && !canReply) return null;
 
   const named = (action: string) => (label ? `${action} ${label}` : undefined);
@@ -136,12 +137,11 @@ export function WorkActions({
         showErrorToast(err.message);
         return;
       }
-      const runId = result?.runs.at(-1)?.runId;
       setAdmission(
-        result && runId
+        result
           ? {
               id: result.id,
-              runId,
+              runId: result.admittedRunId,
               title: result.spec.title,
               resumed: result.resumed,
             }
@@ -155,18 +155,16 @@ export function WorkActions({
 
   return (
     <Stack gap="xs">
-      {admission?.id === id &&
-        admission.runId === latestRunId &&
-        state === 'running' && (
-          <Stack gap={2} data-testid="work-reply-confirmation">
-            <Text size="xs" c="dimmed">
-              {admission.title}
-            </Text>
-            <Text role="status" size="sm">
-              {replyAdmissionMessage(admission.resumed)}
-            </Text>
-          </Stack>
-        )}
+      {admission?.id === id && admission.runId === latestRunId && (
+        <Stack gap={2} data-testid="work-reply-confirmation">
+          <Text size="xs" c="dimmed">
+            {admission.title}
+          </Text>
+          <Text role="status" size="sm">
+            {replyAdmissionMessage(admission.resumed)}
+          </Text>
+        </Stack>
+      )}
       {canReply && (
         <Stack gap={4}>
           <Textarea

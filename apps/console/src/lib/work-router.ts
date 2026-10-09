@@ -359,6 +359,7 @@ export const workRouter = os.router({
     if (task === undefined) throw errors.NOT_FOUND();
     return {
       ...(await view(context, input.id, task.task)),
+      admittedRunId: outcome.runId,
       resumed: outcome.resumed,
     };
   }),

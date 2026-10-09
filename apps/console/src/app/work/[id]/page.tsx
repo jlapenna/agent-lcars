@@ -1,4 +1,4 @@
-import type { ItemView } from '@agent-lcars/work/derive';
+import { type ItemView, latestRun } from '@agent-lcars/work/derive';
 import {
   Anchor,
   Badge,
@@ -223,7 +223,7 @@ export function WorkDetailViewContent({ detail }: WorkDetailContentProps) {
       <Conversation item={item} />
       <WorkActions
         id={item.id}
-        latestRunId={item.runs.at(-1)?.runId}
+        latestRunId={latestRun(item.runs)?.runId}
         state={item.state}
         cancel={cancelItem}
         redispatch={redispatchItem}

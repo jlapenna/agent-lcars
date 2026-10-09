@@ -2367,6 +2367,10 @@
                         "additionalProperties": false
                       }
                     },
+                    "admittedRunId": {
+                      "type": "string",
+                      "description": "Run admitted by this reply, independent of current item history"
+                    },
                     "resumed": {
                       "type": "boolean"
                     }
@@ -2380,6 +2384,7 @@
                     "updatedAt",
                     "runs",
                     "sessions",
+                    "admittedRunId",
                     "resumed"
                   ],
                   "additionalProperties": false

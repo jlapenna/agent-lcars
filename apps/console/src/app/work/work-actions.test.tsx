@@ -71,7 +71,7 @@ describe('WorkActions', () => {
       {
         id: 'ID1',
         spec: { title: 'Choose decision storage' },
-        runs: [{ runId: 'work:ID1/r2' }],
+        admittedRunId: 'work:ID1/r2',
         resumed: true,
       },
     ]);
@@ -125,7 +125,7 @@ describe('WorkActions', () => {
         {
           id: 'ID1',
           spec: { title: 'Choose decision storage' },
-          runs: [{ runId: 'work:ID1/r2' }],
+          admittedRunId: 'work:ID1/r2',
           resumed,
         },
       ]);
@@ -183,6 +183,88 @@ describe('WorkActions', () => {
       expect(screen.queryByRole('status')).toBeNull();
     },
   );
+
+  it.each(['done', 'parked', 'failed'] as const)(
+    'retains admission when the first refreshed accepted round is already %s',
+    async (state) => {
+      const reply = vi.fn().mockResolvedValue([
+        null,
+        {
+          id: 'ID1',
+          spec: { title: 'Choose decision storage' },
+          admittedRunId: 'work:ID1/r2',
+          resumed: false,
+        },
+      ]);
+      const props = { id: 'ID1', cancel: vi.fn(), redispatch: vi.fn(), reply };
+      const { rerender } = render(
+        <MantineProvider>
+          <WorkActions {...props} state="parked" latestRunId="work:ID1/r1" />
+        </MantineProvider>,
+      );
+      fireEvent.change(screen.getByRole('textbox'), {
+        target: { value: 'Finish this quickly.' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+      await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue(''));
+      // Never observe running: the accepted round finishes before refresh.
+      rerender(
+        <MantineProvider>
+          <WorkActions {...props} state={state} latestRunId="work:ID1/r2" />
+        </MantineProvider>,
+      );
+      expect(screen.getByRole('status')).toHaveTextContent(/fresh session/);
+      rerender(
+        <MantineProvider>
+          <WorkActions {...props} state="canceled" latestRunId="work:ID1/r2" />
+        </MantineProvider>,
+      );
+      expect(screen.queryByRole('status')).toBeNull();
+    },
+  );
+
+  it('does not attribute an accepted fresh reply to a newer round already in its response history', async () => {
+    const response = [
+      null,
+      {
+        id: 'ID1',
+        spec: { title: 'Choose decision storage' },
+        admittedRunId: 'work:ID1/r2',
+        resumed: false,
+        runs: [{ runId: 'work:ID1/r2' }, { runId: 'work:ID1/r3' }],
+      },
+    ] as const;
+    let finish: (value: typeof response) => void = () => undefined;
+    const reply = vi.fn(
+      () =>
+        new Promise<typeof response>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const props = { id: 'ID1', cancel: vi.fn(), redispatch: vi.fn(), reply };
+    const { rerender } = render(
+      <MantineProvider>
+        <WorkActions {...props} state="parked" latestRunId="work:ID1/r1" />
+      </MantineProvider>,
+    );
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Start fresh.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+    // Another operator's r3 is visible before our r2 response arrives. Its
+    // history is current, but resumed=false still describes r2 alone.
+    rerender(
+      <MantineProvider>
+        <WorkActions {...props} state="running" latestRunId="work:ID1/r3" />
+      </MantineProvider>,
+    );
+    finish(response);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeEnabled(),
+    );
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText(/fresh session/)).toBeNull();
+  });
 
   it('keeps a refused reply editable without admission confirmation', async () => {
     const reply = vi
