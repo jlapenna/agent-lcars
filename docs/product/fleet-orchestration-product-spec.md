@@ -106,7 +106,7 @@ The core promises:
   returns 202. Deliveries go to the Cloud Tasks queue `dispatch-webhooks`
   (10 concurrent, 100 attempts, 24h, 300s deadline), which calls `/process`.
 - **FL-IN-2 [Shipped]** Interpretation (`orchestrator-ingest.ts`) is a pure
-  function. It returns a run request or an ignore reason: `wrong-repo`,
+  function. It returns a run request, an actionable label conflict, or an ignore reason: `wrong-repo`,
   `malformed-payload`, `unhandled-action`, `anchor-closed`,
   `no-trigger-label`, `no-reply-command`, `untrusted-author`, or
   `unhandled-event`.
@@ -119,9 +119,16 @@ The core promises:
 - **FL-IN-5 [Shipped]** All GitHub-anchored admission goes through one
   boundary, `github-work-admission.ts`. It returns `accepted`, `busy`,
   `duplicate`, `conflict`, `invalid`, `forbidden`, or `not-found`.
-- **FL-IN-6 [Partial]** Each delivery is evaluated on its own. There is no
-  consistency check across an anchor's full label set (for example, two
-  `agent:*` labels) and no stale-label cleanup. See R6.
+- **FL-IN-6 [Shipped]** Label-triggered admission checks the complete delivered
+  anchor label snapshot against the canonical pipeline registry. Multiple
+  choices within the trigger's namespace return `routing-label-conflict`
+  with the namespace, labels, and explicit maintainer resolution guidance;
+  absent/inconsistent snapshots fail closed. `agent:*` and `review:*` are
+  independent, so one of each is valid intent (not a promise of simultaneous
+  runs or different immutable Work pipelines). Replay and concurrent
+  deliveries preserve immutable Work and ownership. The console never
+  rewrites routing labels or removes bot assignment after outcomes. Authorized
+  resolution follows [the label contract](../github-label-contract.md#resolving-ambiguous-routing-intent).
 
 ### 4.2 Pipelines
 
@@ -541,7 +548,6 @@ consumed by every dispatched run in every member repository.
 | R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline, such as 10 minutes, that settles `lost` early            | A failed launch can stall a task for about 2h                                                                                     | P1       |
 | R4  | A priority field on runs (for example `urgent`, `normal`, `background`), honored inside provider-fair selection                      | Scheduled maintenance work and urgent fixes currently share one FIFO                                                              | P1       |
 | R5  | Verify the genuine human Slack reply hop (FL-RC-3) and session continuity on the current Kubernetes backend                          | Historical three-provider continuity and Slack inbound/outbound proofs exist; human Slack reply and current-backend proofs remain | P1       |
-| R6  | Anchor-level label consistency: reject or resolve multiple `agent:*` labels, and clean up stale routing labels after an outcome      | Per-delivery evaluation can leave labels that contradict state                                                                    | P2       |
 | R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit                       | P2       |
 | R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                      | The singleton is a single point of failure                                                                                        | P2       |
 

@@ -18,8 +18,11 @@ state remain their respective artifact facts.
 - `agent:*` requests the canonical executor to take the anchor over -- on an
   issue, implement it and open a PR; on a pull request, take the PR over and
   keep pushing commits to its branch. Apply one of `agent:claude`,
-  `agent:codex`, or `agent:opencode`; conflicting requests are refused by
-  immutable Work admission and never self-healed by label rewriting.
+  `agent:codex`, or `agent:opencode`. Label-triggered admission checks the
+  complete delivered anchor label set and refuses multiple choices with
+  `routing-label-conflict`, the namespace, sorted conflicting labels, and
+  explicit maintainer resolution guidance. Immutable Work admission remains
+  a second fence; neither gate self-heals intent by rewriting labels.
 - `review:*` (pull requests only; declared fleet-wide since #1312 -- #567
   introduced it on Agent LCARS alone, while the native verifier's
   `MODE=review` support was already fleet-wide) asks an agent to leave a
@@ -80,6 +83,34 @@ out with `agents: false`. An agent choice is immutable once the Work record is
 admitted; the console does not offer a parallel reassignment path.
 
 ## State boundaries
+
+### Resolving ambiguous routing intent
+
+Only an authorized maintainer resolves routing choices: inspect existing Work
+and live ownership, explicitly remove the extra labels in the affected
+namespace, then reapply the retained choice if another request is intended.
+The other namespace is independent: one `agent:*` plus one `review:*` is not
+a label conflict, although both still share the anchor's busy and immutable
+Work gates. A conflict in the other namespace does not block an otherwise
+unambiguous trigger.
+
+Once Work exists, retain its admitted pipeline. Removing or replacing labels
+does not change it; requesting a different executor requires explicitly
+authorized new Work on a separate anchor, not an implicit reassignment. No
+outcome removes routing intent or the monotonic bot assignment.
+
+The gate uses the complete snapshot in the signed GitHub delivery, not a
+later GitHub API read. Missing snapshots (`routing-labels-unavailable`) and
+snapshots without the applied choice (`routing-label-snapshot-mismatch`) also
+fail closed. These permanent refusals return HTTP 200 from webhook processing
+so Cloud Tasks does not retry unresolved human intent. Projection refresh
+failures still retry. Delivery replay cannot create work from an ambiguous
+snapshot; overlapping earlier single-choice snapshots remain fenced by the
+transactional immutable Work comparison. Explicit console/API and tagged
+reply requests retain their own authorization and immutable Work gates;
+they are not label-triggered admission.
+
+### Ownership and execution
 
 - Assignees express ownership.
 - `status:needs-human` is cleared by the authorized hand-back path, not inferred

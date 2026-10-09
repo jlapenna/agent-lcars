@@ -10,6 +10,10 @@ const OTHER_REPO = 'someone-else/other-repo';
 const DELIVERY_ID = '4ed2d2a6-7530-11f0-9f9d-8f1bc3e88820';
 
 function issuesLabeledPayload(overrides: Record<string, unknown> = {}) {
+  const label = (overrides['label'] ?? { name: 'agent:claude' }) as {
+    name: string;
+  };
+  const issue = overrides['issue'] as Record<string, unknown> | undefined;
   return {
     action: 'labeled',
     repository: { full_name: REPO },
@@ -18,14 +22,21 @@ function issuesLabeledPayload(overrides: Record<string, unknown> = {}) {
       number: 42,
       title: 'Issue title',
       body: 'Issue body',
+      labels: [label],
     },
     label: { name: 'agent:claude' },
     sender: { login: 'jlapenna' },
     ...overrides,
+    ...(issue === undefined ? {} : { issue: { labels: [label], ...issue } }),
   };
 }
 
 function pullRequestLabeledPayload(overrides: Record<string, unknown> = {}) {
+  const label = (overrides['label'] ?? { name: 'agent:codex' }) as {
+    name: string;
+  };
+  const pullRequest = overrides['pull_request'] as
+    Record<string, unknown> | undefined;
   return {
     action: 'labeled',
     repository: { full_name: REPO },
@@ -34,10 +45,14 @@ function pullRequestLabeledPayload(overrides: Record<string, unknown> = {}) {
       number: 7,
       title: 'Pull request title',
       body: 'Pull request body',
+      labels: [label],
     },
     label: { name: 'agent:codex' },
     sender: { login: 'jlapenna' },
     ...overrides,
+    ...(pullRequest === undefined
+      ? {}
+      : { pull_request: { labels: [label], ...pullRequest } }),
   };
 }
 
@@ -74,6 +89,170 @@ const OVERLONG_DESCRIPTION =
   OVERLONG_MARKER;
 
 describe('interpretDelivery', () => {
+  it.each([
+    ['issues', 'agent', 'agent:claude', 'agent:codex'],
+    ['pull_request', 'agent', 'agent:claude', 'agent:opencode'],
+    ['pull_request', 'review', 'review:codex', 'review:opencode'],
+  ])(
+    'rejects all orders and triggers of conflicting %s %s choices',
+    (event, namespace, left, right) => {
+      for (const labels of [
+        [left, right],
+        [right, left],
+      ]) {
+        for (const trigger of [left, right]) {
+          const key = event === 'issues' ? 'issue' : 'pull_request';
+          const payload = {
+            action: 'labeled',
+            repository: { full_name: REPO },
+            [key]: {
+              state: 'open',
+              number: 42,
+              title: 'Conflicting labels',
+              labels: [...labels, 'type:bug', 'agent-option:cross-repo'].map(
+                (name) => ({ name }),
+              ),
+            },
+            label: { name: trigger },
+            sender: { login: 'jlapenna' },
+          };
+          const result = interpretDelivery({
+            event,
+            deliveryId: DELIVERY_ID,
+            payload,
+          });
+          expect(result).toMatchObject({
+            kind: 'conflict',
+            reason: 'routing-label-conflict',
+            namespace,
+            labels: [...labels].sort(),
+            message: expect.stringContaining(
+              'Existing Work keeps its admitted pipeline',
+            ),
+          });
+          expect(
+            interpretDelivery({ event, deliveryId: DELIVERY_ID, payload }),
+          ).toEqual(result);
+        }
+      }
+    },
+  );
+
+  it.each([
+    ['agent:claude', 'claude', 'implement'],
+    ['review:codex', 'codex', 'review'],
+  ])(
+    'allows one implement plus one review choice for %s without merging namespaces',
+    (trigger, pipeline, mode) => {
+      const result = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: pullRequestLabeledPayload({
+          label: { name: trigger },
+          pull_request: {
+            state: 'open',
+            number: 7,
+            title: 'Independent choices',
+            labels: [{ name: 'agent:claude' }, { name: 'review:codex' }],
+          },
+        }),
+      });
+      expect(result).toMatchObject({
+        kind: 'request',
+        pipeline,
+        params: { mode },
+      });
+    },
+  );
+
+  it.each([
+    [
+      'agent:claude',
+      ['agent:claude', 'review:codex', 'review:opencode'],
+      'implement',
+    ],
+    [
+      'review:codex',
+      ['review:codex', 'agent:claude', 'agent:opencode'],
+      'review',
+    ],
+  ])(
+    'does not let a conflict in the other namespace block %s',
+    (trigger, labels, mode) => {
+      expect(
+        interpretDelivery({
+          event: 'pull_request',
+          deliveryId: DELIVERY_ID,
+          payload: pullRequestLabeledPayload({
+            label: { name: trigger },
+            pull_request: {
+              state: 'open',
+              number: 7,
+              title: 'Independent choices',
+              labels: (labels as string[]).map((name) => ({ name })),
+            },
+          }),
+        }),
+      ).toMatchObject({ kind: 'request', params: { mode } });
+    },
+  );
+
+  it.each([
+    [undefined, 'routing-labels-unavailable'],
+    [[], 'routing-label-snapshot-mismatch'],
+    [[{ name: 'agent:codex' }], 'routing-label-snapshot-mismatch'],
+  ])(
+    'fails closed on missing or inconsistent full label evidence %s',
+    (labels, reason) => {
+      expect(
+        interpretDelivery({
+          event: 'issues',
+          deliveryId: DELIVERY_ID,
+          payload: issuesLabeledPayload({
+            issue: {
+              state: 'open',
+              number: 42,
+              title: 'Incomplete evidence',
+              labels,
+            },
+          }),
+        }),
+      ).toMatchObject({ kind: 'conflict', reason });
+    },
+  );
+
+  it('uses canonical choices without treating duplicate labels, options, or inherited object keys as pipelines', () => {
+    expect(
+      interpretDelivery({
+        event: 'issues',
+        deliveryId: DELIVERY_ID,
+        payload: issuesLabeledPayload({
+          issue: {
+            state: 'open',
+            number: 42,
+            title: 'One choice',
+            labels: [
+              { name: 'agent:claude' },
+              { name: 'agent:claude' },
+              { name: 'agent-option:cross-repo' },
+            ],
+          },
+        }),
+      }),
+    ).toMatchObject({
+      kind: 'request',
+      pipeline: 'claude',
+      params: { crossRepo: 'true' },
+    });
+    expect(
+      interpretDelivery({
+        event: 'issues',
+        deliveryId: DELIVERY_ID,
+        payload: issuesLabeledPayload({ label: { name: 'constructor' } }),
+      }),
+    ).toEqual({ kind: 'ignore', reason: 'no-trigger-label' });
+  });
+
   it('retains explicit tagged follow-up requests on closed GitHub anchors', () => {
     const result = interpretDelivery({
       event: 'issue_comment',
