@@ -366,8 +366,8 @@ an already executed attempt is never restarted to avoid that wait.
 in-process flag the poller checks before every claim call and before starting
 a recovery sweep: the first `SIGUSR1` pauses both, a second resumes them.
 An already running bounded sweep may finish. This is a separate, in-memory
-switch from the `queue.state` machine above: it has no effect on runs already
-claimed, and nothing else in this repo touches it. A claim minted moments
+switch from the `queue.state` machine above: it does not cancel running Jobs
+or settle or un-claim existing runs. Nothing else in this repo touches it. A claim minted moments
 before this instance is replaced would just be another launch failure to
 recover from (see above), so pausing before a redeploy avoids that rather
 than preventing it.
