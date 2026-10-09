@@ -18,7 +18,9 @@ jobs:
   terraform:
     name: repository-owned Terraform
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-ci' }}
+    # This credential-free check takes seconds; keep it independent of the
+    # large self-hosted pool used by full verification and E2E (#2208).
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
