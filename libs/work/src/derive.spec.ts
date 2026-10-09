@@ -110,6 +110,23 @@ describe('deriveItemState', () => {
 });
 
 describe('latestRun', () => {
+  it('keeps conversation views and latest-round selection consistent when generations share a timestamp', () => {
+    const runs = [
+      run(10, 'pending', { createdAt: T }),
+      run(9, 'finished', {
+        createdAt: T,
+        result: { ok: true, summary: 'park' },
+      }),
+    ];
+    const item = toItemView({ workId: WORK_ID, task: task(), runs });
+    expect(item.state).toBe('running');
+    expect(item.runs.map((entry) => entry.runId)).toEqual([
+      `work:${WORK_ID}/r9`,
+      `work:${WORK_ID}/r10`,
+    ]);
+    expect(latestRun(item.runs)?.runId).toBe(`work:${WORK_ID}/r10`);
+  });
+
   it('uses numeric generation when timestamps tie across r9 and r10', () => {
     const older = run(9, 'finished');
     const newer = run(10, 'finished', { createdAt: older.createdAt });

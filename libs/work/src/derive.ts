@@ -11,13 +11,21 @@ import { type WorkOrigin, workPayloadSchema, type WorkSpec } from './spec';
 
 export type ItemState = 'running' | 'done' | 'parked' | 'failed' | 'canceled';
 
-/** Newest run first: createdAt descending, numeric run generation as a tiebreak. */
-export function latestRun(runs: readonly Run[]): Run | undefined {
-  return [...runs].sort(
-    (a, b) =>
-      b.createdAt.localeCompare(a.createdAt) ||
-      b.runId.localeCompare(a.runId, undefined, { numeric: true }),
-  )[0];
+type RunOrder = Pick<Run, 'runId' | 'createdAt'>;
+
+function compareRunOrder(a: RunOrder, b: RunOrder): number {
+  return (
+    a.createdAt.localeCompare(b.createdAt) ||
+    a.runId.localeCompare(b.runId, undefined, { numeric: true })
+  );
+}
+
+/** Newest run first: createdAt descending, numeric run generation as a tiebreak.
+ * Full Runs and public run views use the same ordering. */
+export function latestRun<T extends RunOrder>(
+  runs: readonly T[],
+): T | undefined {
+  return [...runs].sort((a, b) => compareRunOrder(b, a))[0];
 }
 
 /**
@@ -109,9 +117,7 @@ export function toItemView(input: {
   sessions?: readonly ItemSessionView[];
 }): ItemView {
   const payload = workPayloadSchema.parse(input.task.work);
-  const runs = [...input.runs].sort((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  const runs = [...input.runs].sort(compareRunOrder);
   return {
     id: input.workId,
     state: deriveItemState(input.task, input.runs),
@@ -161,9 +167,7 @@ export function toWorkSummary(input: {
   runs: readonly Run[];
 }): WorkSummary {
   const payload = workPayloadSchema.parse(input.task.work);
-  const runs = [...input.runs].sort((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  const runs = [...input.runs].sort(compareRunOrder);
   return {
     id: taskKey(input.task.task),
     anchor: input.task.task,

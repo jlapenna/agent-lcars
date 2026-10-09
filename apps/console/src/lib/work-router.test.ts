@@ -789,6 +789,48 @@ describe('items routes', () => {
       });
     });
 
+    it('returns the admitted round identity even if another reply wins before the response history read', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      ctx.runtime.drain = async () => {
+        // This is the boundary between r2's admission and the handler's
+        // current-item read. Settle r2 and admit a genuinely resumed r3.
+        ctx.runtime.drain = async () => ({ dispatched: [], failed: [] });
+        await ctx.runtime.orchestrator.report(`work:${ID}/r2`, {
+          ok: true,
+          summary: 'park',
+        });
+        const later = await call(ctx, 'POST', `/items/${ID}/reply`, {
+          text: 'Resume for the other operator.',
+        });
+        expect(later.status).toBe(200);
+        expect(later.json).toMatchObject({
+          admittedRunId: `work:${ID}/r3`,
+          resumed: true,
+        });
+        return { dispatched: [], failed: [] };
+      };
+      const first = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'Start a fresh round.',
+        resume: false,
+      });
+      expect(first.status).toBe(200);
+      expect(first.json).toMatchObject({
+        admittedRunId: `work:${ID}/r2`,
+        resumed: false,
+        state: 'running',
+      });
+      expect(
+        first.json.runs.map((run: { runId: string }) => run.runId),
+      ).toEqual([`work:${ID}/r1`, `work:${ID}/r2`, `work:${ID}/r3`]);
+      const accepted = await ctx.runtime.store.readRun(
+        first.json.admittedRunId,
+      );
+      expect(accepted?.params?.['resumeSessionId']).toBeUndefined();
+      const newer = await ctx.runtime.store.readRun(`work:${ID}/r3`);
+      expect(newer?.params?.['resumeSessionId']).toBe('sess-1');
+    });
+
     it('refuses a reply while a run is live', async () => {
       const ctx = context();
       await call(ctx, 'PUT', `/items/${ID}`, { spec });

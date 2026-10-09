@@ -323,10 +323,13 @@ export const itemsContract = {
     .output(
       z.strictObject({
         ...itemViewSchema.shape,
-        /** Whether the minted round actually resumed a prior session --
-         *  `requestReply`'s own outcome (`work-reply.ts`), threaded onto
-         *  the item view so the console can tell the human "started a
-         *  fresh session" rather than silently degrading. */
+        /** The immutable round accepted by this reply. The current history
+         * may already contain a newer round when the response is read. */
+        admittedRunId: itemRunViewSchema.shape.runId.describe(
+          'Run admitted by this reply, independent of current item history',
+        ),
+        /** Whether that admitted round is bound to a saved transcript.
+         * Admission does not mean an executor has started or resumed yet. */
         resumed: z.boolean(),
       }),
     ),
