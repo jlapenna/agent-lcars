@@ -62,8 +62,8 @@ export function PageLoading({
  * `PageLoading` header skeleton has a different shape/height than the real
  * `ConsoleHeader` (title + nav rail + signal bar). Swapping a skeleton bar
  * for that taller, differently-shaped chrome the instant `auth()` resolves
- * is exactly the reflow/ghosting #585 was filed about. None of the header's
- * title or nav rail actually depends on auth or searchParams, so rendering
+ * is exactly the reflow/ghosting #585 was filed about. The title needs no request data; the nav rail inherits the root layout's
+ * authenticated destination set. Rendering
  * the real `ConsoleHeader` here (behind the same Container the resolved
  * page uses, with a placeholder subtitle) keeps the eventual swap limited
  * to the subtitle text and command-row utilities - the header's own shape

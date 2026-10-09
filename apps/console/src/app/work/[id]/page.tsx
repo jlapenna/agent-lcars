@@ -35,6 +35,7 @@ type WorkDetail =
  *  to the header shell, keeping the exported content component testable
  *  without an auth principal. */
 interface WorkDetailContentProps {
+  isAdmin?: boolean;
   detail: WorkDetail;
   title: string;
   subtitle: string;
@@ -43,9 +44,13 @@ interface WorkDetailContentProps {
 interface WorkDetailViewProps extends WorkDetailContentProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
   canCreateWork: boolean;
+  isAdmin: boolean;
 }
 
-export function WorkDetailViewContent({ detail }: WorkDetailContentProps) {
+export function WorkDetailViewContent({
+  detail,
+  isAdmin = false,
+}: WorkDetailContentProps) {
   if (detail.status === 'error') {
     return (
       <Text c="dimmed" size="sm">
@@ -68,6 +73,7 @@ export function WorkDetailViewContent({ detail }: WorkDetailContentProps) {
       <TaskDetailHistory
         anchor={{ workId: item.id }}
         item={item}
+        canViewSessions={isAdmin}
         actions={
           <WorkActions
             id={item.id}
@@ -150,6 +156,7 @@ async function WorkDetailPageContent({ params }: PageProps) {
       title={title}
       subtitle={subtitle}
       watchedRepos={getWatchedRepos()}
+      isAdmin={session.user?.isAdmin === true}
       canCreateWork={
         session.user?.login !== undefined &&
         resolvePrincipal(

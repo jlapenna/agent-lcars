@@ -40,3 +40,10 @@ export function accentForNavKey(key: NavKey): NavAccent {
     CONSOLE_DESTINATIONS.find((item) => item.key === key)?.accent ?? 'amber'
   );
 }
+
+/** The same selection drives the desktop rail and mobile menu. */
+export function consoleDestinations(navigationKeys?: readonly NavKey[]) {
+  return navigationKeys === undefined
+    ? CONSOLE_DESTINATIONS
+    : CONSOLE_DESTINATIONS.filter((item) => navigationKeys.includes(item.key));
+}

@@ -12,12 +12,13 @@ import NextAuth from 'next-auth';
 import { getToken } from 'next-auth/jwt';
 import GitHub from 'next-auth/providers/github';
 
+import { canSignInToConsole } from './lib/console-access';
 import { isAdminGithubLogin } from './lib/deployment';
 
 /**
  * Mock session for the E2E test-session adapter (E2E_TESTING=true +
  * an `x-e2e-auth-user` request header -- see testSession() below).
- * The injected identity is an admin — this replaces the old
+ * Only explicit admin fixtures have admin authority — this replaces the old
  * SKIP_AUTH_FOR_LAN_PREVIEW bypass.
  */
 async function getMockSession(userId: string): Promise<Session> {
@@ -30,7 +31,8 @@ async function getMockSession(userId: string): Promise<Session> {
       // injected identity. Direct Work admission must retain the same
       // concrete actor boundary as production rather than inventing one.
       login: userId,
-      isAdmin: true,
+      isAdmin:
+        userId === 'e2e-agent-lcars-admin' || userId === 'ungranted-admin',
     },
     expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   };
@@ -84,7 +86,7 @@ const nextAuth = NextAuth({
   ],
   callbacks: {
     signIn({ profile }) {
-      return isAdminGithubLogin(profile?.login);
+      return canSignInToConsole(profile?.login);
     },
     jwt({ token, profile, account }) {
       if (typeof profile?.login === 'string') {

@@ -115,9 +115,11 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
 export function SessionsList({
   sessions,
   pinned,
+  canViewSessions = true,
 }: {
   sessions: ItemView['sessions'];
   pinned: boolean;
+  canViewSessions?: boolean;
 }) {
   if (sessions.length === 0) {
     return (
@@ -130,13 +132,20 @@ export function SessionsList({
     <Stack gap={4}>
       {sessions.map((session) => (
         <Group key={session.sessionId} gap="xs">
-          <Anchor
-            href={`/sessions/${encodeURIComponent(session.sessionId)}`}
-            size="sm"
-          >
-            {session.title ?? session.sessionId}
-            {session.status ? ` · ${session.status}` : ''}
-          </Anchor>
+          {canViewSessions ? (
+            <Anchor
+              href={`/sessions/${encodeURIComponent(session.sessionId)}`}
+              size="sm"
+            >
+              {session.title ?? session.sessionId}
+              {session.status ? ` · ${session.status}` : ''}
+            </Anchor>
+          ) : (
+            <Text size="sm">
+              {session.title ?? session.sessionId}
+              {session.status ? ` · ${session.status}` : ''}
+            </Text>
+          )}
           {pinned && (
             <Badge size="xs" variant="outline" color="teal">
               pinned
@@ -157,12 +166,14 @@ export function TaskDetailHistory({
   revision,
   actions,
   audit,
+  canViewSessions = true,
 }: {
   anchor: TaskId;
   item: ItemView;
   revision?: number;
   actions?: ReactNode;
   audit?: ReactNode;
+  canViewSessions?: boolean;
 }) {
   const native = 'workId' in anchor;
   const deliverables = item.runs.filter((run) => run.result?.ref);
@@ -199,7 +210,7 @@ export function TaskDetailHistory({
             No conversation yet.
           </Text>
         ) : (
-          <Conversation item={item} />
+          <Conversation item={item} canViewSessions={canViewSessions} />
         )}
       </Stack>
       {actions}
@@ -216,6 +227,7 @@ export function TaskDetailHistory({
         </Title>
         <SessionsList
           sessions={item.sessions}
+          canViewSessions={canViewSessions}
           pinned={
             item.state === 'running' ||
             item.state === 'parked' ||
