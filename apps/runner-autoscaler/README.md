@@ -232,10 +232,13 @@ not a distributed reservation protocol; do not overlap controller generations.
 
 Each run has one deterministic Job name. The controller creates it suspended,
 creates an immutable per-run token Secret owned by that exact Job, and resumes
-it. A restart resumes the same never-started Job only when its matching token
-exists. An ambiguous create reads that same name rather than allocating a
-replacement. Failed creation remains claimed and recovers through the existing
-lease-expiry/bounded-new-generation retry path. Jobs use `restartPolicy: Never`,
+it. Startup and normal poll ticks recover eligible incomplete handoffs on the
+same Job. Each bounded conflict retry reads fresh state and validates the
+original UID, run, runner, generation-1 suspended spec, owned immutable token,
+and live run/lease through the read-only Work brief route. Previously executed,
+re-suspended, deleting or mismatched Jobs are never resumed. An already
+unsuspended Job is an idempotent success. An ambiguous create reads that same
+name rather than allocating a replacement. Jobs use `restartPolicy: Never`,
 `backoffLimit: 0`, `podReplacementPolicy: Failed`, and fail on disruption.
 Kubernetes does not promise exactly-once process execution under every node
 failure; Work API authentication, completion fencing and provider credential
@@ -344,21 +347,25 @@ The metrics endpoint exposes the queue worker's own health:
 ### Failed launches and pausing
 
 **A failed launch leaves the run claimed on the control plane.** There is no
-callback here to un-claim it -- by design, see the design spec's "Autoscaler
-change". Recovery is passive, and mints a NEW run rather than reusing the
-dead one: the failure is logged and the poller moves on; the claim's lease
-eventually expires (`LEASE_MS`, 2h), the dead run settles to `lost` --
-its `queue.state` stays `claimed` forever, nothing ever moves it back to
-`queued` -- and the orchestrator's bounded auto-retry (`MAX_AUTO_RETRIES`,
-then parked) mints a fresh `queue`-executor run for the same task, which a
-later poll (from this host or another) claims instead. A launch failure
-therefore costs roughly one lease window of latency, not a stuck run, but
-it is not instantaneous, and it is not the same run id claimed again --
-don't expect a retry within the poll interval.
+callback here to un-claim it. An eligible original never-started Job with its
+owned immutable credential and a live run/lease is retried at startup and
+on normal 15-second poll ticks. Recovery is single-flight, has a 20-second
+sweep deadline, and runs off the reservation/claim path. The one-Pending
+admission gate still blocks another claim until placement; recovery does not
+mint a new run, Job or credential.
+
+If startup cannot safely complete (for example, the credential is missing or
+the run/lease fence refuses it), ordinary lease-expiry recovery remains the
+backstop. After the claim lease expires (`LEASE_MS`, 2h), the run settles to
+`lost`; its `queue.state` stays `claimed`. The orchestrator's bounded auto-retry
+(`MAX_AUTO_RETRIES`, then parked) mints a fresh queue-executor run for the same
+task, which a later poll claims. These cases may still cost a lease window;
+an already executed attempt is never restarted to avoid that wait.
 
 **`SIGUSR1` pauses the queue poller from claiming.** The signal toggles an
-in-process flag the poller checks before every claim call: the first
-`SIGUSR1` pauses claims, a second resumes them. This is a separate, in-memory
+in-process flag the poller checks before every claim call and before starting
+a recovery sweep: the first `SIGUSR1` pauses both, a second resumes them.
+An already running bounded sweep may finish. This is a separate, in-memory
 switch from the `queue.state` machine above: it has no effect on runs already
 claimed, and nothing else in this repo touches it. A claim minted moments
 before this instance is replaced would just be another launch failure to
