@@ -22,8 +22,11 @@ const requireAdmin = createAdminAction(auth);
  * an ungated cache-buster is still a lever for forcing repeated datastore
  * reads.
  */
-export async function refreshDashboard(): Promise<void> {
+export async function refreshDashboard(pathname = '/'): Promise<void> {
   await requireAdmin();
+  if (!['/', '/inbox', '/agents'].includes(pathname)) {
+    throw new Error('Invalid dashboard path');
+  }
   updateTag(AUTHORITATIVE_QUEUE_TAG);
-  revalidatePath('/');
+  revalidatePath(pathname);
 }

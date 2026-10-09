@@ -60,3 +60,29 @@ export async function readActiveOrchestratorRun(params: {
     ? undefined
     : { pipeline: run.pipeline, state: run.state };
 }
+
+/** A real durable webhook-projection write, with no fixture route/cache bust. */
+export async function updateDashboardAnchor(params: {
+  issue: number;
+  title?: string;
+  remove?: boolean;
+}) {
+  const store = firestoreStore();
+  const anchor = { repo: E2E_FIXTURE_REPOSITORY, issue: params.issue };
+  const current = await store.readGithubAnchorProjection(anchor);
+  if (!current) throw new Error('Missing seeded anchor');
+  const generation = await store.beginGithubAnchorProjectionRefresh(anchor);
+  await store.applyGithubAnchorProjectionRefresh({
+    anchor,
+    generation,
+    ...(params.remove
+      ? {}
+      : {
+          projection: {
+            ...current,
+            title: params.title ?? current.title,
+            observedAt: new Date().toISOString(),
+          },
+        }),
+  });
+}

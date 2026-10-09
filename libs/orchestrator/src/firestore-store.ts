@@ -352,7 +352,12 @@ export class FirestoreStore implements OrchestratorStore {
         return false;
       }
       if (input.projection === undefined) {
-        tx.set(ref, { refreshGeneration: input.generation });
+        // Keep a bounded change-feed watermark even when the source disappears.
+        // Deleting the projection must notify open dashboards too.
+        tx.set(ref, {
+          refreshGeneration: input.generation,
+          streamChangedAt: FieldValue.serverTimestamp(),
+        });
         return true;
       }
       const next = githubAnchorProjectionSchema.parse(input.projection);
@@ -368,6 +373,7 @@ export class FirestoreStore implements OrchestratorStore {
       // to remove this anchor from the open-order index.
       tx.update(ref, {
         projection: next,
+        streamChangedAt: FieldValue.serverTimestamp(),
         refreshGeneration: input.generation,
         ...(next.state === 'open'
           ? { openUpdatedAt: next.sourceUpdatedAt }
