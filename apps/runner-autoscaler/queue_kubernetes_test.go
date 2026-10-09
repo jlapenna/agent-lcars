@@ -26,9 +26,11 @@ import (
 func kubeQueueFixture(objects ...runtime.Object) (*kubernetesQueue, *fake.Clientset) {
 	c := fake.NewClientset(objects...)
 	q := &kubernetesQueue{client: c, image: "registry.example.com/runner:live", logger: slog.New(slog.NewTextHandler(io.Discard, nil)), config: queueKubernetesConfig{Namespace: "lcars-work", CredentialsSecret: "credentials", ServiceAccount: "worker", MaxConcurrent: 2, NodeSelector: map[string]string{"queue-runner": "true"}, Requests: map[string]string{"cpu": "500m", "memory": "1Gi", "ephemeral-storage": "4Gi"}, Limits: map[string]string{"cpu": "4", "memory": "8Gi", "ephemeral-storage": "24Gi"}}}
+	q.verifyRun = func(context.Context, string, string) error { return nil }
 	c.PrependReactor("create", "jobs", func(a clienttesting.Action) (bool, runtime.Object, error) {
 		j := a.(clienttesting.CreateAction).GetObject().(*batch.Job)
 		j.UID = types.UID("job-uid")
+		j.Generation = 1
 		j.CreationTimestamp = meta.Now()
 		return false, nil, nil
 	})
@@ -159,7 +161,7 @@ func TestKubernetesRecoveryAndAmbiguousCreate(t *testing.T) {
 	l := directRunnerLaunch{runID: "work:recover/r1", runToken: "token", pipeline: "codex"}
 	j, _ := q.job(l)
 	j, _ = c.BatchV1().Jobs(q.config.Namespace).Create(ctx, j, meta.CreateOptions{})
-	_, err := c.CoreV1().Secrets(q.config.Namespace).Create(ctx, &core.Secret{ObjectMeta: meta.ObjectMeta{Name: j.Name, OwnerReferences: []meta.OwnerReference{{UID: j.UID, Kind: "Job"}}}, Data: map[string][]byte{"run-token": []byte("token")}}, meta.CreateOptions{})
+	_, err := c.CoreV1().Secrets(q.config.Namespace).Create(ctx, &core.Secret{ObjectMeta: meta.ObjectMeta{Name: j.Name, OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", UID: j.UID, Kind: "Job", Name: j.Name, Controller: ptr(true)}}}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte("token")}}, meta.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +205,7 @@ func TestKubernetesRecoveryRejectsWrongSecretOwner(t *testing.T) {
 	l := directRunnerLaunch{runID: "work:identity/r1", runToken: "token", pipeline: "codex"}
 	j, _ := q.job(l)
 	j, _ = c.BatchV1().Jobs(q.config.Namespace).Create(ctx, j, meta.CreateOptions{})
-	_, _ = c.CoreV1().Secrets(q.config.Namespace).Create(ctx, &core.Secret{ObjectMeta: meta.ObjectMeta{Name: j.Name, OwnerReferences: []meta.OwnerReference{{UID: "other", Kind: "Job"}}}, Data: map[string][]byte{"run-token": []byte("token")}}, meta.CreateOptions{})
+	_, _ = c.CoreV1().Secrets(q.config.Namespace).Create(ctx, &core.Secret{ObjectMeta: meta.ObjectMeta{Name: j.Name, OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", UID: "other", Kind: "Job", Name: j.Name, Controller: ptr(true)}}}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte("token")}}, meta.CreateOptions{})
 	if err := q.launch(ctx, l); err == nil {
 		t.Fatal("adopted unrelated credential")
 	}
