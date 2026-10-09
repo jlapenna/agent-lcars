@@ -69,7 +69,9 @@ function sameReply(run: Run, request: ReplyRequest): boolean {
     run.params['reply'] === request.text.slice(0, REPLY_MAX) &&
     run.params['replyRequestId'] === request.requestId &&
     run.params['replyResumeRequested'] === String(request.resume ?? true) &&
-    (request.pipeline === undefined || request.pipeline === run.pipeline)
+    // Bind the caller's selection, including inheritance, rather than
+    // resolving an old retry against mutable later run history.
+    run.params['replyPipelineRequested'] === (request.pipeline ?? 'inherit')
   );
 }
 
@@ -161,8 +163,6 @@ export async function requestReply(
 
   const runs = await context.runtime.store.listRuns(request.task);
   const state = deriveItemState(task.task, runs);
-  if (state === 'canceled')
-    return { ok: false, code: 'CONFLICT', message: 'task-closed' };
 
   const { spec } = workPayloadSchema.parse(task.task.work);
   const authorizedReceipt = (run: Run): ReplyOutcome => {
@@ -200,6 +200,10 @@ export async function requestReply(
     // caller's current grants before returning the original receipt.
     return authorizedReceipt(replay);
   }
+  // Historical receipt recovery is read-only. Cancellation only forbids
+  // new admission; it must not erase a previously admitted caller receipt.
+  if (state === 'canceled')
+    return { ok: false, code: 'CONFLICT', message: 'task-closed' };
   const latest = latestRun(runs);
   // Widened to `string` by `Run.pipeline`/`ReplyRequest.pipeline` (both
   // opaque routing data, not the enum `WorkSpec.pipeline` is) -- always one
@@ -260,6 +264,7 @@ export async function requestReply(
         : {
             replyRequestId: request.requestId,
             replyResumeRequested: String(request.resume ?? true),
+            replyPipelineRequested: request.pipeline ?? 'inherit',
           }),
       ...resumeParams,
     },

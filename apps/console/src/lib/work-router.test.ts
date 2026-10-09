@@ -951,6 +951,114 @@ describe('items routes', () => {
       expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
     });
 
+    it('refuses a raced explicit provider for an implicit keyed contender even when both are authorized', async () => {
+      const ctx = contextWithSession({
+        principal: { ...operator, pipelines: ['claude', 'codex'] },
+      });
+      await parkedItemWithSession(ctx);
+      let enter!: () => void, release!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      ctx.sessionDocsForRuns = async () => {
+        enter();
+        await barrier;
+        return [];
+      };
+      const body = { text: 'continue', requestId: 'implicit-race' };
+      const implicit = call(ctx, 'POST', `/items/${ID}/reply`, body);
+      await entered;
+      const explicit = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        ...body,
+        pipeline: 'codex',
+      });
+      release();
+      const contender = await implicit;
+      expect(explicit.status).toBe(200);
+      expect(contender.status).toBe(409);
+      expect(contender.json.message).toContain('different reply');
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
+      expect(
+        await ctx.runtime.store.readRun(explicit.json.admittedRunId),
+      ).toMatchObject({ pipeline: 'codex' });
+    });
+
+    it('keeps an implicit keyed receipt stable after later work switches provider', async () => {
+      const ctx = contextWithSession({
+        principal: { ...operator, pipelines: ['claude', 'codex'] },
+      });
+      await parkedItemWithSession(ctx);
+      const body = {
+        text: 'continue',
+        requestId: 'implicit-history',
+        resume: false,
+      };
+      const first = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      expect(first.status).toBe(200);
+      await ctx.runtime.orchestrator.report(first.json.admittedRunId, {
+        ok: true,
+        summary: 'park',
+      });
+      const later = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'switch now',
+        requestId: 'later-provider',
+        pipeline: 'codex',
+      });
+      expect(later.status).toBe(200);
+      const retry = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      expect(retry.status).toBe(200);
+      expect(retry.json.admittedRunId).toBe(first.json.admittedRunId);
+      const changed = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        ...body,
+        pipeline: 'claude',
+      });
+      expect(changed.status).toBe(409);
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(3);
+    });
+
+    it('recovers a canceled keyed reply receipt without reopening or dispatching, while refusing new work and revoked grants', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      const body = {
+        text: 'continue',
+        requestId: 'cancel-receipt',
+        resume: false,
+      };
+      const first = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      expect(first.status).toBe(200);
+      expect((await call(ctx, 'POST', `/items/${ID}/cancel`, {})).status).toBe(
+        200,
+      );
+      const drain = vi.spyOn(ctx.runtime, 'drain');
+      const retry = await call(ctx, 'POST', `/items/${ID}/reply`, body);
+      expect(retry.status).toBe(200);
+      expect(retry.json).toMatchObject({
+        state: 'canceled',
+        admittedRunId: first.json.admittedRunId,
+        resumed: false,
+      });
+      const newReply = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        ...body,
+        requestId: 'new-after-cancel',
+      });
+      expect(newReply.status).toBe(409);
+      expect(newReply.json.message).toBe('task-closed');
+      const changed = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        ...body,
+        text: 'different',
+      });
+      expect(changed.status).toBe(409);
+      ctx.principal = { ...operator, pipelines: [] };
+      expect((await call(ctx, 'POST', `/items/${ID}/reply`, body)).status).toBe(
+        403,
+      );
+      expect(drain).not.toHaveBeenCalled();
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
+    });
+
     /** Parks `ID` with exactly one finished claude run carrying an
      *  archived session -- the precondition every "mints a reply run"
      *  case below shares. */
