@@ -48,7 +48,12 @@ state remain their respective artifact facts.
   `gh pr create` time bypassed affected-project selection, saturated the
   shared self-hosted runner fleet, and left that PR and unrelated ones
   blocked for six hours. A repository that declares a `ci:*` label inherits
-  this rule; it does not need to rediscover it.
+  this rule; it does not need to rediscover it. The sole standing exception is
+  `ci:run-functional-e2e` in a repository whose profile declares it and whose
+  trusted instructions explicitly authorize it while the ordinary functional
+  lane is paused. Sprinkles is the current consumer: its `e2e.yml` keeps
+  affected-project selection and runs the functional lane only. The broader
+  `ci:run-e2e` control still requires a maintainer's explicit per-use approval.
 - `app:*` scopes work to a product or deployable application.
 - `planning` marks an issue or pull request containing substantial planning,
   design, or proposal material. It has no workflow behavior, so the same
@@ -56,17 +61,17 @@ state remain their respective artifact facts.
 
 ## Repository profiles
 
-| Family            | Agent LCARS                              | Sprinkles                                         | Homelab                                  |
-| ----------------- | ---------------------------------------- | ------------------------------------------------- | ---------------------------------------- |
-| `type:*`          | All canonical types                      | All canonical types                               | All canonical types                      |
-| `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy          | Ready, blocked, needs-human, post-deploy |
-| `agent:*`         | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | Claude, Codex, OpenCode                  |
-| `review:*`        | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                           | Claude, Codex, OpenCode                  |
-| `agent-option:*`  | Cross-repo                               | Cross-repo                                        | Cross-repo                               |
-| Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                              | Quick task, Renovate                     |
-| Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, E2E, snapshots | None                                     |
-| Apps              | Console, telemetry, runner autoscaler    | Sprinkles, OneCake, Primes                        | None                                     |
-| Planning          | `planning`                               | `planning`                                        | `planning`                               |
+| Family            | Agent LCARS                              | Sprinkles                                                         | Homelab                                  |
+| ----------------- | ---------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------- |
+| `type:*`          | All canonical types                      | All canonical types                                               | All canonical types                      |
+| `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy                          | Ready, blocked, needs-human, post-deploy |
+| `agent:*`         | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                                           | Claude, Codex, OpenCode                  |
+| `review:*`        | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                                           | Claude, Codex, OpenCode                  |
+| `agent-option:*`  | Cross-repo                               | Cross-repo                                                        | Cross-repo                               |
+| Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                                              | Quick task, Renovate                     |
+| Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, functional/full E2E, snapshots | None                                     |
+| Apps              | Console, telemetry, runner autoscaler    | Sprinkles, OneCake, Primes                                        | None                                     |
+| Planning          | `planning`                               | `planning`                                                        | `planning`                               |
 
 Repository profiles deliberately share names without requiring every
 repository to install every label. Every watched repository uses the same

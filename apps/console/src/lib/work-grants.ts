@@ -41,10 +41,13 @@ export function parseWorkGrants(raw: string | undefined): WorkGrant[] {
   return grantsSchema.parse(JSON.parse(raw));
 }
 
-let cached: WorkGrant[] | undefined;
+let cached: { raw: string | undefined; grants: WorkGrant[] } | undefined;
 export function workGrants(): WorkGrant[] {
-  cached ??= parseWorkGrants(process.env['AGENT_LCARS_WORK_GRANTS']);
-  return cached;
+  const raw = process.env['AGENT_LCARS_WORK_GRANTS'];
+  if (cached === undefined || cached.raw !== raw) {
+    cached = { raw, grants: parseWorkGrants(raw) };
+  }
+  return cached.grants;
 }
 
 /** Subjects are compared case-insensitively (emails and GitHub logins are). */

@@ -414,6 +414,7 @@ A trusted repository policy may explicitly authorize the exact
 paused. Use that standing authorization when all of these hold:
 
 - The PR's acceptance criteria require browser verification that has not run.
+- The fleet's canonical label manifest declares the label for that repository.
 - The repository's instructions explicitly permit that label, and its current
   workflow preserves affected-project selection and runs functional tests only.
 - The action changes only that PR's label; it does not enable all projects,

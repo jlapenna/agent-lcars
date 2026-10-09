@@ -97,6 +97,10 @@
       "color": "0e8a16",
       "description": "Run the full end-to-end test suite"
     },
+    "ci:run-functional-e2e": {
+      "color": "1d76db",
+      "description": "Run affected functional E2E while the default PR lane is paused"
+    },
     "ci:update-snapshots": {
       "color": "0e8a16",
       "description": "Regenerate visual snapshots in CI"
@@ -220,6 +224,7 @@
         "automation:unstick-prs",
         "automation:visual-refresh",
         "ci:run-e2e",
+        "ci:run-functional-e2e",
         "ci:update-snapshots",
         "ci:update-snapshots:members",
         "ci:update-snapshots:onecake",

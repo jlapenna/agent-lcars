@@ -2,9 +2,11 @@ import { logger } from '@agent-lcars/logging';
 import type { TaskListCursor } from '@agent-lcars/orchestrator';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Box } from '@mantine/core';
+import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
+import { consoleLandingPath } from '@/lib/console-access';
 import {
   excludeClosedGithubAnchors,
   listWorkSummaries,
@@ -428,6 +430,9 @@ const IndexView = withConsolePageShell(
 
 async function IndexShell({ searchParams }: PageProps) {
   const session = await auth();
+  if (!session?.user?.isAdmin && consoleLandingPath(session) === '/work') {
+    redirect('/work');
+  }
   assertAdmin(session, '/login');
 
   const watchedRepos = getWatchedRepos();
