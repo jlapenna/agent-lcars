@@ -29,6 +29,28 @@ gate; selective passing reports cannot satisfy it. See the
 [qualification and bounded rollout artifact](worker-policy-rollout.md) for
 independent commands, provenance, metrics and approval targets.
 
+The [2026-10-09 source evidence record](worker-policy-source-evidence-2026-10-09.json)
+retains every passing mode, sanitized phase timing, exact CLI versions and
+source/module/helper/harness hashes: Claude **78/78**, Codex **79/79**, OpenCode
+**81/81**, plus **3/3 setup-negative cases each**. It also retains the initial
+Codex catalog failures and pre-fix Claude/Codex exhaustion failures. The raw
+runner-local directories are temporary; the committed record does not claim
+an inspected image identity, complete durable fixture bundles or a live dispatch.
+Current candidate-image qualification and failure consumption remain open.
+
+The native fixture uses one monotonic budget across initial execution,
+correction, explicit resume and failure finalization. Its 30/60-second limits
+and denial assertions are unchanged. The source run exposed a separate fixture
+clock issue: Codex and Claude exhaustion observations failed with `Date.now()`;
+all three targeted observations pass with the shared monotonic budget. This
+fixture correction does not repair the production Bash authority below.
+
+Codex's localhost model fixture supplies an isolated `model_catalog_json` with
+its expected tool metadata. The current CLI no longer includes the fixture's
+old model name in its bundled catalog; the initial authorized-edit probe failed
+without `apply_patch` metadata. The scratch catalog corrects the fixture, with
+no production model configuration change. See the [official config reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
 The provider budget still uses wall-clock-derived Bash `SECONDS`.
 [#2223](https://github.com/jlapenna/agent-lcars/issues/2223) owns the monotonic
 deadline/fence prerequisite; [#2217](https://github.com/jlapenna/agent-lcars/issues/2217)
@@ -209,7 +231,7 @@ PR or issue should be modified by multiple canaries.
 | `recovery-exhausted`   | Bounded repair ends as infrastructure failure, no human assignment                            |
 | `authorized-exception` | A specific trusted-policy exception works without relaxing unrelated restrictions             |
 
-### Current evidence and remaining qualification work
+### Historical image qualification evidence
 
 `tools/probes/in-runner-image.mjs` runs the native probes as the image job
 user against baked handlers and the baked bootstrap/completion helpers, verifying their
@@ -671,17 +693,21 @@ evidence refuses qualification. Contract tests run in the existing required
 
 ## Delivery sequence
 
-1. Foundation: this matrix and offline evidence gate.
-2. Build actual provider probe drivers; establish native interception and stop
-   behavior against the pinned runner versions, including failure semantics.
-3. Implement shared behavior and thin adapters; reuse existing ownership,
-   worktree and outcome checks. Add setup installation/verification, repair and completion
-   integration only after the probes establish supported interception points.
-4. Run the three isolated canaries concurrently; retain evidence and graduate
-   passing providers independently. A provider unable to cover a mandatory
-   control stays unqualified; report its exact gap rather than weaken the rule.
-5. Enable graduated providers, observe false rejections and recovery outcomes,
-   then remove superseded prose. Interactive sessions remain a later phase.
+1. Land source controls and their required contracts, with independent review of
+   live runtime/deployment boundaries. Resolve shared prerequisites such as #2223.
+2. Qualify each candidate provider independently with the complete native and
+   setup-negative image suites and retained immutable artifact identities. Run
+   that provider's native failure-chain consumer; do not graduate it from offline
+   observations alone.
+3. Obtain approval for the exact candidate executor scope, then prove useful
+   normal policy-enabled dispatch, finalization and remaining interactive/member
+   acceptance. Retain existing skills for uncovered paths and judgment.
+4. Graduate only a provider whose mandatory artifact-matched and live gates have
+   passed. Another provider's failure does not erase its evidence or require
+   weakening a control.
+5. Obtain specific production activation approval and apply the bounded
+   [observation/rollback plan](worker-policy-rollout.md). Remove superseded prose
+   only after the corresponding executable replacement has passed acceptance.
 
 ## Native OpenCode boundary probe
 

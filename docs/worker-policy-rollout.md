@@ -8,12 +8,15 @@ A provider passes independently. Offline success never means graduation.
 
 ## Candidate qualification
 
-First land the monotonic budget/fence prerequisite
+Before claiming bounded provider execution or starting an approval window, land
+the monotonic budget/fence prerequisite
 [#2223](https://github.com/jlapenna/agent-lcars/issues/2223), including deterministic
 forward/backward wall-clock cases and all provider correction branches. Keep
 [#2217](https://github.com/jlapenna/agent-lcars/issues/2217)'s diagnostic work and
 [Homelab #2186](https://github.com/jlapenna/homelab/issues/2186)'s clock investigation
-separate. A successful unchanged deadline test does not settle either cause.
+separate. A successful unchanged deadline test does not settle either cause. Offline
+canaries can retain independent evidence before this prerequisite passes;
+they cannot establish the production execution bound or authorize activation.
 
 Agree on the reviewed source revision with the platform owner before any image
 publish. Follow [canonical image publishing](image-publish-routing.md). Record
@@ -44,8 +47,14 @@ The full native suite and all setup-negative cases must pass exactly once;
 missing, duplicated, failed, partial, wrong-user or mixed-artifact observations
 fail. The host output includes `expected.json`, `qualification.json`, both raw
 image reports, stdout/stderr and native fixture diagnostics. Retain the whole
-bundle in the operator's approved artifact store. A failed collection prints
-the retained container ID; collect its fixture diagnostics before removing it.
+bundle in the operator's approved artifact store. Every Docker client has hard signal termination. Owned containers are named
+before creation, including disconnected-create paths; one monotonic 15-second
+cleanup budget reserves time for termination and stopped-state proof even when
+inspection hangs. SIGTERM/SIGINT interrupts the active client and awaits that
+cleanup; abrupt host/process death still requires operator inspection. Failed or unproven cleanup cannot report success. A failed
+collection prints the retained container ID; collect its fixture diagnostics
+before removing it. Complete native fixture diagnostics are required, not
+optional.
 Only local model/transport fixtures appear there; do not add real credentials
 to these probes.
 
@@ -118,7 +127,10 @@ time, in a 30-minute window. The owner must reserve the window with no other
 work for that provider on the candidate executor. The selector is provider-wide,
 not an attempt allowlist or sampling mechanism. A broader live queue requires
 an isolated owner-managed executor scope before activation. Leave other
-providers disabled; successful providers need not await a failed provider.
+providers disabled; successful providers need not await a failed provider. At the end of the window,
+restore the previous selector before admitting more attempts. Do not accept the
+window until every in-flight attempt settles under its original budget; a
+configuration restart does not cancel an existing Job.
 
 Retain a baseline and a per-attempt ledger with these counts and denominators.
 Metrics are collected from receipts, sanitized native diagnostics, Job status

@@ -15,6 +15,7 @@ for (const kind of ['version', 'scenario']) {
     'success',
     'hang',
     'ignored-sigterm',
+    'inherited-pipe',
     'disconnect',
     'bad-json',
     'inspect-failure',
@@ -38,6 +39,7 @@ for (const kind of ['version', 'scenario']) {
         docker,
         `#!${process.execPath}
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 const args = process.argv.slice(2);
 const statePath = ${JSON.stringify(statePath)};
 appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + '\\n');
@@ -51,6 +53,7 @@ case 'start':
   state.Running = true; save();
   if (mode === 'ignored-sigterm') process.on('SIGTERM', () => {});
   if (mode === 'hang' || mode === 'ignored-sigterm') await new Promise(() => setInterval(() => {}, 1000));
+  if (mode === 'inherited-pipe') { spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }).unref(); process.exit(0); }
   if (mode === 'disconnect') process.exit(1);
   if (!['inspect-failure','hung-inspect','partial-state','kill-no-effect','cleanup-inspect-failure','bad-json'].includes(mode)) state.Running = false;
   save();

@@ -18,9 +18,17 @@ export async function runImageContainer(
   let active;
   let interrupted;
   let cleaning = false;
+  const hardKill = (child) => {
+    if (!child) return;
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+  };
   const interrupt = (signal) => {
     interrupted ??= new Error('Qualification interrupted by ' + signal);
-    active?.kill('SIGKILL');
+    hardKill(active);
   };
   const onTerm = () => interrupt('SIGTERM');
   const onInt = () => interrupt('SIGINT');
@@ -30,6 +38,7 @@ export async function runImageContainer(
     const execute = (args, limit) =>
       new Promise((resolve) => {
         const child = spawn(docker, args, {
+          detached: true,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
         active = child;
@@ -38,7 +47,7 @@ export async function runImageContainer(
         let error;
         const fail = (reason) => {
           error ??= reason;
-          child.kill('SIGKILL');
+          hardKill(child);
         };
         const timer = setTimeout(
           () => fail(new Error('Docker client deadline exceeded')),
