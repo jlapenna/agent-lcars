@@ -276,21 +276,23 @@ interface IssueAgentSessionDocBase extends BaseSessionDoc {
    * contract into one JSONL object per session before upload, while Claude
    * Code and Codex already write per-session files. Do not assume an archived
    * object is console-renderable without checking
-   * {@link IssueAgentSessionDoc.renderable} first — OpenCode archives are
-   * durable but intentionally remain summary-only in the console. */
+   * {@link IssueAgentSessionDoc.renderable} first. The OpenCode
+   * metadata archive can render redacted turns; its full export, when present
+   * in resumeGcsUri, supplies conversation content. */
 }
 
 /** An archived issue-agent transcript carries the capture-time renderability
- * decision. It is never inferred from the provider at read time. */
+ * decision for transcriptGcsUri. A separately archived OpenCode resume export
+ * is also supported by the console timeline. */
 export interface ArchivedIssueAgentSessionDoc extends IssueAgentSessionDocBase {
   transcriptGcsUri: string;
   renderable: boolean;
   /**
    * The artifact a later run can actually resume from, when that is not the
-   * same file the console renders. Claude and Codex archive their raw CLI
-   * session, so `transcriptGcsUri` is both; OpenCode's rendered archive is
-   * sanitized to redaction markers, so its resumable artifact is a separate
-   * raw export and only this field points at it. Absent means "resume from
+   * same file as the telemetry transcript. Claude and Codex archive their raw CLI
+   * session, so `transcriptGcsUri` is both; OpenCode's telemetry archive is
+   * metadata-only, so its resumable artifact is a separate full export. The
+   * console can also read that export to render conversation turns. Absent means "resume from
    * `transcriptGcsUri`".
    */
   resumeGcsUri?: string;

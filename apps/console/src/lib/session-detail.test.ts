@@ -150,6 +150,30 @@ describe('getSessionDetail', () => {
     expect(result).toMatchObject({ transcript: { events: [] } });
   });
 
+  it('renders an existing OpenCode full export despite the older metadata-only flag', async () => {
+    const doc = agentDoc({
+      agent: 'opencode',
+      renderable: false,
+      transcriptGcsUri: 'gs://bucket/ses.jsonl',
+      resumeGcsUri: 'gs://bucket/ses.export.json',
+    });
+    (getSessionDoc as Mock).mockResolvedValue(doc);
+    (getSessionTranscript as Mock).mockResolvedValue({
+      events: [],
+      warning: 'Transcript unavailable',
+    });
+    expect(await getSessionDetail('agent-1')).toMatchObject({
+      status: 'ok',
+      doc,
+      transcript: { warning: 'Transcript unavailable' },
+    });
+    expect(getSessionTranscript).toHaveBeenCalledWith(
+      'gs://bucket/ses.export.json',
+      'opencode',
+    );
+    expect(doc.renderable).toBe(false);
+  });
+
   it('does not fetch a transcript when doc.renderable is explicitly false, even for claude-code', async () => {
     (getSessionDoc as Mock).mockResolvedValue(
       agentDoc({

@@ -1,3 +1,4 @@
+import { parseTranscriptTimeline } from '@agent-lcars/telemetry';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -24,6 +25,89 @@ describe('captureOpenCodeExports', () => {
     vi.unstubAllEnvs();
     fs.rmSync(root, { recursive: true, force: true });
   });
+
+  it.each([false, true])(
+    'renders owner-produced pending tools without exposing content (mixed=%s)',
+    async (mixed) => {
+      const parts = [
+        {
+          type: 'tool',
+          tool: 'bash',
+          state: {
+            status: 'pending',
+            input: { command: 'private-pending-command' },
+          },
+        },
+        ...(mixed
+          ? [
+              {
+                type: 'tool',
+                tool: 'read',
+                state: {
+                  status: 'completed',
+                  time: { start: 120, end: 180 },
+                  input: { path: 'private-path' },
+                  output: 'private-output',
+                },
+              },
+            ]
+          : []),
+      ];
+      expect(
+        await captureOpenCodeExports({
+          workspaceDir: workspace,
+          exportsDir: root,
+          runOpenCode: () =>
+            JSON.stringify([
+              { id: 'ses_pending', directory: workspace, updated: 200 },
+            ]),
+          runOpenCodeToFile: (_args, output) => {
+            fs.writeFileSync(
+              output,
+              JSON.stringify({
+                info: { id: 'ses_pending', directory: workspace },
+                messages: [
+                  {
+                    info: { role: 'assistant', time: { created: 110 } },
+                    parts,
+                  },
+                ],
+              }),
+            );
+          },
+        }),
+      ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
+
+      const archive = fs.readFileSync(
+        path.join(root, 'sessions', 'ses_pending.jsonl'),
+        'utf8',
+      );
+      // Exercise the existing privacy owner, rather than guessing its shape.
+      const emittedParts = JSON.parse(archive).messages[0].parts;
+      expect(emittedParts[0]).toEqual({ type: 'tool', tool: 'bash' });
+      expect(archive).not.toContain('private-');
+      const parsed = parseTranscriptTimeline(archive, 'opencode');
+      expect(parsed.hadUnparseableLines).toBe(false);
+      expect(parsed.events).toEqual([
+        {
+          kind: 'tool_use',
+          name: 'bash',
+          inputJson: '[Tool input redacted or absent]',
+          timestamp: new Date(110).toISOString(),
+        },
+        ...(mixed
+          ? [
+              {
+                kind: 'tool_use',
+                name: 'read',
+                inputJson: '[Tool input redacted or absent]',
+                timestamp: new Date(120).toISOString(),
+              },
+            ]
+          : []),
+      ]);
+    },
+  );
 
   it('lists a bounded set, selects the exact workspace, and materializes compact JSONL', async () => {
     const calls: Array<{ args: string[]; maxBytes: number; timeout: number }> =

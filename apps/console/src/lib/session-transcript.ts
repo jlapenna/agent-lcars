@@ -11,6 +11,9 @@ import {
   parseTranscriptTimeline,
 } from '@agent-lcars/telemetry';
 import { fetchSessionTranscript } from '@agent-lcars/telemetry/server';
+import { isE2eTesting } from '@agent-lcars/util-server';
+
+import { getE2eTranscript } from './e2e-transcript-fixtures';
 
 export interface SessionTranscriptResult {
   events: (TranscriptTimelineEvent | TranscriptElisionDivider)[];
@@ -38,9 +41,11 @@ export async function getSessionTranscript(
 ): Promise<SessionTranscriptResult> {
   let raw: string;
   try {
-    raw = options
-      ? await fetchSessionTranscript(transcriptGcsUri, options.maxBytes)
-      : await fetchSessionTranscript(transcriptGcsUri);
+    raw =
+      (isE2eTesting() ? getE2eTranscript(transcriptGcsUri) : undefined) ??
+      (options
+        ? await fetchSessionTranscript(transcriptGcsUri, options.maxBytes)
+        : await fetchSessionTranscript(transcriptGcsUri));
   } catch (error) {
     logger.error(
       'agent-lcars: failed to fetch session transcript from storage:',
@@ -48,7 +53,8 @@ export async function getSessionTranscript(
     );
     return {
       events: [],
-      warning: 'Transcript unavailable (failed to fetch from storage).',
+      warning:
+        'Transcript unavailable or expired (failed to fetch from storage).',
     };
   }
 
@@ -56,7 +62,10 @@ export async function getSessionTranscript(
   return {
     events: elideTranscriptTimeline(events),
     ...(hadUnparseableLines && {
-      warning: 'Some transcript lines could not be parsed and were skipped.',
+      warning:
+        agent === 'opencode' && events.length === 0
+          ? 'Transcript archive is malformed and could not be parsed.'
+          : 'Some transcript lines could not be parsed and were skipped.',
     }),
   };
 }
