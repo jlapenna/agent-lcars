@@ -2,7 +2,10 @@ import { logger } from '@agent-lcars/logging';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
-import { controlPlaneRepository } from '../../../../../lib/deployment';
+import {
+  agentFleetLogin,
+  controlPlaneRepository,
+} from '../../../../../lib/deployment';
 import {
   addFixtureComment,
   configureGithubActionFixture,
@@ -149,6 +152,35 @@ export async function POST(
       { message: 'Unknown fixture repository' },
       { status: 404 },
     );
+  }
+  if (
+    path[0] === 'repos' &&
+    path.length === 6 &&
+    path[3] === 'issues' &&
+    issue(Number(path[4]))
+  ) {
+    if (path[5] === 'reactions' && bodyForJournal?.content === 'eyes') {
+      return NextResponse.json(
+        { id: Number(path[4]), content: 'eyes' },
+        { status: 201 },
+      );
+    }
+    if (
+      path[5] === 'assignees' &&
+      JSON.stringify(bodyForJournal?.assignees) ===
+        JSON.stringify([agentFleetLogin()])
+    ) {
+      const anchor = issue(Number(path[4]));
+      return NextResponse.json({
+        ...anchor,
+        assignees: [
+          ...(anchor?.assignees ?? []).filter(
+            ({ login }) => login !== agentFleetLogin(),
+          ),
+          { login: agentFleetLogin() },
+        ],
+      });
+    }
   }
   if (
     path[0] === 'repos' &&
@@ -437,7 +469,7 @@ export async function PUT(
       .map((label) => label.name)
       .filter(
         (label) =>
-          !label.startsWith('agent:') && label !== 'status:needs-human',
+          !label.startsWith('agent:') && label !== 'status:ready-for-agent',
       );
     const agentLabels = (body.labels ?? []).filter((label) =>
       label.startsWith('agent:'),

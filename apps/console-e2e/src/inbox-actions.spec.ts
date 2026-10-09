@@ -34,6 +34,23 @@ async function journal(request: APIRequestContext): Promise<Mutation[]> {
   );
 }
 
+function claimEffects(number: number): Mutation[] {
+  return [
+    {
+      method: 'POST',
+      path: pathFor(`issues/${number}/reactions`),
+      body: { content: 'eyes' },
+      rejected: false,
+    },
+    {
+      method: 'POST',
+      path: pathFor(`issues/${number}/assignees`),
+      body: { assignees: ['agent-lcars-bot'] },
+      rejected: false,
+    },
+  ];
+}
+
 async function configure(
   request: APIRequestContext,
   data: {
@@ -70,6 +87,7 @@ test.describe('Inbox authorized action journeys', () => {
     const number = E2E_ITEM_NUMBERS.humanNeededPostDeploy;
     const url = await selectItem(page, number);
     const detail = page.locator('.queue-workspace__detail');
+    await detail.getByRole('button', { name: 'Reply…', exact: true }).click();
     const draft = detail.getByPlaceholder('Reply…', { exact: true });
     await expect(
       detail.getByText('Comment only', { exact: true }),
@@ -138,7 +156,46 @@ test.describe('Inbox authorized action journeys', () => {
       {
         method: 'PUT',
         path: pathFor(`issues/${number}/labels`),
-        body: { labels: ['status:post-deploy-action', 'agent:codex'] },
+        body: {
+          labels: [
+            'status:needs-human',
+            'status:post-deploy-action',
+            'agent:codex',
+          ],
+        },
+        rejected: false,
+      },
+    ]);
+    expect(mutations).toEqual([
+      {
+        method: 'POST',
+        path: pathFor(`issues/${number}/comments`),
+        body: { body: 'Keep the human decision open.' },
+        rejected: false,
+      },
+      {
+        method: 'POST',
+        path: pathFor(`issues/${number}/comments`),
+        body: { body: 'Use a 30-day retention window.' },
+        rejected: false,
+      },
+      ...claimEffects(number),
+      {
+        method: 'PUT',
+        path: pathFor(`issues/${number}/labels`),
+        body: {
+          labels: [
+            'status:needs-human',
+            'status:post-deploy-action',
+            'agent:codex',
+          ],
+        },
+        rejected: false,
+      },
+      {
+        method: 'DELETE',
+        path: pathFor(`issues/${number}/labels/status:needs-human`),
+        body: null,
         rejected: false,
       },
     ]);
@@ -173,6 +230,7 @@ test.describe('Inbox authorized action journeys', () => {
     const number = E2E_ITEM_NUMBERS.humanNeeded;
     const url = await selectItem(page, number);
     const detail = page.locator('.queue-workspace__detail');
+    await detail.getByRole('button', { name: 'Reply…', exact: true }).click();
     await detail.getByPlaceholder(/Reply/).fill('Choose 90 days.');
     await detail.getByRole('button', { name: 'Reply', exact: true }).click();
     await expect(
@@ -195,6 +253,7 @@ test.describe('Inbox authorized action journeys', () => {
         body: { body: 'Choose 90 days.' },
         rejected: false,
       },
+      ...claimEffects(number),
       {
         method: 'DELETE',
         path: pathFor(`issues/${number}/labels/status:needs-human`),
@@ -220,6 +279,7 @@ test.describe('Inbox authorized action journeys', () => {
     });
     const url = await selectItem(page, number);
     const detail = page.locator('.queue-workspace__detail');
+    await detail.getByRole('button', { name: 'Reply…', exact: true }).click();
     const draft = detail.getByPlaceholder(/Reply/);
     await draft.fill('Retain this rejected reply.');
     await detail.getByRole('button', { name: 'Reply', exact: true }).click();
@@ -244,7 +304,9 @@ test.describe('Inbox authorized action journeys', () => {
     const number = E2E_ITEM_NUMBERS.reviewRequested;
     const approved = action !== 'rebase';
     const mergeableState = action === 'merge' ? 'clean' : 'behind';
-    const requestedReviewers = approved ? ['e2e-agent-lcars-admin'] : [];
+    const requestedReviewers = approved
+      ? [process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] ?? 'dummy-id']
+      : [];
     const terminalPath = pathFor(
       `pulls/${number}/${action === 'merge' ? 'merge' : 'update-branch'}`,
     );
@@ -355,6 +417,8 @@ test.describe('Inbox authorized action journeys', () => {
     const configuration = rejected
       ? { reject: { method: 'POST', path: pathFor('issues'), message } }
       : {};
+    const expectedEffectsCount = rejected ? 1 : 3;
+    const expectedClaims = rejected ? [] : claimEffects(9012);
     const admission = rejected
       ? { task: undefined, run: undefined }
       : {
@@ -393,7 +457,8 @@ test.describe('Inbox authorized action journeys', () => {
       await page.getByRole('button', { name: 'Dispatch', exact: true }).click();
       await expect(page.getByText(message, { exact: true })).toBeVisible();
       const effects = await journal(request);
-      expect(effects).toHaveLength(1);
+      expect(effects).toHaveLength(expectedEffectsCount);
+      expect(effects.slice(1)).toEqual(expectedClaims);
       expect(effects[0]).toMatchObject({
         method: 'POST',
         path: pathFor('issues'),
