@@ -288,7 +288,6 @@ async function IndexBody({
           <ParkedWorkPanel
             items={parkedWorkItems}
             hasMoreTasks={hasMoreParkedTasks}
-            stoppedCursor={stoppedCursor}
             error={stoppedError}
             nextPageHref={
               stoppedNextCursor
@@ -303,6 +302,7 @@ async function IndexBody({
             cancel={cancelItem}
             redispatch={redispatchItem}
             repoFilterKey={repoFilterKey}
+            stoppedCursor={stoppedCursor}
           />
 
           <AgentActivityPanel
@@ -311,12 +311,14 @@ async function IndexBody({
             itemsByRunId={itemsByRunId}
             sessionsByRunId={sessionsByRunId}
             repoFilter={repoFilterKey}
+            stoppedCursor={stoppedCursor}
           />
 
           <BridgeSections
             waitingOnDeploy={deployCards}
             blocked={blockedCards}
             repoFilterKey={repoFilterKey}
+            stoppedCursor={stoppedCursor}
           />
         </div>
 
@@ -324,6 +326,7 @@ async function IndexBody({
           <BridgeDetail
             detail={detail}
             repoFilterKey={repoFilterKey}
+            stoppedCursor={stoppedCursor}
             cancel={cancelItem}
             redispatch={redispatchItem}
           />

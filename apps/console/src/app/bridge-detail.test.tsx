@@ -67,6 +67,29 @@ describe('BridgeDetail', () => {
     );
   });
 
+  it('clears a selected row while keeping the older stopped page and repo scope (#2236)', () => {
+    const cursor = JSON.stringify({
+      taskKey: 'work:older',
+      updatedAt: '2000-01-01T00:00:01.000Z',
+    });
+    render(
+      <MantineProvider>
+        <BridgeDetail
+          detail={renderItem(30)}
+          repoFilterKey="o/r"
+          stoppedCursor={cursor}
+        />
+      </MantineProvider>,
+    );
+    const href = screen
+      .getByRole('link', { name: '← All activity' })
+      .getAttribute('href');
+    const query = new URL(href!, 'http://localhost').searchParams;
+    expect(query.get('repo')).toBe('o/r');
+    expect(query.get('stoppedCursor')).toBe(cursor);
+    expect(query.has('sel')).toBe(false);
+  });
+
   it('renders the run detail variant for a live run', () => {
     const detail: Descriptor = { kind: 'liveRun', run: { id: 'r1' } };
     render(

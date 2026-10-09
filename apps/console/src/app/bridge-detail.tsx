@@ -27,11 +27,13 @@ import type { WorkAction } from './work/work-actions';
 export function BridgeDetail({
   detail,
   repoFilterKey,
+  stoppedCursor,
   cancel = async () => [null, undefined] as const,
   redispatch = async () => [null, undefined] as const,
 }: {
   detail: BridgeDetailDescriptor;
   repoFilterKey?: string;
+  stoppedCursor?: string;
   /** Only ever invoked for the `parkedWork` kind; every other kind renders
    *  without them, so tests exercising those kinds need not supply either -
    *  the no-op defaults keep this pane's own contract self-sufficient. */
@@ -52,7 +54,7 @@ export function BridgeDetail({
     );
   }
 
-  const backHref = bridgeSelectionHref(undefined, repoFilterKey);
+  const backHref = bridgeSelectionHref(undefined, repoFilterKey, stoppedCursor);
   const eyebrow =
     detail.kind === 'item'
       ? 'Waiting on deploy'

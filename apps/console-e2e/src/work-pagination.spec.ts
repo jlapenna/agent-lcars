@@ -47,6 +47,13 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   const first = await links.allTextContents();
   await page.getByRole('link', { name: 'Next work page' }).click();
   await expect(page).toHaveURL(/cursor=/);
+  await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
+  await expect(page.getByLabel('Principal', { exact: true })).toHaveValue(
+    'user:pagination-fixture',
+  );
+  await expect(
+    page.getByRole('status', { name: 'Loading', exact: true }),
+  ).toHaveCount(0);
   await expect(links).toHaveCount(6);
   const second = await links.allTextContents();
   expect(new Set([...first, ...second]).size).toBe(205);
@@ -80,7 +87,10 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await page.getByRole('link', { name: 'Reset filters', exact: true }).click();
   await expect(page.getByLabel('State', { exact: true })).toHaveValue('');
 
-  await page.goto('/');
+  await page.goto(`/?repo=${encodeURIComponent(E2E_FIXTURE_REPOSITORY)}`);
+  await expect(page.getByTestId('parked-work-panel')).not.toContainText(
+    'Pagination fixture 1',
+  );
   await page.getByRole('link', { name: 'Older stopped work' }).click();
   await expect(page).toHaveURL(/stoppedCursor=/);
   await expect(page.getByTestId('parked-work-panel')).toContainText(
@@ -90,6 +100,45 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await expect(page.getByTestId('parked-work-panel')).toContainText(
     'Pagination fixture 1',
   );
+  const stoppedPageUrl = page.url();
+  const stoppedCursor = new URL(stoppedPageUrl).searchParams.get(
+    'stoppedCursor',
+  );
+  const olderRow = page
+    .getByTestId('parked-work-panel')
+    .getByRole('link', { name: 'Pagination fixture 1', exact: true });
+  // Phones retain the canonical full-detail link; desktop selects the pane.
+  await expect(olderRow).toHaveAttribute(
+    'href',
+    '/work/00000000000000000000000001',
+  );
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(olderRow).toHaveAttribute('href', /sel=parked/);
+  await olderRow.click();
+  await expect(page.getByTestId('bridge-detail')).toContainText(
+    'Pagination fixture 1',
+  );
+  const selectedUrl = page.url();
+  expect(new URL(selectedUrl).searchParams.get('stoppedCursor')).toBe(
+    stoppedCursor,
+  );
+  expect(new URL(selectedUrl).searchParams.get('repo')).toBe(
+    E2E_FIXTURE_REPOSITORY,
+  );
+  await page.getByRole('link', { name: '← All activity', exact: true }).click();
+  await expect(page).toHaveURL(stoppedPageUrl);
+  await expect(olderRow).toBeVisible();
+  await expect(page.getByTestId('bridge-detail-empty')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(selectedUrl);
+  await expect(page.getByTestId('bridge-detail')).toContainText(
+    'Pagination fixture 1',
+  );
+  await page.goForward();
+  await expect(page).toHaveURL(stoppedPageUrl);
+  await page.reload();
+  await expect(olderRow).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 740 });
   await page.goto('/?stoppedCursor=invalid');
   await expect(page.getByRole('alert')).toContainText(
     'Could not load stopped work',
@@ -122,7 +171,11 @@ test('repository selection and clearing remain reachable on phones across Bridge
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 740 });
-  for (const route of ['/', '/inbox', '/agents']) {
+  for (const [route, destination] of [
+    ['/', 'Inbox'],
+    ['/inbox', 'Agents'],
+    ['/agents', 'Bridge'],
+  ]) {
     await page.goto(route);
     await page
       .getByLabel('Repository', { exact: true })
@@ -142,6 +195,20 @@ test('repository selection and clearing remain reachable on phones across Bridge
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
+    // The phone utility menu must carry scope to the next destination.
+    await page
+      .getByRole('button', { name: 'More console options', exact: true })
+      .click();
+    await page
+      .getByRole('menuitem', { name: destination, exact: true })
+      .click();
+    await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
+    await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(
+      E2E_FIXTURE_REPOSITORY,
+    );
+    await expect(
+      page.getByRole('status', { name: 'Loading', exact: true }),
+    ).toHaveCount(0);
     await page
       .getByRole('link', { name: 'Clear repository', exact: true })
       .click();
