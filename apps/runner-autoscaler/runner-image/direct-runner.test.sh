@@ -50,8 +50,21 @@ export WORKER_POLICY_NODE="$real_node"
 # the real runner image contains the compiled bundle, while this shell harness
 # deliberately verifies the lifecycle arguments without starting Firestore.
 cp "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" "$baked/sidecar-lifecycle.sh"
-cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon.sh"
-chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh"
+cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon-real.sh"
+# job-daemon backgrounds the sidecar and returns, and finalize stops it at
+# once; a fast scenario could kill the fake sidecar before it logged its
+# argv. Record what `start` launches before it is backgrounded instead.
+cat > "$baked/job-daemon.sh" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1:-}" = start ]; then
+  sep=1
+  while [ "$sep" -le "$#" ] && [ "${!sep}" != -- ]; do sep=$((sep + 1)); done
+  FAKE_NODE_RECORD_ONLY=1 "${@:sep+1}"
+  export FAKE_NODE_RECORDED=1
+fi
+exec "$(dirname "$0")/job-daemon-real.sh" "$@"
+FAKE
+chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh" "$baked/job-daemon-real.sh"
 BAKED_SIDECAR_LIFECYCLE="$baked/sidecar-lifecycle.sh"
 printf '%s\n' '// fake baked telemetry sidecar' > "$baked/sidecar.cjs"
 
@@ -524,13 +537,17 @@ FAKE
   # invalid for the requested-resume contract.
 cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
-echo "$@" >> "$NODE_ARGS_LOG"
-if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
-  echo sidecar >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
-  if [ ! -f "$tmp/opencode-initialized" ]; then
-    touch "$tmp/opencode-startup-race"
+# The baked job-daemon wrapper already recorded a sidecar it launched.
+if [ -z "${FAKE_NODE_RECORDED:-}" ]; then
+  echo "$@" >> "$NODE_ARGS_LOG"
+  if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
+    echo sidecar >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
+    if [ ! -f "$tmp/opencode-initialized" ]; then
+      touch "$tmp/opencode-startup-race"
+    fi
   fi
 fi
+[ "${FAKE_NODE_RECORD_ONLY:-}" != 1 ] || exit 0
 # Stands in for the real sidecar's `runner finalize` subcommand (issue
 # #1784): when direct-runner.sh's sidecar-lifecycle.sh threads
 # --opencode-last-message-file through, this simulates the sidecar writing
