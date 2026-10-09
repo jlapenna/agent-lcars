@@ -88,8 +88,9 @@ An accent used as **text** is not the same value as an accent used as a
 **block**. The palette anchors are the light end of each ramp — which is what
 lets near-black type sit on a full-strength block, and what makes those same
 values fail as ink on a light ground (orange links measured 3.03:1, gold
-1.58:1). Use `--lcars-accent-ink` for accent-coloured text; it is the accent
-itself in dark and a darkened mix in light.
+1.58:1). Use `--lcars-accent-ink` for accent-coloured text; it is an 80% accent mix
+with white in dark (so violet stays readable on table stripes) and a darkened
+mix in light.
 
 `--lcars-ink-dim` is `gray-7`, not `gray-6`. gray-6 measured 4.37:1 on the
 light ground and 3.74:1 on a tinted panel — under AA, on 416 nodes, which was

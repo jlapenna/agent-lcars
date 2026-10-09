@@ -346,7 +346,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    the correct route accent. The scheme-level declarations remain the amber
    fallback for portals and the login page, which have no `[data-accent]`. */
 [data-accent] {
-  --lcars-accent-ink: var(--lcars-accent);
+  /* Violet clears the page ground but needs brighter ink on dark table
+     stripes (#2182). Keep the hue and leave accent block fills alone. */
+  --lcars-accent-ink: color-mix(in srgb, var(--lcars-accent) 80%, white);
 }
 
 :root[data-mantine-color-scheme='light'] [data-accent] {
@@ -433,15 +435,21 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   text-transform: uppercase;
 }
 
-:is(.mantine-Button-root, .mantine-ActionIcon-root)[data-variant='filled'] {
+/* Mantine omits data-variant for its default filled controls, just as it
+   does for badges. Include that state so Work and portal actions inherit
+   the same accessible accent fill and ink (#2182). */
+:is(.mantine-Button-root, .mantine-ActionIcon-root):is(
+  [data-variant='filled'],
+  :not([data-variant])
+) {
   color: var(--lcars-ink-on-accent);
   background-color: var(--lcars-accent);
 }
 
-:is(
-    .mantine-Button-root,
-    .mantine-ActionIcon-root
-  )[data-variant='filled']:hover:not(:disabled) {
+:is(.mantine-Button-root, .mantine-ActionIcon-root):is(
+    [data-variant='filled'],
+    :not([data-variant])
+  ):hover:not(:disabled) {
   background-color: color-mix(in srgb, var(--lcars-accent) 82%, white);
 }
 
@@ -466,6 +474,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   ):hover:not(:disabled) {
   color: var(--lcars-ink-on-accent);
   background-color: var(--lcars-accent);
+}
+
+/* Disabled controls still carry useful labels. Mantine's dark-3 ink on
+   dark-6 measured 3.89:1 in the Work editor (#2182). Use the shared dim ink
+   and surface; the disabled state remains native and visually unfilled. */
+:is(.mantine-Button-root, .mantine-ActionIcon-root):disabled {
+  color: var(--lcars-ink-dim);
+  background-color: var(--lcars-surface);
 }
 
 /* ---- Panel accent spine ----
@@ -592,9 +608,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-ink: var(--mantine-color-gray-0);
   --lcars-ink-dim: var(--mantine-color-dark-2);
   --lcars-ink-on-muted: var(--mantine-color-white);
-  /* The accent used as TEXT rather than as a block. On the dark plane the
-     palette anchor already reads well, so it is itself. */
-  --lcars-accent-ink: var(--lcars-accent);
+  /* Brighten text ink for raised and tinted dark surfaces as well. */
+  --lcars-accent-ink: color-mix(in srgb, var(--lcars-accent) 80%, white);
   /* Links inside rendered Markdown. A stable link colour, deliberately not
      the route accent - a link's colour should mean "this is a link", not
      "this page is Costs". blue-3 clears AA against both the data plane
@@ -828,8 +843,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    hue, and therefore its meaning, while making one ink correct for all of
    them: worst case 5.58:1 across the status palette, against 4.5 required.
 
-   Dark mode is untouched. Its fills are already dark and its badges measured
-   clean. */
+   Dark filled badges keep their existing treatment; unfilled badge ink
+   also needs lifting on tinted dark panels (the Sessions agent tag, #2182). */
 
 :root[data-mantine-color-scheme='light']
   .mantine-Badge-root:is([data-variant='filled'], :not([data-variant])) {
@@ -855,6 +870,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 :root[data-mantine-color-scheme='light']
   .mantine-Badge-root[data-variant='outline'] {
   border-color: color-mix(in srgb, var(--badge-color) 60%, black);
+}
+
+/* Small unfilled tags need body-text contrast, including violet source
+   badges in the Sessions archive (#2182). Preserve their semantic hue. */
+:root[data-mantine-color-scheme='dark']
+  .mantine-Badge-root:is(
+    [data-variant='light'],
+    [data-variant='outline'],
+    [data-variant='default']
+  ) {
+  color: color-mix(in srgb, var(--badge-color) 65%, white);
 }
 
 /* ---- Rendered Markdown (#1843) ----

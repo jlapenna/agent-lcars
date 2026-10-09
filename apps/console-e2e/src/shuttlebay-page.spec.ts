@@ -163,6 +163,9 @@ test.describe('Shuttlebay live stream', () => {
     // only the browser clock beyond the three-heartbeat expiry; no sleep.
     const recovery = await pending[2];
     await page.clock.fastForward(190_000);
+    const warnings = page.getByTestId('data-warnings');
+    await expect(warnings).toBeVisible();
+    await warnings.locator('summary').click();
     await expect(
       page.getByText('Runner capacity status is stale.'),
     ).toBeVisible();
