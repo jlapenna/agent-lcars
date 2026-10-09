@@ -25,7 +25,26 @@ grep -Fq '/usr/local/lib/agent-lcars/runtime' "$dockerfile" || {
 # once direct-runner.sh execs them for real.
 tmp="$(mktemp -d)"
 export tmp
-trap 'rm -rf "$tmp"' EXIT
+export AGENT_LCARS_JOB_DAEMON_STATE_ROOT="$tmp/job-daemon-state"
+cleanup() {
+  local result=$?
+  trap - EXIT
+  if [ "$result" -ne 0 ]; then
+    echo 'direct-runner fixture failure diagnostics (last 4KiB per log):' >&2
+    for log in "${scenario_log:-}" "${NODE_ARGS_LOG:-}" "$tmp/sidecar.log"; do
+      if [ -f "$log" ]; then
+        printf '\n%s\n' "$log" >&2
+        tail -c 4096 "$log" >&2
+      fi
+    done
+  fi
+  if [ -n "${baked:-}" ] && [ -x "$baked/job-daemon-real.sh" ]; then
+    "$baked/job-daemon-real.sh" stop telemetry >/dev/null 2>&1 || true
+  fi
+  rm -rf "$tmp"
+  exit "$result"
+}
+trap cleanup EXIT
 
 # --- Fake baked image tree -------------------------------------------------
 # Build the native runtime shape produced by the Dockerfile, including its
@@ -49,20 +68,34 @@ export WORKER_POLICY_NODE="$real_node"
 # delegates to the fake `node` below. Keep it separate from the source tree:
 # the real runner image contains the compiled bundle, while this shell harness
 # deliberately verifies the lifecycle arguments without starting Firestore.
-cp "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" "$baked/sidecar-lifecycle.sh"
+sed 's|^LOG_FILE=/tmp/runner-telemetry/sidecar.log$|LOG_FILE="$tmp/sidecar.log"|' \
+  "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" > "$baked/sidecar-lifecycle.sh"
+grep -Fq 'LOG_FILE="$tmp/sidecar.log"' "$baked/sidecar-lifecycle.sh" || {
+  echo 'fixture failed to isolate the sidecar log' >&2
+  exit 1
+}
 cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon-real.sh"
 # job-daemon backgrounds the sidecar and returns, and finalize stops it at
 # once; a fast scenario could kill the fake sidecar before it logged its
-# argv. Record what `start` launches before it is backgrounded instead.
+# argv. Wait for the actual fake child to record its argv before returning.
+# This readiness barrier belongs only to the fixture; production stays async.
 cat > "$baked/job-daemon.sh" <<'FAKE'
 #!/usr/bin/env bash
-if [ "${1:-}" = start ]; then
-  sep=1
-  while [ "$sep" -le "$#" ] && [ "${!sep}" != -- ]; do sep=$((sep + 1)); done
-  FAKE_NODE_RECORD_ONLY=1 "${@:sep+1}"
-  export FAKE_NODE_RECORDED=1
+set -euo pipefail
+daemon="$(dirname "$0")/job-daemon-real.sh"
+if [ "${1:-}" != start ]; then
+  exec "$daemon" "$@"
 fi
-exec "$(dirname "$0")/job-daemon-real.sh" "$@"
+mkdir -p "$AGENT_LCARS_JOB_DAEMON_STATE_ROOT"
+FAKE_SIDECAR_READY_FILE="$(mktemp "$AGENT_LCARS_JOB_DAEMON_STATE_ROOT/ready.XXXXXX")"
+export FAKE_SIDECAR_READY_FILE
+"$daemon" "$@"
+if ! /usr/bin/timeout --signal=TERM --kill-after=1s 5s /bin/bash -c \
+  'until [ -s "$1" ]; do sleep 0.01; done' _ "$FAKE_SIDECAR_READY_FILE"; then
+  echo 'fixture sidecar did not record its actual arguments within 5s' >&2
+  exit 1
+fi
+rm -f "$FAKE_SIDECAR_READY_FILE"
 FAKE
 chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh" "$baked/job-daemon-real.sh"
 BAKED_SIDECAR_LIFECYCLE="$baked/sidecar-lifecycle.sh"
@@ -537,17 +570,15 @@ FAKE
   # invalid for the requested-resume contract.
 cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
-# The baked job-daemon wrapper already recorded a sidecar it launched.
-if [ -z "${FAKE_NODE_RECORDED:-}" ]; then
-  echo "$@" >> "$NODE_ARGS_LOG"
-  if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
-    echo sidecar >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
-    if [ ! -f "$tmp/opencode-initialized" ]; then
-      touch "$tmp/opencode-startup-race"
-    fi
+echo "$@" >> "$NODE_ARGS_LOG"
+if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
+  echo sidecar >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
+  if [ ! -f "$tmp/opencode-initialized" ]; then
+    touch "$tmp/opencode-startup-race"
   fi
+  [ -z "${FAKE_SIDECAR_READY_FILE:-}" ] || \
+    printf '%s\n' ready > "$FAKE_SIDECAR_READY_FILE"
 fi
-[ "${FAKE_NODE_RECORD_ONLY:-}" != 1 ] || exit 0
 # Stands in for the real sidecar's `runner finalize` subcommand (issue
 # #1784): when direct-runner.sh's sidecar-lifecycle.sh threads
 # --opencode-last-message-file through, this simulates the sidecar writing
