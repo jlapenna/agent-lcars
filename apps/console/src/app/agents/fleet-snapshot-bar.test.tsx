@@ -150,7 +150,7 @@ describe('FleetSnapshotBar', () => {
       '3 running runs',
     );
     expect(screen.getByTestId('metric-runner-occupancy').textContent).toBe(
-      '2/5 runners busy',
+      '2/5 GitHub runners running',
     );
   });
 

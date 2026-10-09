@@ -14,22 +14,31 @@ vi.mock('@agent-lcars/telemetry/server', () => ({
 
 function status(overrides: Record<string, unknown> = {}) {
   return {
-    schemaVersion: 1,
-    scaleSet: 'lcars-ci',
-    registration: 'primary',
-    registrationUrl: 'https://github.com/jlapenna/agent-lcars',
-    queuedJobs: 2,
-    minRunners: 0,
-    maxRunners: 4,
+    schemaVersion: 2,
+    kind: 'queue-executor',
+    executor: 'queue',
+    ready: true,
     draining: false,
-    runners: [
-      { name: 'runner-idle', host: 'janeway', state: 'idle' },
-      { name: 'runner-busy', host: 'spark', state: 'busy', jobId: 'job-42' },
-    ],
+    activeRuns: 2,
+    maxConcurrent: 3,
     updatedAt: new Date().toISOString(),
     ...overrides,
   };
 }
+const lane = {
+  schemaVersion: 3,
+  kind: 'arc-lane',
+  lane: 'lcars-ci',
+  registrationUrl: 'https://github.com/jlapenna/agent-lcars',
+  assignedJobs: 3,
+  runningJobs: 1,
+  pendingJobs: 2,
+  idleRunners: 1,
+  registeredRunners: 2,
+  desiredRunners: 3,
+  minRunners: 0,
+  maxRunners: 4,
+};
 
 function mockStore(docs: unknown[]) {
   (getAgentTelemetryReaderFirestore as Mock).mockResolvedValue({
@@ -43,139 +52,74 @@ function mockStore(docs: unknown[]) {
 
 describe('getAutoscalerStatuses', () => {
   afterEach(() => vi.resetAllMocks());
-
-  it('reads fresh ARC capacity without leaking Firestore metadata, rejecting uncertain counts', async () => {
-    const lane = {
-      schemaVersion: 3,
-      kind: 'arc-lane',
-      lane: 'lcars-ci',
-      registrationUrl: 'https://github.com/jlapenna/agent-lcars',
-      assignedJobs: 3,
-      runningJobs: 1,
-      pendingJobs: 2,
-      idleRunners: 1,
-      registeredRunners: 2,
-      desiredRunners: 3,
-      minRunners: 0,
-      maxRunners: 4,
-      updatedAt: new Date().toISOString(),
-    };
+  it('projects fresh ARC and v2 executor contracts without Firestore metadata', async () => {
+    const updatedAt = new Date().toISOString();
     mockStore([
-      { ...lane, expireAt: Timestamp.now() },
-      {
-        ...lane,
-        lane: 'stale',
-        updatedAt: new Date(Date.now() - 181_000).toISOString(),
-      },
-      { ...lane, lane: 'bad', runningJobs: NaN },
-      { ...lane, lane: 'unsafe', registrationUrl: 'javascript:alert(1)' },
+      { ...lane, updatedAt, expireAt: Timestamp.now() },
+      status({ expireAt: Timestamp.now() }),
     ]);
     const result = await getAutoscalerStatuses();
-    expect(result.lanes).toEqual([lane]);
-    expect(result.statuses).toEqual([]);
-    expect(result.warnings).toEqual(['ARC lane status is stale.']);
+    expect(result.lanes).toEqual([{ ...lane, updatedAt }]);
+    expect(result.queueExecutor).toEqual(
+      status({ updatedAt: expect.any(String) }),
+    );
+    expect(JSON.stringify(result)).not.toContain('expireAt');
   });
 
-  it('returns fresh, schema-valid scale set snapshots', async () => {
-    const firestoreOnlyFields = {
-      expireAt: Timestamp.now(),
-    };
+  it('ignores retired scale-set records instead of publishing obsolete capacity', async () => {
     mockStore([
-      status({
-        ...firestoreOnlyFields,
-        runners: [
-          {
-            name: 'runner-idle',
-            host: 'janeway',
-            state: 'idle',
-            firestoreMetadata: firestoreOnlyFields,
-          },
-          {
-            name: 'runner-busy',
-            host: 'spark',
-            state: 'busy',
-            jobId: 'job-42',
-          },
-        ],
-      }),
-    ]);
-
-    const result = await getAutoscalerStatuses();
-
-    expect(result.warnings).toEqual([]);
-    expect(result.statuses).toEqual([
       {
         schemaVersion: 1,
-        scaleSet: 'lcars-ci',
+        scaleSet: 'retired',
         registration: 'primary',
-        registrationUrl: 'https://github.com/jlapenna/agent-lcars',
         queuedJobs: 2,
         minRunners: 0,
         maxRunners: 4,
         draining: false,
-        runners: [
-          { name: 'runner-idle', host: 'janeway', state: 'idle' },
-          {
-            name: 'runner-busy',
-            host: 'spark',
-            state: 'busy',
-            jobId: 'job-42',
-          },
-        ],
-        updatedAt: expect.any(String),
-      },
-    ]);
-  });
-
-  it('drops stale or malformed registrations instead of presenting them as live', async () => {
-    mockStore([
-      status({ updatedAt: new Date(Date.now() - 181_000).toISOString() }),
-      status({ schemaVersion: 2 }),
-      status({ runners: [{ name: 'bad', host: 'spark', state: 'unknown' }] }),
-    ]);
-
-    expect((await getAutoscalerStatuses()).statuses).toEqual([]);
-  });
-
-  it('parses the additive queue-executor health record without treating it as scale-set capacity', async () => {
-    mockStore([
-      status(),
-      {
-        schemaVersion: 2,
-        kind: 'queue-executor',
-        executor: 'queue',
-        ready: true,
-        draining: false,
-        activeRuns: 2,
-        maxConcurrent: 3,
+        runners: [{ name: 'old', host: 'old', state: 'busy' }],
         updatedAt: new Date().toISOString(),
       },
     ]);
-
     const result = await getAutoscalerStatuses();
+    expect(result).toEqual({ lanes: [], warnings: [] });
+    expect(result).not.toHaveProperty('statuses');
+  });
 
-    expect(result.statuses).toHaveLength(1);
-    expect(result.queueExecutor).toEqual({
-      schemaVersion: 2,
-      kind: 'queue-executor',
-      executor: 'queue',
-      ready: true,
-      draining: false,
-      activeRuns: 2,
-      maxConcurrent: 3,
-      updatedAt: expect.any(String),
-    });
+  it('rejects malformed ARC counts and unsafe registration URLs, warning for stale producers', async () => {
+    const updatedAt = new Date().toISOString();
+    mockStore([
+      { ...lane, updatedAt: new Date(Date.now() - 181_000).toISOString() },
+      { ...lane, updatedAt, runningJobs: NaN },
+      { ...lane, updatedAt, registrationUrl: 'javascript:alert(1)' },
+      status(),
+    ]);
+    const result = await getAutoscalerStatuses();
+    expect(result.lanes).toEqual([]);
+    expect(result.queueExecutor).toBeDefined();
+    expect(result.warnings).toContain('ARC lane status is stale.');
+    expect(result.warnings).toContain('ARC lane status is invalid.');
+    expect(result.lanesIncomplete).toBe(true);
+  });
+
+  it('drops stale and malformed executor records without conflating unknown with zero', async () => {
+    mockStore([
+      status({ updatedAt: new Date(Date.now() - 181_000).toISOString() }),
+      status({ ready: 'yes' }),
+    ]);
+    expect((await getAutoscalerStatuses()).queueExecutor).toBeUndefined();
+    mockStore([status({ activeRuns: undefined, maxConcurrent: 0 })]);
+    const result = await getAutoscalerStatuses();
+    expect(result.queueExecutor).not.toHaveProperty('activeRuns');
+    expect(result.queueExecutor?.maxConcurrent).toBe(0);
   });
 
   it('degrades without throwing when telemetry reads fail', async () => {
     (getAgentTelemetryReaderFirestore as Mock).mockRejectedValue(
       new Error('offline'),
     );
-
-    const result = await getAutoscalerStatuses();
-
-    expect(result.statuses).toEqual([]);
-    expect(result.warnings[0]).toContain('unavailable');
+    expect((await getAutoscalerStatuses()).warnings[0]).toContain(
+      'unavailable',
+    );
   });
 });
 
@@ -205,10 +149,10 @@ describe('subscribeAutoscalerStatuses', () => {
       results.push(result),
     );
     emit([status({ expireAt: Timestamp.now() })]);
-    emit([status({ queuedJobs: 5 })]);
+    emit([status({ activeRuns: 5 })]);
 
     expect(results).toHaveLength(2);
-    expect(results[1]).toMatchObject({ statuses: [{ queuedJobs: 5 }] });
+    expect(results[1]).toMatchObject({ queueExecutor: { activeRuns: 5 } });
     expect(JSON.stringify(results[0])).not.toContain('expireAt');
     stop();
     expect(unsubscribe).toHaveBeenCalledOnce();

@@ -219,7 +219,7 @@ test.describe('populated dashboard', () => {
     // stalled past the threshold, which is what drives the queue alert.
     await expect(page.getByTestId('queue-health-alert')).toBeVisible();
     await expect(page.getByTestId('fleet-chip')).toHaveText(
-      '2 scale-set runners active (1 busy)',
+      '2 GitHub runners registered (1 running) · Direct executor ready (limit 3)',
     );
 
     // #306: the fixture's duplicate live attempt on the same issue/pipeline

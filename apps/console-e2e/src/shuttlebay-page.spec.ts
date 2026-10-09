@@ -110,14 +110,13 @@ test.describe('Shuttlebay live stream', () => {
     });
     await page.clock.install();
     await page.goto('/shuttlebay');
-    const fleet = page.getByTestId('autoscaler-scale-set-e2e-fixture-runners');
-    await expect(fleet).toContainText('0 queued · 1 busy · 1 idle · 2 max');
-    await expect(
-      page.getByTestId('autoscaler-runner-e2e-fixture-runner-1'),
-    ).toBeVisible();
+    const fleet = page.getByTestId('arc-lane-e2e-fixture-runners');
+    await expect(fleet).toContainText(
+      '1 running · 1 idle · 2 registered · 2 desired · 2 max',
+    );
 
     const snapshot = (activeRuns: number, updatedAt: string) => ({
-      statuses: [],
+      lanes: [],
       warnings: [],
       queueExecutor: {
         schemaVersion: 2,

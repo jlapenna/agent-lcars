@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   agentRunFromOrchestrator,
   duplicateLiveGroups,
+  fleetFromAutoscalerStatuses,
   getAgentActivity,
   queueFromLiveRuns,
 } from './agent-activity';
@@ -80,7 +81,6 @@ beforeEach(() => {
     store,
   });
   (getAutoscalerStatuses as ReturnType<typeof vi.fn>).mockResolvedValue({
-    statuses: [],
     warnings: [],
   });
   store.listLiveRuns.mockResolvedValue([]);
@@ -136,19 +136,20 @@ describe('getAgentActivity', () => {
         : { task: github, revision: 1 },
     );
     (getAutoscalerStatuses as ReturnType<typeof vi.fn>).mockResolvedValue({
-      statuses: [
+      lanes: [
         {
-          schemaVersion: 1,
-          scaleSet: 'linux-arm64',
-          registration: 'registered',
-          queuedJobs: 0,
+          schemaVersion: 3,
+          kind: 'arc-lane',
+          lane: 'lcars-ci',
+          registrationUrl: 'https://github.com/octo/example',
+          assignedJobs: 1,
+          runningJobs: 1,
+          pendingJobs: 0,
+          registeredRunners: 2,
+          idleRunners: 1,
+          desiredRunners: 2,
           minRunners: 0,
           maxRunners: 2,
-          draining: false,
-          runners: [
-            { name: 'a', host: 'laforge', state: 'busy' },
-            { name: 'b', host: 'janeway', state: 'idle' },
-          ],
           updatedAt: '2026-08-28T12:00:00.000Z',
         },
       ],
@@ -225,6 +226,71 @@ describe('getAgentActivity', () => {
       older.runId,
     ]);
     expect(store.readTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('fleetFromAutoscalerStatuses', () => {
+  it('does not turn a mixed fresh-zero/stale ARC fleet into a zero total', () => {
+    const status = {
+      lanes: [
+        {
+          schemaVersion: 3 as const,
+          kind: 'arc-lane' as const,
+          lane: 'fresh-zero',
+          registrationUrl: 'https://github.com/octo/example',
+          assignedJobs: 0,
+          runningJobs: 0,
+          pendingJobs: 0,
+          idleRunners: 0,
+          registeredRunners: 0,
+          desiredRunners: 0,
+          minRunners: 0,
+          maxRunners: 2,
+          updatedAt: T0,
+        },
+      ],
+      queueExecutor: {
+        schemaVersion: 2 as const,
+        kind: 'queue-executor' as const,
+        executor: 'queue' as const,
+        ready: true,
+        draining: false,
+        maxConcurrent: 3,
+        updatedAt: T0,
+      },
+      warnings: ['ARC lane status is stale.'],
+      lanesIncomplete: true,
+    };
+    expect(fleetFromAutoscalerStatuses(status)).toEqual({
+      directExecutor: { ready: true, draining: false, maxConcurrent: 3 },
+    });
+    expect(
+      fleetFromAutoscalerStatuses({
+        ...status,
+        warnings: [],
+        lanesIncomplete: false,
+      }),
+    ).toMatchObject({ online: 0, busy: 0 });
+  });
+  it('keeps absent ARC capacity unknown and direct executor health separate', () => {
+    expect(fleetFromAutoscalerStatuses({ warnings: [] })).toEqual({});
+    expect(
+      fleetFromAutoscalerStatuses({
+        warnings: [],
+        queueExecutor: {
+          schemaVersion: 2,
+          kind: 'queue-executor',
+          executor: 'queue',
+          ready: true,
+          draining: false,
+          activeRuns: 20,
+          maxConcurrent: 3,
+          updatedAt: T0,
+        },
+      }),
+    ).toEqual({
+      directExecutor: { ready: true, draining: false, maxConcurrent: 3 },
+    });
   });
 });
 

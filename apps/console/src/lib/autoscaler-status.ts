@@ -10,28 +10,8 @@ import { RUNNER_STATUS_STALENESS_MS } from './runner-status-contract';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
 
-export interface AutoscalerRunnerStatus {
-  name: string;
-  host: string;
-  state: 'idle' | 'busy';
-  jobId?: string;
-}
-
-export interface AutoscalerScaleSetStatus {
-  schemaVersion: 1;
-  scaleSet: string;
-  registration: string;
-  registrationUrl?: string;
-  queuedJobs: number;
-  minRunners: number;
-  maxRunners: number;
-  draining: boolean;
-  runners: AutoscalerRunnerStatus[];
-  updatedAt: string;
-}
-
-/** Generic direct-executor health, intentionally separate from v1 scale-set
- * capacity. Queue lifecycle counts belong to orchestrator Run records, not
+/** Generic direct-executor health, separate from ARC GitHub runner capacity.
+ * Queue lifecycle counts belong to orchestrator Run records, not
  * this host telemetry projection. */
 export interface QueueExecutorStatus {
   schemaVersion: 2;
@@ -45,8 +25,9 @@ export interface QueueExecutorStatus {
 }
 
 export interface AutoscalerStatusResult {
-  statuses: AutoscalerScaleSetStatus[];
   lanes?: ArcLaneStatus[];
+  /** At least one known ARC producer is stale or invalid; totals are partial. */
+  lanesIncomplete?: boolean;
   queueExecutor?: QueueExecutorStatus;
   warnings: string[];
 }
@@ -110,80 +91,6 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
   };
 }
 
-function parseRunner(value: unknown): AutoscalerRunnerStatus | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const runner = value as Record<string, unknown>;
-  if (
-    typeof runner['name'] === 'string' &&
-    typeof runner['host'] === 'string' &&
-    (runner['state'] === 'idle' || runner['state'] === 'busy') &&
-    (runner['jobId'] === undefined || typeof runner['jobId'] === 'string')
-  ) {
-    // This is the server-to-client transport boundary. Do not return the
-    // Firestore value (or a spread of it): Firestore can add Timestamp and
-    // other class instances which React Server Components cannot serialize.
-    return {
-      name: runner['name'],
-      host: runner['host'],
-      state: runner['state'],
-      ...(typeof runner['jobId'] === 'string'
-        ? { jobId: runner['jobId'] }
-        : {}),
-    };
-  }
-  return undefined;
-}
-
-function parseRunners(value: unknown): AutoscalerRunnerStatus[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const runners: AutoscalerRunnerStatus[] = [];
-  for (const candidate of value) {
-    const runner = parseRunner(candidate);
-    if (!runner) return undefined;
-    runners.push(runner);
-  }
-  return runners;
-}
-
-function parseStatus(value: unknown): AutoscalerScaleSetStatus | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const status = value as Record<string, unknown>;
-  const runners = parseRunners(status['runners']);
-  if (
-    status['schemaVersion'] !== 1 ||
-    typeof status['scaleSet'] !== 'string' ||
-    typeof status['registration'] !== 'string' ||
-    (status['registrationUrl'] !== undefined &&
-      typeof status['registrationUrl'] !== 'string') ||
-    typeof status['queuedJobs'] !== 'number' ||
-    typeof status['minRunners'] !== 'number' ||
-    typeof status['maxRunners'] !== 'number' ||
-    typeof status['draining'] !== 'boolean' ||
-    typeof status['updatedAt'] !== 'string' ||
-    !runners
-  ) {
-    return undefined;
-  }
-  // Keep this server-to-client mapping explicit: only primitive,
-  // client-contract fields may leave the server. In
-  // particular, `expireAt` is a Firestore Timestamp used only for server-side
-  // staleness and must never enter a Client Component prop.
-  return {
-    schemaVersion: 1,
-    scaleSet: status['scaleSet'],
-    registration: status['registration'],
-    ...(typeof status['registrationUrl'] === 'string'
-      ? { registrationUrl: status['registrationUrl'] }
-      : {}),
-    queuedJobs: status['queuedJobs'],
-    minRunners: status['minRunners'],
-    maxRunners: status['maxRunners'],
-    draining: status['draining'],
-    runners,
-    updatedAt: status['updatedAt'],
-  };
-}
-
 function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const status = value as Record<string, unknown>;
@@ -229,13 +136,6 @@ export function projectAutoscalerStatuses(
   records: readonly unknown[],
   now = Date.now(),
 ): AutoscalerStatusResult {
-  const statuses = records
-    .map((record) => parseStatus(record))
-    .filter(
-      (status): status is AutoscalerScaleSetStatus =>
-        status !== undefined && isFresh(status.updatedAt, now),
-    )
-    .sort((a, b) => a.scaleSet.localeCompare(b.scaleSet));
   const queueExecutor = records
     .map((record) => parseQueueExecutor(record))
     .find(
@@ -248,17 +148,27 @@ export function projectAutoscalerStatuses(
   const lanes = laneRecords
     .filter((status) => isFresh(status.updatedAt, now))
     .sort((a, b) => a.lane.localeCompare(b.lane));
+  const arcRecordCount = records.filter(
+    (record) =>
+      record !== null &&
+      typeof record === 'object' &&
+      'kind' in record &&
+      record.kind === 'arc-lane',
+  ).length;
+  const stale = laneRecords.length > lanes.length;
+  const invalid = arcRecordCount > laneRecords.length;
   return {
-    statuses,
     lanes,
+    ...(stale || invalid ? { lanesIncomplete: true } : {}),
     ...(queueExecutor === undefined ? {} : { queueExecutor }),
-    warnings:
-      laneRecords.length > lanes.length ? ['ARC lane status is stale.'] : [],
+    warnings: [
+      ...(stale ? ['ARC lane status is stale.'] : []),
+      ...(invalid ? ['ARC lane status is invalid.'] : []),
+    ],
   };
 }
 
 const UNAVAILABLE: AutoscalerStatusResult = {
-  statuses: [],
   warnings: ['Runner autoscaler status unavailable (telemetry store failed).'],
 };
 

@@ -48,7 +48,8 @@ function MetricsRow({ metrics }: { metrics: ActivityMetrics }) {
       </Text>
       {metrics.onlineRunners !== undefined && (
         <Text size="xs" c="dimmed" data-testid="metric-runner-occupancy">
-          {metrics.busyRunners ?? 0}/{metrics.onlineRunners} runners busy
+          {metrics.busyRunners ?? 0}/{metrics.onlineRunners} GitHub runners
+          running
         </Text>
       )}
     </Group>

@@ -7,7 +7,7 @@ import {
 import { workSpecSchema } from '@agent-lcars/work';
 
 import {
-  type AutoscalerScaleSetStatus,
+  type AutoscalerStatusResult,
   getAutoscalerStatuses,
 } from './autoscaler-status';
 import { repoItemKey, type WatchedRepo } from './github-client';
@@ -69,8 +69,10 @@ export interface AgentRun {
 /** The server-owned autoscaler telemetry aggregate. Runners are ephemeral,
  * can scale to zero when idle, and have no useful repository affiliation. */
 export interface FleetSummary {
-  online: number;
-  busy: number;
+  /** Fresh ARC GitHub Actions capacity only; absent is not scaled-to-zero. */
+  online?: number;
+  busy?: number;
+  directExecutor?: { ready: boolean; draining: boolean; maxConcurrent: number };
 }
 
 export interface AgentActivity {
@@ -86,7 +88,7 @@ export interface AgentActivity {
    * this field itself is the raw, ungrouped truth. */
   liveRuns: AgentRun[];
   recentRuns: AgentRun[];
-  /** undefined = the authoritative runner telemetry read failed. */
+  /** Missing subfields indicate unavailable capacity, never a real zero. */
   fleet?: FleetSummary;
   /** Lifecycle counts from authoritative Run records, never scale-set
    * telemetry. `claimed` remains pending until its executor starts it. */
@@ -95,21 +97,33 @@ export interface AgentActivity {
   warnings: string[];
 }
 
-/** Reduces the autoscaler's current-state projection once for the entire
- * fleet. It deliberately has no repository or provider input: scale-set
- * telemetry is the control plane's authoritative runner truth. */
+/** ARC runners and direct-executor health are separate measures. Never add
+ * Kubernetes agent Jobs to the GitHub Actions runner count. */
 export function fleetFromAutoscalerStatuses(
-  statuses: readonly AutoscalerScaleSetStatus[],
+  status: AutoscalerStatusResult,
 ): FleetSummary {
-  let online = 0;
-  let busy = 0;
-  for (const status of statuses) {
-    for (const runner of status.runners) {
-      online += 1;
-      if (runner.state === 'busy') busy += 1;
-    }
-  }
-  return { online, busy };
+  const lanes = status.lanes ?? [];
+  const executor = status.queueExecutor;
+  return {
+    ...(lanes.length === 0 || status.lanesIncomplete
+      ? {}
+      : {
+          online: lanes.reduce(
+            (count, lane) => count + lane.registeredRunners,
+            0,
+          ),
+          busy: lanes.reduce((count, lane) => count + lane.runningJobs, 0),
+        }),
+    ...(executor === undefined
+      ? {}
+      : {
+          directExecutor: {
+            ready: executor.ready,
+            draining: executor.draining,
+            maxConcurrent: executor.maxConcurrent,
+          },
+        }),
+  };
 }
 
 export interface QueueRunSummary {
@@ -347,7 +361,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   const autoscaler =
     autoscalerRead.status === 'fulfilled'
       ? autoscalerRead.value
-      : { statuses: [], warnings: ['Runner autoscaler status unavailable.'] };
+      : { warnings: ['Runner autoscaler status unavailable.'] };
 
   if (liveRead.status === 'rejected') {
     logger.error(
@@ -418,14 +432,9 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     warnings.push('Authoritative run activity contains invalid task metadata.');
   }
 
-  // A telemetry warning means the reader could not establish authoritative
-  // fleet state, so do not turn that into a misleading zero-runner result.
-  // Propagate its single fleet-level warning unchanged rather than emitting
-  // one synthetic failure per watched repository.
-  const fleet =
-    autoscaler.warnings.length === 0
-      ? fleetFromAutoscalerStatuses(autoscaler.statuses)
-      : undefined;
+  // Preserve fresh independent producers even if another is stale or absent;
+  // unknown subfields must not become misleading zero capacity.
+  const fleet = fleetFromAutoscalerStatuses(autoscaler);
   warnings.push(...autoscaler.warnings);
 
   return {

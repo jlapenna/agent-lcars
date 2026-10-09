@@ -228,9 +228,10 @@ the work that has stopped, and the work in flight.
     timeout).
   - Recent outcomes.
   - Active CLI sessions.
-  - A fleet chip. It is vestigial: it counts runners from the retired
-    scale-set status documents, so it renders nothing in production unless
-    the status read fails ("Runner status unavailable"). See R12.
+  - A fleet chip showing registered/running GitHub Actions runners from
+    fresh ARC lane records separately from direct-executor readiness,
+    draining state and concurrency limit. Missing capacity is unavailable,
+    not zero; fresh scaled-to-zero capacity remains visible.
 - **FE-BR-4 [Shipped]** The "Waiting on Deploy" (`post-deploy-action`) and
   "Blocked" (`blocked`) sections hold waiting items. These are intentionally
   kept out of the decision queue.
@@ -299,7 +300,8 @@ the work that has stopped, and the work in flight.
 **Purpose:** a live operational view of every agent and claim.
 
 - **FE-AG-1 [Shipped]** `FleetSnapshotBar` shows, per pipeline, live runs,
-  active CLI sessions, the (vestigial) fleet chip, and activity metrics.
+  active CLI sessions, the current ARC/direct-executor fleet chip, and
+  activity metrics. GitHub runner capacity is not direct agent Job occupancy.
 - **FE-AG-2 [Shipped]** **Active Agents** shows runs classified as `running`,
   `succeeded`, `failed`, `timeout`, `cancelled`, or `silent-error`, each with a
   diagnosis string.
@@ -326,9 +328,9 @@ the work that has stopped, and the work in flight.
   badge, a `draining` badge, and its active and maximum Job counts.
 - **FE-SB-2 [Shipped]** Each ARC lane (status documents published by the
   executor) shows pending, running, idle, registered, desired, and maximum
-  runners. A legacy scale-set row (queued, busy, idle, max, draining, and a
-  runner list) still renders the retired v1 documents, which are no longer
-  published.
+  runners. Direct agent executor health is shown separately. Retired v1
+  scale-set documents are ignored. Missing/stale ARC or executor snapshots
+  render explicit unavailable states rather than implying zero capacity.
 - **FE-SB-3 [Shipped]** The data is live over SSE, and a staleness banner
   appears after 180s.
 - **FE-SB-4 [Proposed]** Show claim throughput and provider cooldowns:
@@ -541,7 +543,6 @@ Priorities assume the single-maintainer design center.
 | R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                           | P2       |
 | R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                            | P2       |
 | R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                         | P3       |
-| R12 | Re-point the fleet chip at the queue-executor and ARC lane documents, or remove it, and drop the legacy scale-set row from Shuttlebay | Both read status documents that are no longer published                    | P2       |
 
 ## 11. Success metrics
 

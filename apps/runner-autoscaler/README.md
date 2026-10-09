@@ -126,9 +126,9 @@ orchestrator Run records, not autoscaler telemetry.
 The scale-set runtime this process used to also run published one additional
 document per scale set to the same collection (`schemaVersion: 1`); that
 publication was retired along with the scale-set code itself. The console
-(`apps/console/src/lib/autoscaler-status.ts`) still reads and tolerates that
-shape, so no console change was needed -- those documents simply stop being
-written and age out of the console's 30-second staleness window.
+ignores that retired shape and reads only current ARC lane and direct-executor
+records, with the shared three-minute staleness window. GitHub Actions runner
+capacity and direct agent Job occupancy are displayed separately.
 
 ## Queue executor (direct-mode runners)
 

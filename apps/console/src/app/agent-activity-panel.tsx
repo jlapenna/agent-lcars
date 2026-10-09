@@ -299,8 +299,8 @@ export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
 }
 
 /**
- * A dimmed scale-set capacity chip when the fleet has any online runners;
- * nothing at all when it is scaled to zero. This is intentionally not direct
+ * Separate current GitHub Actions capacity and direct-executor health;
+ * fresh zero capacity remains visible. This is intentionally not direct
  * queue-executor occupancy: queued/claimed/running work comes from durable
  * orchestrator Run records elsewhere in the activity view.
  */
@@ -312,11 +312,15 @@ export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
       </Text>
     );
   }
-  if (fleet.online === 0) return null;
   return (
     <Text size="xs" c="dimmed" data-testid="fleet-chip">
-      {fleet.online} scale-set runner{fleet.online === 1 ? '' : 's'} active
-      {fleet.busy > 0 ? ` (${fleet.busy} busy)` : ''}
+      {fleet.online === undefined
+        ? 'GitHub runner status unavailable'
+        : `${fleet.online} GitHub runner${fleet.online === 1 ? '' : 's'} registered (${fleet.busy ?? 0} running)`}
+      {' · '}
+      {fleet.directExecutor === undefined
+        ? 'Direct executor status unavailable'
+        : `Direct executor ${fleet.directExecutor.ready ? 'ready' : 'not ready'}${fleet.directExecutor.draining ? ', draining' : ''} (limit ${fleet.directExecutor.maxConcurrent})`}
     </Text>
   );
 }
