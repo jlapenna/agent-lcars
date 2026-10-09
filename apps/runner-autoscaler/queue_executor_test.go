@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -687,6 +688,105 @@ func TestQueueExecutorPollerCleanupDoesNotBlockClaims(t *testing.T) {
 	case <-cleanupDone:
 	case <-time.After(time.Second):
 		t.Fatal("cleanup did not stop with the poller context")
+	}
+}
+
+func TestQueueExecutorPollerRecoversEachTickWithoutOverlapOrBlockingClaims(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan context.Context, 4)
+	release := make(chan struct{})
+	claims := make(chan struct{}, 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case claims <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runQueueExecutorPoller(ctx, queueExecutorConfig{
+			consoleURL: server.URL,
+			runnerName: "executor",
+			idToken:    func() (string, error) { return "token", nil },
+			reserve:    reserveFor(func(directRunnerLaunch) error { return nil }),
+			recover: func(recoveryCtx context.Context) error {
+				started <- recoveryCtx
+				select {
+				case <-release:
+					return fmt.Errorf("transient API failure")
+				case <-recoveryCtx.Done():
+					return recoveryCtx.Err()
+				}
+			},
+		}, 5*time.Millisecond, discardLogger())
+	}()
+	var recoveryCtx context.Context
+	select {
+	case recoveryCtx = <-started:
+	case <-time.After(time.Second):
+		t.Fatal("startup recovery did not start")
+	}
+	deadline, ok := recoveryCtx.Deadline()
+	if !ok || time.Until(deadline) > queueStartupRecoveryTimeout {
+		t.Fatal("recovery sweep has no finite bound")
+	}
+	for range 3 {
+		select {
+		case <-claims:
+		case <-time.After(time.Second):
+			t.Fatal("recovery blocked claim polling")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("overlapping recovery sweep")
+	default:
+	}
+	release <- struct{}{}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("ordinary tick did not retry failed recovery")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("poller did not stop")
+	}
+	select {
+	case <-recoveryCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("recovery did not honor cancellation")
+	}
+}
+
+func TestQueueExecutorPollerSkipsRecoveryWhileDraining(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	recovery := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runQueueExecutorPoller(ctx, queueExecutorConfig{
+			draining: func() bool { return true },
+			recover:  func(context.Context) error { recovery <- struct{}{}; return nil },
+		}, 5*time.Millisecond, discardLogger())
+	}()
+	select {
+	case <-recovery:
+		t.Fatal("draining executor resumed work")
+	case <-time.After(30 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("draining poller did not stop")
 	}
 }
 

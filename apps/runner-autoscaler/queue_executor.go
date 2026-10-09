@@ -38,8 +38,8 @@ type queueExecutorConfig struct {
 	consoleURL string
 	runnerName string
 	httpClient *http.Client
-	// recover resumes Jobs interrupted between create and start before new
-	// claims.
+	// recover resumes eligible never-started Jobs at startup and during normal
+	// polling. A bounded, non-overlapping sweep never holds the claim path.
 	recover func(context.Context) error
 	// idToken mints a Google ID token for the console's work audience.
 	// Production wires this to idTokenFromSource; tests inject a stub.
@@ -50,8 +50,8 @@ type queueExecutorConfig struct {
 	// minting a token.
 	//
 	// A launch failure leaves the run claimed on the control plane -- there
-	// is no un-claim callback, by design. Recovery is passive, and NOT a
-	// return to `queued`: the claim's lease eventually expires (`LEASE_MS`),
+	// is no un-claim callback, by design. Safe startup handoffs are retried
+	// under the original token; unrecoverable launches still expire (`LEASE_MS`),
 	// `expireLease` settles this exact run to `lost`, and the orchestrator's
 	// own bounded auto-retry (`Orchestrator.sweepExpired`,
 	// `MAX_AUTO_RETRIES`, then parked) mints a brand new run for the same
@@ -237,16 +237,28 @@ func idTokenFromSource(source oauth2.TokenSource) (string, error) {
 
 // runQueueExecutorPoller ticks pollOnce on cfg's interval until ctx is
 // done. A single failed claim is logged and never fatal: the next tick tries
-// again. This is also the only handling a failed launch gets: see
-// queueExecutorConfig.reserve's doc comment for how a claimed-but-never-
-// launched run recovers (lease expiry -> lost -> a brand new run minted by
-// auto-retry), since there is no un-claim callback to call here instead.
+// again. Startup recovery retries original eligible suspended Jobs without
+// blocking claims; unrecoverable attempts retain ordinary lease recovery.
 func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interval time.Duration, logger *slog.Logger) {
-	if cfg.recover != nil {
-		if err := cfg.recover(ctx); err != nil {
-			logger.Warn("Queue Job startup recovery incomplete", slog.Any("error", err))
+	recoveryRunning := make(chan struct{}, 1)
+	recoverStartup := func() {
+		if cfg.recover == nil || (cfg.draining != nil && cfg.draining()) {
+			return
+		}
+		select {
+		case recoveryRunning <- struct{}{}:
+			go func() {
+				defer func() { <-recoveryRunning }()
+				recoveryCtx, cancel := context.WithTimeout(ctx, queueStartupRecoveryTimeout)
+				defer cancel()
+				if err := cfg.recover(recoveryCtx); err != nil {
+					logger.Warn("Queue Job startup recovery incomplete", slog.Any("error", err))
+				}
+			}()
+		default:
 		}
 	}
+	recoverStartup()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	cleanupTicker := time.NewTicker(queueJobCleanupInterval)
@@ -282,6 +294,7 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			recoverStartup()
 			outcome, err := pollOnceWithOutcome(cfg)
 			recordQueueExecutorPollOutcome(outcome)
 			if err != nil {
@@ -383,6 +396,7 @@ const (
 	// queueJobCleanupSweepTimeout caps one cleanup sweep. It runs off the claim
 	// loop, so a slow API server never delays a claim.
 	queueJobCleanupSweepTimeout = 30 * time.Second
+	queueStartupRecoveryTimeout = 20 * time.Second
 )
 
 // directRunnerImage is the one image contract for QueueExecutor Jobs: Claude,

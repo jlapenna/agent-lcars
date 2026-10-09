@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 	podresource "k8s.io/component-helpers/resource"
 	"k8s.io/klog/v2"
 )
@@ -160,6 +161,9 @@ type kubernetesQueue struct {
 	logger                *slog.Logger
 	mu                    sync.Mutex
 	held                  int
+	// verifyRun checks the existing token against the Work API's read-only
+	// brief route, which fences settled runs and expired leases.
+	verifyRun func(context.Context, string, string) error
 	// exits receives every terminated queue Job this executor's inventory
 	// reads observe (nil disables reporting). See runExitReporter.
 	exits *runExitReporter
@@ -182,7 +186,8 @@ func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *sl
 	if err != nil {
 		return nil, err
 	}
-	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers}
+	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers,
+		verifyRun: queueRunFence(strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL")))}
 	if err := q.preflight(ctx); err != nil {
 		return nil, err
 	}
@@ -525,7 +530,7 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 	if job.Annotations[queueRunAnnotation] != l.runID || job.Labels[queueJobLabel] != "true" {
 		return fmt.Errorf("queue Job identity conflict")
 	}
-	if job.Spec.Suspend == nil || !*job.Spec.Suspend {
+	if job.Spec.Suspend == nil || !*job.Spec.Suspend || queueJobAttempted(job) {
 		return nil
 	}
 	secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: job.Name, Namespace: q.config.Namespace, Labels: map[string]string{queueJobLabel: "true"}, OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr(true)}}}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte(l.runToken)}}
@@ -535,28 +540,84 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 	return q.resume(ctx, job)
 }
 func (q *kubernetesQueue) resume(ctx context.Context, job *batch.Job) error {
-	if job.Spec.Suspend == nil || !*job.Spec.Suspend || job.Status.StartTime != nil {
-		return nil
-	}
-	secret, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
-	if err != nil {
+	ctx, cancel := context.WithTimeout(ctx, queueStartupRecoveryTimeout)
+	defer cancel()
+	// Create's resourceVersion is immediately stale if the Job controller
+	// writes Suspended status. Re-read and revalidate every bounded conflict
+	// retry; never adopt a replacement Job or restart an executed attempt.
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		current, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
+		if err != nil {
+			return err
+		}
+		runID := job.Annotations[queueRunAnnotation]
+		if job.UID == "" || current.UID != job.UID || runID == "" || current.Name != queueJobName(runID) || current.Labels[queueJobLabel] != "true" || current.Annotations[queueRunAnnotation] != runID || current.Annotations[queueRunnerAnnotation] != job.Annotations[queueRunnerAnnotation] {
+			return fmt.Errorf("queue Job identity conflict")
+		}
+		if current.DeletionTimestamp != nil || current.Spec.Suspend == nil || !*current.Spec.Suspend || queueJobAttempted(current) {
+			return nil
+		}
+		// Re-suspending a Job clears StartTime and removes its Pods. Generation
+		// one is the original suspended spec; any later suspended spec could
+		// have run, even with zero counters. Already-unsuspended is a no-op.
+		if current.Generation != 1 {
+			return fmt.Errorf("queue Job no longer has its original suspended specification")
+		}
+		pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
+		if err != nil {
+			return err
+		}
+		for _, pod := range pods.Items {
+			for _, owner := range pod.OwnerReferences {
+				if owner.Kind == "Job" && owner.UID == current.UID {
+					return nil
+				}
+			}
+		}
+		secret, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, current.Name, meta.GetOptions{})
+		if err != nil {
+			return err
+		}
+		owned := false
+		for _, owner := range secret.OwnerReferences {
+			if owner.UID == current.UID && owner.Kind == "Job" && owner.Name == current.Name && owner.APIVersion == "batch/v1" && owner.Controller != nil && *owner.Controller {
+				owned = true
+			}
+		}
+		if !owned || secret.Immutable == nil || !*secret.Immutable || len(secret.Data["run-token"]) == 0 {
+			return fmt.Errorf("queue run credential identity conflict")
+		}
+		if q.verifyRun == nil {
+			return fmt.Errorf("queue run-token fence unavailable")
+		}
+		if err := q.verifyRun(ctx, runID, string(secret.Data["run-token"])); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		current.Spec.Suspend = ptr(false)
+		_, err = q.client.BatchV1().Jobs(q.config.Namespace).Update(ctx, current, meta.UpdateOptions{})
+		if err == nil {
+			q.logger.Info("Started Kubernetes direct runner", slog.String("runId", runID), slog.String("job", current.Name))
+		}
 		return err
+	})
+}
+
+func queueJobAttempted(job *batch.Job) bool {
+	if job.Status.StartTime != nil || job.Status.Active != 0 || job.Status.Succeeded != 0 || job.Status.Failed != 0 {
+		return true
 	}
-	owned := false
-	for _, o := range secret.OwnerReferences {
-		if o.UID == job.UID && o.Kind == "Job" {
-			owned = true
+	for _, condition := range job.Status.Conditions {
+		if condition.Status == core.ConditionTrue && (condition.Type == batch.JobComplete || condition.Type == batch.JobFailed || condition.Type == batch.JobFailureTarget || condition.Type == batch.JobSuccessCriteriaMet) {
+			return true
 		}
 	}
-	if !owned || len(secret.Data["run-token"]) == 0 {
-		return fmt.Errorf("queue run credential identity conflict")
-	}
-	job.Spec.Suspend = ptr(false)
-	_, err = q.client.BatchV1().Jobs(q.config.Namespace).Update(ctx, job, meta.UpdateOptions{})
-	if err == nil {
-		q.logger.Info("Started Kubernetes direct runner", slog.String("runId", job.Annotations[queueRunAnnotation]), slog.String("job", job.Name))
-	}
-	return err
+	return false
 }
 func (q *kubernetesQueue) recover(ctx context.Context) error {
 	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
