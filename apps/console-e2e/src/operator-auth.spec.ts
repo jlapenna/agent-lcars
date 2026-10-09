@@ -68,7 +68,7 @@ test.describe('Work operator access', () => {
     await expect(
       nav.getByRole('link', { name: 'Work', exact: true }),
     ).toBeVisible();
-    await page.getByRole('link', { name: 'Schedules', exact: true }).click();
+    await page.getByRole('link', { name: 'Schedules →', exact: true }).click();
     await expect(page).toHaveURL('/work/schedules');
     await expect(
       page.getByRole('heading', { name: 'Schedules', exact: true }),
@@ -180,12 +180,20 @@ test.describe('Work operator access', () => {
     ).toBeVisible();
     await page.goto('/login');
     await expect(page.getByTestId('login-unauthorized')).toBeVisible();
+    const unchanged = await request.get(
+      `/api/work/v1/items/${NATIVE_WORK_ID}`,
+      {
+        headers: { 'X-e2e-auth-user': 'e2e-agent-lcars-admin' },
+      },
+    );
+    expect(unchanged.ok()).toBe(true);
+    expect((await unchanged.json()).spec.title).toBe(NATIVE_WORK_TITLE);
   });
 
   test('preserves full navigation and admin API access for the explicit admin fixture', async ({
     page,
   }) => {
-    await page.setExtraHTTPHeaders({
+    await page.context().setExtraHTTPHeaders({
       'X-e2e-auth-user': 'e2e-agent-lcars-admin',
     });
     await page.goto('/work');

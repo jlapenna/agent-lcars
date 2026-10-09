@@ -42,6 +42,13 @@ function navHref(
   return queryString ? `${item.href}?${queryString}` : item.href;
 }
 
+/**
+ * The destination rail on its own - ConsoleHeader composes it
+ * under the title block. It is exported for the rare embedded navigation
+ * use case, while all routed pages use the complete `ConsoleHeader` through
+ * `ConsoleAppShell`.
+ */
+/** Navigation inherits the root layout's authenticated destination set. */
 export function ConsoleNavRail({
   current,
   archiveQuery,

@@ -43,7 +43,7 @@ export interface ConsoleHeaderProps {
  * mobile utilities therefore read as one piece of LCARS chrome rather than a
  * heading beside a row of generic controls (#204, #1004).
  *
- * Title/subtitle/nav never depend on the slow GitHub/Firestore reads
+ * Title/subtitle never depend on the slow GitHub/Firestore reads
  * `cacheComponents` requires a Suspense boundary for, so every page renders
  * this outside that boundary and renders `DataWarnings` itself once its data
  * resolves (see those pages' `*PageShell`/body components) - the header
@@ -114,12 +114,6 @@ export function ConsoleHeader({
   );
 }
 
-/**
- * The destination rail on its own - ConsoleHeader composes it
- * under the title block. It is exported for the rare embedded navigation
- * use case, while all routed pages use the complete `ConsoleHeader` through
- * `ConsoleAppShell`.
- */
 /** The data-warnings disclosure, factored out of `ConsoleHeader` so every
  * page (which all now split their header from their data-dependent body -
  * see `ConsoleHeader`'s doc comment) can render it once its data resolves,
