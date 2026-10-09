@@ -365,7 +365,7 @@ describe('isRenderableTranscriptAgent', () => {
   // walk expects (see codex-transcript-adapter.spec.ts's fixture) -
   // conflating "has an adapter" with "renderable" was Bug 3 in
   // agent-lcars#645.
-  it('is false for every agent without a real timeline parser', () => {
+  it('supports OpenCode and rejects agents without a timeline parser', () => {
     expect(isRenderableTranscriptAgent('opencode')).toBe(true);
     expect(isRenderableTranscriptAgent('gemini')).toBe(false);
     expect(isRenderableTranscriptAgent('antigravity')).toBe(false);

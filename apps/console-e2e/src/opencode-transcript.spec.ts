@@ -1,14 +1,20 @@
 import { expect, test } from '@playwright/test';
 
+import { resetCliSessions } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
 
 test.beforeEach(async ({ request }) => {
+  await resetCliSessions();
   const response = await request.post('/api/e2e/seed', {
     data: { action: 'seed-populated', transcripts: true },
   });
   expect(response.ok()).toBe(true);
+});
+
+test.afterAll(async () => {
+  await resetCliSessions();
 });
 
 test('renders an archived OpenCode detail with bounded turns and safe tool disclosures', async ({
