@@ -4,6 +4,7 @@ import { ulid } from '@agent-lcars/work';
 import {
   Box,
   Button,
+  Checkbox,
   Group,
   Modal,
   Paper,
@@ -73,6 +74,7 @@ interface QuickTaskSubmission {
   evidenceId?: string;
   repository: { owner: string; name: string };
   pipeline: AgentPipeline;
+  fallbackPipelines?: AgentPipeline[];
   description: string;
   source: QuickTaskSourceContext;
   file?: File;
@@ -127,6 +129,9 @@ export function QuickTaskDialog({
     return String(index >= 0 ? index : 0);
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
+  const [fallbackPipelines, setFallbackPipelines] = useState<AgentPipeline[]>(
+    [],
+  );
   const submitInFlightRef = useRef(false);
 
   // The modal is closed during hydration, so applying browser-local defaults
@@ -263,6 +268,9 @@ export function QuickTaskDialog({
               spec: {
                 title: deriveQuickTaskTitle(request.description),
                 pipeline: request.pipeline,
+                ...(request.fallbackPipelines === undefined
+                  ? {}
+                  : { fallbackPipelines: request.fallbackPipelines }),
                 description: composeQuickTaskIssueBody(
                   {
                     description: request.description,
@@ -357,11 +365,21 @@ export function QuickTaskDialog({
         name: selectedRepo.name,
       },
       pipeline: effectivePipeline,
+      ...(fallbackPipelines.length === 0
+        ? {}
+        : {
+            fallbackPipelines: fallbackPipelines.filter(
+              (candidate) =>
+                candidate !== effectivePipeline &&
+                supportedPipelines.includes(candidate),
+            ),
+          }),
       description,
       source,
       ...(screenshot ? { file: screenshot } : {}),
     };
     setDescription('');
+    setFallbackPipelines([]);
     setScreenshot(null);
     setSource(emptySourceContext());
     close();
@@ -426,6 +444,42 @@ export function QuickTaskDialog({
             allowDeselect={false}
             disabled={pipelineOptions.length === 0}
           />
+          <Checkbox.Group
+            label="Allowed fallback order"
+            description="Optional. After a provider limit, start a fresh attempt in selection order. Your current grants still apply."
+            value={fallbackPipelines.filter(
+              (candidate) =>
+                candidate !== effectivePipeline &&
+                supportedPipelines.includes(candidate),
+            )}
+            onChange={(values) =>
+              setFallbackPipelines(values as AgentPipeline[])
+            }
+          >
+            <Group gap="md" mt="xs">
+              {pipelineOptions
+                .filter((option) => option.value !== effectivePipeline)
+                .map((option) => (
+                  <Checkbox
+                    key={option.value}
+                    value={option.value}
+                    label={option.label}
+                  />
+                ))}
+            </Group>
+            {fallbackPipelines.length > 0 && (
+              <Text size="xs" c="dimmed">
+                Order:{' '}
+                {fallbackPipelines
+                  .filter(
+                    (candidate) =>
+                      candidate !== effectivePipeline &&
+                      supportedPipelines.includes(candidate),
+                  )
+                  .join(' → ')}
+              </Text>
+            )}
+          </Checkbox.Group>
           <Textarea
             label="Description"
             value={description}

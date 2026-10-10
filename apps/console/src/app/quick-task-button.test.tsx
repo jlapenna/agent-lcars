@@ -59,6 +59,32 @@ describe('New work creation', () => {
       expect.objectContaining({ color: 'green' }),
     );
   });
+  it('carries explicitly selected fallback order on this task only', async () => {
+    renderButton();
+    fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'codex' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog');
+    expect(screen.getByRole('checkbox', { name: 'codex' })).toBeChecked();
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Try the authorized alternate after a limit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
+    expect(
+      (createItem as Mock).mock.calls[0][0].spec.fallbackPipelines,
+    ).toEqual(['codex']);
+    await submit('Another task without opt-in');
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(2));
+    expect(
+      (createItem as Mock).mock.calls[1][0].spec.fallbackPipelines,
+    ).toBeUndefined();
+  });
 
   it('keeps source context in the native item description', async () => {
     renderButton();

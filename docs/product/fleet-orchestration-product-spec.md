@@ -561,6 +561,11 @@ consumed by every dispatched run in every member repository.
 | R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit                       | P2       |
 | R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                      | The singleton is a single point of failure                                                                                        | P2       |
 
+R7's explicit opt-in source contract is documented in
+[Lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback).
+[#2198](https://github.com/jlapenna/agent-lcars/issues/2198) tracks delivery and
+real provider-limit qualification separately from local mechanism tests.
+
 The [R8 failover design](../superpowers/specs/2026-10-10-queue-executor-ha-design.md)
 selects server-owned capacity receipts and separates source implementation from
 Homelab fencing/rollout qualification. R8 remains pending those linked gates.

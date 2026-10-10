@@ -130,11 +130,20 @@ async function seedQueuedGithubRun(
   issue: number,
   mode = 'implement',
   pipeline = 'claude',
+  fallback = false,
 ): Promise<string> {
   const outcome = await orchestrator.request({
     taskId: { repo: 'jlapenna/agent-lcars', issue },
     requestId: `github-${issue}`,
     pipeline,
+    ...(fallback
+      ? {
+          providerFallback: {
+            principal: 'user:operator',
+            allowedPipelines: ['claude'],
+          },
+        }
+      : {}),
     params: { mode },
     work: {
       origin: { principal: 'github:jlapenna', channel: 'github' },
@@ -3322,7 +3331,12 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
             status: 200,
             json: { runId, state: 'run-not-live' },
           });
-          expect(await store.readRun(runId)).toEqual(terminalRun);
+          const { credentialOperation: _cleanup, ...immutableTerminal } =
+            terminalRun!;
+          expect(await store.readRun(runId)).toEqual(immutableTerminal);
+          expect(
+            (await store.readRun(runId))?.credentialOperation,
+          ).toBeUndefined();
           expect(drain).not.toHaveBeenCalled();
           expect(releaseLease).toHaveBeenCalledExactlyOnceWith(
             expect.objectContaining({
@@ -3477,7 +3491,7 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
     backend === 'FirestoreStore' &&
       process.env.FIRESTORE_EMULATOR_HOST === undefined,
   )(`${backend}: Codex external generation boundary`, () => {
-    async function brokerFixture(ownedLease = true) {
+    async function brokerFixture(ownedLease = true, fallback = false) {
       const store: OrchestratorStore =
         backend === 'MemoryStore'
           ? new MemoryStore()
@@ -3489,13 +3503,24 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
             });
       let instant = NOW;
       const now = () => new Date(instant);
-      const orchestrator = new Orchestrator(store, { now: () => instant });
+      let fallbackGrants = ['codex', 'claude'];
+      const orchestrator = new Orchestrator(
+        store,
+        { now: () => instant },
+        fallback
+          ? {
+              pipelines: ['codex', 'claude'],
+              allowedPipelines: () => fallbackGrants,
+            }
+          : undefined,
+      );
       const runId = await seedQueuedGithubRun(
         store,
         orchestrator,
         42,
         'implement',
         'codex',
+        fallback,
       );
       const principal = executorPrincipal(['codex']);
       const claimed = await call(
@@ -3553,6 +3578,9 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         codexAuth,
         ctx,
         payload,
+        revokeFallback: () => {
+          fallbackGrants = ['codex'];
+        },
         setNow: (value: string) => {
           instant = value;
         },
@@ -4388,23 +4416,9 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
             tokenHash: f.fingerprint,
           });
         await f.orchestrator.cancel(runId);
-        const operationId = `unknown-${index}`;
-        const reserve = await f.store.transactRun({
-          runId,
-          decide: ({ task, run }) => {
-            if (task === undefined || run === undefined)
-              throw new Error('missing recovery fixture');
-            return reserveCredentialOperation({
-              now: NOW,
-              task: task.task,
-              run,
-              claimFingerprint: f.fingerprint,
-              id: operationId,
-              kind: 'cleanup',
-            });
-          },
-        });
-        expect(reserve).not.toHaveProperty('refused');
+        const cleanup = (await f.store.readRun(runId))?.credentialOperation;
+        expect(cleanup?.kind).toBe('cleanup');
+        const operationId = cleanup!.id;
         const prepare = await f.store.transactRun({
           runId,
           decide: ({ task, run }) => {
@@ -4464,6 +4478,96 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       });
       fence.mockRestore();
     }, 30_000);
+
+    it.each(['direct', 'deferred', 'revoked', 'ordinary'] as const)(
+      'canonical authenticated %s completion preserves cleanup and current fallback authority',
+      async (mode) => {
+        const f = await brokerFixture(true, true);
+        const deferredResult = mode === 'deferred' || mode === 'revoked';
+        let reservation: unknown;
+        if (deferredResult) {
+          reservation = await f.store.transactRun({
+            runId: f.runId,
+            decide: ({ task, run }) => {
+              if (task === undefined || run === undefined)
+                throw new Error('Missing claimed HTTP fixture');
+              return reserveCredentialOperation({
+                now: NOW,
+                task: task.task,
+                run,
+                id: 'http-pending-operation',
+                kind: 'persist',
+                claimFingerprint: f.fingerprint,
+              });
+            },
+          });
+        }
+        expect(reservation).not.toEqual(
+          expect.objectContaining({ refused: true }),
+        );
+        const outcome =
+          mode === 'ordinary' ? 'worker-control-failed' : 'provider-limit';
+        expect(
+          await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+            outcome,
+            outcomeReference: null,
+            message: 'immutable accepted HTTP result',
+          }),
+        ).toEqual({
+          status: 200,
+          json: {
+            runId: f.runId,
+            state: deferredResult ? 'completion-pending' : 'finished',
+          },
+        });
+        const accepted = (await f.store.readRun(f.runId))
+          ?.credentialPendingResult;
+        expect(accepted?.requestedAt).toBe(deferredResult ? NOW : undefined);
+        let recovery:
+          | Awaited<ReturnType<typeof recoverCodexCredentialOperations>>
+          | undefined;
+        if (deferredResult) {
+          if (mode === 'revoked') f.revokeFallback();
+          f.setNow('2026-08-26T14:00:00.000Z');
+          recovery = await recoverCodexCredentialOperations(f.ctx);
+        }
+        expect(recovery).toEqual(
+          deferredResult ? { recovered: [f.runId], unresolved: [] } : undefined,
+        );
+        const settled = await f.store.readRun(f.runId);
+        expect(settled).toMatchObject({
+          state: 'finished',
+          result: {
+            ok: false,
+            summary: outcome,
+            message: 'immutable accepted HTTP result',
+          },
+        });
+        expect(settled?.result).toEqual(
+          accepted?.result ?? {
+            ok: false,
+            summary: outcome,
+            message: 'immutable accepted HTTP result',
+          },
+        );
+        expect(settled?.credentialOperation).toBeUndefined();
+        expect(settled?.credentialPendingResult).toBeUndefined();
+        const successor = await f.store.readActiveRun({
+          repo: 'jlapenna/agent-lcars',
+          issue: 42,
+        });
+        const hasSuccessor = mode === 'direct' || mode === 'deferred';
+        expect(successor?.pipeline).toBe(hasSuccessor ? 'claude' : undefined);
+        expect(successor?.requestId).toBe(
+          hasSuccessor ? `fallback:${f.runId}` : undefined,
+        );
+        const lease = await f.codexAuth.readLease();
+        expect(
+          lease === undefined ||
+            Date.parse(lease.expiresAt) <= f.now().getTime(),
+        ).toBe(true);
+      },
+    );
 
     it('refuses zero credential generation at actual HTTP before any external mutation', async () => {
       const f = await brokerFixture();

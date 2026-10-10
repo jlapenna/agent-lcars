@@ -20,6 +20,7 @@ import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
 import { isClosedItemState } from './session-expiry';
 import { forbiddenReason, type WorkContext } from './work-mint';
+import { authorizeProviderFallback } from './work-provider-fallback';
 
 /** The pipelines whose CLI session can be restored. Values are
  *  `SessionAgent` members (`libs/telemetry/src/lib/types.ts`), matching
@@ -53,6 +54,7 @@ export interface ReplyRequest {
   requestId?: string;
   pipeline?: string;
   resume?: boolean;
+  fallbackPipelines?: readonly string[];
 }
 
 export type ReplyOutcome =
@@ -71,7 +73,11 @@ function sameReply(run: Run, request: ReplyRequest): boolean {
     run.params['replyResumeRequested'] === String(request.resume ?? true) &&
     // Bind the caller's selection, including inheritance, rather than
     // resolving an old retry against mutable later run history.
-    run.params['replyPipelineRequested'] === (request.pipeline ?? 'inherit')
+    run.params['replyPipelineRequested'] === (request.pipeline ?? 'inherit') &&
+    // Omission inherits the task policy; [] explicitly disables fallback.
+    // Legacy keyed replies omitted this field and only support omission.
+    (run.params['replyFallbackPipelinesRequested'] ?? 'null') ===
+      JSON.stringify(request.fallbackPipelines ?? null)
   );
 }
 
@@ -252,6 +258,11 @@ export async function requestReply(
     taskId: request.task,
     requestId,
     pipeline,
+    providerFallback: authorizeProviderFallback(
+      principal,
+      pipeline,
+      request.fallbackPipelines ?? spec.fallbackPipelines,
+    ),
     ...(replaceQueuedRunId === undefined ? {} : { replaceQueuedRunId }),
     params: {
       mode: 'reply',
@@ -265,6 +276,9 @@ export async function requestReply(
             replyRequestId: request.requestId,
             replyResumeRequested: String(request.resume ?? true),
             replyPipelineRequested: request.pipeline ?? 'inherit',
+            replyFallbackPipelinesRequested: JSON.stringify(
+              request.fallbackPipelines ?? null,
+            ),
           }),
       ...resumeParams,
     },

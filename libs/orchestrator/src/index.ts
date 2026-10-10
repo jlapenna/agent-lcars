@@ -11,9 +11,11 @@ export * from './model';
 export {
   type Clock,
   Orchestrator,
+  type ProviderFallbackAuthority,
   type RequestInput,
   type SweepResult,
 } from './orchestrator';
+export * from './provider-fallback';
 export * from './queue-admission-status';
 export * from './schedule-store';
 export * from './store';
