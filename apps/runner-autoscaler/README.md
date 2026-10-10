@@ -239,6 +239,9 @@ still consume capacity between this observation and scheduling. Optional
 do not tolerate deployment readiness, inference-busy, or maintenance taints.
 `max_concurrent` is a cluster-wide bound for the **singleton** queue controller,
 not a distributed reservation protocol; do not overlap controller generations.
+The [R8 failover design](../../docs/superpowers/specs/2026-10-10-queue-executor-ha-design.md)
+selects proposed server-owned capacity receipts. It does not authorize replicas
+or change the current singleton deployment.
 
 Each run has one deterministic Job name. The controller creates it suspended,
 creates an immutable per-run token Secret owned by that exact Job, and resumes

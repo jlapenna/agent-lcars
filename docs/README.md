@@ -58,6 +58,9 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 - `superpowers/specs/` and `superpowers/plans/` record scoped designs and
   implementation plans. Reconcile them with the resulting code and canonical
   docs before treating them as current behavior.
+- [QueueExecutor failover design](superpowers/specs/2026-10-10-queue-executor-ha-design.md)
+  selects proposed durable capacity ownership for R8; implementation and Homelab
+  qualification remain separate gates.
 - Dated audit and support-evidence documents describe the named observation,
   revision, and conditions; they are not live state.
 - [`api/work-v1.openapi.json`](api/work-v1.openapi.json) is generated from the
