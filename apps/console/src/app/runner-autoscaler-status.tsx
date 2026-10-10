@@ -6,7 +6,6 @@ import { useEffect, useState } from 'react';
 
 import type {
   ArcLaneStatus,
-  AutoscalerScaleSetStatus,
   AutoscalerStatusResult,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
@@ -34,10 +33,6 @@ export function expireAutoscalerStatuses(
   result: AutoscalerStatusResult,
   now = Date.now(),
 ): AutoscalerStatusResult {
-  const statuses = result.statuses.filter((status) => {
-    const updatedAt = Date.parse(status.updatedAt);
-    return Number.isFinite(updatedAt) && now - updatedAt <= STALENESS_MS;
-  });
   const queueExecutor = result.queueExecutor;
   const lanes = result.lanes?.filter((status) => {
     const updatedAt = Date.parse(status.updatedAt);
@@ -64,7 +59,6 @@ export function expireAutoscalerStatuses(
       ? admission
       : undefined;
   if (
-    statuses.length === result.statuses.length &&
     lanes?.length === result.lanes?.length &&
     freshQueueExecutor === queueExecutor &&
     freshAdmission === admission
@@ -73,15 +67,16 @@ export function expireAutoscalerStatuses(
   }
   return {
     ...result,
-    statuses,
     ...(lanes === undefined ? {} : { lanes }),
+    ...(result.lanesIncomplete || lanes?.length !== result.lanes?.length
+      ? { lanesIncomplete: true }
+      : {}),
     queueExecutor: freshQueueExecutor,
     providerAdmission: freshAdmission,
     warnings: Array.from(
       new Set([
         ...result.warnings,
-        ...(statuses.length !== result.statuses.length ||
-        lanes?.length !== result.lanes?.length ||
+        ...(lanes?.length !== result.lanes?.length ||
         freshQueueExecutor !== queueExecutor
           ? ['Runner capacity status is stale.']
           : []),
@@ -236,71 +231,6 @@ function ArcLaneRow({ status }: { status: ArcLaneStatus }) {
   );
 }
 
-/** Each autoscaler (scale set) is its own bordered section so a fleet with
- * several queues reads as distinct panels rather than one run-on list -
- * every runner is shown here, not just the busy ones, so the panel doubles
- * as "what task is this queue's capacity spending right now?". */
-function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
-  const busy = status.runners.filter((runner) => runner.state === 'busy');
-  const idle = status.runners.length - busy.length;
-  return (
-    <div
-      className="console-workspace__section shuttlebay-scale-set"
-      data-testid={`autoscaler-scale-set-${status.scaleSet}`}
-    >
-      <Stack gap={4}>
-        <Group gap="xs" wrap="wrap">
-          {status.registrationUrl ? (
-            <Anchor
-              href={status.registrationUrl}
-              target="_blank"
-              rel="noreferrer"
-              size="sm"
-              fw={700}
-              data-testid={`autoscaler-registration-${status.scaleSet}`}
-            >
-              {status.scaleSet}
-            </Anchor>
-          ) : (
-            <Text size="sm" fw={700}>
-              {status.scaleSet}
-            </Text>
-          )}
-          {status.draining && (
-            <Badge color="yellow" size="xs">
-              draining
-            </Badge>
-          )}
-          <Text size="xs" c="dimmed">
-            {status.queuedJobs} queued · {busy.length} busy · {idle} idle ·{' '}
-            {status.maxRunners} max
-          </Text>
-        </Group>
-        {status.runners.length > 0 && (
-          <Group gap="xs" wrap="wrap">
-            {status.runners.map((runner) => (
-              <Badge
-                key={runner.name}
-                variant={runner.state === 'busy' ? 'light' : 'outline'}
-                color={runner.state === 'busy' ? 'blue' : 'gray'}
-                size="sm"
-                data-testid={`autoscaler-runner-${runner.name}`}
-              >
-                {runner.name} on {runner.host}
-                {runner.jobId
-                  ? ` · ${runner.jobId}`
-                  : runner.state === 'idle'
-                    ? ' · idle'
-                    : ''}
-              </Badge>
-            ))}
-          </Group>
-        )}
-      </Stack>
-    </div>
-  );
-}
-
 function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
   return (
     <div
@@ -309,7 +239,7 @@ function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
     >
       <Group gap="xs" wrap="wrap">
         <Text size="sm" fw={700}>
-          Queue executor
+          Direct agent executor
         </Text>
         <Badge color={status.ready ? 'green' : 'red'} size="xs">
           {status.ready ? 'ready' : 'not ready'}
@@ -404,14 +334,21 @@ export function RunnerAutoscalerStatus({
     >
       <div data-testid="runner-autoscaler-status">
         <ProviderAdmissionRows result={result} />
-        {result.statuses.map((status) => (
-          <ScaleSetRow key={status.scaleSet} status={status} />
-        ))}
+        {(result.lanes?.length ?? 0) === 0 && (
+          <Text size="sm" c="dimmed">
+            GitHub runner status unavailable.
+          </Text>
+        )}
         {result.lanes?.map((status) => (
           <ArcLaneRow key={status.lane} status={status} />
         ))}
         {result.queueExecutor && (
           <QueueExecutorRow status={result.queueExecutor} />
+        )}
+        {!result.queueExecutor && (
+          <Text size="sm" c="dimmed">
+            Direct executor status unavailable.
+          </Text>
         )}
       </div>
     </ShuttlebayWorkspace>

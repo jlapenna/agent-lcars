@@ -1,12 +1,17 @@
 import { Badge, Card, Group, Stack, Text } from '@mantine/core';
 
-import type { AgentActivity, AgentPipeline } from '../../lib/agent-activity';
+import type {
+  AgentActivity,
+  AgentPipeline,
+  FleetSummary,
+} from '../../lib/agent-activity';
 import type { ActivityMetrics } from '../../lib/logical-work';
 import {
   FleetChip,
   PipelineBadge,
   QueueHealthAlert,
 } from '../agent-activity-panel';
+import { FleetRunnerOccupancy } from '../fleet-status';
 
 const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
@@ -18,7 +23,13 @@ const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
  * rendering exactly as before - this is additive chrome, not a replacement
  * for the per-pipeline live counts above it.
  */
-function MetricsRow({ metrics }: { metrics: ActivityMetrics }) {
+function MetricsRow({
+  metrics,
+  fleet,
+}: {
+  metrics: ActivityMetrics;
+  fleet?: FleetSummary;
+}) {
   const hasDispatchWork =
     metrics.logicalTaskCount > 0 ||
     metrics.queuedRuns > 0 ||
@@ -46,11 +57,7 @@ function MetricsRow({ metrics }: { metrics: ActivityMetrics }) {
         {metrics.runningRuns} running run
         {metrics.runningRuns === 1 ? '' : 's'}
       </Text>
-      {metrics.onlineRunners !== undefined && (
-        <Text size="xs" c="dimmed" data-testid="metric-runner-occupancy">
-          {metrics.busyRunners ?? 0}/{metrics.onlineRunners} runners busy
-        </Text>
-      )}
+      <FleetRunnerOccupancy fleet={fleet} />
     </Group>
   );
 }
@@ -123,7 +130,7 @@ export function FleetSnapshotBar({
             {queue.running} running
           </Text>
         )}
-        {metrics && <MetricsRow metrics={metrics} />}
+        {metrics && <MetricsRow metrics={metrics} fleet={fleet} />}
         <QueueHealthAlert liveRuns={liveRuns} />
       </Stack>
     </Card>

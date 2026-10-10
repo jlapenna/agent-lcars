@@ -11,28 +11,8 @@ import { RUNNER_STATUS_STALENESS_MS } from './runner-status-contract';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
 
-export interface AutoscalerRunnerStatus {
-  name: string;
-  host: string;
-  state: 'idle' | 'busy';
-  jobId?: string;
-}
-
-export interface AutoscalerScaleSetStatus {
-  schemaVersion: 1;
-  scaleSet: string;
-  registration: string;
-  registrationUrl?: string;
-  queuedJobs: number;
-  minRunners: number;
-  maxRunners: number;
-  draining: boolean;
-  runners: AutoscalerRunnerStatus[];
-  updatedAt: string;
-}
-
-/** Generic direct-executor health, intentionally separate from v1 scale-set
- * capacity. Queue lifecycle counts belong to orchestrator Run records, not
+/** Generic direct-executor health, separate from ARC GitHub runner capacity.
+ * Queue lifecycle counts belong to orchestrator Run records, not
  * this host telemetry projection. */
 export interface QueueExecutorStatus {
   schemaVersion: 2;
@@ -55,8 +35,9 @@ export interface QueueClaimWindow {
 }
 
 export interface AutoscalerStatusResult {
-  statuses: AutoscalerScaleSetStatus[];
   lanes?: ArcLaneStatus[];
+  /** A configured lane is missing/stale/invalid, or its inventory is unknown. */
+  lanesIncomplete?: boolean;
   queueExecutor?: QueueExecutorStatus;
   providerAdmission?: QueueAdmissionStatus;
   warnings: string[];
@@ -66,6 +47,8 @@ export interface ArcLaneStatus {
   schemaVersion: 3;
   kind: 'arc-lane';
   lane: string;
+  /** Authoritative deployment inventory, repeated by each surviving producer. */
+  expectedLanes?: string;
   registrationUrl: string;
   assignedJobs: number;
   runningJobs: number;
@@ -108,6 +91,9 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     schemaVersion: 3,
     kind: 'arc-lane',
     lane: status['lane'],
+    ...(typeof status['expectedLanes'] === 'string'
+      ? { expectedLanes: status['expectedLanes'] }
+      : {}),
     registrationUrl: status['registrationUrl'],
     assignedJobs: status['assignedJobs'] as number,
     runningJobs: status['runningJobs'] as number,
@@ -117,80 +103,6 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     desiredRunners: status['desiredRunners'] as number,
     minRunners: status['minRunners'] as number,
     maxRunners: status['maxRunners'] as number,
-    updatedAt: status['updatedAt'],
-  };
-}
-
-function parseRunner(value: unknown): AutoscalerRunnerStatus | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const runner = value as Record<string, unknown>;
-  if (
-    typeof runner['name'] === 'string' &&
-    typeof runner['host'] === 'string' &&
-    (runner['state'] === 'idle' || runner['state'] === 'busy') &&
-    (runner['jobId'] === undefined || typeof runner['jobId'] === 'string')
-  ) {
-    // This is the server-to-client transport boundary. Do not return the
-    // Firestore value (or a spread of it): Firestore can add Timestamp and
-    // other class instances which React Server Components cannot serialize.
-    return {
-      name: runner['name'],
-      host: runner['host'],
-      state: runner['state'],
-      ...(typeof runner['jobId'] === 'string'
-        ? { jobId: runner['jobId'] }
-        : {}),
-    };
-  }
-  return undefined;
-}
-
-function parseRunners(value: unknown): AutoscalerRunnerStatus[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const runners: AutoscalerRunnerStatus[] = [];
-  for (const candidate of value) {
-    const runner = parseRunner(candidate);
-    if (!runner) return undefined;
-    runners.push(runner);
-  }
-  return runners;
-}
-
-function parseStatus(value: unknown): AutoscalerScaleSetStatus | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const status = value as Record<string, unknown>;
-  const runners = parseRunners(status['runners']);
-  if (
-    status['schemaVersion'] !== 1 ||
-    typeof status['scaleSet'] !== 'string' ||
-    typeof status['registration'] !== 'string' ||
-    (status['registrationUrl'] !== undefined &&
-      typeof status['registrationUrl'] !== 'string') ||
-    typeof status['queuedJobs'] !== 'number' ||
-    typeof status['minRunners'] !== 'number' ||
-    typeof status['maxRunners'] !== 'number' ||
-    typeof status['draining'] !== 'boolean' ||
-    typeof status['updatedAt'] !== 'string' ||
-    !runners
-  ) {
-    return undefined;
-  }
-  // Keep this server-to-client mapping explicit: only primitive,
-  // client-contract fields may leave the server. In
-  // particular, `expireAt` is a Firestore Timestamp used only for server-side
-  // staleness and must never enter a Client Component prop.
-  return {
-    schemaVersion: 1,
-    scaleSet: status['scaleSet'],
-    registration: status['registration'],
-    ...(typeof status['registrationUrl'] === 'string'
-      ? { registrationUrl: status['registrationUrl'] }
-      : {}),
-    queuedJobs: status['queuedJobs'],
-    minRunners: status['minRunners'],
-    maxRunners: status['maxRunners'],
-    draining: status['draining'],
-    runners,
     updatedAt: status['updatedAt'],
   };
 }
@@ -279,13 +191,6 @@ export function projectAutoscalerStatuses(
   records: readonly unknown[],
   now = Date.now(),
 ): AutoscalerStatusResult {
-  const statuses = records
-    .map((record) => parseStatus(record))
-    .filter(
-      (status): status is AutoscalerScaleSetStatus =>
-        status !== undefined && isFresh(status.updatedAt, now),
-    )
-    .sort((a, b) => a.scaleSet.localeCompare(b.scaleSet));
   const queueExecutor = records
     .map((record) => parseQueueExecutor(record))
     .find(
@@ -298,17 +203,51 @@ export function projectAutoscalerStatuses(
   const lanes = laneRecords
     .filter((status) => isFresh(status.updatedAt, now))
     .sort((a, b) => a.lane.localeCompare(b.lane));
+  const arcRecordCount = records.filter(
+    (record) =>
+      record !== null &&
+      typeof record === 'object' &&
+      'kind' in record &&
+      record.kind === 'arc-lane',
+  ).length;
+  const stale = laneRecords.length > lanes.length;
+  const invalid = arcRecordCount > laneRecords.length;
+  // Do not infer configured capacity from the documents that happened to
+  // survive. Every fresh lane must attest the same bounded inventory, with
+  // exactly one fresh record per expected lane. Old producers fail closed.
+  const inventory = lanes[0]?.expectedLanes;
+  const expected = inventory?.split(',') ?? [];
+  const inventoryValid =
+    expected.length > 0 &&
+    expected.length <= 64 &&
+    expected.every((name) =>
+      /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name),
+    ) &&
+    new Set(expected).size === expected.length &&
+    lanes.every((lane) => lane.expectedLanes === inventory);
+  const missing =
+    inventoryValid &&
+    (expected.length !== lanes.length ||
+      expected.some((name) => !lanes.some((lane) => lane.lane === name)));
+  const inventoryUnknown = lanes.length > 0 && !inventoryValid;
   return {
-    statuses,
     lanes,
+    ...(stale || invalid || missing || inventoryUnknown
+      ? { lanesIncomplete: true }
+      : {}),
     ...(queueExecutor === undefined ? {} : { queueExecutor }),
-    warnings:
-      laneRecords.length > lanes.length ? ['ARC lane status is stale.'] : [],
+    warnings: [
+      ...(stale ? ['ARC lane status is stale.'] : []),
+      ...(invalid ? ['ARC lane status is invalid.'] : []),
+      ...(inventoryUnknown
+        ? ['ARC lane inventory is unavailable or inconsistent.']
+        : []),
+      ...(missing ? ['Configured ARC lane status is missing.'] : []),
+    ],
   };
 }
 
 const UNAVAILABLE: AutoscalerStatusResult = {
-  statuses: [],
   warnings: ['Runner autoscaler status unavailable (telemetry store failed).'],
 };
 

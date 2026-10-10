@@ -29,7 +29,7 @@ const admission = {
     { pipeline: 'claude', queued: 3, deferred: 1, eligible: 2, liveClaims: 0 },
   ],
 };
-const telemetry = { statuses: [], warnings: [] };
+const telemetry = { warnings: [] };
 
 describe('Shuttlebay provider evidence', () => {
   beforeEach(() => {
@@ -112,7 +112,6 @@ describe('Shuttlebay provider evidence', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(await result).toMatchObject({
       providerAdmission: admission,
-      statuses: [],
       warnings: [expect.stringContaining('telemetry read timed out')],
     });
     if (finish === undefined) throw new Error('missing pending read');
@@ -138,14 +137,13 @@ describe('Shuttlebay provider evidence', () => {
     const stop = await subscribeShuttlebayStatus(output);
     if (push === undefined || settle === undefined)
       throw new Error('missing listener/read');
-    push({ statuses: [], warnings: ['First producer snapshot'] });
-    push({ statuses: [], warnings: ['Newest producer snapshot'] });
+    push({ warnings: ['First producer snapshot'] });
+    push({ warnings: ['Newest producer snapshot'] });
     expect(output).toHaveBeenCalledTimes(2);
     expect(mocks.read).toHaveBeenCalledTimes(1);
     settle(admission);
     await vi.waitFor(() => expect(output).toHaveBeenCalledTimes(3));
     expect(output).toHaveBeenLastCalledWith({
-      statuses: [],
       warnings: ['Newest producer snapshot'],
       providerAdmission: admission,
     });

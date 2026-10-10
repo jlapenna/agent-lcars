@@ -87,7 +87,6 @@ async function boundedTelemetry(): Promise<AutoscalerStatusResult> {
   } catch (error) {
     logger.error('agent-lcars: runner telemetry unavailable:', error);
     return {
-      statuses: [],
       warnings: [
         'Runner autoscaler status unavailable (telemetry read timed out or failed).',
       ],
@@ -98,7 +97,7 @@ async function boundedTelemetry(): Promise<AutoscalerStatusResult> {
 export async function getShuttlebayStatus(): Promise<AutoscalerStatusResult> {
   const [telemetry, provider] = await Promise.all([
     boundedTelemetry(),
-    withProviderAdmission({ statuses: [], warnings: [] }),
+    withProviderAdmission({ warnings: [] }),
   ]);
   return {
     ...telemetry,
@@ -116,7 +115,6 @@ export async function subscribeShuttlebayStatus(
   let closed = false;
   let refreshing = false;
   let latest: AutoscalerStatusResult = {
-    statuses: [],
     warnings: ['Runner status awaiting first snapshot.'],
   };
   let admission: QueueAdmissionStatus | undefined;
@@ -136,7 +134,6 @@ export async function subscribeShuttlebayStatus(
     refreshing = true;
     try {
       const result = await withProviderAdmission({
-        statuses: [],
         warnings: [],
       });
       admission = result.providerAdmission;
