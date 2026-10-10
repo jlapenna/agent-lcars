@@ -227,11 +227,28 @@ export function renewLease(input: {
   now: string;
   task: Task;
   run: Run;
+  /** Existing authenticated queue token hash; omitted only by internal operations. */
+  claimFingerprint?: string;
 }): Decision | Refusal {
   const { now, task, run } = input;
+  if (
+    input.claimFingerprint !== undefined &&
+    (run.queue?.state !== 'claimed' ||
+      run.queue.tokenHash !== input.claimFingerprint)
+  )
+    return refused('not-claimant');
   if (!isLive(run.state)) return refused('run-not-live');
   if (task.activeRunId !== run.runId) return refused('stale-lease');
   if (startDeadlineElapsed(run, now)) return refused('stale-lease');
+  // Token-authenticated callbacks must retain their live deadline through
+  // commit as well as the fingerprint; internal server operations keep their
+  // existing lease policy.
+  if (
+    input.claimFingerprint !== undefined &&
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+      Date.parse(now)
+  )
+    return refused('stale-lease');
   return {
     task,
     run: {
@@ -257,13 +274,35 @@ export function reportResult(input: {
   now: string;
   task: Task;
   run: Run;
+  /** Existing authenticated queue token hash; omitted only by internal operations. */
+  claimFingerprint?: string;
   result: RunResult;
 }): Decision | Refusal {
   const { now, task, run, result } = input;
+  if (
+    input.claimFingerprint !== undefined &&
+    (run.queue?.state !== 'claimed' ||
+      run.queue.tokenHash !== input.claimFingerprint)
+  )
+    return refused('not-claimant');
   if (run.state === 'finished') return refused('run-not-live', run);
-  if (!isLive(run.state)) return refused('run-not-live');
+  if (!isLive(run.state)) {
+    return refused(
+      'run-not-live',
+      input.claimFingerprint === undefined ? undefined : run,
+    );
+  }
   if (task.activeRunId !== run.runId) return refused('stale-lease');
   if (startDeadlineElapsed(run, now)) return refused('stale-lease');
+  // Token-authenticated callbacks must retain their live deadline through
+  // commit as well as the fingerprint; internal server operations keep their
+  // existing lease policy.
+  if (
+    input.claimFingerprint !== undefined &&
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+      Date.parse(now)
+  )
+    return refused('stale-lease');
   const settled: Run = {
     ...run,
     state: 'finished',

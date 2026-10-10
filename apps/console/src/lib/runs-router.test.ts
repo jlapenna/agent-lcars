@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 
-import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
+import {
+  FirestoreStore,
+  MemoryStore,
+  Orchestrator,
+  type OrchestratorStore,
+} from '@agent-lcars/orchestrator';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -109,22 +114,23 @@ async function seedQueuedRun(
 }
 
 async function seedQueuedGithubRun(
-  store: MemoryStore,
+  store: OrchestratorStore,
   orchestrator: Orchestrator,
   issue: number,
   mode = 'implement',
+  pipeline = 'claude',
 ): Promise<string> {
   const outcome = await orchestrator.request({
     taskId: { repo: 'jlapenna/agent-lcars', issue },
     requestId: `github-${issue}`,
-    pipeline: 'claude',
+    pipeline,
     params: { mode },
     work: {
       origin: { principal: 'github:jlapenna', channel: 'github' },
       spec: {
         title: `GitHub issue ${issue}`,
         description: 'Queued implementation work.',
-        pipeline: 'claude',
+        pipeline,
         target: { repo: 'jlapenna/agent-lcars' },
       },
     },
@@ -2967,3 +2973,218 @@ describe('startup liveness and exact completion metadata compose', () => {
     },
   );
 });
+
+for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
+  describe.skipIf(
+    backend === 'FirestoreStore' &&
+      process.env.FIRESTORE_EMULATOR_HOST === undefined,
+  )(`${backend}: authenticated claim at callback transaction`, () => {
+    it.each([
+      { pipeline: 'claude', route: 'heartbeat' },
+      { pipeline: 'claude', route: 'complete' },
+      { pipeline: 'codex', route: 'heartbeat' },
+      { pipeline: 'codex', route: 'complete' },
+    ])(
+      'refuses old $pipeline token on $route after same-run release/reclaim',
+      async ({ pipeline, route }) => {
+        const store: OrchestratorStore =
+          backend === 'MemoryStore'
+            ? new MemoryStore()
+            : new FirestoreStore({
+                projectId: 'demo-orchestrator',
+                databaseId: '(default)',
+                collectionPrefix: `callback-claim-${crypto.randomUUID()}-`,
+                emulatorHost: process.env.FIRESTORE_EMULATOR_HOST!,
+              });
+        const orchestrator = new Orchestrator(store, { now: () => NOW });
+        const now = () => new Date(NOW);
+        const runId = await seedQueuedGithubRun(
+          store,
+          orchestrator,
+          42,
+          'reply',
+          pipeline,
+        );
+        const principal = executorPrincipal([pipeline]);
+        const claimed = await call(
+          { store, orchestrator, now, ...context, principal },
+          'POST',
+          '/runs/claim',
+          { runner: 'same-runner' },
+        );
+        expect(claimed.status).toBe(200);
+        const oldToken = (claimed.json as { token: string }).token;
+        const freshToken = mintRunToken();
+        const freshFingerprint = hashRunToken(freshToken);
+        const transactRun = store.transactRun.bind(store);
+        let interleaved = false;
+        let freshRun: Awaited<ReturnType<OrchestratorStore['readRun']>>;
+        let freshTask: Awaited<ReturnType<OrchestratorStore['readTask']>>;
+        store.transactRun = async (input) => {
+          if (!interleaved) {
+            interleaved = true;
+            const released = await store.releaseQueuedRunClaim({
+              runId,
+              claimedBy: 'same-runner',
+              tokenHash: hashRunToken(oldToken),
+              now: NOW,
+            });
+            if (!released)
+              throw new Error('failed to release original callback claim');
+            const reclaimed = await store.claimQueuedRun({
+              pipelines: [pipeline],
+              now: NOW,
+              claimedBy: 'same-runner',
+              claimedBySubject: principal.subject.toLowerCase(),
+              tokenHash: freshFingerprint,
+            });
+            if (reclaimed?.runId !== runId)
+              throw new Error('failed to reclaim callback run');
+            freshRun = await store.readRun(runId);
+            freshTask = await store.readTask({
+              repo: 'jlapenna/agent-lcars',
+              issue: 42,
+            });
+          }
+          return transactRun(input);
+        };
+        const drain = vi.fn(context.drain);
+        const releaseLease = vi.fn(context.codexAuth.releaseLease);
+        const takeLease = vi.fn(context.codexAuth.takeLease);
+        const readLease = vi.fn(async () => ({
+          runId,
+          repository: 'jlapenna/agent-lcars',
+          expiresAt: '2026-08-26T12:00:00.000Z',
+          generation: '7',
+        }));
+        try {
+          const callback = await call(
+            {
+              store,
+              orchestrator,
+              now,
+              ...context,
+              bearerToken: oldToken,
+              drain,
+              codexAuth: {
+                ...context.codexAuth,
+                readLease,
+                takeLease,
+                releaseLease,
+              },
+            },
+            'POST',
+            runPath(runId, '/' + route),
+            route === 'complete'
+              ? {
+                  outcome: 'comment',
+                  outcomeReference: {
+                    kind: 'comment',
+                    number: 42,
+                    id: 99,
+                    url: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-99',
+                  },
+                }
+              : undefined,
+          );
+          expect(interleaved).toBe(true);
+          expect(callback.status).toBe(401);
+          expect(await store.readRun(runId)).toEqual(freshRun);
+          expect(
+            await store.readTask({ repo: 'jlapenna/agent-lcars', issue: 42 }),
+          ).toEqual(freshTask);
+          expect(freshRun?.queue?.tokenHash).toBe(freshFingerprint);
+          expect(freshRun?.queue?.firstHeartbeatAt).toBeUndefined();
+          expect(freshRun?.result).toBeUndefined();
+          expect(drain).not.toHaveBeenCalled();
+          expect(readLease).not.toHaveBeenCalled();
+          expect(takeLease).not.toHaveBeenCalled();
+          expect(releaseLease).not.toHaveBeenCalled();
+        } finally {
+          store.transactRun = transactRun;
+        }
+      },
+    );
+    it.each(['finished', 'canceled'] as const)(
+      'releases its own Codex lease after concurrent %s settlement without draining again',
+      async (state) => {
+        const store: OrchestratorStore =
+          backend === 'MemoryStore'
+            ? new MemoryStore()
+            : new FirestoreStore({
+                projectId: 'demo-orchestrator',
+                databaseId: '(default)',
+                collectionPrefix: `callback-terminal-${crypto.randomUUID()}-`,
+                emulatorHost: process.env.FIRESTORE_EMULATOR_HOST!,
+              });
+        const orchestrator = new Orchestrator(store, { now: () => NOW });
+        const now = () => new Date(NOW);
+        const runId = await seedQueuedGithubRun(
+          store,
+          orchestrator,
+          42,
+          'reply',
+          'codex',
+        );
+        const claimed = await call(
+          {
+            store,
+            orchestrator,
+            now,
+            ...context,
+            principal: executorPrincipal(['codex']),
+          },
+          'POST',
+          '/runs/claim',
+          { runner: 'runner-1' },
+        );
+        expect(claimed.status).toBe(200);
+        const token = (claimed.json as { token: string }).token;
+        const transactRun = store.transactRun.bind(store);
+        let interleaved = false;
+        let terminalRun: Awaited<ReturnType<OrchestratorStore['readRun']>>;
+        store.transactRun = async (input) => {
+          if (!interleaved) {
+            interleaved = true;
+            const settled =
+              state === 'finished'
+                ? await orchestrator.report(runId, { ok: true })
+                : await orchestrator.cancel(runId);
+            if ('refused' in settled)
+              throw new Error('terminal interleaving failed');
+            terminalRun = await store.readRun(runId);
+          }
+          return transactRun(input);
+        };
+        const releaseLease = vi.fn(context.codexAuth.releaseLease);
+        const drain = vi.fn(context.drain);
+        try {
+          const callback = await call(
+            {
+              store,
+              orchestrator,
+              now,
+              ...context,
+              bearerToken: token,
+              drain,
+              codexAuth: { ...context.codexAuth, releaseLease },
+            },
+            'POST',
+            runPath(runId, '/complete'),
+            { outcome: 'no-op' },
+          );
+          expect(interleaved).toBe(true);
+          expect(callback).toEqual({
+            status: 200,
+            json: { runId, state: 'run-not-live' },
+          });
+          expect(await store.readRun(runId)).toEqual(terminalRun);
+          expect(drain).not.toHaveBeenCalled();
+          expect(releaseLease).toHaveBeenCalledExactlyOnceWith(runId);
+        } finally {
+          store.transactRun = transactRun;
+        }
+      },
+    );
+  });
+}

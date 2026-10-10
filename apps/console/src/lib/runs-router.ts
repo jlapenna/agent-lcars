@@ -538,7 +538,12 @@ export const runsRouter = os.router({
 
   heartbeat: os.heartbeat.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
-    const renewed = await context.orchestrator.renew(run.runId);
+    // Preserve the token that authenticated this callback through the atomic
+    // Task+Run decision. A same-run release/reclaim changes this fingerprint.
+    const renewed = await context.orchestrator.renew(
+      run.runId,
+      run.queue?.tokenHash ?? '',
+    );
     if (isRefusal(renewed)) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Run heartbeat refused' });
     }
@@ -651,31 +656,47 @@ export const runsRouter = os.router({
       input.message,
       { issue: target.issue, mode: run.params?.mode },
     );
-    try {
-      const settled = await context.orchestrator.report(run.runId, result);
-      // #1799: this is the route that CREATES the `report-outcome` outbox
-      // entry (`orchestrator.report`'s `settle`), but it used to be the
-      // one mutating route that never drained it -- every other one
-      // (`work-router.ts`'s cancel/redispatch, `work-reply.ts`,
-      // `work-mint.ts`, `github-work-admission.ts`,
-      // `orchestrator-routes.ts`'s reconcile) does. The outcome comment
-      // and `status:needs-human` label then waited on an unrelated
-      // webhook delivery or the 30-minute reconcile tick instead of
-      // landing right away. Only on a settled report: a refusal (stale
-      // lease, already-settled run) created no new entry, so there is
-      // nothing fresh for this drain to deliver.
-      if (!isRefusal(settled)) {
-        await drainAfterCompletion(context, run.runId);
-      }
-      return {
-        runId: run.runId,
-        state: isRefusal(settled) ? settled.reason : 'finished',
-      };
-    } finally {
-      if (run.pipeline === 'codex') {
-        await context.codexAuth.releaseLease(run.runId);
+    const settled = await context.orchestrator.report(
+      run.runId,
+      result,
+      run.queue?.tokenHash ?? '',
+    );
+    if (isRefusal(settled) && settled.reason === 'not-claimant') {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Run claim changed' });
+    }
+    // #1799: this is the route that CREATES the `report-outcome` outbox
+    // entry (`orchestrator.report`'s `settle`), but it used to be the
+    // one mutating route that never drained it -- every other one
+    // (`work-router.ts`'s cancel/redispatch, `work-reply.ts`,
+    // `work-mint.ts`, `github-work-admission.ts`,
+    // `orchestrator-routes.ts`'s reconcile) does. The outcome comment
+    // and `status:needs-human` label then waited on an unrelated
+    // webhook delivery or the 30-minute reconcile tick instead of
+    // landing right away. Only on a settled report: a refusal (stale
+    // lease, already-settled run) created no new entry, so there is
+    // nothing fresh for this drain to deliver.
+    // A terminal claim cannot be released/reclaimed. Its transaction snapshot
+    // can safely authorize cleanup of that same credential lease even when
+    // a concurrent cancel/report settled it first. Live refusals and changed
+    // fingerprints never release another attempt's credential ownership.
+    const terminalSameClaim =
+      isRefusal(settled) &&
+      settled.existingRun !== undefined &&
+      !isLive(settled.existingRun.state) &&
+      settled.existingRun.queue?.tokenHash === run.queue?.tokenHash;
+    if (!isRefusal(settled) || terminalSameClaim) {
+      try {
+        if (!isRefusal(settled)) await drainAfterCompletion(context, run.runId);
+      } finally {
+        if (run.pipeline === 'codex') {
+          await context.codexAuth.releaseLease(run.runId);
+        }
       }
     }
+    return {
+      runId: run.runId,
+      state: isRefusal(settled) ? settled.reason : 'finished',
+    };
   }),
 
   checkoutToken: os.checkoutToken.handler(async ({ input, context }) => {

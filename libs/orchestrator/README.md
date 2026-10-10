@@ -77,6 +77,16 @@ lifecycle-read waits never consume this window: release removes claim
 bookkeeping and reclaim grants a new window. Older persisted claims without
 `startDeadlineAt` retain lease-only recovery; no data migration is required.
 
+Run-token heartbeat and completion routes pass the authenticated
+`queue.tokenHash` fingerprint into `Orchestrator.renew`/`report`. Their pure
+decisions compare that fingerprint and deadline against the current Run
+inside the existing Task+Run transaction. Same-run release/reclaim therefore
+invalidates an earlier callback, even with the same runner and timestamp.
+Internal server operations omit this optional fingerprint and retain their
+existing authority. Refused stale callbacks do not drain outbox effects or
+release a newer Codex credential lease; a matching claim already proved
+terminal in that transaction may release its own lease without draining again.
+
 A live run must renew its lease (2 hours) or be presumed `lost` —
 `expireLease` is the only judgement the orchestrator makes about execution,
 and its only meaning is that the task's lock is released so it isn't wedged

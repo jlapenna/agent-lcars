@@ -174,15 +174,33 @@ export class Orchestrator {
     );
   }
 
-  async renew(runId: string): Promise<Decision | Refusal> {
+  async renew(
+    runId: string,
+    claimFingerprint?: string,
+  ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
-      renewLease({ now: this.clock.now(), task, run }),
+      renewLease({
+        now: this.clock.now(),
+        task,
+        run,
+        ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+      }),
     );
   }
 
-  async report(runId: string, result: RunResult): Promise<Decision | Refusal> {
+  async report(
+    runId: string,
+    result: RunResult,
+    claimFingerprint?: string,
+  ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
-      reportResult({ now: this.clock.now(), task, run, result }),
+      reportResult({
+        now: this.clock.now(),
+        task,
+        run,
+        result,
+        ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+      }),
     );
   }
 
