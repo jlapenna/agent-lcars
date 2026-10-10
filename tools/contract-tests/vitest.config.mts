@@ -48,6 +48,7 @@ export default defineConfig({
   test: {
     include: [
       'tools/contract-tests/**/*.test.ts',
+      'tools/dev-console.test.mjs',
       'tools/saved-session/**/*.test.mjs',
       'tools/quick-task-evidence-*.test.mjs',
     ],

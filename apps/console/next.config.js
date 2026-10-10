@@ -97,8 +97,9 @@ const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, '../../'),
   // `allowedDevOrigins` is a top-level Next.js config option (since 15.3 /
   // Next 16), NOT an `experimental` one — under `experimental` Next ignores it.
-  // Lets the dev server accept requests from a LAN device during preview
-  // (tools/serve-lan.sh / the local-lan-preview skill export FQDN).
+  // Lets an explicitly configured dev server accept requests from a LAN
+  // device. `serve-lan`/`pnpm dev:lan` supply a validated FQDN while the
+  // emulator-only development stack stays on loopback by default.
   allowedDevOrigins: process.env.FQDN ? [process.env.FQDN] : undefined,
   // `next build` sizes its static-generation worker pool from the runner's
   // CPU count, and a GitHub-hosted/self-hosted CI runner's kernel OOM-kills
