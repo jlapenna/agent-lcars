@@ -169,7 +169,7 @@ describe('schedule edit/delete controls', () => {
         expectedRevision: 7,
         cron: '15 9 * * *',
         enabled: true,
-        spec: { ...schedule.spec, title: 'Edited audit' },
+        spec: { ...schedule.spec, priority: 'normal', title: 'Edited audit' },
       }),
     );
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));

@@ -46,6 +46,8 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  queuePriorityCursorSchema,
+  queuePriorityTurnAfter,
   type RequestBinding,
   type RequestTransactionState,
   selectFairQueuedRun,
@@ -68,7 +70,9 @@ export interface FirestoreStoreOptions {
   readonly projectId: string;
   readonly databaseId: string;
   /** Defaults to `orchestrator-`. Collections are `<prefix>tasks`,
-   *  `<prefix>runs`, `<prefix>outbox`, `<prefix>request-bindings`. */
+   *  `<prefix>runs`, `<prefix>outbox`, `<prefix>request-bindings`,
+   *  `<prefix>github-anchors`, `<prefix>provider-cooldowns`, and
+   *  `<prefix>priority-positions`. */
   readonly collectionPrefix?: string;
   /** Set to talk to a local Firestore emulator instead of the real service. */
   readonly emulatorHost?: string;
@@ -93,6 +97,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #requestBindings: CollectionReference;
   readonly #githubAnchors: CollectionReference;
   readonly #providerCooldowns: CollectionReference;
+  readonly #priorityPositions: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
     const prefix = options.collectionPrefix ?? 'orchestrator-';
@@ -113,6 +118,9 @@ export class FirestoreStore implements OrchestratorStore {
     this.#githubAnchors = this.#firestore.collection(`${prefix}github-anchors`);
     this.#providerCooldowns = this.#firestore.collection(
       `${prefix}provider-cooldowns`,
+    );
+    this.#priorityPositions = this.#firestore.collection(
+      `${prefix}priority-positions`,
     );
   }
 
@@ -764,6 +772,20 @@ export class FirestoreStore implements OrchestratorStore {
           !providerIsCoolingDown(cooldowns[index]?.data(), input.now),
       );
       if (granted.length === 0) return undefined;
+      const prioritySnapshots = await Promise.all(
+        granted.map((pipeline) =>
+          tx.get(this.#priorityPositions.doc(encodeURIComponent(pipeline))),
+        ),
+      );
+      const priorityPositions = new Map(
+        granted.map((pipeline, index) => [
+          pipeline,
+          prioritySnapshots[index]?.exists
+            ? queuePriorityCursorSchema.parse(prioritySnapshots[index].data())
+                .position
+            : 0,
+        ]),
+      );
       const [queuedSnapshots, ...liveSnapshots] = await Promise.all([
         Promise.all(
           granted.map((pipeline) =>
@@ -798,6 +820,7 @@ export class FirestoreStore implements OrchestratorStore {
         live,
         granted,
         input.now,
+        priorityPositions,
       );
       const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;
@@ -817,6 +840,15 @@ export class FirestoreStore implements OrchestratorStore {
         updatedAt: input.now,
       };
       tx.set(first.doc.ref, claimed);
+      tx.set(
+        this.#priorityPositions.doc(encodeURIComponent(claimed.pipeline)),
+        {
+          position: queuePriorityTurnAfter(
+            priorityPositions.get(claimed.pipeline) ?? 0,
+            claimed.priority ?? 'normal',
+          ),
+        },
+      );
       return claimed;
     });
   }

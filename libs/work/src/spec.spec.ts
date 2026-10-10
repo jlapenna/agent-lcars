@@ -12,10 +12,23 @@ const spec = {
   title: 'Add a health endpoint',
   description: 'Expose GET /healthz returning 200.',
   pipeline: 'claude',
+  priority: 'normal',
   target: { repo: 'jlapenna/agent-lcars' },
 };
 
 describe('workSpecSchema', () => {
+  it('defaults historical or omitted priority to normal and validates the closed vocabulary', () => {
+    const { priority: _priority, ...old } = spec;
+    expect(workSpecSchema.parse(old).priority).toBe('normal');
+    for (const priority of ['urgent', 'normal', 'background']) {
+      expect(workSpecSchema.parse({ ...old, priority }).priority).toBe(
+        priority,
+      );
+    }
+    expect(() =>
+      workSpecSchema.parse({ ...old, priority: 'superurgent' }),
+    ).toThrow();
+  });
   it('accepts a complete spec', () => {
     expect(workSpecSchema.parse(spec)).toEqual(spec);
   });

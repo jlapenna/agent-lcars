@@ -18,6 +18,87 @@ function renderForm(create = vi.fn()) {
 }
 
 describe('ScheduleCreateForm', () => {
+  it('allows an explicitly background schedule', async () => {
+    const create = renderForm(vi.fn().mockResolvedValue([null, { id: 'X' }]));
+    fireEvent.change(screen.getByLabelText(/^Title/), {
+      target: { value: 'Nightly' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Description/), {
+      target: { value: 'Background maintenance' },
+    });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Priority' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'background' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][0].spec).toMatchObject({
+      priority: 'background',
+      pipeline: 'claude',
+    });
+  });
+  it('preserves an urgent edit draft and releases pending state after transport refusal', async () => {
+    let rejectSave!: (error: Error) => void;
+    const create = vi.fn(
+      (_input: unknown) =>
+        new Promise<never>((_resolve, reject) => {
+          rejectSave = reject;
+        }),
+    );
+    const onPendingChange = vi.fn();
+    const onSaved = vi.fn();
+    render(
+      <MantineProvider>
+        <ScheduleCreateForm
+          create={create}
+          defaultRepo="other/repo"
+          initial={{
+            id: 'existing',
+            revision: 7,
+            cron: '0 3 * * *',
+            enabled: false,
+            spec: {
+              title: 'Existing urgent',
+              description: 'Keep this draft',
+              pipeline: 'codex',
+              priority: 'urgent',
+              target: { repo: 'o/r' },
+            },
+          }}
+          onPendingChange={onPendingChange}
+          onSaved={onSaved}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveValue(
+      'urgent',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][0]).toMatchObject({
+      cron: '0 3 * * *',
+      enabled: false,
+      spec: {
+        title: 'Existing urgent',
+        description: 'Keep this draft',
+        pipeline: 'codex',
+        priority: 'urgent',
+        target: { repo: 'o/r' },
+      },
+    });
+    expect(screen.getByRole('combobox', { name: 'Priority' })).toBeDisabled();
+    rejectSave(new Error('Transport refused'));
+    expect(await screen.findByText('Transport refused')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(onPendingChange).toHaveBeenLastCalledWith(false),
+    );
+    expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveValue(
+      'urgent',
+    );
+    expect(screen.getByLabelText(/^Description/)).toHaveValue(
+      'Keep this draft',
+    );
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
   it('submits { id, cron, spec, enabled } with a ulid id', async () => {
     const create = renderForm(vi.fn().mockResolvedValue([null, { id: 'X' }]));
     fireEvent.change(screen.getByLabelText(/^Title/), {
@@ -39,6 +120,7 @@ describe('ScheduleCreateForm', () => {
       title: 'Nightly sync',
       description: 'Run the nightly sync.',
       pipeline: 'claude',
+      priority: 'normal',
       target: { repo: 'jlapenna/agent-lcars' },
     });
   });

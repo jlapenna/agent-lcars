@@ -142,6 +142,7 @@ export async function admitGithubWork(
       ? {}
       : { requestBinding: input.requestBinding }),
     pipeline: work.spec.pipeline,
+    priority: work.spec.priority,
     params: input.params,
     work,
     // This comparison must execute in the store transaction. A standalone
@@ -228,6 +229,7 @@ export async function redispatchGithubWork(
     taskId: anchor,
     requestId: input.requestId,
     pipeline: work.spec.pipeline,
+    priority: work.spec.priority,
     params: input.params,
   });
   if (isRefusal(outcome)) {

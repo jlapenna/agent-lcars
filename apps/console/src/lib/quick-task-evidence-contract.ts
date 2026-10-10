@@ -1,3 +1,5 @@
+import type { QueuePriority } from '@agent-lcars/dispatch-contracts';
+
 import type { RepositoryRef } from './watched-repo';
 
 /** The only multipart fields accepted by the future Quick Task upload route. */
@@ -37,6 +39,7 @@ export interface QuickTaskEvidenceIntent {
   evidenceId?: QuickTaskEvidenceId;
   repository: RepositoryRef;
   pipeline: string;
+  priority?: QueuePriority;
   description: string;
   source: {
     route: string;

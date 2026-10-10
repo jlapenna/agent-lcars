@@ -52,6 +52,7 @@ describe('New work creation', () => {
       spec: expect.objectContaining({
         title: 'Fix the flaky test',
         pipeline: 'claude',
+        priority: 'normal',
         target: { repo: 'supersprinklesracing/sprinkles' },
       }),
     });
@@ -76,6 +77,9 @@ describe('New work creation', () => {
     fireEvent.change(screen.getByLabelText('Description'), {
       target: { value: 'Keep this draft' },
     });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Priority' }), {
+      target: { value: 'background' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
     await waitFor(() =>
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
@@ -83,6 +87,9 @@ describe('New work creation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New work' }));
     await screen.findByRole('dialog');
     expect(screen.getByLabelText('Description')).toHaveValue('Keep this draft');
+    expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveValue(
+      'background',
+    );
     expect(createItem).not.toHaveBeenCalled();
   });
 
@@ -100,6 +107,58 @@ describe('New work creation', () => {
     await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
     expect((createItem as Mock).mock.calls[0][0].spec.description).toContain(
       'Console route: `/agents`',
+    );
+  });
+
+  it('submits the selected urgent priority without changing provider', async () => {
+    renderButton();
+    fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog');
+    const selector = screen.getByRole('combobox', { name: 'Priority' });
+    fireEvent.change(selector, { target: { value: 'urgent' } });
+    expect(selector).toHaveValue('urgent');
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Urgent fix' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
+    expect((createItem as Mock).mock.calls[0][0].spec).toMatchObject({
+      priority: 'urgent',
+      pipeline: 'claude',
+    });
+  });
+
+  it('retries the frozen urgent request while the next draft resets to normal', async () => {
+    (createItem as Mock)
+      .mockResolvedValueOnce([{ message: 'Response lost' }, undefined])
+      .mockResolvedValueOnce([undefined, { id: 'created' }]);
+    renderButton();
+    fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Priority' }), {
+      target: { value: 'urgent' },
+    });
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Urgent request with a lost response' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() => expect(notifications.update).toHaveBeenCalled());
+    const failure = vi
+      .mocked(notifications.update)
+      .mock.calls.find(([notification]) => notification.color === 'red');
+    expect(failure).toBeDefined();
+    if (!failure) throw new Error('Expected the retry notification');
+    render(<MantineProvider>{failure[0].message}</MantineProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(2));
+    expect((createItem as Mock).mock.calls[1][0]).toEqual(
+      (createItem as Mock).mock.calls[0][0],
+    );
+    expect((createItem as Mock).mock.calls[1][0].spec.priority).toBe('urgent');
+    fireEvent.click(screen.getByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog');
+    expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveValue(
+      'normal',
     );
   });
 
@@ -135,12 +194,14 @@ describe('New work creation', () => {
       'description',
       'evidenceId',
       'pipeline',
+      'priority',
       'repository',
       'requestId',
       'source',
       'workId',
     ]);
     expect(wireIntent).not.toHaveProperty('file');
+    expect(wireIntent.priority).toBe('normal');
     expect(createItem).not.toHaveBeenCalled();
   });
 });

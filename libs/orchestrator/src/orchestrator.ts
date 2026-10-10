@@ -16,6 +16,7 @@ import {
   updateTaskWork,
 } from './decide';
 import {
+  type QueuePriority,
   type RequestSource,
   type Run,
   type RunResult,
@@ -59,6 +60,7 @@ export interface RequestInput {
   /** Omitted for arbitrary caller-controlled request IDs. */
   requestSource?: RequestSource;
   pipeline: string;
+  priority?: QueuePriority;
   params?: Record<string, string>;
   work?: WorkPayload;
   /** Optional opaque atomic request binding. Its owner supplies the key and
@@ -125,6 +127,9 @@ export class Orchestrator {
           requestId,
           requestSource,
           pipeline: input.pipeline,
+          priority:
+            input.priority ??
+            (input.replaceQueuedRunId ? activeRun?.priority : undefined),
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
         };

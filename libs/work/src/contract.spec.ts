@@ -58,7 +58,10 @@ describe('dispatchesContract.github', () => {
       mode: 'implement',
       requestId: 'workflow-run:123:dispatch:1633',
     };
-    expect(shape?.parse(input)).toEqual(input);
+    expect(shape?.parse(input)).toEqual({
+      ...input,
+      spec: { ...input.spec, priority: 'normal' },
+    });
     expect(() => {
       const { requestId: _requestId, ...withoutIdempotency } = input;
       shape?.parse(withoutIdempotency);

@@ -241,6 +241,63 @@ describe('lcars work', () => {
       expect(d.out).toEqual([]);
     });
   });
+  it.each(['urgent', 'normal', 'background', undefined])(
+    'create sends validated priority %s',
+    async (priority) => {
+      const d = deps({
+        'PUT /api/work/v1/items/{id}': ({ body }) => {
+          expect(JSON.parse(body as string).spec.priority).toBe(
+            priority ?? 'normal',
+          );
+          return item('running');
+        },
+      });
+      const args = [
+        'create',
+        '--repo',
+        'o/r',
+        '--pipeline',
+        'claude',
+        '--title',
+        't',
+        '--description',
+        'd',
+      ];
+      if (priority) args.push('--priority', priority);
+      expect(await executeWorkCommand(args, d)).toEqual({ ok: true });
+      expect(d.calls).toHaveLength(1);
+    },
+  );
+  it.each([
+    ['--priority', 'invalid'],
+    ['--priority'],
+    ['--priority', '--title', 't'],
+  ])(
+    'rejects invalid priority before credentials or HTTP: %j',
+    async (...flags) => {
+      const d = deps({});
+      d.token = vi.fn(async () => 'tok');
+      const result = await executeWorkCommand(
+        [
+          'create',
+          '--repo',
+          'o/r',
+          '--pipeline',
+          'claude',
+          '--title',
+          't',
+          '--description',
+          'd',
+          ...flags,
+        ],
+        d,
+      );
+      expect(result.ok).toBe(false);
+      expect(result.usage).toContain('urgent|normal|background');
+      expect(d.token).not.toHaveBeenCalled();
+      expect(d.calls).toEqual([]);
+    },
+  );
   it('create PUTs a client-generated ULID and prints it', async () => {
     const d = deps({ 'PUT /api/work/v1/items/{id}': () => item('running') });
     const r = await executeWorkCommand(
