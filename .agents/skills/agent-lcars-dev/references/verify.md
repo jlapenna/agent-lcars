@@ -41,6 +41,55 @@ graph itself, where you want to see the affected-project computation
 directly. Otherwise: fast layer locally, push, let CI's `Verify` job carry
 the rest.
 
+## Frozen Console test reviews
+
+Use a separate, normally installed Git worktree at the exact reviewed commit
+for immutable Console test evidence. A relocated `git archive` with
+`node_modules` symlinked to another checkout is not an equivalent harness:
+shared setup can resolve outside the archive root and fail collection with a
+literal Vite `/@fs/` module identifier even when the underlying file exists.
+That failure executes zero tests; it is not evidence of a missing dependency
+or a failing HTTP contract. Do not repair it by disabling setup, copying shared
+helpers or inventing another Vitest configuration.
+
+1. Record the full reviewed SHA and check live ownership. Follow the
+   [worktree guardrails](../SKILL.md#hard-guardrails) to create an exclusively
+   owned review worktree and unique local branch at that SHA. Keep application
+   changes in their separate feature worktree; do not switch or reinstall
+   another owner's checkout.
+2. Run `./tools/setup-worktree.sh` in the review worktree. It installs that
+   revision's frozen lockfile and keeps dependency resolution inside the
+   review workspace. Retain the normal project config and shared setup.
+3. Bind evidence to source before and after testing: require `git rev-parse
+HEAD` to equal the reviewed SHA and `git diff --exit-code <reviewed-sha> --
+.` to pass. Inspect untracked files; record hashes and the explicit scope
+   of any independent test overlays separately from unchanged production,
+   owning tests, setup, configuration and lockfile bytes.
+4. Run the selected owning tests directly, without an Nx result-cache replay.
+   From the review worktree root, for example:
+
+   ```bash
+   pnpm exec vitest run --config apps/console/vitest.config.mts \
+     src/lib/runs-router.test.ts --maxWorkers=1 --no-passWithNoTests
+   ```
+
+   Select the actual file needed for the review. Retain the command, cwd,
+   true exit status, complete log and executed test count. Preserve earlier
+   zero-test collection failures separately from a successful rerun; do not
+   replace their receipt with the new result.
+
+5. When proving a regression boundary, apply a bounded negative mutation only
+   in an owned isolated fixture, retain its diff and assertion failure, then
+   restore and recheck the frozen source. A setup/collection failure is not a
+   successful negative control. A run in an existing owning checkout can be
+   additional evidence only when its source is byte-bound to the reviewed
+   revision and using it respects that checkout's live ownership.
+
+This procedure establishes scoped test evidence, not browser acceptance,
+ready-event CI, protected delivery or deployed functionality. Keep deeper
+tooling attribution uncertain until traced; a successful supported worktree
+does not identify an upstream Vite defect.
+
 ## Console e2e
 
 `pnpm verify` does **not** run the console E2E suite locally. CI has the
