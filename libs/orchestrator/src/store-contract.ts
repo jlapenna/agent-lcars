@@ -1154,6 +1154,51 @@ export function runOrchestratorStoreContract(
         return { ...f, run };
       }
 
+      it('preserves first provider spawn across duplicate reports, settlement and retry', async () => {
+        const f = await claimedFixture();
+        const id = f.run.runId;
+        const token = 'a'.repeat(64);
+        await f.orchestrator.renew(id);
+        expect(
+          (await f.store.readRun(id))?.queue?.providerProcessStartedAt,
+        ).toBeUndefined();
+        f.clock.advanceMinutes(1);
+        const observed = f.clock.now();
+        await Promise.all([
+          f.orchestrator.renew(id, token, true),
+          f.orchestrator.renew(id, token, true),
+        ]);
+        expect(
+          (await f.store.readRun(id))?.queue?.providerProcessStartedAt,
+        ).toBe(observed);
+        f.clock.advanceMinutes(1);
+        await f.orchestrator.renew(id, token, true);
+        expect(
+          (await f.store.readRun(id))?.queue?.providerProcessStartedAt,
+        ).toBe(observed);
+        expect(
+          await f.orchestrator.renew(id, 'b'.repeat(64), true),
+        ).toMatchObject({ reason: 'not-claimant' });
+        f.clock.advanceMinutes(121);
+        expect(await f.orchestrator.renew(id, token, true)).toMatchObject({
+          reason: 'stale-lease',
+        });
+        const sweep = await f.orchestrator.sweepExpired();
+        expect(sweep.lost).toHaveLength(1);
+        expect(
+          (await f.store.readRun(id))?.queue?.providerProcessStartedAt,
+        ).toBe(observed);
+        const retry = sweep.retried[0];
+        if (retry === undefined) throw new Error('expected automatic retry');
+        expect(
+          (await f.store.readRun(retry.newRunId))?.queue
+            ?.providerProcessStartedAt,
+        ).toBeUndefined();
+        expect(await f.orchestrator.renew(id, token, true)).toMatchObject({
+          refused: true,
+        });
+      });
+
       it('settles a launch with no callback at the startup deadline and atomically retries only twice', async () => {
         const f = await claimedFixture();
         let runId = f.run.runId;

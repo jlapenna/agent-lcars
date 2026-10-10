@@ -177,12 +177,14 @@ export class Orchestrator {
   async renew(
     runId: string,
     claimFingerprint?: string,
+    providerProcessStarted?: boolean,
   ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
       renewLease({
         now: this.clock.now(),
         task,
         run,
+        providerProcessStarted,
         ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
       }),
     );

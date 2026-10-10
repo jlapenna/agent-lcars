@@ -243,3 +243,37 @@ describe('toWorkSummary', () => {
     });
   });
 });
+
+it('projects known queue clocks without claim credentials or invented historical clocks', () => {
+  const observed = '2026-08-26T10:02:00.000Z';
+  const current = run(1, 'running', {
+    queue: {
+      state: 'claimed',
+      claimedAt: T,
+      firstHeartbeatAt: T,
+      providerProcessStartedAt: observed,
+      tokenHash: 'a'.repeat(64),
+    },
+  });
+  for (const makeView of [toItemView, toWorkSummary]) {
+    const view = makeView({
+      workId: WORK_ID,
+      task: task(),
+      runs: [current],
+      sessions: [],
+    });
+    expect(view.runs[0]?.queue).toEqual({
+      state: 'claimed',
+      claimedAt: T,
+      firstHeartbeatAt: T,
+      providerProcessStartedAt: observed,
+    });
+    const legacy = makeView({
+      workId: WORK_ID,
+      task: task(),
+      runs: [run(1, 'running', { queue: { state: 'claimed' } })],
+      sessions: [],
+    });
+    expect(legacy.runs[0]?.queue).toEqual({ state: 'claimed' });
+  }
+});

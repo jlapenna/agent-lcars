@@ -230,6 +230,7 @@ export function renewLease(input: {
   run: Run;
   /** Existing authenticated queue token hash; omitted only by internal operations. */
   claimFingerprint?: string;
+  providerProcessStarted?: boolean;
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (
@@ -254,9 +255,18 @@ export function renewLease(input: {
     task,
     run: {
       ...run,
-      ...(run.queue?.state === 'claimed' &&
-      run.queue.firstHeartbeatAt === undefined
-        ? { queue: { ...run.queue, firstHeartbeatAt: now } }
+      ...(run.queue?.state === 'claimed'
+        ? {
+            queue: {
+              ...run.queue,
+              firstHeartbeatAt: run.queue.firstHeartbeatAt ?? now,
+              ...(input.providerProcessStarted === true &&
+              input.claimFingerprint !== undefined &&
+              run.queue.providerProcessStartedAt === undefined
+                ? { providerProcessStartedAt: now }
+                : {}),
+            },
+          }
         : {}),
       leaseExpiresAt: runLeaseExpiresAt(now),
       updatedAt: now,

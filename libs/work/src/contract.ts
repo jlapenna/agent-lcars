@@ -80,6 +80,9 @@ export const itemRunViewSchema = z.strictObject({
     .strictObject({
       state: z.enum(['queued', 'claimed']),
       claimedBy: z.string().optional(),
+      claimedAt: z.string().optional(),
+      firstHeartbeatAt: z.string().optional(),
+      providerProcessStartedAt: z.string().optional(),
     })
     .optional(),
 });
@@ -886,7 +889,14 @@ export const runsContract = {
       }),
     )
     .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
-    .input(z.strictObject({ runId: runIdSchema }))
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        /** Trusted worker observed successful OS spawn of the provider CLI.
+         * Omit for bootstrap/ordinary liveness; server records the first report. */
+        providerProcessStarted: z.literal(true).optional(),
+      }),
+    )
     .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
   claimStatus: runBase
     .meta(
