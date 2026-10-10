@@ -182,7 +182,7 @@ when a caller omits or empties the legacy override variables.
 
 | Variable                          | This deployment                                                                  | Used by                                                                                                             |
 | --------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `DEFAULT_RUNNER_LABEL`            | `lcars-default`                                                                  | agent-automerge, label-contract-audit, deploy-console gate — small, fast glue jobs only (#451)                      |
+| `DEFAULT_RUNNER_LABEL`            | `lcars-default`                                                                  | agent-automerge, label-contract-audit — small, fast glue jobs only (#451)                                           |
 | `CI_RUNNER_LABEL`                 | `lcars-ci`                                                                       | ci (verify, e2e), local App Hosting build/deploy — long work kept off the latency-sensitive glue pool (#451, #1030) |
 | `E2E_ENABLED`                     | `true`                                                                           | CI E2E operational kill switch; only the exact value `true` enables the job                                         |
 | `GCP_PROJECT_ID`                  | `agent-lcars`                                                                    | Console credential brokering                                                                                        |
@@ -199,6 +199,21 @@ when a caller omits or empties the legacy override variables.
 | `APPHOSTING_BACKEND_ID`           | `agent-lcars`                                                                    | deploy-console                                                                                                      |
 | `AGENT_BOT_LOGINS`                | `["claude[bot]","agent-lcars[bot]"]`                                             | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                                                   |
 | `NX_CACHE_URL`                    | homelab Nx cache                                                                 | CI jobs                                                                                                             |
+
+`deploy-console.yml` runs its GitHub-only Verify admission check on
+`ubuntu-latest`. Only admitted main/manual deployments enter the shared
+deployment lock. Inside that lock, an automatic source must still equal the
+current main tip before checkout, credential setup, build or rollout. This
+also applies to automatic `recovered-ci` dispatches.
+Superseded sources skip every subsequent step; failed or unreadable main
+lookups fail closed. Explicit manual source requests retain their existing
+semantics and use the same lock.
+
+An older green source can therefore be skipped while a newer main tip waits
+for CI or has failed CI. The workflow does not deploy that unverified tip or
+fall back to the older source. A successful superseded workflow performed no
+rollout: delivery evidence must include the actual rollout and serving
+verification, rather than only its aggregate workflow conclusion.
 
 `DISPATCH_FIRESTORE_DATABASE_ID` is deliberately absent from this table: it
 is not a repo variable. It is an App Hosting environment value

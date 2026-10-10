@@ -78,8 +78,8 @@ describe('console deployment workflow', () => {
     expect(workflow).toContain('default: managed');
     expect(workflow).toContain('./.github/actions/setup-nx-remote-cache');
     expect(workflow).toContain('node tools/deploy-console-prebuilt.mjs');
-    expect(workflow).toContain("if: inputs.build_mode == 'prebuilt'");
-    expect(workflow).toContain("if: inputs.build_mode != 'prebuilt'");
+    expect(workflow).toContain("&& inputs.build_mode == 'prebuilt'");
+    expect(workflow).toContain("&& inputs.build_mode != 'prebuilt'");
     expect(workflow).toContain(
       'run-name: Deploy console [source:${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}]',
     );
