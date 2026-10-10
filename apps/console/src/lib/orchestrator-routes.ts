@@ -35,6 +35,11 @@ import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 
 export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
+  /** Fence journalled credential IO before expiry can admit a successor. */
+  recoverCredentialOperations?: () => Promise<{
+    recovered: string[];
+    unresolved: string[];
+  }>;
   orchestrator: Orchestrator;
   drain: (limit?: number) => Promise<DrainOutboxResult>;
   /** Dispatches `work-session-expiry.yml` for a native item whose open/
@@ -339,6 +344,7 @@ export async function handleReconcile(
   deps: OrchestratorRouteDeps,
 ): Promise<RouteResult> {
   try {
+    const credentialRecovery = await deps.recoverCredentialOperations?.();
     const swept = await deps.orchestrator.sweepExpired();
     // One drain owns the whole bounded maintenance pass so its failed-entry
     // exclusion remains effective across all 30 claims. The five-minute
@@ -352,6 +358,7 @@ export async function handleReconcile(
     return {
       status: 200,
       body: {
+        ...(credentialRecovery === undefined ? {} : { credentialRecovery }),
         lost: swept.lost.map((run) => run.runId),
         retried: swept.retried,
         dispatched: drained.dispatched,

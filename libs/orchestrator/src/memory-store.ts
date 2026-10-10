@@ -3,6 +3,7 @@ import {
   isRefusal,
   type Refusal,
   runLeaseExpiresAt,
+  runStartDeadlineAt,
 } from './decide';
 import type {
   GithubAnchorProjection,
@@ -18,6 +19,7 @@ import {
   isLive,
   isWorkAnchor,
   requestHistoryKey,
+  runRecoveryDeadline,
   taskKey,
 } from './model';
 import {
@@ -489,11 +491,10 @@ export class MemoryStore implements OrchestratorStore {
   async listExpiredRuns(now: string): Promise<Run[]> {
     const cutoff = Date.parse(now);
     return structuredClone(
-      (await this.listLiveRuns()).filter(
-        (run) =>
-          run.queue?.state !== 'queued' &&
-          Date.parse(run.leaseExpiresAt) <= cutoff,
-      ),
+      (await this.listLiveRuns()).filter((run) => {
+        const deadline = runRecoveryDeadline(run);
+        return deadline !== undefined && Date.parse(deadline) <= cutoff;
+      }),
     );
   }
 
@@ -547,6 +548,28 @@ export class MemoryStore implements OrchestratorStore {
     });
   }
 
+  async listCredentialOperations(input: {
+    now: string;
+    limit: number;
+  }): Promise<Run[]> {
+    return structuredClone(
+      [...this.#runs.values()]
+        .flatMap((run) => {
+          const operation = run.credentialOperation;
+          return operation !== undefined && operation.recoverAfter <= input.now
+            ? [{ run, recoverAfter: operation.recoverAfter }]
+            : [];
+        })
+        .sort(
+          (a, b) =>
+            a.recoverAfter.localeCompare(b.recoverAfter) ||
+            a.run.runId.localeCompare(b.run.runId),
+        )
+        .slice(0, input.limit)
+        .map((candidate) => candidate.run),
+    );
+  }
+
   async claimQueuedRun(input: {
     pipelines: readonly string[];
     now: string;
@@ -570,6 +593,7 @@ export class MemoryStore implements OrchestratorStore {
       queue: {
         state: 'claimed',
         claimedAt: input.now,
+        startDeadlineAt: runStartDeadlineAt(input.now),
         claimedBy: input.claimedBy,
         ...(input.claimedBySubject === undefined
           ? {}
@@ -593,6 +617,7 @@ export class MemoryStore implements OrchestratorStore {
     if (
       run === undefined ||
       !isLive(run.state) ||
+      run.credentialOperation !== undefined ||
       run.queue?.state !== 'claimed' ||
       run.queue.claimedBy !== input.claimedBy ||
       run.queue.tokenHash !== input.tokenHash

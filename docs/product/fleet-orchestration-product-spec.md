@@ -276,9 +276,13 @@ final turn, shown in the console Conversation.
   - The Job is created suspended. A per-run token Secret is created, then the
     Job is resumed.
   - `restartPolicy: Never`, `backoffLimit: 0`, a 2h deadline, and a 1-day TTL.
-  - A sweep every 15 minutes deletes orphaned suspended Jobs and prunes
-    finished Jobs, keeping at most five per `max_concurrent` slot within
-    the last 24h.
+  - Normal recovery ticks retire original Jobs only after the existing
+    executor identity confirms that exact claim has settled. Foreground
+    deletion uses UID/resourceVersion preconditions and admission waits for
+    owned Pods to drain. A token refusal or expired live claim is insufficient.
+  - A sweep every 15 minutes prunes finished Jobs, keeping at most five per
+    `max_concurrent` slot within the last 24h. Legacy Secret-less, never-started
+    shells without claim proof retain the guarded two-hour backstop.
 - **FL-EX-3 [Shipped]** Operator controls: `SIGUSR1` toggles drain (stop or
   resume claiming), and `SIGHUP` only revalidates the config. Configuration
   lives in `orchestrator.yml` and is owned by Homelab:

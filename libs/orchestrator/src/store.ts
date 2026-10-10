@@ -264,7 +264,7 @@ export interface OrchestratorStore {
     deliveryFailures?: number;
   }): Promise<boolean>;
 
-  /** Live runs whose lease expired at or before `now`; the sweeper's feed. */
+  /** Live runs whose startup or execution deadline expired at `now`; excludes queued waits. */
   listExpiredRuns(now: string): Promise<Run[]>;
 
   /**
@@ -306,6 +306,12 @@ export interface OrchestratorStore {
 
   /** Every live (`pending`/`running`) run, lease or no lease. */
   listLiveRuns(): Promise<Run[]>;
+  /** One bounded recovery page; retry scheduling rotates unresolved actions.
+   * The time filter is eligibility to fence IO, never permission to unlock. */
+  listCredentialOperations(input: {
+    now: string;
+    limit: number;
+  }): Promise<Run[]>;
 
   /** Read-only consistent snapshot of durable provider admission. Each live
    * state is bounded at QUEUE_ADMISSION_READ_LIMIT; overflow or invalid data
@@ -331,7 +337,7 @@ export interface OrchestratorStore {
    *  one of `pipelines`: least live claimed occupancy across providers, then
    *  the oldest provider head, while preserving FIFO within each provider
    *  and enforcing server-owned provider ceilings. Sets `queue.state = 'claimed'`
-   *  plus `claimedAt`/`claimedBy`/`tokenHash` and refreshing the execution
+   *  plus `claimedAt`/`startDeadlineAt`/`claimedBy`/`tokenHash` and refreshing the execution
    *  lease in the same transaction. `undefined` when nothing is queued for
    *  those pipelines. */
   claimQueuedRun(input: {

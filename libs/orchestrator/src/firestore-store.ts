@@ -13,6 +13,7 @@ import {
   isRefusal,
   type Refusal,
   runLeaseExpiresAt,
+  runStartDeadlineAt,
 } from './decide';
 import {
   byOutboxClaimFairness,
@@ -25,6 +26,7 @@ import {
   outboxEntrySchema,
   type RequestSource,
   type Run,
+  runRecoveryDeadline,
   runSchema,
   runStateSchema,
   taskDocumentSchema,
@@ -631,11 +633,10 @@ export class FirestoreStore implements OrchestratorStore {
     // than require one, reuse the per-live-state equality queries
     // `listLiveRuns` already runs (each covered by Firestore's automatic
     // single-field index) and apply the lease-expiry filter client-side.
-    return (await this.listLiveRuns()).filter(
-      (run) =>
-        run.queue?.state !== 'queued' &&
-        Date.parse(run.leaseExpiresAt) <= cutoff,
-    );
+    return (await this.listLiveRuns()).filter((run) => {
+      const deadline = runRecoveryDeadline(run);
+      return deadline !== undefined && Date.parse(deadline) <= cutoff;
+    });
   }
 
   async listLiveRuns(): Promise<Run[]> {
@@ -727,6 +728,18 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
+  async listCredentialOperations(input: {
+    now: string;
+    limit: number;
+  }): Promise<Run[]> {
+    const snapshot = await this.#runs
+      .where('credentialOperation.recoverAfter', '<=', input.now)
+      .orderBy('credentialOperation.recoverAfter')
+      .limit(input.limit)
+      .get();
+    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+  }
+
   async claimQueuedRun(input: {
     pipelines: readonly string[];
     now: string;
@@ -794,6 +807,7 @@ export class FirestoreStore implements OrchestratorStore {
         queue: {
           state: 'claimed',
           claimedAt: input.now,
+          startDeadlineAt: runStartDeadlineAt(input.now),
           claimedBy: input.claimedBy,
           ...(input.claimedBySubject === undefined
             ? {}
@@ -841,6 +855,7 @@ export class FirestoreStore implements OrchestratorStore {
       const run = runSchema.parse(snapshot.data());
       if (
         !isLive(run.state) ||
+        run.credentialOperation !== undefined ||
         run.queue?.state !== 'claimed' ||
         run.queue.claimedBy !== input.claimedBy ||
         run.queue.tokenHash !== input.tokenHash

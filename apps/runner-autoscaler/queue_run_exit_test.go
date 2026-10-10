@@ -15,11 +15,12 @@ import (
 )
 
 type exitReportRecorder struct {
-	mu       sync.Mutex
-	paths    []string
-	runners  []string
-	bearers  []string
-	statuses []int
+	mu           sync.Mutex
+	paths        []string
+	runners      []string
+	fingerprints []string
+	bearers      []string
+	statuses     []int
 }
 
 func (r *exitReportRecorder) server(t *testing.T) *httptest.Server {
@@ -30,6 +31,7 @@ func (r *exitReportRecorder) server(t *testing.T) *httptest.Server {
 		r.mu.Lock()
 		r.paths = append(r.paths, req.URL.EscapedPath())
 		r.runners = append(r.runners, body["runner"])
+		r.fingerprints = append(r.fingerprints, body["claimFingerprint"])
 		r.bearers = append(r.bearers, req.Header.Get("Authorization"))
 		status := http.StatusOK
 		if len(r.statuses) > 0 {
@@ -73,7 +75,7 @@ func TestRunExitReporterReportsEachRunOnceWithExecutorIdentity(t *testing.T) {
 
 	// A native run id contains a slash; it must stay one escaped segment.
 	for range 3 {
-		reporter.observeTerminated("work:01QUEUEEXITREPORT00000001/r1", "")
+		reporter.observeTerminated("work:01QUEUEEXITREPORT00000001/r1", "", "")
 		reporter.wg.Wait()
 	}
 
@@ -91,7 +93,7 @@ func TestRunExitReporterRetriesAFailedReportOnTheNextObservation(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 3 {
-		reporter.observeTerminated("run-retry", "")
+		reporter.observeTerminated("run-retry", "", "")
 		reporter.wg.Wait()
 	}
 
@@ -105,7 +107,7 @@ func TestRunExitReporterTreatsUnknownRunAsDelivered(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 2 {
-		reporter.observeTerminated("run-gone", "")
+		reporter.observeTerminated("run-gone", "", "")
 		reporter.wg.Wait()
 	}
 
@@ -119,7 +121,7 @@ func TestRunExitReporterTreatsNotClaimant403AsFinal(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 3 {
-		reporter.observeTerminated("run-claimed-elsewhere", "")
+		reporter.observeTerminated("run-claimed-elsewhere", "", "")
 		reporter.wg.Wait()
 	}
 
@@ -135,7 +137,7 @@ func TestRunExitReporterRetriesAPipelineGrant403(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 3 {
-		reporter.observeTerminated("run-grant-restored", "")
+		reporter.observeTerminated("run-grant-restored", "", "")
 		reporter.wg.Wait()
 	}
 
@@ -151,7 +153,7 @@ func TestRunExitReporterReportsUnderTheClaimedRunnerName(t *testing.T) {
 
 	// A Job claimed by an earlier executor process (another container
 	// hostname) must be reported under that claim's name, not this one's.
-	reporter.observeTerminated("run-from-previous-process", "executor-0")
+	reporter.observeTerminated("run-from-previous-process", "executor-0", "")
 	reporter.wg.Wait()
 
 	if len(recorder.runners) != 1 || recorder.runners[0] != "executor-0" {
@@ -164,7 +166,7 @@ func TestRunExitReporterRetriesARouteMissing404(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 2 {
-		reporter.observeTerminated("run-before-console-rollout", "")
+		reporter.observeTerminated("run-before-console-rollout", "", "")
 		reporter.wg.Wait()
 	}
 
@@ -179,14 +181,14 @@ func TestRunExitReporterForgetsRunsPastEvidenceRetention(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	reporter.now = func() time.Time { return now }
 
-	reporter.observeTerminated("run-old", "")
+	reporter.observeTerminated("run-old", "", "")
 	reporter.wg.Wait()
 	now = now.Add(runExitReportedRetention + time.Minute)
-	reporter.observeTerminated("run-new", "")
+	reporter.observeTerminated("run-new", "", "")
 	reporter.wg.Wait()
 
 	reporter.mu.Lock()
-	_, kept := reporter.reported["run-old"]
+	_, kept := reporter.reported[exitClaimKey("run-old", "")]
 	reporter.mu.Unlock()
 	if kept {
 		t.Fatal("reported set retained a run past the queue's evidence retention")
@@ -195,7 +197,7 @@ func TestRunExitReporterForgetsRunsPastEvidenceRetention(t *testing.T) {
 
 func TestNilRunExitReporterIsANoOp(t *testing.T) {
 	var reporter *runExitReporter
-	reporter.observeTerminated("run", "")
+	reporter.observeTerminated("run", "", "")
 }
 
 func queueJobFor(runID string, condition batch.JobConditionType) *batch.Job {
@@ -225,6 +227,7 @@ func TestKubernetesQueueRecordsTheClaimingRunnerOnTheJob(t *testing.T) {
 func TestKubernetesInventoryReportsUnderTheJobsClaimingRunner(t *testing.T) {
 	claimed := queueJobFor("run-claimed", batch.JobFailed)
 	claimed.Annotations[queueRunnerAnnotation] = "executor-0"
+	claimed.Annotations[queueClaimAnnotation] = queueClaimFingerprint("original-job-token")
 	q, _ := kubeQueueFixture(claimed)
 	recorder := &exitReportRecorder{}
 	q.exits = testExitReporter(recorder.server(t).URL)
@@ -234,7 +237,7 @@ func TestKubernetesInventoryReportsUnderTheJobsClaimingRunner(t *testing.T) {
 	}
 	q.exits.wg.Wait()
 
-	if len(recorder.runners) != 1 || recorder.runners[0] != "executor-0" {
+	if len(recorder.runners) != 1 || recorder.runners[0] != "executor-0" || recorder.fingerprints[0] != queueClaimFingerprint("original-job-token") {
 		t.Fatalf("runners = %v, want the Job's recorded claimant", recorder.runners)
 	}
 }
@@ -269,5 +272,17 @@ func TestKubernetesInventoryReportsEveryTerminatedJobOnce(t *testing.T) {
 	}
 	if len(recorder.requests()) != len(want) || !got["/api/work/v1/runs/run-failed/exit"] || !got["/api/work/v1/runs/run-complete/exit"] {
 		t.Fatalf("exit reports = %v, want %v once each", recorder.requests(), want)
+	}
+}
+
+func TestRunExitReporterKeysDeliveryByOriginalClaimFingerprint(t *testing.T) {
+	recorder := &exitReportRecorder{statuses: []int{http.StatusForbidden}}
+	reporter := testExitReporter(recorder.server(t).URL)
+	for _, fingerprint := range []string{queueClaimFingerprint("old"), queueClaimFingerprint("old"), queueClaimFingerprint("new"), queueClaimFingerprint("new")} {
+		reporter.observeTerminated("same-run", "same-runner", fingerprint)
+		reporter.wg.Wait()
+	}
+	if len(recorder.requests()) != 2 || recorder.fingerprints[0] != queueClaimFingerprint("old") || recorder.fingerprints[1] != queueClaimFingerprint("new") {
+		t.Fatalf("fingerprints=%v; want each original claim once", recorder.fingerprints)
 	}
 }

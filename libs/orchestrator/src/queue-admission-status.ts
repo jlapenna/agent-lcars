@@ -37,6 +37,7 @@ export interface QueueAdmissionStatus {
 export function isQueueAdmissionCandidate(run: Run, now?: string): boolean {
   return (
     isLive(run.state) &&
+    run.credentialOperation === undefined &&
     run.queue?.state === 'queued' &&
     (now === undefined ||
       run.queue.deferredUntil === undefined ||

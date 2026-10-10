@@ -17,7 +17,7 @@ import (
 const queueRunBriefBodyLimit = 1 << 20
 
 // The brief route is already read-only and requires this exact run's token,
-// liveness and unexpired lease. It grants no new credential or Work authority.
+// liveness and unexpired startup/execution deadline. It grants no new credential or Work authority.
 // The worker checks it again at bootstrap, fencing a settlement that races
 // the Kubernetes update. Never log the token, response body or request URL.
 func queueRunFence(consoleURL string) func(context.Context, string, string) error {

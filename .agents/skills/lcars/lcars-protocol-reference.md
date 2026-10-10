@@ -96,9 +96,11 @@ maintenance ticker calls `/api/work/v1/maintenance/tick` using its existing
   host capacity before requesting a claim. A full fleet produces the bounded
   `capacity_wait` poll outcome without claiming work. Queued runs do not expire
   or consume execution retries; claiming atomically starts a fresh two-hour
-  execution lease. A failed launch after claiming still uses lease recovery,
-  because the launch may have had side effects. Process-local reservations do
-  not coordinate separately running executor generations.
+  execution lease. A failed launch after claiming uses a fifteen-minute
+  first-heartbeat deadline, because the launch may have had side effects.
+  The first accepted heartbeat switches recovery to the ordinary renewable
+  execution lease. Process-local reservations do not coordinate separately
+  running executor generations.
 - **Executor-reported exit, then lease expiry.** A worker that fails on
   its own reports `runner-failed` through its run token. One that dies
   without reporting (OOM, eviction, node loss, the Job deadline) is seen by
@@ -106,13 +108,20 @@ maintenance ticker calls `/api/work/v1/maintenance/tick` using its existing
   to `POST /runs/{runId}/exit`, and a run still live at that point is
   settled `lost` immediately (`decide.ts`'s `executorExited`, event
   `by: executor`). Only the principal that claimed the run, reporting the
-  runner name it claimed with (the Job carries it as an annotation), may do
-  this; any other executor gets 403. Runs that already reported are left
-  unchanged, so the executor reports every exit. The 2-hour lease (`decide.ts`'s
+  runner name and original SHA-256 claim fingerprint recorded on the Job,
+  may do this. The existing Task+Run transaction checks that exact claim;
+  a same-principal/same-runner replacement claim still rejects the old Job
+  with403 before settlement or lease cleanup. Missing-fingerprint legacy
+  reports can only observe terminal runs; live claims retain deadline recovery.
+  Runs that already reported are left unchanged, so the executor reports
+  every exit, deduplicated by run and original fingerprint. The 2-hour lease (`decide.ts`'s
   `RUN_LEASE_MS`), extended by dispatch, claim, or renewal, remains the
-  backstop for what the executor cannot see -- a failed launch or an
-  executor outage: once the lease is past due,
-  the maintenance tick marks the run `lost` and releases the task's mutex.
+  backstop for what the executor cannot see after a first heartbeat.
+  Claimed runs without a heartbeat instead expire at their fifteen-minute
+  startup deadline; the five-minute maintenance tick normally settles them
+  within twenty minutes of claim. Token routes fence late bootstrap and
+  callbacks at that deadline even before settlement. When either deadline
+  is past due, maintenance marks the run `lost` and releases its task's mutex.
   There is nothing for you to hand-repair here; you do not need to
   reconstruct or edit any state.
 - **Bounded, automatic retry.** Immediately after marking a run `lost`,

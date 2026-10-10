@@ -145,11 +145,12 @@ describe('schedulesContract', () => {
 });
 
 describe('runsContract', () => {
-  it('declares the eight run routes with bearer security', () => {
+  it('declares run routes with their authentication contracts', () => {
     const paths = Object.keys(runsContract);
     expect(paths.sort()).toEqual(
       [
         'claim',
+        'claimStatus',
         'brief',
         'heartbeat',
         'exit',
@@ -396,6 +397,7 @@ describe('generateWorkOpenApi', () => {
         '/schedules/{id}/enable',
         '/runs/claim',
         '/runs/{runId}/brief',
+        '/runs/{runId}/claim-status',
         '/runs/{runId}/heartbeat',
         '/runs/{runId}/exit',
         '/runs/{runId}/complete',
@@ -478,6 +480,7 @@ describe('generateWorkOpenApi', () => {
       'POST /schedules/tick': ['200'],
       'POST /runs/claim': ['200', '401'],
       'GET /runs/{runId}/brief': ['200', '401'],
+      'GET /runs/{runId}/claim-status': ['200', '401', '403', '404'],
       'POST /runs/{runId}/heartbeat': ['200', '401'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],
       'POST /runs/{runId}/complete': ['200', '401'],

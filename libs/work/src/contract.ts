@@ -888,6 +888,36 @@ export const runsContract = {
     .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
     .input(z.strictObject({ runId: runIdSchema }))
     .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
+  claimStatus: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/claim-status',
+        operationId: 'getRunClaimStatus',
+        summary: "Read the authenticated executor's exact claim liveness",
+        spec: withBearer,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'work.executor scope required' },
+      FORBIDDEN: { message: 'executor may not inspect this claim' },
+      NOT_FOUND: { message: 'unknown run' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string().min(1).max(256),
+        claimFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      }),
+    )
+    .output(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string(),
+        claimFingerprint: z.string(),
+        status: z.enum(['live', 'settled']),
+      }),
+    ),
   /** The executor's own report that the container or Job it launched for
    *  a claimed run has terminated. Authenticated like `claim` (the
    *  executor's `work.executor` bearer, not the run token, which lives only
@@ -916,6 +946,11 @@ export const runsContract = {
       z.strictObject({
         runId: runIdSchema,
         runner: z.string().min(1).max(256),
+        /** Required for live settlement; absent legacy reports are terminal-only. */
+        claimFingerprint: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
@@ -1035,7 +1070,7 @@ export const runsContract = {
     .input(
       z.strictObject({
         runId: runIdSchema,
-        generation: z.string().regex(/^\d+$/u),
+        generation: z.string().regex(/^[1-9]\d*$/u),
         restoredSha256: z.string().regex(/^[0-9a-f]{64}$/u),
         authBase64: z
           .string()

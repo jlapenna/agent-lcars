@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  changeCredentialOperation,
+  reserveCredentialOperation,
+} from './credential-operation';
+import {
   cancelRun,
   confirmDispatch,
   decidedRun,
@@ -864,6 +868,7 @@ export function runOrchestratorStoreContract(
         });
         expect(await store.listExpiredRuns(clock.now())).toEqual([]);
 
+        await orchestrator.renew(queued.run.runId);
         clock.advanceMinutes(119);
         expect(await orchestrator.sweepExpired()).toEqual({
           lost: [],
@@ -876,6 +881,616 @@ export function runOrchestratorStoreContract(
         expect(await store.readTask(TASK)).toMatchObject({
           task: { consecutiveLost: 1 },
         });
+      });
+    });
+
+    describe('original-claim external credential reservation', () => {
+      async function reservedFixture() {
+        const f = await fixture();
+        const outcome = await f.orchestrator.request({
+          taskId: TASK,
+          requestId: 'codex-operation',
+          pipeline: 'codex',
+          work: TASK_WORK,
+        });
+        if (isRefusal(outcome)) throw new Error('request refused');
+        const run = decidedRun(outcome);
+        await f.orchestrator.confirmDispatch(run.runId);
+        await f.store.enqueueRun({ runId: run.runId, now: f.clock.now() });
+        await f.store.claimQueuedRun({
+          pipelines: ['codex'],
+          now: f.clock.now(),
+          claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
+          tokenHash: 'a'.repeat(64),
+        });
+        const reserve = await f.store.transactRun({
+          runId: run.runId,
+          decide: ({ task, run }) => {
+            if (task === undefined || run === undefined)
+              throw new Error('missing');
+            return reserveCredentialOperation({
+              now: f.clock.now(),
+              task: task.task,
+              run,
+              id: 'operation',
+              kind: 'persist',
+              claimFingerprint: 'a'.repeat(64),
+            });
+          },
+        });
+        expect(reserve).not.toHaveProperty('refused');
+        const change = (
+          change: Parameters<typeof changeCredentialOperation>[0]['change'],
+          fingerprint = 'a'.repeat(64),
+        ) =>
+          f.store.transactRun({
+            runId: run.runId,
+            decide: ({ task, run }) => {
+              if (task === undefined || run === undefined)
+                throw new Error('missing');
+              return changeCredentialOperation({
+                now: f.clock.now(),
+                task: task.task,
+                run,
+                id: 'operation',
+                claimFingerprint: fingerprint,
+                change,
+              });
+            },
+          });
+        return { ...f, run, change };
+      }
+
+      it('blocks release, reclaim, cancellation, expiry and exit until its external CAS is resolved', async () => {
+        const f = await reservedFixture();
+        const mutation = {
+          kind: 'auth-write' as const,
+          id: 'operation:1',
+          expectedGeneration: '7',
+          sha256: 'b'.repeat(64),
+        };
+        await f.change({ kind: 'prepare', mutation });
+        const before = await f.store.readRun(f.run.runId);
+        expect(
+          await f.store.releaseQueuedRunClaim({
+            runId: f.run.runId,
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+            now: f.clock.now(),
+          }),
+        ).toBe(false);
+        expect(
+          await f.store.claimQueuedRun({
+            pipelines: ['codex'],
+            now: f.clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'b'.repeat(64),
+          }),
+        ).toBeUndefined();
+        expect(await f.orchestrator.cancel(f.run.runId)).toMatchObject({
+          reason: 'credential-operation-pending',
+        });
+        expect(
+          await f.orchestrator.executorExited(f.run.runId, {
+            subject: 'executor@example.com',
+            runner: 'executor',
+            claimFingerprint: 'a'.repeat(64),
+          }),
+        ).toMatchObject({ reason: 'credential-operation-pending' });
+        f.clock.advanceMinutes(121);
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        expect(await f.store.readRun(f.run.runId)).toEqual(before);
+        expect(await f.change({ kind: 'finish' })).toMatchObject({
+          reason: 'credential-operation-pending',
+        });
+        expect(
+          await f.change(
+            { kind: 'acknowledge', mutationId: mutation.id },
+            'c'.repeat(64),
+          ),
+        ).toMatchObject({ reason: 'not-claimant' });
+        await f.change({ kind: 'acknowledge', mutationId: mutation.id });
+        await f.change({ kind: 'finish' });
+        expect(
+          (await f.orchestrator.sweepExpired()).lost.map((r) => r.runId),
+        ).toEqual([f.run.runId]);
+      });
+
+      it('never reuses an acknowledged mutation identity and refuses a stale recovery acknowledgement', async () => {
+        const f = await reservedFixture();
+        const first = {
+          kind: 'auth-write' as const,
+          id: 'operation:1',
+          expectedGeneration: '7',
+          sha256: 'b'.repeat(64),
+        };
+        await f.change({ kind: 'prepare', mutation: first });
+        await f.change({ kind: 'acknowledge', mutationId: first.id });
+        expect(
+          await f.change({ kind: 'prepare', mutation: first }),
+        ).toMatchObject({ reason: 'not-claimant' });
+        const next = { ...first, id: 'operation:2' };
+        await f.change({ kind: 'prepare', mutation: next });
+        const before = await f.store.readRun(f.run.runId);
+        expect(
+          await f.change({ kind: 'acknowledge', mutationId: first.id }),
+        ).toMatchObject({ reason: 'not-claimant' });
+        expect(await f.store.readRun(f.run.runId)).toEqual(before);
+      });
+
+      it('invalidates an earlier lease-resolution proof when a later action prepares and acknowledges', async () => {
+        const f = await reservedFixture();
+        await f.orchestrator.report(
+          f.run.runId,
+          { ok: true, summary: 'completion before finish' },
+          'a'.repeat(64),
+        );
+        await f.change({
+          kind: 'prepare',
+          mutation: {
+            kind: 'lease-write',
+            id: 'operation:1',
+            expectedGeneration: '7',
+            repository: 'octo/example',
+            expiresAt: '2026-08-26T12:00:00.000Z',
+          },
+        });
+        await f.change({ kind: 'acknowledge', mutationId: 'operation:1' });
+        const before = await f.store.readRun(f.run.runId);
+        expect(
+          await f.change({ kind: 'finish', leaseRetiredAtSequence: 0 }),
+        ).toMatchObject({ reason: 'credential-operation-pending' });
+        expect(await f.store.readRun(f.run.runId)).toEqual(before);
+        expect((await f.store.readTask(TASK))?.task.activeRunId).toBe(
+          f.run.runId,
+        );
+        expect(
+          await f.change({ kind: 'finish', leaseRetiredAtSequence: 1 }),
+        ).toMatchObject({ run: { state: 'finished' } });
+      });
+
+      it('durably accepts only the first exact completion then settles it atomically after deadline recovery', async () => {
+        const f = await reservedFixture();
+        await f.change({
+          kind: 'prepare',
+          mutation: {
+            kind: 'auth-write',
+            id: 'operation:1',
+            expectedGeneration: '7',
+            sha256: 'b'.repeat(64),
+          },
+        });
+        const result = {
+          ok: true,
+          summary: 'pull-request',
+          ref: 'https://github.com/octo/example/pull/8',
+          relatedRefs: [
+            'https://github.com/octo/example/issues/7#issuecomment-123',
+          ],
+          message: 'Exact pending deliverable',
+        };
+        const accepted = await f.orchestrator.report(
+          f.run.runId,
+          result,
+          'a'.repeat(64),
+        );
+        expect(accepted).toMatchObject({
+          run: {
+            state: 'running',
+            credentialPendingResult: { result, requestedAt: T0 },
+          },
+          outbox: [],
+        });
+        expect(
+          await f.orchestrator.report(
+            f.run.runId,
+            { ok: false },
+            'a'.repeat(64),
+          ),
+        ).toMatchObject({ reason: 'credential-operation-pending' });
+        f.clock.advanceMinutes(121);
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        await f.change({ kind: 'acknowledge', mutationId: 'operation:1' });
+        const retained = await f.store.readRun(f.run.runId);
+        expect(await f.change({ kind: 'finish' })).toMatchObject({
+          reason: 'credential-operation-pending',
+        });
+        expect(await f.store.readRun(f.run.runId)).toEqual(retained);
+        expect(
+          await f.change({ kind: 'finish', leaseRetiredAtSequence: 0 }),
+        ).toMatchObject({ reason: 'credential-operation-pending' });
+        const settled = await f.change({
+          kind: 'finish',
+          leaseRetiredAtSequence: 1,
+        });
+        expect(settled).toMatchObject({
+          run: { state: 'finished', result },
+          task: { consecutiveLost: 0 },
+        });
+        expect(
+          (await f.store.readTask(TASK))?.task.activeRunId,
+        ).toBeUndefined();
+        expect(
+          (await f.store.readRun(f.run.runId))?.credentialOperation,
+        ).toBeUndefined();
+        expect(
+          (await f.store.readRun(f.run.runId))?.credentialPendingResult,
+        ).toBeUndefined();
+        expect(await f.change({ kind: 'finish' })).toMatchObject({
+          reason: 'not-claimant',
+        });
+        const entries = await claimOutbox(f.store, f.clock.now(), 100);
+        expect(entries.filter((e) => e.kind === 'report-outcome')).toHaveLength(
+          1,
+        );
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+      });
+    });
+
+    describe('first heartbeat recovery', () => {
+      async function claimedFixture() {
+        const f = await fixture();
+        const { run } = await started(f.orchestrator);
+        await f.store.enqueueRun({ runId: run.runId, now: f.clock.now() });
+        await f.orchestrator.confirmDispatch(run.runId);
+        const claim = await f.store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: f.clock.now(),
+          claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
+          tokenHash: 'a'.repeat(64),
+        });
+        expect(claim?.queue?.startDeadlineAt).toBe('2026-08-15T12:15:00.000Z');
+        return { ...f, run };
+      }
+
+      it('settles a launch with no callback at the startup deadline and atomically retries only twice', async () => {
+        const f = await claimedFixture();
+        let runId = f.run.runId;
+        f.clock.advanceMinutes(14);
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        f.clock.advanceMinutes(1);
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          const [a, b] = await Promise.all([
+            f.orchestrator.sweepExpired(),
+            f.orchestrator.sweepExpired(),
+          ]);
+          const lost = [...a.lost, ...b.lost];
+          const retries = [...a.retried, ...b.retried];
+          expect(lost.map((run) => run.runId)).toEqual([runId]);
+          expect(lost[0]?.events.at(-1)).toMatchObject({
+            by: 'expiry',
+            note: 'first heartbeat deadline exceeded',
+          });
+          expect(await f.orchestrator.renew(runId)).toMatchObject({
+            refused: true,
+          });
+          expect(
+            await f.orchestrator.report(runId, { ok: true }),
+          ).toMatchObject({ refused: true });
+          if (attempt === 3) {
+            expect(retries).toEqual([]);
+            expect(await f.store.readTask(TASK)).toMatchObject({
+              task: { consecutiveLost: 3, runCount: 3 },
+            });
+            expect(
+              (await f.store.readTask(TASK))?.task.activeRunId,
+            ).toBeUndefined();
+            break;
+          }
+          expect(retries).toHaveLength(1);
+          const next = retries[0]?.newRunId as string;
+          expect(await f.store.readRun(next)).toMatchObject({
+            requestId: `retry:${runId}`,
+            requestSource: 'auto-retry',
+          });
+          await f.store.enqueueRun({ runId: next, now: f.clock.now() });
+          await f.orchestrator.confirmDispatch(next);
+          await f.store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: f.clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'b'.repeat(64),
+          });
+          runId = next;
+          f.clock.advanceMinutes(15);
+        }
+      });
+
+      it.each([1, 14])(
+        'accepts a heartbeat after %i minutes of bootstrap and then uses the renewable lease',
+        async (bootstrapMinutes) => {
+          const f = await claimedFixture();
+          f.clock.advanceMinutes(bootstrapMinutes);
+          const firstHeartbeatAt = f.clock.now();
+          expect(await f.orchestrator.renew(f.run.runId)).not.toHaveProperty(
+            'refused',
+          );
+          expect(
+            (await f.store.readRun(f.run.runId))?.queue?.firstHeartbeatAt,
+          ).toBe(f.clock.now());
+          f.clock.advanceMinutes(100);
+          expect(await f.orchestrator.sweepExpired()).toEqual({
+            lost: [],
+            retried: [],
+          });
+          await f.orchestrator.renew(f.run.runId);
+          expect(
+            (await f.store.readRun(f.run.runId))?.queue?.firstHeartbeatAt,
+          ).toBe(firstHeartbeatAt);
+          f.clock.advanceMinutes(121);
+          expect((await f.orchestrator.sweepExpired()).lost).toHaveLength(1);
+        },
+      );
+
+      it('fences a first heartbeat and completion at the deadline even before the sweep runs', async () => {
+        const f = await claimedFixture();
+        f.clock.advanceMinutes(15);
+        expect(await f.orchestrator.renew(f.run.runId)).toMatchObject({
+          refused: true,
+          reason: 'stale-lease',
+        });
+        expect(
+          await f.orchestrator.report(f.run.runId, { ok: true }),
+        ).toMatchObject({ refused: true, reason: 'stale-lease' });
+        expect((await f.orchestrator.sweepExpired()).retried).toHaveLength(1);
+      });
+
+      it('does not let expiry overwrite a claim released and reclaimed at its commit boundary', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator, 'startup-reclaim-race');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: T0,
+          claimedBy: 'old-executor',
+          tokenHash: 'a'.repeat(64),
+        });
+        clock.advanceMinutes(15);
+        let interleaved = false;
+        const reclaim = async () => {
+          if (interleaved) return;
+          interleaved = true;
+          expect(
+            await store.releaseQueuedRunClaim({
+              runId: run.runId,
+              claimedBy: 'old-executor',
+              tokenHash: 'a'.repeat(64),
+              now: clock.now(),
+            }),
+          ).toBe(true);
+          expect(
+            await store.claimQueuedRun({
+              pipelines: ['claude'],
+              now: clock.now(),
+              claimedBy: 'new-executor',
+              tokenHash: 'b'.repeat(64),
+            }),
+          ).toMatchObject({
+            runId: run.runId,
+            queue: { startDeadlineAt: '2026-08-15T12:30:00.000Z' },
+          });
+        };
+        // Pause at the store's commit boundary. The legacy read/decide/apply
+        // path has already made a stale decision here; an atomic run decision
+        // must instead observe the fresh claim inside its transaction.
+        const apply = store.apply.bind(store);
+        const transactRun = store.transactRun.bind(store);
+        store.apply = async (input) => {
+          if (input.decision.run?.state === 'lost') await reclaim();
+          return apply(input);
+        };
+        store.transactRun = async (input) => {
+          await reclaim();
+          return transactRun(input);
+        };
+        try {
+          expect(await orchestrator.sweepExpired()).toEqual({
+            lost: [],
+            retried: [],
+          });
+          expect(interleaved).toBe(true);
+          expect(await store.readRun(run.runId)).toMatchObject({
+            state: 'running',
+            queue: {
+              claimedBy: 'new-executor',
+              tokenHash: 'b'.repeat(64),
+              startDeadlineAt: '2026-08-15T12:30:00.000Z',
+            },
+          });
+          expect((await store.readTask(run.task))?.task.activeRunId).toBe(
+            run.runId,
+          );
+        } finally {
+          store.apply = apply;
+          store.transactRun = transactRun;
+        }
+      });
+
+      it.each(['heartbeat', 'complete', 'exit'] as const)(
+        'refuses an authenticated %s fingerprint after release/reclaim at the transaction boundary',
+        async (operation) => {
+          const { store, orchestrator, clock, run } = await claimedFixture();
+          const original = store.transactRun.bind(store);
+          let interleaved = false;
+          let freshRun: Awaited<ReturnType<OrchestratorStore['readRun']>>;
+          let freshTask: Awaited<ReturnType<OrchestratorStore['readTask']>>;
+          store.transactRun = async (input) => {
+            if (!interleaved) {
+              interleaved = true;
+              const released = await store.releaseQueuedRunClaim({
+                runId: run.runId,
+                claimedBy: 'executor',
+                tokenHash: 'a'.repeat(64),
+                now: clock.now(),
+              });
+              if (!released)
+                throw new Error('original callback claim was not released');
+              const claimed = await store.claimQueuedRun({
+                pipelines: ['claude'],
+                now: clock.now(),
+                claimedBy: 'executor',
+                claimedBySubject: 'executor@example.com',
+                tokenHash: 'b'.repeat(64),
+              });
+              if (claimed?.runId !== run.runId)
+                throw new Error('callback run was not reclaimed');
+              freshRun = await store.readRun(run.runId);
+              freshTask = await store.readTask(run.task);
+            }
+            return original(input);
+          };
+          try {
+            const result =
+              operation === 'heartbeat'
+                ? await orchestrator.renew(run.runId, 'a'.repeat(64))
+                : operation === 'complete'
+                  ? await orchestrator.report(
+                      run.runId,
+                      { ok: true },
+                      'a'.repeat(64),
+                    )
+                  : await orchestrator.executorExited(run.runId, {
+                      subject: 'executor@example.com',
+                      runner: 'executor',
+                      claimFingerprint: 'a'.repeat(64),
+                    });
+            expect(interleaved).toBe(true);
+            expect(result).toEqual({ refused: true, reason: 'not-claimant' });
+            expect(await store.readRun(run.runId)).toEqual(freshRun);
+            expect(await store.readTask(run.task)).toEqual(freshTask);
+            expect(freshRun?.queue?.firstHeartbeatAt).toBeUndefined();
+            expect(freshRun?.result).toBeUndefined();
+          } finally {
+            store.transactRun = original;
+          }
+        },
+      );
+
+      it.each([false, true])(
+        'accepts matching callback fingerprints on supported claims (historical=%s)',
+        async (historical) => {
+          const f = await claimedFixture();
+          if (historical) {
+            const current = await f.store.readRun(f.run.runId);
+            const task = await f.store.readTask(f.run.task);
+            if (current?.queue === undefined || task === undefined)
+              throw new Error('missing claim');
+            const {
+              startDeadlineAt: _start,
+              firstHeartbeatAt: _heartbeat,
+              ...queue
+            } = current.queue;
+            await f.store.apply({
+              decision: {
+                task: task.task,
+                run: { ...current, queue },
+                outbox: [],
+              },
+              expectedRevision: task.revision,
+            });
+          }
+          f.clock.advanceMinutes(14);
+          expect(
+            await f.orchestrator.renew(f.run.runId, 'a'.repeat(64)),
+          ).not.toHaveProperty('refused');
+          f.clock.advanceMinutes(2);
+          expect(
+            await f.orchestrator.report(
+              f.run.runId,
+              { ok: true, ref: 'https://github.com/octo/example/pull/42' },
+              'a'.repeat(64),
+            ),
+          ).not.toHaveProperty('refused');
+          expect(await f.store.readRun(f.run.runId)).toMatchObject({
+            state: 'finished',
+            result: {
+              ok: true,
+              ref: 'https://github.com/octo/example/pull/42',
+            },
+          });
+        },
+      );
+
+      it.each(['heartbeat', 'complete'] as const)(
+        'rechecks the execution deadline inside an authenticated %s transaction',
+        async (operation) => {
+          const f = await claimedFixture();
+          await f.orchestrator.renew(f.run.runId, 'a'.repeat(64));
+          const before = await f.store.readRun(f.run.runId);
+          const taskBefore = await f.store.readTask(f.run.task);
+          const original = f.store.transactRun.bind(f.store);
+          f.store.transactRun = async (input) => {
+            f.clock.advanceMinutes(120);
+            return original(input);
+          };
+          try {
+            const result =
+              operation === 'heartbeat'
+                ? await f.orchestrator.renew(f.run.runId, 'a'.repeat(64))
+                : await f.orchestrator.report(
+                    f.run.runId,
+                    { ok: true },
+                    'a'.repeat(64),
+                  );
+            expect(result).toEqual({ refused: true, reason: 'stale-lease' });
+            expect(await f.store.readRun(f.run.runId)).toEqual(before);
+            expect(await f.store.readTask(f.run.task)).toEqual(taskBefore);
+          } finally {
+            f.store.transactRun = original;
+          }
+        },
+      );
+
+      it('drops startup bookkeeping when a lifecycle read releases the claim and grants a fresh deadline on reclaim', async () => {
+        const f = await claimedFixture();
+        expect(
+          await f.store.releaseQueuedRunClaim({
+            runId: f.run.runId,
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+            now: f.clock.now(),
+            deferredUntil: '2026-08-15T16:00:00.000Z',
+          }),
+        ).toBe(true);
+        f.clock.advanceMinutes(180);
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        expect(
+          await f.store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: f.clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'b'.repeat(64),
+          }),
+        ).toBeUndefined();
+        f.clock.advanceMinutes(60);
+        const claimed = await f.store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: f.clock.now(),
+          claimedBy: 'executor',
+          tokenHash: 'b'.repeat(64),
+        });
+        expect(claimed?.queue?.startDeadlineAt).toBe(
+          '2026-08-15T16:15:00.000Z',
+        );
+        expect(claimed?.queue?.firstHeartbeatAt).toBeUndefined();
       });
     });
 

@@ -242,6 +242,11 @@ export const runQueueSchema = z.strictObject({
    * instant so one broken GitHub anchor cannot block its whole pipeline. */
   deferredUntil: isoUtc.optional(),
   claimedAt: isoUtc.optional(),
+  /** Claim-time bootstrap budget, independent of the renewable execution
+   * lease. Absent on older claims, which retain lease-only recovery. */
+  startDeadlineAt: isoUtc.optional(),
+  /** First accepted worker heartbeat; dispatch/claim alone is not liveness. */
+  firstHeartbeatAt: isoUtc.optional(),
   /** The executor's self-reported runner name. Unauthenticated: it labels
    * the claim and must match a later exit report, but grants nothing alone. */
   claimedBy: z.string().min(1).max(256).optional(),
@@ -275,6 +280,54 @@ export const runEventSchema = z.strictObject({
 });
 export type RunEvent = z.infer<typeof runEventSchema>;
 
+/** A recoverable external CAS, authorized by the existing queue claim. No
+ * credential bytes or raw token are persisted here. Each action is prepared
+ * atomically before IO; its generation must be completed/fenced before removal. */
+const credentialFingerprintSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const credentialGenerationSchema = z
+  .string()
+  .regex(/^[0-9]+$/u)
+  .max(32);
+export const credentialMutationSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('lease-write'),
+    id: z.string().min(1).max(128),
+    expectedGeneration: credentialGenerationSchema,
+    repository: z.string().min(1).max(256),
+    expiresAt: isoUtc,
+  }),
+  z.strictObject({
+    kind: z.literal('auth-write'),
+    id: z.string().min(1).max(128),
+    expectedGeneration: z
+      .string()
+      .regex(/^[1-9][0-9]*$/u)
+      .max(32),
+    sha256: credentialFingerprintSchema,
+  }),
+]);
+export type CredentialMutation = z.infer<typeof credentialMutationSchema>;
+export const credentialOperationSchema = z.strictObject({
+  id: z.string().min(1).max(128),
+  kind: z.enum(['restore', 'renew', 'persist', 'cleanup']),
+  claimFingerprint: credentialFingerprintSchema,
+  startedAt: isoUtc,
+  mutationSequence: z.number().int().min(0).max(100),
+  /** Recovery scheduling only: passing this time never removes authority. */
+  recoverAfter: isoUtc,
+  mutation: credentialMutationSchema.optional(),
+});
+export type CredentialOperation = z.infer<typeof credentialOperationSchema>;
+export const credentialWriteReceiptSchema = z.strictObject({
+  operationId: z.string().min(1).max(128),
+  claimFingerprint: credentialFingerprintSchema,
+  expectedGeneration: credentialGenerationSchema,
+  sha256: credentialFingerprintSchema,
+});
+export type CredentialWriteReceipt = z.infer<
+  typeof credentialWriteReceiptSchema
+>;
+
 export const runSchema = z.strictObject({
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   task: taskIdSchema,
@@ -296,6 +349,20 @@ export const runSchema = z.strictObject({
   params: z.record(z.string().max(64), z.string().max(16_384)).optional(),
   /** Queue claim state -- see `runQueueSchema`. */
   queue: runQueueSchema.optional(),
+  credentialOperation: credentialOperationSchema.optional(),
+  /** Successful restore receipt; authority remains the current queue hash. */
+  credentialRestoredClaimFingerprint: credentialFingerprintSchema.optional(),
+  /** A timely completion accepted while external IO is unresolved. Recovery
+   * settles this exact result atomically before releasing task ownership. */
+  credentialPendingResult: z
+    .strictObject({
+      claimFingerprint: credentialFingerprintSchema,
+      requestedAt: isoUtc,
+      result: runResultSchema,
+    })
+    .optional(),
+  /** Last confirmed rotation, allowing an exact retry without a second write. */
+  credentialWriteReceipt: credentialWriteReceiptSchema.optional(),
   /** A live run must renew before this instant or it is presumed lost. */
   leaseExpiresAt: isoUtc,
   result: runResultSchema.optional(),
@@ -474,5 +541,28 @@ export type LeasedOutboxEntry = Extract<OutboxEntry, { state: 'leased' }>;
 export function byOutboxClaimFairness(a: OutboxEntry, b: OutboxEntry): number {
   return (
     a.attempts - b.attempts || Date.parse(a.createdAt) - Date.parse(b.createdAt)
+  );
+}
+
+/** Effective recovery deadline. Unclaimed queue waits never expire. Older
+ * claims without startup bookkeeping retain their original lease behavior. */
+export function runRecoveryDeadline(run: Run): string | undefined {
+  if (run.queue?.state === 'queued') return undefined;
+  const start =
+    run.queue?.state === 'claimed' && run.queue.firstHeartbeatAt === undefined
+      ? run.queue.startDeadlineAt
+      : undefined;
+  return start !== undefined &&
+    Date.parse(start) < Date.parse(run.leaseExpiresAt)
+    ? start
+    : run.leaseExpiresAt;
+}
+
+export function startDeadlineElapsed(run: Run, now: string): boolean {
+  return (
+    run.queue?.state === 'claimed' &&
+    run.queue.firstHeartbeatAt === undefined &&
+    run.queue.startDeadlineAt !== undefined &&
+    Date.parse(run.queue.startDeadlineAt) <= Date.parse(now)
   );
 }

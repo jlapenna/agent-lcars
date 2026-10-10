@@ -174,15 +174,33 @@ export class Orchestrator {
     );
   }
 
-  async renew(runId: string): Promise<Decision | Refusal> {
+  async renew(
+    runId: string,
+    claimFingerprint?: string,
+  ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
-      renewLease({ now: this.clock.now(), task, run }),
+      renewLease({
+        now: this.clock.now(),
+        task,
+        run,
+        ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+      }),
     );
   }
 
-  async report(runId: string, result: RunResult): Promise<Decision | Refusal> {
+  async report(
+    runId: string,
+    result: RunResult,
+    claimFingerprint?: string,
+  ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
-      reportResult({ now: this.clock.now(), task, run, result }),
+      reportResult({
+        now: this.clock.now(),
+        task,
+        run,
+        result,
+        ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+      }),
     );
   }
 
@@ -339,14 +357,17 @@ export class Orchestrator {
     runId: string,
     decide: (task: VersionedTask['task'], run: Run) => Decision | Refusal,
   ): Promise<Decision | Refusal> {
-    const run = await this.store.readRun(runId);
-    if (run === undefined) return { refused: true, reason: 'unknown-run' };
-    return this.transact(run.task, async (task) => {
-      const current = await this.store.readRun(runId);
-      if (task === undefined || current === undefined) {
-        return { refused: true, reason: 'unknown-run' } as Refusal;
-      }
-      return decide(task.task, current);
+    // Queue release/reclaim changes Run without advancing Task revision.
+    // Decide against both documents inside the existing store transaction,
+    // so a stale expiry/renewal/report cannot overwrite a fresh claim.
+    return this.store.transactRun({
+      runId,
+      decide: ({ task, run }) => {
+        if (task === undefined || run === undefined) {
+          return { refused: true, reason: 'unknown-run' };
+        }
+        return decide(task.task, run);
+      },
     });
   }
 }

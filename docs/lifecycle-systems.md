@@ -26,7 +26,12 @@ available through Git history.
 5. A lease is renewed while the run is live. When a worker terminates
    without reporting, the QueueExecutor reports the exit and the run is
    settled `lost` at once; reconciliation settles expired leases as the
-   backstop. Both perform bounded retry; an exhausted retry budget parks the
+   backstop. Claims that never deliver a first heartbeat have a separate
+   fifteen-minute startup deadline (normally settled within twenty minutes
+   by the five-minute maintenance tick), followed by the same bounded retry.
+   Normal executor recovery retires the exact settled claim's original Job
+   with guarded foreground deletion; admission waits for its owned Pods to
+   drain. Expiry alone is not deletion authority. Both perform bounded retry; an exhausted retry budget parks the
    task for manual action.
 
 ## Console acknowledgement and maintenance
