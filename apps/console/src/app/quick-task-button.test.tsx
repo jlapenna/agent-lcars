@@ -26,7 +26,8 @@ function renderButton() {
 
 async function submit(description = 'Fix the flaky test') {
   fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
-  await screen.findByRole('dialog');
+  // First activation compiles/loads the lazy dialog in the Node test runtime.
+  await screen.findByRole('dialog', undefined, { timeout: 5_000 });
   fireEvent.change(await screen.findByLabelText('Description'), {
     target: { value: description },
   });
@@ -62,6 +63,40 @@ describe('New work creation', () => {
   it('keeps source context in the native item description', async () => {
     renderButton();
     await submit('Investigate this screen');
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
+    expect((createItem as Mock).mock.calls[0][0].spec.description).toContain(
+      'Console route: `/agents`',
+    );
+  });
+
+  it('keeps a draft when the lazily loaded dialog is dismissed and reopened', async () => {
+    renderButton();
+    fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Keep this draft' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog');
+    expect(screen.getByLabelText('Description')).toHaveValue('Keep this draft');
+    expect(createItem).not.toHaveBeenCalled();
+  });
+
+  it('retains the same trigger and captures the click route before lazy loading', async () => {
+    renderButton();
+    const trigger = await screen.findByRole('button', { name: 'New work' });
+    fireEvent.click(trigger);
+    window.history.replaceState(null, '', '/inbox');
+    await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    expect(screen.getByRole('button', { name: 'New work' })).toBe(trigger);
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Investigate the originating page' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
     await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
     expect((createItem as Mock).mock.calls[0][0].spec.description).toContain(
       'Console route: `/agents`',
