@@ -62,18 +62,30 @@ for credible overlap with the local phase and reserves. Save changed raw node
 and workload rows before issuing the capacity verdict. Kubernetes allocatable
 and Pod inventory alone do not prove complete host safety.
 Reconcile declared reserve coverage and count nested
-unit/container/Pod/cgroup workloads once. If placement, ownership, accounting
-visibility, reserve coverage or overlap fit is unknown, hold the phase. Verify
+unit/container/Pod/cgroup workloads once. If placement, ownership, required
+accounting visibility, reserve coverage or overlap fit is unknown, hold the phase. Verify
 the full proposed envelope fits together on that one supported host under the
 credible overlap. Temporary contention changes when work can start, not its
 supported size; wait or split/resize actual work while retaining required
 reserves and truthful requests. Never understate demand, rely on overcommit,
 change host controls or stop another owner's workload to make the phase fit.
 
-A required resource monitor must prove readiness before the supervisor starts
-any workload: validate the accounting paths/counters and record a successful
-baseline and first sample. Do not assume `io.stat` exists in a user cgroup.
-When IO accounting is unavailable, select and validate a supported filesystem
+Ordinary fast checks retain the commands in [CI delegation](#ci-delegation);
+this repository does not ship a general resource-accounting supervisor.
+For a phase explicitly requiring resource guards, identify an available
+supported executable facility and its required accounting method first.
+On supported systemd hosts, [systemd-run](https://github.com/systemd/systemd/blob/main/man/systemd-run.xml)
+can supervise CPU, memory and time through supported unit properties; consult
+[resource controls](https://github.com/systemd/systemd/blob/main/man/systemd.resource-control.xml)
+and verify the actual host's capabilities and selected properties. This facility
+does not provide an owned disk quota or a filesystem-monitor readiness handshake.
+An unavailable required guard is a setup gate, not a reason to invent a wrapper
+or bypass verification.
+
+A resource monitor declared as a required guard for that phase must prove
+readiness before the supervisor starts its workload: validate the accounting
+paths/counters and record a successful baseline and first sample. Do not assume
+`io.stat` exists in a user cgroup. Identify and validate the supported required
 measurement before execution, or stop with a setup failure. Record the method,
 filesystem identities, observed paths, baseline, sample interval and stop limit;
 include owned outputs, temporary files and caches in the declared scope.
@@ -98,11 +110,15 @@ failure must terminate the owned child while an unrelated witness stays alive.
 Use the actual supervisor, with isolated accounting probes and inert children;
 do not replace it with a test implementation or add tests that mirror this text.
 
-Filesystem free-byte samples can provide a conservative sampled growth stop;
-shared filesystem activity is not attributable solely to the workload. Record
-sampled maxima, final footprint and before/after free-byte observations under
-those names. Sampling does not prove an unsampled peak or enforce a hard disk
-quota; cumulative IO bytes are a different metric from allocated disk growth.
+Shared filesystem free-byte samples measure net filesystem activity.
+Concurrent releases can mask an owned workload's allocation, so these samples
+cannot alone enforce or prove its storage ceiling. If a phase requires that
+ceiling, use supported attributable allocation accounting or an actual quota;
+hold the phase if the required bound cannot be qualified. Keep shared free-space
+samples as diagnostics. Record sampled maxima, final footprint and before/after
+free-byte observations under those names. Sampling does not prove an unsampled
+peak or enforce a hard disk quota; cumulative IO bytes differ from allocated
+disk growth.
 If a required guard failed, preserve that failure and distinguish any valid
 source/test/commit evidence from unproven resource enforcement. Do not rerun a
 completed operation to erase its original receipt.
