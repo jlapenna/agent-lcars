@@ -1,5 +1,5 @@
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
-import type { SessionDoc } from '@agent-lcars/telemetry';
+import type { QualifiedSessionPR, SessionDoc } from '@agent-lcars/telemetry';
 import {
   isCanonicalSessionRepository,
   totalTokens,
@@ -50,17 +50,19 @@ export interface SessionSpend {
 export const spendPRKey = (repo: { owner: string; name: string }, n: number) =>
   `${repo.owner.toLowerCase()}/${repo.name.toLowerCase()}#${n}`;
 
+export function sessionPRReferences(doc: SessionDoc): QualifiedSessionPR[] {
+  return (doc.deliverables.qualifiedPRs ?? []).filter(
+    (pr) =>
+      isCanonicalSessionRepository(pr.repo) &&
+      Number.isSafeInteger(pr.number) &&
+      pr.number > 0,
+  );
+}
+
 export function sessionPRKeys(doc: SessionDoc): string[] {
   return [
     ...new Set(
-      (doc.deliverables.qualifiedPRs ?? [])
-        .filter(
-          (pr) =>
-            isCanonicalSessionRepository(pr.repo) &&
-            Number.isSafeInteger(pr.number) &&
-            pr.number > 0,
-        )
-        .map((pr) => spendPRKey(pr.repo, pr.number)),
+      sessionPRReferences(doc).map((pr) => spendPRKey(pr.repo, pr.number)),
     ),
   ];
 }

@@ -30,6 +30,6 @@ describe('qualified GitHub publication URLs', () => {
       findQualifiedPRs(
         'https://github.com/a/b/pull/42#review https://github.com/A/B/pull/42',
       ),
-    ).toEqual([{ repo: { owner: 'a', name: 'b' }, number: 42 }]);
+    ).toEqual([{ repo: { owner: 'A', name: 'B' }, number: 42 }]);
   });
 });

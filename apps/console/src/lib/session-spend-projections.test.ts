@@ -1,7 +1,11 @@
-import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
+import {
+  type GithubAnchorProjection,
+  MemoryStore,
+} from '@agent-lcars/orchestrator';
 import type { CliSessionDoc } from '@agent-lcars/telemetry';
 import { describe, expect, it, vi } from 'vitest';
 
+import { aggregateSessionSpend } from './session-spend';
 import { loadSpendProjections } from './session-spend-projections';
 
 function doc(prNumbers: number[]): CliSessionDoc {
@@ -82,5 +86,69 @@ describe('stored spend evidence boundary', () => {
     } as GithubAnchorProjection);
     await Promise.resolve();
     expect(result.projections.size).toBe(0);
+  });
+});
+
+describe('canonical stored projection identities (#2303)', () => {
+  it('reads canonical mixed-case keys while deduplicating case-insensitive identities', async () => {
+    const store = new MemoryStore();
+    const anchor = { repo: 'Acme/Other-Project', issue: 42 };
+    const timestamp = '2026-10-01T00:00:00.000Z';
+    const projection: GithubAnchorProjection = {
+      anchor,
+      kind: 'pr',
+      state: 'closed',
+      title: 'merged',
+      body: '',
+      url: 'https://github.com/Acme/Other-Project/pull/42',
+      labels: [],
+      assigneeLogins: [],
+      sourceUpdatedAt: timestamp,
+      observedAt: timestamp,
+      mergedAt: timestamp,
+    };
+    const generation = await store.beginGithubAnchorProjectionRefresh(anchor);
+    await store.applyGithubAnchorProjectionRefresh({
+      anchor,
+      generation,
+      projection,
+    });
+    const session = {
+      ...doc([42]),
+      deliverables: {
+        prNumbers: [42],
+        commitShas: [],
+        qualifiedPRs: [
+          { repo: { owner: 'Acme', name: 'Other-Project' }, number: 42 },
+          { repo: { owner: 'acme', name: 'other-project' }, number: 42 },
+        ],
+      },
+    };
+    const read = vi.fn((target) => store.readGithubAnchorProjection(target));
+    const loaded = await loadSpendProjections([session], read, 5000, [
+      { owner: 'Acme', name: 'Other-Project' },
+    ]);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith(anchor);
+    expect(aggregateSessionSpend([session], loaded.projections).mergedPRs).toBe(
+      1,
+    );
+    const canonicalSession = {
+      ...session,
+      deliverables: {
+        ...session.deliverables,
+        qualifiedPRs: session.deliverables.qualifiedPRs.slice(0, 1),
+      },
+    };
+    expect(
+      aggregateSessionSpend(
+        [canonicalSession],
+        (
+          await loadSpendProjections([canonicalSession], (target) =>
+            store.readGithubAnchorProjection(target),
+          )
+        ).projections,
+      ).mergedPRs,
+    ).toBe(1);
   });
 });

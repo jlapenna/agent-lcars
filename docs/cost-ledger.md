@@ -59,7 +59,9 @@ existing webhook/exact refresh/backfill paths. A timestamp on a closed PR proves
 a known merge; explicit `mergedAt: null` means known unmerged as of the
 projection observation. Closed alone, legacy missing fields, failed reads and
 wrong identities remain unknown. Costs never falls back to GitHub network calls
-during rendering. Point reads are deduplicated, capped at 200, limited to eight
+during rendering. Point reads preserve canonical publication/configured repository spelling;
+case-insensitive keys are used only for deduplication and comparison. Reads are
+deduplicated, capped at 200, limited to eight
 concurrent reads, and share a five-second deadline. Older retained PRs may need
 the existing approved projection backfill before their metrics are complete;
 this change does not request or run one.

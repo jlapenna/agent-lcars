@@ -147,3 +147,54 @@ describe('qualified publication → retained session → spend boundary (#2301)'
     ).toBe(0);
   });
 });
+
+describe('Codex publication stdout normalization (#2302)', () => {
+  it.each(['envelope', 'code-mode', 'plain'])(
+    'retains qualified publication through %s',
+    (format) => {
+      const url = 'https://github.com/jlapenna/agent-lcars/pull/42';
+      const envelope = JSON.stringify({
+        chunk_id: 'a',
+        exit_code: 0,
+        output: url + '\n',
+      });
+      const content =
+        format === 'envelope'
+          ? envelope
+          : format === 'code-mode'
+            ? 'Script completed\nOutput:\n' + envelope
+            : url + '\n';
+      const doc = session([
+        call('create', 'gh pr create'),
+        output('create', content),
+      ]);
+      expect(
+        aggregateSessionSpend(
+          [doc],
+          new Map([['jlapenna/agent-lcars#42', local]]),
+        ).mergedPRs,
+      ).toBe(1);
+    },
+  );
+  it('does not count failed envelopes even inside code-mode prose', () => {
+    const envelope = JSON.stringify({
+      exit_code: 1,
+      output: 'https://github.com/jlapenna/agent-lcars/pull/42',
+    });
+    for (const content of [
+      envelope,
+      'Script completed\nOutput:\n' + envelope,
+    ]) {
+      const doc = session([
+        call('create', 'gh pr create'),
+        output('create', content),
+      ]);
+      expect(
+        aggregateSessionSpend(
+          [doc],
+          new Map([['jlapenna/agent-lcars#42', local]]),
+        ).mergedPRs,
+      ).toBe(0);
+    }
+  });
+});

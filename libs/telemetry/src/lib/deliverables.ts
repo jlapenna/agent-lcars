@@ -74,13 +74,16 @@ export function findQualifiedPRs(line: unknown): QualifiedSessionPR[] {
   for (const text of strings)
     for (const match of text.matchAll(pattern)) {
       const repo = {
-        owner: match[1]?.toLowerCase(),
-        name: match[2]?.toLowerCase(),
+        owner: match[1],
+        name: match[2],
       };
       const number = Number(match[3]);
       if (!isCanonicalSessionRepository(repo) || !Number.isSafeInteger(number))
         continue;
-      refs.set(`${repo.owner}/${repo.name}#${number}`, { repo, number });
+      refs.set(
+        `${repo.owner.toLowerCase()}/${repo.name.toLowerCase()}#${number}`,
+        { repo, number },
+      );
     }
   return [...refs.values()];
 }

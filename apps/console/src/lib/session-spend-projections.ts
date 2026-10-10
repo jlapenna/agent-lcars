@@ -1,7 +1,7 @@
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 
-import { sessionPRKeys } from './session-spend';
+import { sessionPRReferences, spendPRKey } from './session-spend';
 
 /** Stored evidence only. A single page has at most 200 point reads, eight
  * outstanding reads and a shared five-second deadline. Late reads cannot
@@ -12,8 +12,24 @@ export async function loadSpendProjections(
     anchor: GithubAnchorProjection['anchor'],
   ) => Promise<GithubAnchorProjection | undefined>,
   timeoutMs = 5000,
+  canonicalRepositories: readonly { owner: string; name: string }[] = [],
 ) {
-  const keys = [...new Set(docs.flatMap(sessionPRKeys))];
+  const anchors = new Map<string, GithubAnchorProjection['anchor']>();
+  const canonical = new Map(
+    canonicalRepositories.map((repo) => [
+      `${repo.owner}/${repo.name}`.toLowerCase(),
+      `${repo.owner}/${repo.name}`,
+    ]),
+  );
+  for (const doc of docs)
+    for (const pr of sessionPRReferences(doc)) {
+      const repo = `${pr.repo.owner}/${pr.repo.name}`;
+      anchors.set(spendPRKey(pr.repo, pr.number), {
+        repo: canonical.get(repo.toLowerCase()) ?? repo,
+        issue: pr.number,
+      });
+    }
+  const keys = [...anchors.keys()];
   const selected = keys.slice(0, 200);
   const projections = new Map<string, GithubAnchorProjection>();
   let incomplete = keys.length > selected.length;
@@ -29,15 +45,15 @@ export async function loadSpendProjections(
         }
         const key = selected[cursor++];
         if (key === undefined) return;
-        const [repo, issue] = key.split('#');
-        if (repo === undefined) {
+        const anchor = anchors.get(key);
+        if (anchor === undefined) {
           incomplete = true;
           continue;
         }
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const projection = await Promise.race([
-            read({ repo, issue: Number(issue) }),
+            read(anchor),
             new Promise<undefined>((resolve) => {
               timer = setTimeout(() => resolve(undefined), remaining);
             }),

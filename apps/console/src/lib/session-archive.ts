@@ -16,6 +16,7 @@ import {
 
 import { DEFAULT_ARCHIVE_DAYS } from './archive-window';
 import {
+  getWatchedRepos,
   parseRepoFilterParam,
   repoKey,
   type WatchedRepo,
@@ -296,8 +297,11 @@ export async function getSessionArchive(
     let projections = new Map<string, GithubAnchorProjection>();
     try {
       const store = createOrchestratorRuntime().store;
-      const result = await loadSpendProjections(docs, (anchor) =>
-        store.readGithubAnchorProjection(anchor),
+      const result = await loadSpendProjections(
+        docs,
+        (anchor) => store.readGithubAnchorProjection(anchor),
+        5000,
+        getWatchedRepos(),
       );
       projections = result.projections;
       if (result.incomplete)

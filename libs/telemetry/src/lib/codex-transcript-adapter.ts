@@ -14,6 +14,31 @@ import {
   truncateTitle,
 } from './unknown-value';
 
+/** Codex records exec stdout inside a JSON result envelope. Code-mode
+ * orchestration can add prose plus one envelope per line. Decode only known
+ * stdout envelopes; unrelated metadata does not become publication evidence. */
+function publicationOutput(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const outputs: unknown[] = [];
+  let recognized = false;
+  for (const candidate of [value, ...value.split('\n')]) {
+    let parsed: Record<string, unknown> | undefined;
+    try {
+      parsed = asRecord(JSON.parse(candidate));
+    } catch {
+      continue;
+    }
+    if (parsed && 'output' in parsed) {
+      recognized = true;
+      // A recognized failed result is not publication evidence.
+      if (parsed['exit_code'] === undefined || parsed['exit_code'] === 0)
+        outputs.push(parsed['output']);
+      if (candidate === value) return outputs;
+    }
+  }
+  return recognized ? outputs : value;
+}
+
 function emptyTokens(): TokenUsage {
   return {
     inputTokens: 0,
@@ -205,7 +230,9 @@ export const codexAdapter: TranscriptAdapter = {
             payloadType === 'custom_tool_call_output')
         ) {
           creatingCalls.delete(callId);
-          for (const pr of findQualifiedPRs(payload['output']))
+          for (const pr of findQualifiedPRs(
+            publicationOutput(payload['output']),
+          ))
             qualifiedPRs.set(
               `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
               pr,
