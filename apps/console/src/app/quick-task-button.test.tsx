@@ -64,7 +64,7 @@ describe('New work creation', () => {
     await screen.findByRole('dialog');
     fireEvent.keyDown(
       screen.getByRole('combobox', { name: 'Allowed fallback order' }),
-      { key: 'ArrowDown' },
+      { key: 'ArrowDown', code: 'ArrowDown' },
     );
     fireEvent.click(await screen.findByRole('option', { name: 'codex' }));
     fireEvent.change(screen.getByLabelText('Description'), {
