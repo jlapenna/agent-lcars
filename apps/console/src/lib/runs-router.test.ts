@@ -112,12 +112,13 @@ async function seedQueuedGithubRun(
   store: MemoryStore,
   orchestrator: Orchestrator,
   issue: number,
+  mode = 'implement',
 ): Promise<string> {
   const outcome = await orchestrator.request({
     taskId: { repo: 'jlapenna/agent-lcars', issue },
     requestId: `github-${issue}`,
     pipeline: 'claude',
-    params: { mode: 'implement' },
+    params: { mode },
     work: {
       origin: { principal: 'github:jlapenna', channel: 'github' },
       spec: {
@@ -2639,3 +2640,138 @@ describe('codexAuth', () => {
     });
   });
 });
+
+describe('exact outcome links cross the authenticated completion boundary', () => {
+  const repo = 'jlapenna/agent-lcars';
+  const comment = {
+    kind: 'comment',
+    number: 42,
+    id: 99,
+    url: `https://github.com/${repo}/issues/42#issuecomment-99`,
+  };
+  const review = {
+    kind: 'review',
+    number: 42,
+    id: 100,
+    url: `https://github.com/${repo}/pull/42#pullrequestreview-100`,
+  };
+  it.each([
+    {
+      outcome: 'pull-request',
+      reference: { kind: 'pull-request', number: 12 },
+      ref: `https://github.com/${repo}/pull/12`,
+      state: 'done',
+    },
+    { outcome: 'comment', reference: comment, ref: comment.url, state: 'done' },
+    { outcome: 'review', reference: review, ref: review.url, state: 'done' },
+    { outcome: 'park', reference: comment, ref: comment.url, state: 'parked' },
+    { outcome: 'no-op', reference: comment, ref: comment.url, state: 'done' },
+    {
+      outcome: 'park',
+      reference: { kind: 'pull-request', number: 12, related: [comment] },
+      ref: `https://github.com/${repo}/pull/12`,
+      state: 'parked',
+      relatedRefs: [comment.url],
+    },
+    {
+      outcome: 'verification-failed',
+      reference: comment,
+      ref: undefined,
+      state: 'failed',
+    },
+  ])(
+    'stores $outcome without losing its artifact or lifecycle semantics',
+    async ({ outcome, reference, ref, state, ...rest }) => {
+      const { store, orchestrator, now } = fixture();
+      const runId = await seedQueuedGithubRun(
+        store,
+        orchestrator,
+        42,
+        outcome === 'review' ? 'review' : 'reply',
+      );
+      const claimed = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          ...context,
+          principal: executorPrincipal(['claude']),
+        },
+        'POST',
+        '/runs/claim',
+        { runner: 'runner-1' },
+      );
+      expect(claimed.status).toBe(200);
+      const { token } = claimed.json as { token: string };
+      const complete = await call(
+        { store, orchestrator, now, ...context, bearerToken: token },
+        'POST',
+        runPath(runId, '/complete'),
+        { outcome, outcomeReference: reference },
+      );
+      expect(complete.status).toBe(200);
+      const settled = await store.readRun(runId);
+      expect(settled?.state).toBe('finished');
+      expect(settled?.result).toEqual({
+        ok: outcome !== 'verification-failed',
+        summary: outcome,
+        ...(ref === undefined ? {} : { ref }),
+        ...rest,
+      });
+      const taskId = { repo, issue: 42 };
+      const task = await store.readTask(taskId);
+      expect(deriveItemState(task!.task, await store.listRuns(taskId))).toBe(
+        state,
+      );
+    },
+  );
+});
+
+it.each([
+  {
+    outcome: 'comment',
+    reference: {
+      kind: 'comment',
+      number: 43,
+      id: 99,
+      url: 'https://github.com/jlapenna/agent-lcars/issues/43#issuecomment-99',
+    },
+  },
+  {
+    outcome: 'review',
+    reference: {
+      kind: 'review',
+      number: 42,
+      id: 100,
+      url: 'https://github.com/jlapenna/agent-lcars/pull/42#pullrequestreview-100',
+    },
+  },
+])(
+  'does not attach unverified $outcome metadata outside the immutable run anchor/mode',
+  async ({ outcome, reference }) => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedGithubRun(store, orchestrator, 42);
+    const claimed = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    expect(claimed.status).toBe(200);
+    const { token } = claimed.json as { token: string };
+    const complete = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'POST',
+      runPath(runId, '/complete'),
+      { outcome, outcomeReference: reference },
+    );
+    expect(complete.status).toBe(200);
+    expect((await store.readRun(runId))?.result?.ref).toBeUndefined();
+  },
+);
