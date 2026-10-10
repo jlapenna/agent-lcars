@@ -235,6 +235,15 @@ only as evidence for the fixes it names.
 | Published image | The repaired image was published from Agent LCARS revision `4d30d30b230aac09c12c6f1bdf6a79a0abe90867` as `sha256:ad7b6e022ed0bdcca366dca1b2520001c6178ee413cdbc5224a8d88fe8e95b96`.                                                                                                                                                                         |
 | Third canary    | Item [`01M138S62PHGVQ5AQNBP1NRW66`](https://lcars.jlapenna.net/work/01M138S62PHGVQ5AQNBP1NRW66) minted a `queue` run, was claimed by a direct container, and did **not** trigger `claude.yml`. Claude itself then exited because its weekly quota resets at **2026-08-30 00:00 UTC**; the item was canceled and the temporary queue flags were rolled back. |
 
+## Current schedule mutation revision gate
+
+Read a schedule's current `revision`, then send it as `expectedRevision` in
+edit, delete, enable, or disable requests. Bodyless toggles return 400; a
+stale revision returns 409 without applying the change. The `work-create`
+workflow's `schedule-disable` action reads the revision first and fails on
+409 so a concurrent operator change cannot be reported as a successful
+disable. Historical smoke receipts below predate this required input.
+
 ## Sub-project 5: ingress unification — issue-side claim/park projections (2026-08-27)
 
 Sub-project 5 landed as [PR #1545](https://github.com/jlapenna/agent-lcars/pull/1545)
