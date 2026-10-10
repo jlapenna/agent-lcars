@@ -579,6 +579,7 @@ describe('executor-reported exit', () => {
   const CLAIMANT = {
     subject: 'executor@example.iam.gserviceaccount.com',
     runner: 'executor',
+    claimFingerprint: 'a'.repeat(64),
   };
 
   async function claimed(

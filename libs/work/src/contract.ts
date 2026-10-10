@@ -940,6 +940,11 @@ export const runsContract = {
       z.strictObject({
         runId: runIdSchema,
         runner: z.string().min(1).max(256),
+        /** Required for live settlement; absent legacy reports are terminal-only. */
+        claimFingerprint: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),

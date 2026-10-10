@@ -4975,6 +4975,10 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256
+                  },
+                  "claimFingerprint": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
                   }
                 },
                 "required": ["runner"]

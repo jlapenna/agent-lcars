@@ -1625,6 +1625,7 @@ describe('claimStatus', () => {
     await f.orchestrator.executorExited(f.runId, {
       subject: f.principal.subject,
       runner: 'runner-1',
+      claimFingerprint: f.fingerprint,
     });
     const settled = await call({ ...f, ...context }, 'GET', f.path);
     expect(settled).toMatchObject({
@@ -1748,14 +1749,14 @@ describe('exit', () => {
   ])(
     'refuses %s with 403 and leaves the healthy run running',
     async (_, principal, runner) => {
-      const { store, orchestrator, now, runId } = await claimedRun();
+      const { store, orchestrator, now, runId, token } = await claimedRun();
       const drain = vi.fn(context.drain);
 
       const response = await call(
         { store, orchestrator, now, ...context, drain, principal },
         'POST',
         runPath(runId, '/exit'),
-        { runner },
+        { runner, claimFingerprint: hashRunToken(token) },
       );
 
       expect(response).toMatchObject({
@@ -1803,7 +1804,7 @@ describe('exit', () => {
   });
 
   it('matches the claimant subject case-insensitively, as grants do', async () => {
-    const { store, orchestrator, now, runId } = await claimedRun();
+    const { store, orchestrator, now, runId, token } = await claimedRun();
     const principal = executorPrincipal(['claude']);
 
     const response = await call(
@@ -1816,21 +1817,21 @@ describe('exit', () => {
       },
       'POST',
       runPath(runId, '/exit'),
-      { runner: 'runner-1' },
+      { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
     );
 
     expect(response).toEqual({ status: 200, json: { runId, state: 'lost' } });
   });
 
   it('settles the run once the claimant regains a temporarily revoked grant', async () => {
-    const { store, orchestrator, now, runId } = await claimedRun();
+    const { store, orchestrator, now, runId, token } = await claimedRun();
     const base = { store, orchestrator, now, ...context };
 
     const revoked = await call(
       { ...base, principal: executorPrincipal(['opencode']) },
       'POST',
       runPath(runId, '/exit'),
-      { runner: 'runner-1' },
+      { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
     );
     expect(revoked.status).toBe(403);
     expect((await store.readRun(runId))?.state).toBe('running');
@@ -1839,7 +1840,7 @@ describe('exit', () => {
       { ...base, principal: executorPrincipal(['claude']) },
       'POST',
       runPath(runId, '/exit'),
-      { runner: 'runner-1' },
+      { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
     );
     expect(restored).toEqual({ status: 200, json: { runId, state: 'lost' } });
   });
@@ -1859,14 +1860,14 @@ describe('exit', () => {
           { store, orchestrator, now, ...context, principal: otherExecutor() },
           'POST',
           runPath(runId, '/exit'),
-          { runner: 'runner-1' },
+          { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
         )
       ).status,
     ).toBe(403);
   });
 
   it('settles a still-live claimed run lost at once, retries it, and drains', async () => {
-    const { store, orchestrator, now, runId } = await claimedRun();
+    const { store, orchestrator, now, runId, token } = await claimedRun();
     const drain = vi.fn(context.drain);
 
     const response = await call(
@@ -1880,7 +1881,7 @@ describe('exit', () => {
       },
       'POST',
       runPath(runId, '/exit'),
-      { runner: 'runner-1' },
+      { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
     );
 
     expect(response).toEqual({ status: 200, json: { runId, state: 'lost' } });
@@ -1918,7 +1919,7 @@ describe('exit', () => {
       },
       'POST',
       runPath(runId, '/exit'),
-      { runner: 'runner-1' },
+      { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
     );
 
     expect(response).toEqual({
@@ -1932,7 +1933,8 @@ describe('exit', () => {
   });
 
   it('releases the Codex subscription lease of a lost Codex run', async () => {
-    const { store, orchestrator, now, runId } = await claimedRun('codex');
+    const { store, orchestrator, now, runId, token } =
+      await claimedRun('codex');
     const releaseLease = vi.fn(async () => undefined);
 
     const response = await call(
@@ -1946,7 +1948,7 @@ describe('exit', () => {
       },
       'POST',
       runPath(runId, '/exit'),
-      { runner: 'runner-1' },
+      { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
     );
 
     expect(response.status).toBe(200);
@@ -1954,9 +1956,12 @@ describe('exit', () => {
   });
 
   it('requires the work.executor scope, the run pipeline grant, and a known run', async () => {
-    const { store, orchestrator, now, runId } = await claimedRun();
+    const { store, orchestrator, now, runId, token } = await claimedRun();
     const base = { store, orchestrator, now, ...context };
-    const body = { runner: 'runner-1' };
+    const body = {
+      runner: 'runner-1',
+      claimFingerprint: hashRunToken(token),
+    };
 
     expect(
       (await call(base, 'POST', runPath(runId, '/exit'), body)).status,
@@ -3183,6 +3188,128 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           expect(releaseLease).toHaveBeenCalledExactlyOnceWith(runId);
         } finally {
           store.transactRun = transactRun;
+        }
+      },
+    );
+    it.each(['claude', 'codex'])(
+      'fences old %s Job exit after same-subject/same-runner reclaim at the transaction boundary',
+      async (pipeline) => {
+        const store: OrchestratorStore =
+          backend === 'MemoryStore'
+            ? new MemoryStore()
+            : new FirestoreStore({
+                projectId: 'demo-orchestrator',
+                databaseId: '(default)',
+                collectionPrefix: `exit-claim-${crypto.randomUUID()}-`,
+                emulatorHost: process.env.FIRESTORE_EMULATOR_HOST!,
+              });
+        const orchestrator = new Orchestrator(store, { now: () => NOW });
+        const now = () => new Date(NOW);
+        const principal = executorPrincipal([pipeline]);
+        const runId = await seedQueuedGithubRun(
+          store,
+          orchestrator,
+          42,
+          'reply',
+          pipeline,
+        );
+        const claimed = await call(
+          { store, orchestrator, now, ...context, principal },
+          'POST',
+          '/runs/claim',
+          { runner: 'same-runner' },
+        );
+        expect(claimed.status).toBe(200);
+        const oldFingerprint = hashRunToken(
+          (claimed.json as { token: string }).token,
+        );
+        const freshFingerprint = hashRunToken(mintRunToken());
+        const original = store.transactRun.bind(store);
+        let interleaved = false;
+        let freshRun: Awaited<ReturnType<OrchestratorStore['readRun']>>;
+        let freshTask: Awaited<ReturnType<OrchestratorStore['readTask']>>;
+        store.transactRun = async (input) => {
+          if (!interleaved) {
+            interleaved = true;
+            const released = await store.releaseQueuedRunClaim({
+              runId,
+              claimedBy: 'same-runner',
+              tokenHash: oldFingerprint,
+              now: NOW,
+            });
+            if (!released)
+              throw new Error('original exit claim was not released');
+            const reclaimed = await store.claimQueuedRun({
+              pipelines: [pipeline],
+              now: NOW,
+              claimedBy: 'same-runner',
+              claimedBySubject: principal.subject.toLowerCase(),
+              tokenHash: freshFingerprint,
+            });
+            if (reclaimed?.runId !== runId)
+              throw new Error('exit run was not reclaimed');
+            freshRun = await store.readRun(runId);
+            freshTask = await store.readTask({
+              repo: 'jlapenna/agent-lcars',
+              issue: 42,
+            });
+          }
+          return original(input);
+        };
+        const drain = vi.fn(context.drain);
+        const releaseLease = vi.fn(context.codexAuth.releaseLease);
+        const ctx = {
+          store,
+          orchestrator,
+          now,
+          ...context,
+          principal,
+          drain,
+          codexAuth: { ...context.codexAuth, releaseLease },
+        };
+        try {
+          const stale = await call(ctx, 'POST', runPath(runId, '/exit'), {
+            runner: 'same-runner',
+            claimFingerprint: oldFingerprint,
+          });
+          expect(interleaved).toBe(true);
+          expect(stale.status).toBe(403);
+          expect(await store.readRun(runId)).toEqual(freshRun);
+          expect(
+            await store.readTask({ repo: 'jlapenna/agent-lcars', issue: 42 }),
+          ).toEqual(freshTask);
+          expect(drain).not.toHaveBeenCalled();
+          expect(releaseLease).not.toHaveBeenCalled();
+          const missing = await call(ctx, 'POST', runPath(runId, '/exit'), {
+            runner: 'same-runner',
+          });
+          expect(missing.status).toBe(403);
+          expect(await store.readRun(runId)).toEqual(freshRun);
+          const matching = await call(ctx, 'POST', runPath(runId, '/exit'), {
+            runner: 'same-runner',
+            claimFingerprint: freshFingerprint,
+          });
+          expect(matching).toEqual({
+            status: 200,
+            json: { runId, state: 'lost' },
+          });
+          expect(drain).toHaveBeenCalledOnce();
+          expect(releaseLease).toHaveBeenCalledTimes(
+            pipeline === 'codex' ? 1 : 0,
+          );
+          expect(
+            await store.listRuns({ repo: 'jlapenna/agent-lcars', issue: 42 }),
+          ).toHaveLength(2);
+          const terminal = await call(ctx, 'POST', runPath(runId, '/exit'), {
+            runner: 'same-runner',
+          });
+          expect(terminal).toEqual({
+            status: 200,
+            json: { runId, state: 'lost' },
+          });
+          expect(drain).toHaveBeenCalledOnce();
+        } finally {
+          store.transactRun = original;
         }
       },
     );

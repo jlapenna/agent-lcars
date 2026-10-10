@@ -1064,7 +1064,7 @@ export function runOrchestratorStoreContract(
         }
       });
 
-      it.each(['heartbeat', 'complete'] as const)(
+      it.each(['heartbeat', 'complete', 'exit'] as const)(
         'refuses an authenticated %s fingerprint after release/reclaim at the transaction boundary',
         async (operation) => {
           const { store, orchestrator, clock, run } = await claimedFixture();
@@ -1101,11 +1101,17 @@ export function runOrchestratorStoreContract(
             const result =
               operation === 'heartbeat'
                 ? await orchestrator.renew(run.runId, 'a'.repeat(64))
-                : await orchestrator.report(
-                    run.runId,
-                    { ok: true },
-                    'a'.repeat(64),
-                  );
+                : operation === 'complete'
+                  ? await orchestrator.report(
+                      run.runId,
+                      { ok: true },
+                      'a'.repeat(64),
+                    )
+                  : await orchestrator.executorExited(run.runId, {
+                      subject: 'executor@example.com',
+                      runner: 'executor',
+                      claimFingerprint: 'a'.repeat(64),
+                    });
             expect(interleaved).toBe(true);
             expect(result).toEqual({ refused: true, reason: 'not-claimant' });
             expect(await store.readRun(run.runId)).toEqual(freshRun);

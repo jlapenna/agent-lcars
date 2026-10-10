@@ -108,9 +108,13 @@ maintenance ticker calls `/api/work/v1/maintenance/tick` using its existing
   to `POST /runs/{runId}/exit`, and a run still live at that point is
   settled `lost` immediately (`decide.ts`'s `executorExited`, event
   `by: executor`). Only the principal that claimed the run, reporting the
-  runner name it claimed with (the Job carries it as an annotation), may do
-  this; any other executor gets 403. Runs that already reported are left
-  unchanged, so the executor reports every exit. The 2-hour lease (`decide.ts`'s
+  runner name and original SHA-256 claim fingerprint recorded on the Job,
+  may do this. The existing Task+Run transaction checks that exact claim;
+  a same-principal/same-runner replacement claim still rejects the old Job
+  with403 before settlement or lease cleanup. Missing-fingerprint legacy
+  reports can only observe terminal runs; live claims retain deadline recovery.
+  Runs that already reported are left unchanged, so the executor reports
+  every exit, deduplicated by run and original fingerprint. The 2-hour lease (`decide.ts`'s
   `RUN_LEASE_MS`), extended by dispatch, claim, or renewal, remains the
   backstop for what the executor cannot see after a first heartbeat.
   Claimed runs without a heartbeat instead expire at their fifteen-minute

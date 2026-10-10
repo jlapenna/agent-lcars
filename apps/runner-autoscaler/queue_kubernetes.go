@@ -263,7 +263,7 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 		// until its lease expires. Only a Job whose name is derived from its
 		// own run annotation identifies a run.
 		if runID := j.Annotations[queueRunAnnotation]; runID != "" && j.Name == queueJobName(runID) {
-			q.exits.observeTerminated(runID, j.Annotations[queueRunnerAnnotation])
+			q.exits.observeTerminated(runID, j.Annotations[queueRunnerAnnotation], j.Annotations[queueClaimAnnotation])
 		}
 	}
 	return n, nil

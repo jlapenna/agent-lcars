@@ -380,6 +380,8 @@ export function expireLease(input: {
 export interface ExitClaimant {
   readonly subject: string;
   readonly runner: string;
+  /** Original Job token hash; legacy reports can only observe terminal runs. */
+  readonly claimFingerprint?: string;
 }
 
 /**
@@ -390,7 +392,8 @@ export interface ExitClaimant {
  * This is the same judgement lease expiry makes, delivered when the loss
  * happens instead of when the lease runs out.
  *
- * Only the executor that claimed the run may report it: a pipeline grant
+ * Only the executor that claimed the run may report its original fingerprint:
+ * a pipeline grant
  * alone would let any executor kill another's healthy worker by settling
  * its run lost. Ownership is judged first, so even an already-settled run
  * answers its idempotent refusal only to its own claimant. A claim recorded
@@ -419,7 +422,10 @@ export function executorExited(input: {
     queue?.state !== 'claimed' ||
     queue.claimedBySubject === undefined ||
     queue.claimedBySubject !== input.claimant.subject ||
-    queue.claimedBy !== input.claimant.runner
+    queue.claimedBy !== input.claimant.runner ||
+    (input.claimant.claimFingerprint !== undefined &&
+      queue.tokenHash !== input.claimant.claimFingerprint) ||
+    (isLive(input.run.state) && input.claimant.claimFingerprint === undefined)
   ) {
     return refused('not-claimant');
   }

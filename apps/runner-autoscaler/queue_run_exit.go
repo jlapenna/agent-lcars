@@ -14,7 +14,7 @@ import (
 )
 
 // runExitReportedRetention bounds the reporter's memory of runs it already
-// reported. It only has to outlive the queue's own evidence retention: a
+// reported per claim generation. It only has to outlive the queue's own evidence retention: a
 // terminal Job older than this has been deleted (TTL and cleanup both stop
 // at queueJobRetentionAge), so it can never be observed again.
 const runExitReportedRetention = 2 * queueJobRetentionAge
@@ -26,7 +26,7 @@ const runExitReportedRetention = 2 * queueJobRetentionAge
 //
 // It is fed by observations the executor already makes -- the Kubernetes
 // queue's Job inventory read -- and adds no clock of its own. Every
-// terminated Job is reported once per process, whatever its exit status: the
+// terminated claim is reported once per process, whatever its exit status: the
 // server decides. A run that already reported its outcome (the normal case)
 // is answered unchanged, so a restart re-reporting the retained Jobs is
 // harmless. A failed report is retried on the next observation.
@@ -62,12 +62,14 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 
 // observeTerminated records that the worker for runID is no longer running
 // and reports it asynchronously, unless it was already reported or a report
-// is in flight. claimedBy is the runner name the run was claimed under (from
+// for that exact claim is in flight. fingerprint is the immutable token hash
+// recorded on the original Job; a legacy report without it can only observe
+// an already terminal run. claimedBy is the runner name the run was claimed under (from
 // its Job); the Work API accepts the report only from the claiming principal
 // under that name. Empty falls back to this process's own runner name, for
 // Jobs created before the name was recorded. It never blocks the caller (a
 // claim admission or a status read) on the Work API.
-func (r *runExitReporter) observeTerminated(runID, claimedBy string) {
+func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string) {
 	if r == nil || runID == "" {
 		return
 	}
@@ -79,13 +81,14 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy string) {
 			delete(r.reported, id)
 		}
 	}
-	if _, done := r.reported[runID]; done {
+	key := exitClaimKey(runID, fingerprint)
+	if _, done := r.reported[key]; done {
 		return
 	}
-	if _, busy := r.inflight[runID]; busy {
+	if _, busy := r.inflight[key]; busy {
 		return
 	}
-	r.inflight[runID] = struct{}{}
+	r.inflight[key] = struct{}{}
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
@@ -93,11 +96,11 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy string) {
 		if runner == "" {
 			runner = r.runnerName
 		}
-		state, err := r.post(runID, runner)
+		state, err := r.post(runID, runner, fingerprint)
 		r.mu.Lock()
-		delete(r.inflight, runID)
+		delete(r.inflight, key)
 		if err == nil {
-			r.reported[runID] = r.now()
+			r.reported[key] = r.now()
 		}
 		r.mu.Unlock()
 		switch {
@@ -114,19 +117,25 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy string) {
 }
 
 // stateNotClaimant is post's answer for the route's 403: this principal and
-// runner name did not claim the run. Claim ownership never changes, so the
-// refusal is final and is not retried; lease expiry remains the backstop.
+// runner name and original fingerprint do not own the claim. This original
+// claim cannot regain authority; its refusal is final and lease expiry remains
+// the backstop. A replacement same-run claim has its own delivery key.
 const stateNotClaimant = "not-claimant"
 
 // post reports one exit as runner. The route's own 404 (the run no longer
-// exists) and its claimant-mismatch 403 can never succeed on a later
-// attempt, so both count as delivered; a pipeline-grant 403 is retried.
-func (r *runExitReporter) post(runID, runner string) (string, error) {
+// exists) and its claimant-mismatch 403 are final for this original claim,
+// so both count as delivered; a pipeline-grant 403 is retried. A different
+// same-run claim has a separate delivery key.
+func (r *runExitReporter) post(runID, runner, fingerprint string) (string, error) {
 	token, err := r.idToken()
 	if err != nil {
 		return "", fmt.Errorf("minting exit report id token: %w", err)
 	}
-	body, err := json.Marshal(map[string]string{"runner": runner})
+	payload := map[string]string{"runner": runner}
+	if fingerprint != "" {
+		payload["claimFingerprint"] = fingerprint
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
@@ -180,3 +189,6 @@ func (r *runExitReporter) post(runID, runner string) (string, error) {
 		return "", fmt.Errorf("exit report returned %d", resp.StatusCode)
 	}
 }
+
+// A refused old Job cannot suppress an exit from a later same-run claim.
+func exitClaimKey(runID, fingerprint string) string { return runID + "\x00" + fingerprint }

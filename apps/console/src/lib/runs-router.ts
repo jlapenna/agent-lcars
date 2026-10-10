@@ -600,6 +600,9 @@ export const runsRouter = os.router({
     const settled = await context.orchestrator.executorExited(run.runId, {
       subject: claimantSubject(context.principal),
       runner: input.runner,
+      ...(input.claimFingerprint === undefined
+        ? {}
+        : { claimFingerprint: input.claimFingerprint }),
     });
     if (isRefusal(settled) && settled.reason === 'not-claimant') {
       logger.warn(
