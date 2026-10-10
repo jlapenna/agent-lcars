@@ -6,14 +6,11 @@
   "tags": ["platform:shared", "scope:shared"],
   "targets": {
     "build": {
-      "executor": "@nx/js:swc",
-      "outputs": ["{options.outputPath}"],
+      "executor": "nx:run-commands",
+      "outputs": ["{projectRoot}/dist"],
       "options": {
-        "outputPath": "dist/libs/dispatch-contracts",
-        "main": "libs/dispatch-contracts/src/index.ts",
-        "tsConfig": "libs/dispatch-contracts/tsconfig.lib.json",
-        "skipTypeCheck": true,
-        "clean": false
+        "command": "tsc --build tsconfig.lib.json",
+        "cwd": "libs/dispatch-contracts"
       }
     }
   }
