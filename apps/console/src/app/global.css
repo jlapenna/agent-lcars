@@ -2784,3 +2784,20 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .work-workspace__toolbar {
   flex-wrap: wrap;
 }
+
+.costs-spend-identity {
+  overflow-wrap: anywhere;
+}
+
+.costs-spend-deliverable {
+  min-width: 0;
+  padding-block: var(--mantine-spacing-xs);
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.costs-spend-deliverable a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
+}

@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
+import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 import type {
   SessionAgent,
   SessionDoc,
@@ -20,6 +21,8 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
+import { aggregateSessionSpend, type SessionSpend } from './session-spend';
+import { loadSpendProjections } from './session-spend-projections';
 
 export { DEFAULT_ARCHIVE_DAYS } from './archive-window';
 
@@ -85,6 +88,7 @@ export function describeArchiveWindow(query: SessionArchiveQuery): string {
   if (query.source) parts.push(`source=${query.source}`);
   if (query.issueNumber !== undefined)
     parts.push(`issue #${query.issueNumber}`);
+  if (query.repo) parts.push(`repo=${repoKey(query.repo)}`);
   return parts.join(', ');
 }
 
@@ -226,6 +230,7 @@ export interface SessionArchiveResult {
    * matching every other fetcher in this app (cli-sessions.ts,
    * runner-sessions.ts). */
   warnings: string[];
+  spend?: SessionSpend;
 }
 
 /**
@@ -236,6 +241,7 @@ export interface SessionArchiveResult {
  */
 export async function getSessionArchive(
   query: SessionArchiveQuery,
+  options: { includeSpend?: boolean } = {},
 ): Promise<SessionArchiveResult> {
   const activeSince = new Date(
     Date.now() - query.days * 24 * 60 * 60 * 1000,
@@ -258,8 +264,13 @@ export async function getSessionArchive(
       rows: [],
       ledger: { byIssue: [], byWeek: [] },
       warnings: ['Session archive unavailable (agent-telemetry store failed).'],
+      ...(options.includeSpend && {
+        spend: aggregateSessionSpend([], new Map(), true),
+      }),
     };
   }
+
+  const coverageLimited = docs.length >= ARCHIVE_LIST_LIMIT;
 
   // No repo field on `listSessionDocs` to filter server-side by, unlike
   // source/issueNumber (which are indexed Firestore query params) - applied
@@ -274,10 +285,37 @@ export async function getSessionArchive(
     );
   }
 
+  const warnings = coverageLimited
+    ? [
+        'Session limit reached; totals may be partial, including repository-filtered totals.',
+      ]
+    : [];
+  let spend: SessionSpend | undefined;
+  if (options.includeSpend) {
+    let projections = new Map<string, GithubAnchorProjection>();
+    try {
+      const store = createOrchestratorRuntime().store;
+      const result = await loadSpendProjections(docs, (anchor) =>
+        store.readGithubAnchorProjection(anchor),
+      );
+      projections = result.projections;
+      if (result.incomplete)
+        warnings.push(
+          'Some pull request merge evidence is unavailable; those deliverables remain unknown.',
+        );
+    } catch (error) {
+      logger.error('agent-lcars: spend merge evidence unavailable:', error);
+      warnings.push(
+        'Pull request merge evidence unavailable; deliverables remain unknown.',
+      );
+    }
+    spend = aggregateSessionSpend(docs, projections, coverageLimited);
+  }
   const now = new Date().toISOString();
   return {
     rows: docs.map((doc) => toSessionRow(doc, now)),
     ledger: aggregateSessionLedger(docs),
-    warnings: [],
+    warnings,
+    ...(spend && { spend }),
   };
 }

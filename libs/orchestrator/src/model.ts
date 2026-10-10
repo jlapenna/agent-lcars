@@ -80,6 +80,9 @@ export const githubAnchorProjectionSchema = z.strictObject({
     .max(256)
     .optional(),
   draft: z.boolean().optional(),
+  /** PR merge evidence from GitHub. null means known unmerged; omitted is
+   * unknown (including projections written before this field existed). */
+  mergedAt: isoUtc.nullable().optional(),
   mergeableState: z
     .enum([
       'clean',

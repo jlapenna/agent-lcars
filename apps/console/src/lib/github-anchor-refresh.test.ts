@@ -262,3 +262,24 @@ describe('refreshGithubAnchorProjection', () => {
     ).rejects.toThrow('GitHub is down');
   });
 });
+
+describe('merge evidence enrichment', () => {
+  it.each([null, '2026-08-30T12:00:00.000Z'])(
+    'stores mergedAt %s and clears stale evidence with explicit null',
+    async (mergedAt) => {
+      const graphql = vi
+        .fn()
+        .mockResolvedValue({ repository: { i42: { mergedAt } } });
+      const [result] = await enrichGithubAnchorProjections(
+        anchor.repo,
+        [{ ...projection(), mergedAt: '2026-08-29T12:00:00.000Z' }],
+        { graphql },
+      );
+      expect(result?.mergedAt).toBe(mergedAt);
+      expect(graphql).toHaveBeenCalledWith(
+        expect.stringContaining('mergedAt'),
+        expect.anything(),
+      );
+    },
+  );
+});
