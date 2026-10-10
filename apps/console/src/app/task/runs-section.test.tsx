@@ -142,6 +142,34 @@ describe('RunsSection', () => {
     expect(within(row).queryByText(/lease expires/)).toBeNull();
   });
 
+  it('renders the observed queued run lease as a future deadline', () => {
+    const now = vi
+      .spyOn(Date, 'now')
+      .mockReturnValue(new Date('2026-10-10T07:44:39.955Z').getTime());
+    try {
+      const run = makeRun({
+        runId: 'jlapenna/agent-lcars#2379/r1',
+        task: { repo: 'jlapenna/agent-lcars', issue: 2379 },
+        pipeline: 'codex',
+        leaseExpiresAt: '2026-10-10T09:32:27.791Z',
+        createdAt: '2026-10-10T07:32:27.294Z',
+        updatedAt: '2026-10-10T07:32:27.791Z',
+        queue: { state: 'queued' },
+      });
+      renderRuns([run]);
+      const row = screen.getByTestId(`run-${run.runId}`);
+      expect(within(row).getByText(/lease expires/)).toHaveTextContent(
+        'lease expires in 1 hour',
+      );
+      expect(within(row).getByText('in 1 hour')).toHaveAttribute(
+        'datetime',
+        run.leaseExpiresAt,
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('renders every run, newest first, never collapsing history', () => {
     renderRuns([
       makeRun({

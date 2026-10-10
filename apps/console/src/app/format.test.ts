@@ -1,6 +1,43 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { formatCost } from './format';
+import {
+  formatCompactRelativeTime,
+  formatCost,
+  formatRelativeTime,
+} from './format';
+
+describe('relative deadlines', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-10T07:44:39.955Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the observed queued lease deadline as future time', () => {
+    const leaseExpiresAt = '2026-10-10T09:32:27.791Z';
+    expect(formatRelativeTime(leaseExpiresAt)).toBe('in 1 hour');
+    expect(formatCompactRelativeTime(leaseExpiresAt)).toBe('in 1h');
+  });
+
+  it.each([
+    [30, 'in 30 seconds', 'in 30s'],
+    [60, 'in 1 minute', 'in 1m'],
+    [3600, 'in 1 hour', 'in 1h'],
+    [86400, 'tomorrow', 'in 1d'],
+    [0, 'just now', 'now'],
+    [-30, 'just now', 'now'],
+    [-60, '1 minute ago', '1m ago'],
+    [-3600, '1 hour ago', '1h ago'],
+    [-86400, 'yesterday', '1d ago'],
+  ])('formats a timestamp %i seconds from now', (offset, full, compact) => {
+    const iso = new Date(Date.now() + offset * 1000).toISOString();
+    expect(formatRelativeTime(iso)).toBe(full);
+    expect(formatCompactRelativeTime(iso)).toBe(compact);
+  });
+});
 
 describe('formatCost', () => {
   it('formats a positive amount to two decimal places', () => {
