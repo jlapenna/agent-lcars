@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,6 +50,65 @@ func TestARCLaneStatusMapsListenerCapacityAndRejectsUncertainMetrics(t *testing.
 				t.Fatalf("incorrect capacity: %#v", status)
 			}
 		})
+	}
+}
+
+type captureARCLanePublisher struct{ statuses chan consoleARCLaneStatus }
+
+func (p captureARCLanePublisher) PublishARCLane(_ context.Context, status consoleARCLaneStatus) {
+	p.statuses <- status
+}
+func (captureARCLanePublisher) PublishQueueExecutor(context.Context, consoleQueueExecutorStatus) {}
+func (captureARCLanePublisher) Enabled() bool                                                    { return true }
+func (captureARCLanePublisher) Close() error                                                     { return nil }
+
+func TestSurvivingARCLanePublishesAuthoritativeInventoryWhenOtherScrapeFails(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, arcMetricsFixture) }))
+	defer good.Close()
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer bad.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	publisher := captureARCLanePublisher{statuses: make(chan consoleARCLaneStatus, 2)}
+	done := make(chan struct{})
+	go func() {
+		runARCLaneStatusPublisher(ctx, publisher, []arcLaneConfig{
+			{Name: "good", RegistrationURL: "https://github.com/example/repo", MetricsURL: good.URL},
+			{Name: "bad", RegistrationURL: "https://github.com/example/repo", MetricsURL: bad.URL},
+		}, slog.Default())
+		close(done)
+	}()
+	select {
+	case status := <-publisher.statuses:
+		if status.Lane != "good" || status.ExpectedLanes != "bad,good" {
+			t.Fatalf("lost configured missing lane: %#v", status)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher did not publish surviving lane")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher did not stop")
+	}
+}
+
+func TestARCLaneInventoryUsesExistingChangeAndHeartbeatWriteGate(t *testing.T) {
+	now := time.Now()
+	status := consoleARCLaneStatus{SchemaVersion: 3, Kind: "arc-lane", Lane: "good", ExpectedLanes: "good"}
+	gate := newStatusWriteGate(consoleStatusHeartbeat)
+	gate.recordWritten("arc-good", status, now)
+	if gate.shouldWrite("arc-good", status, now.Add(consoleStatusInterval)) {
+		t.Fatal("inventory added duplicate writes")
+	}
+	status.ExpectedLanes = "bad,good"
+	if !gate.shouldWrite("arc-good", status, now.Add(consoleStatusInterval)) {
+		t.Fatal("inventory change did not publish")
+	}
+	gate.recordWritten("arc-good", status, now)
+	if !gate.shouldWrite("arc-good", status, now.Add(consoleStatusHeartbeat)) {
+		t.Fatal("inventory missed heartbeat")
 	}
 }
 
