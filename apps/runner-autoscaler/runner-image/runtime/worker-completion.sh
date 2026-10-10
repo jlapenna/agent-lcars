@@ -2,11 +2,22 @@
 # Sourced by direct-runner. A successful process exit is not a deliverable.
 # This helper authorizes at most the caller's one same-session correction;
 # provider errors, lookup failures, and terminal Work records never qualify.
+
+# Deadlines passed here, and every run deadline the caller computes, use the
+# kernel's monotonic uptime rather than bash's wall-clock $SECONDS: a node
+# clock step must neither grant nor take provider time.
+# DIRECT_RUNNER_UPTIME_FILE lets the test drive this clock exactly.
+monotonic_seconds() {
+  local uptime
+  read -r uptime _ < "${DIRECT_RUNNER_UPTIME_FILE:-/proc/uptime}"
+  printf '%s\n' "${uptime%%.*}"
+}
+
 worker_completion_needed() {
   local agent_exit="$1" deadline="$2" remaining probe_dir probe_exit
   [ "$agent_exit" -eq 0 ] || return 1
   if worker_control_failed; then return 1; fi
-  remaining=$((deadline - SECONDS))
+  remaining=$((deadline - $(monotonic_seconds)))
   [ "$remaining" -gt 0 ] || return 1
   if [ "$ANCHOR_TYPE" = work ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ]; then
     local result
@@ -24,7 +35,7 @@ worker_completion_needed() {
   AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" RUNTIME_ENV="$probe_dir/runtime.env" \
     timeout --signal=TERM --kill-after=5s "${remaining}s" bash "$VERIFY_OUTCOME" > "$probe_dir/result.txt" 2>&1 || probe_exit=$?
   [ "$probe_exit" -eq 1 ] &&
-    grep -Fxq 'NO_DELIVERABLE=1' "$probe_dir/runtime.env" && [ $((deadline - SECONDS)) -gt 0 ]
+    grep -Fxq 'NO_DELIVERABLE=1' "$probe_dir/runtime.env" && [ $((deadline - $(monotonic_seconds))) -gt 0 ]
 }
 
 worker_authorize_correction() {

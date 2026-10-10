@@ -200,8 +200,8 @@ async function prepareContrastState(page: Page, name: string) {
     ).toBeVisible();
   } else if (name === 'Shuttlebay' || name === 'Shuttlebay create') {
     await expect(
-      page.getByTestId('autoscaler-scale-set-e2e-fixture-runners'),
-    ).toContainText('1 busy · 1 idle');
+      page.getByTestId('arc-lane-e2e-fixture-runners'),
+    ).toContainText('1 running · 1 idle');
     if (name === 'Shuttlebay create') {
       await page.getByRole('button', { name: 'New work' }).click();
       await expect(

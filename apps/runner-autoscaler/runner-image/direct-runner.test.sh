@@ -401,10 +401,10 @@ printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
-if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
-  printf '%s start %s sleep=%s\n' "$run_count" "$EPOCHREALTIME" "$FAKE_WORKER_SLEEP" >> "$WORKER_TIME_LOG"
-  sleep "$FAKE_WORKER_SLEEP"
-  printf '%s end %s\n' "$run_count" "$EPOCHREALTIME" >> "$WORKER_TIME_LOG"
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then sleep "$FAKE_WORKER_SLEEP"; fi
+if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
+  read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+  printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
 fi
 if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
   printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
@@ -437,10 +437,10 @@ printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
-if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
-  printf '%s start %s sleep=%s\n' "$run_count" "$EPOCHREALTIME" "$FAKE_WORKER_SLEEP" >> "$WORKER_TIME_LOG"
-  sleep "$FAKE_WORKER_SLEEP"
-  printf '%s end %s\n' "$run_count" "$EPOCHREALTIME" >> "$WORKER_TIME_LOG"
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then sleep "$FAKE_WORKER_SLEEP"; fi
+if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
+  read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+  printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
 fi
 if [ "${FAKE_WORKER_NO_THREAD:-}" != 1 ]; then echo '{"type":"thread.started","thread_id":"thread-codex-fixture"}'; fi
 if [ "${FAKE_WORKER_ERROR_EVENT:-}" = 1 ]; then echo '{"type":"error","message":"provider execution failed"}'; fi
@@ -533,6 +533,10 @@ elif [ ! -f "$OPENCODE_FAKE_SESSIONS_FILE" ] || [ "$(cat "$OPENCODE_FAKE_SESSION
 fi
 if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
   sleep "$FAKE_OPENCODE_SLEEP_SECONDS"
+fi
+if [ -n "${FAKE_OPENCODE_ELAPSED:-}" ]; then
+  read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+  printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_OPENCODE_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
 fi
 if [ -n "${FAKE_OPENCODE_RESOLVED_MODEL:-}" ]; then
   printf '%s' "$FAKE_OPENCODE_RESOLVED_MODEL" > "$RUNNER_TEMP/opencode-proxy/resolved-model"
@@ -689,7 +693,6 @@ run_scenario() {
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
   export CODEX_ARGS_LOG="$dir/codex-args.log"
   export WORKER_RUN_COUNT_FILE="$dir/worker-run-count"
-  export WORKER_TIME_LOG="$dir/worker-times.log"
   export WORKER_CONTEXT_LOG="$dir/worker-context.log"
   export CODEX_ENV_LOG="$dir/codex-env.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
@@ -707,6 +710,15 @@ run_scenario() {
   export OPENCODE_FAKE_SESSIONS_FILE="$dir/opencode-sessions.json"
   export OPENCODE_RUN_COUNT_FILE="$dir/opencode-run-count"
   export TIMEOUT_ARGS_LOG="$dir/timeout-args.log"
+  # A scenario asserting exact deadline arithmetic opts into a frozen
+  # monotonic clock that only a fake provider's *_ELAPSED advances; real
+  # elapsed time and node clock steps then cannot change the result.
+  if [ "${FAKE_CLOCK:-}" = 1 ]; then
+    printf '1000.00 0.00\n' > "$dir/uptime"
+    export DIRECT_RUNNER_UPTIME_FILE="$dir/uptime"
+  else
+    unset DIRECT_RUNNER_UPTIME_FILE
+  fi
   export RUNTIME_HELPERS_DEFAULT_LOG="$dir/runtime-helpers-default.log"
 
   # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
@@ -1244,13 +1256,13 @@ echo "scenario opencode-empty-bootstrap: OK"
 export FAKE_BRIEF_NO_RESUME=1
 export FAKE_GH_NO_MATCH=1
 export FAKE_GH_MATCH_AFTER_OPENCODE_RUNS=2
-export FAKE_OPENCODE_SLEEP_SECONDS=1
+export FAKE_CLOCK=1 FAKE_OPENCODE_ELAPSED=1
 export OPENCODE_TIMEOUT_SECONDS=5
 export FAKE_OPENCODE_BAKED_STORE=1
 run_scenario opencode-premature-stop opencode
 unset FAKE_OPENCODE_BAKED_STORE
 unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_OPENCODE_RUNS
-unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS
+unset FAKE_CLOCK FAKE_OPENCODE_ELAPSED OPENCODE_TIMEOUT_SECONDS
 
 [ "$rc" -eq 0 ] || fail "opencode premature stop: continuation did not produce verified completion"
 [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 2 ] ||
@@ -1260,7 +1272,7 @@ grep -q -- 'run --model homelab/default --session ses_new_1 --auto Continue the 
 mapfile -t opencode_run_timeouts < <(grep 'opencode.* run ' "$TIMEOUT_ARGS_LOG" | sed -nE 's/.* ([0-9]+)s .*opencode.*/\1/p')
 [ "${#opencode_run_timeouts[@]}" -eq 2 ] ||
   fail "opencode premature stop: did not record two bounded provider rounds ($(cat "$TIMEOUT_ARGS_LOG"))"
-[ "${opencode_run_timeouts[1]}" -lt "${opencode_run_timeouts[0]}" ] ||
+[ "${opencode_run_timeouts[*]}" = "5 4" ] ||
   fail "opencode premature stop: continuation reset the provider time budget ($(cat "$TIMEOUT_ARGS_LOG"))"
 
 echo "scenario opencode-premature-stop: OK"
@@ -1889,7 +1901,7 @@ jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
 
 # All default provider invocations receive the same two-hour allowance.
 for provider in claude codex opencode; do
-  run_scenario "two-hour-$provider" "$provider"
+  FAKE_CLOCK=1 run_scenario "two-hour-$provider" "$provider"
   [ "$rc" -eq 0 ] || fail "$provider default runtime: run failed"
   grep -q -- '--signal=TERM --kill-after=30s 7200s' "$scenario_runner_temp/timeout-args.log" || fail "$provider default runtime is not two hours"
 done
@@ -1901,10 +1913,10 @@ unset FAKE_GH_LOOKUP_FAIL
 jq -e '.outcome == "verification-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "failed lookup lost its diagnosis"
 
 for provider in claude codex; do
-  export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_WORKER_RUNS=2 FAKE_WORKER_SLEEP=1
-  export CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5
+  export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_WORKER_RUNS=2
+  export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=1 CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5
   run_scenario "$provider-completion-correction" "$provider"
-  unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_WORKER_RUNS FAKE_WORKER_SLEEP
+  unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_WORKER_RUNS FAKE_CLOCK FAKE_WORKER_ELAPSED
   unset CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS
   [ "$rc" -eq 0 ] || fail "$provider correction did not deliver"
   [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] || fail "$provider correction must run exactly twice"
@@ -1915,12 +1927,11 @@ for provider in claude codex; do
     grep -Fq -- 'exec resume thread-codex-fixture' "$CODEX_ARGS_LOG" || fail "Codex correction changed thread"
   fi
   mapfile -t round_timeouts < <(grep -E "[0-9]+s $provider " "$TIMEOUT_ARGS_LOG" | sed -nE "s/.* ([0-9]+)s $provider .*/\\1/p")
-  if [ "${#round_timeouts[@]}" -ne 2 ] || [ "${round_timeouts[1]}" -ge "${round_timeouts[0]}" ]; then
-    cat "$WORKER_TIME_LOG" >&2
+  if [ "${round_timeouts[*]}" != "5 4" ]; then
     fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
   fi
 
-  for refusal in heartbeat lookup native exit deadline; do
+  for refusal in heartbeat lookup native exit deadline budget; do
     export FAKE_GH_NO_MATCH=1
     case "$refusal" in
       heartbeat) export FAKE_HEARTBEAT_FAIL=1 ;;
@@ -1928,10 +1939,17 @@ for provider in claude codex; do
       native) export FAKE_NATIVE_OUTCOME=no-op ;;
       exit) export FAKE_WORKER_EXIT=1 ;;
       deadline) export FAKE_WORKER_SLEEP=2 CLAUDE_TIMEOUT_SECONDS=1 CODEX_TIMEOUT_SECONDS=1 ;;
+      # A round that exits cleanly having used its whole budget leaves no
+      # time for a correction; only the shared helper's deadline can say so.
+      budget) export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=5 CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5 ;;
     esac
     run_scenario "$provider-correction-refused-$refusal" "$provider"
-    unset FAKE_GH_NO_MATCH FAKE_HEARTBEAT_FAIL FAKE_GH_LOOKUP_FAIL FAKE_NATIVE_OUTCOME FAKE_WORKER_EXIT FAKE_WORKER_SLEEP CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS
+    unset FAKE_GH_NO_MATCH FAKE_HEARTBEAT_FAIL FAKE_GH_LOOKUP_FAIL FAKE_NATIVE_OUTCOME FAKE_WORKER_EXIT FAKE_WORKER_SLEEP CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS FAKE_CLOCK FAKE_WORKER_ELAPSED
     [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "$provider incorrectly corrected after $refusal"
+    if [ "$refusal" = budget ]; then
+      jq -e '.outcome == "no-deliverable"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+        fail "$provider misreported an exhausted budget ($(tail -n1 "$COMPLETE_LOG"))"
+    fi
     if [ "$refusal" = native ]; then
       [ "$rc" -eq 0 ] || fail "$provider lost the native terminal outcome"
     else

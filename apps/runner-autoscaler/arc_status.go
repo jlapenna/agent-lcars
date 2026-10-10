@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,9 +26,13 @@ type arcLaneConfig struct {
 }
 
 type consoleARCLaneStatus struct {
-	SchemaVersion     int       `firestore:"schemaVersion"`
-	Kind              string    `firestore:"kind"`
-	Lane              string    `firestore:"lane"`
+	SchemaVersion int    `firestore:"schemaVersion"`
+	Kind          string `firestore:"kind"`
+	Lane          string `firestore:"lane"`
+	// Sorted, comma-separated DNS-label names from authoritative deployment
+	// configuration. A surviving producer still identifies a missing lane
+	// after its document has expired or before its first successful scrape.
+	ExpectedLanes     string    `firestore:"expectedLanes"`
 	RegistrationURL   string    `firestore:"registrationUrl"`
 	AssignedJobs      int       `firestore:"assignedJobs"`
 	RunningJobs       int       `firestore:"runningJobs"`
@@ -135,6 +140,7 @@ func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPubli
 		return
 	}
 	client := &http.Client{Timeout: consoleStatusTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	expectedLanes := configuredARCLaneNames(lanes)
 	publish := func() {
 		var wg sync.WaitGroup
 		// Configuration caps this fan-out, with one bounded fetch per lane.
@@ -147,6 +153,7 @@ func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPubli
 					logger.Warn("ARC lane status unavailable", slog.String("lane", lane.Name), slog.Any("error", err))
 					return
 				}
+				status.ExpectedLanes = expectedLanes
 				publisher.PublishARCLane(ctx, status)
 			})
 		}
@@ -163,6 +170,15 @@ func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPubli
 			publish()
 		}
 	}
+}
+
+func configuredARCLaneNames(lanes []arcLaneConfig) string {
+	names := make([]string, len(lanes))
+	for i, lane := range lanes {
+		names[i] = lane.Name
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
 }
 
 // splitPrometheusSample splits one exposition line into its metric name and

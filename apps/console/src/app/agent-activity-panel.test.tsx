@@ -1023,23 +1023,63 @@ describe('AgentActivityPanel pipeline metadata', () => {
 });
 
 describe('AgentActivityPanel fleet chip', () => {
-  it('renders scale-set capacity with a busy breakdown when the fleet has online runners', () => {
-    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 2, busy: 1 } });
+  it('renders current GitHub capacity without implying direct Job occupancy', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      fleet: {
+        online: 2,
+        busy: 1,
+        githubExpiresAt: new Date(Date.now() + 180_000).toISOString(),
+      },
+    });
     expect(screen.getByTestId('fleet-chip').textContent).toBe(
-      '2 scale-set runners active (1 busy)',
+      '2 GitHub runners registered (1 running) · Direct executor status unavailable',
     );
   });
 
-  it('renders singular wording and no parenthetical when exactly one runner is online and idle', () => {
-    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 1, busy: 0 } });
+  it('renders singular wording for one idle GitHub runner', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      fleet: {
+        online: 1,
+        busy: 0,
+        githubExpiresAt: new Date(Date.now() + 180_000).toISOString(),
+      },
+    });
     expect(screen.getByTestId('fleet-chip').textContent).toBe(
-      '1 scale-set runner active',
+      '1 GitHub runner registered (0 running) · Direct executor status unavailable',
     );
   });
 
-  it('renders nothing when the fleet is scaled to zero - that is normal, not an outage', () => {
-    renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 0, busy: 0 } });
-    expect(screen.queryByTestId('fleet-chip')).toBeNull();
+  it('shows fresh zero capacity rather than hiding it as if telemetry were absent', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      fleet: {
+        online: 0,
+        busy: 0,
+        githubExpiresAt: new Date(Date.now() + 180_000).toISOString(),
+      },
+    });
+    expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
+      '0 GitHub runners registered (0 running)',
+    );
+  });
+
+  it('does not convert missing ARC telemetry into zero when the direct executor is ready', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      fleet: {
+        directExecutor: {
+          ready: true,
+          draining: true,
+          maxConcurrent: 3,
+          expiresAt: new Date(Date.now() + 180_000).toISOString(),
+        },
+      },
+    });
+    expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
+      'GitHub runner status unavailable · Direct executor ready, draining (limit 3)',
+    );
   });
 
   it('renders an unavailable message when the runner API failed', () => {
