@@ -60,8 +60,30 @@ repository agent workflow callers.
 
 ## 1. Bootstrap the target repository
 
+Generate the repository's fleet surface with the scaffolder instead of
+copying files from the last onboarded repository:
+
+```sh
+node tools/fleet-onboard.mjs scaffold --repo OWNER/NAME --target ../NAME \
+  [--runner-label NAME-default] \
+  [--ci-workflow ci.yml --ci-checks "Check A,Check B"]
+```
+
+It writes the guardrail hooks, the `validate`, `gitleaks`, `ruleset`, and
+`agent-automerge` callers, the repository-owned ruleset root with the baseline
+required checks, the `repo-require-worktree` hook wiring, a Renovate config,
+and the fleet-membership section of `AGENTS.md`, then prints the remaining
+operator steps with this repository's values filled in. Re-running it is
+safe: files it generated carry a `fleet-onboard: managed` line and are
+refreshed; a file without that line is reported as locally owned and left
+alone unless `--force` is given; `--check` reports drift without writing.
+Without `--runner-label`, glue and validation jobs run GitHub-hosted and no
+Homelab lane is needed.
+
 Open a target-repository PR for its label, hook, validation, and local
-instruction contract; do not vendor fleet execution implementation.
+instruction contract; do not vendor fleet execution implementation. The
+scaffolder covers the items below; review its output rather than re-deriving
+them by hand.
 
 - Add the thin `agent-automerge` and `repo-validation` callers. Keep
   repository validation runnable on GitHub-hosted runners so it can establish
@@ -139,7 +161,10 @@ identifiers and installation guidance live in
 ## 4. Add the repository to Agent LCARS
 
 Open one PR in this repository to make the control plane recognize the new
-repository:
+repository. `node tools/fleet-onboard.mjs admit --repo OWNER/NAME` makes all
+three edits below (copying the standard member label profile), and
+`node tools/fleet-onboard.mjs check` plus the `fleet-onboard` contract test
+fail when any projection of fleet membership disagrees with the others:
 
 - Add the repository’s label manifest to `config/github-labels.json`, using
   the fleet’s standard `type:*`, `status:*`, `agent:*`, and `review:*` labels.
