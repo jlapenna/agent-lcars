@@ -15,6 +15,12 @@
         "scheme": "bearer",
         "bearerFormat": "JWT"
       },
+      "capacityWorkerIdentity": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-lcars-worker-identity",
+        "description": "A Pod-bound Kubernetes projected token from the declared pool issuer, audience, namespace and service account."
+      },
       "runToken": {
         "type": "http",
         "scheme": "bearer",
@@ -498,7 +504,7 @@
                             "properties": {
                               "state": {
                                 "type": "string",
-                                "enum": ["queued", "claimed"]
+                                "enum": ["queued", "claimed", "retired"]
                               },
                               "claimedBy": {
                                 "type": "string"
@@ -788,7 +794,7 @@
                             "properties": {
                               "state": {
                                 "type": "string",
-                                "enum": ["queued", "claimed"]
+                                "enum": ["queued", "claimed", "retired"]
                               },
                               "claimedBy": {
                                 "type": "string"
@@ -1084,7 +1090,7 @@
                             "properties": {
                               "state": {
                                 "type": "string",
-                                "enum": ["queued", "claimed"]
+                                "enum": ["queued", "claimed", "retired"]
                               },
                               "claimedBy": {
                                 "type": "string"
@@ -1431,7 +1437,7 @@
                                   "properties": {
                                     "state": {
                                       "type": "string",
-                                      "enum": ["queued", "claimed"]
+                                      "enum": ["queued", "claimed", "retired"]
                                     },
                                     "claimedBy": {
                                       "type": "string"
@@ -1708,7 +1714,7 @@
                             "properties": {
                               "state": {
                                 "type": "string",
-                                "enum": ["queued", "claimed"]
+                                "enum": ["queued", "claimed", "retired"]
                               },
                               "claimedBy": {
                                 "type": "string"
@@ -2016,7 +2022,7 @@
                             "properties": {
                               "state": {
                                 "type": "string",
-                                "enum": ["queued", "claimed"]
+                                "enum": ["queued", "claimed", "retired"]
                               },
                               "claimedBy": {
                                 "type": "string"
@@ -2372,7 +2378,7 @@
                             "properties": {
                               "state": {
                                 "type": "string",
-                                "enum": ["queued", "claimed"]
+                                "enum": ["queued", "claimed", "retired"]
                               },
                               "claimedBy": {
                                 "type": "string"
@@ -4334,6 +4340,1703 @@
         ]
       }
     },
+    "/runs/capacity": {
+      "post": {
+        "operationId": "changeCapacity",
+        "summary": "Receipt lifecycle under separately granted capacity authority",
+        "tags": ["capacity"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "register"
+                      },
+                      "producerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": ["action", "producerId"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "configure"
+                      },
+                      "policy": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175,
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]*$"
+                          },
+                          "cluster": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "namespace": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "maxConcurrent": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 128
+                          },
+                          "maxUnplaced": {
+                            "type": "number",
+                            "const": 1
+                          },
+                          "enforced": {
+                            "type": "boolean"
+                          },
+                          "inventoryKnown": {
+                            "type": "boolean"
+                          },
+                          "domains": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "domainId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175,
+                                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]*$"
+                                },
+                                "ceiling": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 128
+                                }
+                              },
+                              "required": ["domainId", "ceiling"],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "cluster",
+                          "namespace",
+                          "version",
+                          "maxConcurrent",
+                          "maxUnplaced",
+                          "enforced",
+                          "inventoryKnown",
+                          "domains"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["action", "policy"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "recover"
+                      },
+                      "purpose": {
+                        "type": "string",
+                        "enum": ["recover", "retire"]
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "recoveryNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      }
+                    },
+                    "required": ["action", "fence", "recoveryNonce"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "authorize-producer"
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "recoveryNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      },
+                      "producerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "fence",
+                      "recoveryNonce",
+                      "producerId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "bind"
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "recoveryNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      },
+                      "jobUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "jobName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "podUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "secretUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "secretTokenHash": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "placed": {
+                        "type": "boolean"
+                      },
+                      "deleting": {
+                        "type": "boolean"
+                      },
+                      "owned": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "fence",
+                      "recoveryNonce",
+                      "jobUid",
+                      "jobName",
+                      "placed",
+                      "deleting",
+                      "owned"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "attest"
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "recoveryNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      },
+                      "jobUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "podUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "generation": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "owned": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "fence",
+                      "recoveryNonce",
+                      "jobUid",
+                      "podUid",
+                      "generation",
+                      "owned"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "worker-retired"
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "recoveryNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      },
+                      "generation": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "podUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "evidence": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "fence",
+                      "recoveryNonce",
+                      "generation",
+                      "podUid",
+                      "evidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "operation"
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "recoveryNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      },
+                      "producerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "operationId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "resolved": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "fence",
+                      "recoveryNonce",
+                      "producerId",
+                      "operationId",
+                      "resolved"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "stop-producer"
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "producerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "producerSubject": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "fenced": {
+                        "type": "boolean"
+                      },
+                      "evidence": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "fence",
+                      "producerId",
+                      "producerSubject",
+                      "fenced",
+                      "evidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "retire"
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "recoveryNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      }
+                    },
+                    "required": ["action", "fence", "recoveryNonce"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "release"
+                      },
+                      "fence": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "recoveryNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      },
+                      "barrierUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "barrierRunId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "barrierNonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      },
+                      "resourceVersion": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "jobName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "evidence": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "inert": {
+                        "type": "boolean"
+                      },
+                      "physicalWorkersEnded": {
+                        "type": "boolean"
+                      },
+                      "neverStarted": {
+                        "type": "boolean"
+                      },
+                      "originalJobUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "fence",
+                      "recoveryNonce",
+                      "barrierUid",
+                      "barrierRunId",
+                      "barrierNonce",
+                      "resourceVersion",
+                      "jobName",
+                      "evidence",
+                      "inert",
+                      "physicalWorkersEnded",
+                      "neverStarted"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "resolve-retired-write"
+                      },
+                      "runId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "nonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      },
+                      "barrierUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "operationId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "producerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "producerSubject": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "evidence": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "runId",
+                      "nonce",
+                      "barrierUid",
+                      "operationId",
+                      "producerId",
+                      "producerSubject",
+                      "evidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "import"
+                      },
+                      "dryRun": {
+                        "type": "boolean"
+                      },
+                      "reviewedDigest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "known": {
+                        "type": "boolean"
+                      },
+                      "evidence": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "inventory": {
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "observedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "slot": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "revision": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "nonce": {
+                              "type": "string",
+                              "minLength": 16,
+                              "maxLength": 128
+                            },
+                            "producerId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "producerSubject": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "runner": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "jobUid": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "secretUid": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "unplaced": {
+                              "type": "boolean"
+                            },
+                            "pendingWrites": {
+                              "maxItems": 32,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              }
+                            }
+                          },
+                          "required": [
+                            "runId",
+                            "observedAt",
+                            "pipeline",
+                            "slot",
+                            "revision",
+                            "nonce",
+                            "producerId",
+                            "producerSubject",
+                            "runner",
+                            "unplaced",
+                            "pendingWrites"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "dryRun",
+                      "known",
+                      "evidence",
+                      "inventory"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "receipt": {
+                      "type": "object",
+                      "properties": {
+                        "poolId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 175
+                        },
+                        "slot": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "runId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 175
+                        },
+                        "nonce": {
+                          "type": "string",
+                          "minLength": 16,
+                          "maxLength": 128
+                        }
+                      },
+                      "required": [
+                        "poolId",
+                        "slot",
+                        "revision",
+                        "runId",
+                        "nonce"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "jobName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 175
+                    },
+                    "released": {
+                      "type": "boolean"
+                    },
+                    "retainBarrier": {
+                      "type": "boolean"
+                    },
+                    "digest": {
+                      "type": "string"
+                    },
+                    "inventoryKnown": {
+                      "type": "boolean"
+                    },
+                    "missingRunIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "imported": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["ok"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Capacity authority required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Capacity protocol refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "getCapacityInventory",
+        "summary": "Bounded redacted inventory for the server-granted pool",
+        "tags": ["capacity"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "policy": {
+                      "type": "object",
+                      "properties": {
+                        "poolId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 175,
+                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]*$"
+                        },
+                        "cluster": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 175
+                        },
+                        "namespace": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 175
+                        },
+                        "version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "maxConcurrent": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 128
+                        },
+                        "maxUnplaced": {
+                          "type": "number",
+                          "const": 1
+                        },
+                        "enforced": {
+                          "type": "boolean"
+                        },
+                        "inventoryKnown": {
+                          "type": "boolean"
+                        },
+                        "domains": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "domainId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175,
+                                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]*$"
+                              },
+                              "ceiling": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 128
+                              }
+                            },
+                            "required": ["domainId", "ceiling"],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "poolId",
+                        "cluster",
+                        "namespace",
+                        "version",
+                        "maxConcurrent",
+                        "maxUnplaced",
+                        "enforced",
+                        "inventoryKnown",
+                        "domains"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "receipts": {
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "poolId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "nonce": {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128
+                          },
+                          "taskKey": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "domainId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "pipeline": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "subject": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "runner": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "producerId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "claimedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "unplaced",
+                              "placed",
+                              "quarantined",
+                              "retiring"
+                            ]
+                          },
+                          "unplaced": {
+                            "type": "boolean"
+                          },
+                          "jobUid": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "secretUid": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "jobName": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
+                          "worker": {
+                            "type": "object",
+                            "properties": {
+                              "generation": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "podUid": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              },
+                              "jobUid": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              },
+                              "active": {
+                                "type": "boolean"
+                              },
+                              "retiredEvidence": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              }
+                            },
+                            "required": [
+                              "generation",
+                              "podUid",
+                              "jobUid",
+                              "active"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "retiredWorkers": {
+                            "maxItems": 32,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "podUid": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "generation": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "evidence": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                }
+                              },
+                              "required": ["podUid", "generation", "evidence"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "attestedPod": {
+                            "type": "object",
+                            "properties": {
+                              "podUid": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              },
+                              "jobUid": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              },
+                              "generation": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": ["podUid", "jobUid", "generation"],
+                            "additionalProperties": false
+                          },
+                          "recovery": {
+                            "type": "object",
+                            "properties": {
+                              "subject": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              },
+                              "nonce": {
+                                "type": "string",
+                                "minLength": 16,
+                                "maxLength": 128
+                              },
+                              "expiresAt": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": ["subject", "nonce", "expiresAt"],
+                            "additionalProperties": false
+                          },
+                          "producers": {
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "producerId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "subject": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "stopped": {
+                                  "type": "boolean"
+                                },
+                                "fenced": {
+                                  "type": "boolean"
+                                },
+                                "pendingWrites": {
+                                  "maxItems": 32,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 175
+                                  }
+                                }
+                              },
+                              "required": [
+                                "producerId",
+                                "subject",
+                                "stopped",
+                                "fenced",
+                                "pendingWrites"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "barrier": {
+                            "type": "object",
+                            "properties": {
+                              "uid": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              },
+                              "resourceVersion": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              },
+                              "evidence": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 175
+                              }
+                            },
+                            "required": ["uid", "resourceVersion", "evidence"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "poolId",
+                          "slot",
+                          "revision",
+                          "runId",
+                          "nonce",
+                          "domainId",
+                          "pipeline",
+                          "subject",
+                          "runner",
+                          "producerId",
+                          "claimedAt",
+                          "state",
+                          "unplaced",
+                          "jobName",
+                          "retiredWorkers",
+                          "producers"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["revision", "receipts"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Capacity inventory authority required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/runs/capacity/metrics": {
+      "get": {
+        "operationId": "getCapacityMetrics",
+        "summary": "Bounded authenticated capacity metrics",
+        "tags": ["capacity"],
+        "responses": {
+          "200": {
+            "description": "Prometheus exposition",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Capacity inventory authority required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/runs/activate": {
+      "post": {
+        "operationId": "activateWorker",
+        "summary": "Activate an attested worker using a bound Kubernetes workload identity",
+        "tags": ["capacity"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "fence": {
+                    "type": "object",
+                    "properties": {
+                      "poolId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "slot": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "runId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      },
+                      "nonce": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128
+                      }
+                    },
+                    "required": [
+                      "poolId",
+                      "slot",
+                      "revision",
+                      "runId",
+                      "nonce"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "jobUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 175
+                  }
+                },
+                "required": ["fence", "jobUid"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generation": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["generation"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bound worker identity required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Capacity protocol refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "runToken": [],
+            "capacityWorkerIdentity": []
+          }
+        ]
+      }
+    },
     "/runs/claim": {
       "post": {
         "operationId": "claimRun",
@@ -4350,6 +6053,21 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256
+                  },
+                  "capacityVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "producerId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 175
+                  },
+                  "claimRequestId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 175
                   }
                 },
                 "required": ["runner"],
@@ -4364,29 +6082,264 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "runId": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 175
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "runId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 175
+                        },
+                        "workId": {
+                          "type": "string",
+                          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "pipeline": {
+                          "type": "string"
+                        },
+                        "token": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["runId", "pipeline", "token", "expiresAt"],
+                      "additionalProperties": false
                     },
-                    "workId": {
-                      "type": "string",
-                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
-                    },
-                    "pipeline": {
-                      "type": "string"
-                    },
-                    "token": {
-                      "type": "string"
-                    },
-                    "expiresAt": {
-                      "type": "string"
+                    {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "claim"
+                            },
+                            "receipt": {
+                              "type": "object",
+                              "properties": {
+                                "poolId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "slot": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "revision": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "runId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "nonce": {
+                                  "type": "string",
+                                  "minLength": 16,
+                                  "maxLength": 128
+                                }
+                              },
+                              "required": [
+                                "poolId",
+                                "slot",
+                                "revision",
+                                "runId",
+                                "nonce"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "token": {
+                              "type": "string"
+                            },
+                            "expiresAt": {
+                              "type": "string"
+                            },
+                            "jobName": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "receipt",
+                            "runId",
+                            "pipeline",
+                            "token",
+                            "expiresAt",
+                            "jobName"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "recover-owned-secret"
+                            },
+                            "receipt": {
+                              "type": "object",
+                              "properties": {
+                                "poolId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "slot": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "revision": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "runId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "nonce": {
+                                  "type": "string",
+                                  "minLength": 16,
+                                  "maxLength": 128
+                                }
+                              },
+                              "required": [
+                                "poolId",
+                                "slot",
+                                "revision",
+                                "runId",
+                                "nonce"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "jobName": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "jobUid": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "secretUid": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "receipt",
+                            "runId",
+                            "jobName",
+                            "secretUid"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "quarantined-unrecoverable-token"
+                            },
+                            "receipt": {
+                              "type": "object",
+                              "properties": {
+                                "poolId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "slot": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "revision": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "runId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "nonce": {
+                                  "type": "string",
+                                  "minLength": 16,
+                                  "maxLength": 128
+                                }
+                              },
+                              "required": [
+                                "poolId",
+                                "slot",
+                                "revision",
+                                "runId",
+                                "nonce"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "jobName": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            }
+                          },
+                          "required": ["kind", "runId", "jobName"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "wait"
+                            },
+                            "reason": {
+                              "type": "string",
+                              "enum": ["queue", "capacity"]
+                            }
+                          },
+                          "required": ["kind", "reason"],
+                          "additionalProperties": false
+                        }
+                      ]
                     }
-                  },
-                  "required": ["runId", "pipeline", "token", "expiresAt"],
-                  "additionalProperties": false
+                  ]
                 }
               }
             }
@@ -4399,6 +6352,23 @@
                   "oneOf": [
                     {
                       "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Receipt-aware capacity policy refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
                     },
                     {
                       "$ref": "#/components/schemas/UndefinedError"
@@ -4430,6 +6400,25 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 175
+            }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         ],
@@ -4739,6 +6728,23 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Worker generation refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4762,6 +6768,25 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 175
+            }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         ],
@@ -4806,6 +6831,23 @@
                   "oneOf": [
                     {
                       "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Worker generation refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
                     },
                     {
                       "$ref": "#/components/schemas/UndefinedError"
@@ -4955,6 +6997,25 @@
               "minLength": 1,
               "maxLength": 175
             }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         ],
         "requestBody": {
@@ -5015,6 +7076,23 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Worker generation refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5038,6 +7116,25 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 175
+            }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         ],
@@ -5111,6 +7208,23 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Worker generation refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5134,6 +7248,25 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 175
+            }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         ],
@@ -5253,6 +7386,25 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 175
+            }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         ],

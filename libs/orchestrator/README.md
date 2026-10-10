@@ -136,3 +136,12 @@ FIRESTORE_EMULATOR_HOST=localhost:4002 npx vitest run --project '@agent-lcars/or
   by `(repo, issue)`; there is no tenant concept above that. The consumer
   repos' formerly separate dispatch loops have since migrated onto this
   orchestrator (#1198, #1200).
+
+## Executor capacity receipts
+
+The application-owned pool/domain, receipt, generation and retirement protocol
+uses the Work API and serializable Memory/Firestore store transactions. It is
+disabled in production unless explicitly enabled through the approved
+deployment path. See [the capacity contract](../../docs/executor-capacity.md)
+for authority, durable replay, physical retirement, migration and qualification
+boundaries.

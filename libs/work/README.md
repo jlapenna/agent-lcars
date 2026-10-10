@@ -101,6 +101,15 @@ generic OIDC POST transport with
 `audience=agent-lcars-work`. The composite does not interpret this API's
 payload or response; the generated OpenAPI contract is authoritative.
 
+## Executor capacity receipts
+
+The application-owned pool/domain, receipt, generation and retirement protocol
+uses the Work API and serializable Memory/Firestore store transactions. It is
+disabled in production unless explicitly enabled through the approved
+deployment path. See [the capacity contract](../../docs/executor-capacity.md)
+for authority, durable replay, physical retirement, migration and qualification
+boundaries.
+
 ## Schedule edits and occurrence admission
 
 Schedule evaluation uses five-field UTC cron expressions. Views include a

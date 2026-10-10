@@ -1,3 +1,4 @@
+import type { CapacityWorkerPermit } from './capacity-model';
 import {
   cancelRun,
   closeTask,
@@ -174,15 +175,26 @@ export class Orchestrator {
     );
   }
 
-  async renew(runId: string): Promise<Decision | Refusal> {
-    return this.transactOnRun(runId, (task, run) =>
-      renewLease({ now: this.clock.now(), task, run }),
+  async renew(
+    runId: string,
+    workerPermit?: CapacityWorkerPermit,
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(
+      runId,
+      (task, run) => renewLease({ now: this.clock.now(), task, run }),
+      workerPermit,
     );
   }
 
-  async report(runId: string, result: RunResult): Promise<Decision | Refusal> {
-    return this.transactOnRun(runId, (task, run) =>
-      reportResult({ now: this.clock.now(), task, run, result }),
+  async report(
+    runId: string,
+    result: RunResult,
+    workerPermit?: CapacityWorkerPermit,
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(
+      runId,
+      (task, run) => reportResult({ now: this.clock.now(), task, run, result }),
+      workerPermit,
     );
   }
 
@@ -338,7 +350,17 @@ export class Orchestrator {
   private async transactOnRun(
     runId: string,
     decide: (task: VersionedTask['task'], run: Run) => Decision | Refusal,
+    workerPermit?: CapacityWorkerPermit,
   ): Promise<Decision | Refusal> {
+    if (workerPermit !== undefined)
+      return this.store.transactRun({
+        runId,
+        workerPermit,
+        decide: ({ task, run }) =>
+          task === undefined || run === undefined
+            ? { refused: true, reason: 'unknown-run' }
+            : decide(task.task, run),
+      });
     const run = await this.store.readRun(runId);
     if (run === undefined) return { refused: true, reason: 'unknown-run' };
     return this.transact(run.task, async (task) => {

@@ -1,4 +1,5 @@
 import { WORK_ID_RE } from '@agent-lcars/orchestrator';
+import type { OpenAPIV3_2 } from '@orpc/openapi';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -145,11 +146,15 @@ describe('schedulesContract', () => {
 });
 
 describe('runsContract', () => {
-  it('declares the eight run routes with bearer security', () => {
+  it('declares run and receipt lifecycle routes with bearer security', () => {
     const paths = Object.keys(runsContract);
     expect(paths.sort()).toEqual(
       [
         'claim',
+        'capacity',
+        'capacityMetrics',
+        'capacityInventory',
+        'activate',
         'brief',
         'heartbeat',
         'exit',
@@ -395,6 +400,9 @@ describe('generateWorkOpenApi', () => {
         '/schedules/{id}/disable',
         '/schedules/{id}/enable',
         '/runs/claim',
+        '/runs/capacity',
+        '/runs/capacity/metrics',
+        '/runs/activate',
         '/runs/{runId}/brief',
         '/runs/{runId}/heartbeat',
         '/runs/{runId}/exit',
@@ -412,6 +420,49 @@ describe('generateWorkOpenApi', () => {
     expect(doc.components.securitySchemes).toHaveProperty('runToken');
   });
 
+  it('retains every required runId path parameter beside worker headers', async () => {
+    const doc = (await generateWorkOpenApi()) as OpenAPIV3_2.OpenAPIObject;
+    const operations = Object.entries(doc.paths ?? {})
+      .filter(([path]) => path.includes('{runId}'))
+      .flatMap(([path, item]) =>
+        (['get', 'post', 'put', 'patch', 'delete'] as const).flatMap(
+          (method) => {
+            const operation = item?.[method];
+            return operation === undefined ? [] : [{ path, method, operation }];
+          },
+        ),
+      );
+    expect(operations).toHaveLength(7);
+    for (const { path, method, operation } of operations)
+      expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'runId',
+            in: 'path',
+            required: true,
+          }),
+        ]),
+      );
+    const workers = operations.filter(({ operation }) =>
+      operation.security?.some(
+        (scheme: Record<string, unknown>) => 'runToken' in scheme,
+      ),
+    );
+    expect(workers).toHaveLength(6);
+    for (const { operation } of workers)
+      expect(operation.parameters).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'x-lcars-worker-identity',
+            in: 'header',
+          }),
+          expect.objectContaining({
+            name: 'x-lcars-worker-generation',
+            in: 'header',
+          }),
+        ]),
+      );
+  });
   it('gives tick a distinct presentation: the cron tag and bearer security', async () => {
     // `tick` is a service operation guarded by the server-owned work.cron
     // scope. Its credential is therefore the same Google bearer format as
@@ -476,12 +527,16 @@ describe('generateWorkOpenApi', () => {
       'POST /schedules/{id}/enable': ['200', '400', '403', '404', '409'],
       'POST /schedules/{id}/disable': ['200', '400', '403', '404', '409'],
       'POST /schedules/tick': ['200'],
-      'POST /runs/claim': ['200', '401'],
-      'GET /runs/{runId}/brief': ['200', '401'],
-      'POST /runs/{runId}/heartbeat': ['200', '401'],
+      'POST /runs/claim': ['200', '401', '409'],
+      'POST /runs/capacity': ['200', '401', '409'],
+      'GET /runs/capacity': ['200', '401'],
+      'GET /runs/capacity/metrics': ['200', '401'],
+      'POST /runs/activate': ['200', '401', '409'],
+      'GET /runs/{runId}/brief': ['200', '401', '409'],
+      'POST /runs/{runId}/heartbeat': ['200', '401', '409'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],
-      'POST /runs/{runId}/complete': ['200', '401'],
-      'GET /runs/{runId}/checkout-token': ['200', '401'],
+      'POST /runs/{runId}/complete': ['200', '401', '409'],
+      'GET /runs/{runId}/checkout-token': ['200', '401', '409'],
       'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
     });

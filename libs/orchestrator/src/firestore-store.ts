@@ -9,6 +9,17 @@ import {
 import { z } from 'zod';
 
 import {
+  assertCapacityWorkerPermit,
+  capacityRecordForStorage,
+  capacityRecordSchema,
+  CapacityRefusal,
+  capacityStateForStorage,
+  capacityStateSchema,
+  type CapacityWorkerPermit,
+  emptyCapacityState,
+  retiredKey,
+} from './capacity-model';
+import {
   type Decision,
   isRefusal,
   type Refusal,
@@ -40,6 +51,10 @@ import {
   projectQueueAdmissionStatus,
   QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
+import type {
+  CapacityTransactionResult,
+  CapacityTransactionSnapshot,
+} from './store';
 import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
@@ -85,6 +100,8 @@ export interface FirestoreStoreOptions {
  */
 export class FirestoreStore implements OrchestratorStore {
   readonly #firestore: Firestore;
+  readonly #capacity: CollectionReference;
+  readonly #capacityRecords: CollectionReference;
   readonly #tasks: CollectionReference;
   readonly #runs: CollectionReference;
   readonly #outbox: CollectionReference;
@@ -102,6 +119,10 @@ export class FirestoreStore implements OrchestratorStore {
         : { host: options.emulatorHost, ssl: false }),
     };
     this.#firestore = new Firestore(firestoreOptions);
+    this.#capacity = this.#firestore.collection(`${prefix}capacity`);
+    this.#capacityRecords = this.#firestore.collection(
+      `${prefix}capacity-records`,
+    );
     this.#tasks = this.#firestore.collection(`${prefix}tasks`);
     this.#runs = this.#firestore.collection(`${prefix}runs`);
     this.#outbox = this.#firestore.collection(`${prefix}outbox`);
@@ -122,6 +143,110 @@ export class FirestoreStore implements OrchestratorStore {
         cooldown,
       );
     }
+  }
+
+  async transactCapacity<T>(input: {
+    now: string;
+    recordKeys: readonly string[];
+    claimPipelines?: readonly string[];
+    runId?: string;
+    readRunIds?: readonly string[];
+    decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
+  }): Promise<T> {
+    return this.#firestore.runTransaction(async (tx) => {
+      const stateRef = this.#capacity.doc('active');
+      const stateDoc = await tx.get(stateRef);
+      const state = stateDoc.exists
+        ? capacityStateSchema.parse(stateDoc.data())
+        : emptyCapacityState();
+      let runs: Run[] = [];
+      if (input.claimPipelines !== undefined) {
+        // Include logical-terminal claims: physical occupancy is not liveness.
+        const [queued, claimed] = await Promise.all([
+          tx.get(this.#runs.where('queue.state', '==', 'queued').limit(1001)),
+          tx.get(this.#runs.where('queue.state', '==', 'claimed').limit(1001)),
+        ]);
+        if (queued.size + claimed.size > 1000)
+          throw new Error('Capacity run inventory exceeds read bound');
+        runs = [...queued.docs, ...claimed.docs].map((doc) =>
+          runSchema.parse(doc.data()),
+        );
+      } else if (input.runId !== undefined) {
+        const run = await tx.get(this.#runRef(input.runId));
+        if (run.exists) runs = [runSchema.parse(run.data())];
+      }
+      const extraIds = [
+        ...new Set([
+          ...(input.readRunIds ?? []),
+          ...(input.claimPipelines === undefined
+            ? []
+            : state.receipts.map((receipt) => receipt.runId)),
+        ]),
+      ].filter((runId) => !runs.some((run) => run.runId === runId));
+      if (runs.length + extraIds.length > 1000)
+        throw new Error('Capacity run inventory exceeds read bound');
+      const extraRuns = await Promise.all(
+        extraIds.map((runId) => tx.get(this.#runRef(runId))),
+      );
+      for (const run of extraRuns)
+        if (run.exists) runs.push(runSchema.parse(run.data()));
+      const keys = [
+        ...new Set([
+          ...input.recordKeys,
+          ...runs.map((run) => retiredKey(run.runId)),
+        ]),
+      ];
+      const documents = await Promise.all(
+        keys.map((key) =>
+          tx.get(this.#capacityRecords.doc(encodeURIComponent(key))),
+        ),
+      );
+      const records = new Map<
+        string,
+        ReturnType<typeof capacityRecordSchema.parse>
+      >();
+      documents.forEach((doc, index) => {
+        if (doc.exists)
+          records.set(
+            keys[index] ?? '',
+            capacityRecordSchema.parse(doc.data()),
+          );
+      });
+      const pipelines = [...new Set(input.claimPipelines ?? [])];
+      const cooldowns = await Promise.all(
+        pipelines.map((pipeline) =>
+          tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+        ),
+      );
+      const result = input.decide({
+        state,
+        records,
+        runs,
+        coolingPipelines: new Set(
+          pipelines.filter(
+            (_, index) =>
+              cooldowns[index]?.exists === true &&
+              (parseProviderCooldown(
+                cooldowns[index]?.data(),
+                pipelines[index] ?? '',
+              ) === undefined ||
+                providerIsCoolingDown(cooldowns[index]?.data(), input.now)),
+          ),
+        ),
+      });
+      // The guard document serializes every pool/domain/receipt mutation. History
+      // remains separately keyed; no eventually consistent counter is used.
+      if (result.state !== undefined)
+        tx.set(stateRef, capacityStateForStorage(result.state));
+      for (const [key, record] of result.records ?? [])
+        tx.set(
+          this.#capacityRecords.doc(encodeURIComponent(key)),
+          capacityRecordForStorage(record),
+        );
+      if (result.run !== undefined)
+        tx.set(this.#runRef(result.run.runId), result.run);
+      return result.value;
+    });
   }
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
@@ -287,6 +412,7 @@ export class FirestoreStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
+    workerPermit?: CapacityWorkerPermit;
     decide(state: {
       task: VersionedTask | undefined;
       run: Run | undefined;
@@ -294,6 +420,26 @@ export class FirestoreStore implements OrchestratorStore {
   }): Promise<Decision | Refusal> {
     const runRef = this.#runRef(input.runId);
     return this.#firestore.runTransaction(async (tx) => {
+      if (input.workerPermit !== undefined) {
+        const [capacity, retired] = await Promise.all([
+          tx.get(this.#capacity.doc('active')),
+          tx.get(
+            this.#capacityRecords.doc(
+              encodeURIComponent(retiredKey(input.runId)),
+            ),
+          ),
+        ]);
+        assertCapacityWorkerPermit(
+          capacity.exists
+            ? capacityStateSchema.parse(capacity.data())
+            : emptyCapacityState(),
+          retired.exists
+            ? capacityRecordSchema.parse(retired.data())
+            : undefined,
+          input.workerPermit,
+        );
+      }
+
       const runSnapshot = await tx.get(runRef);
       const run = runSnapshot.exists
         ? runSchema.parse(runSnapshot.data())
@@ -735,6 +881,21 @@ export class FirestoreStore implements OrchestratorStore {
     tokenHash: string;
   }): Promise<Run | undefined> {
     return this.#firestore.runTransaction(async (tx) => {
+      const capacity = await tx.get(this.#capacity.doc('active'));
+      if (
+        capacity.exists &&
+        capacityStateSchema
+          .parse(capacity.data())
+          .policies.some(
+            (policy) =>
+              policy.enforced &&
+              input.pipelines.some(
+                (pipeline) => policy.domains[pipeline] !== undefined,
+              ),
+          )
+      ) {
+        throw new CapacityRefusal('policy');
+      }
       // One query per candidate pipeline for queued work and each live state.
       // Every query uses two equality clauses, so provider-aware occupancy
       // remains index-compatible with the former single-pipeline claim shape.
@@ -836,9 +997,28 @@ export class FirestoreStore implements OrchestratorStore {
   }): Promise<boolean> {
     const ref = this.#runRef(input.runId);
     return this.#firestore.runTransaction(async (tx) => {
+      const capacity = await tx.get(this.#capacity.doc('active'));
+      if (
+        capacity.exists &&
+        capacityStateSchema
+          .parse(capacity.data())
+          .receipts.some((receipt) => receipt.runId === input.runId)
+      )
+        return false;
+
       const snapshot = await tx.get(ref);
       if (!snapshot.exists) return false;
       const run = runSchema.parse(snapshot.data());
+      if (
+        capacity.exists &&
+        capacityStateSchema
+          .parse(capacity.data())
+          .policies.some(
+            (policy) =>
+              policy.enforced && policy.domains[run.pipeline] !== undefined,
+          )
+      )
+        return false;
       if (
         !isLive(run.state) ||
         run.queue?.state !== 'claimed' ||
