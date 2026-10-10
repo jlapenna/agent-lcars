@@ -95,3 +95,25 @@ index 4a34ba2..a1c3489 100644
              }
              if (terminalOutput) {
                  const outputPath = this.temporaryOutputPath(task);
+diff --git a/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js b/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
+--- a/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
++++ b/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
+@@ -1329,9 +1329,16 @@
+             const reason = stoppingReason === 'fulfilled' ? 'fulfilled' : 'interrupted';
+             await this.completeContinuousTask(task, groupId, ownsRunningTasksService, reason);
+         }
+-        else if (!this.isContinuousTaskNeeded(task.id)) {
++        else if (!this.isContinuousTaskNeeded(task.id) && code === 0) {
+             // No remaining tasks depend on this — the task was about to be
+-            // killed by cleanUpUnneededContinuousTasks anyway.
++            // killed by cleanUpUnneededContinuousTasks anyway. A nonzero
++            // self-exit is not that: a standalone continuous target that dies
++            // on a fatal startup error has nothing depending on it either, and
++            // calling that fulfilled reports the failure behind exit 0
++            // (agent-lcars#2325). Intentional stops are already handled above —
++            // both performCleanup and cleanUpUnneededContinuousTasks set
++            // stoppingReason before killing, and expected termination signals
++            // match on the exit code.
+             await this.completeContinuousTask(task, groupId, ownsRunningTasksService, 'fulfilled');
+         }
+         else {
