@@ -380,7 +380,8 @@ test.describe('Inbox authorized action journeys', () => {
             ]
           : []),
       ];
-      // A successful merge also awaits the bounded server reconciliation sweep.
+      // Keep the observed merge allowance until measured product latency is qualified.
+      // Merge now waits only for its GitHub mutation and authoritative projection.
       const noticeTimeout = action === 'merge' && !rejected ? 20_000 : 5_000;
       const expectedState = action === 'merge' && !rejected ? 'closed' : 'open';
       const expectedMergeable =
@@ -397,10 +398,25 @@ test.describe('Inbox authorized action journeys', () => {
           requestedReviewerLogins: requestedReviewers,
         });
         const url = await selectItem(page, number);
+        const interactionStarted = performance.now();
         await click(page, request);
         await expect(page.getByText(message, { exact: true })).toBeVisible({
           timeout: noticeTimeout,
         });
+        const clickToNoticeMs = Math.round(
+          performance.now() - interactionStarted,
+        );
+        test.info().annotations.push({
+          type: `${action}-click-to-notice-ms`,
+          description: String(clickToNoticeMs),
+        });
+        console.log(
+          JSON.stringify({
+            journey: `${action}-click-to-notice`,
+            rejected,
+            durationMs: clickToNoticeMs,
+          }),
+        );
         expect(await journal(request)).toEqual(expectedEffects);
         const issue = await request.get(
           `${GITHUB}/${pathFor(`issues/${number}`)}`,
