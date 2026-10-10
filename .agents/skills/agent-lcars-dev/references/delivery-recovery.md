@@ -109,7 +109,7 @@ retains allowed metadata/categories without printing arbitrary response data:
 ```bash
 queue_request="<PRIVATE_QUEUE_REQUEST_JSON>"
 set -o pipefail
-if env -u GH_DEBUG gh api graphql --include --input "$queue_request" |
+if env -u GH_DEBUG gh api graphql --include --input "$queue_request" 2>/dev/null |
   python3 -c '
 import json, re, sys
 text = sys.stdin.read().replace("\r\n", "\n")
@@ -118,7 +118,7 @@ numeric = {"x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-used",
            "x-ratelimit-reset", "retry-after"}
 metadata = {}
 for line in headers.splitlines():
-    if re.fullmatch(r"HTTP/[^ ]+ [0-9]{3}(?: .*)?", line):
+    if re.fullmatch(r"HTTP/(?:1\.[01]|[23](?:\.0)?) [0-9]{3}(?: .*)?", line):
         metadata["status"] = line.split(" ", 2)[:2]
     key, colon, value = line.partition(":")
     key, value = key.lower(), value.strip()
@@ -149,8 +149,11 @@ printf 'request_exit=%s filter_exit=%s\n' "${request_statuses[0]}" "${request_st
 Keep the bounded receipt outside Git with private permissions. An empty
 receipt or failed filter is missing evidence, not success. `unparsed`
 Retry-After is not permission to retry; obtain its actual guidance safely
-before recovery. For an error supplied only on stderr, record its
-credential-free category manually; do not redirect debug traces into evidence.
+before recovery. CLI stderr is intentionally suppressed because it can echo
+arbitrary response messages even with debugging disabled. A stderr-only failure
+has unknown error attribution; its nonzero CLI status and independent
+state/quota readback remain evidence. Do not redirect that channel into a
+retained raw diagnostic file.
 
 After success or failure, re-read the exact PR/head and auto-merge state.
 Require the same ready head and non-null SQUASH request; otherwise retain the
