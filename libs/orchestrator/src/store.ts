@@ -8,6 +8,7 @@ import type {
   TaskId,
 } from './model';
 import { taskKey } from './model';
+import { providerIsCoolingDown } from './provider-cooldown';
 
 /** Server-owned direct-runner admission ceilings. OpenCode is serialized to
  * protect the shared local inference backend from measured contention. Codex
@@ -17,6 +18,41 @@ import { taskKey } from './model';
 export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
   Record<string, number | undefined>
 > = Object.freeze({ codex: 1, opencode: 1 });
+
+/** The same provider cooldowns and admission ceilings used by queue claims. */
+export function availableQueuePipelines(input: {
+  pipelines: readonly string[];
+  cooldowns: Readonly<Record<string, unknown>>;
+  liveRuns: readonly Run[];
+  now: string;
+}): string[] {
+  return [...new Set(input.pipelines)].filter((pipeline) => {
+    if (providerIsCoolingDown(input.cooldowns[pipeline], input.now))
+      return false;
+    const ceiling = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
+    return (
+      ceiling === undefined ||
+      input.liveRuns.filter(
+        (run) =>
+          run.pipeline === pipeline &&
+          run.queue?.state === 'claimed' &&
+          (run.state === 'pending' || run.state === 'running'),
+      ).length < ceiling
+    );
+  });
+}
+
+export interface QueueEligibilitySnapshot {
+  readonly cooldowns: Readonly<Record<string, unknown>>;
+  readonly liveRuns: readonly Run[];
+}
+
+export interface RunTransactionState {
+  readonly task: VersionedTask | undefined;
+  readonly run: Run | undefined;
+  /** Absent unless requested; observed before any writes in this transaction. */
+  readonly queueEligibility?: QueueEligibilitySnapshot;
+}
 
 /** Selects one provider head using least live occupancy, then FIFO age.
  * Callers must pass only server-authorized pipelines. */
@@ -157,10 +193,8 @@ export interface OrchestratorStore {
    */
   transactRun(input: {
     runId: string;
-    decide(state: {
-      task: VersionedTask | undefined;
-      run: Run | undefined;
-    }): Decision | Refusal;
+    queueEligibilityPipelines?: readonly string[];
+    decide(state: RunTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
   apply(input: {
     decision: Decision;

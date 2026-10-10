@@ -2,6 +2,8 @@ import {
   isLive,
   isWorkAnchor,
   type OutboxEntry,
+  type ProviderFallback,
+  type ProviderFallbackRequest,
   requestHistoryKey,
   type RequestSource,
   type Run,
@@ -95,6 +97,7 @@ export interface RequestRunInput {
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
+  providerFallback?: ProviderFallbackRequest | ProviderFallback;
 }
 
 /**
@@ -140,6 +143,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     requestSource: input.requestSource,
     pipeline: input.pipeline,
     params: input.params,
+    providerFallback: input.providerFallback,
   });
 }
 
@@ -152,6 +156,7 @@ function mintRun(input: {
   requestSource?: RequestSource;
   pipeline: string;
   params?: Record<string, string>;
+  providerFallback?: ProviderFallbackRequest | ProviderFallback;
 }): Decision {
   const { now, taskId, task, requestId, requestSource, pipeline, params } =
     input;
@@ -165,6 +170,23 @@ function mintRun(input: {
     requestId,
     requestSource: requestSource ?? 'caller',
     ...(params === undefined ? {} : { params }),
+    ...(input.providerFallback === undefined ||
+    input.providerFallback.allowedPipelines.length === 0
+      ? {}
+      : {
+          providerFallback: {
+            ...input.providerFallback,
+            allowedPipelines: [...input.providerFallback.allowedPipelines],
+            attemptedPipelines:
+              'attemptedPipelines' in input.providerFallback
+                ? [...input.providerFallback.attemptedPipelines]
+                : [pipeline],
+            originalRunId:
+              'originalRunId' in input.providerFallback
+                ? input.providerFallback.originalRunId
+                : runId,
+          },
+        }),
     leaseExpiresAt: runLeaseExpiresAt(now),
     events: [{ at: now, to: 'pending', by: 'request' }],
     createdAt: now,
@@ -407,6 +429,9 @@ function settleLostAndRetry(
     requestSource: 'auto-retry',
     pipeline: lostRun.pipeline,
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
+    ...(lostRun.providerFallback === undefined
+      ? {}
+      : { providerFallback: lostRun.providerFallback }),
   });
   return {
     task: retry.task,

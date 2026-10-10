@@ -16,6 +16,7 @@ import {
   updateTaskWork,
 } from './decide';
 import {
+  type ProviderFallbackRequest,
   type RequestSource,
   type Run,
   type RunResult,
@@ -24,6 +25,11 @@ import {
   type WorkPayload,
 } from './model';
 import {
+  reportResultWithFallback,
+  rerouteQueuedRun,
+} from './provider-fallback';
+import {
+  availableQueuePipelines,
   type OrchestratorStore,
   type RequestBinding,
   StoreConflict,
@@ -49,6 +55,13 @@ export interface SweepResult {
   readonly retried: { lostRunId: string; newRunId: string }[];
 }
 
+export interface ProviderFallbackAuthority {
+  /** Server-known providers whose cooldown/occupancy are read transactionally. */
+  readonly pipelines: readonly string[];
+  /** Re-evaluates the request's authorizing principal and repository now. */
+  allowedPipelines(task: Task, run: Run): readonly string[];
+}
+
 /**
  * Read → decide → apply, with one retry on a lost compare-and-set. The
  * decision layer is pure; this class is the only place I/O and time meet it.
@@ -61,6 +74,8 @@ export interface RequestInput {
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
+  /** Constructed by the authenticated admission adapter, not a raw API field. */
+  providerFallback?: ProviderFallbackRequest;
   /** Optional opaque atomic request binding. Its owner supplies the key and
    * canonical identity; the store records the first source request with the
    * request transaction rather than leaving a pre-request race to a caller. */
@@ -85,6 +100,7 @@ export class Orchestrator {
   constructor(
     private readonly store: OrchestratorStore,
     private readonly clock: Clock,
+    private readonly fallbackAuthority?: ProviderFallbackAuthority,
   ) {}
 
   async request(input: RequestInput): Promise<Decision | Refusal> {
@@ -127,6 +143,9 @@ export class Orchestrator {
           pipeline: input.pipeline,
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
+          ...(input.providerFallback === undefined
+            ? {}
+            : { providerFallback: input.providerFallback }),
         };
         if (input.replaceQueuedRunId !== undefined) {
           if (
@@ -181,9 +200,87 @@ export class Orchestrator {
   }
 
   async report(runId: string, result: RunResult): Promise<Decision | Refusal> {
+    if (this.fallbackAuthority !== undefined && !result.ok) {
+      const now = this.clock.now();
+      return this.store.transactRun({
+        runId,
+        queueEligibilityPipelines: this.fallbackAuthority.pipelines,
+        decide: ({ task, run, queueEligibility }) => {
+          if (task === undefined || run === undefined)
+            return refused('unknown-run');
+          return reportResultWithFallback({
+            now,
+            task: task.task,
+            run,
+            result,
+            authorizedPipelines:
+              this.fallbackAuthority?.allowedPipelines(task.task, run) ?? [],
+            availablePipelines:
+              queueEligibility === undefined
+                ? []
+                : availableQueuePipelines({
+                    ...queueEligibility,
+                    pipelines: this.fallbackAuthority?.pipelines ?? [],
+                    now,
+                  }),
+          });
+        },
+      });
+    }
     return this.transactOnRun(runId, (task, run) =>
       reportResult({ now: this.clock.now(), task, run, result }),
     );
+  }
+
+  /** The executor's grant further narrows alternatives; only fresh unclaimed
+   * attempts can be rerouted, never a live provider conversation. */
+  async rerouteQueued(
+    executorPipelines: readonly string[],
+  ): Promise<{ fromRunId: string; newRunId: string }[]> {
+    const authority = this.fallbackAuthority;
+    if (authority === undefined) return [];
+    const candidates = (await this.store.listQueuedRuns()).filter(
+      (run) => run.providerFallback !== undefined,
+    );
+    const rerouted: { fromRunId: string; newRunId: string }[] = [];
+    for (const candidate of candidates) {
+      const now = this.clock.now();
+      const outcome = await this.store.transactRun({
+        runId: candidate.runId,
+        queueEligibilityPipelines: authority.pipelines,
+        decide: ({ task, run, queueEligibility }) => {
+          if (
+            task === undefined ||
+            run === undefined ||
+            queueEligibility === undefined
+          )
+            return refused('unknown-run');
+          return rerouteQueuedRun({
+            now,
+            task: task.task,
+            run,
+            cooldown: queueEligibility.cooldowns[run.pipeline],
+            authorizedPipelines: authority
+              .allowedPipelines(task.task, run)
+              .filter((pipeline) => executorPipelines.includes(pipeline)),
+            availablePipelines: availableQueuePipelines({
+              ...queueEligibility,
+              pipelines: authority.pipelines,
+              now,
+            }),
+          });
+        },
+      });
+      if (!isRefusal(outcome)) {
+        const replacement = outcome.additionalRuns?.[0];
+        if (replacement !== undefined)
+          rerouted.push({
+            fromRunId: candidate.runId,
+            newRunId: replacement.runId,
+          });
+      }
+    }
+    return rerouted;
   }
 
   async cancel(runId: string, note?: string): Promise<Decision | Refusal> {

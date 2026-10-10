@@ -169,7 +169,7 @@ export const RUN_ID_MAX_LENGTH =
   String(GITHUB_ISSUE_MAX + 1).length;
 
 /** Orchestrator-generated dependent IDs must admit the longest run ID too. */
-const RETRY_REQUEST_ID_MAX_LENGTH = 'retry:'.length + RUN_ID_MAX_LENGTH;
+const DEPENDENT_REQUEST_ID_MAX_LENGTH = 'fallback:'.length + RUN_ID_MAX_LENGTH;
 const OUTBOX_ENTRY_ID_MAX_LENGTH = 'dispatch/'.length + RUN_ID_MAX_LENGTH;
 
 /**
@@ -189,7 +189,11 @@ export type RunState = z.infer<typeof runStateSchema>;
 /** Distinguishes arbitrary caller idempotency keys from orchestrator-owned
  * automatic retry keys. The raw requestId remains caller-visible; this source
  * exists only for the durable request-history namespace. */
-export const requestSourceSchema = z.enum(['caller', 'auto-retry']);
+export const requestSourceSchema = z.enum([
+  'caller',
+  'auto-retry',
+  'provider-fallback',
+]);
 export type RequestSource = z.infer<typeof requestSourceSchema>;
 
 /** A collision-proof durable idempotency identity. Caller input is arbitrary,
@@ -265,10 +269,45 @@ export const runEventSchema = z.strictObject({
     'operator',
     'expiry',
     'executor',
+    'provider-fallback',
   ]),
   note: z.string().max(1_024).optional(),
 });
 export type RunEvent = z.infer<typeof runEventSchema>;
+
+/** Server-authorized request policy, never accepted as a raw caller identity. */
+const uniquePipelineList = z
+  .array(z.string().min(1).max(128))
+  .refine((pipelines) => new Set(pipelines).size === pipelines.length, {
+    message: 'Provider fallback pipeline lists must be unique',
+  });
+export const providerFallbackSchema = z
+  .strictObject({
+    principal: z.string().min(1).max(128),
+    allowedPipelines: uniquePipelineList.min(1).max(8),
+    attemptedPipelines: uniquePipelineList.min(1).max(9),
+    originalRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
+    fromRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
+    trigger: z
+      .strictObject({
+        reason: z.enum(['provider-limit', 'provider-cooldown']),
+        failureRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
+        limitedPipeline: z.string().min(1).max(128),
+      })
+      .optional(),
+  })
+  .refine(
+    (policy) =>
+      (policy.fromRunId === undefined) === (policy.trigger === undefined),
+    {
+      message: 'Fallback provenance requires both predecessor and trigger',
+    },
+  );
+export type ProviderFallback = z.infer<typeof providerFallbackSchema>;
+export interface ProviderFallbackRequest {
+  readonly principal: string;
+  readonly allowedPipelines: readonly string[];
+}
 
 export const runSchema = z.strictObject({
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
@@ -278,7 +317,7 @@ export const runSchema = z.strictObject({
   pipeline: z.string().min(1).max(128),
   /** Idempotency: the request that created this run. A retry of the same
    *  request maps to this run instead of creating a second one. */
-  requestId: z.string().min(1).max(RETRY_REQUEST_ID_MAX_LENGTH),
+  requestId: z.string().min(1).max(DEPENDENT_REQUEST_ID_MAX_LENGTH),
   /** Namespace for requestId in the durable idempotency ledger. */
   requestSource: requestSourceSchema,
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
@@ -289,6 +328,8 @@ export const runSchema = z.strictObject({
    *  persisted here without a later `runSchema.parse` read throwing on the
    *  run that stored it. */
   params: z.record(z.string().max(64), z.string().max(16_384)).optional(),
+  /** Explicit provider alternatives and the exact fresh-attempt provenance. */
+  providerFallback: providerFallbackSchema.optional(),
   /** Queue claim state -- see `runQueueSchema`. */
   queue: runQueueSchema.optional(),
   /** A live run must renew before this instant or it is presumed lost. */
