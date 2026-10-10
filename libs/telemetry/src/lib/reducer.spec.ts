@@ -453,3 +453,50 @@ describe('reduceTranscript', () => {
     expect(summary.deliverables.prNumbers).toEqual([]);
   });
 });
+
+describe('Claude qualified PR publication invocation', () => {
+  it.each([
+    ['gh pr create --dry-run', false],
+    ['gh pr create --help', false],
+    ['echo "gh pr create"', false],
+    ['gh pr create --title "--dry-run"', true],
+  ])('qualifies only actual creation: %s', (command, creating) => {
+    const sessionId = 'publication-invocation';
+    const transcript = [
+      {
+        type: 'assistant',
+        uuid: 'a',
+        sessionId,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', name: 'Bash', id: 'call', input: { command } },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        uuid: 'u',
+        sessionId,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call',
+              content: 'https://github.com/octo/example/pull/42',
+            },
+          ],
+        },
+      },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join('\n');
+    const summary = reduceTranscript(transcript)[0];
+    expect(summary.deliverables.qualifiedPRs).toEqual(
+      creating
+        ? [{ repo: { owner: 'octo', name: 'example' }, number: 42 }]
+        : undefined,
+    );
+  });
+});

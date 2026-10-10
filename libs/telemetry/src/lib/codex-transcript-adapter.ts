@@ -39,6 +39,20 @@ function publicationOutput(value: unknown): unknown {
   return recognized ? outputs : value;
 }
 
+/** Decode the supported shell tool argument, not unrelated JSON properties
+ * or code-mode orchestration source that merely mentions a command. */
+function publicationCommand(input: unknown): string | undefined {
+  if (typeof input === 'string') {
+    try {
+      return publicationCommand(JSON.parse(input));
+    } catch {
+      return input;
+    }
+  }
+  const record = asRecord(input);
+  return asString(record?.['cmd']) ?? asString(record?.['command']);
+}
+
 function emptyTokens(): TokenUsage {
   return {
     inputTokens: 0,
@@ -205,8 +219,7 @@ export const codexAdapter: TranscriptAdapter = {
             payloadType === 'custom_tool_call')
         ) {
           const input = payload['arguments'] ?? payload['input'];
-          const command =
-            typeof input === 'string' ? input : JSON.stringify(input);
+          const command = publicationCommand(input);
           const toolName = asString(payload['name']);
           if (
             toolName &&

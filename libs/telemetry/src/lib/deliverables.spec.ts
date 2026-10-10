@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { findDeliverables, findQualifiedPRs } from './deliverables';
+import {
+  findDeliverables,
+  findQualifiedPRs,
+  isPRPublicationCommand,
+} from './deliverables';
 
 describe('findDeliverables', () => {
   it('finds commit SHAs in bracket output without regex backtracking', () => {
@@ -32,4 +36,26 @@ describe('qualified GitHub publication URLs', () => {
       ),
     ).toEqual([{ repo: { owner: 'A', name: 'B' }, number: 42 }]);
   });
+});
+
+describe('actual PR creation invocation', () => {
+  it.each([
+    'gh pr create --dry-run',
+    'gh pr create --dry-run=true',
+    'gh pr create --help',
+    'gh pr create -h',
+    'echo "gh pr create"',
+    "rg 'gh pr create' docs",
+    '# gh pr create',
+    'gh pr view 42 --jq "gh pr create"',
+  ])('rejects non-creating uses: %s', (command) =>
+    expect(isPRPublicationCommand(command)).toBe(false),
+  );
+  it.each([
+    'gh pr create',
+    'gh pr create --draft --body-file /tmp/body.md',
+    'gh pr create --title "--dry-run" --body "mentions gh pr create --help"',
+  ])('retains actual creation: %s', (command) =>
+    expect(isPRPublicationCommand(command)).toBe(true),
+  );
 });

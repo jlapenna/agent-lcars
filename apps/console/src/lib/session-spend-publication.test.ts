@@ -56,6 +56,27 @@ const output = (id: string, text: string) => ({
 });
 
 describe('qualified publication → retained session → spend boundary (#2301)', () => {
+  it.each([
+    'gh pr create --dry-run',
+    'gh pr create "--dry-run"',
+    'gh pr create --help',
+    'printf "%s" "gh pr create"',
+    "rg 'gh pr create' docs/product",
+    'gh pr view 42 --json body --jq "gh pr create"',
+  ])('keeps non-creating invocation unqualified: %s', (command) => {
+    const doc = session([
+      call('inspect', command),
+      output('inspect', local.url),
+    ]);
+    const spend = aggregateSessionSpend(
+      [doc],
+      new Map([['jlapenna/agent-lcars#42', local]]),
+    );
+    expect(doc.deliverables.qualifiedPRs).toBeUndefined();
+    expect(spend.mergedPRs).toBe(0);
+    expect(spend.totals.costUsd).toBe(5);
+  });
+
   it('does not turn foreign user or lookup output into a local merged deliverable', () => {
     const doc = session([
       {

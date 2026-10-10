@@ -89,5 +89,108 @@ export function findQualifiedPRs(line: unknown): QualifiedSessionPR[] {
 }
 
 export function isPRPublicationCommand(command: string): boolean {
-  return /\bgh\s+pr\s+create\b/iu.test(command);
+  const words = literalShellWords(command);
+  if (words === undefined) return false;
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[0] ?? '')) words.shift();
+  if (words[0] === 'env') {
+    words.shift();
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[0] ?? '')) words.shift();
+  }
+  if (words[0] === 'command') words.shift();
+  if (
+    !/^(?:[^\s]*\/)?gh$/u.test(words[0] ?? '') ||
+    words[1] !== 'pr' ||
+    words[2] !== 'create'
+  )
+    return false;
+
+  // Values such as --title '--dry-run' are data, not CLI options.
+  const valueFlags = new Set([
+    '--title',
+    '-t',
+    '--body',
+    '-b',
+    '--body-file',
+    '-F',
+    '--base',
+    '-B',
+    '--head',
+    '-H',
+    '--repo',
+    '-R',
+    '--label',
+    '-l',
+    '--assignee',
+    '-a',
+    '--reviewer',
+    '-r',
+    '--project',
+    '-p',
+    '--template',
+    '-T',
+  ]);
+  for (let index = 3; index < words.length; index++) {
+    const word = words[index];
+    const flag = word.split('=', 1)[0];
+    if (['--dry-run', '--help', '-h', '--web', '-w', '--'].includes(flag))
+      return false;
+    if (valueFlags.has(word)) {
+      if (++index >= words.length) return false;
+    } else if (!word.startsWith('-')) return false;
+  }
+  return true;
+}
+
+/** Parse one literal shell invocation without executing it. Financial
+ * attribution leaves substitutions, scripts and compound output unqualified:
+ * their aggregate stdout cannot be bound to a specific creating command. */
+function literalShellWords(command: string): string[] | undefined {
+  const words: string[] = [];
+  let word = '';
+  let started = false;
+  let quote: "'" | '"' | undefined;
+  let ended = false;
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    if (quote === "'") {
+      if (char === quote) quote = undefined;
+      else word += char;
+      continue;
+    }
+    if (char === '\\') {
+      const next = command[++index];
+      if (next === undefined) return undefined;
+      if (next !== '\n') {
+        word += next;
+        started = true;
+      }
+      continue;
+    }
+    if (quote === '"') {
+      if (char === quote) quote = undefined;
+      else if (char === '$' || char === '`') return undefined;
+      else word += char;
+      continue;
+    }
+    if (char === '#' && !started) {
+      while (index < command.length && command[index] !== '\n') index++;
+      if (index === command.length) break;
+    }
+    if (/\s/u.test(command[index])) {
+      if (started) {
+        words.push(word);
+        word = '';
+        started = false;
+      }
+      if (command[index] === '\n' && words.length > 0) ended = true;
+      continue;
+    }
+    if (ended || ';|&<>$`(){}'.includes(char)) return undefined;
+    started = true;
+    if (char === "'" || char === '"') quote = char;
+    else word += char;
+  }
+  if (quote !== undefined) return undefined;
+  if (started) words.push(word);
+  return words;
 }
