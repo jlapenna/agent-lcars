@@ -677,6 +677,14 @@ export class MemoryStore implements OrchestratorStore {
       return false;
     const run = this.#runs.get(input.runId);
     if (
+      run !== undefined &&
+      this.#capacity.policies.some(
+        (policy) =>
+          policy.enforced && policy.domains[run.pipeline] !== undefined,
+      )
+    )
+      return false;
+    if (
       run === undefined ||
       !isLive(run.state) ||
       run.queue?.state !== 'claimed' ||

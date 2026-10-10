@@ -337,6 +337,25 @@ function contract(
       await enqueue(store, orchestrator);
       const { receipt } = await claimed(protocol, a);
       await bind(protocol, a, receipt);
+      const observedJob = {
+        recoveryNonce,
+        jobUid: 'replacement-job',
+        jobName: receipt.jobName,
+        placed: false,
+        deleting: false,
+        owned: true,
+        now,
+      };
+      await expect(
+        protocol.bind(a, fence(receipt), observedJob),
+      ).rejects.toThrow('physical');
+      await expect(
+        protocol.bind(
+          a,
+          { ...fence(receipt), revision: receipt.revision + 1 },
+          { ...observedJob, jobUid: 'job-original' },
+        ),
+      ).rejects.toThrow('stale');
       await expect(
         protocol.activate({
           fence: fence(receipt),
@@ -563,6 +582,15 @@ function contract(
       const protocol = new CapacityProtocol(store);
       const a = authority();
       await protocol.configure(a, policy(), now);
+      expect(
+        await store.releaseQueuedRunClaim({
+          runId: legacy.runId,
+          now,
+          claimedBy: 'legacy-runner',
+          tokenHash,
+        }),
+      ).toBe(false);
+      expect((await store.readRun(legacy.runId))?.queue?.state).toBe('claimed');
       const observation: CapacityReceipt = {
         poolId: a.poolId,
         slot: 0,

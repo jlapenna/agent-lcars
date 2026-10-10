@@ -992,6 +992,16 @@ export class FirestoreStore implements OrchestratorStore {
       if (!snapshot.exists) return false;
       const run = runSchema.parse(snapshot.data());
       if (
+        capacity.exists &&
+        capacityStateSchema
+          .parse(capacity.data())
+          .policies.some(
+            (policy) =>
+              policy.enforced && policy.domains[run.pipeline] !== undefined,
+          )
+      )
+        return false;
+      if (
         !isLive(run.state) ||
         run.queue?.state !== 'claimed' ||
         run.queue.claimedBy !== input.claimedBy ||
