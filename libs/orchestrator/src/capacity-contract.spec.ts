@@ -725,6 +725,46 @@ function contract(
       expect(
         await protocol.release(a, fence(receipt), releaseInput(receipt)),
       ).toEqual({ released: true, retainBarrier: true });
+      expect((await protocol.read(now)).receipts).toHaveLength(0);
+      expect(await protocol.inspectProducer(a, 'producer-a', now)).toEqual({
+        poolId: a.poolId,
+        subject: a.subject,
+        producerId: 'producer-a',
+        closed: true,
+      });
+      expect(
+        await protocol.inspectProducer(
+          { ...a, subject: 'foreign' },
+          'producer-a',
+          now,
+        ),
+      ).toBeNull();
+      expect(await protocol.inspectProducer(a, 'unknown', now)).toBeNull();
+      await expect(
+        protocol.inspectProducer(
+          { ...a, capabilities: new Set(['claim']) },
+          'producer-a',
+          now,
+        ),
+      ).rejects.toThrow('authority');
+
+      expect(
+        await protocol.inspectRetired(a, receipt.runId, now),
+      ).toMatchObject({
+        runId: receipt.runId,
+        nonce: receipt.nonce,
+        jobName: receipt.jobName,
+        released: true,
+        retainBarrier: true,
+        barrier: { uid: 'job-tombstone' },
+      });
+      await expect(
+        protocol.inspectRetired(
+          { ...a, capabilities: new Set(['claim']) },
+          receipt.runId,
+          now,
+        ),
+      ).rejects.toThrow('authority');
       await expect(protocol.register(a, 'producer-a', now)).rejects.toThrow(
         'producer',
       );

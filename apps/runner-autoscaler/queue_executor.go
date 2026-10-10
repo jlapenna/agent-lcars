@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -28,7 +29,8 @@ type directRunnerLaunch struct {
 	// accepts the run's exit report only under that same name, so the
 	// Kubernetes queue records it on the Job: a restarted executor (whose
 	// hostname-derived name changed) still reports as the claimant.
-	runner string
+	runner  string
+	receipt *capacityFence
 }
 
 // queueExecutorConfig is the poller's whole dependency surface, kept
@@ -38,6 +40,7 @@ type queueExecutorConfig struct {
 	consoleURL string
 	runnerName string
 	httpClient *http.Client
+	capacity   *queueCapacityClient
 	// recover resumes eligible never-started Jobs at startup and during normal
 	// polling. A bounded, non-overlapping sweep never holds the claim path.
 	recover func(context.Context) error
@@ -132,6 +135,36 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		return queuePollOutcomeCapacityWait, nil
 	}
 	defer reservation.release()
+	if cfg.capacity != nil {
+		cfg.capacity.pollMu.Lock()
+		defer cfg.capacity.pollMu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		x, err := cfg.capacity.claim(ctx, cfg.runnerName)
+		if err != nil {
+			return queuePollOutcomePollError, err
+		}
+		switch x.Kind {
+		case "wait":
+			if x.Reason == "capacity" {
+				return queuePollOutcomeCapacityWait, nil
+			}
+			return queuePollOutcomeIdle204, nil
+		case "quarantined-unrecoverable-token":
+			return queuePollOutcomeCapacityWait, nil
+		case "recover-owned-secret":
+			// The independent receipt sweep resumes the exact original object.
+			// A replay is never counted as a newly claimed or launched attempt.
+			return queuePollOutcomeCapacityWait, nil
+		case "claim":
+			queueExecutorClaimsTotal.WithLabelValues(x.Pipeline).Inc()
+			if err := reservation.launch(directRunnerLaunch{runID: x.RunID, runToken: x.Token, pipeline: x.Pipeline, consoleURL: cfg.consoleURL, runner: cfg.runnerName, receipt: x.Receipt}); err != nil {
+				return queuePollOutcomeLaunchErr, err
+			}
+			return queuePollOutcomeClaimed, nil
+		}
+		return queuePollOutcomePollError, fmt.Errorf("receipt claim invalid")
+	}
 	client := cfg.httpClient
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
@@ -240,6 +273,8 @@ func idTokenFromSource(source oauth2.TokenSource) (string, error) {
 // again. Startup recovery retries original eligible suspended Jobs without
 // blocking claims; unrecoverable attempts retain ordinary lease recovery.
 func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interval time.Duration, logger *slog.Logger) {
+	var background sync.WaitGroup
+	defer background.Wait()
 	recoveryRunning := make(chan struct{}, 1)
 	recoverStartup := func() {
 		if cfg.recover == nil || (cfg.draining != nil && cfg.draining()) {
@@ -247,7 +282,9 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 		}
 		select {
 		case recoveryRunning <- struct{}{}:
+			background.Add(1)
 			go func() {
+				defer background.Done()
 				defer func() { <-recoveryRunning }()
 				recoveryCtx, cancel := context.WithTimeout(ctx, queueStartupRecoveryTimeout)
 				defer cancel()
@@ -273,7 +310,9 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 		// overlapping cleanup goroutines.
 		select {
 		case cleanupRunning <- struct{}{}:
+			background.Add(1)
 			go func() {
+				defer background.Done()
 				defer func() { <-cleanupRunning }()
 				cleanupCtx, cancel := context.WithTimeout(ctx, queueJobCleanupSweepTimeout)
 				defer cancel()

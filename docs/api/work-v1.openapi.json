@@ -4367,6 +4367,38 @@
                     "properties": {
                       "action": {
                         "type": "string",
+                        "const": "inspect-retired"
+                      },
+                      "runId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": ["action", "runId"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "inspect-producer"
+                      },
+                      "producerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": ["action", "producerId"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
                         "const": "configure"
                       },
                       "policy": {
@@ -5331,6 +5363,110 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "producer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "poolId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "producerId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "subject": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "closed": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "poolId",
+                            "producerId",
+                            "subject",
+                            "closed"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "retirement": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "nonce": {
+                              "type": "string",
+                              "minLength": 16,
+                              "maxLength": 128
+                            },
+                            "jobName": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "released": {
+                              "type": "boolean"
+                            },
+                            "barrier": {
+                              "type": "object",
+                              "properties": {
+                                "uid": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "resourceVersion": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                },
+                                "evidence": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 175
+                                }
+                              },
+                              "required": [
+                                "uid",
+                                "resourceVersion",
+                                "evidence"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "retainBarrier": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "runId",
+                            "nonce",
+                            "jobName",
+                            "released",
+                            "retainBarrier"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "receipt": {
                       "type": "object",

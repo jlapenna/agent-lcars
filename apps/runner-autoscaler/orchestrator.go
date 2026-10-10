@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // runOrchestrator runs the LCARS queue executor and schedule ticker -- the
@@ -119,15 +120,45 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					queue.exits = newRunExitReporter(consoleURL, runnerName, func() (string, error) {
 						return idTokenFromSource(tokenSource)
 					}, logger.With("component", "run-exit-reporter"))
-					queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
+					pollDone := make(chan struct{})
+					if queue.config.Capacity != nil {
+						queue.capacity = &queueCapacityClient{config: *queue.config.Capacity, namespace: queue.config.Namespace, maxConcurrent: queue.config.MaxConcurrent, consoleURL: consoleURL, producerID: newCapacityIdentity(), available: func(available bool) {
+							queueStatus.ready.Store(available)
+							if available {
+								setQueueExecutorStartupState(queueExecutorStateReady)
+							} else {
+								setQueueExecutorStartupState(queueExecutorStateMisconfigured)
+							}
+						}, idToken: func() (string, error) { return idTokenFromSource(tokenSource) }}
+						// The server endpoint owns global pool/domain occupancy.
+						// Instance health must not multiply its capacity totals.
+						defer func() {
+							select {
+							case <-pollDone:
+							case <-time.After(35 * time.Second):
+								logger.Warn("Receipt poller shutdown unproven")
+								return
+							}
+							shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+							if err := queue.quiesceReceipts(shutdownCtx); err != nil {
+								logger.Warn("Receipt producer quiescence unproven", slog.Any("error", err))
+							}
+						}()
+					} else {
+						queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
+					}
 					setQueueExecutorStartupState(queueExecutorStateReady)
-					queueStatus.ready.Store(true)
-					go runQueueExecutorPoller(ctx, queueExecutorConfig{
-						consoleURL: consoleURL, runnerName: runnerName,
-						idToken: func() (string, error) { return idTokenFromSource(tokenSource) },
-						reserve: func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
-						recover: queue.recover, cleanup: queue.cleanup, draining: queueDraining.Load,
-					}, queueClaimPollInterval, logger)
+					queueStatus.ready.Store(queue.capacity == nil)
+					go func() {
+						defer close(pollDone)
+						runQueueExecutorPoller(ctx, queueExecutorConfig{
+							consoleURL: consoleURL, runnerName: runnerName,
+							idToken:  func() (string, error) { return idTokenFromSource(tokenSource) },
+							reserve:  func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
+							capacity: queue.capacity, recover: queue.recover, cleanup: queue.cleanup, draining: queueDraining.Load,
+						}, queueClaimPollInterval, logger)
+					}()
 				}
 			}
 		}

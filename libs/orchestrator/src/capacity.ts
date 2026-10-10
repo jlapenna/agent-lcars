@@ -1020,6 +1020,69 @@ export class CapacityProtocol {
     });
   }
 
+  /** The authenticated principal may inspect only its own permanent incarnation.
+   * Absence is unknown, never evidence that an ambiguous stop committed. */
+  async inspectProducer(
+    authority: CapacityAuthority,
+    producerId: string,
+    now: string,
+  ) {
+    requireCapability(authority, 'recover');
+    const key = producerKey(authority.poolId, authority.subject, producerId);
+    return this.store.transactCapacity({
+      now,
+      recordKeys: [key],
+      decide: (snapshot) => {
+        policyFor(snapshot, authority);
+        const record = snapshot.records.get(key);
+        if (
+          record?.kind !== 'producer' ||
+          record.poolId !== authority.poolId ||
+          record.subject !== authority.subject ||
+          record.producerId !== producerId
+        )
+          return { value: null };
+        return {
+          value: {
+            poolId: record.poolId,
+            producerId: record.producerId,
+            subject: record.subject,
+            closed: record.closed,
+          },
+        };
+      },
+    });
+  }
+
+  async inspectRetired(
+    authority: CapacityAuthority,
+    runId: string,
+    now: string,
+  ) {
+    requireCapability(authority, 'recover');
+    const key = retiredKey(runId);
+    return this.store.transactCapacity({
+      now,
+      recordKeys: [key],
+      decide: (snapshot) => {
+        policyFor(snapshot, authority);
+        const record = snapshot.records.get(key);
+        if (record?.kind !== 'retired' || record.poolId !== authority.poolId)
+          return { value: null };
+        return {
+          value: {
+            runId: record.runId,
+            nonce: record.nonce,
+            jobName: record.jobName,
+            released: record.released,
+            barrier: record.barrier,
+            retainBarrier: record.pendingWrites.length !== 0,
+          },
+        };
+      },
+    });
+  }
+
   async retiredWriteResolved(
     authority: CapacityAuthority,
     input: {
