@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
 
 import { usePopulatedFixtures } from './seed';
-import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import {
+  E2E_ADMIN_GITHUB_LOGIN,
+  useE2eAdminBeforeEach,
+} from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
 usePopulatedFixtures();
@@ -90,8 +93,26 @@ for (const width of [390, 768, 1280]) {
     await expect(
       control.getByRole('button', { name: 'Enable Inbox notifications' }),
     ).toBeVisible();
-    const worker = await page.request.get('/inbox-notifications-sw.js');
+    // APIRequestContext does not traverse the browser's page.route admin
+    // adapter. Keep the anonymous gate visible, then authenticate the asset
+    // read explicitly instead of accepting a followed login redirect.
+    const anonymous = await page.request.get('/inbox-notifications-sw.js', {
+      maxRedirects: 0,
+    });
+    expect(anonymous.status()).toBe(307);
+    expect(
+      new URL(anonymous.headers()['location'], anonymous.url()).pathname,
+    ).toBe('/login');
+
+    const worker = await page.request.get('/inbox-notifications-sw.js', {
+      headers: { 'X-e2e-auth-user': E2E_ADMIN_GITHUB_LOGIN },
+      maxRedirects: 0,
+    });
     expect(worker.status()).toBe(200);
+    expect(new URL(worker.url()).pathname).toBe('/inbox-notifications-sw.js');
+    expect(worker.headers()['content-type']).toMatch(
+      /^(?:application|text)\/javascript\b/,
+    );
     expect(await worker.text()).toContain(
       "self.addEventListener('notificationclick'",
     );
