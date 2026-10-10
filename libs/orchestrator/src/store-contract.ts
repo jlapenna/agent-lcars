@@ -1022,6 +1022,37 @@ export function runOrchestratorStoreContract(
         expect(await f.store.readRun(f.run.runId)).toEqual(before);
       });
 
+      it('invalidates an earlier lease-resolution proof when a later action prepares and acknowledges', async () => {
+        const f = await reservedFixture();
+        await f.orchestrator.report(
+          f.run.runId,
+          { ok: true, summary: 'completion before finish' },
+          'a'.repeat(64),
+        );
+        await f.change({
+          kind: 'prepare',
+          mutation: {
+            kind: 'lease-write',
+            id: 'operation:1',
+            expectedGeneration: '7',
+            repository: 'octo/example',
+            expiresAt: '2026-08-26T12:00:00.000Z',
+          },
+        });
+        await f.change({ kind: 'acknowledge', mutationId: 'operation:1' });
+        const before = await f.store.readRun(f.run.runId);
+        expect(
+          await f.change({ kind: 'finish', leaseRetiredAtSequence: 0 }),
+        ).toMatchObject({ reason: 'credential-operation-pending' });
+        expect(await f.store.readRun(f.run.runId)).toEqual(before);
+        expect((await f.store.readTask(TASK))?.task.activeRunId).toBe(
+          f.run.runId,
+        );
+        expect(
+          await f.change({ kind: 'finish', leaseRetiredAtSequence: 1 }),
+        ).toMatchObject({ run: { state: 'finished' } });
+      });
+
       it('durably accepts only the first exact completion then settles it atomically after deadline recovery', async () => {
         const f = await reservedFixture();
         await f.change({
@@ -1067,7 +1098,18 @@ export function runOrchestratorStoreContract(
           retried: [],
         });
         await f.change({ kind: 'acknowledge', mutationId: 'operation:1' });
-        const settled = await f.change({ kind: 'finish' });
+        const retained = await f.store.readRun(f.run.runId);
+        expect(await f.change({ kind: 'finish' })).toMatchObject({
+          reason: 'credential-operation-pending',
+        });
+        expect(await f.store.readRun(f.run.runId)).toEqual(retained);
+        expect(
+          await f.change({ kind: 'finish', leaseRetiredAtSequence: 0 }),
+        ).toMatchObject({ reason: 'credential-operation-pending' });
+        const settled = await f.change({
+          kind: 'finish',
+          leaseRetiredAtSequence: 1,
+        });
         expect(settled).toMatchObject({
           run: { state: 'finished', result },
           task: { consecutiveLost: 0 },

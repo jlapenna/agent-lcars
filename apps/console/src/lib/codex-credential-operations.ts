@@ -9,8 +9,11 @@ import {
   type CredentialOperation,
   type CredentialWriteReceipt,
   decidedRun,
+  type Decision,
   isRefusal,
   type OrchestratorStore,
+  type Refusal,
+  refused,
   reserveCredentialOperation,
   type Run,
 } from '@agent-lcars/orchestrator';
@@ -27,6 +30,104 @@ interface BrokerContext {
   store: OrchestratorStore;
   codexAuth: CodexAuthStore;
   now: () => Date;
+}
+
+/** A healthy renewal/restore keeps its lease. If completion won before the
+ * finish transaction, retain the reservation and resolve that exact lease first.
+ * The proof sequence is captured before external reads or from the acknowledged
+ * cleanup CAS, and checked in the final transaction. No unchecked read unlocks IO. */
+async function finishCredentialOperation(
+  context: BrokerContext,
+  runId: string,
+  operationId: string,
+  claimFingerprint: string,
+  restored = false,
+): Promise<Decision | Refusal> {
+  const change = (
+    next: Parameters<typeof changeCredentialOperation>[0]['change'],
+  ) =>
+    context.store.transactRun({
+      runId,
+      decide: ({ task, run }) =>
+        task === undefined || run === undefined
+          ? refused('unknown-run')
+          : changeCredentialOperation({
+              now: context.now().toISOString(),
+              task: task.task,
+              run,
+              id: operationId,
+              claimFingerprint,
+              change: next,
+            }),
+    });
+  let leaseRetiredAtSequence: number | undefined;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const finished = await change({
+      kind: 'finish',
+      ...(restored ? { restored: true } : {}),
+      ...(leaseRetiredAtSequence === undefined
+        ? {}
+        : { leaseRetiredAtSequence }),
+    });
+    if (
+      !isRefusal(finished) ||
+      finished.reason !== 'credential-operation-pending'
+    )
+      return finished;
+    const current = await context.store.readRun(runId);
+    const operation = current?.credentialOperation;
+    if (
+      operation?.id !== operationId ||
+      operation.claimFingerprint !== claimFingerprint
+    )
+      return refused('not-claimant');
+    if (
+      operation.mutation !== undefined ||
+      current?.credentialPendingResult === undefined
+    )
+      return finished;
+    const lease = await context.codexAuth.readLease();
+    if (
+      lease?.runId === runId &&
+      lease.claimFingerprint === claimFingerprint &&
+      Date.parse(lease.expiresAt) > context.now().getTime()
+    ) {
+      const id = `${operation.id}:${operation.mutationSequence + 1}`;
+      const prepared = await change({
+        kind: 'prepare',
+        mutation: {
+          kind: 'lease-write',
+          id,
+          expectedGeneration: lease.generation,
+          repository: lease.repository,
+          expiresAt: '1970-01-01T00:00:00.000Z',
+        },
+      });
+      if (isRefusal(prepared)) return prepared;
+      try {
+        await context.codexAuth.releaseLease(lease as CodexOwnedLease, id);
+      } catch (error) {
+        if (
+          error instanceof CodexAuthStoreError &&
+          error.kind !== 'unavailable'
+        )
+          await change({ kind: 'acknowledge', mutationId: id });
+        throw error;
+      }
+      const acknowledged = await change({
+        kind: 'acknowledge',
+        mutationId: id,
+      });
+      if (isRefusal(acknowledged)) return acknowledged;
+      leaseRetiredAtSequence =
+        decidedRun(acknowledged).credentialOperation?.mutationSequence;
+    } else {
+      // Absent, expired, historical or foreign ownership cannot be this
+      // operation's live lease. A concurrent later prepare invalidates this proof.
+      leaseRetiredAtSequence = operation.mutationSequence;
+    }
+  }
+  return refused('credential-operation-pending');
 }
 
 /** Serialized by the canonical Run, including across separate server processes.
@@ -122,11 +223,16 @@ class ReservedCodexOperation {
     });
   }
 
-  async finish(restored = false): Promise<void> {
-    await this.change({
-      kind: 'finish',
-      ...(restored ? { restored: true } : {}),
-    });
+  async finish(restored = false): Promise<Run> {
+    return this.accept(
+      await finishCredentialOperation(
+        this.context,
+        this.run.runId,
+        this.id,
+        this.claimFingerprint,
+        restored,
+      ),
+    );
   }
 
   async finishIfResolved(): Promise<void> {
@@ -249,14 +355,22 @@ export async function restoreCodexCredential(
     const snapshot = await context.codexAuth.read();
     // Recovery may have fenced this operation while a read was in flight. Its
     // old caller then gets no credential response and cannot prepare more IO.
-    await operation.finish(true);
+    const finished = await operation.finish(true);
+    if (finished.state === 'finished')
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Run completed during credential restore',
+      });
     return {
       authBase64: snapshot.authBase64,
       generation: snapshot.generation,
       sha256: snapshot.sha256,
     };
   } catch (error) {
-    if (lease !== undefined) {
+    const current = await context.store.readRun(run.runId);
+    if (
+      lease !== undefined &&
+      current?.credentialOperation?.id === operation.id
+    ) {
       try {
         await operation.release(lease);
       } catch {
@@ -284,8 +398,7 @@ export async function renewCodexCredentialLease(
       !operation.owned(lease) &&
       renewed.credentialRestoredClaimFingerprint !== operation.claimFingerprint
     ) {
-      await operation.finish();
-      return renewed;
+      return await operation.finish();
     }
     if (!operation.owned(lease))
       throw new CodexAuthStoreError(
@@ -311,8 +424,7 @@ export async function renewCodexCredentialLease(
       },
       () => context.codexAuth.takeLease(input),
     );
-    await operation.finish();
-    return renewed;
+    return await operation.finish();
   } catch (error) {
     await operation.finishIfResolved();
     throw error;
@@ -537,7 +649,16 @@ export async function recoverCodexCredentialOperations(
             continue;
         }
       }
-      if (!isRefusal(await change({ kind: 'finish' })))
+      if (
+        !isRefusal(
+          await finishCredentialOperation(
+            context,
+            run.runId,
+            operation.id,
+            operation.claimFingerprint,
+          ),
+        )
+      )
         recovered.push(run.runId);
     } catch {
       unresolved.push(run.runId);

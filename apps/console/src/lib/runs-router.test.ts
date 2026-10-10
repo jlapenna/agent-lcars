@@ -3952,6 +3952,216 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       },
     );
 
+    it('retires the original credential lease when completion arrives between renewal recovery snapshot and finish', async () => {
+      const f = await brokerFixture();
+      let lost = false;
+      f.fake.afterSave = async (attempt) => {
+        if (!lost && attempt.name === CODEX_GLOBAL_LEASE_OBJECT) {
+          lost = true;
+          throw Object.assign(new Error('lost renewal response'), {
+            code: 503,
+          });
+        }
+      };
+      expect((await request(f, 'heartbeat')).status).toBe(500);
+      expect((await f.store.readRun(f.runId))?.credentialOperation?.kind).toBe(
+        'renew',
+      );
+      f.fake.afterSave = undefined;
+      f.setNow('2026-08-26T10:06:00.000Z');
+      const originalRead = f.store.readRun.bind(f.store);
+      let injected = false;
+      let pendingResponse: Awaited<ReturnType<typeof call>> | undefined;
+      f.store.readRun = async (runId) => {
+        const snapshot = await originalRead(runId);
+        if (
+          !injected &&
+          runId === f.runId &&
+          snapshot?.credentialOperation?.kind === 'renew' &&
+          snapshot.credentialOperation.mutation === undefined
+        ) {
+          injected = true;
+          pendingResponse = await call(
+            f.ctx,
+            'POST',
+            runPath(f.runId, '/complete'),
+            {
+              outcome: 'pull-request',
+              outcomeReference: { kind: 'pull-request', number: 99 },
+              message: 'Accepted during recovery snapshot gap',
+            },
+          );
+        }
+        return snapshot;
+      };
+      const recovery = await recoverCodexCredentialOperations(f.ctx);
+      expect(injected).toBe(true);
+      expect(pendingResponse).toEqual({
+        status: 200,
+        json: { runId: f.runId, state: 'completion-pending' },
+      });
+      expect(recovery).toEqual({ recovered: [f.runId], unresolved: [] });
+      expect((await originalRead(f.runId))?.state).toBe('finished');
+      const lease = await f.codexAuth.readLease();
+      const next = await f.orchestrator.request({
+        taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+        requestId: 'after-renew-completion',
+        pipeline: 'codex',
+      });
+      if ('refused' in next || next.run === undefined)
+        throw new Error('successor admission failed');
+      await f.store.enqueueRun({
+        runId: next.run.runId,
+        now: f.now().toISOString(),
+      });
+      await f.orchestrator.confirmDispatch(next.run.runId);
+      const claim = await call(f.ctx, 'POST', '/runs/claim', {
+        runner: 'same-runner',
+      });
+      expect(claim.status).toBe(200);
+      const successorCtx = {
+        ...f.ctx,
+        bearerToken: (claim.json as { token: string }).token,
+      };
+      const restore = await call(
+        successorCtx,
+        'GET',
+        runPath(next.run.runId, '/codex-auth'),
+      );
+      expect(restore.status).toBe(200);
+      expect(lease?.expiresAt).toBe('1970-01-01T00:00:00.000Z');
+    });
+
+    it.each(['restore', 'heartbeat', 'persist'])(
+      'retires a live exact lease when completion arrives before normal %s finish',
+      async (route) => {
+        const f = await brokerFixture();
+        const transact = f.store.transactRun.bind(f.store);
+        const read = f.store.readRun.bind(f.store);
+        let injected = false;
+        let pendingResponse: Awaited<ReturnType<typeof call>> | undefined;
+        f.store.transactRun = async (input) => {
+          const snapshot = await read(input.runId);
+          if (
+            !injected &&
+            input.runId === f.runId &&
+            snapshot?.credentialOperation?.kind ===
+              (route === 'heartbeat' ? 'renew' : route) &&
+            snapshot.credentialOperation.mutation === undefined &&
+            (route === 'restore' ||
+              snapshot.credentialOperation.mutationSequence > 0)
+          ) {
+            injected = true;
+            pendingResponse = await call(
+              f.ctx,
+              'POST',
+              runPath(f.runId, '/complete'),
+              {
+                outcome: 'pull-request',
+                outcomeReference: { kind: 'pull-request', number: 99 },
+                message: 'Accepted before normal finish',
+              },
+            );
+          }
+          return transact(input);
+        };
+        const response = await request(f, route);
+        expect(response.status).toBe(route === 'restore' ? 401 : 200);
+        expect(response.json).not.toHaveProperty('authBase64');
+        expect(injected).toBe(true);
+        expect(pendingResponse).toEqual({
+          status: 200,
+          json: { runId: f.runId, state: 'completion-pending' },
+        });
+        const finished = await read(f.runId);
+        expect(finished?.state).toBe('finished');
+        expect(finished?.result).toMatchObject({
+          ref: 'https://github.com/jlapenna/agent-lcars/pull/99',
+          message: 'Accepted before normal finish',
+        });
+        expect(finished?.credentialPendingResult).toBeUndefined();
+        expect(finished?.credentialOperation).toBeUndefined();
+        expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+          '1970-01-01T00:00:00.000Z',
+        );
+        const entries = await f.store.claimPendingOutbox({
+          limit: 30,
+          now: f.now().toISOString(),
+          leaseExpiresAt: '2026-08-26T10:05:00.000Z',
+        });
+        expect(
+          entries.filter((entry) => entry.kind === 'report-outcome'),
+        ).toHaveLength(1);
+        const next = await f.orchestrator.request({
+          taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+          requestId: `after-normal-${route}-completion`,
+          pipeline: 'codex',
+        });
+        if ('refused' in next || next.run === undefined)
+          throw new Error('successor admission failed');
+        await f.store.enqueueRun({
+          runId: next.run.runId,
+          now: f.now().toISOString(),
+        });
+        await f.orchestrator.confirmDispatch(next.run.runId);
+        const claim = await call(f.ctx, 'POST', '/runs/claim', {
+          runner: 'same-runner',
+        });
+        expect(claim.status).toBe(200);
+        const successorCtx = {
+          ...f.ctx,
+          bearerToken: (claim.json as { token: string }).token,
+        };
+        expect(
+          (
+            await call(
+              successorCtx,
+              'GET',
+              runPath(next.run.runId, '/codex-auth'),
+            )
+          ).status,
+        ).toBe(200);
+      },
+    );
+
+    it('keeps a healthy renewal lease live through recovery when no completion was accepted', async () => {
+      const f = await brokerFixture();
+      let lost = false;
+      f.fake.afterSave = async (attempt) => {
+        if (!lost && attempt.name === CODEX_GLOBAL_LEASE_OBJECT) {
+          lost = true;
+          throw Object.assign(new Error('lost renewal response'), {
+            code: 503,
+          });
+        }
+      };
+      expect((await request(f, 'heartbeat')).status).toBe(500);
+      f.fake.afterSave = undefined;
+      f.setNow('2026-08-26T10:06:00.000Z');
+      expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+        recovered: [f.runId],
+        unresolved: [],
+      });
+      const run = await f.store.readRun(f.runId);
+      expect(run?.state).toBe('running');
+      expect(run?.credentialPendingResult).toBeUndefined();
+      expect(run?.credentialOperation).toBeUndefined();
+      const lease = await f.codexAuth.readLease();
+      expect(lease?.claimFingerprint).toBe(f.fingerprint);
+      expect(Date.parse(lease?.expiresAt ?? '')).toBeGreaterThan(
+        f.now().getTime(),
+      );
+      expect(
+        f.fake.commits.filter(
+          (commit) =>
+            commit.name === CODEX_GLOBAL_LEASE_OBJECT &&
+            JSON.parse(commit.bytes.toString()).expiresAt ===
+              '1970-01-01T00:00:00.000Z',
+        ),
+      ).toHaveLength(0);
+      expect((await request(f, 'heartbeat')).status).toBe(200);
+    });
+
     it('refuses a stale recovery acknowledgement when the original actor has prepared its next action', async () => {
       const f = await brokerFixture();
       f.fake.afterSave = async (attempt) => {

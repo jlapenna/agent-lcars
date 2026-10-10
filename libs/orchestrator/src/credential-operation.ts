@@ -76,7 +76,12 @@ export function changeCredentialOperation(input: {
         receipt?: CredentialWriteReceipt;
       }
     | { kind: 'retry-recovery' }
-    | { kind: 'finish'; restored?: boolean };
+    | {
+        kind: 'finish';
+        restored?: boolean;
+        /** Server proof of lease retirement/absence at this exact IO sequence. */
+        leaseRetiredAtSequence?: number;
+      };
 }): Decision | Refusal {
   const { run, task, now, change } = input;
   const op = run.credentialOperation;
@@ -99,6 +104,15 @@ export function changeCredentialOperation(input: {
   if (change.kind === 'acknowledge' && op.mutation?.id !== change.mutationId)
     return refused('not-claimant');
   if (change.kind === 'finish' && op.mutation !== undefined)
+    return refused('credential-operation-pending');
+  // A completion may arrive after an external cleanup decision. Its atomic
+  // settlement must observe a positive lease resolution for this same IO
+  // sequence; any later prepare invalidates an earlier read/CAS proof.
+  if (
+    change.kind === 'finish' &&
+    run.credentialPendingResult !== undefined &&
+    change.leaseRetiredAtSequence !== op.mutationSequence
+  )
     return refused('credential-operation-pending');
   const { credentialOperation: _previous, ...withoutOperation } = run;
   const { mutation: _mutation, ...withoutMutation } = op;

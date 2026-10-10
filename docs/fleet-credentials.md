@@ -194,7 +194,12 @@ The current writer is Console App Hosting; direct containers receive no GCS IAM.
 A timely, authenticated completion during unresolved credential IO records its
 first exact result on the Run and returns `completion-pending`. Recovery settles
 that accepted result, releases the Task, and creates the normal outcome outbox
-atomically, even after the deadline. A different later result cannot replace it.
+atomically, even after the deadline. Canonical finish also requires a positive
+lease-retirement or absence proof for the current operation mutation sequence
+before settling a pending result. If completion arrives after a renewal's cleanup
+decision, finish retains the reservation and resolves the exact lease first;
+a later prepared action invalidates an earlier resolution proof. Healthy renewal
+without completion retains its live lease. A different later result cannot replace it.
 Confirmed credential receipts permit exact persistence retries without rewriting
 a newer generation. Recovery errors log the run ID without credential material.
 
