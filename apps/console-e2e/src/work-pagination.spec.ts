@@ -1,3 +1,4 @@
+import type { Frame, Page, Request, Response } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { resetCliSessions } from './seed';
@@ -6,6 +7,10 @@ import {
   E2E_FIXTURE_REPOSITORY,
   seedWorkPagination,
 } from './util/orchestrator-seed';
+
+// Trace is a worker option, so keep this at file scope (as in Inbox actions).
+// The original clear-link stalls lost their first-attempt trace (#2239).
+test.use({ trace: 'retain-on-failure' });
 
 useE2eAdminBeforeEach();
 
@@ -174,6 +179,110 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   ).toHaveCount(0);
 });
 
+async function clearRepository(page: Page, destination: string) {
+  const pathname = new URL(page.url()).pathname;
+  const started = performance.now();
+  const phases: { phase: string; elapsedMs: number; status?: number }[] = [];
+  const record = (phase: string, status?: number) => {
+    if (phases.length < 32) {
+      phases.push({
+        phase,
+        elapsedMs: Math.round(performance.now() - started),
+        ...(status === undefined ? {} : { status }),
+      });
+    }
+  };
+  // Only this main-frame native GET: no refresh actions, prefetches, headers,
+  // bodies or repository query strings in the compact attachment.
+  const isClearNavigation = (request: Request) => {
+    const url = new URL(request.url());
+    return (
+      request.isNavigationRequest() &&
+      request.frame() === page.mainFrame() &&
+      request.method() === 'GET' &&
+      url.origin === new URL(page.url()).origin &&
+      url.pathname === pathname &&
+      !url.searchParams.has('repo')
+    );
+  };
+  const onRequest = (request: Request) => {
+    if (isClearNavigation(request)) record('document-request');
+  };
+  const onResponse = (response: Response) => {
+    if (isClearNavigation(response.request()))
+      record('document-response', response.status());
+  };
+  const onFinished = (request: Request) => {
+    if (isClearNavigation(request)) record('document-finished');
+  };
+  const onFailed = (request: Request) => {
+    if (isClearNavigation(request)) record('document-failed');
+  };
+  const onNavigated = (frame: Frame) => {
+    if (frame === page.mainFrame()) record('main-frame-commit');
+  };
+  const onDomContentLoaded = () => record('dom-content-loaded');
+  const onLoad = () => record('load');
+  page.on('request', onRequest);
+  page.on('response', onResponse);
+  page.on('requestfinished', onFinished);
+  page.on('requestfailed', onFailed);
+  page.on('framenavigated', onNavigated);
+  page.on('domcontentloaded', onDomContentLoaded);
+  page.on('load', onLoad);
+  try {
+    const clear = page.getByRole('link', {
+      name: 'Clear repository',
+      exact: true,
+    });
+    await expect(clear).toHaveAttribute('href', pathname);
+
+    await test.step(`Clear repository on ${destination}: click and navigation`, async () => {
+      record('click-start');
+      // Keep Playwright's real click/actionability and default navigation wait.
+      // Both recorded retries finished this action in <100ms. A finite 15s
+      // action bound leaves time to attach evidence before the unchanged 90s
+      // test deadline, without accepting a missing click or bypassing a wait.
+      await clear.click({ timeout: 15_000 });
+      record('click-complete');
+    });
+
+    await test.step(`Clear repository on ${destination}: resolved route`, async () => {
+      await expect(page).toHaveURL(
+        (url) => url.pathname === pathname && !url.searchParams.has('repo'),
+      );
+      record('scope-cleared');
+      await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(
+        '',
+      );
+      await expect(
+        page.getByRole('status', { name: 'Loading', exact: true }),
+      ).toHaveCount(0);
+      record('selector-resolved');
+    });
+  } finally {
+    page.off('request', onRequest);
+    page.off('response', onResponse);
+    page.off('requestfinished', onFinished);
+    page.off('requestfailed', onFailed);
+    page.off('framenavigated', onNavigated);
+    page.off('domcontentloaded', onDomContentLoaded);
+    page.off('load', onLoad);
+    await test
+      .info()
+      .attach(`repository-clear-${destination.toLowerCase()}-phases`, {
+        body: JSON.stringify({
+          retry: test.info().retry,
+          destination,
+          pathname,
+          clickTimeoutMs: 15_000,
+          phases,
+        }),
+        contentType: 'application/json',
+      });
+  }
+}
+
 test('repository selection and clearing remain reachable on phones across Bridge, Inbox and Agents', async ({
   page,
 }) => {
@@ -216,12 +325,6 @@ test('repository selection and clearing remain reachable on phones across Bridge
     await expect(
       page.getByRole('status', { name: 'Loading', exact: true }),
     ).toHaveCount(0);
-    await page
-      .getByRole('link', { name: 'Clear repository', exact: true })
-      .click();
-    await expect(page).not.toHaveURL(/repo=/);
-    await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(
-      '',
-    );
+    await clearRepository(page, destination);
   }
 });
