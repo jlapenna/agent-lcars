@@ -3,6 +3,7 @@ import {
   FirestoreStore,
   Orchestrator,
   type Run,
+  type Task,
 } from '@agent-lcars/orchestrator';
 import { Firestore } from '@google-cloud/firestore';
 
@@ -165,10 +166,12 @@ export async function seedNativeExecutionPhase(
   };
   if (phase === 'lost') run.queue = oldRun.queue;
   delete run.result;
+  const updatedTask: Task = { ...task.task, activeRunId: runId };
+  if (phase === 'lost') delete updatedTask.activeRunId;
   await store.apply({
     expectedRevision: task.revision,
     decision: {
-      task: { ...task.task, activeRunId: phase === 'lost' ? undefined : runId },
+      task: updatedTask,
       run,
       outbox: [],
     },
