@@ -1,13 +1,26 @@
-import type { APIRequestContext, Page } from '@playwright/test';
+import type {
+  APIRequestContext,
+  Page,
+  Request,
+  Response,
+  Route,
+} from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { E2E_ITEM_NUMBERS, usePopulatedFixtures } from './seed';
-import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import {
+  E2E_ADMIN_HEADERS,
+  useE2eAdminBeforeEach,
+} from './util/e2e-test-utils';
 import {
   readTaskAdmission,
   seedTaskDeliverableHistory,
   updateDashboardAnchor,
 } from './util/orchestrator-seed';
+
+// Trace mode is a worker option: Playwright rejects it inside a nested
+// describe. Retain first-attempt failure evidence for this Inbox journey file.
+test.use({ trace: 'retain-on-failure' });
 
 const REPOSITORY = 'supersprinklesracing/sprinkles';
 const REPO_QUERY = encodeURIComponent(REPOSITORY);
@@ -71,6 +84,144 @@ async function selectItem(page: Page, number: number) {
   await page.getByTestId(`queue-row-${number}`).getByRole('link').click();
   await expect(page).toHaveURL(new RegExp(`item=[^&]*${number}`));
   return page.url();
+}
+
+async function expectResolvedMergeRefusal(
+  page: Page,
+  click: () => Promise<void>,
+  message: string,
+  number: number,
+  controlledDelayMs: number,
+) {
+  // The production notifications limiter serializes approval and merge at
+  // 3s intervals; a preceding notification measured a 6s action even with
+  // 12ms provider calls (#2228). Keep the existing merge action allowance,
+  // then give rendered refusal its separate, unchanged 5s bound. Neither
+  // an unfinished action nor missing/incorrect feedback is accepted.
+  const actionTimeout = 20_000;
+  const renderTimeout = 5_000;
+  const started = performance.now();
+  const phases: { phase: string; elapsedMs: number; status?: number }[] = [];
+  // Match the action's public arguments, not Next's opaque action ID. The
+  // live dashboard submits a separate refresh action to this same URL.
+  const isMergeAction = (request: Request) => {
+    if (
+      request.method() !== 'POST' ||
+      new URL(request.url()).pathname !== '/inbox' ||
+      !request.headers()['next-action']
+    )
+      return false;
+    try {
+      const args: unknown = request.postDataJSON();
+      if (!Array.isArray(args) || args.length !== 2) return false;
+      const repo = args[0] as { owner?: string; name?: string } | null;
+      return (
+        repo?.owner === 'supersprinklesracing' &&
+        repo?.name === 'sprinkles' &&
+        args[1] === number
+      );
+    } catch {
+      return false;
+    }
+  };
+  let intendedRequest: Request | undefined;
+  let delayApplied = false;
+  const record = (phase: string, status?: number) => {
+    if (phases.length < 12) {
+      phases.push({
+        phase,
+        elapsedMs: Math.round(performance.now() - started),
+        ...(status === undefined ? {} : { status }),
+      });
+    }
+  };
+  const onRequest = (request: Request) => {
+    if (!intendedRequest && isMergeAction(request)) {
+      intendedRequest = request;
+      record('action-request');
+    }
+  };
+  const onResponse = (response: Response) => {
+    if (response.request() === intendedRequest)
+      record('action-response', response.status());
+  };
+  const onFailed = (request: Request) => {
+    if (request === intendedRequest) record('action-request-failed');
+  };
+  const delayResponse = async (route: Route) => {
+    // Preserve the earlier fixture-auth route for refreshes and other work.
+    if (delayApplied || route.request() !== intendedRequest)
+      return route.fallback();
+    delayApplied = true;
+    // fetch bypasses the earlier admin interceptor: reuse its exact fixture
+    // identity and reject redirects rather than holding a login response.
+    const response = await route.fetch({
+      headers: {
+        ...(await route.request().allHeaders()),
+        ...E2E_ADMIN_HEADERS,
+      },
+      maxRedirects: 0,
+    });
+    record('controlled-upstream-response', response.status());
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toContain('text/x-component');
+    await expect(
+      page
+        .locator('.queue-workspace__detail')
+        .getByRole('button', { name: 'Approve & Merge', exact: true }),
+    ).toBeDisabled({ timeout: renderTimeout });
+    record('controlled-response-held');
+    await new Promise((resolve) => setTimeout(resolve, controlledDelayMs));
+    await route.fulfill({ response });
+  };
+  page.on('request', onRequest);
+  page.on('response', onResponse);
+  page.on('requestfailed', onFailed);
+  try {
+    if (controlledDelayMs) {
+      // Bounded fault injection for the observed >5s readiness boundary,
+      // not a sleep used to make an assertion pass. Fetch once so the real
+      // app and effect journal still execute exactly one authorized action.
+      await page.route('**/inbox?**', delayResponse);
+    }
+    const completed = page.waitForEvent('requestfinished', {
+      predicate: (request) => request === intendedRequest,
+      timeout: actionTimeout,
+    });
+    record('confirmation-start');
+    await Promise.all([completed, click()]);
+    record('action-complete');
+    if (controlledDelayMs) expect(delayApplied).toBe(true);
+    await Promise.all([
+      expect(
+        page
+          .locator('.queue-workspace__detail')
+          .getByRole('button', { name: 'Approve & Merge', exact: true }),
+      )
+        .toBeEnabled({ timeout: renderTimeout })
+        .then(() => record('pending-cleared')),
+      expect(page.getByText(message, { exact: true }))
+        .toBeVisible({ timeout: renderTimeout })
+        .then(() => record('refusal-visible')),
+    ]);
+  } finally {
+    page.off('request', onRequest);
+    page.off('response', onResponse);
+    page.off('requestfailed', onFailed);
+    if (controlledDelayMs) await page.unroute('**/inbox?**', delayResponse);
+    // Attach on the first attempt as well as retries, including timeout.
+    // Numeric phase facts only: no headers, URL/query, cookies or bodies.
+    await test.info().attach('merge-refusal-phases', {
+      body: JSON.stringify({
+        retry: test.info().retry,
+        actionTimeoutMs: actionTimeout,
+        renderTimeoutMs: renderTimeout,
+        controlledDelayMs,
+        phases,
+      }),
+      contentType: 'application/json',
+    });
+  }
 }
 
 async function expectScope(page: Page, url: string) {
@@ -386,47 +537,73 @@ test.describe('Inbox authorized action journeys', () => {
       const expectedState = action === 'merge' && !rejected ? 'closed' : 'open';
       const expectedMergeable =
         action !== 'merge' && !rejected ? 'clean' : mergeableState;
+      const observeFeedback =
+        action === 'merge' && rejected
+          ? (page: Page, request: APIRequestContext, delayMs: number) =>
+              expectResolvedMergeRefusal(
+                page,
+                () => click(page, request),
+                message,
+                number,
+                delayMs,
+              )
+          : async (page: Page, request: APIRequestContext) => {
+              await click(page, request);
+              await expect(
+                page.getByText(message, { exact: true }),
+              ).toBeVisible({
+                timeout: noticeTimeout,
+              });
+            };
 
-      test(`${action} ${rejected ? 'reports provider rejection' : 'performs only its authorized effects'}`, async ({
-        page,
-        request,
-      }) => {
-        await configure(request, configuration);
-        await updateDashboardAnchor({
-          issue: number,
-          mergeableState,
-          requestedReviewerLogins: requestedReviewers,
+      const defineJourney = (controlledDelayMs = 0) =>
+        test(`${action} ${rejected ? 'reports provider rejection' : 'performs only its authorized effects'}${controlledDelayMs ? ' after controlled delay' : ''}`, async ({
+          page,
+          request,
+        }) => {
+          await configure(request, configuration);
+          await updateDashboardAnchor({
+            issue: number,
+            mergeableState,
+            requestedReviewerLogins: requestedReviewers,
+          });
+          const url = await selectItem(page, number);
+          const interactionStarted = performance.now();
+          await observeFeedback(page, request, controlledDelayMs);
+          const clickToNoticeMs = Math.round(
+            performance.now() - interactionStarted,
+          );
+          test.info().annotations.push({
+            type: `${action}-click-to-notice-ms`,
+            description: String(clickToNoticeMs),
+          });
+          console.log(
+            JSON.stringify({
+              journey: `${action}-click-to-notice`,
+              rejected,
+              durationMs: clickToNoticeMs,
+            }),
+          );
+          expect(await journal(request)).toEqual(expectedEffects);
+          const issue = await request.get(
+            `${GITHUB}/${pathFor(`issues/${number}`)}`,
+          );
+          expect((await issue.json()).state).toBe(expectedState);
+          const pr = await request.get(
+            `${GITHUB}/${pathFor(`pulls/${number}`)}`,
+          );
+          expect((await pr.json()).mergeable_state).toBe(expectedMergeable);
+          expect((await readTaskAdmission(number)).run).toBeUndefined();
+          await expectScope(page, url);
         });
-        const url = await selectItem(page, number);
-        const interactionStarted = performance.now();
-        await click(page, request);
-        await expect(page.getByText(message, { exact: true })).toBeVisible({
-          timeout: noticeTimeout,
+      if (action === 'merge' && rejected) {
+        test.describe('first-attempt refusal evidence', () => {
+          defineJourney();
+          defineJourney(6_000);
         });
-        const clickToNoticeMs = Math.round(
-          performance.now() - interactionStarted,
-        );
-        test.info().annotations.push({
-          type: `${action}-click-to-notice-ms`,
-          description: String(clickToNoticeMs),
-        });
-        console.log(
-          JSON.stringify({
-            journey: `${action}-click-to-notice`,
-            rejected,
-            durationMs: clickToNoticeMs,
-          }),
-        );
-        expect(await journal(request)).toEqual(expectedEffects);
-        const issue = await request.get(
-          `${GITHUB}/${pathFor(`issues/${number}`)}`,
-        );
-        expect((await issue.json()).state).toBe(expectedState);
-        const pr = await request.get(`${GITHUB}/${pathFor(`pulls/${number}`)}`);
-        expect((await pr.json()).mergeable_state).toBe(expectedMergeable);
-        expect((await readTaskAdmission(number)).run).toBeUndefined();
-        await expectScope(page, url);
-      });
+      } else {
+        defineJourney();
+      }
     }
   }
 
