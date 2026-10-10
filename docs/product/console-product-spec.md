@@ -459,7 +459,10 @@ CLI sessions and dispatched runs.
   filters are shared with Sessions. When a provider reports no `costUSD`, cost
   is estimated from `MODEL_RATES`.
 - **FE-CO-2 [Proposed]** Add breakdowns by pipeline and by model, budget
-  thresholds with alerting, and a cost-per-merged-deliverable metric.
+  thresholds with alerting, and a cost-per-merged-deliverable metric. The exact
+  activity-window, reported/estimated, deduplication, attribution, unavailable
+  data and operator-owned alert contract is [Session spend](../cost-ledger.md).
+  Shipping and runtime qualification are tracked in #2195.
 
 ## 7. Server surface owned by the console
 

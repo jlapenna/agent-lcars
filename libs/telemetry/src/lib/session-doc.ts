@@ -227,6 +227,25 @@ export function parseSessionDoc(value: unknown): SessionDoc {
   if (!isSessionAgent(value['agent'])) {
     throw new Error('Persisted session document requires an explicit agent');
   }
+  const deliverables = value['deliverables'];
+  if (
+    isStoredDocument(deliverables) &&
+    deliverables['qualifiedPRs'] !== undefined
+  ) {
+    const refs = deliverables['qualifiedPRs'];
+    if (
+      !Array.isArray(refs) ||
+      refs.some(
+        (ref) =>
+          !isStoredDocument(ref) ||
+          !isCanonicalSessionRepository(ref['repo']) ||
+          !Number.isSafeInteger(ref['number']) ||
+          Number(ref['number']) <= 0,
+      )
+    ) {
+      throw new Error('Persisted session has invalid qualified PR evidence');
+    }
+  }
   const repo = value['repo'];
   if (source === 'issue-agent' && !isCanonicalSessionRepository(repo)) {
     throw new Error(

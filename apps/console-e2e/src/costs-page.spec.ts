@@ -23,6 +23,22 @@ test.describe('/costs workspace @smoke', () => {
     await expect(page.getByRole('button', { name: 'New work' })).toBeVisible();
     await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
     await expect(page.getByTestId('session-ledger')).toBeVisible();
+    await expect(page.getByTestId('spend-breakdowns')).toBeVisible();
+    await expect(page.getByTestId('cost-budget-state')).toContainText(
+      'No budget configured',
+    );
+    await expect(page.getByTestId('cost-per-deliverable')).toContainText(
+      'per merged deliverable',
+    );
+    await expect(
+      page.getByRole('region', { name: 'By pipeline' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'By requested model' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'By resolved model' }),
+    ).toBeVisible();
     await expect(
       workspace.getByRole('region', { name: 'By issue' }),
     ).toBeVisible();
@@ -52,6 +68,8 @@ test.describe('/costs workspace @smoke', () => {
     await expect(workspace).toBeVisible();
     await expect(page.getByTestId('ledger-issue-row-compact')).toBeVisible();
     await expect(page.getByTestId('ledger-week-row-compact')).toBeVisible();
+    await expect(page.getByTestId('spend-breakdowns')).toBeVisible();
+    await expect(page.getByRole('list', { name: 'By pipeline' })).toBeVisible();
     await expectMobileBridgeHeader(header);
 
     await page.getByRole('button', { name: 'More console options' }).click();

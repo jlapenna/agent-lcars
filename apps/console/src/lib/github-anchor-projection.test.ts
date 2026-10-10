@@ -110,3 +110,33 @@ describe('githubAnchorProjectionFromDelivery', () => {
     ).toEqual({ repo: REPO, issue: 42 });
   });
 });
+
+describe('PR merge evidence', () => {
+  it.each([null, '2026-08-30T12:00:00.000Z'])(
+    'preserves explicit merge evidence %s',
+    (merged_at) => {
+      const payload = completeIssue();
+      const result = githubAnchorProjectionFromDelivery({
+        event: 'pull_request',
+        observedAt: T0,
+        payload: {
+          repository: payload.repository,
+          pull_request: { ...payload.issue, state: 'closed', merged_at },
+        },
+      });
+      expect(result?.mergedAt).toBe(merged_at);
+    },
+  );
+  it('does not infer a merge from a closed event without merge evidence', () => {
+    const payload = completeIssue();
+    const result = githubAnchorProjectionFromDelivery({
+      event: 'pull_request',
+      observedAt: T0,
+      payload: {
+        repository: payload.repository,
+        pull_request: { ...payload.issue, state: 'closed' },
+      },
+    });
+    expect(result?.mergedAt).toBeUndefined();
+  });
+});
