@@ -234,10 +234,12 @@ function usage() {
   return `Agent LCARS local development stack
 
 Usage:
-  pnpm dev [-- --port-base 4300] [--no-seed]
-  FQDN=<host.example.net> pnpm dev:lan [-- --port-base 4300]
-  pnpm dev:reset [-- --port-base 4300]
-  pnpm dev:status [-- --port-base 4300]
+  ./tools/nx run @agent-lcars/console:serve-emulator --port-base 4300
+  FQDN=<host.example.net> ./tools/nx run @agent-lcars/console:serve-lan --port-base 4300
+  ./tools/nx run @agent-lcars/console:dev-reset --port-base 4300
+  ./tools/nx run @agent-lcars/console:dev-status --port-base 4300
+
+Serve targets accept --no-seed to retain an unseeded fixture stack.
 
 The stack runs only against synthetic GitHub data and a demo Firebase project.
 Choose a different seven-port range with --port-base when another stack is up.`;
@@ -245,6 +247,19 @@ Choose a different seven-port range with --port-base when another stack is up.`;
 
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export function watchOutputStreams(
+  onFailure,
+  streams = [process.stdout, process.stderr],
+) {
+  let failed = false;
+  const handleError = () => {
+    if (failed) return;
+    failed = true;
+    onFailure();
+  };
+  for (const stream of streams) stream.on('error', handleError);
 }
 
 async function assertPortAvailable(port, host = LOOPBACK) {
@@ -478,6 +493,7 @@ async function start(ports, seed, fqdn) {
   let server;
   let previewServer;
   let ready = false;
+  let outputFailed = false;
   const sockets = new Set();
   const ownedEmulatorProcesses = new Map();
   const stop = (signal = 'SIGTERM') => {
@@ -492,7 +508,7 @@ async function start(ports, seed, fqdn) {
       }
       if (app) {
         await Promise.race([app.close(), wait(2_000)]).catch((error) => {
-          console.error(`Next shutdown: ${error.message}`);
+          if (!outputFailed) console.error(`Next shutdown: ${error.message}`);
         });
       }
       if (firebase.exitCode === null && firebase.signalCode === null) {
@@ -526,6 +542,17 @@ async function start(ports, seed, fqdn) {
   });
   process.on('SIGHUP', () => {
     if (!shuttingDown) stopForSignal('SIGHUP');
+  });
+  // A detached terminal/tool can close either pipe while Next is running.
+  // Without a stream error listener, EPIPE reaches Next's exception logger,
+  // which writes to the broken pipe again and can spin until the heap fills.
+  // Retain the listeners throughout cleanup and do not log to failed output.
+  watchOutputStreams(() => {
+    outputFailed = true;
+    void stop().then(
+      () => process.exit(1),
+      () => process.exit(1),
+    );
   });
   firebase.once('exit', (code, signal) => {
     if (shuttingDown) return;

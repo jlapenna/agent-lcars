@@ -22,6 +22,54 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 describe('local development stack contract', () => {
+  for (const output of ['stdout', 'stderr']) {
+    it(`exits after ${output}'s reader disconnects instead of spinning on EPIPE`, async () => {
+      const child = spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `import { watchOutputStreams } from ${JSON.stringify(new URL('./dev-console.mjs', import.meta.url).href)};
+           // Model the installed Next exception logger: logging an unhandled
+           // EPIPE to the same failed stream keeps the process alive/spinning.
+           process.on('uncaughtException', () => process.${output}.write('exception output\\n'));
+           const timer = setInterval(() => process.${output}.write('fixture output\\n'), 10);
+           watchOutputStreams(() => { clearInterval(timer); process.exitCode = 1; });
+           process.send('ready');`,
+        ],
+        { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
+      );
+      const exit = new Promise((resolve) =>
+        child.once('exit', (code, signal) => resolve({ code, signal })),
+      );
+      child.stdout.resume();
+      child.stderr.resume();
+      let deadline;
+      try {
+        await new Promise((resolve, reject) => {
+          child.once('message', resolve);
+          child.once('error', reject);
+        });
+        child.disconnect();
+        child[output].destroy();
+        const result = await Promise.race([
+          exit,
+          new Promise((_, reject) => {
+            deadline = setTimeout(
+              () => reject(new Error('output failure left child alive')),
+              2_000,
+            );
+          }),
+        ]);
+        expect(result).toEqual({ code: 1, signal: null });
+      } finally {
+        clearTimeout(deadline);
+        if (child.exitCode === null && child.signalCode === null)
+          child.kill('SIGKILL');
+      }
+    });
+  }
+
   it('discovers a loopback stack for status despite an ambient LAN FQDN', async () => {
     const server = http.createServer((_request, response) => {
       response.setHeader('content-type', 'application/json');
