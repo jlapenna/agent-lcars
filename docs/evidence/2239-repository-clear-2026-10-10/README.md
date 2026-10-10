@@ -50,3 +50,45 @@ On recurrence, inspect that failed attempt's trace and phase log together:
 A passing first attempt establishes current behavior only. The issue remains
 open until a failing-attempt boundary demonstrates an owning cause and its
 correction passes the focused browser journey and protected required CI.
+
+## First retained failure on the diagnostic revision
+
+Required [CI 38091770013](https://github.com/jlapenna/agent-lcars/actions/runs/38091770013)
+at `ca72d58be8536400a6c44d6dabf1dfe9b884bf70` completed successfully with
+**197 passed, 1 flaky in 7.5 minutes**. The phone journey failed its first
+attempt after 1815 ms, before any clear click, at the repository-value assertion
+after Bridge → Inbox. Its successful retry completed all three destinations
+in 5670 ms and attached three native-clear phase logs with HTTP 200 responses.
+These retry timings do not establish the earlier 90-second clear-click cause.
+
+The [first-attempt report](ca72-first-attempt-report.json),
+[screenshot](ca72-first-attempt.png) and
+[failed-assertion DOM snapshot](ca72-first-attempt-dom-snapshot.json) are retained
+separately from the [successful retry report](ca72-successful-retry-report.json).
+The actual failed first-attempt trace is in
+[artifact 11685215734](https://github.com/jlapenna/agent-lcars/actions/runs/38091770013/artifacts/11685215734);
+its identity and SHA256 are recorded in the first-attempt report. The retained
+snapshot uses Playwright's snapshot references; the complete source trace supplies
+those references and resources. It is evidence, not an executable test fixture.
+
+The failed trace's `mexz@4402` after-snapshot contains one visible Inbox selector
+(`mantine-8f1guw8n4`) and one cached Deck selector (`mantine-i5bqsjkop`), under a
+Deck shell with `display: none !important`. The exact label query matches both
+and fails strictness; the screenshot shows only the active Inbox. This is the
+already diagnosed hidden Activity behavior in
+[#503](https://github.com/jlapenna/agent-lcars/issues/503) and
+[#755](https://github.com/jlapenna/agent-lcars/pull/755), rather than a new product
+DOM-duplication defect. Next's [UI-state testing guidance](https://nextjs.org/docs/app/guides/preserving-ui-state#testing)
+explains that cached hidden routes remain in the DOM and recommends accessible
+role queries for visible controls.
+
+The correction follows that precedent: the phone journey uses the exact
+accessible Repository combobox, asserts the destination pathname and repository
+query before checking scope, and keeps strict single-control/value assertions.
+The clear link still performs a real native click with its existing navigation
+wait and bounded diagnostics. No first/nth selection, forced click, sleep,
+retry increase, whole-test timeout increase or product change is used.
+
+This demonstrates and corrects the newly captured hidden-selector assertion
+failure. It does **not** retroactively establish the lower-level cause of the
+original unfinished clear clicks. #2239 remains open for that boundary evidence.

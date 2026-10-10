@@ -1,0 +1,180 @@
+{
+  "type": "frame-snapshot",
+  "snapshot": {
+    "callId": "mexz@4402",
+    "phase": "after",
+    "pageId": "page@0ccdfccfccc1b10e037a578f4cdda9f4",
+    "frameId": "frame@b6d943743a070e133dfe1af1cf6a9069",
+    "frameUrl": "http://127.0.0.1:4200/inbox?repo=supersprinklesracing%2Fsprinkles",
+    "doctype": "html",
+    "html": [
+      "HTML",
+      {
+        "lang": "en",
+        "data-mantine-color-scheme": "dark",
+        "class": "S-yRSG_variable LVo1EW_variable _sNt3a_variable"
+      },
+      [[4, 7]],
+      [
+        "BODY",
+        {},
+        [[4, 8]],
+        [[14, 2]],
+        [[14, 4]],
+        [
+          "DIV",
+          {
+            "class": "console-page-shell inbox-page-shell m_7485cace mantine-Container-root",
+            "data-size": "xl",
+            "data-strategy": "block",
+            "data-route": "inbox",
+            "data-accent": "blue",
+            "style": "--container-size: var(--container-size-xl); padding-inline: 0rem; padding-block: var(--mantine-spacing-xl);"
+          },
+          [[1, 69]],
+          [
+            "MAIN",
+            {
+              "class": "console-page-content"
+            },
+            [
+              "FORM",
+              {
+                "action": "/inbox",
+                "class": "console-repository-selector"
+              },
+              [
+                "DIV",
+                {
+                  "class": "m_4081bf90 mantine-Group-root",
+                  "style": "--group-gap: var(--mantine-spacing-xs); --group-align: end; --group-justify: flex-start; --group-wrap: wrap;"
+                },
+                [
+                  "DIV",
+                  {
+                    "class": "m_46b77525 mantine-InputWrapper-root mantine-NativeSelect-root",
+                    "data-size": "sm",
+                    "style": "flex: 1 1 180px; min-width: 0px;"
+                  },
+                  [[1, 71]],
+                  [
+                    "DIV",
+                    {
+                      "class": "m_6c018570 mantine-Input-wrapper mantine-NativeSelect-wrapper",
+                      "data-variant": "default",
+                      "data-size": "sm",
+                      "data-pointer": "true",
+                      "data-with-right-section": "true",
+                      "style": "--input-height: var(--input-height-sm); --input-fz: var(--mantine-font-size-sm); --input-right-section-pointer-events: none;"
+                    },
+                    [
+                      "SELECT",
+                      {
+                        "__playwright_target__": "",
+                        "class": "m_8fb7ebe7 mantine-Input-input mantine-NativeSelect-input",
+                        "data-variant": "default",
+                        "name": "repo",
+                        "id": "mantine-8f1guw8n4"
+                      },
+                      [[1, 73]],
+                      [[1, 75]]
+                    ],
+                    [[1, 79]]
+                  ]
+                ],
+                [[1, 85]],
+                [[1, 87]]
+              ]
+            ],
+            [[1, 91]],
+            [[1, 96]],
+            [[1, 106]],
+            [[1, 206]]
+          ]
+        ],
+        [
+          "DIV",
+          {
+            "style": "--container-size: var(--container-size-xl); padding-inline: 0rem; padding-block: var(--mantine-spacing-xl); display: none !important;",
+            "class": "console-page-shell deck-page-shell m_7485cace mantine-Container-root",
+            "data-size": "xl",
+            "data-strategy": "block",
+            "data-route": "deck",
+            "data-accent": "amber"
+          },
+          [[4, 56]],
+          [
+            "MAIN",
+            {
+              "class": "console-page-content"
+            },
+            [
+              "FORM",
+              {
+                "class": "console-repository-selector",
+                "action": "/"
+              },
+              [
+                "DIV",
+                {
+                  "style": "--group-gap:var(--mantine-spacing-xs);--group-align:end;--group-justify:flex-start;--group-wrap:wrap",
+                  "class": "m_4081bf90 mantine-Group-root"
+                },
+                [
+                  "DIV",
+                  {
+                    "style": "flex:1 1 180px;min-width:0",
+                    "class": "m_46b77525 mantine-InputWrapper-root mantine-NativeSelect-root",
+                    "data-size": "sm"
+                  },
+                  [[8, 11]],
+                  [
+                    "DIV",
+                    {
+                      "style": "--input-height:var(--input-height-sm);--input-fz:var(--mantine-font-size-sm);--input-right-section-pointer-events:none",
+                      "class": "m_6c018570 mantine-Input-wrapper mantine-NativeSelect-wrapper",
+                      "data-variant": "default",
+                      "data-size": "sm",
+                      "data-pointer": "true",
+                      "data-with-right-section": "true"
+                    },
+                    [
+                      "SELECT",
+                      {
+                        "__playwright_target__": "",
+                        "class": "m_8fb7ebe7 mantine-Input-input mantine-NativeSelect-input",
+                        "data-variant": "default",
+                        "name": "repo",
+                        "id": "mantine-i5bqsjkop"
+                      },
+                      [[14, 78]],
+                      [[14, 80]]
+                    ],
+                    [[14, 84]]
+                  ]
+                ],
+                [[14, 90]],
+                [[11, 0]]
+              ]
+            ],
+            [[14, 96]],
+            [[14, 113]],
+            [[14, 195]]
+          ]
+        ],
+        [[10, 2]],
+        [[1, 211]],
+        [[1, 212]]
+      ]
+    ],
+    "viewport": {
+      "width": 320,
+      "height": 740
+    },
+    "timestamp": 442395.45,
+    "wallTime": 1791672872145,
+    "collectionTime": 2.400000035762787,
+    "resourceOverrides": [],
+    "isMainFrame": true
+  }
+}
