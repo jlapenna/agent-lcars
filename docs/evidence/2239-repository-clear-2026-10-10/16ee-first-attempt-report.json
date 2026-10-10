@@ -6,7 +6,9 @@
     "head": "16ee77dc15f2256491568e2b89dded358402d44b",
     "reportFile": "e0d7f4cd6f2f8da6d2f8.json",
     "reportSha256": "bc76e87581e26834a0c94ff287cd84f768dc080f980d3445a5bcfcfc09dabd66",
-    "jobLogSha256": "762167e6f86d52b27e111fe5f1861d392978bb525c8bc6dfaedac7f8b53c33cf"
+    "jobLogSha256": "bc327828a775116974f97e79b147a59eccbb0bd0892182514526e64ef487b14d",
+    "jobLogDownloadCommand": "gh api --allow-escape-sequences repos/jlapenna/agent-lcars/actions/jobs/113879140019/logs > job-113879140019.log",
+    "jobLogRepresentation": "Raw individual job endpoint output; no decoding, prefixing, ANSI removal or newline transformation."
   },
   "title": "repository selection and clearing remain reachable on phones across Bridge, Inbox and Agents",
   "location": {

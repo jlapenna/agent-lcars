@@ -7,7 +7,11 @@ The original packed HTML reports were downloaded and decoded independently.
 Each JSON preserves one original result, including its full step timeline,
 errors, attachment identities and hashes. Failed screenshots and error contexts
 are retained here; the successful retry traces remain in their source artifacts.
-The source report and complete downloaded job log hashes identify the extraction.
+The source report and raw individual job log hashes identify the extraction.
+Each `source` records the exact log download command and byte representation.
+The log hashes use `gh api --allow-escape-sequences` on the individual job
+endpoint, with no transformations; they are not `gh run view --log` output
+(which combines and prefixes logs from all jobs in the workflow).
 No successful retry trace is used to infer the failed attempt's lower-level cause.
 
 | Exact head                                 | Failed first attempt                                                                                                                                                      | Successful retry                                                                  | Source                                                                                                                                                                                                                |
