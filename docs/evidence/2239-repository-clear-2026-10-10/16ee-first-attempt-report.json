@@ -486,14 +486,14 @@
         "contentType": "text/markdown",
         "path": "data/d29291d895eca0bd57483cbc5cee1531b6304e9e.md",
         "sha256": "614e0a415b4f53faebe47ca4393620d1f9376db6fb6551701b54fb0648d9b70e",
-        "retainedFile": "16ee-first-attempt-context.md"
+        "retainedFile": "16ee-first-attempt-context.txt"
       },
       {
         "name": "error-context",
         "contentType": "text/markdown",
         "path": "data/d29291d895eca0bd57483cbc5cee1531b6304e9e.md",
         "sha256": "614e0a415b4f53faebe47ca4393620d1f9376db6fb6551701b54fb0648d9b70e",
-        "retainedFile": "16ee-first-attempt-context.md"
+        "retainedFile": "16ee-first-attempt-context.txt"
       }
     ],
     "workerIndex": 0
