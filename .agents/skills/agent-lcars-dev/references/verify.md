@@ -242,9 +242,13 @@ multi-minute feedback loop:
    the editor without a second hand-maintained denylist.
 3. **Server code calling a function exported from a client module.**
    Fails at runtime with "Attempted to call X() from the server."
-4. **Cross-page `next/link` transitions leaving the previous page's DOM
-   mounted** (#503) — a pure client-side/browser bug; nothing short of a
-   real browser catches this one.
+4. **Cross-page `next/link` transitions retaining hidden controls** (#503).
+   Next.js Cache Components preserves prior routes in hidden Activity trees;
+   that is expected behavior, not two visible pages. DOM/label queries can
+   match cached controls and fail strictness (#2239). Assert the destination
+   URL and resolved UI, and use exact accessible-role queries or explicit
+   visibility filtering. A real browser observes this boundary; unit and
+   type checks do not. See [Next's testing guidance](https://nextjs.org/docs/app/guides/preserving-ui-state#testing).
 
 None of these are reliably caught by unit tests or typecheck (#537). Treat
 any change that adds/removes a `'use client'` directive, moves a component
@@ -264,7 +268,7 @@ smoke in the pre-push hook (`tools/console-build-smoke.sh`), which catches
 class 1 and prerenderable cases of class 3 in well under a minute. It is
 not a substitute for CI's E2E gate: a build can't see anything that only
 breaks at request time on a non-prerendered route or in a real browser
-(class 4 stays browser-e2e-only until #503 is understood). Local E2E remains
+(class 4 stays browser-e2e-only). Local E2E remains
 available for focused diagnosis, but is not required to deliver the change.
 
 Use that target, not `:e2e` directly. It sets up the same environment CI's
