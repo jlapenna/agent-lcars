@@ -6,8 +6,9 @@ import { asArray, asBoolean, asRecord, asString } from './unknown-value';
 const MAX_BLOCK_CHARS = 2000;
 
 /**
- * Agents whose raw transcript lines {@link parseTranscriptTimeline} actually
- * understands. Codex's raw rollout JSONL uses a different line shape
+ * Agents whose archived transcripts {@link parseTranscriptTimeline} actually
+ * understands. OpenCode exports use a single JSON envelope of message info
+ * and parts; Claude and Codex use JSONL. Codex's raw rollout JSONL uses a different line shape
  * (`session_meta`/`turn_context`/`event_msg` envelopes wrapping a `payload`
  * — see `codex-transcript-adapter.ts`) than Claude Code's
  * `message.role`/`message.content` shape, so each has an explicit parsing
@@ -29,6 +30,7 @@ const MAX_BLOCK_CHARS = 2000;
 export const RENDERABLE_TRANSCRIPT_AGENTS: readonly SessionAgent[] = [
   'claude-code',
   'codex',
+  'opencode',
 ];
 
 /** Whether {@link parseTranscriptTimeline} can render this agent's raw
@@ -265,8 +267,98 @@ function eventsFromCodexLine(
   return [];
 }
 
+/** OpenCode exports are one JSON envelope, even when pretty-printed. The
+ * telemetry archive uses the same envelope with conversation fields removed. */
+function parseOpenCodeTimeline(rawContent: string): ParsedTranscriptTimeline {
+  const events: TranscriptTimelineEvent[] = [];
+  let hadUnparseableLines = false;
+  let raw: Record<string, unknown> | undefined;
+  try {
+    raw = asRecord(JSON.parse(rawContent));
+  } catch {
+    return { events, hadUnparseableLines: true };
+  }
+  const info = asRecord(raw?.['info']);
+  const messages = asArray(raw?.['messages']);
+  if (!asString(info?.['id']) || !messages) {
+    return { events, hadUnparseableLines: true };
+  }
+  const isoTime = (value: unknown): string | undefined => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+  };
+  for (const value of messages) {
+    const message = asRecord(value);
+    const messageInfo = asRecord(message?.['info']);
+    const role = asString(messageInfo?.['role']);
+    const parts = asArray(message?.['parts']);
+    if ((role !== 'user' && role !== 'assistant') || !parts) {
+      hadUnparseableLines = true;
+      continue;
+    }
+    const timestamp = isoTime(asRecord(messageInfo?.['time'])?.['created']);
+    if (parts.length === 0) {
+      events.push({
+        kind: 'text',
+        role,
+        text: '[Archived turn: content redacted or absent]',
+        timestamp,
+      });
+    }
+    for (const value of parts) {
+      const part = asRecord(value);
+      if (!part || typeof part['type'] !== 'string') {
+        hadUnparseableLines = true;
+        continue;
+      }
+      if (part['type'] === 'text') {
+        const text = asString(part['text']);
+        if (text === undefined) hadUnparseableLines = true;
+        else if (text)
+          events.push({ kind: 'text', role, text: truncate(text), timestamp });
+      } else if (part['type'] === 'tool') {
+        const name = asString(part['tool']);
+        // The metadata archive owner omits state when no timestamps exist,
+        // including pending tools. Keep those redacted events renderable.
+        const state =
+          part['state'] === undefined ? {} : asRecord(part['state']);
+        if (!name || !state) {
+          hadUnparseableLines = true;
+          continue;
+        }
+        const time = asRecord(state['time']);
+        events.push({
+          kind: 'tool_use',
+          name: truncate(name, 128),
+          inputJson: truncate(
+            state['input'] === undefined
+              ? '[Tool input redacted or absent]'
+              : JSON.stringify(state['input'], null, 2),
+          ),
+          timestamp: isoTime(time?.['start']) ?? timestamp,
+        });
+        if (state['status'] === 'completed' || state['status'] === 'error') {
+          events.push({
+            kind: 'tool_result',
+            content: truncate(
+              asString(state['error']) ??
+                asString(state['output']) ??
+                '[Tool output redacted or absent]',
+            ),
+            timestamp: isoTime(time?.['end']) ?? timestamp,
+          });
+        }
+      }
+      // Reasoning, step accounting, files and snapshots are not conversation
+      // turns. Never stringify their arbitrary metadata into the console.
+    }
+  }
+  return { events, hadUnparseableLines };
+}
+
 /**
- * Parses raw transcript JSONL from a supported agent into a
+ * Parses an archived transcript from a supported agent into a
  * flat, renderable timeline for a single session's detail page - a
  * different shape than `reduceTranscripts`' aggregated `SessionSummary`, but
  * deliberately reusing the same tolerant line-by-line approach and
@@ -282,6 +374,8 @@ export function parseTranscriptTimeline(
   rawContent: string,
   agent: SessionAgent = 'claude-code',
 ): ParsedTranscriptTimeline {
+  if (agent === 'opencode') return parseOpenCodeTimeline(rawContent);
+
   const events: TranscriptTimelineEvent[] = [];
   let currentSidechain: TranscriptTimelineEvent[] | undefined;
   let hadUnparseableLines = false;

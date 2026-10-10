@@ -237,6 +237,10 @@ interface BaseSessionDoc {
 }
 
 export interface CliSessionDoc extends BaseSessionDoc {
+  /** Explicit host archive consent/capture outcome; absent means not enabled. */
+  cliTranscriptArchive?: import('./cli-transcript-archive').CliTranscriptArchive;
+  transcriptGcsUri?: string;
+  renderable?: boolean;
   source: 'cli';
   /** A host-scoped CLI session is valid without a GitHub repository. When a
    * repository is present it must be canonical; readers never guess one. */
@@ -272,21 +276,23 @@ interface IssueAgentSessionDocBase extends BaseSessionDoc {
    * contract into one JSONL object per session before upload, while Claude
    * Code and Codex already write per-session files. Do not assume an archived
    * object is console-renderable without checking
-   * {@link IssueAgentSessionDoc.renderable} first — OpenCode archives are
-   * durable but intentionally remain summary-only in the console. */
+   * {@link IssueAgentSessionDoc.renderable} first. The OpenCode
+   * metadata archive can render redacted turns; its full export, when present
+   * in resumeGcsUri, supplies conversation content. */
 }
 
 /** An archived issue-agent transcript carries the capture-time renderability
- * decision. It is never inferred from the provider at read time. */
+ * decision for transcriptGcsUri. A separately archived OpenCode resume export
+ * is also supported by the console timeline. */
 export interface ArchivedIssueAgentSessionDoc extends IssueAgentSessionDocBase {
   transcriptGcsUri: string;
   renderable: boolean;
   /**
    * The artifact a later run can actually resume from, when that is not the
-   * same file the console renders. Claude and Codex archive their raw CLI
-   * session, so `transcriptGcsUri` is both; OpenCode's rendered archive is
-   * sanitized to redaction markers, so its resumable artifact is a separate
-   * raw export and only this field points at it. Absent means "resume from
+   * same file as the telemetry transcript. Claude and Codex archive their raw CLI
+   * session, so `transcriptGcsUri` is both; OpenCode's telemetry archive is
+   * metadata-only, so its resumable artifact is a separate full export. The
+   * console can also read that export to render conversation turns. Absent means "resume from
    * `transcriptGcsUri`".
    */
   resumeGcsUri?: string;
@@ -329,8 +335,9 @@ export interface BuildSessionDocOptions {
   /** `issue-agent` sessions only — `cli` sessions get `repo` from
    * `summary.repo` instead (see {@link SessionSummary.repo}). */
   repo?: { owner: string; name: string };
-  /** `issue-agent` sessions only. */
+  /** CLI capture must also supply cliTranscriptArchive.status = available. */
   transcriptGcsUri?: string;
+  cliTranscriptArchive?: import('./cli-transcript-archive').CliTranscriptArchive;
   /** `issue-agent` sessions only. Only ever set when `transcriptGcsUri` is
    * also set — see {@link ArchivedIssueAgentSessionDoc.resumeGcsUri}. */
   resumeGcsUri?: string;
@@ -339,14 +346,20 @@ export interface BuildSessionDocOptions {
 /**
  * Closed union of `SessionDoc` fields a write can request DELETED from
  * Firestore rather than merely omitted (issue #1257) — `status` and
- * `statusUpdatedAt` (always requested together) and `resolvedModel` (see
+ * `statusUpdatedAt` (always requested together), `resolvedModel`, and CLI
+ * archive capability fields (revoked when consent is absent; see
  * {@link buildSessionWrite}'s `clearFields` derivation in `session-doc.ts`).
  * Closed on purpose: nothing else on `SessionDoc` is deletable this way, so
  * a caller can never mistakenly request deletion of a field this contract
  * doesn't cover.
  */
 export type ClearableSessionField =
-  'status' | 'statusUpdatedAt' | 'resolvedModel';
+  | 'status'
+  | 'statusUpdatedAt'
+  | 'resolvedModel'
+  | 'cliTranscriptArchive'
+  | 'transcriptGcsUri'
+  | 'renderable';
 
 /**
  * The complete description of one Firestore write: the document to merge,

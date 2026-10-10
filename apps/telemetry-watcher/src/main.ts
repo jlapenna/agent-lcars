@@ -52,6 +52,9 @@ function runHostWatcher(): void {
     shareDir: config.shareDir,
     antigravitySummaryDb: config.antigravitySummaryDb,
     sessionStateDir: config.sessionStateDir,
+    cliArchivePolicy: config.cliArchivePolicy,
+    archiveProjectId: config.firestoreProjectId,
+    archiveWriterKeyJson: config.firestoreWriterKeyJson,
     metrics,
   });
 

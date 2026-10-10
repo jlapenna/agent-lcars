@@ -16,6 +16,140 @@ function readFixture(name: string): string {
 }
 
 describe('parseTranscriptTimeline', () => {
+  it.each([null, [], 'invalid', 0])(
+    'rejects a present malformed OpenCode tool state (%j)',
+    (state) => {
+      expect(
+        parseTranscriptTimeline(
+          JSON.stringify({
+            info: { id: 'ses_malformed_tool' },
+            messages: [
+              {
+                info: { role: 'assistant' },
+                parts: [{ type: 'tool', tool: 'bash', state }],
+              },
+            ],
+          }),
+          'opencode',
+        ),
+      ).toEqual({ events: [], hadUnparseableLines: true });
+    },
+  );
+
+  it('renders the full OpenCode export envelope, including completed and failed tools', () => {
+    const parsed = parseTranscriptTimeline(
+      readFixture('opencode-export.json'),
+      'opencode',
+    );
+    expect(parsed.hadUnparseableLines).toBe(false);
+    expect(parsed.events).toMatchObject([
+      {
+        kind: 'text',
+        role: 'user',
+        text: 'Review the archived session.',
+        timestamp: '2026-08-18T11:29:30.573Z',
+      },
+      { kind: 'text', role: 'assistant' },
+      {
+        kind: 'tool_use',
+        name: 'bash',
+        inputJson: expect.stringContaining('archive checked'),
+      },
+      { kind: 'tool_result', content: expect.stringContaining('<img') },
+      { kind: 'tool_use', name: 'read' },
+      { kind: 'tool_result', content: 'File not found' },
+    ]);
+    expect(
+      parseTranscriptTimeline(
+        JSON.stringify(JSON.parse(readFixture('opencode-export.json'))),
+        'opencode',
+      ),
+    ).toEqual(parsed);
+  });
+
+  it('renders redacted turns and tool metadata without inventing conversation content', () => {
+    const parsed = parseTranscriptTimeline(
+      readFixture('opencode-session.json'),
+      'opencode',
+    );
+    expect(parsed.hadUnparseableLines).toBe(false);
+    expect(parsed.events).toMatchObject([
+      { kind: 'text', role: 'user', text: expect.stringContaining('redacted') },
+      {
+        kind: 'tool_use',
+        name: 'bash',
+        inputJson: expect.stringContaining('redacted'),
+      },
+    ]);
+  });
+
+  it('distinguishes valid empty OpenCode exports from malformed archives and retains valid turns', () => {
+    expect(
+      parseTranscriptTimeline(
+        ' {"info":{"id":"ses_empty"},"messages":[]} ',
+        'opencode',
+      ),
+    ).toEqual({ events: [], hadUnparseableLines: false });
+    for (const raw of [
+      '',
+      'broken',
+      '{}',
+      '{"info":{"id":"ses_bad"},"messages":{}}',
+    ]) {
+      expect(parseTranscriptTimeline(raw, 'opencode')).toEqual({
+        events: [],
+        hadUnparseableLines: true,
+      });
+    }
+    expect(
+      parseTranscriptTimeline(
+        JSON.stringify({
+          info: { id: 'ses_partial' },
+          messages: [
+            null,
+            {
+              info: { role: 'user' },
+              parts: [{ type: 'text', text: 'survives' }],
+            },
+          ],
+        }),
+        'opencode',
+      ),
+    ).toMatchObject({
+      events: [{ kind: 'text', text: 'survives' }],
+      hadUnparseableLines: true,
+    });
+  });
+
+  it('bounds OpenCode text, tool input/output, and the rendered event count', () => {
+    const raw = JSON.stringify({
+      info: { id: 'ses_long' },
+      messages: Array.from({ length: 500 }, () => ({
+        info: { role: 'assistant' },
+        parts: [
+          { type: 'text', text: 'x'.repeat(5000) },
+          {
+            type: 'tool',
+            tool: 'bash',
+            state: {
+              status: 'completed',
+              input: { command: 'y'.repeat(5000) },
+              output: 'z'.repeat(5000),
+            },
+          },
+        ],
+      })),
+    });
+    const parsed = parseTranscriptTimeline(raw, 'opencode');
+    expect(parsed.hadUnparseableLines).toBe(false);
+    expect(parsed.events.slice(0, 3)).toMatchObject([
+      { text: expect.stringContaining('truncated') },
+      { inputJson: expect.stringContaining('truncated') },
+      { content: expect.stringContaining('truncated') },
+    ]);
+    expect(elideTranscriptTimeline(parsed.events)).toHaveLength(251);
+  });
+
   it('renders a representative Codex rollout as shared timeline events', () => {
     const { events, hadUnparseableLines } = parseTranscriptTimeline(
       readFixture('codex-session.jsonl'),
@@ -251,13 +385,17 @@ describe('isRenderableTranscriptAgent', () => {
   // walk expects (see codex-transcript-adapter.spec.ts's fixture) -
   // conflating "has an adapter" with "renderable" was Bug 3 in
   // agent-lcars#645.
-  it('is false for every agent without a real timeline parser', () => {
-    expect(isRenderableTranscriptAgent('opencode')).toBe(false);
+  it('supports OpenCode and rejects agents without a timeline parser', () => {
+    expect(isRenderableTranscriptAgent('opencode')).toBe(true);
     expect(isRenderableTranscriptAgent('gemini')).toBe(false);
     expect(isRenderableTranscriptAgent('antigravity')).toBe(false);
   });
 
   it('lists exactly the formats with timeline parsers', () => {
-    expect(RENDERABLE_TRANSCRIPT_AGENTS).toEqual(['claude-code', 'codex']);
+    expect(RENDERABLE_TRANSCRIPT_AGENTS).toEqual([
+      'claude-code',
+      'codex',
+      'opencode',
+    ]);
   });
 });

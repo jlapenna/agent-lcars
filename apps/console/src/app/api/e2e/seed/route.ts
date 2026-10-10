@@ -28,6 +28,7 @@ import {
   resetE2eOrchestratorFixtures,
   seedPopulatedE2eOrchestratorFixtures,
 } from '../../../../lib/e2e-orchestrator-fixtures';
+import { E2E_OPENCODE_SESSION_IDS } from '../../../../lib/e2e-transcript-fixtures';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
 const E2E_RUNNER_STATUS_ID = 'e2e-fixture-scale-set';
@@ -237,6 +238,7 @@ interface SeedRequest {
   action?:
     'seed' | 'seed-populated' | 'seed-inbox' | 'seed-inbox-only' | 'reset';
   resume?: boolean;
+  transcripts?: boolean;
 }
 
 /**
@@ -347,6 +349,20 @@ export async function POST(req: NextRequest) {
           'gs://demo-no-project/e2e-native-resume-session.jsonl',
         renderable: false,
       });
+    }
+    if (body.transcripts) {
+      for (const sessionId of Object.values(E2E_OPENCODE_SESSION_IDS)) {
+        docs.push({
+          ...fixtureIssueAgentSession(),
+          sessionId,
+          agent: 'opencode',
+          title: `OpenCode archive ${sessionId}`,
+          transcriptGcsUri: `gs://e2e-transcripts/${sessionId}.jsonl`,
+          resumeGcsUri: `gs://e2e-transcripts/${sessionId}.export.json`,
+          // Covers already-stored docs from before OpenCode timeline support.
+          renderable: false,
+        });
+      }
     }
     // Full-fixture writes, not a status update - nothing to clear. See
     // SessionWrite's doc comment (@agent-lcars/telemetry): upsertSession

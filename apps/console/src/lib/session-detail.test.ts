@@ -150,6 +150,30 @@ describe('getSessionDetail', () => {
     expect(result).toMatchObject({ transcript: { events: [] } });
   });
 
+  it('renders an existing OpenCode full export despite the older metadata-only flag', async () => {
+    const doc = agentDoc({
+      agent: 'opencode',
+      renderable: false,
+      transcriptGcsUri: 'gs://bucket/ses.jsonl',
+      resumeGcsUri: 'gs://bucket/ses.export.json',
+    });
+    (getSessionDoc as Mock).mockResolvedValue(doc);
+    (getSessionTranscript as Mock).mockResolvedValue({
+      events: [],
+      warning: 'Transcript unavailable',
+    });
+    expect(await getSessionDetail('agent-1')).toMatchObject({
+      status: 'ok',
+      doc,
+      transcript: { warning: 'Transcript unavailable' },
+    });
+    expect(getSessionTranscript).toHaveBeenCalledWith(
+      'gs://bucket/ses.export.json',
+      'opencode',
+    );
+    expect(doc.renderable).toBe(false);
+  });
+
   it('does not fetch a transcript when doc.renderable is explicitly false, even for claude-code', async () => {
     (getSessionDoc as Mock).mockResolvedValue(
       agentDoc({
@@ -190,5 +214,51 @@ describe('getSessionDetail', () => {
           'gs://supersprinklesracing-agent-session-transcripts/runs/1/opencode/',
       },
     });
+  });
+});
+
+describe('CLI session transcript detail', () => {
+  afterEach(() => vi.resetAllMocks());
+  it('reads a consented CLI archive with the provider adapter and size bound', async () => {
+    (getSessionDoc as Mock).mockResolvedValue(
+      cliDoc({
+        agent: 'codex',
+        transcriptGcsUri: 'gs://cli-archives/cli/host/codex/a.jsonl',
+        renderable: true,
+        cliTranscriptArchive: {
+          status: 'available',
+          expiresAt: '2099-01-01T00:00:00Z',
+        },
+      }),
+    );
+    (getSessionTranscript as Mock).mockResolvedValue({
+      events: [],
+      warning: 'Transcript unavailable (failed to fetch from storage).',
+    });
+    expect(await getSessionDetail('cli-1')).toMatchObject({
+      status: 'ok',
+      transcript: { warning: expect.stringContaining('unavailable') },
+    });
+    expect(getSessionTranscript).toHaveBeenCalledWith(
+      'gs://cli-archives/cli/host/codex/a.jsonl',
+      'codex',
+      { maxBytes: 5 * 1024 * 1024 },
+    );
+  });
+  it('never reads an expired CLI archive', async () => {
+    (getSessionDoc as Mock).mockResolvedValue(
+      cliDoc({
+        transcriptGcsUri: 'gs://cli-archives/cli/host/claude-code/a.jsonl',
+        renderable: true,
+        cliTranscriptArchive: {
+          status: 'available',
+          expiresAt: '2000-01-01T00:00:00Z',
+        },
+      }),
+    );
+    expect(await getSessionDetail('cli-1')).toMatchObject({
+      transcript: { warning: expect.stringContaining('retention expired') },
+    });
+    expect(getSessionTranscript).not.toHaveBeenCalled();
   });
 });

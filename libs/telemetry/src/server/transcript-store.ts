@@ -57,9 +57,9 @@ function parseGcsUri(uri: string): ParsedGcsUri | undefined {
 
 /**
  * Downloads and decodes a session's archived transcript from GCS, given the
- * `gs://` URI stored on its `IssueAgentSessionDoc.transcriptGcsUri` (see
- * types.ts — CLI sessions never have one, only issue-agent runner sessions,
- * since the runner container that produced them is destroyed on exit).
+ * `gs://` URI stored on its `SessionDoc.transcriptGcsUri`. CLI archives additionally require explicit
+ * consent and unexpired retention in the console detail loader; maxBytes
+ * bounds that read without buffering arbitrary object sizes.
  *
  * Throws on any failure (malformed URI, object not found, network/auth
  * error) — callers (the console's session detail page) are expected to
@@ -67,12 +67,34 @@ function parseGcsUri(uri: string): ParsedGcsUri | undefined {
  * other degraded-read path in this app (see cli-sessions.ts/
  * runner-sessions.ts).
  */
-export async function fetchSessionTranscript(gcsUri: string): Promise<string> {
+export async function fetchSessionTranscript(
+  gcsUri: string,
+  maxBytes?: number,
+): Promise<string> {
   const parsed = parseGcsUri(gcsUri);
   if (!parsed) {
     throw new Error(`Malformed transcript GCS URI: ${gcsUri}`);
   }
   const storage = getTranscriptStorageClient();
+  if (maxBytes !== undefined) {
+    const stream = storage
+      .bucket(parsed.bucket)
+      .file(parsed.object)
+      .createReadStream();
+    const chunks: Buffer[] = [];
+    let size = 0;
+    try {
+      for await (const chunk of stream) {
+        const bytes = Buffer.from(chunk);
+        size += bytes.length;
+        if (size > maxBytes) throw new Error('Transcript exceeds size limit');
+        chunks.push(bytes);
+      }
+      return Buffer.concat(chunks).toString('utf8');
+    } finally {
+      stream.destroy();
+    }
+  }
   const [contents] = await storage
     .bucket(parsed.bucket)
     .file(parsed.object)

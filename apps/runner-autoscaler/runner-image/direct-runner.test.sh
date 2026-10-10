@@ -25,7 +25,26 @@ grep -Fq '/usr/local/lib/agent-lcars/runtime' "$dockerfile" || {
 # once direct-runner.sh execs them for real.
 tmp="$(mktemp -d)"
 export tmp
-trap 'rm -rf "$tmp"' EXIT
+export AGENT_LCARS_JOB_DAEMON_STATE_ROOT="$tmp/job-daemon-state"
+cleanup() {
+  local result=$?
+  trap - EXIT
+  if [ "$result" -ne 0 ]; then
+    echo 'direct-runner fixture failure diagnostics (last 4KiB per log):' >&2
+    for log in "${scenario_log:-}" "${NODE_ARGS_LOG:-}" "$tmp/sidecar.log"; do
+      if [ -f "$log" ]; then
+        printf '\n%s\n' "$log" >&2
+        tail -c 4096 "$log" >&2
+      fi
+    done
+  fi
+  if [ -n "${baked:-}" ] && [ -x "$baked/job-daemon-real.sh" ]; then
+    "$baked/job-daemon-real.sh" stop telemetry >/dev/null 2>&1 || true
+  fi
+  rm -rf "$tmp"
+  exit "$result"
+}
+trap cleanup EXIT
 
 # --- Fake baked image tree -------------------------------------------------
 # Build the native runtime shape produced by the Dockerfile, including its
@@ -49,9 +68,36 @@ export WORKER_POLICY_NODE="$real_node"
 # delegates to the fake `node` below. Keep it separate from the source tree:
 # the real runner image contains the compiled bundle, while this shell harness
 # deliberately verifies the lifecycle arguments without starting Firestore.
-cp "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" "$baked/sidecar-lifecycle.sh"
-cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon.sh"
-chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh"
+sed 's|^LOG_FILE=/tmp/runner-telemetry/sidecar.log$|LOG_FILE="$tmp/sidecar.log"|' \
+  "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" > "$baked/sidecar-lifecycle.sh"
+grep -Fq 'LOG_FILE="$tmp/sidecar.log"' "$baked/sidecar-lifecycle.sh" || {
+  echo 'fixture failed to isolate the sidecar log' >&2
+  exit 1
+}
+cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon-real.sh"
+# job-daemon backgrounds the sidecar and returns, and finalize stops it at
+# once; a fast scenario could kill the fake sidecar before it logged its
+# argv. Wait for the actual fake child to record its argv before returning.
+# This readiness barrier belongs only to the fixture; production stays async.
+cat > "$baked/job-daemon.sh" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+daemon="$(dirname "$0")/job-daemon-real.sh"
+if [ "${1:-}" != start ]; then
+  exec "$daemon" "$@"
+fi
+mkdir -p "$AGENT_LCARS_JOB_DAEMON_STATE_ROOT"
+FAKE_SIDECAR_READY_FILE="$(mktemp "$AGENT_LCARS_JOB_DAEMON_STATE_ROOT/ready.XXXXXX")"
+export FAKE_SIDECAR_READY_FILE
+"$daemon" "$@"
+if ! /usr/bin/timeout --signal=TERM --kill-after=1s 5s /bin/bash -c \
+  'until [ -s "$1" ]; do sleep 0.01; done' _ "$FAKE_SIDECAR_READY_FILE"; then
+  echo 'fixture sidecar did not record its actual arguments within 5s' >&2
+  exit 1
+fi
+rm -f "$FAKE_SIDECAR_READY_FILE"
+FAKE
+chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh" "$baked/job-daemon-real.sh"
 BAKED_SIDECAR_LIFECYCLE="$baked/sidecar-lifecycle.sh"
 printf '%s\n' '// fake baked telemetry sidecar' > "$baked/sidecar.cjs"
 
@@ -526,6 +572,8 @@ if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
   if [ ! -f "$tmp/opencode-initialized" ]; then
     touch "$tmp/opencode-startup-race"
   fi
+  [ -z "${FAKE_SIDECAR_READY_FILE:-}" ] || \
+    printf '%s\n' ready > "$FAKE_SIDECAR_READY_FILE"
 fi
 # Stands in for the real sidecar's `runner finalize` subcommand (issue
 # #1784): when direct-runner.sh's sidecar-lifecycle.sh threads
@@ -981,10 +1029,24 @@ grep -q -- '--session-id sess_1' "$NODE_ARGS_LOG" ||
   fail "codex happy path: runner resume was not passed the session id ($(cat "$NODE_ARGS_LOG"))"
 grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE_ARGS_LOG" ||
   fail "codex happy path: runner resume was not passed the transcript uri ($(cat "$NODE_ARGS_LOG"))"
-sidecar_session_calls="$(grep -Fc -- "--codex-sessions-dir $codex_sessions_dir" "$NODE_ARGS_LOG" || true)"
-if [ "$sidecar_session_calls" -lt 2 ]; then
-  fail "codex happy path: sidecar start/finalize did not both receive Codex sessions root ($(cat "$NODE_ARGS_LOG"))"
-fi
+# Fixture argv paths contain no whitespace. Check exact values per lifecycle
+# phase so a descendant path or duplicate phase cannot satisfy the receipt.
+for phase in sidecar finalize; do
+  sidecar_session_valid="$(awk -v expected="$codex_sessions_dir" -v phase="$phase" '
+    $2 == "runner" && $3 == phase {
+      calls++
+      for (i = 1; i <= NF; i++) {
+        if ($i == "--codex-sessions-dir") {
+          flags++
+          if (i < NF && $(i + 1) == expected) correct++
+        }
+      }
+    }
+    END { print (calls == 1 && flags == 1 && correct == 1) ? 1 : 0 }
+  ' "$NODE_ARGS_LOG")"
+  [ "$sidecar_session_valid" -eq 1 ] ||
+    fail "codex happy path: runner $phase did not receive exactly one correct Codex sessions root ($(cat "$NODE_ARGS_LOG"))"
+done
 [ -s "$CODEX_AUTH_PERSIST_LOG" ] || fail "codex happy path: auth.json was not persisted"
 jq -e '.generation == "7" and (.restoredSha256 | test("^[0-9a-f]{64}$")) and (.authBase64 | length > 0) and (has("authFailure") | not)' \
   "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||

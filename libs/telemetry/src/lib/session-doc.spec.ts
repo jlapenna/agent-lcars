@@ -53,7 +53,7 @@ describe('buildSessionDoc', () => {
       'live',
     );
 
-    expect(write.clearFields).toEqual(['resolvedModel']);
+    expect(write.clearFields).toContain('resolvedModel');
   });
 
   it('builds a cli doc with only cli-relevant optional fields', () => {
@@ -581,13 +581,15 @@ describe('buildSessionWrite', () => {
       'live',
     );
 
-    expect(write.clearFields).toEqual([]);
+    expect(write.clearFields).not.toContain('status');
   });
 
   it('requests both status fields cleared, unconditionally, when the summary carries no status', () => {
     const write = buildSessionWrite(baseSummary(), 'live');
 
-    expect(write.clearFields).toEqual(['status', 'statusUpdatedAt']);
+    expect(write.clearFields).toEqual(
+      expect.arrayContaining(['status', 'statusUpdatedAt']),
+    );
   });
 
   it('never clears expireAt, so a late sidecar write cannot undo the close stamp', () => {
@@ -617,6 +619,61 @@ describe('buildSessionWrite', () => {
       { runId: 'run-123' },
     );
 
-    expect(write.clearFields).toEqual(['status', 'statusUpdatedAt']);
+    expect(write.clearFields).toEqual(
+      expect.arrayContaining(['status', 'statusUpdatedAt']),
+    );
+  });
+});
+
+describe('explicit CLI archive capability', () => {
+  it('requires opt-in archive metadata before carrying a CLI transcript', () => {
+    const options = {
+      transcriptGcsUri:
+        'gs://cli-archives/cli/host/claude-code/session-1.jsonl',
+      cliTranscriptArchive: {
+        status: 'available' as const,
+        expiresAt: '2026-08-09T10:05:00Z',
+      },
+    };
+    const doc = buildSessionDoc(baseSummary(), 'ended', options);
+    expect(parseSessionDoc(doc)).toMatchObject({
+      source: 'cli',
+      transcriptGcsUri: options.transcriptGcsUri,
+      renderable: true,
+    });
+    expect(() =>
+      parseSessionDoc({ ...doc, cliTranscriptArchive: undefined }),
+    ).toThrow('explicit available');
+    expect(() =>
+      parseSessionDoc({
+        ...doc,
+        cliTranscriptArchive: { status: 'available', expiresAt: 'invalid' },
+      }),
+    ).toThrow('expiry');
+    expect(() =>
+      buildSessionDoc(baseSummary(), 'ended', {
+        cliTranscriptArchive: { status: 'available' },
+      }),
+    ).toThrow('valid expiry');
+  });
+  it('revokes stale stored archive capabilities when consent disappears or capture fails', () => {
+    const revoked = buildSessionWrite(baseSummary(), 'ended');
+    expect(revoked.clearFields).toEqual(
+      expect.arrayContaining([
+        'cliTranscriptArchive',
+        'transcriptGcsUri',
+        'renderable',
+      ]),
+    );
+    const failed = buildSessionWrite(baseSummary(), 'ended', {
+      cliTranscriptArchive: { status: 'failed' },
+    });
+    expect(failed.doc).toMatchObject({
+      cliTranscriptArchive: { status: 'failed' },
+    });
+    expect(failed.clearFields).toEqual(
+      expect.arrayContaining(['transcriptGcsUri', 'renderable']),
+    );
+    expect(failed.clearFields).not.toContain('cliTranscriptArchive');
   });
 });

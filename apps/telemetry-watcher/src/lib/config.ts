@@ -8,6 +8,10 @@ import {
   AntigravitySummaryDbConfig,
   defaultAntigravityWorkspacePrefixes,
 } from './antigravity-summary-source';
+import {
+  CliArchivePolicy,
+  parseCliArchivePolicy,
+} from './cli-transcript-archive';
 import { checkoutRoots } from './default-checkout';
 import { SESSION_STATE_DIRECTORY } from './session-title-paths';
 import { WatchRootConfig } from './watch-roots';
@@ -29,6 +33,7 @@ export interface SharedWatcherConfig {
 }
 
 export interface WatcherConfig extends SharedWatcherConfig {
+  cliArchivePolicy?: CliArchivePolicy;
   watchRoots: WatchRootConfig[];
   shareDir: string;
   metricsHost: string;
@@ -284,6 +289,9 @@ export function loadConfig(): WatcherConfig {
 
   return {
     ...shared,
+    cliArchivePolicy: parseCliArchivePolicy(
+      optional('AGENT_TELEMETRY_CLI_ARCHIVE_POLICY'),
+    ),
     watchRoots,
     shareDir:
       optional('AGENT_TELEMETRY_SHARE_DIR') ?? path.join(os.homedir(), 'share'),

@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 
 import { chromium } from '@playwright/test';
 
+import { chromiumHeadlessShellReadiness } from './browser-runtime.mjs';
 import {
   assertSuccessfulNavigation,
   DEFAULT_ORIGIN,
@@ -90,6 +91,17 @@ async function main() {
   const role = values.role;
   const storage = values.storage;
   const secretName = values['secret-name'] ?? secretNameForRole(role);
+  const browserRuntime = await chromiumHeadlessShellReadiness();
+  if (!browserRuntime.ready) {
+    console.error(
+      'BROWSER_RUNTIME_UNAVAILABLE: The Chromium headless shell required by the installed Playwright version is not installed and executable. ' +
+        'Run "pnpm exec playwright install chromium --only-shell" as the current user, then retry. ' +
+        'The verifier never installs browser packages or uses sudo.',
+    );
+    return 5;
+  }
+  console.log('PASS: matching Playwright Chromium headless shell is ready.');
+
   const { storageState, source } = await loadStorageState({
     storage,
     role,

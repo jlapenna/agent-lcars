@@ -1,4 +1,4 @@
-import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
+import type { SessionDoc } from '@agent-lcars/telemetry';
 import { Code, Stack, Text, Title } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
@@ -23,34 +23,51 @@ interface PageProps {
 }
 
 /**
- * The bottom half of an issue-agent session's detail view: either the real
- * turn-by-turn transcript timeline (the persisted `renderable` flag, see
- * `transcript-timeline.ts`'s `RENDERABLE_TRANSCRIPT_AGENTS`), or - for every
- * unsupported agent - a short note that the archive exists without attempting to
- * render it as a transcript. Rendering the latter as a transcript would
- * fail-soft into a scary warning on every one of those session pages for no
- * benefit, since an archive-first agent's raw shape may not even be one file
- * (see `types.ts`'s
- * `transcriptGcsUri` doc comment). This reads the same `renderable` field
- * `session-detail.ts`'s fetch gate does rather than re-deriving its own
- * opinion from the provider. Exported (not
- * inlined into the page below) so both branches are independently
- * unit-testable without rendering the whole async server page.
+ * The archive section renders supported capture-time transcripts, consented CLI
+ * transcripts and separately archived OpenCode full exports. Unsupported formats
+ * keep their URI note. Older OpenCode exports may predate the renderable flag;
+ * the fetch result is used only alongside that explicit export capability.
  */
 export function ArchivedSessionTranscript({
   doc,
   transcript,
 }: {
-  doc: IssueAgentSessionDoc;
+  doc: SessionDoc;
   transcript?: SessionTranscriptResult;
 }) {
   if (!doc.transcriptGcsUri) {
-    return null;
+    if (doc.source !== 'cli') return null;
+    const status = doc.cliTranscriptArchive?.status;
+    const messages = {
+      pending: 'Transcript archival enabled; waiting for the session to end.',
+      failed:
+        'Transcript unavailable (archive upload failed; the watcher will retry).',
+      'too-large': 'Transcript unavailable (exceeds the 5 MiB archive limit).',
+      expired: 'Transcript unavailable (archive retention expired).',
+      unsupported:
+        'Transcript unavailable (provider does not support console transcripts).',
+      available: 'Transcript unavailable (archive reference missing).',
+    };
+    return (
+      <Text size="sm" c="dimmed" data-testid="cli-transcript-state">
+        {status
+          ? messages[status]
+          : 'Transcript archival not enabled for this CLI session.'}
+      </Text>
+    );
   }
 
   const agent = doc.agent;
 
-  if (!doc.renderable) {
+  if (
+    !doc.renderable &&
+    !(
+      doc.source === 'issue-agent' &&
+      doc.agent === 'opencode' &&
+      doc.resumeGcsUri &&
+      transcript
+    )
+  ) {
     return (
       <Stack gap={4} data-testid="session-archive-note">
         <Text size="sm" c="dimmed">
@@ -144,12 +161,10 @@ function SessionDetailViewContent({
         <>
           <SessionHeader doc={detail.doc} now={generatedAt} />
 
-          {detail.doc.source === 'issue-agent' && (
-            <ArchivedSessionTranscript
-              doc={detail.doc}
-              transcript={detail.transcript}
-            />
-          )}
+          <ArchivedSessionTranscript
+            doc={detail.doc}
+            transcript={detail.transcript}
+          />
         </>
       )}
     </>
@@ -189,8 +204,8 @@ const SessionDetailView = withConsolePageShell(
 
 /**
  * A single session's detail view: full header (identity, cost/token totals,
- * source-specific fields, deliverables, artifacts) plus - for an
- * issue-agent session whose transcript was archived to GCS - the turn-by-
+ * source-specific fields, deliverables, artifacts) plus - for a
+ * session whose transcript was archived to GCS - the turn-by-
  * turn transcript timeline (or, for an unsupported agent's archive-first
  * stub, a note that it exists). A missing doc is a real 404; every other
  * failure mode (store read failure, GCS fetch/parse failure) fails soft to
