@@ -24,6 +24,7 @@ import {
   type TaskId,
   type WorkPayload,
 } from './model';
+import { providerIsCoolingDown } from './provider-cooldown';
 import {
   reportResultWithFallback,
   rerouteQueuedRun,
@@ -235,13 +236,28 @@ export class Orchestrator {
   /** The executor's grant further narrows alternatives; only fresh unclaimed
    * attempts can be rerouted, never a live provider conversation. */
   async rerouteQueued(
-    executorPipelines: readonly string[],
+    executorPipelines?: readonly string[],
+    limit = 30,
   ): Promise<{ fromRunId: string; newRunId: string }[]> {
     const authority = this.fallbackAuthority;
     if (authority === undefined) return [];
-    const candidates = (await this.store.listQueuedRuns()).filter(
-      (run) => run.providerFallback !== undefined,
-    );
+    const selectionTime = this.clock.now();
+    const [queued, cooldowns] = await Promise.all([
+      this.store.listQueuedRuns(),
+      this.store.readProviderCooldowns(authority.pipelines),
+    ]);
+    // Healthy older requests must not consume the bounded reroute batch.
+    // This prefilter grants no authority: the transaction rechecks cooldown,
+    // exact run identity, current requester grants and provider occupancy.
+    const candidates = queued
+      .filter(
+        (run) =>
+          run.providerFallback !== undefined &&
+          providerIsCoolingDown(cooldowns[run.pipeline], selectionTime) &&
+          (run.queue?.deferredUntil === undefined ||
+            run.queue.deferredUntil <= selectionTime),
+      )
+      .slice(0, limit);
     const rerouted: { fromRunId: string; newRunId: string }[] = [];
     for (const candidate of candidates) {
       const now = this.clock.now();
@@ -262,7 +278,9 @@ export class Orchestrator {
             cooldown: queueEligibility.cooldowns[run.pipeline],
             authorizedPipelines: authority
               .allowedPipelines(task.task, run)
-              .filter((pipeline) => executorPipelines.includes(pipeline)),
+              .filter((pipeline) =>
+                (executorPipelines ?? authority.pipelines).includes(pipeline),
+              ),
             availablePipelines: availableQueuePipelines({
               ...queueEligibility,
               pipelines: authority.pipelines,

@@ -1,6 +1,7 @@
 import {
   isLive,
   MAX_AUTO_RETRIES,
+  type ProviderFallback,
   type Run,
   type Task,
   type TaskId,
@@ -58,6 +59,14 @@ export interface ItemRunView {
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
+  providerFallback?: Pick<
+    ProviderFallback,
+    | 'allowedPipelines'
+    | 'attemptedPipelines'
+    | 'originalRunId'
+    | 'fromRunId'
+    | 'trigger'
+  >;
   queue?: { state: 'queued' | 'claimed'; claimedBy?: string };
   /** The human turn that opened this round, for a `mode: reply` run.
    *  Round 1's human turn is `spec.description`, not a reply. */
@@ -135,6 +144,21 @@ export function toItemView(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.providerFallback === undefined
+        ? {}
+        : {
+            providerFallback: {
+              allowedPipelines: [...r.providerFallback.allowedPipelines],
+              attemptedPipelines: [...r.providerFallback.attemptedPipelines],
+              originalRunId: r.providerFallback.originalRunId,
+              ...(r.providerFallback.fromRunId === undefined
+                ? {}
+                : { fromRunId: r.providerFallback.fromRunId }),
+              ...(r.providerFallback.trigger === undefined
+                ? {}
+                : { trigger: { ...r.providerFallback.trigger } }),
+            },
+          }),
       ...(r.queue === undefined
         ? {}
         : {
@@ -186,6 +210,21 @@ export function toWorkSummary(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.providerFallback === undefined
+        ? {}
+        : {
+            providerFallback: {
+              allowedPipelines: [...r.providerFallback.allowedPipelines],
+              attemptedPipelines: [...r.providerFallback.attemptedPipelines],
+              originalRunId: r.providerFallback.originalRunId,
+              ...(r.providerFallback.fromRunId === undefined
+                ? {}
+                : { fromRunId: r.providerFallback.fromRunId }),
+              ...(r.providerFallback.trigger === undefined
+                ? {}
+                : { trigger: { ...r.providerFallback.trigger } }),
+            },
+          }),
       ...(r.queue === undefined
         ? {}
         : {

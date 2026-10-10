@@ -6,6 +6,7 @@ import {
   Button,
   Group,
   Modal,
+  MultiSelect,
   Paper,
   Select,
   Stack,
@@ -67,6 +68,7 @@ interface QuickTaskSubmission {
   evidenceId?: string;
   repository: { owner: string; name: string };
   pipeline: AgentPipeline;
+  fallbackPipelines?: AgentPipeline[];
   description: string;
   source: QuickTaskSourceContext;
   file?: File;
@@ -115,6 +117,9 @@ export function QuickTaskButton({
     return String(index >= 0 ? index : 0);
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
+  const [fallbackPipelines, setFallbackPipelines] = useState<AgentPipeline[]>(
+    [],
+  );
   const submitInFlightRef = useRef(false);
 
   // The server-rendered trigger is visible before this client component's
@@ -249,6 +254,9 @@ export function QuickTaskButton({
               spec: {
                 title: deriveQuickTaskTitle(request.description),
                 pipeline: request.pipeline,
+                ...(request.fallbackPipelines === undefined
+                  ? {}
+                  : { fallbackPipelines: request.fallbackPipelines }),
                 description: composeQuickTaskIssueBody(
                   {
                     description: request.description,
@@ -343,11 +351,21 @@ export function QuickTaskButton({
         name: selectedRepo.name,
       },
       pipeline: effectivePipeline,
+      ...(fallbackPipelines.length === 0
+        ? {}
+        : {
+            fallbackPipelines: fallbackPipelines.filter(
+              (candidate) =>
+                candidate !== effectivePipeline &&
+                supportedPipelines.includes(candidate),
+            ),
+          }),
       description,
       source,
       ...(screenshot ? { file: screenshot } : {}),
     };
     setDescription('');
+    setFallbackPipelines([]);
     setScreenshot(null);
     setSource(emptySourceContext());
     close();
@@ -414,6 +432,23 @@ export function QuickTaskButton({
             }}
             allowDeselect={false}
             disabled={pipelineOptions.length === 0}
+          />
+          <MultiSelect
+            label="Allowed fallback order"
+            description="Optional. After a provider limit, start a fresh attempt in selection order. Your current grants still apply."
+            data={pipelineOptions.filter(
+              (option) => option.value !== effectivePipeline,
+            )}
+            value={fallbackPipelines.filter(
+              (candidate) =>
+                candidate !== effectivePipeline &&
+                supportedPipelines.includes(candidate),
+            )}
+            onChange={(values) =>
+              setFallbackPipelines(values as AgentPipeline[])
+            }
+            maxValues={2}
+            clearable
           />
           <Textarea
             label="Description"

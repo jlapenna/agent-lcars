@@ -13,6 +13,7 @@ import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
 import { isClosedItemState } from './session-expiry';
 import { forbiddenReason, type WorkContext } from './work-mint';
+import { authorizeProviderFallback } from './work-provider-fallback';
 
 /** The pipelines whose CLI session can be restored. Values are
  *  `SessionAgent` members (`libs/telemetry/src/lib/types.ts`), matching
@@ -44,6 +45,7 @@ export interface ReplyRequest {
   ref?: string;
   pipeline?: string;
   resume?: boolean;
+  fallbackPipelines?: readonly string[];
 }
 
 export type ReplyOutcome =
@@ -182,6 +184,11 @@ export async function requestReply(
         ? `${taskKey(request.task)}:${task.task.runCount + 1}`
         : `reply:${request.ref}`,
     pipeline,
+    providerFallback: authorizeProviderFallback(
+      principal,
+      pipeline,
+      request.fallbackPipelines ?? spec.fallbackPipelines,
+    ),
     ...(replaceQueuedRunId === undefined ? {} : { replaceQueuedRunId }),
     params: {
       mode: 'reply',

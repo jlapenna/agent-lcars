@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { parseCron } from './cron';
 import {
+  fallbackPipelinesSchema,
   PIPELINES,
   WORK_TITLE_MAX,
   workOriginSchema,
@@ -40,6 +41,21 @@ export const itemRunViewSchema = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   result: runResultSchema.optional(),
+  providerFallback: z
+    .strictObject({
+      allowedPipelines: z.array(z.string()),
+      attemptedPipelines: z.array(z.string()),
+      originalRunId: z.string(),
+      fromRunId: z.string().optional(),
+      trigger: z
+        .strictObject({
+          reason: z.enum(['provider-limit', 'provider-cooldown']),
+          failureRunId: z.string(),
+          limitedPipeline: z.string(),
+        })
+        .optional(),
+    })
+    .optional(),
   /** The human turn that opened this round, for a `mode: reply` run.
    *  Round 1's human turn is `spec.description`, not a reply. Mirrors
    *  `@agent-lcars/work/derive`'s `ItemRunView`. */
@@ -110,6 +126,11 @@ export const itemsContract = {
         retried: z.array(
           z.strictObject({ lostRunId: z.string(), newRunId: z.string() }),
         ),
+        rerouted: z
+          .array(
+            z.strictObject({ fromRunId: z.string(), newRunId: z.string() }),
+          )
+          .optional(),
         dispatched: z.array(z.string()),
         reported: z.array(z.string()),
         outboxProcessed: z.number().int().nonnegative(),
@@ -284,6 +305,7 @@ export const itemsContract = {
         // Session ids are opaque UUIDs from the agent CLI, not ULIDs --
         // bounded generously above any real id.
         resumeSessionId: z.string().min(1).max(256).optional(),
+        fallbackPipelines: fallbackPipelinesSchema.optional(),
       }),
     )
     .output(itemViewSchema),
@@ -318,6 +340,7 @@ export const itemsContract = {
          *  carries the reply text. */
         resume: z.boolean().optional(),
         pipeline: z.enum(['claude', 'codex', 'opencode']).optional(),
+        fallbackPipelines: fallbackPipelinesSchema.optional(),
       }),
     )
     .output(
@@ -363,6 +386,7 @@ export const githubDispatchSpecSchema = z.strictObject({
   title: z.string().min(1).max(WORK_TITLE_MAX),
   description: z.string().max(GITHUB_DISPATCH_DESCRIPTION_MAX),
   pipeline: z.enum(PIPELINES),
+  fallbackPipelines: fallbackPipelinesSchema.optional(),
   target: workTargetSchema,
 });
 
@@ -454,6 +478,7 @@ export const dispatchesContract = {
         context: z.string().max(4_096).optional(),
         /** Caller-controlled idempotency key for this redispatch. */
         requestId: z.string().min(1).max(128),
+        fallbackPipelines: fallbackPipelinesSchema.optional(),
       }),
     )
     .output(githubDispatchResultSchema),

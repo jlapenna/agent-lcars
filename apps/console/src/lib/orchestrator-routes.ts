@@ -312,6 +312,10 @@ export async function handleReconcile(
 ): Promise<RouteResult> {
   try {
     const swept = await deps.orchestrator.sweepExpired();
+    // Keep provider-cooldown rerouting in maintenance, outside the executor's
+    // ten-second claim request. Every choice rechecks the requesting grant;
+    // the ordinary claim transaction still enforces the executor grant.
+    const rerouted = await deps.orchestrator.rerouteQueued();
     // One drain owns the whole bounded maintenance pass so its failed-entry
     // exclusion remains effective across all 30 claims. The five-minute
     // ticker continues any larger backlog on its next pass.
@@ -326,6 +330,7 @@ export async function handleReconcile(
       body: {
         lost: swept.lost.map((run) => run.runId),
         retried: swept.retried,
+        rerouted,
         dispatched: drained.dispatched,
         reported: drained.reported,
         outboxProcessed,

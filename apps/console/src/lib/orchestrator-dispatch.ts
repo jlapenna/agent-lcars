@@ -433,6 +433,15 @@ async function handleReportOutcome(
     return;
   }
 
+  const fallbackSuccessor =
+    run.providerFallback === undefined
+      ? undefined
+      : (await store.listRuns(run.task)).find(
+          (candidate) =>
+            candidate.requestSource === 'provider-fallback' &&
+            candidate.providerFallback?.fromRunId === run.runId,
+        );
+
   // `anchorTarget` only needs the task for a native anchor's `spec.target
   // .repo`; `describeLostOutcome` below separately needs the full task doc
   // (any anchor type) for its activeRunId/consecutiveLost read, but only
@@ -464,7 +473,14 @@ async function handleReportOutcome(
       await settleClaim(deps, entry, 'done');
       return;
     }
-    await deliverNativeOutcome(deps, entry, run, task, result);
+    await deliverNativeOutcome(
+      deps,
+      entry,
+      run,
+      task,
+      result,
+      fallbackSuccessor,
+    );
     return;
   }
 
@@ -494,7 +510,7 @@ async function handleReportOutcome(
     run.state === 'lost'
       ? await describeLostOutcome(store, run, task)
       : {
-          body: outcomeCommentBody(run),
+          body: outcomeCommentBody(run, fallbackSuccessor),
           needsHumanLabel: run.state === 'finished' && runNeedsHumanLabel(run),
         };
   const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
@@ -570,6 +586,7 @@ async function deliverNativeOutcome(
   run: Run,
   task: Task,
   result: DrainOutboxResult,
+  fallbackSuccessor?: Run,
 ): Promise<void> {
   if (!isWorkAnchor(run.task)) {
     // Unreachable: this helper is only called when `anchorTarget` resolved
@@ -635,6 +652,24 @@ async function deliverNativeOutcome(
     ...(run.result?.ref === undefined ? {} : { ref: run.result.ref }),
     thread: origin.thread,
     consoleUrl: `${consoleUrl()}/work/${run.task.workId}`,
+    ...(run.providerFallback?.trigger === undefined ||
+    run.providerFallback.fromRunId === undefined
+      ? {}
+      : {
+          providerFallback: {
+            originalRunId: run.providerFallback.originalRunId,
+            fromRunId: run.providerFallback.fromRunId,
+            ...run.providerFallback.trigger,
+          },
+        }),
+    ...(fallbackSuccessor === undefined
+      ? {}
+      : {
+          reroutedTo: {
+            runId: fallbackSuccessor.runId,
+            pipeline: fallbackSuccessor.pipeline,
+          },
+        }),
   };
 
   const deliver = deps.deliverOutcomeWebhook ?? deliverOutcomeWebhookDefault;
@@ -908,7 +943,7 @@ function isLaterRun(candidate: Run, run: Run): boolean {
   );
 }
 
-export function outcomeCommentBody(run: Run): string {
+export function outcomeCommentBody(run: Run, fallbackSuccessor?: Run): string {
   switch (run.state) {
     case 'finished': {
       const lines = run.result?.ok
@@ -934,7 +969,11 @@ export function outcomeCommentBody(run: Run): string {
       } else if (run.result?.summary !== undefined) {
         lines.push(run.result.summary);
       }
-      if (run.result?.ok === false) {
+      if (fallbackSuccessor !== undefined) {
+        lines.push(
+          `A fresh fallback attempt ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} was created after this provider limit. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
+        );
+      } else if (run.result?.ok === false) {
         // Mirrors `describeLostOutcome`'s exhausted-budget clause: the run
         // itself never called this a retryable loss, so (unlike `lost`)
         // no auto-retry will follow it -- the task failed,
@@ -943,6 +982,12 @@ export function outcomeCommentBody(run: Run): string {
           'Execution failed; no human decision has been established. ' +
             'No auto-retry will follow -- re-request manually (re-add the ' +
             'agent label) when ready.',
+        );
+      }
+      if (run.providerFallback?.trigger !== undefined) {
+        const { trigger, originalRunId, fromRunId } = run.providerFallback;
+        lines.push(
+          `Fresh fallback from ${fromRunId} on ${trigger.limitedPipeline} (${trigger.reason}); triggering failure: ${trigger.failureRunId}; original intent: ${originalRunId}.`,
         );
       }
       return lines.join('\n');

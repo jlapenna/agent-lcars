@@ -1,6 +1,7 @@
 import type { ItemView } from '@agent-lcars/work/derive';
 import { Anchor, Code, Group, Stack, Text } from '@mantine/core';
 
+import { ProviderFallbackSummary } from './provider-fallback-summary';
 import { safeHttpUrl } from './safe-url';
 
 /** Same rendering rule `page.tsx`'s `RunRef` already uses: `result.ref` is
@@ -99,6 +100,7 @@ export function Conversation({
         const session = item.sessions.find((s) => s.runId === run.runId);
         return (
           <Stack key={run.runId} gap="xs">
+            <ProviderFallbackSummary run={run} />
             {humanText !== undefined && (
               <HumanTurn
                 text={humanText}

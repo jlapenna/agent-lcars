@@ -6,6 +6,7 @@ import { Anchor, Badge, Divider, Group, Stack, Text } from '@mantine/core';
 import type { AgentPipeline } from '../../lib/agent-activity';
 import { PipelineBadge } from '../agent-activity-panel';
 import { RelativeTime } from '../relative-time';
+import { ProviderFallbackSummary } from '../work/provider-fallback-summary';
 import { safeHttpUrl } from '../work/safe-url';
 
 const RUN_STATE_LABELS: Record<RunState, string> = {
@@ -33,6 +34,7 @@ const EVENT_BY_LABELS: Record<RunEvent['by'], string> = {
   operator: 'operator',
   expiry: 'lease expired',
   executor: 'worker exited',
+  'provider-fallback': 'provider fallback',
 };
 
 const KNOWN_PIPELINES = new Set<AgentPipeline>(['claude', 'codex', 'opencode']);
@@ -164,6 +166,7 @@ function RunRow({ run }: { run: Run }) {
         )}
         <RunParamChips params={run.params} />
       </Group>
+      <ProviderFallbackSummary run={run} />
       {run.events.length > 0 && (
         <Stack gap={2} pl="xs" data-testid={`run-events-${run.runId}`}>
           {run.events.map((event, index) => (

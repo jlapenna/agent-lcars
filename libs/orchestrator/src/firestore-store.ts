@@ -803,6 +803,18 @@ export class FirestoreStore implements OrchestratorStore {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit);
   }
+  async readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>> {
+    const records = await Promise.all(
+      pipelines.map((pipeline) =>
+        this.#providerCooldowns.doc(encodeURIComponent(pipeline)).get(),
+      ),
+    );
+    return Object.fromEntries(
+      pipelines.map((pipeline, index) => [pipeline, records[index]?.data()]),
+    );
+  }
 
   async releaseQueuedRunClaim(input: {
     runId: string;

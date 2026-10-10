@@ -77,6 +77,35 @@ function renderConversation(item: ItemView) {
 }
 
 describe('Conversation', () => {
+  it('renders a fresh provider fallback with its original intent and triggering failure', () => {
+    const run = itemWithLiveRound.runs[0]!;
+    renderConversation({
+      ...itemWithLiveRound,
+      runs: [
+        {
+          ...run,
+          pipeline: 'codex',
+          providerFallback: {
+            allowedPipelines: ['codex', 'opencode'],
+            attemptedPipelines: ['claude', 'codex'],
+            originalRunId: 'work:x/r1',
+            fromRunId: 'work:x/r1',
+            trigger: {
+              reason: 'provider-cooldown',
+              failureRunId: 'other/repo#7/r3',
+              limitedPipeline: 'claude',
+            },
+          },
+        },
+      ],
+    });
+    expect(
+      screen.getByText(/Fresh attempt on codex.*claude is cooling down/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/triggering failure: other\/repo#7\/r3/),
+    ).toBeInTheDocument();
+  });
   it('renders round one as the spec description and each reply round as a turn pair', () => {
     renderConversation(itemWithTwoRounds);
     // round 1: the human turn is the item's own description

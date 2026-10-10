@@ -21,6 +21,7 @@ import {
   view,
   type WorkContext,
 } from './work-mint';
+import { authorizeProviderFallback } from './work-provider-fallback';
 import { requestReply } from './work-reply';
 
 export type { WorkContext } from './work-mint';
@@ -317,6 +318,11 @@ export const workRouter = os.router({
         taskId: { workId: input.id },
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
+        providerFallback: authorizeProviderFallback(
+          context.principal,
+          spec.pipeline,
+          input.fallbackPipelines ?? spec.fallbackPipelines,
+        ),
         params: { mode: 'implement', ...resumeParams },
       });
       if (isRefusal(outcome)) {
@@ -344,6 +350,9 @@ export const workRouter = os.router({
       principal: context.principal.principal,
       ...(input.resume === undefined ? {} : { resume: input.resume }),
       ...(input.pipeline === undefined ? {} : { pipeline: input.pipeline }),
+      ...(input.fallbackPipelines === undefined
+        ? {}
+        : { fallbackPipelines: input.fallbackPipelines }),
     });
     if (!outcome.ok) {
       if (outcome.code === 'NOT_FOUND') throw errors.NOT_FOUND();

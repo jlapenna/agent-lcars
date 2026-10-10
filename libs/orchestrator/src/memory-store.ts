@@ -613,4 +613,14 @@ export class MemoryStore implements OrchestratorStore {
         .slice(0, limit),
     );
   }
+  async readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>> {
+    return Object.fromEntries(
+      pipelines.map((pipeline) => [
+        pipeline,
+        structuredClone(this.#providerCooldowns.get(pipeline)),
+      ]),
+    );
+  }
 }

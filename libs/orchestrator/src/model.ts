@@ -284,6 +284,8 @@ const uniquePipelineList = z
 export const providerFallbackSchema = z
   .strictObject({
     principal: z.string().min(1).max(128),
+    /** Retain the signed OIDC repository boundary when present at admission. */
+    sourceRepository: githubAnchorSchema.shape.repo.optional(),
     allowedPipelines: uniquePipelineList.min(1).max(8),
     attemptedPipelines: uniquePipelineList.min(1).max(9),
     originalRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
@@ -307,6 +309,7 @@ export type ProviderFallback = z.infer<typeof providerFallbackSchema>;
 export interface ProviderFallbackRequest {
   readonly principal: string;
   readonly allowedPipelines: readonly string[];
+  readonly sourceRepository?: string;
 }
 
 export const runSchema = z.strictObject({

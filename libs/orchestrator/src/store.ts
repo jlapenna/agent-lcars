@@ -389,6 +389,10 @@ export interface OrchestratorStore {
   /** Every live run with `queue.state === 'queued'`, oldest first. An
    * optional `limit` bounds the result after terminal entries are removed. */
   listQueuedRuns(limit?: number): Promise<Run[]>;
+  /** Read-only prefilter; decisions must recheck these records transactionally. */
+  readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>>;
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and
