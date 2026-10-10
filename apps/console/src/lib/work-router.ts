@@ -5,6 +5,9 @@ import {
   isLive,
   isRefusal,
   isWorkAnchor,
+  LIFECYCLE_METRICS_READ_LIMIT,
+  LIFECYCLE_METRICS_WINDOW_SECONDS,
+  lifecycleMetricSnapshot,
 } from '@agent-lcars/orchestrator';
 import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
@@ -60,6 +63,18 @@ const cron = os.use(async ({ context, next }) => {
   return next({ context });
 });
 
+const metricsReader = os.use(async ({ context, next }) => {
+  if (
+    !context.principal?.scopes.has('work.operator') &&
+    !context.principal?.scopes.has('work.cron')
+  ) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.operator or work.cron scope required',
+    });
+  }
+  return next({ context });
+});
+
 /** `list`/`get` additionally accept `work.reaper` (the session-expiry
  *  workflow, a read-only caller) -- `create`/`cancel`/`redispatch`
  *  stay `operator`-only; a reaper-scoped principal must never mint or
@@ -79,6 +94,19 @@ const reader = os.use(async ({ context, next }) => {
 });
 
 export const workRouter = os.router({
+  lifecycleMetrics: metricsReader.lifecycleMetrics.handler(
+    async ({ context }) => {
+      const observedAt = context.now().toISOString();
+      const records = await context.runtime.store.readLifecycleMetricRecords({
+        since: new Date(
+          Date.parse(observedAt) - LIFECYCLE_METRICS_WINDOW_SECONDS * 1_000,
+        ).toISOString(),
+        until: observedAt,
+        limit: LIFECYCLE_METRICS_READ_LIMIT,
+      });
+      return lifecycleMetricSnapshot(records, observedAt);
+    },
+  ),
   maintenanceTick: cron.maintenanceTick.handler(async ({ context }) => {
     const result = await handleReconcile(context.runtime);
     if (result.status !== 200) {

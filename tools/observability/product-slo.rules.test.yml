@@ -1,0 +1,150 @@
+rule_files:
+  - product-slo.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: a missing timestamp still warns with the affected collector labels
+    interval: 1m
+    input_series:
+      - series: lcars_product_snapshot_complete{job="lcars-product",instance="one"}
+        values: 1x15
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: LcarsProductObservationUnavailable
+        exp_alerts:
+          - exp_labels: { job: lcars-product, instance: one, severity: warning }
+    promql_expr_test:
+      - expr: lcars_product:observation_ready
+        eval_time: 11m
+        exp_samples: []
+  - name: stale observations cannot page as a current loss
+    interval: 1m
+    input_series:
+      - series: lcars_product_snapshot_complete{job="lcars-product",instance="one"}
+        values: 1x20
+      - series: lcars_product_snapshot_observed_timestamp_seconds{job="lcars-product",instance="one"}
+        values: 0x20
+      - series: lcars_product_silent_loss_runs{job="lcars-product",instance="one",pipeline="codex"}
+        values: 1x20
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: LcarsProductObservationUnavailable
+        exp_alerts:
+          - exp_labels: { job: lcars-product, instance: one, severity: warning }
+      - eval_time: 14m
+        alertname: LcarsProductSilentLoss
+        exp_alerts: []
+  - name: low volume and unknown duration samples suppress budget claims
+    interval: 1m
+    input_series:
+      - series: lcars_product_snapshot_complete{job="lcars-product",instance="one"}
+        values: 1x20
+      - series: lcars_product_snapshot_observed_timestamp_seconds{job="lcars-product",instance="one"}
+        values: 0+60x20
+      - series: lcars_product_latency_window_observations{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
+        values: 29x20
+      - series: lcars_product_latency_window_samples{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue",upper_bound_seconds="60"}
+        values: 0x20
+      - series: lcars_product_latency_window_unknown{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
+        values: 0x20
+      - series: lcars_product_latency_window_observations{job="lcars-product",instance="one",pipeline="codex",stage="admission_to_queue"}
+        values: 40x20
+      - series: lcars_product_latency_window_samples{job="lcars-product",instance="one",pipeline="codex",stage="admission_to_queue",upper_bound_seconds="60"}
+        values: 0x20
+      - series: lcars_product_latency_window_unknown{job="lcars-product",instance="one",pipeline="codex",stage="admission_to_queue"}
+        values: 1x20
+    promql_expr_test:
+      - expr: lcars_product:admission_bad_ratio_1h
+        eval_time: 16m
+        exp_samples: []
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: LcarsProductAdmissionBudget
+        exp_alerts: []
+  - name: incomplete reads cannot report healthy observations
+    interval: 1m
+    input_series:
+      - series: lcars_product_snapshot_complete{job="lcars-product",instance="one"}
+        values: 0x15
+      - series: lcars_product_snapshot_observed_timestamp_seconds{job="lcars-product",instance="one"}
+        values: 0+60x15
+      - series: lcars_product_silent_loss_runs{job="lcars-product",instance="one",pipeline="codex"}
+        values: 0x15
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: LcarsProductObservationUnavailable
+        exp_alerts:
+          - exp_labels: { job: lcars-product, instance: one, severity: warning }
+      - eval_time: 11m
+        alertname: LcarsProductSilentLoss
+        exp_alerts: []
+    promql_expr_test:
+      - expr: lcars_product:observation_ready
+        eval_time: 11m
+        exp_samples: []
+  - name: live loss and dead letters are actionable only with fresh complete observations
+    interval: 1m
+    input_series:
+      - series: lcars_product_snapshot_complete{job="lcars-product",instance="one"}
+        values: 1x15
+      - series: lcars_product_snapshot_observed_timestamp_seconds{job="lcars-product",instance="one"}
+        values: 0+60x15
+      - series: lcars_product_silent_loss_runs{job="lcars-product",instance="one",pipeline="codex"}
+        values: 1x15
+      - series: lcars_product_outbox_entries{job="lcars-product",instance="one",kind="report-outcome",state="failed"}
+        values: 2x15
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: LcarsProductSilentLoss
+        exp_alerts:
+          - exp_labels:
+              {
+                job: lcars-product,
+                instance: one,
+                pipeline: codex,
+                severity: warning,
+              }
+      - eval_time: 11m
+        alertname: LcarsProductDeadLetters
+        exp_alerts:
+          - exp_labels:
+              {
+                job: lcars-product,
+                instance: one,
+                kind: report-outcome,
+                state: failed,
+                severity: warning,
+              }
+      - eval_time: 11m
+        alertname: LcarsProductObservationUnavailable
+        exp_alerts: []
+  - name: overlapping rolling gauges measure a ratio, never a counter rate
+    interval: 1m
+    input_series:
+      - series: lcars_product_snapshot_complete{job="lcars-product",instance="one"}
+        values: 1x20
+      - series: lcars_product_snapshot_observed_timestamp_seconds{job="lcars-product",instance="one"}
+        values: 0+60x20
+      - series: lcars_product_latency_window_observations{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
+        values: 40x20
+      - series: lcars_product_latency_window_samples{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue",upper_bound_seconds="60"}
+        values: 36x20
+      - series: lcars_product_latency_window_unknown{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
+        values: 0x20
+    promql_expr_test:
+      - expr: lcars_product:admission_bad_ratio_1h
+        eval_time: 16m
+        exp_samples:
+          - labels: lcars_product:admission_bad_ratio_1h{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
+            value: 0.1
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: LcarsProductAdmissionBudget
+        exp_alerts:
+          - exp_labels:
+              {
+                job: lcars-product,
+                instance: one,
+                pipeline: claude,
+                stage: admission_to_queue,
+                severity: warning,
+              }

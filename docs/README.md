@@ -6,16 +6,17 @@ Use this index to retrieve the smallest current contract for a task.
 
 ## System and operations
 
-| Need                                     | Canonical document                                                         |
-| ---------------------------------------- | -------------------------------------------------------------------------- |
-| Dispatch ownership and failure routing   | [`lifecycle-systems.md`](lifecycle-systems.md)                             |
-| Application/deployment/Homelab boundary  | [`deployment-boundary.md`](deployment-boundary.md)                         |
-| Work API access and parked-item cleanup  | [`../OPERATIONS.md`](../OPERATIONS.md)                                     |
-| Published actions and reusable workflows | [`published-actions.md`](published-actions.md)                             |
-| CI control flags                         | [`ci-control-flags.md`](ci-control-flags.md)                               |
-| Runner image publication                 | [`image-publish-routing.md`](image-publish-routing.md)                     |
-| Nx remote cache                          | [`nx-remote-cache.md`](nx-remote-cache.md)                                 |
-| App Hosting stale revision audit         | [`apphosting-stale-revision-audit.md`](apphosting-stale-revision-audit.md) |
+| Need                                          | Canonical document                                                         |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| Dispatch ownership and failure routing        | [`lifecycle-systems.md`](lifecycle-systems.md)                             |
+| Application/deployment/Homelab boundary       | [`deployment-boundary.md`](deployment-boundary.md)                         |
+| Work API access and parked-item cleanup       | [`../OPERATIONS.md`](../OPERATIONS.md)                                     |
+| Product lifecycle measurement and SLO handoff | [`product-lifecycle-metrics.md`](product-lifecycle-metrics.md)             |
+| Published actions and reusable workflows      | [`published-actions.md`](published-actions.md)                             |
+| CI control flags                              | [`ci-control-flags.md`](ci-control-flags.md)                               |
+| Runner image publication                      | [`image-publish-routing.md`](image-publish-routing.md)                     |
+| Nx remote cache                               | [`nx-remote-cache.md`](nx-remote-cache.md)                                 |
+| App Hosting stale revision audit              | [`apphosting-stale-revision-audit.md`](apphosting-stale-revision-audit.md) |
 
 ## Identity, credentials, and security
 

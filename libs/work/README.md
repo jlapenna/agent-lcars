@@ -25,6 +25,16 @@ Regenerate `docs/api/work-v1.openapi.json` with `pnpm work:openapi`; CI
 fails when it is stale. Design:
 `docs/superpowers/specs/2026-08-23-native-work-items-design.md`.
 
+## Read-only lifecycle metrics
+
+`GET /api/work/v1/metrics/lifecycle` accepts `work.operator` or `work.cron`
+and returns a bounded durable observation plus Prometheus text. `work metrics`
+prints the text; `work metrics --json` prints the response. Incomplete reads
+exit nonzero and suppress health series. These are rolling-window gauges,
+not counters or proof that a provider started. Exact clocks, unknown facts
+and the unapplied Homelab monitoring handoff live in
+[`product-lifecycle-metrics.md`](../../docs/product-lifecycle-metrics.md).
+
 ## Replying from the CLI
 
 ```bash

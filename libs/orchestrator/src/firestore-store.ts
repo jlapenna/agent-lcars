@@ -16,6 +16,11 @@ import {
   runStartDeadlineAt,
 } from './decide';
 import {
+  type LifecycleMetricRead,
+  type LifecycleMetricRecords,
+  validateLifecycleMetricRead,
+} from './lifecycle-metrics';
+import {
   byOutboxClaimFairness,
   type GithubAnchorProjection,
   githubAnchorProjectionSchema,
@@ -130,6 +135,42 @@ export class FirestoreStore implements OrchestratorStore {
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
     const snapshot = await this.#taskRef(id).get();
     return snapshot.exists ? taskDocSchema.parse(snapshot.data()) : undefined;
+  }
+
+  async readLifecycleMetricRecords(
+    input: LifecycleMetricRead,
+  ): Promise<LifecycleMetricRecords> {
+    validateLifecycleMetricRead(input);
+    // Automatic single-field indexes only: no infra change or full-table read.
+    const [recent, live, outbox] = await Promise.all([
+      this.#runs
+        .where('updatedAt', '>=', input.since)
+        .where('updatedAt', '<=', input.until)
+        .limit(input.limit + 1)
+        .get(),
+      this.#runs
+        .where('state', 'in', LIVE_STATES)
+        .limit(input.limit + 1)
+        .get(),
+      this.#outbox
+        .where('state', 'in', ['pending', 'leased', 'failed'])
+        .limit(input.limit + 1)
+        .get(),
+    ]);
+    return {
+      recentRuns: recent.docs
+        .slice(0, input.limit)
+        .map((doc) => runSchema.parse(doc.data())),
+      liveRuns: live.docs
+        .slice(0, input.limit)
+        .map((doc) => runSchema.parse(doc.data())),
+      outstandingOutbox: outbox.docs
+        .slice(0, input.limit)
+        .map((doc) => outboxEntrySchema.parse(doc.data())),
+      complete: [recent, live, outbox].every(
+        (feed) => feed.size <= input.limit,
+      ),
+    };
   }
 
   async readRun(runId: string): Promise<Run | undefined> {
