@@ -742,11 +742,11 @@ if [ "$PIPELINE" = "claude" ]; then
     exit 1
   fi
   LAST_MESSAGE_FILE="$RUNNER_TEMP/last-message.txt"
-  CLAUDE_DEADLINE=$((SECONDS + CLAUDE_TIMEOUT_SECONDS))
+  CLAUDE_DEADLINE=$(($(monotonic_seconds) + CLAUDE_TIMEOUT_SECONDS))
   run_claude_round() {
     local prompt="$1" remaining
     shift
-    remaining=$((CLAUDE_DEADLINE - SECONDS))
+    remaining=$((CLAUDE_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
       claude --dangerously-skip-permissions \
@@ -782,13 +782,13 @@ elif [ "$PIPELINE" = "codex" ]; then
     echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
     exit 1
   fi
-  auth_deadline=$((SECONDS + auth_wait_seconds))
+  auth_deadline=$(($(monotonic_seconds) + auth_wait_seconds))
   auth_delay=5
   auth_first_request=1
   trap 'EARLY_FAILURE_MESSAGE="Codex credential wait cancelled"; exit 143' TERM
   trap 'EARLY_FAILURE_MESSAGE="Codex credential wait cancelled"; exit 130' INT
   while true; do
-    auth_remaining=$((auth_deadline - SECONDS))
+    auth_remaining=$((auth_deadline - $(monotonic_seconds)))
     if [ "$auth_first_request" = 0 ] && [ "$auth_remaining" -le 0 ]; then
       EARLY_FAILURE_MESSAGE="Codex credential wait exhausted after $auth_wait_seconds seconds (HTTP 409)"
       echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
@@ -826,7 +826,7 @@ CURLCFG
       echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
       exit 1
     fi
-    auth_remaining=$((auth_deadline - SECONDS))
+    auth_remaining=$((auth_deadline - $(monotonic_seconds)))
     if [ "$auth_remaining" -le 0 ]; then
       EARLY_FAILURE_MESSAGE="Codex credential wait exhausted after $auth_wait_seconds seconds (HTTP 409)"
       echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
@@ -910,12 +910,12 @@ CURLCFG
   # $RUNNER_TEMP lives for the whole script, exactly where Claude's own
   # LAST_MESSAGE_FILE already lives.
   CODEX_LAST_MESSAGE_FILE="$RUNNER_TEMP/codex-last-message.txt"
-  CODEX_DEADLINE=$((SECONDS + CODEX_TIMEOUT_SECONDS))
+  CODEX_DEADLINE=$(($(monotonic_seconds) + CODEX_TIMEOUT_SECONDS))
   CODEX_THREAD_FILE="$CODEX_RUNTIME_DIR/thread-id"
   run_codex_round() {
     local prompt="$1" remaining round_exit
     shift
-    remaining=$((CODEX_DEADLINE - SECONDS))
+    remaining=$((CODEX_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
@@ -1099,11 +1099,11 @@ else
   # No `tee` here means the live log is just the log, and the exit code
   # comes directly from `$?` rather than `${PIPESTATUS[0]}`.
   OPENCODE_LAST_MESSAGE_FILE="$RUNNER_TEMP/opencode-last-message.txt"
-  OPENCODE_DEADLINE=$((SECONDS + OPENCODE_TIMEOUT_SECONDS))
+  OPENCODE_DEADLINE=$(($(monotonic_seconds) + OPENCODE_TIMEOUT_SECONDS))
   run_opencode_round() {
     round_prompt="$1"
     shift
-    round_remaining=$((OPENCODE_DEADLINE - SECONDS))
+    round_remaining=$((OPENCODE_DEADLINE - $(monotonic_seconds)))
     if [ "$round_remaining" -lt 1 ]; then
       return 124
     fi
@@ -1151,7 +1151,7 @@ else
     fi
   fi
 
-  if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((OPENCODE_DEADLINE - SECONDS)) -gt 0 ]; then
+  if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((OPENCODE_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
     set +e
     run_opencode_round "$WORKER_COMPLETION_PROMPT" --session "$OPENCODE_CONTINUATION_SESSION"
     AGENT_EXIT=$?
