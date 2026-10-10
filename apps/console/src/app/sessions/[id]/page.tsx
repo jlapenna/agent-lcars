@@ -1,4 +1,4 @@
-import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
+import type { SessionDoc } from '@agent-lcars/telemetry';
 import { Code, Stack, Text, Title } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
@@ -23,27 +23,50 @@ interface PageProps {
 }
 
 /**
- * The archive section renders supported capture-time transcripts and separately
- * archived OpenCode full exports. Unsupported archive formats keep their URI
- * note. OpenCode exports on older docs may predate the renderable flag; the
- * server fetch result is used only alongside that explicit export capability.
+ * The archive section renders supported capture-time transcripts, consented CLI
+ * transcripts and separately archived OpenCode full exports. Unsupported formats
+ * keep their URI note. Older OpenCode exports may predate the renderable flag;
+ * the fetch result is used only alongside that explicit export capability.
  */
 export function ArchivedSessionTranscript({
   doc,
   transcript,
 }: {
-  doc: IssueAgentSessionDoc;
+  doc: SessionDoc;
   transcript?: SessionTranscriptResult;
 }) {
   if (!doc.transcriptGcsUri) {
-    return null;
+    if (doc.source !== 'cli') return null;
+    const status = doc.cliTranscriptArchive?.status;
+    const messages = {
+      pending: 'Transcript archival enabled; waiting for the session to end.',
+      failed:
+        'Transcript unavailable (archive upload failed; the watcher will retry).',
+      'too-large': 'Transcript unavailable (exceeds the 5 MiB archive limit).',
+      expired: 'Transcript unavailable (archive retention expired).',
+      unsupported:
+        'Transcript unavailable (provider does not support console transcripts).',
+      available: 'Transcript unavailable (archive reference missing).',
+    };
+    return (
+      <Text size="sm" c="dimmed" data-testid="cli-transcript-state">
+        {status
+          ? messages[status]
+          : 'Transcript archival not enabled for this CLI session.'}
+      </Text>
+    );
   }
 
   const agent = doc.agent;
 
   if (
     !doc.renderable &&
-    !(doc.agent === 'opencode' && doc.resumeGcsUri && transcript)
+    !(
+      doc.source === 'issue-agent' &&
+      doc.agent === 'opencode' &&
+      doc.resumeGcsUri &&
+      transcript
+    )
   ) {
     return (
       <Stack gap={4} data-testid="session-archive-note">
@@ -138,12 +161,10 @@ function SessionDetailViewContent({
         <>
           <SessionHeader doc={detail.doc} now={generatedAt} />
 
-          {detail.doc.source === 'issue-agent' && (
-            <ArchivedSessionTranscript
-              doc={detail.doc}
-              transcript={detail.transcript}
-            />
-          )}
+          <ArchivedSessionTranscript
+            doc={detail.doc}
+            transcript={detail.transcript}
+          />
         </>
       )}
     </>
@@ -183,8 +204,8 @@ const SessionDetailView = withConsolePageShell(
 
 /**
  * A single session's detail view: full header (identity, cost/token totals,
- * source-specific fields, deliverables, artifacts) plus - for an
- * issue-agent session whose transcript was archived to GCS - the turn-by-
+ * source-specific fields, deliverables, artifacts) plus - for a
+ * session whose transcript was archived to GCS - the turn-by-
  * turn transcript timeline (or, for an unsupported agent's archive-first
  * stub, a note that it exists). A missing doc is a real 404; every other
  * failure mode (store read failure, GCS fetch/parse failure) fails soft to

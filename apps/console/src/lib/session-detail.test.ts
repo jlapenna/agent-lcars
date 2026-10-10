@@ -216,3 +216,49 @@ describe('getSessionDetail', () => {
     });
   });
 });
+
+describe('CLI session transcript detail', () => {
+  afterEach(() => vi.resetAllMocks());
+  it('reads a consented CLI archive with the provider adapter and size bound', async () => {
+    (getSessionDoc as Mock).mockResolvedValue(
+      cliDoc({
+        agent: 'codex',
+        transcriptGcsUri: 'gs://cli-archives/cli/host/codex/a.jsonl',
+        renderable: true,
+        cliTranscriptArchive: {
+          status: 'available',
+          expiresAt: '2099-01-01T00:00:00Z',
+        },
+      }),
+    );
+    (getSessionTranscript as Mock).mockResolvedValue({
+      events: [],
+      warning: 'Transcript unavailable (failed to fetch from storage).',
+    });
+    expect(await getSessionDetail('cli-1')).toMatchObject({
+      status: 'ok',
+      transcript: { warning: expect.stringContaining('unavailable') },
+    });
+    expect(getSessionTranscript).toHaveBeenCalledWith(
+      'gs://cli-archives/cli/host/codex/a.jsonl',
+      'codex',
+      { maxBytes: 5 * 1024 * 1024 },
+    );
+  });
+  it('never reads an expired CLI archive', async () => {
+    (getSessionDoc as Mock).mockResolvedValue(
+      cliDoc({
+        transcriptGcsUri: 'gs://cli-archives/cli/host/claude-code/a.jsonl',
+        renderable: true,
+        cliTranscriptArchive: {
+          status: 'available',
+          expiresAt: '2000-01-01T00:00:00Z',
+        },
+      }),
+    );
+    expect(await getSessionDetail('cli-1')).toMatchObject({
+      transcript: { warning: expect.stringContaining('retention expired') },
+    });
+    expect(getSessionTranscript).not.toHaveBeenCalled();
+  });
+});

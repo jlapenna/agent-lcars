@@ -237,6 +237,10 @@ interface BaseSessionDoc {
 }
 
 export interface CliSessionDoc extends BaseSessionDoc {
+  /** Explicit host archive consent/capture outcome; absent means not enabled. */
+  cliTranscriptArchive?: import('./cli-transcript-archive').CliTranscriptArchive;
+  transcriptGcsUri?: string;
+  renderable?: boolean;
   source: 'cli';
   /** A host-scoped CLI session is valid without a GitHub repository. When a
    * repository is present it must be canonical; readers never guess one. */
@@ -331,8 +335,9 @@ export interface BuildSessionDocOptions {
   /** `issue-agent` sessions only — `cli` sessions get `repo` from
    * `summary.repo` instead (see {@link SessionSummary.repo}). */
   repo?: { owner: string; name: string };
-  /** `issue-agent` sessions only. */
+  /** CLI capture must also supply cliTranscriptArchive.status = available. */
   transcriptGcsUri?: string;
+  cliTranscriptArchive?: import('./cli-transcript-archive').CliTranscriptArchive;
   /** `issue-agent` sessions only. Only ever set when `transcriptGcsUri` is
    * also set — see {@link ArchivedIssueAgentSessionDoc.resumeGcsUri}. */
   resumeGcsUri?: string;
@@ -341,14 +346,20 @@ export interface BuildSessionDocOptions {
 /**
  * Closed union of `SessionDoc` fields a write can request DELETED from
  * Firestore rather than merely omitted (issue #1257) — `status` and
- * `statusUpdatedAt` (always requested together) and `resolvedModel` (see
+ * `statusUpdatedAt` (always requested together), `resolvedModel`, and CLI
+ * archive capability fields (revoked when consent is absent; see
  * {@link buildSessionWrite}'s `clearFields` derivation in `session-doc.ts`).
  * Closed on purpose: nothing else on `SessionDoc` is deletable this way, so
  * a caller can never mistakenly request deletion of a field this contract
  * doesn't cover.
  */
 export type ClearableSessionField =
-  'status' | 'statusUpdatedAt' | 'resolvedModel';
+  | 'status'
+  | 'statusUpdatedAt'
+  | 'resolvedModel'
+  | 'cliTranscriptArchive'
+  | 'transcriptGcsUri'
+  | 'renderable';
 
 /**
  * The complete description of one Firestore write: the document to merge,

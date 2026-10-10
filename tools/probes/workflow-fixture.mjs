@@ -159,7 +159,7 @@ export function workflowFixture(directory, home, mode) {
             'bash',
             [
               '-c',
-              'source "$1/worker-policy-bootstrap.sh"; source "$1/worker-completion.sh"; worker_completion_needed "$2" "$((SECONDS + $3))" && worker_authorize_correction && printf "%s" "$WORKER_COMPLETION_PROMPT"',
+              'source "$1/worker-policy-bootstrap.sh"; source "$1/worker-completion.sh"; worker_completion_needed "$2" "$(($(monotonic_seconds) + $3))" && worker_authorize_correction && printf "%s" "$WORKER_COMPLETION_PROMPT"',
               'workflow-correction',
               helperRoot,
               String(execution.code ?? 1),

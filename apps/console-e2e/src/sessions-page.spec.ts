@@ -93,6 +93,17 @@ test.describe('/sessions workspace @smoke', () => {
       .toBe(true);
   });
 
+  test('shows that CLI transcript archival is disabled without session consent', async ({
+    page,
+  }) => {
+    await page.goto(`/sessions/${E2E_CLI_SESSION_IDS.live}`);
+    await expect(page.getByTestId('session-header')).toBeVisible();
+    await expect(page.getByTestId('cli-transcript-state')).toHaveText(
+      'Transcript archival not enabled for this CLI session.',
+    );
+    await expect(page.getByTestId('transcript-timeline')).toHaveCount(0);
+  });
+
   test('gives artifact preview controls unique accessible names', async ({
     page,
   }) => {

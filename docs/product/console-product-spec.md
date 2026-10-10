@@ -431,9 +431,12 @@ CLI sessions and dispatched runs.
   for dispatched `issue-agent` sessions whose agent is in
   `RENDERABLE_TRANSCRIPT_AGENTS`, currently Claude Code and Codex. OpenCode
   sessions show "Session archive stored ({agent} format) — not yet
-  renderable", and CLI sessions have no transcript view. **Proposed:** render
-  OpenCode transcripts and CLI sessions through the existing
-  `libs/telemetry` adapters.
+  renderable". CLI Claude Code/Codex sessions use the same timeline only after
+  explicit per-session host archive consent, within the existing privacy
+  allowlists and 5 MiB / 30-day bounds; otherwise detail shows not-enabled or
+  unavailable. See [CLI archive policy](../../apps/telemetry-watcher/README.md#opt-in-cli-transcript-archives).
+  Production activation is a separate operator-approved operation.
+  **Proposed:** render OpenCode transcripts through the existing adapters.
 - **FE-SE-5 [Shipped]** A session's title is the transcript's own title
   (Claude Code's `aiTitle`) unless `lcars session title` sets an override, and
   `lcars session status` adds a status line. A session that drifts from its

@@ -2135,7 +2135,7 @@ describe('WatcherDaemon', () => {
         // deletion.
         await daemon.tick();
         expect(writes).toHaveLength(1);
-        expect(writes[0].clearFields).toEqual([]);
+        expect(writes[0].clearFields).not.toContain('status');
         expect(writes[0].doc).toMatchObject({ status: 'in progress' });
 
         // Tick 2: `lcars session status --clear` happens — the annotation
@@ -2144,7 +2144,9 @@ describe('WatcherDaemon', () => {
         statusOverlay = statusOverlayRead(new Map());
         await daemon.tick();
         expect(writes).toHaveLength(2);
-        expect(writes[1].clearFields).toEqual(['status', 'statusUpdatedAt']);
+        expect(writes[1].clearFields).toEqual(
+          expect.arrayContaining(['status', 'statusUpdatedAt']),
+        );
         expect(writes[1].doc).not.toHaveProperty('status');
         expect(writes[1].doc).not.toHaveProperty('statusUpdatedAt');
 

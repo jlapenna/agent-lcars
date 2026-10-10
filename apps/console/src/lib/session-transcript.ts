@@ -27,7 +27,7 @@ export interface SessionTranscriptResult {
 }
 
 /**
- * Fetches and parses an issue-agent session's archived transcript for the
+ * Fetches and parses a session's archived transcript for the
  * detail page's timeline section. Every failure mode - a malformed/expired
  * `gs://` URI, the object missing from the bucket, a network/auth error, or
  * a transcript with some unparseable lines - degrades to a warning rather
@@ -37,12 +37,15 @@ export interface SessionTranscriptResult {
 export async function getSessionTranscript(
   transcriptGcsUri: string,
   agent: SessionAgent = 'claude-code',
+  options?: { maxBytes: number },
 ): Promise<SessionTranscriptResult> {
   let raw: string;
   try {
     raw =
       (isE2eTesting() ? getE2eTranscript(transcriptGcsUri) : undefined) ??
-      (await fetchSessionTranscript(transcriptGcsUri));
+      (options
+        ? await fetchSessionTranscript(transcriptGcsUri, options.maxBytes)
+        : await fetchSessionTranscript(transcriptGcsUri));
   } catch (error) {
     logger.error(
       'agent-lcars: failed to fetch session transcript from storage:',
