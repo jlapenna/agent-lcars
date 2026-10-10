@@ -10,6 +10,10 @@ import {
 import { parseArgs, promisify } from 'node:util';
 
 import {
+  QUEUE_PRIORITIES,
+  type QueuePriority,
+} from '@agent-lcars/dispatch-contracts';
+import {
   type ItemsContract,
   itemsContract,
   itemStateSchema,
@@ -35,7 +39,7 @@ export interface WorkCommandDeps {
 }
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> --title "<text>" (--description "<text>" | --description-file <path>)\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>)\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id>\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
@@ -98,7 +102,12 @@ const SETTLED = new Set(['done', 'parked', 'failed', 'canceled']);
 interface ItemSummary {
   id: string;
   state: string;
-  spec: { title: string; pipeline: string; target: { repo: string } };
+  spec: {
+    title: string;
+    pipeline: string;
+    priority?: QueuePriority;
+    target: { repo: string };
+  };
 }
 
 function line(item: ItemSummary): string {
@@ -212,6 +221,13 @@ export async function executeWorkCommand(
         const repo = flag(rest, '--repo');
         const pipeline = flag(rest, '--pipeline');
         const title = flag(rest, '--title');
+        const priority = flag(rest, '--priority');
+        if (
+          rest.includes('--priority') &&
+          !(QUEUE_PRIORITIES as readonly string[]).includes(priority ?? '')
+        ) {
+          return usageFailure(deps);
+        }
         const description = readDescription(rest);
         if (!repo || !pipeline || !title || !description) {
           return usageFailure(deps);
@@ -223,6 +239,7 @@ export async function executeWorkCommand(
             title,
             description,
             pipeline: pipeline as 'claude' | 'codex' | 'opencode',
+            priority: (priority ?? 'normal') as QueuePriority,
             target: { repo },
           },
         });

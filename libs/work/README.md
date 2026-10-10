@@ -53,6 +53,28 @@ accepting either from CLI input. Invalid input, busy work, and denied grants
 exit nonzero. Authentication uses the bearer transport described above;
 a failed bearer never falls back to a console cookie.
 
+## Priority
+
+`WorkSpec.priority` accepts `urgent`, `normal`, or `background`; omitted
+values and historical records default to `normal`. The Work API exposes it
+in item/schedule specs and run views. For CLI creation:
+
+```bash
+lcars work create --repo jlapenna/agent-lcars --pipeline codex \
+  --title 'Investigate a regression' --description 'Describe the useful work.' \
+  --priority urgent
+```
+
+The console's New work and schedule creation forms use the same vocabulary.
+An explicitly background schedule freezes that priority into each minted
+item and run. Existing schedules remain normal. Priority is immutable with
+the spec: replaying the same ID with a different priority conflicts, while
+omitted and explicit normal are equivalent. Replies inherit the newest run;
+redispatch reuses the stored spec; automatic retries copy the lost run.
+See the [orchestrator's weighted service policy](../orchestrator/README.md#priority-within-provider-fair-claims)
+for its starvation bound and capacity/cooldown limits. No urgent request
+bypasses authorization or guarantees a wall-clock launch time.
+
 ## Creating items from GitHub Actions
 
 `.github/workflows/work-create.yml` is a `workflow_dispatch` surface for

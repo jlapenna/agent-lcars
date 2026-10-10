@@ -67,6 +67,7 @@ export const itemRunViewSchema = z.strictObject({
   runId: z.string(),
   state: z.enum(['pending', 'running', 'finished', 'canceled', 'lost']),
   pipeline: z.string(),
+  priority: workSpecSchema.shape.priority,
   createdAt: z.string(),
   updatedAt: z.string(),
   result: runResultSchema.optional(),
@@ -396,6 +397,7 @@ export const GITHUB_DISPATCH_DESCRIPTION_MAX = 65_536;
  * be empty because an empty GitHub body is valid. The route turns it into a
  * stored `WorkSpec` before grant checks or orchestrator storage. */
 export const githubDispatchSpecSchema = z.strictObject({
+  priority: workSpecSchema.shape.priority,
   title: z.string().min(1).max(WORK_TITLE_MAX),
   description: z.string().max(GITHUB_DISPATCH_DESCRIPTION_MAX),
   pipeline: z.enum(PIPELINES),

@@ -47,6 +47,45 @@ further requests (`task-closed`). See
 
 ## The decision layer
 
+### Priority within provider-fair claims
+
+`Run.priority` is `urgent`, `normal`, or `background`. Missing historical
+values decode as `normal`; new runs validate and persist the selected value.
+The per-task mutex, provider cooldowns, and server-owned Codex/OpenCode live
+claim ceilings apply to every priority.
+
+Claim selection first chooses the provider with the least live claimed
+occupancy, then its oldest eligible queue head (regardless of priority).
+Inside that provider, successful atomic claim reservations follow the durable
+cycle `urgent, urgent, normal, urgent, urgent, normal, background`. Empty
+classes are skipped, and each class remains FIFO by creation time and run ID.
+With all classes continuously eligible this gives 4:2:1 service. With only
+normal work it preserves historical FIFO.
+
+A continuously eligible background **head** receives service within seven
+successful reservations for its provider, even under sustained urgent demand.
+An item with `k` older eligible background items has a bound of `7 × (k + 1)`
+provider reservations. This is not a wall-clock launch deadline: capacity,
+provider cooldowns, deferred lifecycle checks, and previously claimed work
+can delay service. A reservation later released by a lifecycle check still
+consumes its turn; the bound measures reservations, not worker launches.
+
+Firestore commits the selected Run claim and the provider's
+`<prefix>priority-positions` cursor together. Missing cursor documents start
+at the first turn; malformed cursors fail closed. Empty or cooling polls
+do not advance it. The cursor survives process restart and does not reset
+when work completes. No index, historical backfill, or operator data write is
+required. Coordinate the server rollout: older strict Run/WorkSpec decoders
+reject records carrying the new field, and older claim selection ignores the
+cursor. New decoders accept historical records; this is not forward
+compatibility with older decoders or a safe mixed-version/rollback guarantee.
+
+Work creation and schedules accept priority through the same authorized
+intake. Replies inherit the newest run's priority (falling back to the stored
+spec, then normal); redispatch uses the immutable stored spec; automatic
+loss retries copy the lost run's priority. Priority is not a new capability
+grant and cannot be used to override provider/repository authorization.
+
 `src/decide.ts` is pure: given current state and one input (`requestRun`,
 `confirmDispatch`, `renewLease`, `reportResult`, `cancelRun`, `expireLease`),
 it produces the next state and any outbox effects — no I/O, no clock reads,

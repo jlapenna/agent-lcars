@@ -141,6 +141,77 @@ async function call(
 }
 
 describe('items routes', () => {
+  it.each(['urgent', 'normal', 'background'] as const)(
+    'mints and exposes %s priority without changing authorization or idempotency',
+    async (priority) => {
+      const ctx = context();
+      const body = { spec: { ...spec, priority } };
+      const first = await call(ctx, 'PUT', `/items/${ID}`, body);
+      expect(first.status).toBe(201);
+      expect(first.json.spec.priority).toBe(priority);
+      expect(first.json.runs[0].priority).toBe(priority);
+      expect(await ctx.runtime.store.readRun(`work:${ID}/r1`)).toMatchObject({
+        priority,
+        pipeline: 'claude',
+      });
+      expect(
+        (await call(ctx, 'PUT', `/items/${ID}`, body)).json.runs,
+      ).toHaveLength(1);
+      expect(
+        (
+          await call(ctx, 'PUT', `/items/${ID}`, {
+            spec: {
+              ...spec,
+              priority: priority === 'urgent' ? 'background' : 'urgent',
+            },
+          })
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await call(
+            { ...ctx, principal: undefined },
+            'PUT',
+            `/items/${OTHER_ID}`,
+            body,
+          )
+        ).status,
+      ).toBe(401);
+      expect(
+        (
+          await call(
+            { ...ctx, principal: { ...operator, pipelines: [] } },
+            'PUT',
+            `/items/${OTHER_ID}`,
+            body,
+          )
+        ).status,
+      ).toBe(403);
+    },
+  );
+
+  it('treats omitted and explicit normal priority as the same immutable specification', async () => {
+    const ctx = context();
+    expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    const replay = await call(ctx, 'PUT', `/items/${ID}`, {
+      spec: { ...spec, priority: 'normal' },
+    });
+    expect(replay.status).toBe(201);
+    expect(replay.json.runs).toHaveLength(1);
+    expect(replay.json.runs[0].priority).toBe('normal');
+  });
+
+  it('rejects unknown priority without minting work', async () => {
+    const ctx = context();
+    expect(
+      (
+        await call(ctx, 'PUT', `/items/${ID}`, {
+          spec: { ...spec, priority: 'immediate' },
+        })
+      ).status,
+    ).toBe(400);
+    expect(await ctx.runtime.store.readTask({ workId: ID })).toBeUndefined();
+  });
   it('refuses every route without a principal', async () => {
     const ctx = context({ principal: undefined });
     for (const [m, p, b] of [
@@ -1326,6 +1397,27 @@ describe('items routes', () => {
 });
 
 describe('GitHub-anchor dispatch route', () => {
+  it('preserves an explicitly urgent GitHub API admission and redispatch', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const first = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, priority: 'urgent' },
+    });
+    expect(first.status).toBe(200);
+    expect(await ctx.runtime.store.readRun(first.json.runId)).toMatchObject({
+      priority: 'urgent',
+    });
+    await ctx.runtime.orchestrator.report(first.json.runId, { ok: true });
+    const again = await call(ctx, 'POST', '/dispatches/github/redispatch', {
+      anchor,
+      mode: 'implement',
+      requestId: 'urgent-redispatch',
+    });
+    expect(again.status).toBe(200);
+    expect(await ctx.runtime.store.readRun(again.json.runId)).toMatchObject({
+      priority: 'urgent',
+    });
+  });
   const anchor = { repo: 'jlapenna/agent-lcars', issue: 1633 };
   const input = {
     anchor,
@@ -1333,6 +1425,7 @@ describe('GitHub-anchor dispatch route', () => {
       title: 'Migrate automation dispatch',
       description: 'Use the Work API route.',
       pipeline: 'codex',
+      priority: 'normal',
       target: { repo: anchor.repo },
     },
     mode: 'implement' as const,

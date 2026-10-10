@@ -163,6 +163,7 @@ export async function mintItem(
     taskId: { workId: input.id },
     requestId: input.id,
     pipeline: input.spec.pipeline,
+    priority: input.spec.priority,
     params: { mode: 'implement' },
     work: { origin: input.origin, spec: input.spec },
     // This comparison must execute in the store transaction. Two native

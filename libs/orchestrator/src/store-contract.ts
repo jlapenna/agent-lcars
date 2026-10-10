@@ -13,6 +13,7 @@ import {
 } from './decide';
 import {
   type LeasedOutboxEntry,
+  type QueuePriority,
   type TaskId,
   taskKey,
   WORK_PAYLOAD_MAX_BYTES,
@@ -1742,16 +1743,72 @@ export function runOrchestratorStoreContract(
         orchestrator: Orchestrator,
         requestId: string,
         pipeline = 'claude',
+        priority?: QueuePriority,
       ) {
         const outcome = await orchestrator.request({
           taskId: { workId: queueWorkId(requestId) },
           requestId,
           pipeline,
+          priority,
           work: TASK_WORK,
         });
         if (isRefusal(outcome)) throw new Error('unexpected refusal');
         return decidedRun(outcome);
       }
+
+      it('commits priority service turns with concurrent claims, preserving the background bound', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        for (let index = 0; index < 6; index++) {
+          for (const [offset, priority] of [
+            [100, 'urgent'],
+            [200, 'normal'],
+            [300, 'background'],
+          ] as const) {
+            const run = await queuedRun(
+              orchestrator,
+              `q${offset + index}`,
+              'claude',
+              priority,
+            );
+            await store.enqueueRun({ runId: run.runId, now: clock.now() });
+            clock.advanceMinutes(1);
+          }
+        }
+        // Race pairs, not seven writers against Firestore's bounded
+        // transaction retry budget; all seven committed turns still matter.
+        const claims = [];
+        for (const count of [2, 2, 2, 1]) {
+          claims.push(
+            ...(await Promise.all(
+              Array.from({ length: count }, (_, index) =>
+                store.claimQueuedRun({
+                  pipelines: ['claude'],
+                  now: clock.now(),
+                  claimedBy: `priority-runner-${claims.length + index}`,
+                  tokenHash: 'a'.repeat(64),
+                }),
+              ),
+            )),
+          );
+        }
+        expect(claims.every((run) => run !== undefined)).toBe(true);
+        expect(new Set(claims.map((run) => run?.runId)).size).toBe(7);
+        expect(
+          claims
+            .map((run) => run?.priority)
+            .filter((priority) => priority === 'urgent'),
+        ).toHaveLength(4);
+        expect(
+          claims
+            .map((run) => run?.priority)
+            .filter((priority) => priority === 'normal'),
+        ).toHaveLength(2);
+        expect(
+          claims
+            .map((run) => run?.priority)
+            .filter((priority) => priority === 'background'),
+        ).toHaveLength(1);
+      });
 
       it('enqueueRun is idempotent and listQueuedRuns finds it', async () => {
         const { store, orchestrator } = await fixture();
@@ -2071,6 +2128,63 @@ export function runOrchestratorStoreContract(
           ).toBe(held.runId);
         },
       );
+
+      it('reports priority queue eligibility without bypassing provider ceilings or deferral', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const runs = [];
+        for (const [index, priority] of (
+          ['background', 'normal', 'urgent'] as const
+        ).entries()) {
+          const run = await queuedRun(
+            orchestrator,
+            `q${970 + index}`,
+            'codex',
+            priority,
+          );
+          await store.enqueueRun({ runId: run.runId, now: clock.now() });
+          runs.push(run);
+          clock.advanceMinutes(1);
+        }
+        const claim = {
+          pipelines: ['codex'],
+          now: clock.now(),
+          claimedBy: 'priority-status-test',
+          tokenHash: 'a'.repeat(64),
+        };
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 3, deferred: 0, liveClaims: 0, eligible: 3 });
+        const claimed = await store.claimQueuedRun(claim);
+        expect(claimed).toMatchObject({
+          runId: runs[2]?.runId,
+          priority: 'urgent',
+        });
+        if (claimed === undefined) throw new Error('missing priority claim');
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 2, deferred: 0, liveClaims: 1, eligible: 0 });
+        expect(await store.claimQueuedRun(claim)).toBeUndefined();
+        await store.releaseQueuedRunClaim({
+          runId: claimed.runId,
+          claimedBy: claim.claimedBy,
+          tokenHash: claim.tokenHash,
+          now: clock.now(),
+          deferredUntil: new Date(
+            Date.parse(clock.now()) + 60_000,
+          ).toISOString(),
+        });
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 3, deferred: 1, liveClaims: 0, eligible: 2 });
+        const next = await store.claimQueuedRun(claim);
+        expect(next).toMatchObject({
+          runId: runs[1]?.runId,
+          priority: 'normal',
+        });
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 2, deferred: 1, liveClaims: 1, eligible: 0 });
+      });
 
       it('reports durable queue eligibility with provider ceilings, deferral and terminal claims', async () => {
         const { store, orchestrator, clock } = await fixture();

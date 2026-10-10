@@ -22,6 +22,7 @@ export {
   REPLY_COMMANDS,
   REVIEW_LABELS,
 } from './pipelines';
+export { QUEUE_PRIORITIES, type QueuePriority } from './priority';
 export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,

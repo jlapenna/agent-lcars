@@ -138,7 +138,11 @@ export function normalizeGithubWorkPayload(input: {
   const description = truncatedDescription(original);
   const payload: WorkPayload = {
     origin: input.origin,
-    spec: { ...input.spec, description },
+    spec: {
+      ...input.spec,
+      priority: input.spec.priority ?? 'normal',
+      description,
+    },
   };
   if (serializedWorkPayloadBytes(payload) <= WORK_PAYLOAD_MAX_BYTES) {
     return workPayloadSchema.parse(payload);

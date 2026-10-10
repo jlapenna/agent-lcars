@@ -32,6 +32,7 @@ const evidenceIntentSchema = z.strictObject({
     name: z.string().min(1),
   }),
   pipeline: z.enum(['claude', 'codex', 'opencode']),
+  priority: workSpecSchema.shape.priority,
   description: z.string().min(1),
   source: z.strictObject({
     route: z.string(),
@@ -108,6 +109,7 @@ export async function createItemWithEvidence(form: FormData) {
       intent.evidenceId,
     ),
     pipeline: intent.pipeline,
+    priority: intent.priority,
     target: { repo: `${repository.owner}/${repository.name}` },
   });
   const capabilityReason = forbiddenReason(principal, spec);

@@ -311,6 +311,11 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "priority": {
+                        "default": "normal",
+                        "type": "string",
+                        "enum": ["urgent", "normal", "background"]
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -375,6 +380,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -391,6 +401,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -444,6 +455,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -521,6 +537,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -674,6 +691,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -690,6 +712,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -743,6 +766,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -820,6 +848,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -979,6 +1008,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -995,6 +1029,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -1048,6 +1083,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -1125,6 +1165,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -1329,6 +1370,11 @@
                                 "type": "string",
                                 "enum": ["claude", "codex", "opencode"]
                               },
+                              "priority": {
+                                "default": "normal",
+                                "type": "string",
+                                "enum": ["urgent", "normal", "background"]
+                              },
                               "target": {
                                 "type": "object",
                                 "properties": {
@@ -1345,6 +1391,7 @@
                               "title",
                               "description",
                               "pipeline",
+                              "priority",
                               "target"
                             ],
                             "additionalProperties": false
@@ -1404,6 +1451,11 @@
                                 },
                                 "pipeline": {
                                   "type": "string"
+                                },
+                                "priority": {
+                                  "default": "normal",
+                                  "type": "string",
+                                  "enum": ["urgent", "normal", "background"]
                                 },
                                 "createdAt": {
                                   "type": "string"
@@ -1481,6 +1533,7 @@
                                 "runId",
                                 "state",
                                 "pipeline",
+                                "priority",
                                 "createdAt",
                                 "updatedAt"
                               ],
@@ -1621,6 +1674,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -1637,6 +1695,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -1690,6 +1749,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -1767,6 +1831,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -1938,6 +2003,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -1954,6 +2024,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -2007,6 +2078,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -2084,6 +2160,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -2303,6 +2380,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -2319,6 +2401,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -2372,6 +2455,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -2449,6 +2537,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -2620,6 +2709,11 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "priority": {
+                        "default": "normal",
+                        "type": "string",
+                        "enum": ["urgent", "normal", "background"]
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -2676,6 +2770,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -2692,6 +2791,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -2860,6 +2960,11 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "priority": {
+                        "default": "normal",
+                        "type": "string",
+                        "enum": ["urgent", "normal", "background"]
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -2916,6 +3021,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -2932,6 +3042,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -3233,6 +3344,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -3249,6 +3365,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -3391,6 +3508,11 @@
                                 "type": "string",
                                 "enum": ["claude", "codex", "opencode"]
                               },
+                              "priority": {
+                                "default": "normal",
+                                "type": "string",
+                                "enum": ["urgent", "normal", "background"]
+                              },
                               "target": {
                                 "type": "object",
                                 "properties": {
@@ -3407,6 +3529,7 @@
                               "title",
                               "description",
                               "pipeline",
+                              "priority",
                               "target"
                             ],
                             "additionalProperties": false
@@ -3547,6 +3670,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -3563,6 +3691,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -3766,6 +3895,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -3782,6 +3916,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -4049,6 +4184,11 @@
                   "spec": {
                     "type": "object",
                     "properties": {
+                      "priority": {
+                        "default": "normal",
+                        "type": "string",
+                        "enum": ["urgent", "normal", "background"]
+                      },
                       "title": {
                         "type": "string",
                         "minLength": 1,
@@ -4527,6 +4667,11 @@
                               "type": "string",
                               "enum": ["claude", "codex", "opencode"]
                             },
+                            "priority": {
+                              "default": "normal",
+                              "type": "string",
+                              "enum": ["urgent", "normal", "background"]
+                            },
                             "target": {
                               "type": "object",
                               "properties": {
@@ -4543,6 +4688,7 @@
                             "title",
                             "description",
                             "pipeline",
+                            "priority",
                             "target"
                           ],
                           "additionalProperties": false
@@ -4692,6 +4838,11 @@
                                   "type": "string",
                                   "enum": ["claude", "codex", "opencode"]
                                 },
+                                "priority": {
+                                  "default": "normal",
+                                  "type": "string",
+                                  "enum": ["urgent", "normal", "background"]
+                                },
                                 "target": {
                                   "type": "object",
                                   "properties": {
@@ -4708,6 +4859,7 @@
                                 "title",
                                 "description",
                                 "pipeline",
+                                "priority",
                                 "target"
                               ],
                               "additionalProperties": false

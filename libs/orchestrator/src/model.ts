@@ -1,3 +1,4 @@
+import { QUEUE_PRIORITIES } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 /**
@@ -189,6 +190,10 @@ export const runStateSchema = z.enum([
 ]);
 export type RunState = z.infer<typeof runStateSchema>;
 
+/** Shared queue vocabulary; omitted historical records decode as normal. */
+export const queuePrioritySchema = z.enum(QUEUE_PRIORITIES);
+export type QueuePriority = z.infer<typeof queuePrioritySchema>;
+
 /** Distinguishes arbitrary caller idempotency keys from orchestrator-owned
  * automatic retry keys. The raw requestId remains caller-visible; this source
  * exists only for the durable request-history namespace. */
@@ -338,6 +343,7 @@ export const runSchema = z.strictObject({
   state: runStateSchema,
   /** The agent/pipeline asked to do the work; opaque routing data. */
   pipeline: z.string().min(1).max(128),
+  priority: queuePrioritySchema.default('normal'),
   /** Idempotency: the request that created this run. A retry of the same
    *  request maps to this run instead of creating a second one. */
   requestId: z.string().min(1).max(RETRY_REQUEST_ID_MAX_LENGTH),
@@ -374,7 +380,8 @@ export const runSchema = z.strictObject({
   createdAt: isoUtc,
   updatedAt: isoUtc,
 });
-export type Run = z.infer<typeof runSchema>;
+/** Input records admit pre-priority history; the schema's output fills normal. */
+export type Run = z.input<typeof runSchema>;
 
 export function runRequestHistoryKey(
   run: Pick<Run, 'requestId' | 'requestSource'>,

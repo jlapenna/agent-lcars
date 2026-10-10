@@ -35,6 +35,7 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  queuePriorityTurnAfter,
   type RequestBinding,
   type RequestTransactionState,
   selectFairQueuedRun,
@@ -47,6 +48,7 @@ import {
 export class MemoryStore implements OrchestratorStore {
   readonly #tasks = new Map<string, VersionedTask>();
   readonly #providerCooldowns = new Map<string, ProviderCooldown>();
+  readonly #priorityPositions = new Map<string, number>();
   readonly #runs = new Map<string, Run>();
   readonly #requestRuns = new Map<string, string>();
   readonly #requestBindings = new Map<
@@ -585,7 +587,13 @@ export class MemoryStore implements OrchestratorStore {
           input.now,
         ),
     );
-    const candidate = selectFairQueuedRun(runs, runs, eligible, input.now);
+    const candidate = selectFairQueuedRun(
+      runs,
+      runs,
+      eligible,
+      input.now,
+      this.#priorityPositions,
+    );
     if (candidate === undefined) return undefined;
     const claimed: Run = {
       ...candidate,
@@ -603,6 +611,13 @@ export class MemoryStore implements OrchestratorStore {
       updatedAt: input.now,
     };
     this.#runs.set(candidate.runId, claimed);
+    this.#priorityPositions.set(
+      candidate.pipeline,
+      queuePriorityTurnAfter(
+        this.#priorityPositions.get(candidate.pipeline) ?? 0,
+        candidate.priority ?? 'normal',
+      ),
+    );
     return structuredClone(claimed);
   }
 

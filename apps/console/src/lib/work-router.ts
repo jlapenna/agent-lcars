@@ -317,6 +317,7 @@ export const workRouter = os.router({
         taskId: { workId: input.id },
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
+        priority: spec.priority,
         params: { mode: 'implement', ...resumeParams },
       });
       if (isRefusal(outcome)) {
