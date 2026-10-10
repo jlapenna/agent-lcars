@@ -252,9 +252,9 @@ async function clearRepository(page: Page, destination: string) {
         (url) => url.pathname === pathname && !url.searchParams.has('repo'),
       );
       record('scope-cleared');
-      await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(
-        '',
-      );
+      await expect(
+        page.getByRole('combobox', { name: 'Repository', exact: true }),
+      ).toHaveValue('');
       await expect(
         page.getByRole('status', { name: 'Loading', exact: true }),
       ).toHaveCount(0);
@@ -287,22 +287,22 @@ test('repository selection and clearing remain reachable on phones across Bridge
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 740 });
-  for (const [route, destination] of [
-    ['/', 'Inbox'],
-    ['/inbox', 'Agents'],
-    ['/agents', 'Bridge'],
+  for (const [route, destination, destinationPath] of [
+    ['/', 'Inbox', '/inbox'],
+    ['/inbox', 'Agents', '/agents'],
+    ['/agents', 'Bridge', '/'],
   ]) {
     await page.goto(route);
     await page
-      .getByLabel('Repository', { exact: true })
+      .getByRole('combobox', { name: 'Repository', exact: true })
       .selectOption(E2E_FIXTURE_REPOSITORY);
     await page
       .getByRole('button', { name: 'Apply repository', exact: true })
       .click();
     await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
-    await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(
-      E2E_FIXTURE_REPOSITORY,
-    );
+    await expect(
+      page.getByRole('combobox', { name: 'Repository', exact: true }),
+    ).toHaveValue(E2E_FIXTURE_REPOSITORY);
     await expect(
       page.getByRole('link', { name: 'Clear repository', exact: true }),
     ).toBeVisible();
@@ -318,10 +318,17 @@ test('repository selection and clearing remain reachable on phones across Bridge
     await page
       .getByRole('menuitem', { name: destination, exact: true })
       .click();
-    await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
-    await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(
-      E2E_FIXTURE_REPOSITORY,
+    // The source URL already has this repository. Wait for the destination,
+    // then query its accessible control: Cache Components keeps the previous
+    // route's selector in a hidden Activity subtree (#503, #2239).
+    await expect(page).toHaveURL(
+      (url) =>
+        url.pathname === destinationPath &&
+        url.searchParams.get('repo') === E2E_FIXTURE_REPOSITORY,
     );
+    await expect(
+      page.getByRole('combobox', { name: 'Repository', exact: true }),
+    ).toHaveValue(E2E_FIXTURE_REPOSITORY);
     await expect(
       page.getByRole('status', { name: 'Loading', exact: true }),
     ).toHaveCount(0);
