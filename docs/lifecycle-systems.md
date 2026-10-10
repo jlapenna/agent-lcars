@@ -175,9 +175,11 @@ heartbeat, advance RunState or authorize Job deletion.
 
 The executor samples Jobs and their controller-UID-owned Pods every ten
 seconds in a separate five-second-bounded sweep. It publishes only allowlisted
-`pending`, `unschedulable`, `scheduled` or `inventory-unavailable` reasons;
-raw scheduler messages, node names and credentials are excluded. A missing
-Pod counts as awaiting placement. An assigned Pod means bootstrapping, including
+`pending`, `unschedulable`, `scheduled`, `launch-pending` or
+`inventory-unavailable` reasons;
+raw scheduler messages, node names and credentials are excluded. A suspended
+Job remains bootstrapping while awaiting launch; an unsuspended Job with a
+missing Pod counts as awaiting placement. An assigned Pod means bootstrapping, including
 a Running Pod; only the worker's existing `providerProcessStartedAt` report
 proves the provider executable spawned. This milestone does not assert a first
 model response. Pod API failure is unavailable; Job API failure leaves the

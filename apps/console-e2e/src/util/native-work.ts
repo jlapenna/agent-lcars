@@ -1,6 +1,8 @@
 import {
   FirestoreScheduleStore,
   FirestoreStore,
+  Orchestrator,
+  type Run,
 } from '@agent-lcars/orchestrator';
 import { Firestore } from '@google-cloud/firestore';
 
@@ -111,20 +113,28 @@ export async function seedNativeExecutionPhase(
     | 'bootstrapping'
     | 'provider-execution'
     | 'unavailable'
-    | 'stale',
+    | 'stale'
+    | 'lost',
+  githubIssue?: number,
 ) {
   const store = new FirestoreStore(emulatorOptions());
-  const anchor = { workId: NATIVE_WORK_ID };
-  const runId = `work:${NATIVE_WORK_ID}/r1`;
+  const anchor =
+    githubIssue === undefined
+      ? { workId: NATIVE_WORK_ID }
+      : { repo: 'supersprinklesracing/sprinkles', issue: githubIssue };
+  const runId =
+    githubIssue === undefined
+      ? `work:${NATIVE_WORK_ID}/r1`
+      : `supersprinklesracing/sprinkles#${githubIssue}/r1`;
   const [task, oldRun] = await Promise.all([
     store.readTask(anchor),
     store.readRun(runId),
   ]);
   if (!task || !oldRun) throw new Error('Missing native placement fixture');
   const now = new Date().toISOString();
-  const run = {
+  const run: Run = {
     ...oldRun,
-    state: 'running' as const,
+    state: phase === 'lost' ? ('lost' as const) : ('running' as const),
     queue: {
       state: 'claimed' as const,
       claimedAt: now,
@@ -153,14 +163,36 @@ export async function seedNativeExecutionPhase(
         : {}),
     },
   };
+  if (phase === 'lost') run.queue = oldRun.queue;
   delete run.result;
   await store.apply({
     expectedRevision: task.revision,
     decision: {
-      task: { ...task.task, activeRunId: runId },
+      task: { ...task.task, activeRunId: phase === 'lost' ? undefined : runId },
       run,
       outbox: [],
     },
   });
   return runId;
+}
+
+/** Mint the successor through the same admission owner, after the old fixture
+ * is settled, to prove its execution observations are not inherited. */
+export async function seedNativePlacementRetry() {
+  await seedNativeExecutionPhase('lost');
+  const store = new FirestoreStore(emulatorOptions());
+  const taskId = { workId: NATIVE_WORK_ID };
+  const task = await store.readTask(taskId);
+  if (!task) throw new Error('Missing retry fixture');
+  const outcome = await new Orchestrator(store, {
+    now: () => new Date().toISOString(),
+  }).request({
+    taskId,
+    requestId: 'placement-retry-evidence',
+    pipeline: 'claude',
+    work: task.task.work,
+  });
+  if ('refused' in outcome || !outcome.run)
+    throw new Error('Retry fixture was not admitted');
+  return outcome.run.runId;
 }

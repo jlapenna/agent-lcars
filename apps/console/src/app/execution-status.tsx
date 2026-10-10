@@ -34,6 +34,10 @@ export function ExecutionStatus({ run }: { run: ExecutionRun }) {
       {placement && (
         <Text size="xs" c="dimmed">
           Placement observed <RelativeTime iso={placement.observedAt} />
+          {phase === 'bootstrapping' &&
+            placement.reason === 'launch-pending' && (
+              <> · Awaiting Job launch</>
+            )}
           {phase === 'waiting-for-placement' && (
             <>
               {' '}

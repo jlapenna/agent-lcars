@@ -1719,6 +1719,32 @@ describe('claimStatus', () => {
     expect(after?.state).toBe(before?.state);
   });
 
+  it('rejects delayed observations while retaining the latest sample and the original startup bound', async () => {
+    const f = await claimed();
+    const startDeadline = (await f.store.readRun(f.runId))?.queue
+      ?.startDeadlineAt;
+    const observe = (observedAt: string) =>
+      call({ ...f, ...context }, 'POST', runPath(f.runId, '/placement'), {
+        runner: 'runner-1',
+        claimFingerprint: f.fingerprint,
+        placement: {
+          phase: 'waiting-for-placement',
+          reason: 'pending',
+          observedAt,
+        },
+      });
+    f.setNow('2026-08-26T10:00:10.000Z');
+    expect((await observe('2026-08-26T10:00:10.000Z')).status).toBe(200);
+    expect((await observe(NOW)).status).toBe(403);
+    f.setNow('2026-08-26T10:14:59.000Z');
+    expect((await observe('2026-08-26T10:14:59.000Z')).status).toBe(200);
+    expect((await f.store.readRun(f.runId))?.queue?.startDeadlineAt).toBe(
+      startDeadline,
+    );
+    f.setNow('2026-08-26T10:15:00.000Z');
+    expect((await observe('2026-08-26T10:15:00.000Z')).status).toBe(403);
+  });
+
   it.each([
     'subject',
     'runner',
