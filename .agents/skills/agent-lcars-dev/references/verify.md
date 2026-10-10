@@ -57,9 +57,26 @@ helpers or inventing another Vitest configuration.
    owned review worktree and unique local branch at that SHA. Keep application
    changes in their separate feature worktree; do not switch or reinstall
    another owner's checkout.
-2. Run `./tools/setup-worktree.sh` in the review worktree. It installs that
-   revision's frozen lockfile and keeps dependency resolution inside the
-   review workspace. Retain the normal project config and shared setup.
+2. Install the reviewed revision's frozen lockfile without running its
+   lifecycle scripts:
+
+   ```bash
+   pnpm install --frozen-lockfile --ignore-scripts
+   bash tools/setup-nx-native-file-cache.sh
+   ```
+
+   Do not run `setup-worktree.sh`, `setup-git-hooks.sh` or the workspace
+   `prepare` script from the frozen review. Git stores the Husky bootstrap
+   and hook path in the shared common directory; an older reviewed installer
+   can replace that policy for every active sibling worktree. Record the
+   configured hook path and shared bootstrap hashes before and after the
+   install and require them to remain unchanged. Existing commit/push hooks
+   stay enabled; author feature worktrees still use normal worktree setup.
+   Retain the normal project config and shared test setup. If an ignored
+   dependency build script is required by the selected tests, treat that as
+   an explicit setup gate rather than running the reviewed workspace lifecycle
+   or changing shared hooks.
+
 3. Bind evidence to source before and after testing: require `git rev-parse
 HEAD` to equal the reviewed SHA and `git diff --exit-code <reviewed-sha> --
 .` to pass. Inspect untracked files; record hashes and the explicit scope
