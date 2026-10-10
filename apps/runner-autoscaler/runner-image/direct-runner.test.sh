@@ -673,9 +673,13 @@ args=("$@")
 offset=0
 while [[ "${args[$offset]:-}" == --* ]]; do offset=$((offset + 1)); done
 seconds="${args[$offset]:-}"
-command="${args[$((offset + 1))]:-}"
+command_offset=$((offset + 1))
+if [ "${args[$((command_offset + 1))]##*/}" = provider-process.mjs ]; then
+  command_offset=$((command_offset + 2))
+fi
+command="${args[$command_offset]:-}"
 round=0
-case "${command##*/}:${args[$((offset + 2))]:-}" in
+case "${command##*/}:${args[$((command_offset + 1))]:-}" in
   claude:*|codex:exec|opencode:run) round=1 ;;
 esac
 if [ "$round" -eq 0 ]; then exec /usr/bin/timeout "$@"; fi
@@ -744,6 +748,16 @@ fi
 echo "/fake/claude/projects/-fake-cwd/sess_1.jsonl"
 FAKE
   chmod +x "$bindir/node"
+  cat > "$bindir/provider-node" <<'FAKE'
+#!/bin/bash
+if [ "${1:-}" = /usr/local/lib/agent-lcars/runtime/provider-process.mjs ]; then
+  shift
+  exec "$REAL_NODE" "$FAKE_BAKED_RUNTIME_HELPERS_DIR/provider-process.mjs" "$@"
+fi
+exec "$REAL_NODE" "$@"
+FAKE
+  chmod +x "$bindir/provider-node"
+
 
   # The production runner has no RUNTIME_HELPERS_DIR in its environment. For
   # the one default-path scenario, intercept only the two image-runtime
@@ -836,6 +850,9 @@ run_scenario() {
   export OPENCODE_SEQUENCE_LOG="$dir/opencode-sequence.log"
   export OPENCODE_FAKE_SESSIONS_FILE="$dir/opencode-sessions.json"
   export OPENCODE_RUN_COUNT_FILE="$dir/opencode-run-count"
+  export PROVIDER_PROCESS_NODE="$bindir/provider-node"
+  export REAL_NODE="$real_node"
+  export FAKE_BAKED_RUNTIME_HELPERS_DIR="$BAKED_RUNTIME_HELPERS_DIR"
   export TIMEOUT_ARGS_LOG="$dir/timeout-args.log"
   export FIXTURE_TIMING_LOG="$dir/timing.jsonl"
   # A scenario asserting exact deadline arithmetic opts into a frozen
@@ -2135,7 +2152,7 @@ for provider in claude codex; do
   else
     grep -Fq -- 'exec resume thread-codex-fixture' "$CODEX_ARGS_LOG" || fail "Codex correction changed thread"
   fi
-  mapfile -t round_timeouts < <(grep -E "[0-9]+s $provider " "$TIMEOUT_ARGS_LOG" | sed -nE "s/.* ([0-9]+)s $provider .*/\\1/p")
+  mapfile -t round_timeouts < <(grep -E "[0-9]+s .*provider-process.mjs $provider " "$TIMEOUT_ARGS_LOG" | sed -nE "s/.* ([0-9]+)s .*provider-process.mjs $provider .*/\\1/p")
   if [ "${round_timeouts[*]}" != "5 4" ]; then
     fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
   fi
@@ -2227,3 +2244,5 @@ echo "direct-runner.sh: OK"
 
 # Exact-reference verification is part of this required runner contract gate.
 bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
+
+"$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/provider-process.test.mjs"

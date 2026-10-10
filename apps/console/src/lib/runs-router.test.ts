@@ -1541,6 +1541,67 @@ describe('heartbeat', () => {
     expect((await store.readRun(runId))!.leaseExpiresAt).toBe(after);
   });
 
+  it('records only the first authenticated provider-process observation', async () => {
+    const { store, orchestrator, now, setNow } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-provider-start'),
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const ctx = { store, orchestrator, now, ...context, bearerToken: token };
+    expect((await call(ctx, 'POST', runPath(runId, '/heartbeat'))).status).toBe(
+      200,
+    );
+    expect(
+      (await store.readRun(runId))!.queue!.providerProcessStartedAt,
+    ).toBeUndefined();
+    setNow('2026-08-26T10:01:00.000Z');
+    expect(
+      (
+        await call(ctx, 'POST', runPath(runId, '/heartbeat'), {
+          providerProcessStarted: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await store.readRun(runId))!.queue!.providerProcessStartedAt).toBe(
+      '2026-08-26T10:01:00.000Z',
+    );
+    setNow('2026-08-26T10:02:00.000Z');
+    expect(
+      (
+        await call(ctx, 'POST', runPath(runId, '/heartbeat'), {
+          providerProcessStarted: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await store.readRun(runId))!.queue!.providerProcessStartedAt).toBe(
+      '2026-08-26T10:01:00.000Z',
+    );
+    expect(
+      (
+        await call(
+          { ...ctx, bearerToken: 'wrong' },
+          'POST',
+          runPath(runId, '/heartbeat'),
+          { providerProcessStarted: true },
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(ctx, 'POST', runPath(runId, '/heartbeat'), {
+          providerProcessStarted: false,
+        })
+      ).status,
+    ).toBe(400);
+  });
+
   it('extends the shared Codex credential lease with each broker heartbeat', async () => {
     const { store, orchestrator, now, setNow } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {

@@ -247,6 +247,10 @@ export const runQueueSchema = z.strictObject({
   startDeadlineAt: isoUtc.optional(),
   /** First accepted worker heartbeat; dispatch/claim alone is not liveness. */
   firstHeartbeatAt: isoUtc.optional(),
+  /** First accepted run-token report that the provider executable was spawned.
+   * Server observation clock; not claim, heartbeat, authentication or first
+   * model response. Optional on legacy workers; never inferred or backfilled. */
+  providerProcessStartedAt: isoUtc.optional(),
   /** The executor's self-reported runner name. Unauthenticated: it labels
    * the claim and must match a later exit report, but grants nothing alone. */
   claimedBy: z.string().min(1).max(256).optional(),

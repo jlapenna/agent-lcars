@@ -44,6 +44,9 @@ source "${WORKER_COMPLETION_HELPER:-$RUNTIME_HELPERS_DIR/worker-completion.sh}"
 # shellcheck source=runtime/worker-policy-bootstrap.sh
 source "${WORKER_POLICY_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/worker-policy-bootstrap.sh}"
 CODEX_HOOK_ARGS=()
+# This supervisor observes successful OS spawn, not a bootstrap heartbeat.
+PROVIDER_PROCESS_NODE="${PROVIDER_PROCESS_NODE:-/usr/bin/node}"
+PROVIDER_PROCESS_HELPER="${PROVIDER_PROCESS_HELPER:-$RUNTIME_HELPERS_DIR/provider-process.mjs}"
 
 # The native dispatch helper requires RUNNER_TEMP in its child environment. A
 # direct-mode container is not a GitHub Actions runner, so it does not supply
@@ -749,7 +752,7 @@ if [ "$PIPELINE" = "claude" ]; then
     remaining=$((CLAUDE_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
-      claude --dangerously-skip-permissions \
+      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" claude --dangerously-skip-permissions \
       --allowedTools "Bash,Edit,Write,MultiEdit" \
       --disallowedTools "ScheduleWakeup,SendMessage,Monitor" \
       "$@" --print "$prompt" | tee "$LAST_MESSAGE_FILE"
@@ -920,7 +923,7 @@ CURLCFG
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
-      codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
+      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
       --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
       "$prompt" 2> "$CODEX_STDERR_PIPE" |
       while IFS= read -r codex_event; do
@@ -1109,7 +1112,7 @@ else
     fi
     env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
       timeout --signal=TERM --kill-after=30s "${round_remaining}s" \
-      "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
+      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
         "$@" \
         --auto "$round_prompt"
   }

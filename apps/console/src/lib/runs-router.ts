@@ -441,6 +441,7 @@ export const runsRouter = os.router({
       const renewed = await context.orchestrator.renew(
         run.runId,
         run.queue?.tokenHash ?? '',
+        input.providerProcessStarted,
       );
       if (isRefusal(renewed))
         throw new ORPCError('UNAUTHORIZED', {

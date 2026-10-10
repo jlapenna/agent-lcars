@@ -576,7 +576,11 @@ variable remains configuration; registry tests do not validate its live value.
 
 ## 13. Success metrics and SLOs
 
-The SLO targets below are proposed.
+The SLO targets below are proposed. The
+[provider-process observation contract](../provider-process-measurement.md)
+separates admission, queue, claim, bootstrap heartbeat and successful OS spawn.
+Its server-observed process clock is not a model-start or useful-outcome claim;
+missing historical clocks remain unknown.
 
 | Metric                      | Definition                                                                                   | Proposed target     |
 | --------------------------- | -------------------------------------------------------------------------------------------- | ------------------- |

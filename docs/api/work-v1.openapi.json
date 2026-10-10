@@ -502,6 +502,15 @@
                               },
                               "claimedBy": {
                                 "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
+                                "type": "string"
                               }
                             },
                             "required": ["state"],
@@ -791,6 +800,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -1087,6 +1105,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -1435,6 +1462,15 @@
                                     },
                                     "claimedBy": {
                                       "type": "string"
+                                    },
+                                    "claimedAt": {
+                                      "type": "string"
+                                    },
+                                    "firstHeartbeatAt": {
+                                      "type": "string"
+                                    },
+                                    "providerProcessStartedAt": {
+                                      "type": "string"
                                     }
                                   },
                                   "required": ["state"],
@@ -1711,6 +1747,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -2019,6 +2064,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -2375,6 +2429,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -4770,7 +4833,12 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "providerProcessStarted": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
               }
             }
           }
