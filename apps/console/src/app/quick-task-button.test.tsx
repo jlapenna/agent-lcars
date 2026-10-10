@@ -86,6 +86,23 @@ describe('New work creation', () => {
     expect(createItem).not.toHaveBeenCalled();
   });
 
+  it('retains the same trigger and captures the click route before lazy loading', async () => {
+    renderButton();
+    const trigger = await screen.findByRole('button', { name: 'New work' });
+    fireEvent.click(trigger);
+    window.history.replaceState(null, '', '/inbox');
+    await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    expect(screen.getByRole('button', { name: 'New work' })).toBe(trigger);
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Investigate the originating page' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
+    expect((createItem as Mock).mock.calls[0][0].spec.description).toContain(
+      'Console route: `/agents`',
+    );
+  });
+
   it('uses the evidence-aware native action for an attachment', async () => {
     (createItemWithEvidence as Mock).mockResolvedValue([
       undefined,

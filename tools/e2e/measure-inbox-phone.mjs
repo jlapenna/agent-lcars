@@ -118,9 +118,6 @@ async function milestone(page, origin) {
 export async function measure(options) {
   const report = {
     schemaVersion: 1,
-    sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], {
-      encoding: 'utf8',
-    }).trim(),
     measuredAt: new Date().toISOString(),
     environment: {
       host: os.hostname(),
@@ -142,14 +139,24 @@ export async function measure(options) {
       'Nearest rank: sorted[ceil(0.95 * n) - 1]; cold and warm never pooled',
     samples: [],
   };
-  const browser = await chromium.launch({
-    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
-      : {}),
-  });
-  report.browserVersion = browser.version();
-  const deadline = setTimeout(() => void browser.close(), RUN_TIMEOUT_MS);
+  let browser;
+  let deadline;
   try {
+    report.sourceRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim();
+    browser = await chromium.launch({
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
+    });
+    report.browserVersion = browser.version();
+    deadline = setTimeout(() => {
+      report.error = 'Measurement exceeded its whole-run deadline';
+      void browser.close().catch((error) => {
+        report.cleanupError = error.message;
+      });
+    }, RUN_TIMEOUT_MS);
     await seed(options.origin);
     for (let index = 0; index < options.samples; index++) {
       // Interleave cases rather than assigning all cold runs the cold server.
@@ -221,14 +228,21 @@ export async function measure(options) {
   } catch (error) {
     report.error =
       error instanceof Error ? error.message : 'Measurement failed';
-    throw error;
   } finally {
     clearTimeout(deadline);
-    await browser.close();
+    try {
+      await browser?.close();
+    } catch (error) {
+      report.cleanupError =
+        error instanceof Error ? error.message : 'Browser cleanup failed';
+      report.error ??= report.cleanupError;
+    }
+    if (report.error) delete report.summary;
     await writeFile(options.out, `${JSON.stringify(report, null, 2)}\n`, {
       flag: 'wx',
     });
   }
+  if (report.error) throw new Error(report.error);
   console.log(JSON.stringify(report.summary, null, 2));
   return report;
 }

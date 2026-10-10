@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-import { labOptions } from '../e2e/measure-inbox-phone.mjs';
+import { describe, expect, it, vi } from 'vitest';
+
+import { labOptions, measure } from '../e2e/measure-inbox-phone.mjs';
 
 const environment = {
   E2E_HERMETIC: '1',
@@ -10,6 +14,31 @@ const environment = {
 const options = ['--origin', 'http://localhost:4204', '--out', '/tmp/lab.json'];
 
 describe('phone performance lab safety boundary', () => {
+  it('writes startup diagnostics without seeding when Chromium cannot launch', async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), 'inbox-phone-launch-'),
+    );
+    const out = path.join(directory, 'failed.json');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    vi.stubEnv(
+      'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH',
+      '/definitely-not-a-browser',
+    );
+    try {
+      await expect(
+        measure({ origin: 'http://localhost:4204', samples: 5, out }),
+      ).rejects.toThrow();
+      const report = JSON.parse(await readFile(out, 'utf8'));
+      expect(report.error).toContain('/definitely-not-a-browser');
+      expect(report.samples).toEqual([]);
+      expect(report.summary).toBeUndefined();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true });
+    }
+  });
   it.each([
     'https://lcars.jlapenna.net',
     'http://10.0.0.1:4204',

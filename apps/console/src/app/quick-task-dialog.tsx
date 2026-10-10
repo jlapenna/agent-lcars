@@ -78,6 +78,13 @@ interface QuickTaskSubmission {
   file?: File;
 }
 
+export interface QuickTaskActivation {
+  pathname: string;
+  search: string;
+  identities: QuickTaskSourceIdentity[];
+  capturedAt: string;
+}
+
 /**
  * Creates a native Work item from any console route and dispatches it through
  * the canonical Work API.
@@ -91,9 +98,8 @@ interface QuickTaskSubmission {
 export function QuickTaskDialog({
   watchedRepos,
   initialRepoKey,
-  sourceIdentities = [],
-  size = 'compact-sm',
-  initiallyOpen = false,
+  activation,
+  onReady,
 }: {
   /** Passed down from the server component that already resolved
    * getWatchedRepos() - this is a client component, and AGENT_LCARS_
@@ -106,11 +112,9 @@ export function QuickTaskDialog({
   /** Canonical identity already resolved by a detail page. It is folded into
    * the issue's auto-captured source context; browser code never guesses
    * PR/run identity from unrelated hidden page data. */
-  sourceIdentities?: QuickTaskSourceIdentity[];
-  size?: string;
-  initiallyOpen?: boolean;
+  activation: QuickTaskActivation;
+  onReady: () => void;
 }) {
-  const [hydrated, setHydrated] = useState(false);
   const [opened, setOpened] = useState(false);
   const [description, setDescription] = useState('');
   const [screenshot, setScreenshot] = useState<File | null>(null);
@@ -124,13 +128,6 @@ export function QuickTaskDialog({
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
   const submitInFlightRef = useRef(false);
-
-  // The server-rendered trigger is visible before this client component's
-  // click handler is attached. Keep it disabled for that brief window so a
-  // fast click is queued by the browser/test runner instead of being lost.
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
 
   // The modal is closed during hydration, so applying browser-local defaults
   // in an effect is SSR-safe without flashing a different visible selection.
@@ -191,10 +188,11 @@ export function QuickTaskDialog({
       setSource(
         captureQuickTaskSource(
           {
-            pathname: window.location.pathname,
-            search: window.location.search,
+            pathname: activation.pathname,
+            search: activation.search,
           },
-          sourceIdentities,
+          activation.identities,
+          new Date(activation.capturedAt),
         ),
       );
     }
@@ -203,10 +201,11 @@ export function QuickTaskDialog({
 
   // Capture source through the existing open path after first lazy activation.
   // Retain this instance across dismiss/reopen so drafts and retries survive.
-  const openOnFirstActivation = useEffectEvent(() => {
-    if (initiallyOpen) open();
+  const openForActivation = useEffectEvent(() => {
+    open();
+    onReady();
   });
-  useEffect(() => openOnFirstActivation(), []);
+  useEffect(() => openForActivation(), [activation]);
 
   const submissionNotificationId = (request: QuickTaskSubmission) =>
     `quick-task:${request.requestId}`;
@@ -372,15 +371,6 @@ export function QuickTaskDialog({
 
   return (
     <>
-      <Button
-        className="lcars-action-button"
-        data-accent="amber"
-        size={size}
-        disabled={!hydrated}
-        onClick={open}
-      >
-        New work
-      </Button>
       <Modal
         opened={opened}
         onClose={close}

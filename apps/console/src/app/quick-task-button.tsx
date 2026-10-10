@@ -6,23 +6,14 @@ import { useEffect, useState } from 'react';
 
 import type { QuickTaskSourceIdentity } from '../lib/quick-task-evidence';
 import type { WatchedRepo } from '../lib/watched-repo';
+import type { QuickTaskActivation } from './quick-task-dialog';
 
 const QuickTaskDialog = dynamic(
   // eslint-disable-next-line no-restricted-syntax -- #2201 intentional browser-only on-demand chunk; a static import downloads creation/evidence code before any decision can be used.
   () => import('./quick-task-dialog').then((module) => module.QuickTaskDialog),
   {
     ssr: false,
-    loading: () => (
-      <Button
-        className="lcars-action-button"
-        data-accent="amber"
-        size="compact-xs"
-        disabled
-        aria-busy="true"
-      >
-        Opening New work…
-      </Button>
-    ),
+    loading: () => null,
   },
 );
 
@@ -40,28 +31,41 @@ export function QuickTaskButton({
   size?: string;
 }) {
   const [hydrated, setHydrated] = useState(false);
-  const [activated, setActivated] = useState(false);
+  const [activation, setActivation] = useState<QuickTaskActivation | null>(
+    null,
+  );
+  const [ready, setReady] = useState(false);
   useEffect(() => setHydrated(true), []);
-  if (activated) {
-    return (
-      <QuickTaskDialog
-        watchedRepos={watchedRepos}
-        initialRepoKey={initialRepoKey}
-        sourceIdentities={sourceIdentities}
-        size={size}
-        initiallyOpen
-      />
-    );
-  }
   return (
-    <Button
-      className="lcars-action-button"
-      data-accent="amber"
-      size={size}
-      disabled={!hydrated}
-      onClick={() => setActivated(true)}
-    >
-      New work
-    </Button>
+    <>
+      <Button
+        className="lcars-action-button"
+        data-accent="amber"
+        size={size}
+        disabled={!hydrated}
+        aria-busy={!!activation && !ready}
+        onClick={() => {
+          if (activation && !ready) return;
+          // Snapshot at the click, not after the lazy chunk arrives: a route
+          // change during loading must not reattribute the originating work.
+          setActivation({
+            pathname: window.location.pathname,
+            search: window.location.search,
+            identities: sourceIdentities ?? [],
+            capturedAt: new Date().toISOString(),
+          });
+        }}
+      >
+        New work
+      </Button>
+      {activation && (
+        <QuickTaskDialog
+          watchedRepos={watchedRepos}
+          initialRepoKey={initialRepoKey}
+          activation={activation}
+          onReady={() => setReady(true)}
+        />
+      )}
+    </>
   );
 }
