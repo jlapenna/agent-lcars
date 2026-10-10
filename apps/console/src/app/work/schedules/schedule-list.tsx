@@ -1,6 +1,7 @@
 import type { WorkSpec } from '@agent-lcars/work';
 import {
   Anchor,
+  Stack,
   Table,
   TableScrollContainer,
   TableTbody,
@@ -12,6 +13,8 @@ import {
 } from '@mantine/core';
 
 import { type ScheduleAction, ScheduleActions } from './schedule-actions';
+import { type UpdateScheduleAction } from './schedule-create-form';
+import { ScheduleTime } from './schedule-time';
 
 export interface ScheduleView {
   id: string;
@@ -22,7 +25,12 @@ export interface ScheduleView {
   // an operator can find and disable it.
   spec?: WorkSpec;
   enabled: boolean;
+  revision: number;
+  disabledReason?: 'grant-revoked' | 'operator' | 'invalid';
+  nextDueAt?: string;
+  pendingItemId?: string;
   lastItemId?: string;
+  lastClosedSlotAt?: string;
 }
 
 /** The `/work/schedules` list table: server-safe (no hooks), so the page
@@ -31,10 +39,14 @@ export function ScheduleList({
   schedules,
   enable,
   disable,
+  update,
+  remove,
 }: {
   schedules: ScheduleView[];
   enable: ScheduleAction;
   disable: ScheduleAction;
+  update: UpdateScheduleAction;
+  remove: ScheduleAction;
 }) {
   if (schedules.length === 0) {
     return (
@@ -57,6 +69,7 @@ export function ScheduleList({
             <TableTh>Pipeline</TableTh>
             <TableTh>Repo</TableTh>
             <TableTh>Enabled</TableTh>
+            <TableTh>Next occurrence</TableTh>
             <TableTh>Last item</TableTh>
             <TableTh />
           </TableTr>
@@ -70,7 +83,39 @@ export function ScheduleList({
               </TableTd>
               <TableTd>{schedule.spec?.pipeline ?? '—'}</TableTd>
               <TableTd>{schedule.spec?.target.repo ?? '—'}</TableTd>
-              <TableTd>{schedule.enabled ? 'yes' : 'no'}</TableTd>
+              <TableTd>
+                <Stack gap={2}>
+                  <Text size="xs">{schedule.enabled ? 'yes' : 'no'}</Text>
+                  {schedule.disabledReason && (
+                    <Text size="xs" c="dimmed">
+                      {
+                        (
+                          {
+                            operator: 'Disabled by an operator',
+                            'grant-revoked':
+                              'Creator grant revoked or repository unavailable',
+                            invalid: 'Invalid schedule; edit to repair',
+                          } as const
+                        )[schedule.disabledReason]
+                      }
+                    </Text>
+                  )}
+                  {schedule.lastClosedSlotAt && (
+                    <Text size="xs" c="dimmed">
+                      A prior occurrence was closed for future admission. Work
+                      admitted earlier may still finish.
+                    </Text>
+                  )}
+                  {schedule.pendingItemId && (
+                    <Text size="xs">
+                      An admitted occurrence is still settling.
+                    </Text>
+                  )}
+                </Stack>
+              </TableTd>
+              <TableTd>
+                <ScheduleTime value={schedule.nextDueAt} />
+              </TableTd>
               <TableTd>
                 {schedule.lastItemId ? (
                   <Anchor href={`/work/${schedule.lastItemId}`} size="sm">
@@ -84,10 +129,11 @@ export function ScheduleList({
               </TableTd>
               <TableTd>
                 <ScheduleActions
-                  id={schedule.id}
-                  enabled={schedule.enabled}
+                  schedule={schedule}
                   enable={enable}
                   disable={disable}
+                  update={update}
+                  remove={remove}
                 />
               </TableTd>
             </TableTr>

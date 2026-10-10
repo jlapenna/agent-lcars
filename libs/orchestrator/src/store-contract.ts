@@ -1656,9 +1656,9 @@ const SCHEDULE_T0 = '2026-08-15T12:00:00.000Z';
 
 /**
  * Behavioural contract every `ScheduleStore` implementation must satisfy,
- * parallel to {@link runOrchestratorStoreContract} but for schedules,
- * which have no mutex and no version guard -- see `schedule-store.ts`'s
- * `writeSchedule` doc for why last-write-wins is acceptable here.
+ * parallel to {@link runOrchestratorStoreContract}. Configuration changes,
+ * occurrence admission and settlement share one atomic schedule owner;
+ * writeSchedule remains a low-level fixture/import writer.
  */
 export function runScheduleStoreContract(
   name: string,
@@ -1678,6 +1678,84 @@ export function runScheduleStoreContract(
       };
     }
 
+    it('admits only one configuration update at the same revision', async () => {
+      const store = await makeStore();
+      const initial = schedule({ revision: 1 });
+      await store.writeSchedule(initial);
+      const results = await Promise.all(
+        ['first', 'second'].map((title) =>
+          store.mutateSchedule(initial.scheduleId, (current) => {
+            if (current?.revision !== 1) return undefined;
+            return { ...current, revision: 2, spec: { title } };
+          }),
+        ),
+      );
+      expect(results.filter((result) => result !== undefined)).toHaveLength(1);
+      expect((await store.readSchedule(initial.scheduleId))?.revision).toBe(2);
+    });
+
+    it('keeps an admitted pending occurrence after deletion, without listing the schedule', async () => {
+      const store = await makeStore();
+      const initial = schedule({ revision: 1 });
+      await store.writeSchedule(initial);
+      const pendingTick = {
+        slotAt: SCHEDULE_T0,
+        itemId: '01J5Z3K9QX8F0N2B4V6C8D1E3H',
+        revision: 1,
+        spec: initial.spec,
+        createdBy: initial.createdBy,
+      };
+      await store.mutateSchedule(initial.scheduleId, (current) => {
+        if (current === undefined) throw new Error('Missing schedule fixture');
+        return { ...current, pendingTick };
+      });
+      await store.mutateSchedule(initial.scheduleId, (current) => {
+        if (current === undefined) throw new Error('Missing schedule fixture');
+        return {
+          ...current,
+          revision: 2,
+          enabled: false,
+          deletedAt: SCHEDULE_T0,
+        };
+      });
+      expect(await store.listSchedules()).toEqual([]);
+      expect(await store.listEnabledSchedules()).toEqual([]);
+      expect((await store.listTickSchedules())[0]?.pendingTick).toEqual(
+        pendingTick,
+      );
+      await store.mutateSchedule(initial.scheduleId, (current) => {
+        if (current === undefined) throw new Error('Missing schedule fixture');
+        const { pendingTick: _pending, ...rest } = current;
+        return rest;
+      });
+      expect(await store.listTickSchedules()).toEqual([]);
+      expect((await store.readSchedule(initial.scheduleId))?.deletedAt).toBe(
+        SCHEDULE_T0,
+      );
+    });
+
+    it('fills a visible page after newer deletion tombstones', async () => {
+      const store = await makeStore();
+      const ids = [
+        '01J5Z3K9QX8F0N2B4V6C8D1E3A',
+        '01J5Z3K9QX8F0N2B4V6C8D1E3B',
+        '01J5Z3K9QX8F0N2B4V6C8D1E3C',
+      ];
+      for (const scheduleId of ids)
+        await store.writeSchedule(
+          schedule({
+            scheduleId,
+            ...(scheduleId === ids[2]
+              ? { deletedAt: SCHEDULE_T0, enabled: false }
+              : {}),
+          }),
+        );
+      expect((await store.listSchedules(2)).map((s) => s.scheduleId)).toEqual([
+        ids[1],
+        ids[0],
+      ]);
+    });
+
     it('round-trips a written schedule', async () => {
       const store = await makeStore();
       await store.writeSchedule(schedule());
@@ -1686,12 +1764,14 @@ export function runScheduleStoreContract(
       );
     });
 
-    it('round-trips a schedule with all three optional fields set', async () => {
+    it('round-trips successful and closed occurrence metadata', async () => {
       const store = await makeStore();
       const withOptionals = schedule({
         lastSlotAt: SCHEDULE_T0,
         lastItemId: '01J5Z3K9QX8F0N2B4V6C8D1E3H',
         disabledReason: 'grant-revoked',
+        lastClosedSlotAt: SCHEDULE_T0,
+        revision: 2,
       });
       await store.writeSchedule(withOptionals);
       expect(await store.readSchedule('01J5Z3K9QX8F0N2B4V6C8D1E3G')).toEqual(

@@ -522,6 +522,10 @@ const scheduleViewSchema = z.strictObject({
   lastSlotAt: z.string().optional(),
   lastItemId: workIdSchema.optional(),
   disabledReason: z.enum(['grant-revoked', 'operator', 'invalid']).optional(),
+  revision: z.number().int().nonnegative(),
+  nextDueAt: z.iso.datetime().optional(),
+  pendingItemId: workIdSchema.optional(),
+  lastClosedSlotAt: z.iso.datetime({ offset: false }).optional(),
 });
 
 const scheduleBase = oc.meta(
@@ -563,6 +567,61 @@ export const schedulesContract = {
       }),
     )
     .output(scheduleViewSchema),
+  update: scheduleBase
+    .meta(
+      openapi({
+        method: 'PATCH',
+        path: '/schedules/{id}',
+        operationId: 'updateSchedule',
+        summary: 'Edit a schedule at its current configuration revision',
+      }),
+    )
+    .errors({
+      NOT_FOUND: { message: 'No such schedule' },
+      FORBIDDEN: {
+        message: 'No grant for this schedule or requested pipeline',
+      },
+      CONFLICT: { message: 'Schedule changed; reload before editing' },
+      BAD_REQUEST: { message: 'Malformed or impossible cron expression' },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        expectedRevision: z.number().int().nonnegative(),
+        cron: cronExpressionSchema,
+        spec: workSpecSchema,
+        enabled: z.boolean(),
+      }),
+    )
+    .output(scheduleViewSchema),
+  delete: scheduleBase
+    .meta(
+      openapi({
+        method: 'DELETE',
+        path: '/schedules/{id}',
+        operationId: 'deleteSchedule',
+        summary:
+          'Delete future recurrence; an already admitted occurrence may finish',
+      }),
+    )
+    .errors({
+      NOT_FOUND: { message: 'No such schedule' },
+      FORBIDDEN: { message: 'No grant for this schedule' },
+      CONFLICT: { message: 'Schedule changed; reload before deleting' },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        expectedRevision: z.number().int().nonnegative(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        id: workIdSchema,
+        deleted: z.literal(true),
+        pendingItemId: workIdSchema.optional(),
+      }),
+    ),
   get: scheduleBase
     .meta(
       openapi({
@@ -599,8 +658,20 @@ export const schedulesContract = {
         summary: 'Enable a cron schedule',
       }),
     )
-    .errors({ NOT_FOUND: { message: 'No such schedule' } })
-    .input(z.strictObject({ id: workIdSchema }))
+    .errors({
+      NOT_FOUND: { message: 'No such schedule' },
+      FORBIDDEN: { message: 'No grant for this schedule' },
+      CONFLICT: { message: 'Schedule changed; reload before toggling' },
+      BAD_REQUEST: {
+        message: 'Repair the invalid schedule before enabling it',
+      },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        expectedRevision: z.number().int().nonnegative(),
+      }),
+    )
     .output(scheduleViewSchema),
   disable: scheduleBase
     .meta(
@@ -611,8 +682,20 @@ export const schedulesContract = {
         summary: 'Disable a cron schedule',
       }),
     )
-    .errors({ NOT_FOUND: { message: 'No such schedule' } })
-    .input(z.strictObject({ id: workIdSchema }))
+    .errors({
+      NOT_FOUND: { message: 'No such schedule' },
+      FORBIDDEN: { message: 'No grant for this schedule' },
+      CONFLICT: { message: 'Schedule changed; reload before toggling' },
+      BAD_REQUEST: {
+        message: 'Repair the invalid schedule before enabling it',
+      },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        expectedRevision: z.number().int().nonnegative(),
+      }),
+    )
     .output(scheduleViewSchema),
   tick: scheduleBase
     .meta(

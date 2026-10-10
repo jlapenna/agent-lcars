@@ -213,6 +213,9 @@ jobs:
           find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 \
             | xargs -0 "$actionlint_command"
 
+      - name: Test revision-checked schedule-disable workflow
+        run: bash tools/work-schedule-disable.test.sh
+
       - name: Test the work-session-expiry workflow
         run: bash tools/workflow-session-expiry.test.sh
 

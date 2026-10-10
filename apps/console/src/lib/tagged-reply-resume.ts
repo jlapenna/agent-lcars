@@ -42,6 +42,12 @@ const unreachableScheduleStore: ScheduleStore = {
   readSchedule: () => {
     throw new Error('tagged-reply: scheduleStore is not available here');
   },
+  mutateSchedule: () => {
+    throw new Error('tagged-reply: scheduleStore is not available here');
+  },
+  listTickSchedules: () => {
+    throw new Error('tagged-reply: scheduleStore is not available here');
+  },
   writeSchedule: () => {
     throw new Error('tagged-reply: scheduleStore is not available here');
   },
