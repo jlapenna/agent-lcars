@@ -2,6 +2,8 @@ import { logger } from '@agent-lcars/logging';
 import {
   applySessionTitleOverlay,
   buildSessionWrite,
+  CLI_TRANSCRIPT_MAX_BYTES,
+  CLI_TRANSCRIPT_RETENTION_DAYS,
   computeLiveness,
   getTranscriptAdapter,
   SessionStatusAnnotationV1,
@@ -16,6 +18,12 @@ import {
   AntigravitySummaryDbConfig,
   pollAntigravitySummaries as defaultPollAntigravitySummaries,
 } from './antigravity-summary-source';
+import {
+  archiveCliTranscript,
+  CliArchivePolicy,
+  CliArchiveResult,
+  isCliArchiveAllowed,
+} from './cli-transcript-archive';
 import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
 import { discoverSessionArtifacts as defaultDiscoverArtifacts } from './discover-artifacts';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
@@ -49,6 +57,10 @@ export interface WatcherDaemonOptions {
    * are discovered, change-detected, and reduced fully independently of
    * each other within the same tick. */
   watchRoots: WatchRootConfig[];
+  cliArchivePolicy?: CliArchivePolicy;
+  archiveCliTranscript?: typeof archiveCliTranscript;
+  archiveProjectId?: string;
+  archiveWriterKeyJson?: string;
   host: string;
   store: SessionStore;
   heartbeatIntervalMs: number;
@@ -235,6 +247,14 @@ export class WatcherDaemon {
     string,
     SessionStatusAnnotationV1
   > = new Map();
+  private archiveFiles = new Map<
+    string,
+    { file: string; root: WatchRootConfig }
+  >();
+  private archives = new Map<
+    string,
+    { result: CliArchiveResult; signature: string; attemptedAt: number }
+  >();
   private intervalHandle?: ReturnType<typeof setInterval>;
   private tickInFlight?: Promise<void>;
 
@@ -252,6 +272,8 @@ export class WatcherDaemon {
    */
   private evictStaleSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.archiveFiles.delete(sessionId);
+    this.archives.delete(sessionId);
     this.lastWrittenWrites.delete(sessionId);
 
     for (const [file, sessionIds] of this.sessionIdsByFile) {
@@ -429,6 +451,16 @@ export class WatcherDaemon {
               : summary,
           );
           acceptedSessionIds.push(summary.sessionId);
+          // Never archive a multi-session file: the accepted summary is not
+          // consent for other sessions whose bytes happen to share its file.
+          if (
+            fileSummaries.length === 1 &&
+            isCliArchiveAllowed(root, file, summary)
+          ) {
+            this.archiveFiles.set(summary.sessionId, { file, root });
+          } else {
+            this.archiveFiles.delete(summary.sessionId);
+          }
         }
         this.sessionIdsByFile.set(file, acceptedSessionIds);
       } catch (error) {
@@ -573,6 +605,12 @@ export class WatcherDaemon {
           forceSource: this.options.forceSource,
         }),
         observedAt,
+        ...(await this.cliArchiveOptions(
+          sessionId,
+          tracked.summary,
+          liveness,
+          now,
+        )),
       });
       // Keyed on the WHOLE write, not the doc alone — see
       // `lastWrittenWrites`'s own doc comment above for why that
@@ -599,6 +637,74 @@ export class WatcherDaemon {
 
     await this.tickAntigravitySummaries(now);
     this.options.metrics?.recordCompletedTick(now, this.sessions.size);
+  }
+
+  /** Only ended, individually consented CLI sessions may be uploaded. */
+  private async cliArchiveOptions(
+    sessionId: string,
+    summary: SessionSummary,
+    liveness: string,
+    now: string,
+  ): Promise<CliArchiveResult | undefined> {
+    const policy = this.options.cliArchivePolicy;
+    const capture = this.archiveFiles.get(sessionId);
+    if (
+      !policy ||
+      this.options.forceSource === 'issue-agent' ||
+      summary.source !== 'cli' ||
+      !policy.sessionIds.includes(sessionId) ||
+      !capture ||
+      !Number.isFinite(Date.parse(summary.startedAt)) ||
+      Date.parse(summary.startedAt) < Date.parse(policy.enabledAfter)
+    )
+      return undefined;
+    const expires =
+      Date.parse(summary.lastActivityAt) +
+      CLI_TRANSCRIPT_RETENTION_DAYS * 86400000;
+    if (!Number.isFinite(expires) || expires <= Date.parse(now))
+      return { cliTranscriptArchive: { status: 'expired' } };
+    if (liveness !== 'ended')
+      return { cliTranscriptArchive: { status: 'pending' } };
+    const signature = JSON.stringify(this.fileStats.get(capture.file));
+    const previous = this.archives.get(sessionId);
+    if (
+      previous?.signature === signature &&
+      (previous.result.cliTranscriptArchive.status !== 'failed' ||
+        Date.parse(now) - previous.attemptedAt < 60_000)
+    )
+      return previous.result;
+    let result: CliArchiveResult;
+    if (
+      (this.fileStats.get(capture.file)?.size ?? Infinity) >
+      CLI_TRANSCRIPT_MAX_BYTES
+    ) {
+      result = { cliTranscriptArchive: { status: 'too-large' } };
+    } else {
+      try {
+        result = await (
+          this.options.archiveCliTranscript ?? archiveCliTranscript
+        )({
+          policy,
+          ...capture,
+          summary,
+          now,
+          projectId: this.options.archiveProjectId,
+          writerKeyJson: this.options.archiveWriterKeyJson,
+        });
+      } catch (error) {
+        logger.warn(
+          'agent-lcars-telemetry-watcher: CLI archive failed; summary telemetry continues',
+          error,
+        );
+        result = { cliTranscriptArchive: { status: 'failed' } };
+      }
+    }
+    this.archives.set(sessionId, {
+      result,
+      signature,
+      attemptedAt: Date.parse(now),
+    });
+    return result;
   }
 
   /**

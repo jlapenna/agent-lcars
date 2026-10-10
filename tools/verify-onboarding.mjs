@@ -427,8 +427,9 @@ export async function runAudit({
     }
     // The deployed configuration remains Homelab-owned. Read its data; never
     // import code or copy its registration list into this repository.
-    if (!registrationConfig) {
-      try {
+    let registrations = [];
+    try {
+      if (!registrationConfig) {
         const token = await tokenFor('jlapenna/homelab');
         const file = await api(
           '/repos/jlapenna/homelab/contents/github-runner-autoscaler/orchestrator.yml',
@@ -437,76 +438,77 @@ export async function runAudit({
         registrationConfig = parse(
           Buffer.from(file.content, 'base64').toString('utf8'),
         );
-      } catch (error) {
-        facts.push({
-          repo: 'registrations',
-          fact: 'configuration',
-          status: 'FAIL',
-          detail: safeMessage(error),
-        });
       }
-    }
-    if (registrationConfig) {
-      for (const registration of runnerRegistrations(
-        registrationConfig,
+      registrations = runnerRegistrations(
+        registrationConfig ?? {},
         legacyRunnerApp,
-      )) {
-        const fact = {
-          repo: registration.target,
-          fact: `runner-list:${registration.name}`,
-        };
-        // Legacy root registration receives identity through deployment env.
-        // Do not substitute another App and claim its scope was verified.
-        const registrationJwt =
-          registration.clientId === clientId
-            ? jwt
-            : registration.clientId === runnerClientId
-              ? runnerJwt
-              : undefined;
-        if (!registrationJwt) {
+      );
+      if (!registrations.length)
+        throw new UnverifiedError(
+          'No active runner registrations in configuration; supply current registration targets and their actual App identities with --registrations=PATH. Runner coverage was not audited.',
+        );
+    } catch (error) {
+      facts.push({
+        repo: 'registrations',
+        fact: 'configuration',
+        status: error instanceof UnverifiedError ? 'UNVERIFIED' : 'FAIL',
+        detail: safeMessage(error),
+      });
+    }
+    for (const registration of registrations) {
+      const fact = {
+        repo: registration.target,
+        fact: `runner-list:${registration.name}`,
+      };
+      // Legacy root registration receives identity through deployment env.
+      // Do not substitute another App and claim its scope was verified.
+      const registrationJwt =
+        registration.clientId === clientId
+          ? jwt
+          : registration.clientId === runnerClientId
+            ? runnerJwt
+            : undefined;
+      if (!registrationJwt) {
+        facts.push({
+          ...fact,
+          status: 'UNVERIFIED',
+          detail:
+            'Registration App identity absent or differs from supplied App credential; audit with its declared identity',
+        });
+        continue;
+      }
+      try {
+        const lookup = registration.target.includes('/')
+          ? `/repos/${registration.target}/installation`
+          : `/orgs/${registration.target}/installation`;
+        const installation = await api(lookup, registrationJwt);
+        if (installation.id !== registration.installationId)
+          throw new AuditError(
+            'Registration installation differs from authenticated App',
+          );
+        const readable = registration.target.includes('/')
+          ? 'administration'
+          : 'organization_self_hosted_runners';
+        if (!installation.permissions[readable])
+          throw new AuditError('Registration App lacks runner-list permission');
+        const minted = await api(
+          `/app/installations/${installation.id}/access_tokens`,
+          registrationJwt,
+          'POST',
+          { permissions: { [readable]: 'read' } },
+        );
+        try {
+          await api(`${registration.endpoint}?per_page=1`, minted.token);
           facts.push({
             ...fact,
-            status: 'UNVERIFIED',
-            detail:
-              'Registration App identity absent or differs from supplied App credential; audit with its declared identity',
+            status: 'PASS',
+            detail: 'correctly scoped runner-list request succeeded',
           });
-          continue;
+        } finally {
+          await api('/installation/token', minted.token, 'DELETE');
         }
-        try {
-          const lookup = registration.target.includes('/')
-            ? `/repos/${registration.target}/installation`
-            : `/orgs/${registration.target}/installation`;
-          const installation = await api(lookup, registrationJwt);
-          if (installation.id !== registration.installationId)
-            throw new AuditError(
-              'Registration installation differs from authenticated App',
-            );
-          const readable = registration.target.includes('/')
-            ? 'administration'
-            : 'organization_self_hosted_runners';
-          if (!installation.permissions[readable])
-            throw new AuditError(
-              'Registration App lacks runner-list permission',
-            );
-          const minted = await api(
-            `/app/installations/${installation.id}/access_tokens`,
-            registrationJwt,
-            'POST',
-            { permissions: { [readable]: 'read' } },
-          );
-          try {
-            await api(`${registration.endpoint}?per_page=1`, minted.token);
-            facts.push({
-              ...fact,
-              status: 'PASS',
-              detail: 'correctly scoped runner-list request succeeded',
-            });
-          } finally {
-            await api('/installation/token', minted.token, 'DELETE');
-          }
-        } catch (error) {
-          facts.push({ ...fact, status: 'FAIL', detail: safeMessage(error) });
-        }
+      } catch (error) {
+        facts.push({ ...fact, status: 'FAIL', detail: safeMessage(error) });
       }
     }
   } finally {

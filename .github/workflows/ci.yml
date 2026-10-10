@@ -213,6 +213,9 @@ jobs:
           find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 \
             | xargs -0 "$actionlint_command"
 
+      - name: Test revision-checked schedule-disable workflow
+        run: bash tools/work-schedule-disable.test.sh
+
       - name: Test the work-session-expiry workflow
         run: bash tools/workflow-session-expiry.test.sh
 
@@ -539,29 +542,15 @@ jobs:
           lane: required E2E verification
           restore-command: gh variable set E2E_ENABLED --body true
 
-  e2e:
-    name: E2E
-    # Missing is enabled; set false only for an explicit, visible emergency
-    # control window. A skipped required check intentionally satisfies it.
+  e2e-scope:
+    name: Console E2E selection
     if: ${{ vars.E2E_ENABLED != 'false' }}
-    # The runner IS the pinned sandbox now (agent-lcars#920, mirroring
-    # supersprinklesracing/sprinkles' own e2e pool): tools/e2e-runner/
-    # Dockerfile derives FROM the published tools/e2e/Dockerfile sandbox
-    # plus the JIT runner agent, and jlapenna/homelab's orchestrator.yml
-    # pins that image as the lcars-e2e pool's runner_image. That's what lets
-    # this job invoke the suite directly below -- no tools/e2e-docker.sh
-    # wrapper or host Docker socket.
-    #
-    # Fork PRs still run on ubuntu-latest via tools/e2e-local.sh -- lcars-e2e
-    # is a trusted self-hosted pool, off-limits to untrusted fork code the
-    # same way the trusted Verify pool is for `verify` above (see
-    # codeql.yml's `analyze` job for the same fork-PR rationale in more
-    # detail). Literal 'lcars-e2e', not a vars.* indirection: this job is
-    # only correct on a runner whose image IS the pinned sandbox, so
-    # nothing should be able to silently redirect it elsewhere (mirrors
-    # sprinkles' own e2e.yml `runs-on: [e2e]`).
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-e2e' }}
-    timeout-minutes: 30
+    # Selection must finish before reserving the scarce pinned browser pool.
+    # This graph/diff query needs no fleet network or runtime credentials.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.e2e-scope.outputs.run }}
 
     steps:
       - uses: actions/checkout@v7
@@ -605,7 +594,7 @@ jobs:
               run=true
             elif ! affected_count="$(
               node -e \
-                "const fs=require('node:fs'); process.stdout.write(String(JSON.parse(fs.readFileSync(0, 'utf8')).length))" \
+                "const fs=require('node:fs'); const projects=JSON.parse(fs.readFileSync(0, 'utf8')); if (!Array.isArray(projects) || projects.some(p => typeof p !== 'string')) process.exit(1); process.stdout.write(String(projects.length))" \
                 <<< "$affected_json"
             )"; then
               echo "::warning::Nx affected output was invalid; running the suite."
@@ -627,11 +616,41 @@ jobs:
             echo "::notice::Console and its E2E harness are unaffected; skipping browser setup and tests."
           fi
 
+  e2e-browser:
+    name: Console E2E browser suite
+    needs: e2e-scope
+    if: ${{ needs.e2e-scope.outputs.run == 'true' }}
+    # The runner IS the pinned sandbox now (agent-lcars#920, mirroring
+    # supersprinklesracing/sprinkles' own e2e pool): tools/e2e-runner/
+    # Dockerfile derives FROM the published tools/e2e/Dockerfile sandbox
+    # plus the JIT runner agent, and jlapenna/homelab's orchestrator.yml
+    # pins that image as the lcars-e2e pool's runner_image. That's what lets
+    # this job invoke the suite directly below -- no tools/e2e-docker.sh
+    # wrapper or host Docker socket.
+    #
+    # Fork PRs still run on ubuntu-latest via tools/e2e-local.sh -- lcars-e2e
+    # is a trusted self-hosted pool, off-limits to untrusted fork code the
+    # same way the trusted Verify pool is for `verify` above (see
+    # codeql.yml's `analyze` job for the same fork-PR rationale in more
+    # detail). Literal 'lcars-e2e', not a vars.* indirection: this job is
+    # only correct on a runner whose image IS the pinned sandbox, so
+    # nothing should be able to silently redirect it elsewhere (mirrors
+    # sprinkles' own e2e.yml `runs-on: [e2e]`).
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-e2e' }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-node-pnpm
+
       # The E2E targets are explicitly cache:false, so selected tests always
       # run. Its hermetic wrapper admits only this L2 capability pair to let
       # the deterministic console bundle reuse or warm the remote cache.
       - uses: ./.github/actions/setup-nx-remote-cache
-        if: steps.e2e-scope.outputs.run == 'true'
+        if: needs.e2e-scope.outputs.run == 'true'
         with:
           url: ${{ vars.NX_CACHE_URL }}
           write-token: ${{ secrets.NX_CACHE_TOKEN }}
@@ -645,7 +664,7 @@ jobs:
       # two ways to express the same runtime condition.
       - name: Detect Java 21 runtime
         id: java-runtime
-        if: steps.e2e-scope.outputs.run == 'true'
+        if: needs.e2e-scope.outputs.run == 'true'
         shell: bash
         run: |
           java_major=''
@@ -663,7 +682,7 @@ jobs:
           fi
 
       - uses: actions/setup-java@v6
-        if: steps.e2e-scope.outputs.run == 'true' && steps.java-runtime.outputs.ready != 'true'
+        if: needs.e2e-scope.outputs.run == 'true' && steps.java-runtime.outputs.ready != 'true'
         with:
           distribution: temurin
           java-version: '21'
@@ -673,7 +692,7 @@ jobs:
       # headless Chromium; checking only a chromium-* directory missed drift.
       - name: Detect matching preinstalled Playwright browser
         id: playwright-deps
-        if: steps.e2e-scope.outputs.run == 'true'
+        if: needs.e2e-scope.outputs.run == 'true'
         shell: bash
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
@@ -698,11 +717,11 @@ jobs:
           fi
 
       - name: Install Playwright browser from baked dependencies
-        if: steps.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.ready != 'true' && steps.playwright-deps.outputs.dependencies_ready == 'true'
+        if: needs.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.ready != 'true' && steps.playwright-deps.outputs.dependencies_ready == 'true'
         run: pnpm exec playwright install chromium
 
       - name: Install Playwright browser and dependencies
-        if: steps.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.dependencies_ready != 'true'
+        if: needs.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.dependencies_ready != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
       # One e2e entrypoint for every environment (fork ubuntu-latest,
@@ -722,14 +741,14 @@ jobs:
       # telemetry cannot claim a full execution when the browser suite was
       # skipped or never started.
       - name: Run console e2e suite [full-suite]
-        if: steps.e2e-scope.outputs.run == 'true'
+        if: needs.e2e-scope.outputs.run == 'true'
         run: ./tools/e2e-local.sh
 
       # Preserve Playwright's HTML report, traces, screenshots, and error
       # context after the ephemeral runner exits. `if: always()` is
       # load-bearing: failures are when these artifacts matter most (#991).
       - name: Upload console e2e diagnostics
-        if: always() && steps.e2e-scope.outputs.run == 'true'
+        if: always() && needs.e2e-scope.outputs.run == 'true'
         # Diagnostics are ancillary. An artifact-service outage must not turn
         # a fully passing Playwright suite into a red required E2E check
         # (run 34252742315: 93 passed, FinalizeArtifact returned 403).
@@ -740,3 +759,38 @@ jobs:
           path: apps/console-e2e/test-output/
           if-no-files-found: ignore
           retention-days: 14
+
+  e2e:
+    name: E2E
+    needs: [e2e-scope, e2e-browser]
+    # Missing is enabled; preserve the visible emergency-control exception.
+    # always() exposes selection/browser failure rather than skipping a
+    # required check because one dependency failed or was cancelled.
+    if: ${{ always() && vars.E2E_ENABLED != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require successful E2E selection and selected browser execution
+        shell: bash
+        env:
+          SELECTION_RESULT: ${{ needs.e2e-scope.result }}
+          BROWSER_RESULT: ${{ needs.e2e-browser.result }}
+          RUN_BROWSER: ${{ needs.e2e-scope.outputs.run }}
+        run: |
+          set -euo pipefail
+          if [[ "$SELECTION_RESULT" != success ]]; then
+            echo "::error::Console E2E selection did not succeed ($SELECTION_RESULT)."
+            exit 1
+          fi
+          case "$RUN_BROWSER:$BROWSER_RESULT" in
+            true:success)
+              echo "Selected console browser suite passed."
+              ;;
+            false:skipped)
+              echo "Console and its E2E harness are unaffected."
+              ;;
+            *)
+              echo "::error::Console E2E result is incomplete (selected=$RUN_BROWSER, browser=$BROWSER_RESULT)."
+              exit 1
+              ;;
+          esac

@@ -1,7 +1,10 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
-import type { SessionDoc } from '@agent-lcars/telemetry';
+import {
+  CLI_TRANSCRIPT_MAX_BYTES,
+  type SessionDoc,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   getSessionDoc,
@@ -19,7 +22,7 @@ export type SessionDetailResult =
 
 /**
  * Loads everything the /sessions/[id] detail page needs: the doc itself,
- * plus - for an issue-agent doc that has one - its archived transcript.
+ * plus its renderable archived transcript (CLI archives require unexpired consent).
  *
  * Two distinct failure modes are kept separate (see `SessionDetailResult`)
  * because the page treats them differently: a genuinely-missing doc is a
@@ -29,20 +32,10 @@ export type SessionDetailResult =
  * `getSessionTranscript` already absorbs it into its own `warning` field, so
  * the header still renders even when the transcript can't be shown.
  *
- * Only fetched when the persisted `renderable` field is true:
- * `getSessionTranscript`
- * parses `transcriptGcsUri` as a single `.jsonl` object via the agent-specific
- * branch in `parseTranscriptTimeline` (see `RENDERABLE_TRANSCRIPT_AGENTS` in
- * `transcript-timeline.ts`). Unsupported agents may archive-first rather
- * than ship a parseable transcript at
- * all (e.g. OpenCode's raw local session storage, which is a single SQLite
- * database rather than a per-session file - see `types.ts`'s
- * `transcriptGcsUri` doc comment) - fetching either shape as a transcript
- * would fail-soft into a scary warning on every one of their session pages
- * for no benefit, since there's nothing renderable yet. The page instead
- * shows a short note that the archive exists without attempting to
- * fetch/parse it. This gate is deliberately read from `doc.renderable`, the
- * Worker runtime's capture-time claim, rather than re-derived from `agent`.
+ * The persisted renderable flag gates the normal transcript archive. OpenCode
+ * also has a separate full export for resume; that envelope is renderable even
+ * on older docs captured before the timeline parser existed. Reading it never
+ * changes the archive or the provider identity.
  */
 export async function getSessionDetail(
   sessionId: string,
@@ -63,10 +56,37 @@ export async function getSessionDetail(
     return { status: 'not-found' };
   }
 
-  const transcript =
-    doc.source === 'issue-agent' && doc.transcriptGcsUri && doc.renderable
-      ? await getSessionTranscript(doc.transcriptGcsUri, doc.agent)
+  const cliArchive =
+    doc.source === 'cli' ? doc.cliTranscriptArchive : undefined;
+  const cliAvailable =
+    doc.source !== 'cli' ||
+    (cliArchive?.status === 'available' &&
+      cliArchive.expiresAt &&
+      Date.parse(cliArchive.expiresAt) > Date.now());
+  const openCodeExport =
+    doc.source === 'issue-agent' &&
+    doc.transcriptGcsUri &&
+    doc.agent === 'opencode'
+      ? doc.resumeGcsUri
       : undefined;
+  const transcript =
+    doc.transcriptGcsUri && (doc.renderable || openCodeExport) && cliAvailable
+      ? doc.source === 'cli'
+        ? await getSessionTranscript(doc.transcriptGcsUri, doc.agent, {
+            maxBytes: CLI_TRANSCRIPT_MAX_BYTES,
+          })
+        : await getSessionTranscript(
+            openCodeExport ?? doc.transcriptGcsUri,
+            doc.agent,
+          )
+      : doc.source === 'cli' &&
+          cliArchive?.status === 'available' &&
+          !cliAvailable
+        ? {
+            events: [],
+            warning: 'Transcript unavailable (archive retention expired).',
+          }
+        : undefined;
 
   return { status: 'ok', doc, ...(transcript && { transcript }) };
 }

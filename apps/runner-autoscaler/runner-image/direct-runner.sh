@@ -742,11 +742,11 @@ if [ "$PIPELINE" = "claude" ]; then
     exit 1
   fi
   LAST_MESSAGE_FILE="$RUNNER_TEMP/last-message.txt"
-  CLAUDE_DEADLINE=$((SECONDS + CLAUDE_TIMEOUT_SECONDS))
+  CLAUDE_DEADLINE=$(($(monotonic_seconds) + CLAUDE_TIMEOUT_SECONDS))
   run_claude_round() {
     local prompt="$1" remaining
     shift
-    remaining=$((CLAUDE_DEADLINE - SECONDS))
+    remaining=$((CLAUDE_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
       claude --dangerously-skip-permissions \
@@ -782,13 +782,13 @@ elif [ "$PIPELINE" = "codex" ]; then
     echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
     exit 1
   fi
-  auth_deadline=$((SECONDS + auth_wait_seconds))
+  auth_deadline=$(($(monotonic_seconds) + auth_wait_seconds))
   auth_delay=5
   auth_first_request=1
   trap 'EARLY_FAILURE_MESSAGE="Codex credential wait cancelled"; exit 143' TERM
   trap 'EARLY_FAILURE_MESSAGE="Codex credential wait cancelled"; exit 130' INT
   while true; do
-    auth_remaining=$((auth_deadline - SECONDS))
+    auth_remaining=$((auth_deadline - $(monotonic_seconds)))
     if [ "$auth_first_request" = 0 ] && [ "$auth_remaining" -le 0 ]; then
       EARLY_FAILURE_MESSAGE="Codex credential wait exhausted after $auth_wait_seconds seconds (HTTP 409)"
       echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
@@ -826,7 +826,7 @@ CURLCFG
       echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
       exit 1
     fi
-    auth_remaining=$((auth_deadline - SECONDS))
+    auth_remaining=$((auth_deadline - $(monotonic_seconds)))
     if [ "$auth_remaining" -le 0 ]; then
       EARLY_FAILURE_MESSAGE="Codex credential wait exhausted after $auth_wait_seconds seconds (HTTP 409)"
       echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
@@ -910,12 +910,12 @@ CURLCFG
   # $RUNNER_TEMP lives for the whole script, exactly where Claude's own
   # LAST_MESSAGE_FILE already lives.
   CODEX_LAST_MESSAGE_FILE="$RUNNER_TEMP/codex-last-message.txt"
-  CODEX_DEADLINE=$((SECONDS + CODEX_TIMEOUT_SECONDS))
+  CODEX_DEADLINE=$(($(monotonic_seconds) + CODEX_TIMEOUT_SECONDS))
   CODEX_THREAD_FILE="$CODEX_RUNTIME_DIR/thread-id"
   run_codex_round() {
     local prompt="$1" remaining round_exit
     shift
-    remaining=$((CODEX_DEADLINE - SECONDS))
+    remaining=$((CODEX_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
@@ -1099,11 +1099,11 @@ else
   # No `tee` here means the live log is just the log, and the exit code
   # comes directly from `$?` rather than `${PIPESTATUS[0]}`.
   OPENCODE_LAST_MESSAGE_FILE="$RUNNER_TEMP/opencode-last-message.txt"
-  OPENCODE_DEADLINE=$((SECONDS + OPENCODE_TIMEOUT_SECONDS))
+  OPENCODE_DEADLINE=$(($(monotonic_seconds) + OPENCODE_TIMEOUT_SECONDS))
   run_opencode_round() {
     round_prompt="$1"
     shift
-    round_remaining=$((OPENCODE_DEADLINE - SECONDS))
+    round_remaining=$((OPENCODE_DEADLINE - $(monotonic_seconds)))
     if [ "$round_remaining" -lt 1 ]; then
       return 124
     fi
@@ -1151,7 +1151,7 @@ else
     fi
   fi
 
-  if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((OPENCODE_DEADLINE - SECONDS)) -gt 0 ]; then
+  if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((OPENCODE_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
     set +e
     run_opencode_round "$WORKER_COMPLETION_PROMPT" --session "$OPENCODE_CONTINUATION_SESSION"
     AGENT_EXIT=$?
@@ -1189,72 +1189,20 @@ elif [ "$AGENT_EXIT" -ne 0 ]; then
 fi
 OUTCOME_REFERENCE=null
 VERIFY_OUTPUT="$RUNNER_TEMP/verify-outcome-output"
-# A timeout or provider crash can happen after a PR was published. Always
-# verify exact attempt-bound artifacts before classifying execution failure.
+VERIFIED_OUTCOME_FILE="$RUNNER_TEMP/verified-outcome.json"
+# A timeout or provider crash can happen after publication. The verifier
+# classifies and returns the same exact marker-bound REST objects it checked;
+# completion does not repeat GitHub lookups or inspect agent-supplied links.
 if AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" \
+  VERIFIED_OUTCOME_FILE="$VERIFIED_OUTCOME_FILE" \
   bash "$VERIFY_OUTCOME" >"$VERIFY_OUTPUT" 2>&1; then
   cat "$VERIFY_OUTPUT"
-  # The verifier proves that *some* exact marker-bound artifact exists; the
-  # completion outcome must still name that artifact rather than relabeling
-  # a reply comment or a pull-request review as a pull request.
-  #
-  # Start at `unknown-success`: a transient classification lookup cannot
-  # undo the verifier's success, nor can it assert a nonexistent PR.
   OUTCOME=unknown-success
-  claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
-  if pr_hits="$(gh api "repos/$TARGET_REPO/pulls?state=all&per_page=100" --paginate \
-    --jq ".[] | select(.user.type == \"Bot\") | select(((.title // \"\") + \"\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number")"; then
-    if [ -n "$pr_hits" ]; then
-      OUTCOME=pull-request
-      if [[ "$pr_hits" != *$'\n'* ]]; then
-        OUTCOME_REFERENCE="$(jq -n --argjson n "$pr_hits" '{kind: "pull-request", number: $n}')"
-      fi
-    fi
-  else
-    echo "::warning::Could not classify a pull-request deliverable for the completion callback" >&2
-    pr_hits=""
-  fi
-
-  # A GitHub issue/PR anchor can complete with an evidence comment. Check
-  # park/no-op before a plain comment; these structured comments carry distinct control-plane
-  # semantics even though they use the same GitHub artifact type.
-  if [ -n "$ISSUE" ]; then
-    if comment_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
-      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then
-      if [ -n "$comment_hits" ]; then
-        if park_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
-          --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:park -->\")) | .id")" && \
-          [ -n "$park_hits" ]; then
-          # A structured park wins even if this run also opened a PR. The
-          # PR reference remains attached so the control plane can point at
-          # the partial work alongside the human blocker.
-          OUTCOME=park
-        elif [ "$OUTCOME" = unknown-success ]; then
-          OUTCOME=comment
-          if no_op_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
-            --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id")" && \
-            [ -n "$no_op_hits" ]; then
-            OUTCOME=no-op
-          fi
-        fi
-      fi
-    else
-      echo "::warning::Could not classify a comment deliverable for the completion callback" >&2
-    fi
-  fi
-
-  # A review is a distinct protocol deliverable. It is intentionally after
-  # comments: a marker-stamped comment remains the authoritative artifact if
-  # an agent left both.
-  if [ "$OUTCOME" = unknown-success ] && [ "$MODE" = review ] && [ -n "$ISSUE" ]; then
-    if review_hits="$(gh api "repos/$TARGET_REPO/pulls/$ISSUE/reviews?per_page=100" --paginate \
-      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then
-      if [ -n "$review_hits" ]; then
-        OUTCOME=review
-      fi
-    else
-      echo "::warning::Could not classify a pull-request review deliverable for the completion callback" >&2
-    fi
+  if [ -s "$VERIFIED_OUTCOME_FILE" ] && jq -e '
+    .outcome | IN("pull-request", "comment", "review", "park", "no-op")
+  ' "$VERIFIED_OUTCOME_FILE" >/dev/null; then
+    OUTCOME="$(jq -r .outcome "$VERIFIED_OUTCOME_FILE")"
+    OUTCOME_REFERENCE="$(jq -c .outcomeReference "$VERIFIED_OUTCOME_FILE")"
   fi
 elif [ "$ANCHOR_TYPE" = "work" ]; then
   # A native Work terminal outcome is a deliberately narrow replacement for

@@ -70,69 +70,86 @@ if [ -z "${ATTEMPT_ID:-}" ]; then
   exit 1
 fi
 
+# The private completion file is produced after the provider stops. Never
+# accept an agent-written file or parse links from its stdout/final message.
+if [ -n "${VERIFIED_OUTCOME_FILE:-}" ]; then
+  rm -f -- "$VERIFIED_OUTCOME_FILE" || exit 1
+fi
 found=""
 errors=()
-
 claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
+pr_hits='[]'
+comment_hits='[]'
+review_hits='[]'
 
-# Every lookup here paginates. These have no sort and no time filter -- the
-# marker IS the identity check - so "the first page" is an arbitrary slice,
-# and a marker one page deep would read as a genuine absence.
-
-# PRs: any BOT-AUTHORED PR (regardless of which bot, or of update time)
-# whose title or body carries this exact marker. See #1223 in the header:
-# without the author test, a human PR that merely quotes the marker counts.
-if claim_pr_hits=$(gh api "repos/$REPO/pulls?state=all&per_page=100" --paginate \
-  --jq ".[] | select(.user.type == \"Bot\") | select(((.title // \"\") + \"\\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number" 2>&1); then
-  if [ -n "$claim_pr_hits" ]; then
-    found="PR carrying this run's attempt-claim marker ($ATTEMPT_ID)"
+# Read each paginated REST collection once, then classify and carry the very
+# same verified object. Re-querying for its URL can credit a different artifact
+# or lose evidence when a second lookup fails.
+lookup_hits() {
+  local endpoint="$1" kind="$2" pages hits
+  if ! pages=$(gh api "$endpoint" --paginate --slurp 2>&1); then
+    errors+=("$kind lookup (gh api $endpoint) failed: $pages")
+    return 1
   fi
-else
-  errors+=("PR list lookup (gh api repos/$REPO/pulls) failed: $claim_pr_hits")
-fi
+  if ! hits=$(jq -ce --arg marker "$claim_marker" --arg kind "$kind" '
+    [ .[][]
+      | select(.user.type == "Bot")
+      | select((if $kind == "PR" then ((.title // "") + "\n" + (.body // "")) else (.body // "") end) | contains($marker))
+    ]' <<< "$pages" 2>&1); then
+    errors+=("$kind lookup returned invalid REST data: $hits")
+    return 1
+  fi
+  LOOKUP_HITS="$hits"
+}
 
-# Comments: not gated on MODE - a marker stamped on a comment is exact
-# evidence regardless of dispatch mode. Gated on NUM: a native work-item
-# run has no issue to fetch comments from at all.
-if [ -n "$NUM" ] && [ -z "$found" ]; then
-  if claim_comment_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
-    --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
-    if [ -n "$claim_comment_hits" ]; then
-      found="comment carrying this run's attempt-claim marker ($ATTEMPT_ID)"
-      if claim_no_op_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
-        --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id" 2>/dev/null) && \
-        [ -n "$claim_no_op_hits" ]; then
-        found="evidence-backed structured no-op carrying this run's attempt-claim marker ($ATTEMPT_ID)"
-      elif claim_park_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
-        --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:park -->\")) | .id" 2>/dev/null) && \
-        [ -n "$claim_park_hits" ]; then
-        found="evidence-backed park carrying this run's attempt-claim marker ($ATTEMPT_ID)"
-      fi
-    fi
-  else
-    errors+=("Attempt-claim comment lookup (gh api repos/$REPO/issues/$NUM/comments) failed: $claim_comment_hits")
+if lookup_hits "repos/$REPO/pulls?state=all&per_page=100" PR; then
+  pr_hits="$LOOKUP_HITS"
+fi
+# A structured park must be checked even beside a partial PR.
+if [ -n "$NUM" ]; then
+  if lookup_hits "repos/$REPO/issues/$NUM/comments?per_page=100" comment; then
+    comment_hits="$LOOKUP_HITS"
   fi
 fi
-
-# Reviews: gated on MODE=review - `pulls/$NUM/reviews` 404s when #NUM is
-# not a pull request, and review mode is the one case this script already
-# knows #NUM is one. Also gated on NUM: a native work-item run has no
-# pull request number to fetch reviews from.
-if [ -n "$NUM" ] && [ -z "$found" ] && [ "$MODE" = "review" ]; then
-  if claim_review_hits=$(gh api "repos/$REPO/pulls/$NUM/reviews?per_page=100" --paginate \
-    --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
-    if [ -n "$claim_review_hits" ]; then
-      found="pull request review carrying this run's attempt-claim marker ($ATTEMPT_ID)"
-    fi
-  else
-    errors+=("PR review lookup (gh api repos/$REPO/pulls/$NUM/reviews) failed: $claim_review_hits")
+if [ "$MODE" = review ] && [ -n "$NUM" ] &&
+  [ "$(jq length <<< "$pr_hits")" -eq 0 ] && [ "$(jq length <<< "$comment_hits")" -eq 0 ]; then
+  if lookup_hits "repos/$REPO/pulls/$NUM/reviews?per_page=100" review; then
+    review_hits="$LOOKUP_HITS"
   fi
 fi
 
-if [ -n "$found" ]; then
+# Preserve the runner's existing priority: park overrides a partial PR;
+# otherwise PR, structured no-op, comment, then mode-gated review. Select the
+# latest matching comment/review ID; every candidate already passed BOTH
+# bot-author and exact-attempt tests. Multiple matching PRs remain ambiguous.
+verified=$(jq -cn --argjson prs "$pr_hits" --argjson comments "$comment_hits" \
+  --argjson reviews "$review_hits" --argjson number "${NUM:-0}" '
+  def reference($kind; $number):
+    if $kind == "pull-request" then
+      if (.number | type) == "number" then {kind:$kind, number:.number} else null end
+    elif (.id | type) == "number" and (.html_url | type) == "string" then
+      {kind:$kind, number:$number, id:.id, url:.html_url}
+    else null end;
+  ($comments | map(select((.body // "") | contains("<!-- agent-result:v1:park -->"))) | sort_by(.id) | last) as $park |
+  ($comments | map(select((.body // "") | contains("<!-- agent-result:v1:no-op -->"))) | sort_by(.id) | last) as $noop |
+  (if ($prs | length) == 1 then ($prs[0] | reference("pull-request"; 0)) else null end) as $pr |
+  if $park != null then
+    ($park | reference("comment"; $number)) as $comment |
+    {outcome:"park", outcomeReference:
+      (if $pr != null then $pr + (if $comment != null then {related:[$comment]} else {} end) else $comment end)}
+  elif ($prs | length) > 0 then {outcome:"pull-request", outcomeReference:$pr}
+  elif $noop != null then {outcome:"no-op", outcomeReference:($noop | reference("comment"; $number))}
+  elif ($comments | length) > 0 then {outcome:"comment", outcomeReference:($comments | sort_by(.id) | last | reference("comment"; $number))}
+  elif ($reviews | length) > 0 then {outcome:"review", outcomeReference:($reviews | sort_by(.id) | last | reference("review"; $number))}
+  else null end') || exit 1
+
+if [ "$verified" != null ]; then
+  found="$(jq -r .outcome <<< "$verified") carrying this run's attempt-claim marker ($ATTEMPT_ID)"
+  if [ -n "${VERIFIED_OUTCOME_FILE:-}" ]; then
+    printf '%s\n' "$verified" > "$VERIFIED_OUTCOME_FILE" || exit 1
+  fi
   echo "::notice::$AGENT deliverable verified via exact attempt-claim marker"
   echo "Deliverable evidence: $found"
-  # The direct runner owns completion after this gate succeeds.
   exit 0
 fi
 

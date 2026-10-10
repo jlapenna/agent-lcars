@@ -132,7 +132,7 @@ function isoWeekKey(iso: string): string {
 /** A single session's cost contribution to the ledger: its recorded
  * `totalCostUsd` when present, else an {@link estimateCostUsd} from its
  * model + token usage, else no cost at all - see `docCost`. */
-interface SessionCost {
+export interface SessionCost {
   costUsd: number | undefined;
   /** True when `costUsd` came from `estimateCostUsd` rather than a recorded
    * `totalCostUsd`. Meaningless when `costUsd` is undefined. */
@@ -150,11 +150,14 @@ interface SessionCost {
  * a stored negative total, which would otherwise drag a bucket's summed
  * total below what its other, correctly-priced sessions actually cost.
  */
-function docCost(doc: SessionDoc): SessionCost {
-  if (doc.totalCostUsd !== undefined) {
+export function docCost(doc: SessionDoc): SessionCost {
+  if (doc.totalCostUsd !== undefined && Number.isFinite(doc.totalCostUsd)) {
     return { costUsd: Math.max(0, doc.totalCostUsd), estimated: false };
   }
-  return { costUsd: estimateCostUsd(doc.model, doc.tokens), estimated: true };
+  return {
+    costUsd: estimateCostUsd(doc.resolvedModel ?? doc.model, doc.tokens),
+    estimated: true,
+  };
 }
 
 function accumulateTotals(

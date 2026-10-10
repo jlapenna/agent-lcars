@@ -63,6 +63,16 @@ snapshot expires after three minutes. Pending jobs mean
 runners retain ARC's own semantics. They are separate from Kubernetes Pending
 pods and from QueueExecutor's native Work capacity.
 
+Each successful lane snapshot repeats `expectedLanes`: the sorted,
+comma-separated DNS-label names from the validated `arc_lanes` configuration.
+This bounded inventory uses the existing change/heartbeat write gate, with no
+extra Firestore writes. Fleet totals require a consistent inventory and one
+fresh snapshot per configured lane, including lanes that never published or
+whose documents have been removed by TTL. During producer rollout, older
+snapshots without inventory remain visible as individual Shuttlebay lanes but
+cannot establish complete fleet totals; Bridge and Agents report unavailable
+until the current producer contract arrives. Homelab owns producer delivery.
+
 `orchestrator.yml`'s whole schema is:
 
 ```yaml
@@ -126,9 +136,9 @@ orchestrator Run records, not autoscaler telemetry.
 The scale-set runtime this process used to also run published one additional
 document per scale set to the same collection (`schemaVersion: 1`); that
 publication was retired along with the scale-set code itself. The console
-(`apps/console/src/lib/autoscaler-status.ts`) still reads and tolerates that
-shape, so no console change was needed -- those documents simply stop being
-written and age out of the console's 30-second staleness window.
+ignores that retired shape and reads only current ARC lane and direct-executor
+records, with the shared three-minute staleness window. GitHub Actions runner
+capacity and direct agent Job occupancy are displayed separately.
 
 ## Queue executor (direct-mode runners)
 
@@ -355,6 +365,16 @@ The metrics endpoint exposes the queue worker's own health:
   then records whether that claim launched a direct runner (`success` or
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
+
+The existing v2 `runner-status` document carries an additive `claims` sample
+for Shuttlebay. It differences these same three provider counters over an
+exact `windowStart`–`windowEnd` interval, bounded to 15 minutes and 92 samples.
+The initial baseline, a metric error, counter reset, or gap beyond the status
+TTL is unavailable; a restart never invents a full preceding window. Changed
+counts publish immediately and unchanged counts follow the normal heartbeat.
+This is successful-claim throughput before launch, not provider execution or
+completed functionality. Durable cooldowns and provider queue eligibility are
+read separately from the orchestrator in a bounded, read-only transaction.
 
 ### Failed launches and pausing
 

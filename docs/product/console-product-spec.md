@@ -228,9 +228,18 @@ the work that has stopped, and the work in flight.
     timeout).
   - Recent outcomes.
   - Active CLI sessions.
-  - A fleet chip. It is vestigial: it counts runners from the retired
-    scale-set status documents, so it renders nothing in production unless
-    the status read fails ("Runner status unavailable"). See R12.
+  - A fleet chip showing registered/running GitHub Actions runners from
+    fresh ARC lane records separately from direct-executor readiness,
+    draining state and concurrency limit. Missing capacity is unavailable,
+    not zero; fresh scaled-to-zero capacity remains visible. The earliest
+    ARC producer deadline and direct-executor producer deadline survive
+    projection and expire independently on the client, even during unchanged
+    healthy heartbeats or disconnected/reconnecting streams. Re-delivering
+    the same snapshot never renews freshness.
+    Complete totals also require each fresh producer's authoritative
+    `expectedLanes` inventory to agree and every configured lane to be present.
+    A never-published or TTL-deleted lane, an unknown inventory, and a rolling
+    inventory disagreement cannot masquerade as complete or zero capacity.
 - **FE-BR-4 [Shipped]** The "Waiting on Deploy" (`post-deploy-action`) and
   "Blocked" (`blocked`) sections hold waiting items. These are intentionally
   kept out of the decision queue.
@@ -299,7 +308,10 @@ the work that has stopped, and the work in flight.
 **Purpose:** a live operational view of every agent and claim.
 
 - **FE-AG-1 [Shipped]** `FleetSnapshotBar` shows, per pipeline, live runs,
-  active CLI sessions, the (vestigial) fleet chip, and activity metrics.
+  active CLI sessions, the current ARC/direct-executor fleet chip, and
+  activity metrics. GitHub runner capacity is not direct agent Job occupancy.
+  Both the chip and runner-occupancy metric expire at the original producer
+  deadlines; stale capacity is unavailable, never a reported zero.
 - **FE-AG-2 [Shipped]** **Active Agents** shows runs classified as `running`,
   `succeeded`, `failed`, `timeout`, `cancelled`, or `silent-error`, each with a
   diagnosis string.
@@ -326,14 +338,20 @@ the work that has stopped, and the work in flight.
   badge, a `draining` badge, and its active and maximum Job counts.
 - **FE-SB-2 [Shipped]** Each ARC lane (status documents published by the
   executor) shows pending, running, idle, registered, desired, and maximum
-  runners. A legacy scale-set row (queued, busy, idle, max, draining, and a
-  runner list) still renders the retired v1 documents, which are no longer
-  published.
+  runners. Direct agent executor health is shown separately. Retired v1
+  scale-set documents are ignored. Missing/stale ARC or executor snapshots
+  render explicit unavailable states rather than implying zero capacity.
 - **FE-SB-3 [Shipped]** The data is live over SSE, and a staleness banner
   appears after 180s.
 - **FE-SB-4 [Proposed]** Show claim throughput and provider cooldowns:
   pipeline X is cooling down until T after a `provider-limit` failure.
-  Operators currently have to infer this from failures.
+  Include the authoritative provider queue, deferred and live-claim counts,
+  server-owned provider ceilings, and eligible depth after fresh executor
+  readiness/drain/capacity checks. Claim metrics name their exact observed
+  interval (up to 15 minutes), timestamp and provenance; a restart, missing
+  sample, failed read or stale/reset-crossing observation is unavailable,
+  never an inferred zero. Eligibility does not prove worker placement or
+  successful execution. Track implementation and delivery in #2192.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 
@@ -375,18 +393,28 @@ GitHub issues, and manage recurring work.
     fields, UTC, default `0 * * * *`, validated on the client), and Enabled.
     The server also rejects a cron expression that never fires within a
     year.
-  - The list has columns Title, Cron, Pipeline, Repo, Enabled, and Last item,
-    and supports enable and disable.
-  - The API and store record a `disabledReason` (`grant-revoked`, `operator`,
-    or `invalid`), but the list does not show it.
+  - The list shows Title, Cron, Pipeline, Repo, Enabled, Next occurrence,
+    and Last item. It explains `disabledReason` (`grant-revoked`, `operator`,
+    or `invalid`), pending settlement, and closed occurrences.
+  - Enable, disable, edit, and delete submit the selected configuration
+    revision. Stale changes fail visibly without overwriting a newer edit.
+    Delete requires explicit confirmation and stops future recurrence;
+    work admitted earlier may still finish.
+  - The next occurrence includes UTC and an explicitly labeled browser-local
+    time zone. Cron evaluation remains UTC; local display does not change it.
+  - API/store regression tests cover authorization, invalid/revoked recovery,
+    concurrent operator/tick decisions, deletion and durable mint retries.
+    Browser edit/delete journeys are included; CI and production verification
+    remain required before treating those journeys as qualified.
 - **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
   and cursor-based next-page navigation in the URL. Each page examines up to
   200 native tasks; an empty filtered page can still lead to older matches.
   Bridge stopped work pages over the authoritative all-anchor task feed with
   the same explicit 200-task bound. Bridge, Inbox, and Agents have a repository
   selector and clear action, with scope preserved across their navigation.
-  Schedules still have no edit or delete in the UI or the API (a `PUT` accepts
-  only a new or identical schedule), and no time zone other than UTC. See R8.
+  Schedules support revision-checked editing/deletion in the UI and API,
+  with UTC evaluation and labeled local display. `PUT` remains an idempotent
+  create; `PATCH` edits and `DELETE` stops future recurrence. See R8.
 
 ### 6.6 Task detail (`/task/[owner]/[repo]/[issue]`)
 
@@ -423,9 +451,12 @@ CLI sessions and dispatched runs.
   for dispatched `issue-agent` sessions whose agent is in
   `RENDERABLE_TRANSCRIPT_AGENTS`, currently Claude Code and Codex. OpenCode
   sessions show "Session archive stored ({agent} format) — not yet
-  renderable", and CLI sessions have no transcript view. **Proposed:** render
-  OpenCode transcripts and CLI sessions through the existing
-  `libs/telemetry` adapters.
+  renderable". CLI Claude Code/Codex sessions use the same timeline only after
+  explicit per-session host archive consent, within the existing privacy
+  allowlists and 5 MiB / 30-day bounds; otherwise detail shows not-enabled or
+  unavailable. See [CLI archive policy](../../apps/telemetry-watcher/README.md#opt-in-cli-transcript-archives).
+  Production activation is a separate operator-approved operation.
+  **Proposed:** render OpenCode transcripts through the existing adapters.
 - **FE-SE-5 [Shipped]** A session's title is the transcript's own title
   (Claude Code's `aiTitle`) unless `lcars session title` sets an override, and
   `lcars session status` adds a status line. A session that drifts from its
@@ -438,7 +469,10 @@ CLI sessions and dispatched runs.
   filters are shared with Sessions. When a provider reports no `costUSD`, cost
   is estimated from `MODEL_RATES`.
 - **FE-CO-2 [Proposed]** Add breakdowns by pipeline and by model, budget
-  thresholds with alerting, and a cost-per-merged-deliverable metric.
+  thresholds with alerting, and a cost-per-merged-deliverable metric. The exact
+  activity-window, reported/estimated, deduplication, attribution, unavailable
+  data and operator-owned alert contract is [Session spend](../cost-ledger.md).
+  Shipping and runtime qualification are tracked in #2195.
 
 ## 7. Server surface owned by the console
 
@@ -517,7 +551,8 @@ console Reply action.
 
 - `/work` list content, and `/work/[id]` reply, redispatch, cancel, and
   edit.
-- `/work/schedules`: create, enable, and disable.
+- `/work/schedules`: create, enable, disable, edit, and confirmed delete;
+  edit/delete browser journeys still require passing CI qualification.
 - `/task/...` beyond the "Open task" navigation.
 - Inbox reply submission, trigger selection, and dispatch hand-off.
 - Merge and rebase end to end.
@@ -537,11 +572,10 @@ Priorities assume the single-maintainer design center.
 | R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6, implemented)                                                               | Operator grants admit sign-in without granting admin authority             | P1       |
 | R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI      | P1       |
 | R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                              | P2       |
-| R8  | Schedule edit and delete, and a time-zone display                                                                                     | Schedules can currently only be toggled                                    | P2       |
+| R8  | Schedule edit/delete and UTC/local next-occurrence qualification                                                                      | Implemented; required browser CI and production evidence remain            | P2       |
 | R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                           | P2       |
 | R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                            | P2       |
 | R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                         | P3       |
-| R12 | Re-point the fleet chip at the queue-executor and ARC lane documents, or remove it, and drop the legacy scale-set row from Shuttlebay | Both read status documents that are no longer published                    | P2       |
 
 ## 11. Success metrics
 

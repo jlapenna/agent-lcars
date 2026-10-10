@@ -1,6 +1,7 @@
 import { Firestore } from '@google-cloud/firestore';
 import { describe, expect, it } from 'vitest';
 
+import { decidedRun, isRefusal } from './decide';
 import { FirestoreScheduleStore } from './firestore-schedule-store';
 import { FirestoreStore } from './firestore-store';
 import { MemoryScheduleStore } from './memory-schedule-store';
@@ -65,6 +66,63 @@ if (
 
 describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
   let prefixCounter = 0;
+
+  it('rejects malformed cooldowns and over-bound admission reads instead of presenting partial zeros', async () => {
+    const prefix = `admission-bounds-${Date.now()}-`;
+    const firestore = new Firestore({
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      host: emulatorHost ?? 'localhost:8080',
+      ssl: false,
+    });
+    const store = new FirestoreStore({
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      collectionPrefix: prefix,
+      emulatorHost: emulatorHost ?? 'localhost:8080',
+    });
+    const now = '2026-10-09T23:00:00.000Z';
+    const outcome = await new Orchestrator(store, { now: () => now }).request({
+      taskId: { repo: 'octo/example', issue: 999 },
+      requestId: 'bounded-read',
+      pipeline: 'claude',
+      work: { spec: { title: 'Admission read regression' } },
+    });
+    if (isRefusal(outcome)) throw new Error('unexpected refusal');
+    const run = decidedRun(outcome);
+    const input = { pipelines: ['claude'], now };
+    expect(
+      (await store.readQueueAdmissionStatus(input)).providers[0],
+    ).toMatchObject({ queued: 0, liveClaims: 0 });
+    const cooldown = firestore
+      .collection(`${prefix}provider-cooldowns`)
+      .doc('claude');
+    await cooldown.set({
+      pipeline: 'claude',
+      runId: run.runId,
+      observedAt: now,
+      expiresAt: 'not-a-time',
+    });
+    await expect(store.readQueueAdmissionStatus(input)).rejects.toThrow(
+      'Invalid provider cooldown',
+    );
+    await cooldown.delete();
+    for (let batchIndex = 0; batchIndex < 2; batchIndex++) {
+      const batch = firestore.batch();
+      for (let index = 0; index < 500; index++) {
+        const id = `bounded-${batchIndex}-${index}`;
+        batch.set(firestore.collection(`${prefix}runs`).doc(id), {
+          ...run,
+          runId: id,
+        });
+      }
+      await batch.commit();
+    }
+    await expect(store.readQueueAdmissionStatus(input)).rejects.toThrow(
+      'exceeds read bound',
+    );
+    await firestore.terminate();
+  });
 
   it('reads only candidates for the requested idempotency key', async () => {
     prefixCounter += 1;

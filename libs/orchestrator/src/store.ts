@@ -8,15 +8,18 @@ import type {
   TaskId,
 } from './model';
 import { taskKey } from './model';
+import {
+  isQueueAdmissionCandidate,
+  QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
+  type QueueAdmissionStatus,
+} from './queue-admission-status';
 
 /** Server-owned direct-runner admission ceilings. OpenCode is serialized to
  * protect the shared local inference backend from measured contention. Codex
  * is serialized because its global subscription credential lease rejects a
  * second concurrent session. Claude remains bounded by fleet host capacity.
  * This policy is deliberately absent from the claim request contract. */
-export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
-  Record<string, number | undefined>
-> = Object.freeze({ codex: 1, opencode: 1 });
+export { QUEUE_PIPELINE_MAX_LIVE_CLAIMS } from './queue-admission-status';
 
 /** Selects one provider head using least live occupancy, then FIFO age.
  * Callers must pass only server-authorized pipelines. */
@@ -43,14 +46,7 @@ export function selectFairQueuedRun(
 
   const heads = new Map<string, Run>();
   for (const run of queuedRuns) {
-    if (
-      run.queue?.state !== 'queued' ||
-      (run.state !== 'pending' && run.state !== 'running') ||
-      !granted.has(run.pipeline) ||
-      (now !== undefined &&
-        run.queue.deferredUntil !== undefined &&
-        run.queue.deferredUntil > now)
-    )
+    if (!isQueueAdmissionCandidate(run, now) || !granted.has(run.pipeline))
       continue;
     const current = heads.get(run.pipeline);
     if (
@@ -310,6 +306,14 @@ export interface OrchestratorStore {
 
   /** Every live (`pending`/`running`) run, lease or no lease. */
   listLiveRuns(): Promise<Run[]>;
+
+  /** Read-only consistent snapshot of durable provider admission. Each live
+   * state is bounded at QUEUE_ADMISSION_READ_LIMIT; overflow or invalid data
+   * rejects instead of implying an empty/partial queue. */
+  readQueueAdmissionStatus(input: {
+    pipelines: readonly string[];
+    now: string;
+  }): Promise<QueueAdmissionStatus>;
 
   /**
    * The most recently updated runs across every anchor, newest first and

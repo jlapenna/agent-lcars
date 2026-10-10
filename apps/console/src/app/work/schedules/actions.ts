@@ -12,6 +12,8 @@ const createScheduleFn = functionable(scheduleRouter.create);
 const listSchedulesFn = functionable(scheduleRouter.list);
 const enableScheduleFn = functionable(scheduleRouter.enable);
 const disableScheduleFn = functionable(scheduleRouter.disable);
+const updateScheduleFn = functionable(scheduleRouter.update);
+const deleteScheduleFn = functionable(scheduleRouter.delete);
 
 // One-line forwarders, not a behavioral difference from the four
 // procedures above: this repo's `fleet/use-server-actions-only` lint rule
@@ -36,4 +38,15 @@ export async function disableSchedule(
   input: Parameters<typeof disableScheduleFn>[0],
 ) {
   return disableScheduleFn(input);
+}
+
+export async function updateSchedule(
+  input: Parameters<typeof updateScheduleFn>[0],
+) {
+  return updateScheduleFn(input);
+}
+export async function deleteSchedule(
+  input: Parameters<typeof deleteScheduleFn>[0],
+) {
+  return deleteScheduleFn(input);
 }

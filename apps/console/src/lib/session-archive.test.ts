@@ -26,6 +26,11 @@ import {
   toSessionRow,
 } from './session-archive';
 
+const spendStore = vi.hoisted(() => ({ readGithubAnchorProjection: vi.fn() }));
+vi.mock('./orchestrator-runtime', () => ({
+  createOrchestratorRuntime: () => ({ store: spendStore }),
+}));
+
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
   listSessionDocs: vi.fn(),
@@ -375,5 +380,68 @@ describe('getSessionArchive', () => {
     expect(result.rows).toEqual([]);
     expect(result.ledger).toEqual({ byIssue: [], byWeek: [] });
     expect(result.warnings).toHaveLength(1);
+  });
+});
+
+describe('costs archive selection', () => {
+  afterEach(() => vi.resetAllMocks());
+  it('uses exactly the filtered archive and preserves unknown merge evidence on failure', async () => {
+    vi.mocked(listSessionDocs).mockResolvedValue([
+      cliDoc({
+        sessionId: 'selected',
+        totalCostUsd: 3,
+        deliverables: {
+          prNumbers: [42, 42],
+          qualifiedPRs: [
+            {
+              repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
+              number: 42,
+            },
+          ],
+          commitShas: [],
+        },
+      }),
+      cliDoc({
+        sessionId: 'excluded',
+        totalCostUsd: 100,
+        repo: { owner: 'other', name: 'repo' },
+      }),
+    ]);
+    spendStore.readGithubAnchorProjection.mockRejectedValue(
+      new Error('unavailable'),
+    );
+    const result = await getSessionArchive(
+      { days: 14, repo: { owner: 'supersprinklesracing', name: 'sprinkles' } },
+      { includeSpend: true },
+    );
+    expect(result.spend).toMatchObject({
+      totals: { sessions: 1, costUsd: 3 },
+      mergedPRs: 0,
+      unknownPRs: 1,
+    });
+    expect(result.ledger.byIssue[0]?.costUsd).toBe(3);
+    expect(spendStore.readGithubAnchorProjection).toHaveBeenCalledTimes(1);
+    expect(result.warnings).toHaveLength(1);
+  });
+  it('flags the pre-repository session ceiling, even if the selected subset is empty', async () => {
+    vi.mocked(listSessionDocs).mockResolvedValue(
+      Array.from({ length: 200 }, () => cliDoc()),
+    );
+    const result = await getSessionArchive(
+      { days: 14, repo: { owner: 'other', name: 'repo' } },
+      { includeSpend: true },
+    );
+    expect(result.spend?.coverageLimited).toBe(true);
+    expect(result.spend?.totals.sessions).toBe(0);
+    expect(result.warnings[0]).toContain('Session limit reached');
+  });
+  it('keeps a failed archive incomplete rather than treating it as zero known spend', async () => {
+    vi.mocked(listSessionDocs).mockRejectedValue(new Error('unavailable'));
+    const result = await getSessionArchive(
+      { days: 14 },
+      { includeSpend: true },
+    );
+    expect(result.spend?.coverageLimited).toBe(true);
+    expect(result.spend?.totals.costUsd).toBeUndefined();
   });
 });

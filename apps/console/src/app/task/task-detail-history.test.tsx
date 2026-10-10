@@ -85,3 +85,30 @@ for (const anchor of [
     });
   });
 }
+
+it('shows both exact artifacts in deliverables and run history', () => {
+  const blocker =
+    'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-99';
+  const run = {
+    ...item.runs[0],
+    result: { ...item.runs[0].result!, relatedRefs: [blocker] },
+  };
+  render(
+    <MantineProvider>
+      <TaskDetailHistory
+        anchor={{ repo: 'jlapenna/agent-lcars', issue: 42 }}
+        item={{ ...item, runs: [run] }}
+      />
+    </MantineProvider>,
+  );
+  expect(
+    within(screen.getByTestId('task-deliverables')).getByRole('link', {
+      name: blocker,
+    }),
+  ).toHaveAttribute('href', blocker);
+  expect(
+    screen
+      .getAllByRole('link')
+      .filter((link) => link.getAttribute('href') === blocker),
+  ).toHaveLength(3);
+});

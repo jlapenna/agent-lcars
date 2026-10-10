@@ -6,6 +6,7 @@ import { Anchor, Badge, Divider, Group, Stack, Text } from '@mantine/core';
 import type { AgentPipeline } from '../../lib/agent-activity';
 import { PipelineBadge } from '../agent-activity-panel';
 import { RelativeTime } from '../relative-time';
+import { resultRefs } from '../work/result-refs';
 import { safeHttpUrl } from '../work/safe-url';
 
 const RUN_STATE_LABELS: Record<RunState, string> = {
@@ -111,21 +112,23 @@ function RunResultView({ result }: { result: Run['result'] }) {
           {result.summary}
         </Text>
       )}
-      {result.ref &&
-        (safeHttpUrl(result.ref) ? (
+      {resultRefs(result).map((ref) =>
+        safeHttpUrl(ref) ? (
           <Anchor
-            href={safeHttpUrl(result.ref)}
+            key={ref}
+            href={safeHttpUrl(ref)}
             target="_blank"
             rel="noreferrer"
             size="xs"
           >
-            {result.ref}
+            {ref}
           </Anchor>
         ) : (
-          <Text size="xs" c="dimmed">
-            {result.ref}
+          <Text key={ref} size="xs" c="dimmed">
+            {ref}
           </Text>
-        ))}
+        ),
+      )}
     </Group>
   );
 }

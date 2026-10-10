@@ -1,11 +1,11 @@
 'use client';
 
+import { PIPELINES } from '@agent-lcars/work';
 import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 
 import type {
   ArcLaneStatus,
-  AutoscalerScaleSetStatus,
   AutoscalerStatusResult,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
@@ -33,10 +33,6 @@ export function expireAutoscalerStatuses(
   result: AutoscalerStatusResult,
   now = Date.now(),
 ): AutoscalerStatusResult {
-  const statuses = result.statuses.filter((status) => {
-    const updatedAt = Date.parse(status.updatedAt);
-    return Number.isFinite(updatedAt) && now - updatedAt <= STALENESS_MS;
-  });
   const queueExecutor = result.queueExecutor;
   const lanes = result.lanes?.filter((status) => {
     const updatedAt = Date.parse(status.updatedAt);
@@ -48,23 +44,160 @@ export function expireAutoscalerStatuses(
     now - Date.parse(queueExecutor.updatedAt) <= STALENESS_MS
       ? queueExecutor
       : undefined;
+  const admission = result.providerAdmission;
+  const freshAdmission =
+    admission !== undefined &&
+    Number.isFinite(Date.parse(admission.observedAt)) &&
+    now - Date.parse(admission.observedAt) <= STALENESS_MS &&
+    !admission.providers.some(
+      (provider) =>
+        provider.cooldown !== undefined &&
+        Date.parse(admission.observedAt) <
+          Date.parse(provider.cooldown.expiresAt) &&
+        now >= Date.parse(provider.cooldown.expiresAt),
+    )
+      ? admission
+      : undefined;
   if (
-    statuses.length === result.statuses.length &&
     lanes?.length === result.lanes?.length &&
-    freshQueueExecutor === queueExecutor
+    freshQueueExecutor === queueExecutor &&
+    freshAdmission === admission
   ) {
     return result;
   }
   return {
-    statuses,
+    ...result,
     ...(lanes === undefined ? {} : { lanes }),
-    ...(freshQueueExecutor === undefined
-      ? {}
-      : { queueExecutor: freshQueueExecutor }),
+    ...(result.lanesIncomplete || lanes?.length !== result.lanes?.length
+      ? { lanesIncomplete: true }
+      : {}),
+    queueExecutor: freshQueueExecutor,
+    providerAdmission: freshAdmission,
     warnings: Array.from(
-      new Set([...result.warnings, 'Runner capacity status is stale.']),
+      new Set([
+        ...result.warnings,
+        ...(lanes?.length !== result.lanes?.length ||
+        freshQueueExecutor !== queueExecutor
+          ? ['Runner capacity status is stale.']
+          : []),
+        ...(freshAdmission !== admission
+          ? [
+              'Provider queue and cooldown status is stale or awaiting reset refresh.',
+            ]
+          : []),
+      ]),
     ),
   };
+}
+
+function ProviderAdmissionRows({ result }: { result: AutoscalerStatusResult }) {
+  const admission = result.providerAdmission;
+  const executor = result.queueExecutor;
+  return (
+    <>
+      {PIPELINES.map((pipeline) => {
+        const provider = admission?.providers.find(
+          (value) => value.pipeline === pipeline,
+        );
+        const cooldown = provider?.cooldown;
+        const cooling =
+          cooldown !== undefined && Date.parse(cooldown.expiresAt) > Date.now();
+        const window = executor?.claims;
+        const executorAccepting =
+          executor !== undefined &&
+          executor.ready &&
+          !executor.draining &&
+          executor.activeRuns !== undefined &&
+          executor.activeRuns < executor.maxConcurrent;
+        const paused =
+          executor !== undefined &&
+          (!executor.ready ||
+            executor.draining ||
+            (executor.activeRuns !== undefined &&
+              executor.activeRuns >= executor.maxConcurrent));
+        const eligible =
+          provider === undefined
+            ? undefined
+            : paused
+              ? 0
+              : executorAccepting
+                ? provider.eligible
+                : undefined;
+        return (
+          <div
+            key={pipeline}
+            className="console-workspace__section shuttlebay-scale-set"
+            data-testid={`provider-admission-${pipeline}`}
+          >
+            <Stack gap={4}>
+              <Group gap="xs" wrap="wrap">
+                <Text size="sm" fw={700}>
+                  {pipeline}
+                </Text>
+                {provider === undefined ? (
+                  <Badge color="gray" size="xs">
+                    admission unavailable
+                  </Badge>
+                ) : cooling ? (
+                  <Badge color="yellow" size="xs">
+                    cooling down
+                  </Badge>
+                ) : (
+                  <Badge color="green" size="xs">
+                    no active cooldown
+                  </Badge>
+                )}
+                {paused && (
+                  <Badge color="yellow" size="xs">
+                    {executor.draining
+                      ? 'executor draining'
+                      : !executor.ready
+                        ? 'executor not ready'
+                        : 'executor at capacity'}
+                  </Badge>
+                )}
+              </Group>
+              <Text size="xs">
+                {eligible === undefined
+                  ? 'Eligible queue unavailable'
+                  : `${eligible} eligible queued`}{' '}
+                ·{' '}
+                {provider === undefined
+                  ? 'queue unavailable'
+                  : `${provider.queued} queued · ${provider.deferred} deferred · ${provider.liveClaims} live claims`}
+              </Text>
+              {cooling && (
+                <Text size="xs">
+                  Provider limit: cooling down until {cooldown.expiresAt}.
+                  Retry/reset deadline from run {cooldown.runId}; reported{' '}
+                  {cooldown.observedAt}.
+                </Text>
+              )}
+              {provider !== undefined && (
+                <Text size="xs" c="dimmed">
+                  Durable provider queue: {provider.eligible} eligible before
+                  executor capacity checks. Orchestrator snapshot{' '}
+                  {admission?.observedAt}.
+                  {provider.maxLiveClaims === undefined
+                    ? ''
+                    : ` Provider live-claim limit: ${provider.maxLiveClaims}.`}
+                </Text>
+              )}
+              <Text size="xs" c="dimmed">
+                {window === undefined
+                  ? 'Recent claims unavailable.'
+                  : `${window[pipeline]} claims from ${window.windowStart} to ${window.windowEnd}. Executor successful-claim counter; sampled interval, up to 15 minutes.`}
+              </Text>
+            </Stack>
+          </div>
+        );
+      })}
+      <Text size="xs" c="dimmed">
+        Eligible work can still wait for host placement, credentials, or
+        external checks. Claims precede worker launch.
+      </Text>
+    </>
+  );
 }
 
 function ArcLaneRow({ status }: { status: ArcLaneStatus }) {
@@ -98,71 +231,6 @@ function ArcLaneRow({ status }: { status: ArcLaneStatus }) {
   );
 }
 
-/** Each autoscaler (scale set) is its own bordered section so a fleet with
- * several queues reads as distinct panels rather than one run-on list -
- * every runner is shown here, not just the busy ones, so the panel doubles
- * as "what task is this queue's capacity spending right now?". */
-function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
-  const busy = status.runners.filter((runner) => runner.state === 'busy');
-  const idle = status.runners.length - busy.length;
-  return (
-    <div
-      className="console-workspace__section shuttlebay-scale-set"
-      data-testid={`autoscaler-scale-set-${status.scaleSet}`}
-    >
-      <Stack gap={4}>
-        <Group gap="xs" wrap="wrap">
-          {status.registrationUrl ? (
-            <Anchor
-              href={status.registrationUrl}
-              target="_blank"
-              rel="noreferrer"
-              size="sm"
-              fw={700}
-              data-testid={`autoscaler-registration-${status.scaleSet}`}
-            >
-              {status.scaleSet}
-            </Anchor>
-          ) : (
-            <Text size="sm" fw={700}>
-              {status.scaleSet}
-            </Text>
-          )}
-          {status.draining && (
-            <Badge color="yellow" size="xs">
-              draining
-            </Badge>
-          )}
-          <Text size="xs" c="dimmed">
-            {status.queuedJobs} queued · {busy.length} busy · {idle} idle ·{' '}
-            {status.maxRunners} max
-          </Text>
-        </Group>
-        {status.runners.length > 0 && (
-          <Group gap="xs" wrap="wrap">
-            {status.runners.map((runner) => (
-              <Badge
-                key={runner.name}
-                variant={runner.state === 'busy' ? 'light' : 'outline'}
-                color={runner.state === 'busy' ? 'blue' : 'gray'}
-                size="sm"
-                data-testid={`autoscaler-runner-${runner.name}`}
-              >
-                {runner.name} on {runner.host}
-                {runner.jobId
-                  ? ` · ${runner.jobId}`
-                  : runner.state === 'idle'
-                    ? ' · idle'
-                    : ''}
-              </Badge>
-            ))}
-          </Group>
-        )}
-      </Stack>
-    </div>
-  );
-}
-
 function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
   return (
     <div
@@ -171,7 +239,7 @@ function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
     >
       <Group gap="xs" wrap="wrap">
         <Text size="sm" fw={700}>
-          Queue executor
+          Direct agent executor
         </Text>
         <Badge color={status.ready ? 'green' : 'red'} size="xs">
           {status.ready ? 'ready' : 'not ready'}
@@ -201,7 +269,12 @@ export function RunnerAutoscalerStatus({
 }: {
   initial: AutoscalerStatusResult;
 }) {
-  const [result, setResult] = useState(initial);
+  const [storedResult, setResult] = useState(() =>
+    expireAutoscalerStatuses(initial),
+  );
+  // Arrival and render are both clock boundaries. A reset/stale timestamp
+  // crossed during RSC transport or a sibling render cannot look healthy.
+  const result = expireAutoscalerStatuses(storedResult);
 
   useEffect(() => {
     // EventSource reconnects by itself after the server ends a stream or the
@@ -219,7 +292,11 @@ export function RunnerAutoscalerStatus({
       next.addEventListener(RUNNER_STATUS_EVENT, (event) => {
         backoffMs = STREAM_RETRY_MIN_MS;
         try {
-          setResult(JSON.parse(event.data) as AutoscalerStatusResult);
+          setResult(
+            expireAutoscalerStatuses(
+              JSON.parse(event.data) as AutoscalerStatusResult,
+            ),
+          );
         } catch {
           // A malformed frame leaves the previous snapshot to expire locally.
         }
@@ -256,14 +333,22 @@ export function RunnerAutoscalerStatus({
       }
     >
       <div data-testid="runner-autoscaler-status">
-        {result.statuses.map((status) => (
-          <ScaleSetRow key={status.scaleSet} status={status} />
-        ))}
+        <ProviderAdmissionRows result={result} />
+        {(result.lanes?.length ?? 0) === 0 && (
+          <Text size="sm" c="dimmed">
+            GitHub runner status unavailable.
+          </Text>
+        )}
         {result.lanes?.map((status) => (
           <ArcLaneRow key={status.lane} status={status} />
         ))}
         {result.queueExecutor && (
           <QueueExecutorRow status={result.queueExecutor} />
+        )}
+        {!result.queueExecutor && (
+          <Text size="sm" c="dimmed">
+            Direct executor status unavailable.
+          </Text>
         )}
       </div>
     </ShuttlebayWorkspace>

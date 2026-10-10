@@ -14,9 +14,11 @@ import { withConsolePageShell } from '../../with-console-page-shell';
 import { WorkWorkspace } from '../work-workspace';
 import {
   createSchedule,
+  deleteSchedule,
   disableSchedule,
   enableSchedule,
   listSchedules,
+  updateSchedule,
 } from './actions';
 import { ScheduleCreateForm } from './schedule-create-form';
 import { ScheduleList } from './schedule-list';
@@ -48,6 +50,8 @@ async function SchedulesBody() {
           schedules={data.schedules}
           enable={enableSchedule}
           disable={disableSchedule}
+          update={updateSchedule}
+          remove={deleteSchedule}
         />
       </div>
     </>

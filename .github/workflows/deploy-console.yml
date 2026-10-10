@@ -36,10 +36,6 @@ permissions:
   id-token: write
   pull-requests: write
 
-concurrency:
-  group: deploy-console
-  cancel-in-progress: false
-
 jobs:
   # CI's workflow_run conclusion is a rollup of every job in that run,
   # including E2E (timeout-minutes: 30, not a required merge gate) -- a
@@ -53,7 +49,8 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
-    runs-on: ['lcars-default']
+    # This GitHub-only check must not wait for large fleet-runner placement.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       verify_passed: ${{ steps.check.outputs.verify_passed }}
@@ -86,6 +83,14 @@ jobs:
   deploy:
     needs: gate
     if: needs.gate.outputs.verify_passed == 'true'
+    # Ineligible CI completions must not replace a pending main deployment
+    # before gate.if runs. Serialize only deployments admitted by the gate.
+    concurrency:
+      group: deploy-console
+      cancel-in-progress: false
+      # Keep newer eligible work when an older gate finishes late. Source
+      # freshness is checked again after this FIFO queue grants the lock.
+      queue: max
     # The optional prebuilt path runs the console's production Nx graph
     # locally. Keep that long-running diagnostic work off lcars-default's
     # latency-sensitive glue pool.
@@ -94,19 +99,57 @@ jobs:
     environment: production
 
     steps:
+      # Gate completion and CI completion can both arrive out of source order.
+      # Check only after acquiring the deployment lock, before any credentials
+      # or rollout effects. A newer tip may wait for CI; stale automatic runs
+      # do not deploy it or roll production backward while it waits.
+      - name: Check automatic source is still the main tip
+        id: source
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          DELIVERY_MODE: ${{ inputs.delivery_mode }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$DELIVERY_MODE" != "recovered-ci" ]; then
+            echo "deploy_current=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Automatic deployment source is not an exact commit."
+            exit 1
+          fi
+          MAIN_SHA=$(timeout 30s gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if ! [[ "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Could not verify the current main tip."
+            exit 1
+          fi
+          if [ "$SOURCE_SHA" != "$MAIN_SHA" ]; then
+            echo "::notice::Skipping superseded automatic source $SOURCE_SHA; main is $MAIN_SHA."
+            echo "deploy_current=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "deploy_current=true" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
+        if: steps.source.outputs.deploy_current == 'true'
         with:
           ref: ${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}
 
       - uses: ./.github/actions/setup-nx-remote-cache
-        if: inputs.build_mode == 'prebuilt'
+        if: steps.source.outputs.deploy_current == 'true' && inputs.build_mode == 'prebuilt'
         with:
           url: ${{ vars.NX_CACHE_URL }}
           write-token: ${{ secrets.NX_CACHE_TOKEN }}
 
       - uses: ./.github/actions/setup-node-pnpm
+        if: steps.source.outputs.deploy_current == 'true'
 
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        if: steps.source.outputs.deploy_current == 'true'
         id: gcp-auth
         with:
           # This provider accepts only deploy-console.yml from main. The
@@ -117,11 +160,11 @@ jobs:
           token_format: access_token
 
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-        if: inputs.build_mode == 'prebuilt'
+        if: steps.source.outputs.deploy_current == 'true' && inputs.build_mode == 'prebuilt'
 
       - name: Build locally and deploy App Hosting backend
         id: prebuilt
-        if: inputs.build_mode == 'prebuilt'
+        if: steps.source.outputs.deploy_current == 'true' && inputs.build_mode == 'prebuilt'
         shell: bash
         run: |
           set -euo pipefail
@@ -137,7 +180,7 @@ jobs:
         id: managed
         # workflow_run has no inputs, so it intentionally follows the
         # managed production default. A manual prebuilt dispatch is opt-in.
-        if: inputs.build_mode != 'prebuilt'
+        if: steps.source.outputs.deploy_current == 'true' && inputs.build_mode != 'prebuilt'
         shell: bash
         run: |
           set -euo pipefail
@@ -158,6 +201,7 @@ jobs:
 
       - name: Resolve exact deployed App Hosting build
         id: release
+        if: steps.source.outputs.deploy_current == 'true'
         # The prebuilt tool already proves the exact artifact is live. Keep
         # release annotation lookup best-effort, matching the managed path's
         # historical behavior: an API hiccup after a successful rollout must
@@ -215,12 +259,13 @@ jobs:
       # best-effort release annotation above: an unverified rollout must
       # mark this run red.
       - name: Verify the deployed console is serving
+        if: steps.source.outputs.deploy_current == 'true'
         uses: ./.github/actions/deploy-verify
         with:
           url: https://lcars.jlapenna.net
 
       - name: Annotate the deployed PR with its App Hosting version
-        if: steps.release.outputs.version != ''
+        if: steps.source.outputs.deploy_current == 'true' && steps.release.outputs.version != ''
         # A release annotation is useful metadata, but an API or permission
         # hiccup after a successful production rollout must not mark that
         # rollout as failed.

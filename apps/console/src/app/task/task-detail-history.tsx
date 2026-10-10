@@ -18,6 +18,7 @@ import {
 import type { ReactNode } from 'react';
 
 import { Conversation } from '../work/conversation';
+import { resultRefs } from '../work/result-refs';
 import { safeHttpUrl } from '../work/safe-url';
 
 const STATE_COLORS: Record<ItemView['state'], string> = {
@@ -99,7 +100,9 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
               </TableTd>
               <TableTd>{run.result?.summary}</TableTd>
               <TableTd>
-                <RunRef value={run.result?.ref} />
+                {resultRefs(run.result).map((value) => (
+                  <RunRef key={value} value={value} />
+                ))}
               </TableTd>
             </TableTr>
           ))}
@@ -176,7 +179,9 @@ export function TaskDetailHistory({
   canViewSessions?: boolean;
 }) {
   const native = 'workId' in anchor;
-  const deliverables = item.runs.filter((run) => run.result?.ref);
+  const deliverables = item.runs.filter(
+    (run) => resultRefs(run.result).length > 0,
+  );
   return (
     <Stack
       gap="md"
@@ -249,17 +254,22 @@ export function TaskDetailHistory({
               <Text size="xs" c="dimmed">
                 {run.runId}
               </Text>
-              {safeHttpUrl(run.result?.ref) ? (
-                <Anchor
-                  href={safeHttpUrl(run.result?.ref)}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="sm"
-                >
-                  {run.result?.ref}
-                </Anchor>
-              ) : (
-                <Text size="sm">{run.result?.ref}</Text>
+              {resultRefs(run.result).map((ref) =>
+                safeHttpUrl(ref) ? (
+                  <Anchor
+                    key={ref}
+                    href={safeHttpUrl(ref)}
+                    target="_blank"
+                    rel="noreferrer"
+                    size="sm"
+                  >
+                    {ref}
+                  </Anchor>
+                ) : (
+                  <Text key={ref} size="sm">
+                    {ref}
+                  </Text>
+                ),
               )}
             </Group>
           ))

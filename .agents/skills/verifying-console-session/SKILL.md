@@ -124,6 +124,71 @@ test environment.
 
 ## Reuse and verify
 
+Run the read-only readiness check before a production acceptance run. It needs
+only access to the saved state, checks the live Auth.js role without launching
+a browser, and reports the cookie deadline and the last safe rotation time for
+the default 14-day validity window:
+
+```bash
+./tools/nx run @agent-lcars/console:check-session -- \
+  --role admin --storage secret --origin https://lcars.jlapenna.net \
+  --project agent-lcars --minimum-valid-days 14
+```
+
+Exit codes are `0` ready, `1` unavailable/invalid request, `2` expired or
+revoked, `3` wrong role, and `4` expiring or unknown expiry. The request has a
+10-second timeout; Secret Manager access has a 20-second timeout. The command
+does not rotate or refresh a credential and never saves response cookies.
+`verify-session --minimum-valid-days 14` uses the same expiry classifier before
+page navigation. A readiness pass proves authentication and the rotation
+window; use the browser verifier below for rendered-page acceptance.
+
+For a daily operator-owned check, configure the following command in the
+existing private monitoring environment, with its saved-state read identity
+and absolute repository path. Keep stdout/stderr in private operator logs;
+alert routing and installation of the schedule belong to that environment.
+This is a configuration handoff, not an installed cron job or public alert:
+
+```bash
+# Daily at 08:00 in the operator scheduler's timezone
+0 8 * * * cd /absolute/path/to/agent-lcars && timeout 60s node tools/saved-session/check.mjs --role admin --storage secret --origin https://lcars.jlapenna.net --project agent-lcars --minimum-valid-days 14
+```
+
+On an expiry warning, an approved maintainer rotates the dedicated admin state
+with this exact scoped command (read-only workers must not run it):
+
+```bash
+./tools/nx run @agent-lcars/console:mint-session -- \
+  --storage secret --origin https://lcars.jlapenna.net --project agent-lcars \
+  --secret-name AGENT_LCARS_ADMIN_STORAGE_STATE --auth-secret-name AUTH_SECRET
+```
+
+After rotation, run `check-session` above, then prove the admin session and
+the intended page with the supported browser verifier:
+
+```bash
+./tools/nx run @agent-lcars/console:verify-session -- \
+  --role admin --storage secret --origin https://lcars.jlapenna.net \
+  --project agent-lcars --minimum-valid-days 14 --path / \
+  --wait-for main --assert-text Bridge
+```
+
+Install the Chromium headless shell that matches this checkout's installed
+Playwright package before using the read-only verifier lane:
+
+```bash
+pnpm exec playwright install chromium --only-shell
+```
+
+This is an explicit, unprivileged browser-cache setup step; the verifier never
+downloads a browser, installs operating-system packages, or uses `sudo` on the
+operator's behalf. Playwright's host-library dependencies remain a workstation
+prerequisite and must be managed through the host's normal reviewed setup path,
+not by adding `--with-deps` to a verification run. Re-run the command after a
+Playwright upgrade so the cached revision stays aligned with the package in the
+current checkout. Do not substitute an older cached browser or a person's
+signed-in shared Chrome.
+
 ```bash
 ./tools/nx run @agent-lcars/console:verify-session -- \
   --role admin \
@@ -147,6 +212,14 @@ Exit codes:
 - `2`: the saved session is expired or revoked; repeat the interactive capture.
 - `3`: the session authenticates but has the wrong role or the page redirected
   elsewhere.
+- `4`: the saved session expiry is unknown or falls inside the requested
+  `--minimum-valid-days` safety window; rotate it before the deadline.
+- `5`: the matching Playwright Chromium headless-shell executable is not ready;
+  run the bounded install command above and retry.
+
+The executable preflight runs before saved state is read and before browser
+launch. It reports `BROWSER_RUNTIME_UNAVAILABLE` separately from expired
+credentials, role failures, redirects, and product-navigation assertions.
 
 Auth.js JWT sessions are finite-lived credentials. The saved file/secret does
 not silently refresh itself; recapture when the command reports exit code 2 or

@@ -14,9 +14,14 @@ enough.
   and stateless: an `issues`/`pull_request` `labeled` event whose label is
   `agent:claude`/`agent:codex`/`agent:opencode` requests mode `implement`
   (issue or PR); the same on a PR with `review:claude`/`review:codex`/
-  `review:opencode` requests mode `review`. Each delivery is evaluated on
-  its own — there is no cross-check against the anchor's full current label
-  set, no contradictory-multi-label detection, and no stale-label cleanup.
+  `review:opencode` requests mode `review`. Label routing validates the full
+  delivered anchor label snapshot against the canonical pipeline registry;
+  multiple choices within the triggering namespace produce an actionable
+  `routing-label-conflict` refusal before admission. Missing/inconsistent
+  snapshots fail closed. Implement and review namespaces are independent;
+  one label in each is not ambiguous. Maintainers resolve intent explicitly
+  under [the label contract](../../../docs/github-label-contract.md#resolving-ambiguous-routing-intent);
+  the console never rewrites routing labels or removes bot assignment.
   What actually prevents two runs is `libs/orchestrator`'s per-task mutex:
   a request while a run is already live is refused (`task-busy`); a retried
   delivery (same GitHub delivery ID) maps back to the run it already

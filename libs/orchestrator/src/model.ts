@@ -80,6 +80,9 @@ export const githubAnchorProjectionSchema = z.strictObject({
     .max(256)
     .optional(),
   draft: z.boolean().optional(),
+  /** PR merge evidence from GitHub. null means known unmerged; omitted is
+   * unknown (including projections written before this field existed). */
+  mergedAt: isoUtc.nullable().optional(),
   mergeableState: z
     .enum([
       'clean',
@@ -217,6 +220,8 @@ export const runResultSchema = z.strictObject({
   summary: z.string().max(4_096).optional(),
   /** e.g. a PR URL; opaque to the orchestrator. */
   ref: z.string().max(1_024).optional(),
+  /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
+  relatedRefs: z.array(z.string().max(1_024)).max(1).optional(),
   /**
    * The agent's own final message for this round -- its question when it
    * parked, its summary when it opened a PR. Durable so every surface can

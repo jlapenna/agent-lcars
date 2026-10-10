@@ -120,7 +120,8 @@ API errors and stale repository refreshes observable.
 
 ## Full-suite performance queries
 
-Agent LCARS marks the real console browser step, while retaining `E2E` as its
+Agent LCARS marks the real console browser step in `Console E2E browser suite`,
+while retaining `E2E` as its
 required GitHub status context. The following selectors exclude unaffected-PR
 short circuits and unassigned runner-label migration. Use `[14d]` in place of
 `[7d]` for the longer dashboard window.
@@ -135,7 +136,7 @@ histogram_quantile(
     increase(github_actions_job_duration_seconds_bucket{
       repository="jlapenna/agent-lcars",
       workflow="ci",
-      job="E2E",
+      job=~"E2E|Console E2E browser suite",
       runner_group="Default",
       execution="full_suite"
     }[7d])
@@ -152,7 +153,7 @@ histogram_quantile(
     increase(github_actions_job_queue_duration_seconds_bucket{
       repository="jlapenna/agent-lcars",
       workflow="ci",
-      job="E2E",
+      job=~"E2E|Console E2E browser suite",
       runner_group="Default",
       execution="full_suite"
     }[7d])
@@ -166,7 +167,7 @@ Full-suite execution mean uses the histogram sum and count:
 sum(increase(github_actions_job_duration_seconds_sum{
   repository="jlapenna/agent-lcars",
   workflow="ci",
-  job="E2E",
+  job=~"E2E|Console E2E browser suite",
   runner_group="Default",
   execution="full_suite"
 }[7d]))
@@ -174,7 +175,7 @@ sum(increase(github_actions_job_duration_seconds_sum{
 sum(increase(github_actions_job_duration_seconds_count{
   repository="jlapenna/agent-lcars",
   workflow="ci",
-  job="E2E",
+  job=~"E2E|Console E2E browser suite",
   runner_group="Default",
   execution="full_suite"
 }[7d]))
@@ -186,7 +187,7 @@ Always pair percentiles with the sample count:
 sum(increase(github_actions_job_duration_seconds_count{
   repository="jlapenna/agent-lcars",
   workflow="ci",
-  job="E2E",
+  job=~"E2E|Console E2E browser suite",
   runner_group="Default",
   execution="full_suite"
 }[7d]))
@@ -198,7 +199,7 @@ Completed full-suite success rate:
 sum(increase(github_actions_jobs_total{
   repository="jlapenna/agent-lcars",
   workflow="ci",
-  job="E2E",
+  job=~"E2E|Console E2E browser suite",
   runner_group="Default",
   execution="full_suite",
   conclusion="success"
@@ -207,7 +208,7 @@ sum(increase(github_actions_jobs_total{
 sum(increase(github_actions_jobs_total{
   repository="jlapenna/agent-lcars",
   workflow="ci",
-  job="E2E",
+  job=~"E2E|Console E2E browser suite",
   runner_group="Default",
   execution="full_suite"
 }[7d]))

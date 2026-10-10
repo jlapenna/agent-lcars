@@ -27,6 +27,8 @@ test.afterAll(async () => {
 });
 
 test.describe('Work schedule mutation journeys', () => {
+  test.use({ timezoneId: 'America/Los_Angeles', locale: 'en-US' });
+
   test('creates, enables, disables and follows Last item after reload', async ({
     page,
     request,
@@ -53,7 +55,7 @@ test.describe('Work schedule mutation journeys', () => {
     await expect(row).toContainText('15 9 * * *');
     await expect(row).toContainText('supersprinklesracing/sprinkles');
     await expect(
-      row.getByRole('cell', { name: 'no', exact: true }),
+      row.getByRole('cell').filter({ hasText: /^no/ }),
     ).toBeVisible();
     await expect(
       row.getByRole('cell', { name: 'never', exact: true }),
@@ -68,7 +70,7 @@ test.describe('Work schedule mutation journeys', () => {
     ).toBeVisible();
     await row.getByRole('button', { name: 'Disable', exact: true }).click();
     await expect(
-      row.getByRole('cell', { name: 'no', exact: true }),
+      row.getByRole('cell').filter({ hasText: /^no/ }),
     ).toBeVisible();
     await page.reload();
     await expect(
@@ -183,9 +185,9 @@ test.describe('Work schedule mutation journeys', () => {
       });
     });
     await row.getByRole('button', { name: 'Disable', exact: true }).click();
-    await expect(
-      page.getByText('work.operator scope required', { exact: true }),
-    ).toBeVisible();
+    await expect(row.getByRole('alert')).toContainText(
+      'work.operator scope required',
+    );
     await expect(
       row.getByRole('cell', { name: 'yes', exact: true }),
     ).toBeVisible();
@@ -212,5 +214,189 @@ test.describe('Work schedule mutation journeys', () => {
     await expect(
       row.getByRole('cell', { name: 'yes', exact: true }),
     ).toBeVisible();
+  });
+
+  test('edits, confirms deletion, and displays labeled UTC and local occurrences', async ({
+    page,
+    request,
+  }) => {
+    const id = '01J5Z3K9QX8F0N2B4V6C8D1E3J';
+    const created = await request.put(`/api/work/v1/schedules/${id}`, {
+      headers: WORK_ADMIN_HEADERS,
+      data: {
+        cron: '* * * * *',
+        enabled: true,
+        spec: {
+          title: 'Schedule to edit',
+          description: 'Audit scheduling',
+          pipeline: 'claude',
+          target: { repo: 'supersprinklesracing/sprinkles' },
+        },
+      },
+    });
+    expect(created.ok()).toBe(true);
+    await page.goto('/work/schedules');
+    let row = page.getByRole('row').filter({ hasText: 'Schedule to edit' });
+    await expect(row.getByText(/^UTC:/)).toBeVisible();
+    const utc = await row.getByText(/^UTC:/).innerText();
+    const shownAt = new Date(utc.replace(/^UTC: /u, ''));
+    const local = new Intl.DateTimeFormat('en-US', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'America/Los_Angeles',
+    }).format(shownAt);
+    await expect(
+      row.getByText(`Local (America/Los_Angeles): ${local}`, { exact: true }),
+    ).toBeVisible();
+    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    const edit = page.getByRole('dialog', {
+      name: 'Edit schedule',
+      exact: true,
+    });
+    await expect(
+      edit.getByRole('textbox', { name: 'Title', exact: true }),
+    ).toHaveValue('Schedule to edit');
+    await edit
+      .getByRole('textbox', { name: 'Title', exact: true })
+      .fill('Edited schedule');
+    await edit.getByRole('textbox', { name: /Cron/ }).fill('15 9 * * *');
+    await edit
+      .getByRole('button', { name: 'Save changes', exact: true })
+      .click();
+    await expect(edit).toHaveCount(0);
+    row = page.getByRole('row').filter({ hasText: 'Edited schedule' });
+    await expect(row).toContainText('15 9 * * *');
+    await page.reload();
+    await expect(row).toContainText('15 9 * * *');
+    const updated = await request.get(`/api/work/v1/schedules/${id}`, {
+      headers: WORK_ADMIN_HEADERS,
+    });
+    expect(await updated.json()).toMatchObject({
+      revision: 2,
+      cron: '15 9 * * *',
+      spec: { title: 'Edited schedule' },
+    });
+    await row.getByRole('button', { name: 'Delete', exact: true }).click();
+    let dialog = page.getByRole('dialog', {
+      name: 'Delete schedule?',
+      exact: true,
+    });
+    await expect(dialog).toContainText(
+      'An already admitted occurrence may still finish.',
+    );
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(row).toBeVisible();
+    expect(
+      (
+        await request.get(`/api/work/v1/schedules/${id}`, {
+          headers: WORK_ADMIN_HEADERS,
+        })
+      ).ok(),
+    ).toBe(true);
+    await row.getByRole('button', { name: 'Delete', exact: true }).click();
+    dialog = page.getByRole('dialog', {
+      name: 'Delete schedule?',
+      exact: true,
+    });
+    await dialog
+      .getByRole('button', { name: 'Delete schedule', exact: true })
+      .click();
+    await expect(page.getByText('No schedules yet.')).toBeVisible();
+    await page.reload();
+    expect(
+      (
+        await request.get(`/api/work/v1/schedules/${id}`, {
+          headers: WORK_ADMIN_HEADERS,
+        })
+      ).status(),
+    ).toBe(404);
+  });
+
+  test('retains a stale edit and deletion dialog without claiming success', async ({
+    page,
+    request,
+  }) => {
+    const id = '01J5Z3K9QX8F0N2B4V6C8D1E3J';
+    const spec = {
+      title: 'Concurrent schedule',
+      description: 'Preserve operator intent',
+      pipeline: 'claude',
+      target: { repo: 'supersprinklesracing/sprinkles' },
+    };
+    expect(
+      (
+        await request.put(`/api/work/v1/schedules/${id}`, {
+          headers: WORK_ADMIN_HEADERS,
+          data: { cron: '0 * * * *', spec },
+        })
+      ).ok(),
+    ).toBe(true);
+    await page.goto('/work/schedules');
+    let row = page.getByRole('row').filter({ hasText: 'Concurrent schedule' });
+    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    const edit = page.getByRole('dialog', {
+      name: 'Edit schedule',
+      exact: true,
+    });
+    await edit
+      .getByRole('textbox', { name: 'Title', exact: true })
+      .fill('Unsaved edit');
+    expect(
+      (
+        await request.patch(`/api/work/v1/schedules/${id}`, {
+          headers: WORK_ADMIN_HEADERS,
+          data: {
+            expectedRevision: 1,
+            cron: '0 * * * *',
+            spec: { ...spec, title: 'External change' },
+            enabled: true,
+          },
+        })
+      ).ok(),
+    ).toBe(true);
+    await edit
+      .getByRole('button', { name: 'Save changes', exact: true })
+      .click();
+    await expect(
+      edit.getByText('Schedule changed; reload before applying your change'),
+    ).toBeVisible();
+    await expect(
+      edit.getByRole('textbox', { name: 'Title', exact: true }),
+    ).toHaveValue('Unsaved edit');
+    expect(
+      await (
+        await request.get(`/api/work/v1/schedules/${id}`, {
+          headers: WORK_ADMIN_HEADERS,
+        })
+      ).json(),
+    ).toMatchObject({ revision: 2, spec: { title: 'External change' } });
+    await page.reload();
+    row = page.getByRole('row').filter({ hasText: 'External change' });
+    await row.getByRole('button', { name: 'Delete', exact: true }).click();
+    const dialog = page.getByRole('dialog', {
+      name: 'Delete schedule?',
+      exact: true,
+    });
+    expect(
+      (
+        await request.post(`/api/work/v1/schedules/${id}/disable`, {
+          headers: WORK_ADMIN_HEADERS,
+          data: { expectedRevision: 2 },
+        })
+      ).ok(),
+    ).toBe(true);
+    await dialog
+      .getByRole('button', { name: 'Delete schedule', exact: true })
+      .click();
+    await expect(dialog.getByRole('alert')).toContainText(
+      'Schedule changed; reload before applying your change',
+    );
+    expect(
+      (
+        await request.get(`/api/work/v1/schedules/${id}`, {
+          headers: WORK_ADMIN_HEADERS,
+        })
+      ).ok(),
+    ).toBe(true);
   });
 });

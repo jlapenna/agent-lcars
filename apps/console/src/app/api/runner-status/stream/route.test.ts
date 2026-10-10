@@ -7,8 +7,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/auth', () => ({ auth: mocks.auth }));
-vi.mock('@/lib/autoscaler-status', () => ({
-  subscribeAutoscalerStatuses: mocks.subscribe,
+vi.mock('@/lib/shuttlebay-status', () => ({
+  subscribeShuttlebayStatus: mocks.subscribe,
 }));
 
 import { RUNNER_STATUS_STREAM_LIFETIME_MS } from '@/lib/runner-status-contract';
@@ -49,7 +49,7 @@ describe('GET /api/runner-status/stream', () => {
     let push: (result: unknown) => void = () => undefined;
     mocks.subscribe.mockImplementation(async (onResult) => {
       push = onResult;
-      onResult({ statuses: [], warnings: [] });
+      onResult({ lanes: [], warnings: [] });
       return mocks.unsubscribe;
     });
     const abort = new AbortController();
@@ -62,10 +62,10 @@ describe('GET /api/runner-status/stream', () => {
     const first = await readFrames(reader, 2);
     expect(first).toContain('retry: 1000');
     expect(first).toContain(
-      'event: runner-status\ndata: {"statuses":[],"warnings":[]}',
+      'event: runner-status\ndata: {"lanes":[],"warnings":[]}',
     );
 
-    push({ statuses: [], warnings: ['ARC lane status is stale.'] });
+    push({ lanes: [], warnings: ['ARC lane status is stale.'] });
     expect(await readFrames(reader, 1)).toContain('ARC lane status is stale.');
 
     abort.abort();

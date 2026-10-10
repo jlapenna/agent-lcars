@@ -28,9 +28,11 @@ import {
   resetE2eOrchestratorFixtures,
   seedPopulatedE2eOrchestratorFixtures,
 } from '../../../../lib/e2e-orchestrator-fixtures';
+import { E2E_OPENCODE_SESSION_IDS } from '../../../../lib/e2e-transcript-fixtures';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
-const E2E_RUNNER_STATUS_ID = 'e2e-fixture-scale-set';
+const E2E_RUNNER_STATUS_ID = 'e2e-fixture-arc-lane';
+const E2E_EXECUTOR_STATUS_ID = 'e2e-fixture-queue-executor';
 
 export const E2E_CLI_SESSION_IDS = {
   live: 'e2e-cli-session-live',
@@ -237,6 +239,7 @@ interface SeedRequest {
   action?:
     'seed' | 'seed-populated' | 'seed-inbox' | 'seed-inbox-only' | 'reset';
   resume?: boolean;
+  transcripts?: boolean;
 }
 
 /**
@@ -271,25 +274,31 @@ async function seedRunnerStatus() {
     .collection(RUNNER_STATUS_COLLECTION)
     .doc(E2E_RUNNER_STATUS_ID)
     .set({
-      schemaVersion: 1,
-      scaleSet: 'e2e-fixture-runners',
-      registration: 'e2e-fixture-registration',
-      queuedJobs: 0,
+      schemaVersion: 3,
+      kind: 'arc-lane',
+      lane: 'e2e-fixture-runners',
+      expectedLanes: 'e2e-fixture-runners',
+      registrationUrl: 'https://github.com/supersprinklesracing/sprinkles',
+      assignedJobs: 1,
+      runningJobs: 1,
+      pendingJobs: 0,
+      registeredRunners: 2,
+      idleRunners: 1,
+      desiredRunners: 2,
       minRunners: 0,
       maxRunners: 2,
+      updatedAt: new Date().toISOString(),
+    });
+  await firestore
+    .collection(RUNNER_STATUS_COLLECTION)
+    .doc(E2E_EXECUTOR_STATUS_ID)
+    .set({
+      schemaVersion: 2,
+      kind: 'queue-executor',
+      executor: 'queue',
+      ready: true,
       draining: false,
-      runners: [
-        {
-          name: 'e2e-fixture-runner-1',
-          host: 'e2e-fixture-host-1',
-          state: 'busy',
-        },
-        {
-          name: 'e2e-fixture-runner-2',
-          host: 'e2e-fixture-host-2',
-          state: 'idle',
-        },
-      ],
+      maxConcurrent: 3,
       updatedAt: new Date().toISOString(),
     });
 }
@@ -317,6 +326,10 @@ export async function POST(req: NextRequest) {
         telemetry
           .collection(RUNNER_STATUS_COLLECTION)
           .doc(E2E_RUNNER_STATUS_ID)
+          .delete(),
+        telemetry
+          .collection(RUNNER_STATUS_COLLECTION)
+          .doc(E2E_EXECUTOR_STATUS_ID)
           .delete(),
         resetE2eOrchestratorFixtures(),
       ]);
@@ -347,6 +360,20 @@ export async function POST(req: NextRequest) {
           'gs://demo-no-project/e2e-native-resume-session.jsonl',
         renderable: false,
       });
+    }
+    if (body.transcripts) {
+      for (const sessionId of Object.values(E2E_OPENCODE_SESSION_IDS)) {
+        docs.push({
+          ...fixtureIssueAgentSession(),
+          sessionId,
+          agent: 'opencode',
+          title: `OpenCode archive ${sessionId}`,
+          transcriptGcsUri: `gs://e2e-transcripts/${sessionId}.jsonl`,
+          resumeGcsUri: `gs://e2e-transcripts/${sessionId}.export.json`,
+          // Covers already-stored docs from before OpenCode timeline support.
+          renderable: false,
+        });
+      }
     }
     // Full-fixture writes, not a status update - nothing to clear. See
     // SessionWrite's doc comment (@agent-lcars/telemetry): upsertSession

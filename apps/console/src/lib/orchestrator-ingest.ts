@@ -1,6 +1,8 @@
 import {
+  AGENT_LABELS,
   parseTerminalQuickTaskBody,
   REPLY_COMMANDS,
+  REVIEW_LABELS,
 } from '@agent-lcars/dispatch-contracts';
 import {
   type RequestBinding,
@@ -14,13 +16,18 @@ import { isControlPlaneRepository } from '@/lib/deployment';
 import { matchReplyTrigger } from '@/lib/reply-trigger';
 import { hasCrossRepoOption } from '@/lib/watched-repo';
 
+import {
+  checkGithubLabelRouting,
+  type GithubLabelRouting,
+  type RoutingLabelConflict,
+} from './github-routing-labels';
 import { workPayloadFromGithub } from './work-from-github';
 
 /**
  * Interprets one GitHub webhook delivery and decides whether it is a
  * request to work a task. Pure: no I/O, no throwing on malformed input --
- * every parse failure and every non-matching payload becomes an
- * `IngestIgnore` with a short reason instead. Callers own dispatch; this
+ * parse failures and non-matching payloads become an `IngestIgnore`,
+ * while ambiguous label intent returns an actionable conflict. Callers own dispatch; this
  * module only decides *whether* and *what*.
  */
 
@@ -42,6 +49,7 @@ export interface IngestDecision {
   /** Every admitted GitHub anchor supplies the Work specification its
    * direct runner will execute. */
   work: WorkPayload;
+  labelRouting?: GithubLabelRouting;
 }
 
 export interface IngestIgnore {
@@ -50,7 +58,7 @@ export interface IngestIgnore {
   reason: string;
 }
 
-export type IngestResult = IngestDecision | IngestIgnore;
+export type IngestResult = IngestDecision | IngestIgnore | RoutingLabelConflict;
 
 export interface GithubAnchorClosure {
   taskId: TaskId;
@@ -88,6 +96,8 @@ const issueBodySchema = z.object({
 // their own resume policy and deliberately keep the comment schema below.
 const labelAnchorSchema = issueBodySchema.extend({
   state: z.enum(['open', 'closed']),
+  // Missing full-set evidence must not become a fabricated empty snapshot.
+  labels: z.array(labelSchema).optional(),
 });
 
 const issuesEventSchema = z.object({
@@ -146,22 +156,6 @@ export const issueCommentEventSchema = z.object({
   sender: senderSchema,
 });
 
-/** `issues`/`pull_request` `labeled` action, label `agent:<pipeline>` ->
- *  work the issue/PR, mode `implement`. */
-const IMPLEMENT_LABELS: Readonly<Record<string, Pipeline>> = {
-  'agent:claude': 'claude',
-  'agent:codex': 'codex',
-  'agent:opencode': 'opencode',
-};
-
-/** `pull_request` `labeled` action, label `review:<pipeline>` -> work that
- *  PR, mode `review`. Issues have no review-label trigger. */
-const REVIEW_LABELS: Readonly<Record<string, Pipeline>> = {
-  'review:claude': 'claude',
-  'review:codex': 'codex',
-  'review:opencode': 'opencode',
-};
-
 function matchReplyCommand(body: string): Pipeline | undefined {
   const trigger = matchReplyTrigger(body, [...REPLY_COMMANDS.keys()]);
   return trigger ? REPLY_COMMANDS.get(trigger) : undefined;
@@ -194,6 +188,7 @@ function buildRequestDecision(
   params: Record<string, string>,
   work: WorkPayload,
   requestBinding?: RequestBinding,
+  labelRouting?: GithubLabelRouting,
 ): IngestResult {
   const taskId = taskIdSchema.safeParse({ repo, issue });
   if (!taskId.success) return ignore('malformed-payload');
@@ -205,6 +200,7 @@ function buildRequestDecision(
     pipeline,
     params,
     work,
+    ...(labelRouting === undefined ? {} : { labelRouting }),
   };
 }
 
@@ -233,8 +229,16 @@ function interpretIssuesEvent(
   if (action !== 'labeled') return ignore('unhandled-action');
   if (issue.state !== 'open') return ignore('anchor-closed');
 
-  const pipeline = label && IMPLEMENT_LABELS[label.name];
+  if (!label) return ignore('no-trigger-label');
+  const pipeline = AGENT_LABELS.get(label.name);
   if (!pipeline) return ignore('no-trigger-label');
+  const labelRouting: GithubLabelRouting = {
+    mode: 'implement',
+    trigger: label.name,
+    labels: issue.labels,
+  };
+  const conflict = checkGithubLabelRouting(labelRouting);
+  if (conflict) return conflict;
 
   const work = workPayloadFromGithub({
     title: issue.title,
@@ -251,10 +255,11 @@ function interpretIssuesEvent(
     pipeline,
     {
       mode: 'implement',
-      ...crossRepoParams(issue.labels),
+      ...crossRepoParams(issue.labels ?? []),
     },
     work,
     terminalQuickTaskBinding(issue.body),
+    labelRouting,
   );
 }
 
@@ -277,9 +282,17 @@ function interpretPullRequestEvent(
   if (action !== 'labeled') return ignore('unhandled-action');
   if (pullRequest.state !== 'open') return ignore('anchor-closed');
 
-  const labelName = label?.name;
-  const implementPipeline = labelName && IMPLEMENT_LABELS[labelName];
+  if (!label) return ignore('no-trigger-label');
+  const labelName = label.name;
+  const implementPipeline = AGENT_LABELS.get(labelName);
   if (implementPipeline) {
+    const labelRouting: GithubLabelRouting = {
+      mode: 'implement',
+      trigger: labelName,
+      labels: pullRequest.labels,
+    };
+    const conflict = checkGithubLabelRouting(labelRouting);
+    if (conflict) return conflict;
     const work = workPayloadFromGithub({
       title: pullRequest.title,
       body: pullRequest.body,
@@ -292,13 +305,22 @@ function interpretPullRequestEvent(
       pullRequest.number,
       deliveryId,
       implementPipeline,
-      { mode: 'implement', ...crossRepoParams(pullRequest.labels) },
+      { mode: 'implement', ...crossRepoParams(pullRequest.labels ?? []) },
       work,
+      undefined,
+      labelRouting,
     );
   }
 
-  const reviewPipeline = labelName && REVIEW_LABELS[labelName];
+  const reviewPipeline = REVIEW_LABELS.get(labelName);
   if (reviewPipeline) {
+    const labelRouting: GithubLabelRouting = {
+      mode: 'review',
+      trigger: labelName,
+      labels: pullRequest.labels,
+    };
+    const conflict = checkGithubLabelRouting(labelRouting);
+    if (conflict) return conflict;
     const work = workPayloadFromGithub({
       title: pullRequest.title,
       body: pullRequest.body,
@@ -311,8 +333,10 @@ function interpretPullRequestEvent(
       pullRequest.number,
       deliveryId,
       reviewPipeline,
-      { mode: 'review', ...crossRepoParams(pullRequest.labels) },
+      { mode: 'review', ...crossRepoParams(pullRequest.labels ?? []) },
       work,
+      undefined,
+      labelRouting,
     );
   }
 

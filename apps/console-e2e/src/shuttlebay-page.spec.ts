@@ -94,6 +94,98 @@ test.describe('/shuttlebay workspace', () => {
 test.describe('Shuttlebay live stream', () => {
   usePopulatedFixtures();
 
+  test('shows cooldown/reset provenance, normal claims, drain and unavailable provider evidence', async ({
+    page,
+  }) => {
+    const connections: Array<Promise<Route>> = [];
+    const accept: Array<(route: Route) => void> = [];
+    for (let i = 0; i < 4; i++)
+      connections.push(new Promise((resolve) => accept.push(resolve)));
+    let index = 0;
+    await page.route('**/api/runner-status/stream', async (route) => {
+      const resolve = accept[index++];
+      if (resolve) resolve(route);
+      else await route.abort();
+    });
+    await page.goto('/shuttlebay');
+    const now = new Date().toISOString();
+    const reset = new Date(Date.now() + 60_000).toISOString();
+    const provider = {
+      pipeline: 'claude',
+      queued: 2,
+      deferred: 0,
+      liveClaims: 0,
+      eligible: 0,
+      cooldown: {
+        pipeline: 'claude',
+        runId: 'quota/r1',
+        observedAt: now,
+        expiresAt: reset,
+      },
+    };
+    const executor = {
+      schemaVersion: 2,
+      kind: 'queue-executor',
+      executor: 'queue',
+      ready: true,
+      draining: false,
+      activeRuns: 0,
+      maxConcurrent: 3,
+      updatedAt: now,
+      claims: {
+        claude: 3,
+        codex: 0,
+        opencode: 1,
+        windowStart: new Date(Date.now() - 60_000).toISOString(),
+        windowEnd: now,
+      },
+    };
+    const snapshot = {
+      warnings: [],
+      queueExecutor: executor,
+      providerAdmission: {
+        observedAt: now,
+        provenance: 'orchestrator',
+        providers: [provider],
+      },
+    };
+    const send = async (connection: number, data: unknown) =>
+      (await connections[connection]).fulfill({
+        contentType: 'text/event-stream',
+        body: `retry: 1000\n\nevent: runner-status\ndata: ${JSON.stringify(data)}\n\n`,
+      });
+    await send(0, snapshot);
+    const row = page.getByTestId('provider-admission-claude');
+    await expect(row).toContainText('cooling down');
+    await expect(row).toContainText(reset);
+    await expect(row).toContainText('quota/r1');
+    await expect(row).toContainText('3 claims from');
+    const healthy = {
+      ...snapshot,
+      providerAdmission: {
+        ...snapshot.providerAdmission,
+        providers: [{ ...provider, eligible: 2, cooldown: undefined }],
+      },
+    };
+    await send(1, healthy);
+    await expect(row).toContainText('2 eligible queued');
+    await expect(row).toContainText('no active cooldown');
+    await send(2, {
+      ...healthy,
+      queueExecutor: { ...executor, draining: true },
+    });
+    await expect(row).toContainText('executor draining');
+    await expect(row).toContainText('0 eligible queued');
+    await expect(row).toContainText('2 queued');
+    await send(3, {
+      warnings: ['Provider queue and cooldown status unavailable.'],
+    });
+    await expect(row).toContainText('admission unavailable');
+    await expect(row).toContainText('Eligible queue unavailable');
+    await expect(row).toContainText('Recent claims unavailable');
+    await expect(row).not.toContainText('0 eligible queued');
+  });
+
   test('renders the initial snapshot, updates, expires while denied, and recovers after reconnect', async ({
     page,
   }) => {
@@ -110,14 +202,13 @@ test.describe('Shuttlebay live stream', () => {
     });
     await page.clock.install();
     await page.goto('/shuttlebay');
-    const fleet = page.getByTestId('autoscaler-scale-set-e2e-fixture-runners');
-    await expect(fleet).toContainText('0 queued · 1 busy · 1 idle · 2 max');
-    await expect(
-      page.getByTestId('autoscaler-runner-e2e-fixture-runner-1'),
-    ).toBeVisible();
+    const fleet = page.getByTestId('arc-lane-e2e-fixture-runners');
+    await expect(fleet).toContainText(
+      '1 running · 1 idle · 2 registered · 2 desired · 2 max',
+    );
 
     const snapshot = (activeRuns: number, updatedAt: string) => ({
-      statuses: [],
+      lanes: [],
       warnings: [],
       queueExecutor: {
         schemaVersion: 2,

@@ -25,7 +25,26 @@ grep -Fq '/usr/local/lib/agent-lcars/runtime' "$dockerfile" || {
 # once direct-runner.sh execs them for real.
 tmp="$(mktemp -d)"
 export tmp
-trap 'rm -rf "$tmp"' EXIT
+export AGENT_LCARS_JOB_DAEMON_STATE_ROOT="$tmp/job-daemon-state"
+cleanup() {
+  local result=$?
+  trap - EXIT
+  if [ "$result" -ne 0 ]; then
+    echo 'direct-runner fixture failure diagnostics (last 4KiB per log):' >&2
+    for log in "${scenario_log:-}" "${NODE_ARGS_LOG:-}" "$tmp/sidecar.log"; do
+      if [ -f "$log" ]; then
+        printf '\n%s\n' "$log" >&2
+        tail -c 4096 "$log" >&2
+      fi
+    done
+  fi
+  if [ -n "${baked:-}" ] && [ -x "$baked/job-daemon-real.sh" ]; then
+    "$baked/job-daemon-real.sh" stop telemetry >/dev/null 2>&1 || true
+  fi
+  rm -rf "$tmp"
+  exit "$result"
+}
+trap cleanup EXIT
 
 # --- Fake baked image tree -------------------------------------------------
 # Build the native runtime shape produced by the Dockerfile, including its
@@ -49,9 +68,36 @@ export WORKER_POLICY_NODE="$real_node"
 # delegates to the fake `node` below. Keep it separate from the source tree:
 # the real runner image contains the compiled bundle, while this shell harness
 # deliberately verifies the lifecycle arguments without starting Firestore.
-cp "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" "$baked/sidecar-lifecycle.sh"
-cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon.sh"
-chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh"
+sed 's|^LOG_FILE=/tmp/runner-telemetry/sidecar.log$|LOG_FILE="$tmp/sidecar.log"|' \
+  "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" > "$baked/sidecar-lifecycle.sh"
+grep -Fq 'LOG_FILE="$tmp/sidecar.log"' "$baked/sidecar-lifecycle.sh" || {
+  echo 'fixture failed to isolate the sidecar log' >&2
+  exit 1
+}
+cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon-real.sh"
+# job-daemon backgrounds the sidecar and returns, and finalize stops it at
+# once; a fast scenario could kill the fake sidecar before it logged its
+# argv. Wait for the actual fake child to record its argv before returning.
+# This readiness barrier belongs only to the fixture; production stays async.
+cat > "$baked/job-daemon.sh" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+daemon="$(dirname "$0")/job-daemon-real.sh"
+if [ "${1:-}" != start ]; then
+  exec "$daemon" "$@"
+fi
+mkdir -p "$AGENT_LCARS_JOB_DAEMON_STATE_ROOT"
+FAKE_SIDECAR_READY_FILE="$(mktemp "$AGENT_LCARS_JOB_DAEMON_STATE_ROOT/ready.XXXXXX")"
+export FAKE_SIDECAR_READY_FILE
+"$daemon" "$@"
+if ! /usr/bin/timeout --signal=TERM --kill-after=1s 5s /bin/bash -c \
+  'until [ -s "$1" ]; do sleep 0.01; done' _ "$FAKE_SIDECAR_READY_FILE"; then
+  echo 'fixture sidecar did not record its actual arguments within 5s' >&2
+  exit 1
+fi
+rm -f "$FAKE_SIDECAR_READY_FILE"
+FAKE
+chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh" "$baked/job-daemon-real.sh"
 BAKED_SIDECAR_LIFECYCLE="$baked/sidecar-lifecycle.sh"
 printf '%s\n' '// fake baked telemetry sidecar' > "$baked/sidecar.cjs"
 
@@ -268,6 +314,32 @@ FAKE
   cat > "$bindir/gh" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s' "${GH_TOKEN:-}" > "$GH_INVOCATION_TOKEN_LOG"
+if [[ "$*" == *"--slurp"* ]]; then
+  if [[ "$*" == *"pulls?state=all"* ]]; then
+    [ "${FAKE_GH_LOOKUP_FAIL:-}" != 1 ] || exit 1
+    match=1
+    if [ -n "${FAKE_GH_MATCH_AFTER_WORKER_RUNS:-}" ]; then
+      [ -f "${WORKER_RUN_COUNT_FILE:-/nonexistent}" ] && [ "$(cat "$WORKER_RUN_COUNT_FILE")" -ge "$FAKE_GH_MATCH_AFTER_WORKER_RUNS" ] || match=0
+    elif [ -n "${FAKE_GH_MATCH_AFTER_OPENCODE_RUNS:-}" ]; then
+      [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ] && [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -ge "$FAKE_GH_MATCH_AFTER_OPENCODE_RUNS" ] || match=0
+    elif [ "${FAKE_GH_NO_MATCH:-}" = 1 ]; then match=0; fi
+    if [ "$match" = 1 ]; then
+      jq -cn --arg marker "<!-- attempt-claim:${ATTEMPT_ID} -->" '[[{number:12,user:{type:"Bot"},body:$marker}]]'
+    else echo '[[]]'; fi
+  elif [[ "$*" == *"issues/42/comments"* ]]; then
+    if [ "${FAKE_GH_MARKER_COMMENT:-}" = 1 ]; then
+      body="<!-- attempt-claim:${ATTEMPT_ID} -->"
+      [ "${FAKE_GH_MARKER_PARK:-}" != 1 ] || body="$body <!-- agent-result:v1:park -->"
+      [ "${FAKE_GH_MARKER_NO_OP:-}" != 1 ] || body="$body <!-- agent-result:v1:no-op -->"
+      jq -cn --arg body "$body" '[[{id:99,user:{type:"Bot"},body:$body,html_url:"https://github.com/octo/example/issues/42#issuecomment-99"}]]'
+    else echo '[[]]'; fi
+  elif [[ "$*" == *"pulls/42/reviews"* ]]; then
+    if [ "${FAKE_GH_MARKER_REVIEW:-}" = 1 ]; then
+      jq -cn --arg marker "<!-- attempt-claim:${ATTEMPT_ID} -->" '[[{id:100,user:{type:"Bot"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]'
+    else echo '[[]]'; fi
+  else exit 1; fi
+  exit 0
+fi
 if [[ "$*" == *"pulls?state=all"* ]]; then
   if [ "${FAKE_GH_LOOKUP_FAIL:-}" = 1 ]; then
     exit 1
@@ -355,10 +427,10 @@ printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
-if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
-  printf '%s start %s sleep=%s\n' "$run_count" "$EPOCHREALTIME" "$FAKE_WORKER_SLEEP" >> "$WORKER_TIME_LOG"
-  sleep "$FAKE_WORKER_SLEEP"
-  printf '%s end %s\n' "$run_count" "$EPOCHREALTIME" >> "$WORKER_TIME_LOG"
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then sleep "$FAKE_WORKER_SLEEP"; fi
+if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
+  read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+  printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
 fi
 if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
   printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
@@ -391,10 +463,10 @@ printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
-if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
-  printf '%s start %s sleep=%s\n' "$run_count" "$EPOCHREALTIME" "$FAKE_WORKER_SLEEP" >> "$WORKER_TIME_LOG"
-  sleep "$FAKE_WORKER_SLEEP"
-  printf '%s end %s\n' "$run_count" "$EPOCHREALTIME" >> "$WORKER_TIME_LOG"
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then sleep "$FAKE_WORKER_SLEEP"; fi
+if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
+  read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+  printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
 fi
 if [ "${FAKE_WORKER_NO_THREAD:-}" != 1 ]; then echo '{"type":"thread.started","thread_id":"thread-codex-fixture"}'; fi
 if [ "${FAKE_WORKER_ERROR_EVENT:-}" = 1 ]; then echo '{"type":"error","message":"provider execution failed"}'; fi
@@ -488,6 +560,10 @@ fi
 if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
   sleep "$FAKE_OPENCODE_SLEEP_SECONDS"
 fi
+if [ -n "${FAKE_OPENCODE_ELAPSED:-}" ]; then
+  read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+  printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_OPENCODE_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
+fi
 if [ -n "${FAKE_OPENCODE_RESOLVED_MODEL:-}" ]; then
   printf '%s' "$FAKE_OPENCODE_RESOLVED_MODEL" > "$RUNNER_TEMP/opencode-proxy/resolved-model"
 fi
@@ -526,6 +602,8 @@ if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
   if [ ! -f "$tmp/opencode-initialized" ]; then
     touch "$tmp/opencode-startup-race"
   fi
+  [ -z "${FAKE_SIDECAR_READY_FILE:-}" ] || \
+    printf '%s\n' ready > "$FAKE_SIDECAR_READY_FILE"
 fi
 # Stands in for the real sidecar's `runner finalize` subcommand (issue
 # #1784): when direct-runner.sh's sidecar-lifecycle.sh threads
@@ -641,7 +719,6 @@ run_scenario() {
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
   export CODEX_ARGS_LOG="$dir/codex-args.log"
   export WORKER_RUN_COUNT_FILE="$dir/worker-run-count"
-  export WORKER_TIME_LOG="$dir/worker-times.log"
   export WORKER_CONTEXT_LOG="$dir/worker-context.log"
   export CODEX_ENV_LOG="$dir/codex-env.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
@@ -659,6 +736,15 @@ run_scenario() {
   export OPENCODE_FAKE_SESSIONS_FILE="$dir/opencode-sessions.json"
   export OPENCODE_RUN_COUNT_FILE="$dir/opencode-run-count"
   export TIMEOUT_ARGS_LOG="$dir/timeout-args.log"
+  # A scenario asserting exact deadline arithmetic opts into a frozen
+  # monotonic clock that only a fake provider's *_ELAPSED advances; real
+  # elapsed time and node clock steps then cannot change the result.
+  if [ "${FAKE_CLOCK:-}" = 1 ]; then
+    printf '1000.00 0.00\n' > "$dir/uptime"
+    export DIRECT_RUNNER_UPTIME_FILE="$dir/uptime"
+  else
+    unset DIRECT_RUNNER_UPTIME_FILE
+  fi
   export RUNTIME_HELPERS_DEFAULT_LOG="$dir/runtime-helpers-default.log"
 
   # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
@@ -981,10 +1067,24 @@ grep -q -- '--session-id sess_1' "$NODE_ARGS_LOG" ||
   fail "codex happy path: runner resume was not passed the session id ($(cat "$NODE_ARGS_LOG"))"
 grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE_ARGS_LOG" ||
   fail "codex happy path: runner resume was not passed the transcript uri ($(cat "$NODE_ARGS_LOG"))"
-sidecar_session_calls="$(grep -Fc -- "--codex-sessions-dir $codex_sessions_dir" "$NODE_ARGS_LOG" || true)"
-if [ "$sidecar_session_calls" -lt 2 ]; then
-  fail "codex happy path: sidecar start/finalize did not both receive Codex sessions root ($(cat "$NODE_ARGS_LOG"))"
-fi
+# Fixture argv paths contain no whitespace. Check exact values per lifecycle
+# phase so a descendant path or duplicate phase cannot satisfy the receipt.
+for phase in sidecar finalize; do
+  sidecar_session_valid="$(awk -v expected="$codex_sessions_dir" -v phase="$phase" '
+    $2 == "runner" && $3 == phase {
+      calls++
+      for (i = 1; i <= NF; i++) {
+        if ($i == "--codex-sessions-dir") {
+          flags++
+          if (i < NF && $(i + 1) == expected) correct++
+        }
+      }
+    }
+    END { print (calls == 1 && flags == 1 && correct == 1) ? 1 : 0 }
+  ' "$NODE_ARGS_LOG")"
+  [ "$sidecar_session_valid" -eq 1 ] ||
+    fail "codex happy path: runner $phase did not receive exactly one correct Codex sessions root ($(cat "$NODE_ARGS_LOG"))"
+done
 [ -s "$CODEX_AUTH_PERSIST_LOG" ] || fail "codex happy path: auth.json was not persisted"
 jq -e '.generation == "7" and (.restoredSha256 | test("^[0-9a-f]{64}$")) and (.authBase64 | length > 0) and (has("authFailure") | not)' \
   "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||
@@ -1182,13 +1282,13 @@ echo "scenario opencode-empty-bootstrap: OK"
 export FAKE_BRIEF_NO_RESUME=1
 export FAKE_GH_NO_MATCH=1
 export FAKE_GH_MATCH_AFTER_OPENCODE_RUNS=2
-export FAKE_OPENCODE_SLEEP_SECONDS=1
+export FAKE_CLOCK=1 FAKE_OPENCODE_ELAPSED=1
 export OPENCODE_TIMEOUT_SECONDS=5
 export FAKE_OPENCODE_BAKED_STORE=1
 run_scenario opencode-premature-stop opencode
 unset FAKE_OPENCODE_BAKED_STORE
 unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_OPENCODE_RUNS
-unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS
+unset FAKE_CLOCK FAKE_OPENCODE_ELAPSED OPENCODE_TIMEOUT_SECONDS
 
 [ "$rc" -eq 0 ] || fail "opencode premature stop: continuation did not produce verified completion"
 [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 2 ] ||
@@ -1198,7 +1298,7 @@ grep -q -- 'run --model homelab/default --session ses_new_1 --auto Continue the 
 mapfile -t opencode_run_timeouts < <(grep 'opencode.* run ' "$TIMEOUT_ARGS_LOG" | sed -nE 's/.* ([0-9]+)s .*opencode.*/\1/p')
 [ "${#opencode_run_timeouts[@]}" -eq 2 ] ||
   fail "opencode premature stop: did not record two bounded provider rounds ($(cat "$TIMEOUT_ARGS_LOG"))"
-[ "${opencode_run_timeouts[1]}" -lt "${opencode_run_timeouts[0]}" ] ||
+[ "${opencode_run_timeouts[*]}" = "5 4" ] ||
   fail "opencode premature stop: continuation reset the provider time budget ($(cat "$TIMEOUT_ARGS_LOG"))"
 
 echo "scenario opencode-premature-stop: OK"
@@ -1461,7 +1561,7 @@ context_path="$scenario_runner_temp/agent-dispatch/context.json"
 jq -e '.anchor.type == "issue" and .anchor.number == 42 and .mode == "reply" and .reply == "/opencode report the current status" and .runbook == "status-runbook" and .context == "from a GitHub comment"' \
   "$context_path" >/dev/null ||
   fail "github reply: prepare context lost the anchor or dispatch parameters ($(cat "$context_path"))"
-jq -e '.outcome == "comment" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "comment" and .outcomeReference == {kind:"comment",number:42,id:99,url:"https://github.com/octo/example/issues/42#issuecomment-99"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github reply: marker-bound comment was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-reply: OK"
@@ -1478,7 +1578,7 @@ run_scenario github-reply-no-op opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GH_NO_MATCH FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_NO_OP
 
 [ "$rc" -eq 0 ] || fail "github reply no-op: expected exit 0, got $rc"
-jq -e '.outcome == "no-op" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "no-op" and .outcomeReference == {kind:"comment",number:42,id:99,url:"https://github.com/octo/example/issues/42#issuecomment-99"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github reply no-op: marker-bound no-op was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-reply-no-op: OK"
@@ -1492,7 +1592,7 @@ run_scenario github-reply-park opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GH_NO_MATCH FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_PARK
 
 [ "$rc" -eq 0 ] || fail "github reply park: expected exit 0, got $rc"
-jq -e '.outcome == "park" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "park" and .outcomeReference == {kind:"comment",number:42,id:99,url:"https://github.com/octo/example/issues/42#issuecomment-99"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github reply park: marker-bound park was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-reply-park: OK"
@@ -1507,7 +1607,7 @@ run_scenario github-pr-park opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_PARK
 
 [ "$rc" -eq 0 ] || fail "github PR park: expected exit 0, got $rc"
-jq -e '.outcome == "park" and .outcomeReference == {kind: "pull-request", number: 12}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "park" and .outcomeReference == {kind:"pull-request",number:12,related:[{kind:"comment",number:42,id:99,url:"https://github.com/octo/example/issues/42#issuecomment-99"}]}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github PR park: park did not override the PR while retaining its reference ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-pr-park: OK"
@@ -1527,7 +1627,7 @@ context_path="$scenario_runner_temp/agent-dispatch/context.json"
 jq -e '.anchor.type == "pull-request" and .anchor.number == 42 and .mode == "review"' \
   "$context_path" >/dev/null ||
   fail "github review: prepare context lost the PR anchor or review mode ($(cat "$context_path"))"
-jq -e '.outcome == "review" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+jq -e '.outcome == "review" and .outcomeReference == {kind:"review",number:42,id:100,url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github review: marker-bound review was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-review: OK"
@@ -1827,7 +1927,7 @@ jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
 
 # All default provider invocations receive the same two-hour allowance.
 for provider in claude codex opencode; do
-  run_scenario "two-hour-$provider" "$provider"
+  FAKE_CLOCK=1 run_scenario "two-hour-$provider" "$provider"
   [ "$rc" -eq 0 ] || fail "$provider default runtime: run failed"
   grep -q -- '--signal=TERM --kill-after=30s 7200s' "$scenario_runner_temp/timeout-args.log" || fail "$provider default runtime is not two hours"
 done
@@ -1839,10 +1939,10 @@ unset FAKE_GH_LOOKUP_FAIL
 jq -e '.outcome == "verification-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "failed lookup lost its diagnosis"
 
 for provider in claude codex; do
-  export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_WORKER_RUNS=2 FAKE_WORKER_SLEEP=1
-  export CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5
+  export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_WORKER_RUNS=2
+  export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=1 CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5
   run_scenario "$provider-completion-correction" "$provider"
-  unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_WORKER_RUNS FAKE_WORKER_SLEEP
+  unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_WORKER_RUNS FAKE_CLOCK FAKE_WORKER_ELAPSED
   unset CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS
   [ "$rc" -eq 0 ] || fail "$provider correction did not deliver"
   [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] || fail "$provider correction must run exactly twice"
@@ -1853,12 +1953,11 @@ for provider in claude codex; do
     grep -Fq -- 'exec resume thread-codex-fixture' "$CODEX_ARGS_LOG" || fail "Codex correction changed thread"
   fi
   mapfile -t round_timeouts < <(grep -E "[0-9]+s $provider " "$TIMEOUT_ARGS_LOG" | sed -nE "s/.* ([0-9]+)s $provider .*/\\1/p")
-  if [ "${#round_timeouts[@]}" -ne 2 ] || [ "${round_timeouts[1]}" -ge "${round_timeouts[0]}" ]; then
-    cat "$WORKER_TIME_LOG" >&2
+  if [ "${round_timeouts[*]}" != "5 4" ]; then
     fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
   fi
 
-  for refusal in heartbeat lookup native exit deadline; do
+  for refusal in heartbeat lookup native exit deadline budget; do
     export FAKE_GH_NO_MATCH=1
     case "$refusal" in
       heartbeat) export FAKE_HEARTBEAT_FAIL=1 ;;
@@ -1866,10 +1965,17 @@ for provider in claude codex; do
       native) export FAKE_NATIVE_OUTCOME=no-op ;;
       exit) export FAKE_WORKER_EXIT=1 ;;
       deadline) export FAKE_WORKER_SLEEP=2 CLAUDE_TIMEOUT_SECONDS=1 CODEX_TIMEOUT_SECONDS=1 ;;
+      # A round that exits cleanly having used its whole budget leaves no
+      # time for a correction; only the shared helper's deadline can say so.
+      budget) export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=5 CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5 ;;
     esac
     run_scenario "$provider-correction-refused-$refusal" "$provider"
-    unset FAKE_GH_NO_MATCH FAKE_HEARTBEAT_FAIL FAKE_GH_LOOKUP_FAIL FAKE_NATIVE_OUTCOME FAKE_WORKER_EXIT FAKE_WORKER_SLEEP CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS
+    unset FAKE_GH_NO_MATCH FAKE_HEARTBEAT_FAIL FAKE_GH_LOOKUP_FAIL FAKE_NATIVE_OUTCOME FAKE_WORKER_EXIT FAKE_WORKER_SLEEP CLAUDE_TIMEOUT_SECONDS CODEX_TIMEOUT_SECONDS FAKE_CLOCK FAKE_WORKER_ELAPSED
     [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "$provider incorrectly corrected after $refusal"
+    if [ "$refusal" = budget ]; then
+      jq -e '.outcome == "no-deliverable"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+        fail "$provider misreported an exhausted budget ($(tail -n1 "$COMPLETE_LOG"))"
+    fi
     if [ "$refusal" = native ]; then
       [ "$rc" -eq 0 ] || fail "$provider lost the native terminal outcome"
     else
@@ -1931,3 +2037,6 @@ for provider in claude codex opencode; do
 done
 
 echo "direct-runner.sh: OK"
+
+# Exact-reference verification is part of this required runner contract gate.
+bash "$(dirname "$0")/runtime/verify-outcome.test.sh"

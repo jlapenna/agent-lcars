@@ -1635,6 +1635,111 @@ export function runOrchestratorStoreContract(
         },
       );
 
+      it('reports durable queue eligibility with provider ceilings, deferral and terminal claims', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const first = await queuedRun(orchestrator, 'q951', 'codex');
+        const second = await queuedRun(orchestrator, 'q952', 'codex');
+        for (const run of [first, second])
+          await store.enqueueRun({ runId: run.runId, now: clock.now() });
+        const claim = {
+          pipelines: ['codex'],
+          now: clock.now(),
+          claimedBy: 'status-test',
+          tokenHash: 'a'.repeat(64),
+        };
+        expect((await store.readQueueAdmissionStatus(claim)).providers).toEqual(
+          [
+            {
+              pipeline: 'codex',
+              queued: 2,
+              deferred: 0,
+              eligible: 2,
+              liveClaims: 0,
+              maxLiveClaims: 1,
+            },
+          ],
+        );
+        const claimed = await store.claimQueuedRun(claim);
+        expect(claimed).toBeDefined();
+        if (claimed === undefined) throw new Error('missing claim');
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 1, liveClaims: 1, eligible: 0 });
+        const deadline = new Date(
+          Date.parse(clock.now()) + 60_000,
+        ).toISOString();
+        await store.releaseQueuedRunClaim({
+          runId: claimed.runId,
+          claimedBy: claim.claimedBy,
+          tokenHash: claim.tokenHash,
+          now: clock.now(),
+          deferredUntil: deadline,
+        });
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 2, deferred: 1, liveClaims: 0, eligible: 1 });
+        await orchestrator.cancel(second.runId, 'operator canceled');
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 1, deferred: 1, liveClaims: 0, eligible: 0 });
+        clock.advanceMinutes(1);
+        const current = { ...claim, now: clock.now() };
+        expect(
+          (await store.readQueueAdmissionStatus(current)).providers[0],
+        ).toMatchObject({ queued: 1, deferred: 0, eligible: 1 });
+        expect((await store.claimQueuedRun(current))?.runId).toBe(
+          claimed.runId,
+        );
+        await orchestrator.report(claimed.runId, { ok: true });
+        expect(
+          (await store.readQueueAdmissionStatus(current)).providers[0],
+        ).toMatchObject({ queued: 0, liveClaims: 0, eligible: 0 });
+      });
+
+      it('reports the authoritative quota hold and removes its admission effect exactly at reset', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const failed = await queuedRun(orchestrator, 'q961');
+        const held = await queuedRun(orchestrator, 'q962');
+        await orchestrator.report(failed.runId, {
+          ok: false,
+          summary: 'provider-limit',
+          message: 'quota unavailable',
+        });
+        await store.enqueueRun({ runId: held.runId, now: clock.now() });
+        const input = { pipelines: ['claude', 'codex'], now: clock.now() };
+        const snapshot = await store.readQueueAdmissionStatus(input);
+        expect(snapshot).toMatchObject({
+          observedAt: clock.now(),
+          provenance: 'orchestrator',
+        });
+        expect(snapshot.providers[0]).toMatchObject({
+          queued: 1,
+          eligible: 0,
+          cooldown: {
+            pipeline: 'claude',
+            runId: failed.runId,
+            observedAt: clock.now(),
+            expiresAt: '2026-08-15T12:15:00.000Z',
+          },
+        });
+        expect(snapshot.providers[1]).toMatchObject({ queued: 0, eligible: 0 });
+        clock.advanceMinutes(15);
+        expect(
+          (await store.readQueueAdmissionStatus({ ...input, now: clock.now() }))
+            .providers[0],
+        ).toMatchObject({ queued: 1, eligible: 1 });
+        expect(
+          (
+            await store.claimQueuedRun({
+              ...input,
+              now: clock.now(),
+              claimedBy: 'reset-test',
+              tokenHash: 'b'.repeat(64),
+            })
+          )?.runId,
+        ).toBe(held.runId);
+      });
+
       it('claimQueuedRun ignores a non-matching pipeline', async () => {
         const { store, orchestrator } = await fixture();
         const run = await queuedRun(orchestrator, 'q1');
@@ -1774,9 +1879,9 @@ const SCHEDULE_T0 = '2026-08-15T12:00:00.000Z';
 
 /**
  * Behavioural contract every `ScheduleStore` implementation must satisfy,
- * parallel to {@link runOrchestratorStoreContract} but for schedules,
- * which have no mutex and no version guard -- see `schedule-store.ts`'s
- * `writeSchedule` doc for why last-write-wins is acceptable here.
+ * parallel to {@link runOrchestratorStoreContract}. Configuration changes,
+ * occurrence admission and settlement share one atomic schedule owner;
+ * writeSchedule remains a low-level fixture/import writer.
  */
 export function runScheduleStoreContract(
   name: string,
@@ -1796,6 +1901,84 @@ export function runScheduleStoreContract(
       };
     }
 
+    it('admits only one configuration update at the same revision', async () => {
+      const store = await makeStore();
+      const initial = schedule({ revision: 1 });
+      await store.writeSchedule(initial);
+      const results = await Promise.all(
+        ['first', 'second'].map((title) =>
+          store.mutateSchedule(initial.scheduleId, (current) => {
+            if (current?.revision !== 1) return undefined;
+            return { ...current, revision: 2, spec: { title } };
+          }),
+        ),
+      );
+      expect(results.filter((result) => result !== undefined)).toHaveLength(1);
+      expect((await store.readSchedule(initial.scheduleId))?.revision).toBe(2);
+    });
+
+    it('keeps an admitted pending occurrence after deletion, without listing the schedule', async () => {
+      const store = await makeStore();
+      const initial = schedule({ revision: 1 });
+      await store.writeSchedule(initial);
+      const pendingTick = {
+        slotAt: SCHEDULE_T0,
+        itemId: '01J5Z3K9QX8F0N2B4V6C8D1E3H',
+        revision: 1,
+        spec: initial.spec,
+        createdBy: initial.createdBy,
+      };
+      await store.mutateSchedule(initial.scheduleId, (current) => {
+        if (current === undefined) throw new Error('Missing schedule fixture');
+        return { ...current, pendingTick };
+      });
+      await store.mutateSchedule(initial.scheduleId, (current) => {
+        if (current === undefined) throw new Error('Missing schedule fixture');
+        return {
+          ...current,
+          revision: 2,
+          enabled: false,
+          deletedAt: SCHEDULE_T0,
+        };
+      });
+      expect(await store.listSchedules()).toEqual([]);
+      expect(await store.listEnabledSchedules()).toEqual([]);
+      expect((await store.listTickSchedules())[0]?.pendingTick).toEqual(
+        pendingTick,
+      );
+      await store.mutateSchedule(initial.scheduleId, (current) => {
+        if (current === undefined) throw new Error('Missing schedule fixture');
+        const { pendingTick: _pending, ...rest } = current;
+        return rest;
+      });
+      expect(await store.listTickSchedules()).toEqual([]);
+      expect((await store.readSchedule(initial.scheduleId))?.deletedAt).toBe(
+        SCHEDULE_T0,
+      );
+    });
+
+    it('fills a visible page after newer deletion tombstones', async () => {
+      const store = await makeStore();
+      const ids = [
+        '01J5Z3K9QX8F0N2B4V6C8D1E3A',
+        '01J5Z3K9QX8F0N2B4V6C8D1E3B',
+        '01J5Z3K9QX8F0N2B4V6C8D1E3C',
+      ];
+      for (const scheduleId of ids)
+        await store.writeSchedule(
+          schedule({
+            scheduleId,
+            ...(scheduleId === ids[2]
+              ? { deletedAt: SCHEDULE_T0, enabled: false }
+              : {}),
+          }),
+        );
+      expect((await store.listSchedules(2)).map((s) => s.scheduleId)).toEqual([
+        ids[1],
+        ids[0],
+      ]);
+    });
+
     it('round-trips a written schedule', async () => {
       const store = await makeStore();
       await store.writeSchedule(schedule());
@@ -1804,12 +1987,14 @@ export function runScheduleStoreContract(
       );
     });
 
-    it('round-trips a schedule with all three optional fields set', async () => {
+    it('round-trips successful and closed occurrence metadata', async () => {
       const store = await makeStore();
       const withOptionals = schedule({
         lastSlotAt: SCHEDULE_T0,
         lastItemId: '01J5Z3K9QX8F0N2B4V6C8D1E3H',
         disabledReason: 'grant-revoked',
+        lastClosedSlotAt: SCHEDULE_T0,
+        revision: 2,
       });
       await store.writeSchedule(withOptionals);
       expect(await store.readSchedule('01J5Z3K9QX8F0N2B4V6C8D1E3G')).toEqual(

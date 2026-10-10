@@ -28,6 +28,10 @@ import {
   providerIsCoolingDown,
 } from './provider-cooldown';
 import {
+  projectQueueAdmissionStatus,
+  QUEUE_ADMISSION_READ_LIMIT,
+} from './queue-admission-status';
+import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
@@ -509,6 +513,28 @@ export class MemoryStore implements OrchestratorStore {
             right.runId.localeCompare(left.runId),
         )
         .slice(0, limit),
+    );
+  }
+
+  async readQueueAdmissionStatus(input: {
+    pipelines: readonly string[];
+    now: string;
+  }) {
+    const runs = [...this.#runs.values()].filter((run) => isLive(run.state));
+    for (const state of ['pending', 'running']) {
+      if (
+        runs.filter((run) => run.state === state).length >
+        QUEUE_ADMISSION_READ_LIMIT
+      )
+        throw new Error('Queue admission snapshot exceeds read bound');
+    }
+    return structuredClone(
+      projectQueueAdmissionStatus(
+        runs,
+        this.#providerCooldowns,
+        input.pipelines,
+        input.now,
+      ),
     );
   }
 
