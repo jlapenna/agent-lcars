@@ -13,12 +13,12 @@ import { RelativeTime } from './relative-time';
 /** Shared placement/start presentation for Agents, canonical task and Work.
  * Age expires in an open tab even when the underlying snapshot stops updating. */
 export function ExecutionStatus({ run }: { run: ExecutionRun }) {
-  const [now, setNow] = useState(() => Date.now());
+  const [, refreshClock] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 10_000);
+    const timer = setInterval(() => refreshClock((tick) => tick + 1), 10_000);
     return () => clearInterval(timer);
   }, []);
-  const phase = executionPhase(run, now);
+  const phase = executionPhase(run);
   if (phase === undefined) return null;
   const placement = run.queue?.placement;
   return (
