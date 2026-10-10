@@ -193,6 +193,76 @@ describe('authoritative ARC inventory', () => {
       expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('busy');
     }
   });
+
+  it('validates the exact bounded claim window and strips producer-only metadata', async () => {
+    const now = new Date().toISOString();
+    const claims = {
+      claude: 3,
+      codex: 0,
+      opencode: 1,
+      windowStart: new Date(Date.now() - 60_000).toISOString(),
+      windowEnd: now,
+    };
+    const executor = {
+      schemaVersion: 2,
+      kind: 'queue-executor',
+      executor: 'queue',
+      ready: true,
+      draining: false,
+      maxConcurrent: 3,
+      updatedAt: now,
+    };
+    mockStore([
+      { ...executor, claims: { ...claims, expireAt: Timestamp.now() } },
+    ]);
+    expect((await getAutoscalerStatuses()).queueExecutor?.claims).toEqual(
+      claims,
+    );
+    for (const invalid of [
+      { ...claims, claude: -1 },
+      { ...claims, codex: 0.5 },
+      { ...claims, windowEnd: 'invalid' },
+      {
+        ...claims,
+        windowStart: new Date(Date.now() - 16 * 60_000).toISOString(),
+      },
+    ]) {
+      mockStore([{ ...executor, claims: invalid }]);
+      const result = await getAutoscalerStatuses();
+      expect(result.queueExecutor?.ready).toBe(true);
+      expect(result.queueExecutor?.claims).toBeUndefined();
+    }
+  });
+
+  it.each([0, 1, Number.MAX_SAFE_INTEGER])(
+    'preserves signed Firestore claim integers through the reader: %s',
+    (count) => {
+      const updatedAt = new Date(now).toISOString();
+      const claims = {
+        claude: count,
+        codex: count,
+        opencode: count,
+        windowStart: new Date(now - 10_000).toISOString(),
+        windowEnd: updatedAt,
+      };
+      // Firestore integer_value fields decode to these exact JS numbers.
+      // The Go SDK Commit regression verifies the producer's wire types.
+      const result = projectAutoscalerStatuses(
+        [
+          status({
+            updatedAt,
+            expireAt: Timestamp.fromMillis(now + 180_000),
+            claims,
+          }),
+        ],
+        now,
+      );
+      expect(result.queueExecutor?.claims).toEqual(claims);
+      expect(JSON.parse(JSON.stringify(result.queueExecutor))?.claims).toEqual(
+        claims,
+      );
+    },
+  );
 });
 
 describe('subscribeAutoscalerStatuses', () => {

@@ -43,7 +43,7 @@ correction, explicit resume and failure finalization. Its 30/60-second limits
 and denial assertions are unchanged. The source run exposed a separate fixture
 clock issue: Codex and Claude exhaustion observations failed with `Date.now()`;
 all three targeted observations pass with the shared monotonic budget. This
-fixture correction does not repair the production Bash authority below.
+fixture correction is separate from the adopted production budget below.
 
 Codex's localhost model fixture supplies an isolated `model_catalog_json` with
 its expected tool metadata. The current CLI no longer includes the fixture's
@@ -51,17 +51,32 @@ old model name in its bundled catalog; the initial authorized-edit probe failed
 without `apply_patch` metadata. The scratch catalog corrects the fixture, with
 no production model configuration change. See the [official config reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 
-The provider budget still uses wall-clock-derived Bash `SECONDS`.
-[#2223](https://github.com/jlapenna/agent-lcars/issues/2223) owns the monotonic
-deadline/fence prerequisite; [#2217](https://github.com/jlapenna/agent-lcars/issues/2217)
-owns retained harness diagnostics. Three retained CI failures measured backward
-wall-clock readings. Descendant-main CI
-[37921531307](https://github.com/jlapenna/agent-lcars/actions/runs/37921531307)
-passed the unchanged deadline assertions; that counterexample does not repair
-the runtime authority. No fresh candidate may claim bounded execution across
-clock steps until #2223's deterministic acceptance and image refresh pass.
-The host-clock investigation remains independently owned by
+The shared provider budget now uses monotonic `/proc/uptime` deadlines.
+[#2223](https://github.com/jlapenna/agent-lcars/issues/2223) is closed: deterministic
+clock, correction, credential-wait and verifier controls passed, and the adopted
+runner image `sha256:42dac0f2ece61b34e280ee7d155f44dae45608d80d2eafa4dd805e6ef5489eae`
+is bound to source `3d6492a8366f71566867302521cc7de72a37c33c`, including the
+monotonic-budget fix. One real OpenCode run, #2325/r2, completed useful work under
+the observed 7200-second timeout. This establishes adoption of that budget;
+it does not establish a live wall-clock-step experiment, deadline exhaustion or
+policy-enabled provider graduation. The retained wall-clock CI failures and
+[#2217](https://github.com/jlapenna/agent-lcars/issues/2217)'s diagnostics remain
+historical evidence. The host-clock investigation remains independently owned by
 [Homelab #2186](https://github.com/jlapenna/homelab/issues/2186).
+
+The later [#2409](https://github.com/jlapenna/agent-lcars/issues/2409) provider
+OS-spawn clock wrapper is present in source
+`8aec097bb898fde306f09cacd768a553f74f66e8`; the observed `42dac` runner predates
+it, so source delivery does not establish adoption of that wrapper. Likewise,
+the controller observed on 2026-10-10 runs source
+`9a4badfa89c008f4c0f7cae4e1d30bc40dd1cdd9`.
+[#2273](https://github.com/jlapenna/agent-lcars/issues/2273) and
+[#2275](https://github.com/jlapenna/agent-lcars/issues/2275) retain the separate
+controller-adoption gates for token refresh and terminal-run retention. Their
+source fixes landed in [#2264](https://github.com/jlapenna/agent-lcars/pull/2264);
+Console deployment does not deliver the controller binary. The production policy
+selector remains empty, and current-image qualification, useful policy-enabled
+dispatch and approved activation remain separate gates.
 
 ## Scope and decisions
 

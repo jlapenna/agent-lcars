@@ -10,6 +10,8 @@ import {
 } from '@agent-lcars/orchestrator';
 import { required } from '@agent-lcars/util-server';
 
+import { codexAuthStore } from '@/lib/codex-auth-store';
+import { recoverCodexCredentialOperations } from '@/lib/codex-credential-operations';
 import { loadGithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   createDispatchTokenProvider,
@@ -18,6 +20,7 @@ import {
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
 import { dispatchSessionExpiry } from '@/lib/session-expiry';
+import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed
@@ -85,11 +88,22 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     projectId: required('PROJECT_ID'),
     databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
   });
-  const orchestrator = new Orchestrator(store, utcClock);
+  const orchestrator = new Orchestrator(
+    store,
+    utcClock,
+    providerFallbackAuthority,
+  );
 
   cached = {
     store,
     orchestrator,
+    recoverCredentialOperations: () =>
+      recoverCodexCredentialOperations({
+        store,
+        orchestrator,
+        codexAuth: codexAuthStore('agent-lcars-codex-auth'),
+        now: () => new Date(),
+      }),
     loadGithubAnchorLifecycle: (anchor) => {
       const github = orchestratorGithubRuntimeDeps(process.env);
       return loadGithubAnchorLifecycle(github, anchor);

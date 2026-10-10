@@ -77,6 +77,35 @@ function renderConversation(item: ItemView) {
 }
 
 describe('Conversation', () => {
+  it('renders a fresh provider fallback with its original intent and triggering failure', () => {
+    const run = itemWithLiveRound.runs[0]!;
+    renderConversation({
+      ...itemWithLiveRound,
+      runs: [
+        {
+          ...run,
+          pipeline: 'codex',
+          providerFallback: {
+            allowedPipelines: ['codex', 'opencode'],
+            attemptedPipelines: ['claude', 'codex'],
+            originalRunId: 'work:x/r1',
+            fromRunId: 'work:x/r1',
+            trigger: {
+              reason: 'provider-cooldown',
+              failureRunId: 'other/repo#7/r3',
+              limitedPipeline: 'claude',
+            },
+          },
+        },
+      ],
+    });
+    expect(
+      screen.getByText(/Fresh attempt on codex.*claude is cooling down/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/triggering failure: other\/repo#7\/r3/),
+    ).toBeInTheDocument();
+  });
   it('renders round one as the spec description and each reply round as a turn pair', () => {
     renderConversation(itemWithTwoRounds);
     // round 1: the human turn is the item's own description
@@ -94,4 +123,93 @@ describe('Conversation', () => {
     renderConversation(itemWithLiveRound);
     expect(screen.queryByTestId('agent-turn')).not.toBeInTheDocument();
   });
+});
+
+it('carries both exact PR and blocker links on the agent turn', () => {
+  const ref = 'https://github.com/octo/example/pull/12';
+  const blocker = 'https://github.com/octo/example/issues/42#issuecomment-99';
+  renderConversation({
+    ...baseItem,
+    runs: [
+      {
+        ...itemWithTwoRounds.runs[0],
+        result: {
+          ok: true,
+          summary: 'park',
+          message: 'Choose a database.',
+          ref,
+          relatedRefs: [blocker],
+        },
+      },
+    ],
+  });
+  expect(
+    screen
+      .getAllByRole('link', { name: 'ref' })
+      .map((link) => link.getAttribute('href')),
+  ).toEqual([ref, blocker]);
+});
+
+it('keeps fallback provenance and exact result links when session access is withheld', () => {
+  const originalRunId = 'work:x/r1';
+  const runId = 'work:x/r2';
+  const ref = 'https://github.com/octo/example/pull/12';
+  const blocker = 'https://github.com/octo/example/issues/42#issuecomment-99';
+  const item: ItemView = {
+    ...baseItem,
+    runs: [
+      {
+        ...itemWithTwoRounds.runs[1]!,
+        runId,
+        pipeline: 'codex',
+        providerFallback: {
+          allowedPipelines: ['codex'],
+          attemptedPipelines: ['claude', 'codex'],
+          originalRunId,
+          fromRunId: originalRunId,
+          trigger: {
+            reason: 'provider-limit',
+            limitedPipeline: 'claude',
+            failureRunId: originalRunId,
+          },
+        },
+        result: {
+          ok: true,
+          summary: 'park',
+          message: 'Choose a database.',
+          ref,
+          relatedRefs: [blocker, ref, 'javascript:alert(1)'],
+        },
+      },
+    ],
+    sessions: [
+      {
+        runId,
+        sessionId: 'private/session',
+        startedAt: '2026-08-26T10:10:00.000Z',
+        lastActivityAt: '2026-08-26T10:15:00.000Z',
+      },
+    ],
+  };
+  render(
+    <MantineProvider>
+      <Conversation item={item} canViewSessions={false} />
+    </MantineProvider>,
+  );
+  expect(
+    screen.getByText(
+      /Fresh attempt on codex.*claude reported a provider limit/,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      /Original intent: work:x\/r1; previous attempt: work:x\/r1; triggering failure: work:x\/r1/,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen
+      .getAllByRole('link', { name: 'ref' })
+      .map((link) => link.getAttribute('href')),
+  ).toEqual([ref, blocker]);
+  expect(screen.queryByRole('link', { name: 'session' })).toBeNull();
 });

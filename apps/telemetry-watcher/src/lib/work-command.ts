@@ -1,13 +1,26 @@
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { promisify } from 'node:util';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+} from 'node:fs';
+import { parseArgs, promisify } from 'node:util';
 
 import {
+  fallbackPipelinesSchema,
   type ItemsContract,
   itemsContract,
   itemStateSchema,
+  WORK_DESCRIPTION_MAX,
+  workIdSchema,
+  workReplyRequestIdSchema,
+  workReplyTextSchema,
+  workSpecSchema,
 } from '@agent-lcars/work';
-import { createORPCClient } from '@orpc/client';
+import { createORPCClient, ORPCError } from '@orpc/client';
 import type { RouterContractClient } from '@orpc/contract';
 import { OpenAPILink } from '@orpc/openapi/fetch';
 import { ulid } from 'ulid';
@@ -23,8 +36,9 @@ export interface WorkCommandDeps {
 }
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> --title "<text>" (--description "<text>" | --description-file <path>)\n' +
-  '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id>\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>]\n' +
+  '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
+  '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
   '       status exits 1 for failed work (with or without --watch); other states exit 0.';
@@ -100,6 +114,32 @@ function readDescription(rest: string[]): string | undefined {
   return file === undefined ? undefined : readFileSync(file, 'utf8');
 }
 
+/** Bound bytes before decoding and characters through the shared contract.
+ * Nonblocking open plus a regular-file check also rejects FIFO input. */
+function readReplyFile(file: string): string {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const maxBytes = WORK_DESCRIPTION_MAX * 4;
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw new Error('--text-file must be a regular file');
+    if (stat.size > maxBytes)
+      throw new Error('reply file exceeds the size limit');
+    const bytes = Buffer.alloc(maxBytes + 1);
+    let used = 0;
+    while (used < bytes.length) {
+      const n = readSync(fd, bytes, used, bytes.length - used, null);
+      if (n === 0) break;
+      used += n;
+    }
+    if (used > maxBytes) throw new Error('reply file exceeds the size limit');
+    return new TextDecoder('utf-8', { fatal: true }).decode(
+      bytes.subarray(0, used),
+    );
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Every "bad invocation" exit shares this shape: print usage to stderr --
  *  where CLI errors belong, not stdout -- and report it back in the result
  *  too, for a caller that wants to act on it without re-parsing output. */
@@ -134,11 +174,74 @@ export async function executeWorkCommand(
           );
         return { ok: snapshot.complete };
       }
+      case 'reply': {
+        const parsed = parseArgs({
+          args: rest,
+          allowPositionals: true,
+          strict: true,
+          tokens: true,
+          options: {
+            text: { type: 'string' },
+            'text-file': { type: 'string' },
+            pipeline: { type: 'string' },
+            'request-id': { type: 'string' },
+            fresh: { type: 'boolean' },
+          },
+        });
+        const names = parsed.tokens
+          .filter((t) => t.kind === 'option')
+          .map((t) => t.name);
+        const { values, positionals } = parsed;
+        if (
+          positionals.length !== 1 ||
+          new Set(names).size !== names.length ||
+          (values.text === undefined) === (values['text-file'] === undefined)
+        ) {
+          return usageFailure(deps);
+        }
+        const id = workIdSchema.parse(positionals[0]);
+        const text = workReplyTextSchema.parse(
+          values['text-file'] === undefined
+            ? values.text
+            : readReplyFile(values['text-file']),
+        );
+        const pipeline =
+          values.pipeline === undefined
+            ? undefined
+            : workSpecSchema.shape.pipeline.parse(values.pipeline);
+        const requestId = workReplyRequestIdSchema.parse(
+          values['request-id'] ?? ulid(deps.now().getTime()),
+        );
+        // Print before sending: even a lost response leaves a usable retry key.
+        deps.stderr(
+          `reply request ${JSON.stringify(requestId)}; reuse --request-id with the same input to retry`,
+        );
+        const admitted = await c.reply({
+          id,
+          text,
+          requestId,
+          ...(pipeline === undefined ? {} : { pipeline }),
+          ...(values.fresh ? { resume: false } : {}),
+        });
+        deps.stdout(
+          `admitted ${admitted.admittedRunId}  ${admitted.resumed ? 'resume requested' : 'fresh session requested'}  request ${JSON.stringify(requestId)}`,
+        );
+        return { ok: true };
+      }
       case 'create': {
         const repo = flag(rest, '--repo');
         const pipeline = flag(rest, '--pipeline');
         const title = flag(rest, '--title');
         const description = readDescription(rest);
+        const fallback = flag(rest, '--fallback-pipelines');
+        if (rest.includes('--fallback-pipelines') && fallback === undefined)
+          return usageFailure(deps);
+        const fallbackPipelines =
+          fallback === undefined
+            ? undefined
+            : fallbackPipelinesSchema.parse(
+                fallback === 'none' ? [] : fallback.split(','),
+              );
         if (!repo || !pipeline || !title || !description) {
           return usageFailure(deps);
         }
@@ -149,6 +252,7 @@ export async function executeWorkCommand(
             title,
             description,
             pipeline: pipeline as 'claude' | 'codex' | 'opencode',
+            ...(fallbackPipelines === undefined ? {} : { fallbackPipelines }),
             target: { repo },
           },
         });
@@ -190,10 +294,24 @@ export async function executeWorkCommand(
       case 'redispatch': {
         const id = rest[0];
         if (!id) return usageFailure(deps);
+        const fallback = flag(rest, '--fallback-pipelines');
+        if (rest.includes('--fallback-pipelines') && fallback === undefined)
+          return usageFailure(deps);
+        const fallbackPipelines =
+          fallback === undefined
+            ? undefined
+            : fallbackPipelinesSchema.parse(
+                fallback === 'none' ? [] : fallback.split(','),
+              );
         const updated =
           sub === 'cancel'
             ? await c.cancel({ id })
-            : await c.redispatch({ id });
+            : await c.redispatch({
+                id,
+                ...(fallbackPipelines === undefined
+                  ? {}
+                  : { fallbackPipelines }),
+              });
         deps.stdout(line(updated));
         return { ok: true };
       }
@@ -204,6 +322,17 @@ export async function executeWorkCommand(
     deps.stderr(
       `error: ${error instanceof Error ? error.message : String(error)}`,
     );
+    if (sub === 'reply' && error instanceof ORPCError) {
+      if (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN') {
+        deps.stderr(
+          'check the bearer identity and its Work operator, repository and pipeline grants',
+        );
+      } else if (error.code === 'CONFLICT') {
+        deps.stderr(
+          'check work status; reuse the request key only for the same turn, and use a new key for changed input',
+        );
+      }
+    }
     return { ok: false };
   }
 }

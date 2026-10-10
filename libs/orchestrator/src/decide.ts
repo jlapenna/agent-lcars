@@ -2,11 +2,15 @@ import {
   isLive,
   isWorkAnchor,
   type OutboxEntry,
+  type ProviderFallback,
+  type ProviderFallbackRequest,
   requestHistoryKey,
   type RequestSource,
   type Run,
+  runRecoveryDeadline,
   runRequestHistoryKey,
   type RunResult,
+  startDeadlineElapsed,
   type Task,
   type TaskId,
   taskKey,
@@ -49,6 +53,7 @@ export interface Refusal {
     | 'work-spec-mismatch' // caller's immutable Work validation rejected it
     | 'unknown-task' // close on a task that was never created
     | 'not-native' // closeTask on a GitHub anchor: closedAt is native-only
+    | 'credential-operation-pending' // external CAS must be resolved before replacement
     | 'not-claimant'; // exit report from a principal/runner that did not claim the run
   /** For `duplicate-request`, the run the request already maps to. */
   readonly existingRun?: Run;
@@ -70,6 +75,15 @@ export function decidedRun(decision: Decision): Run {
     throw new Error('decision unexpectedly carries no run');
   }
   return decision.run;
+}
+
+/** Fifteen minutes includes placement, image pull, bootstrap, and the
+ * worker's five-minute initial heartbeat interval. Maintenance runs every
+ * five minutes, so an unstarted claim normally settles within twenty. */
+export const RUN_START_TIMEOUT_MS = 15 * 60_000;
+
+export function runStartDeadlineAt(now: string): string {
+  return new Date(Date.parse(now) + RUN_START_TIMEOUT_MS).toISOString();
 }
 
 export const RUN_LEASE_MS = 2 * 60 * 60 * 1_000;
@@ -95,6 +109,7 @@ export interface RequestRunInput {
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
+  providerFallback?: ProviderFallbackRequest | ProviderFallback;
 }
 
 /**
@@ -140,6 +155,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     requestSource: input.requestSource,
     pipeline: input.pipeline,
     params: input.params,
+    providerFallback: input.providerFallback,
   });
 }
 
@@ -152,6 +168,7 @@ function mintRun(input: {
   requestSource?: RequestSource;
   pipeline: string;
   params?: Record<string, string>;
+  providerFallback?: ProviderFallbackRequest | ProviderFallback;
 }): Decision {
   const { now, taskId, task, requestId, requestSource, pipeline, params } =
     input;
@@ -165,6 +182,23 @@ function mintRun(input: {
     requestId,
     requestSource: requestSource ?? 'caller',
     ...(params === undefined ? {} : { params }),
+    ...(input.providerFallback === undefined ||
+    input.providerFallback.allowedPipelines.length === 0
+      ? {}
+      : {
+          providerFallback: {
+            ...input.providerFallback,
+            allowedPipelines: [...input.providerFallback.allowedPipelines],
+            attemptedPipelines:
+              'attemptedPipelines' in input.providerFallback
+                ? [...input.providerFallback.attemptedPipelines]
+                : [pipeline],
+            originalRunId:
+              'originalRunId' in input.providerFallback
+                ? input.providerFallback.originalRunId
+                : runId,
+          },
+        }),
     leaseExpiresAt: runLeaseExpiresAt(now),
     events: [{ at: now, to: 'pending', by: 'request' }],
     createdAt: now,
@@ -216,13 +250,49 @@ export function renewLease(input: {
   now: string;
   task: Task;
   run: Run;
+  /** Existing authenticated queue token hash; omitted only by internal operations. */
+  claimFingerprint?: string;
+  providerProcessStarted?: boolean;
 }): Decision | Refusal {
   const { now, task, run } = input;
+  if (
+    input.claimFingerprint !== undefined &&
+    (run.queue?.state !== 'claimed' ||
+      run.queue.tokenHash !== input.claimFingerprint)
+  )
+    return refused('not-claimant');
   if (!isLive(run.state)) return refused('run-not-live');
   if (task.activeRunId !== run.runId) return refused('stale-lease');
+  if (startDeadlineElapsed(run, now)) return refused('stale-lease');
+  // Token-authenticated callbacks must retain their live deadline through
+  // commit as well as the fingerprint; internal server operations keep their
+  // existing lease policy.
+  if (
+    input.claimFingerprint !== undefined &&
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+      Date.parse(now)
+  )
+    return refused('stale-lease');
   return {
     task,
-    run: { ...run, leaseExpiresAt: runLeaseExpiresAt(now), updatedAt: now },
+    run: {
+      ...run,
+      ...(run.queue?.state === 'claimed'
+        ? {
+            queue: {
+              ...run.queue,
+              firstHeartbeatAt: run.queue.firstHeartbeatAt ?? now,
+              ...(input.providerProcessStarted === true &&
+              input.claimFingerprint !== undefined &&
+              run.queue.providerProcessStartedAt === undefined
+                ? { providerProcessStartedAt: now }
+                : {}),
+            },
+          }
+        : {}),
+      leaseExpiresAt: runLeaseExpiresAt(now),
+      updatedAt: now,
+    },
     outbox: [],
   };
 }
@@ -237,14 +307,66 @@ export function reportResult(input: {
   now: string;
   task: Task;
   run: Run;
+  /** Existing authenticated queue token hash; omitted only by internal operations. */
+  claimFingerprint?: string;
   result: RunResult;
 }): Decision | Refusal {
   const { now, task, run, result } = input;
+  if (
+    input.claimFingerprint !== undefined &&
+    (run.queue?.state !== 'claimed' ||
+      run.queue.tokenHash !== input.claimFingerprint)
+  )
+    return refused('not-claimant');
   if (run.state === 'finished') return refused('run-not-live', run);
-  if (!isLive(run.state)) return refused('run-not-live');
+  if (!isLive(run.state)) {
+    return refused(
+      'run-not-live',
+      input.claimFingerprint === undefined ? undefined : run,
+    );
+  }
   if (task.activeRunId !== run.runId) return refused('stale-lease');
+  const pending = run.credentialPendingResult;
+  if (
+    pending !== undefined &&
+    (pending.claimFingerprint !== run.queue?.tokenHash ||
+      (['ok', 'summary', 'ref', 'message'] as const).some(
+        (key) => pending.result[key] !== result[key],
+      ) ||
+      JSON.stringify(pending.result.relatedRefs) !==
+        JSON.stringify(result.relatedRefs))
+  )
+    return refused('credential-operation-pending');
+  const admittedAt = pending?.requestedAt ?? now;
+  if (startDeadlineElapsed(run, admittedAt)) return refused('stale-lease');
+  // Token-authenticated callbacks must retain their live deadline through
+  // commit as well as the fingerprint; internal server operations keep their
+  // existing lease policy.
+  if (
+    input.claimFingerprint !== undefined &&
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+      Date.parse(admittedAt)
+  )
+    return refused('stale-lease');
+  if (run.credentialOperation !== undefined) {
+    if (run.queue?.tokenHash === undefined) return refused('not-claimant');
+    return {
+      task,
+      run: {
+        ...run,
+        credentialPendingResult: pending ?? {
+          claimFingerprint: run.queue.tokenHash,
+          requestedAt: now,
+          result,
+        },
+        updatedAt: now,
+      },
+      outbox: [],
+    };
+  }
+  const { credentialPendingResult: _pending, ...withoutPending } = run;
   const settled: Run = {
-    ...run,
+    ...withoutPending,
     state: 'finished',
     result,
     events: [...run.events, { at: now, to: 'finished', by: 'report' }],
@@ -266,6 +388,8 @@ export function cancelRun(input: {
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (!isLive(run.state)) return refused('run-not-live');
+  if (run.credentialOperation !== undefined)
+    return refused('credential-operation-pending');
   const settled: Run = {
     ...run,
     state: 'canceled',
@@ -307,10 +431,13 @@ export function expireLease(input: {
   // QueueExecutor capacity waits are not execution attempts. A queued run
   // may wait past its original request lease without consuming the task's
   // lost-run retry budget; the atomic claim refreshes the execution lease.
-  if (run.queue?.state === 'queued') return refused('stale-lease');
-  if (Date.parse(run.leaseExpiresAt) > Date.parse(now)) {
+  const deadline = runRecoveryDeadline(run);
+  if (deadline === undefined || Date.parse(deadline) > Date.parse(now)) {
     return refused('stale-lease'); // not actually expired
   }
+  if (input.task.activeRunId !== run.runId) return refused('stale-lease');
+  if (input.run.credentialOperation !== undefined)
+    return refused('credential-operation-pending');
   return settleLost(input, 'expiry');
 }
 
@@ -319,6 +446,8 @@ export function expireLease(input: {
 export interface ExitClaimant {
   readonly subject: string;
   readonly runner: string;
+  /** Original Job token hash; legacy reports can only observe terminal runs. */
+  readonly claimFingerprint?: string;
 }
 
 /**
@@ -329,7 +458,8 @@ export interface ExitClaimant {
  * This is the same judgement lease expiry makes, delivered when the loss
  * happens instead of when the lease runs out.
  *
- * Only the executor that claimed the run may report it: a pipeline grant
+ * Only the executor that claimed the run may report its original fingerprint:
+ * a pipeline grant
  * alone would let any executor kill another's healthy worker by settling
  * its run lost. Ownership is judged first, so even an already-settled run
  * answers its idempotent refusal only to its own claimant. A claim recorded
@@ -358,12 +488,17 @@ export function executorExited(input: {
     queue?.state !== 'claimed' ||
     queue.claimedBySubject === undefined ||
     queue.claimedBySubject !== input.claimant.subject ||
-    queue.claimedBy !== input.claimant.runner
+    queue.claimedBy !== input.claimant.runner ||
+    (input.claimant.claimFingerprint !== undefined &&
+      queue.tokenHash !== input.claimant.claimFingerprint) ||
+    (isLive(input.run.state) && input.claimant.claimFingerprint === undefined)
   ) {
     return refused('not-claimant');
   }
   if (!isLive(input.run.state)) return refused('run-not-live');
   if (input.task.activeRunId !== input.run.runId) return refused('stale-lease');
+  if (input.run.credentialOperation !== undefined)
+    return refused('credential-operation-pending');
   return settleLost(input, 'executor');
 }
 
@@ -375,7 +510,17 @@ function settleLost(
   const settled: Run = {
     ...run,
     state: 'lost',
-    events: [...run.events, { at: now, to: 'lost', by }],
+    events: [
+      ...run.events,
+      {
+        at: now,
+        to: 'lost',
+        by,
+        ...(by === 'expiry' && startDeadlineElapsed(run, now)
+          ? { note: 'first heartbeat deadline exceeded' }
+          : {}),
+      },
+    ],
     updatedAt: now,
   };
   return settle(
@@ -407,6 +552,9 @@ function settleLostAndRetry(
     requestSource: 'auto-retry',
     pipeline: lostRun.pipeline,
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
+    ...(lostRun.providerFallback === undefined
+      ? {}
+      : { providerFallback: lostRun.providerFallback }),
   });
   return {
     task: retry.task,

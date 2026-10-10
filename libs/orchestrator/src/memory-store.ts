@@ -3,6 +3,7 @@ import {
   isRefusal,
   type Refusal,
   runLeaseExpiresAt,
+  runStartDeadlineAt,
 } from './decide';
 import {
   type LifecycleMetricRead,
@@ -23,6 +24,7 @@ import {
   isLive,
   isWorkAnchor,
   requestHistoryKey,
+  runRecoveryDeadline,
   taskKey,
 } from './model';
 import {
@@ -31,11 +33,16 @@ import {
   providerIsCoolingDown,
 } from './provider-cooldown';
 import {
+  projectQueueAdmissionStatus,
+  QUEUE_ADMISSION_READ_LIMIT,
+} from './queue-admission-status';
+import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
   type RequestBinding,
   type RequestTransactionState,
+  type RunTransactionState,
   selectFairQueuedRun,
   StoreConflict,
   type TaskListCursor,
@@ -156,10 +163,11 @@ export class MemoryStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
-    decide(state: {
-      task: VersionedTask | undefined;
-      run: Run | undefined;
-    }): Decision | Refusal;
+    queueEligibilityPipelines?: readonly string[];
+    shouldReadQueueEligibility?: (
+      state: Pick<RunTransactionState, 'task' | 'run'>,
+    ) => boolean;
+    decide(state: RunTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     // Keep the snapshot and write synchronous, matching `transactRequest`'s
     // reference transaction semantics.
@@ -168,7 +176,28 @@ export class MemoryStore implements OrchestratorStore {
       run === undefined
         ? undefined
         : structuredClone(this.#tasks.get(taskKey(run.task)));
-    const outcome = input.decide({ task, run });
+    const outcome = input.decide({
+      task,
+      run,
+      ...(input.queueEligibilityPipelines === undefined ||
+      input.shouldReadQueueEligibility?.({ task, run }) === false
+        ? {}
+        : {
+            queueEligibility: {
+              cooldowns: Object.fromEntries(
+                input.queueEligibilityPipelines.map((pipeline) => [
+                  pipeline,
+                  structuredClone(this.#providerCooldowns.get(pipeline)),
+                ]),
+              ),
+              liveRuns: structuredClone(
+                [...this.#runs.values()].filter((candidate) =>
+                  input.queueEligibilityPipelines?.includes(candidate.pipeline),
+                ),
+              ),
+            },
+          }),
+    });
     if (isRefusal(outcome)) return outcome;
     this.#apply({ decision: outcome, expectedRevision: task?.revision });
     return outcome;
@@ -516,11 +545,10 @@ export class MemoryStore implements OrchestratorStore {
   async listExpiredRuns(now: string): Promise<Run[]> {
     const cutoff = Date.parse(now);
     return structuredClone(
-      (await this.listLiveRuns()).filter(
-        (run) =>
-          run.queue?.state !== 'queued' &&
-          Date.parse(run.leaseExpiresAt) <= cutoff,
-      ),
+      (await this.listLiveRuns()).filter((run) => {
+        const deadline = runRecoveryDeadline(run);
+        return deadline !== undefined && Date.parse(deadline) <= cutoff;
+      }),
     );
   }
 
@@ -542,6 +570,28 @@ export class MemoryStore implements OrchestratorStore {
     );
   }
 
+  async readQueueAdmissionStatus(input: {
+    pipelines: readonly string[];
+    now: string;
+  }) {
+    const runs = [...this.#runs.values()].filter((run) => isLive(run.state));
+    for (const state of ['pending', 'running']) {
+      if (
+        runs.filter((run) => run.state === state).length >
+        QUEUE_ADMISSION_READ_LIMIT
+      )
+        throw new Error('Queue admission snapshot exceeds read bound');
+    }
+    return structuredClone(
+      projectQueueAdmissionStatus(
+        runs,
+        this.#providerCooldowns,
+        input.pipelines,
+        input.now,
+      ),
+    );
+  }
+
   async enqueueRun(input: { runId: string; now: string }): Promise<void> {
     const run = this.#runs.get(input.runId);
     if (run === undefined || run.queue !== undefined) return;
@@ -550,6 +600,28 @@ export class MemoryStore implements OrchestratorStore {
       queue: { state: 'queued' },
       updatedAt: input.now,
     });
+  }
+
+  async listCredentialOperations(input: {
+    now: string;
+    limit: number;
+  }): Promise<Run[]> {
+    return structuredClone(
+      [...this.#runs.values()]
+        .flatMap((run) => {
+          const operation = run.credentialOperation;
+          return operation !== undefined && operation.recoverAfter <= input.now
+            ? [{ run, recoverAfter: operation.recoverAfter }]
+            : [];
+        })
+        .sort(
+          (a, b) =>
+            a.recoverAfter.localeCompare(b.recoverAfter) ||
+            a.run.runId.localeCompare(b.run.runId),
+        )
+        .slice(0, input.limit)
+        .map((candidate) => candidate.run),
+    );
   }
 
   async claimQueuedRun(input: {
@@ -575,6 +647,7 @@ export class MemoryStore implements OrchestratorStore {
       queue: {
         state: 'claimed',
         claimedAt: input.now,
+        startDeadlineAt: runStartDeadlineAt(input.now),
         claimedBy: input.claimedBy,
         ...(input.claimedBySubject === undefined
           ? {}
@@ -598,6 +671,7 @@ export class MemoryStore implements OrchestratorStore {
     if (
       run === undefined ||
       !isLive(run.state) ||
+      run.credentialOperation !== undefined ||
       run.queue?.state !== 'claimed' ||
       run.queue.claimedBy !== input.claimedBy ||
       run.queue.tokenHash !== input.tokenHash
@@ -623,6 +697,16 @@ export class MemoryStore implements OrchestratorStore {
         .filter((run) => run.queue?.state === 'queued' && isLive(run.state))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .slice(0, limit),
+    );
+  }
+  async readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>> {
+    return Object.fromEntries(
+      pipelines.map((pipeline) => [
+        pipeline,
+        structuredClone(this.#providerCooldowns.get(pipeline)),
+      ]),
     );
   }
 }

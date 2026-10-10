@@ -36,6 +36,9 @@ describe('reduceTranscript', () => {
     expect(summary.title).toBe('Fix flaky login test');
     expect(summary.titleSource).toBe('generated');
     expect(summary.deliverables.prNumbers).toEqual([42]);
+    expect(summary.deliverables.qualifiedPRs).toEqual([
+      { repo: { owner: 'org', name: 'repo' }, number: 42 },
+    ]);
     expect(summary.deliverables.commitShas).toEqual(['abc1234']);
   });
 
@@ -448,5 +451,96 @@ describe('reduceTranscript', () => {
     const [summary] = reduceTranscript(content);
 
     expect(summary.deliverables.prNumbers).toEqual([]);
+  });
+});
+
+describe('Claude qualified PR publication invocation', () => {
+  it.each([
+    ['gh pr create --dry-run', false],
+    ['gh pr create --help', false],
+    ['echo "gh pr create"', false],
+    ['gh pr create --title "--dry-run"', true],
+  ])('qualifies only actual creation: %s', (command, creating) => {
+    const sessionId = 'publication-invocation';
+    const transcript = [
+      {
+        type: 'assistant',
+        uuid: 'a',
+        sessionId,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', name: 'Bash', id: 'call', input: { command } },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        uuid: 'u',
+        sessionId,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call',
+              content: 'https://github.com/octo/example/pull/42',
+            },
+          ],
+        },
+      },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join('\n');
+    const summary = reduceTranscript(transcript)[0];
+    expect(summary.deliverables.qualifiedPRs).toEqual(
+      creating
+        ? [{ repo: { owner: 'octo', name: 'example' }, number: 42 }]
+        : undefined,
+    );
+  });
+});
+
+describe('failed Claude publication evidence', () => {
+  it('does not qualify a failed result or replay a consumed publication call', () => {
+    const rows = [
+      {
+        type: 'assistant',
+        uuid: 'a',
+        sessionId: 'failed-create',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              name: 'Bash',
+              id: 'create',
+              input: { command: 'gh pr create' },
+            },
+          ],
+        },
+      },
+      ...[true, false].map((is_error, index) => ({
+        type: 'user',
+        uuid: `u${index}`,
+        sessionId: 'failed-create',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'create',
+              is_error,
+              content: 'https://github.com/octo/example/pull/42',
+            },
+          ],
+        },
+      })),
+    ];
+    const summary = reduceTranscript(
+      rows.map((row) => JSON.stringify(row)).join('\n'),
+    )[0];
+    expect(summary.deliverables.qualifiedPRs).toBeUndefined();
+    expect(summary.deliverables.prNumbers).toEqual([42]);
   });
 });

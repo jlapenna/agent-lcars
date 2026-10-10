@@ -1,4 +1,8 @@
 import {
+  changeCredentialOperation,
+  reserveCredentialOperation,
+} from './credential-operation';
+import {
   cancelRun,
   closeTask,
   confirmDispatch,
@@ -16,6 +20,8 @@ import {
   updateTaskWork,
 } from './decide';
 import {
+  isLive,
+  type ProviderFallbackRequest,
   type RequestSource,
   type Run,
   type RunResult,
@@ -24,8 +30,20 @@ import {
   type WorkPayload,
 } from './model';
 import {
+  providerCooldownForRun,
+  providerIsCoolingDown,
+} from './provider-cooldown';
+import {
+  reportResultWithFallback,
+  rerouteQueuedRun,
+  selectFallbackPipeline,
+  settleProviderFallback,
+} from './provider-fallback';
+import {
+  availableQueuePipelines,
   type OrchestratorStore,
   type RequestBinding,
+  type RunTransactionState,
   StoreConflict,
   type VersionedTask,
 } from './store';
@@ -49,6 +67,13 @@ export interface SweepResult {
   readonly retried: { lostRunId: string; newRunId: string }[];
 }
 
+export interface ProviderFallbackAuthority {
+  /** Server-known providers whose cooldown/occupancy are read transactionally. */
+  readonly pipelines: readonly string[];
+  /** Re-evaluates the request's authorizing principal and repository now. */
+  allowedPipelines(task: Task, run: Run): readonly string[];
+}
+
 /**
  * Read → decide → apply, with one retry on a lost compare-and-set. The
  * decision layer is pure; this class is the only place I/O and time meet it.
@@ -61,6 +86,8 @@ export interface RequestInput {
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
+  /** Constructed by the authenticated admission adapter, not a raw API field. */
+  providerFallback?: ProviderFallbackRequest;
   /** Optional opaque atomic request binding. Its owner supplies the key and
    * canonical identity; the store records the first source request with the
    * request transaction rather than leaving a pre-request race to a caller. */
@@ -82,9 +109,11 @@ export interface RequestInput {
 }
 
 export class Orchestrator {
+  #rerouteOffset: number | undefined;
   constructor(
     private readonly store: OrchestratorStore,
     private readonly clock: Clock,
+    private readonly fallbackAuthority?: ProviderFallbackAuthority,
   ) {}
 
   async request(input: RequestInput): Promise<Decision | Refusal> {
@@ -127,6 +156,9 @@ export class Orchestrator {
           pipeline: input.pipeline,
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
+          ...(input.providerFallback === undefined
+            ? {}
+            : { providerFallback: input.providerFallback }),
         };
         if (input.replaceQueuedRunId !== undefined) {
           if (
@@ -174,16 +206,251 @@ export class Orchestrator {
     );
   }
 
-  async renew(runId: string): Promise<Decision | Refusal> {
+  async renew(
+    runId: string,
+    claimFingerprint?: string,
+    providerProcessStarted?: boolean,
+  ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
-      renewLease({ now: this.clock.now(), task, run }),
+      renewLease({
+        now: this.clock.now(),
+        task,
+        run,
+        providerProcessStarted,
+        ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+      }),
     );
   }
 
-  async report(runId: string, result: RunResult): Promise<Decision | Refusal> {
-    return this.transactOnRun(runId, (task, run) =>
-      reportResult({ now: this.clock.now(), task, run, result }),
+  async report(
+    runId: string,
+    result: RunResult,
+    claimFingerprint?: string,
+    /** Server-owned cleanup identity, captured before the retryable transaction. */
+    credentialCleanupId?: string,
+  ): Promise<Decision | Refusal> {
+    if (this.fallbackAuthority !== undefined && !result.ok) {
+      return this.transactOnRun(
+        runId,
+        (task, run, queueEligibility) => {
+          const decisionNow = this.clock.now();
+          return reportResultWithFallback({
+            now: decisionNow,
+            task,
+            run,
+            result,
+            ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+            authorizedPipelines:
+              this.fallbackAuthority?.allowedPipelines(task, run) ?? [],
+            availablePipelines:
+              queueEligibility === undefined
+                ? []
+                : availableQueuePipelines({
+                    ...queueEligibility,
+                    pipelines: this.fallbackAuthority?.pipelines ?? [],
+                    now: decisionNow,
+                  }),
+          });
+        },
+        credentialCleanupId,
+        {
+          queueEligibilityPipelines: this.fallbackAuthority.pipelines,
+          // Evaluate only after the consistent task/run read, before global
+          // eligibility queries. Ordinary failures stay task-local.
+          shouldReadQueueEligibility: ({ task, run }) =>
+            task !== undefined &&
+            run !== undefined &&
+            task.task.activeRunId === run.runId &&
+            (run.state === 'pending' || run.state === 'running') &&
+            run.providerFallback !== undefined &&
+            providerCooldownForRun({
+              ...run,
+              state: 'finished',
+              result,
+              updatedAt: this.clock.now(),
+            }) !== undefined &&
+            selectFallbackPipeline(
+              run,
+              this.fallbackAuthority?.allowedPipelines(task.task, run) ?? [],
+              this.fallbackAuthority?.pipelines ?? [],
+            ) !== undefined,
+        },
+      );
+    }
+    return this.transactOnRun(
+      runId,
+      (task, run) =>
+        reportResult({
+          now: this.clock.now(),
+          task,
+          run,
+          result,
+          ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+        }),
+      credentialCleanupId,
     );
+  }
+
+  /** Positive exact-sequence lease resolution and deferred fallback settlement
+   * commit together. Recovery needs the reserved claim, not an active worker. */
+  async finishCredentialOperation(input: {
+    runId: string;
+    operationId: string;
+    claimFingerprint: string;
+    restored?: boolean;
+    leaseRetiredAtSequence?: number;
+    now: () => string;
+  }): Promise<Decision | Refusal> {
+    const authority = this.fallbackAuthority;
+    return this.store.transactRun({
+      runId: input.runId,
+      ...(authority === undefined
+        ? {}
+        : {
+            queueEligibilityPipelines: authority.pipelines,
+            shouldReadQueueEligibility: ({
+              task,
+              run,
+            }: Pick<RunTransactionState, 'task' | 'run'>) =>
+              task !== undefined &&
+              run !== undefined &&
+              task.task.activeRunId === run.runId &&
+              run.credentialPendingResult !== undefined &&
+              providerCooldownForRun({
+                ...run,
+                state: 'finished',
+                result: run.credentialPendingResult.result,
+                updatedAt: input.now(),
+              }) !== undefined &&
+              selectFallbackPipeline(
+                run,
+                authority.allowedPipelines(task.task, run),
+                authority.pipelines,
+              ) !== undefined,
+          }),
+      decide: ({ task, run, queueEligibility }) => {
+        if (task === undefined || run === undefined)
+          return refused('unknown-run');
+        const now = input.now();
+        const outcome = changeCredentialOperation({
+          now,
+          task: task.task,
+          run,
+          id: input.operationId,
+          claimFingerprint: input.claimFingerprint,
+          change: {
+            kind: 'finish',
+            ...(input.restored === undefined
+              ? {}
+              : { restored: input.restored }),
+            ...(input.leaseRetiredAtSequence === undefined
+              ? {}
+              : { leaseRetiredAtSequence: input.leaseRetiredAtSequence }),
+          },
+        });
+        if (
+          isRefusal(outcome) ||
+          authority === undefined ||
+          run.credentialPendingResult === undefined
+        )
+          return outcome;
+        return settleProviderFallback({
+          now,
+          settled: outcome,
+          authorizedPipelines: authority.allowedPipelines(task.task, run),
+          availablePipelines:
+            queueEligibility === undefined
+              ? []
+              : availableQueuePipelines({
+                  ...queueEligibility,
+                  pipelines: authority.pipelines,
+                  now,
+                }),
+        });
+      },
+    });
+  }
+
+  /** The executor's grant further narrows alternatives; only fresh unclaimed
+   * attempts can be rerouted, never a live provider conversation. */
+  async rerouteQueued(
+    executorPipelines?: readonly string[],
+    limit = 30,
+  ): Promise<{ fromRunId: string; newRunId: string }[]> {
+    const authority = this.fallbackAuthority;
+    if (authority === undefined || !Number.isSafeInteger(limit) || limit <= 0)
+      return [];
+    const batchLimit = Math.min(limit, 30);
+    const selectionTime = this.clock.now();
+    const [queued, cooldowns] = await Promise.all([
+      this.store.listQueuedRuns(),
+      this.store.readProviderCooldowns(authority.pipelines),
+    ]);
+    // Healthy older requests must not consume the bounded reroute batch.
+    // This prefilter grants no authority: the transaction rechecks cooldown,
+    // exact run identity, current requester grants and provider occupancy.
+    const candidates = queued.filter(
+      (run) =>
+        run.providerFallback !== undefined &&
+        providerIsCoolingDown(cooldowns[run.pipeline], selectionTime) &&
+        (run.queue?.deferredUntil === undefined ||
+          run.queue.deferredUntil <= selectionTime),
+    );
+    if (candidates.length === 0) return [];
+    // Rotate even on refusals. A minute-based initial slot also advances
+    // cold instances; warm instances reserve their next batch before yielding.
+    // This cursor changes scheduling only; every attempt is rechecked below.
+    const offset =
+      this.#rerouteOffset ??
+      Math.floor(Date.parse(selectionTime) / 60_000) * batchLimit;
+    const start =
+      ((offset % candidates.length) + candidates.length) % candidates.length;
+    const batch = Array.from(
+      { length: Math.min(batchLimit, candidates.length) },
+      (_, index) => candidates[(start + index) % candidates.length],
+    );
+    this.#rerouteOffset = start + batch.length;
+    const rerouted: { fromRunId: string; newRunId: string }[] = [];
+    for (const candidate of batch) {
+      const now = this.clock.now();
+      const outcome = await this.store.transactRun({
+        runId: candidate.runId,
+        queueEligibilityPipelines: authority.pipelines,
+        decide: ({ task, run, queueEligibility }) => {
+          if (
+            task === undefined ||
+            run === undefined ||
+            queueEligibility === undefined
+          )
+            return refused('unknown-run');
+          return rerouteQueuedRun({
+            now,
+            task: task.task,
+            run,
+            cooldown: queueEligibility.cooldowns[run.pipeline],
+            authorizedPipelines: authority
+              .allowedPipelines(task.task, run)
+              .filter((pipeline) =>
+                (executorPipelines ?? authority.pipelines).includes(pipeline),
+              ),
+            availablePipelines: availableQueuePipelines({
+              ...queueEligibility,
+              pipelines: authority.pipelines,
+              now,
+            }),
+          });
+        },
+      });
+      if (!isRefusal(outcome)) {
+        const replacement = outcome.additionalRuns?.[0];
+        if (replacement !== undefined)
+          rerouted.push({
+            fromRunId: candidate.runId,
+            newRunId: replacement.runId,
+          });
+      }
+    }
+    return rerouted;
   }
 
   async cancel(runId: string, note?: string): Promise<Decision | Refusal> {
@@ -276,7 +543,7 @@ export class Orchestrator {
     const retried: { lostRunId: string; newRunId: string }[] = [];
     for (const run of await this.store.listExpiredRuns(now)) {
       const outcome = await this.transactOnRun(run.runId, (task, current) =>
-        expireLeaseAndRetry({ now, task, run: current }),
+        expireLeaseAndRetry({ now: this.clock.now(), task, run: current }),
       );
       if (isRefusal(outcome)) continue;
       const settled = decidedRun(outcome);
@@ -337,16 +604,55 @@ export class Orchestrator {
 
   private async transactOnRun(
     runId: string,
-    decide: (task: VersionedTask['task'], run: Run) => Decision | Refusal,
+    decide: (
+      task: VersionedTask['task'],
+      run: Run,
+      queueEligibility?: RunTransactionState['queueEligibility'],
+    ) => Decision | Refusal,
+    credentialCleanupId: string = crypto.randomUUID(),
+    queueEligibilityOptions?: Pick<
+      Parameters<OrchestratorStore['transactRun']>[0],
+      'queueEligibilityPipelines' | 'shouldReadQueueEligibility'
+    >,
   ): Promise<Decision | Refusal> {
-    const run = await this.store.readRun(runId);
-    if (run === undefined) return { refused: true, reason: 'unknown-run' };
-    return this.transact(run.task, async (task) => {
-      const current = await this.store.readRun(runId);
-      if (task === undefined || current === undefined) {
-        return { refused: true, reason: 'unknown-run' } as Refusal;
-      }
-      return decide(task.task, current);
+    // Queue release/reclaim changes Run without advancing Task revision.
+    // Decide against both documents inside the existing store transaction,
+    // so a stale expiry/renewal/report cannot overwrite a fresh claim.
+    return this.store.transactRun({
+      runId,
+      ...queueEligibilityOptions,
+      decide: ({ task, run, queueEligibility }) => {
+        if (task === undefined || run === undefined) {
+          return { refused: true, reason: 'unknown-run' };
+        }
+        const outcome = decide(task.task, run, queueEligibility);
+        if (
+          isRefusal(outcome) ||
+          !isLive(run.state) ||
+          outcome.run === undefined ||
+          isLive(outcome.run.state) ||
+          run.pipeline !== 'codex' ||
+          run.queue?.state !== 'claimed' ||
+          run.queue.tokenHash === undefined ||
+          outcome.run.credentialOperation !== undefined
+        )
+          return outcome;
+        // Every accepted claimed-Codex terminal transition must retain exact
+        // server cleanup authority before physical release. Keep the original
+        // terminal Run, deterministic retry and outbox in this one Decision.
+        // The ID is stable outside a retryable callback; the decided timestamp
+        // follows the owning callback clock, never an earlier pre-read clock.
+        const cleanup = reserveCredentialOperation({
+          now: outcome.run.updatedAt,
+          task: outcome.task,
+          run: outcome.run,
+          claimFingerprint: run.queue.tokenHash,
+          id: credentialCleanupId,
+          kind: 'cleanup',
+        });
+        if (isRefusal(cleanup)) return cleanup;
+        return { ...outcome, run: cleanup.run };
+      },
     });
   }
 }

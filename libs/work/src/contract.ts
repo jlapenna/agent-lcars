@@ -4,7 +4,9 @@ import { z } from 'zod';
 
 import { parseCron } from './cron';
 import {
+  fallbackPipelinesSchema,
   PIPELINES,
+  WORK_DESCRIPTION_MAX,
   WORK_TITLE_MAX,
   workOriginSchema,
   workSpecSchema,
@@ -23,11 +25,40 @@ import {
 export const WORK_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
 export const workIdSchema = z.string().regex(WORK_ID_PATTERN);
+export const workReplyTextSchema = z.string().min(1).max(WORK_DESCRIPTION_MAX);
+export const workReplyRequestIdSchema = z.string().min(1).max(128);
+
+const githubArtifactIdSchema = z.number().int().positive();
+const githubArtifactReferenceSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('pull-request'),
+    number: githubArtifactIdSchema,
+  }),
+  z.strictObject({
+    kind: z.enum(['comment', 'review']),
+    number: githubArtifactIdSchema,
+    id: githubArtifactIdSchema,
+    url: z.string().max(1_024),
+  }),
+]);
+
+/** Trusted runner metadata from the exact-marker verifier, never parsed from
+ * the agent's final message. A parked partial PR can retain its blocker link. */
+export const outcomeReferenceSchema = z.discriminatedUnion('kind', [
+  githubArtifactReferenceSchema.options[0].extend({
+    related: z.array(githubArtifactReferenceSchema).max(1).optional(),
+  }),
+  githubArtifactReferenceSchema.options[1].extend({
+    related: z.array(githubArtifactReferenceSchema).max(1).optional(),
+  }),
+]);
 
 const runResultSchema = z.strictObject({
   ok: z.boolean(),
   summary: z.string().max(4_096).optional(),
   ref: z.string().max(1_024).optional(),
+  /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
+  relatedRefs: z.array(z.string().max(1_024)).max(1).optional(),
   /** The agent's final message for this round, e.g. its question when it
    *  parked. Mirrors `@agent-lcars/orchestrator`'s `runResultSchema`. */
   message: z.string().max(16_384).optional(),
@@ -40,6 +71,21 @@ export const itemRunViewSchema = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   result: runResultSchema.optional(),
+  providerFallback: z
+    .strictObject({
+      allowedPipelines: z.array(z.string()),
+      attemptedPipelines: z.array(z.string()),
+      originalRunId: z.string(),
+      fromRunId: z.string().optional(),
+      trigger: z
+        .strictObject({
+          reason: z.enum(['provider-limit', 'provider-cooldown']),
+          failureRunId: z.string(),
+          limitedPipeline: z.string(),
+        })
+        .optional(),
+    })
+    .optional(),
   /** The human turn that opened this round, for a `mode: reply` run.
    *  Round 1's human turn is `spec.description`, not a reply. Mirrors
    *  `@agent-lcars/work/derive`'s `ItemRunView`. */
@@ -50,6 +96,9 @@ export const itemRunViewSchema = z.strictObject({
     .strictObject({
       state: z.enum(['queued', 'claimed']),
       claimedBy: z.string().optional(),
+      claimedAt: z.string().optional(),
+      firstHeartbeatAt: z.string().optional(),
+      providerProcessStartedAt: z.string().optional(),
     })
     .optional(),
 });
@@ -129,6 +178,11 @@ export const itemsContract = {
         retried: z.array(
           z.strictObject({ lostRunId: z.string(), newRunId: z.string() }),
         ),
+        rerouted: z
+          .array(
+            z.strictObject({ fromRunId: z.string(), newRunId: z.string() }),
+          )
+          .optional(),
         dispatched: z.array(z.string()),
         reported: z.array(z.string()),
         outboxProcessed: z.number().int().nonnegative(),
@@ -303,6 +357,7 @@ export const itemsContract = {
         // Session ids are opaque UUIDs from the agent CLI, not ULIDs --
         // bounded generously above any real id.
         resumeSessionId: z.string().min(1).max(256).optional(),
+        fallbackPipelines: fallbackPipelinesSchema.optional(),
       }),
     )
     .output(itemViewSchema),
@@ -332,11 +387,15 @@ export const itemsContract = {
         id: workIdSchema,
         /** The human's turn. Bounded to WORK_DESCRIPTION_MAX: a reply is
          *  the same kind of prose an item's description is. */
-        text: z.string().min(1).max(16_384),
+        text: workReplyTextSchema,
+        /** Retries with this key return the original admitted round. Scoped
+         * to the item and authenticated principal; changed input conflicts. */
+        requestId: workReplyRequestIdSchema.optional(),
         /** Defaults to true. False starts a fresh session that still
          *  carries the reply text. */
         resume: z.boolean().optional(),
         pipeline: z.enum(['claude', 'codex', 'opencode']).optional(),
+        fallbackPipelines: fallbackPipelinesSchema.optional(),
       }),
     )
     .output(
@@ -382,6 +441,7 @@ export const githubDispatchSpecSchema = z.strictObject({
   title: z.string().min(1).max(WORK_TITLE_MAX),
   description: z.string().max(GITHUB_DISPATCH_DESCRIPTION_MAX),
   pipeline: z.enum(PIPELINES),
+  fallbackPipelines: fallbackPipelinesSchema.optional(),
   target: workTargetSchema,
 });
 
@@ -473,6 +533,7 @@ export const dispatchesContract = {
         context: z.string().max(4_096).optional(),
         /** Caller-controlled idempotency key for this redispatch. */
         requestId: z.string().min(1).max(128),
+        fallbackPipelines: fallbackPipelinesSchema.optional(),
       }),
     )
     .output(githubDispatchResultSchema),
@@ -514,6 +575,10 @@ const scheduleViewSchema = z.strictObject({
   lastSlotAt: z.string().optional(),
   lastItemId: workIdSchema.optional(),
   disabledReason: z.enum(['grant-revoked', 'operator', 'invalid']).optional(),
+  revision: z.number().int().nonnegative(),
+  nextDueAt: z.iso.datetime().optional(),
+  pendingItemId: workIdSchema.optional(),
+  lastClosedSlotAt: z.iso.datetime({ offset: false }).optional(),
 });
 
 const scheduleBase = oc.meta(
@@ -555,6 +620,61 @@ export const schedulesContract = {
       }),
     )
     .output(scheduleViewSchema),
+  update: scheduleBase
+    .meta(
+      openapi({
+        method: 'PATCH',
+        path: '/schedules/{id}',
+        operationId: 'updateSchedule',
+        summary: 'Edit a schedule at its current configuration revision',
+      }),
+    )
+    .errors({
+      NOT_FOUND: { message: 'No such schedule' },
+      FORBIDDEN: {
+        message: 'No grant for this schedule or requested pipeline',
+      },
+      CONFLICT: { message: 'Schedule changed; reload before editing' },
+      BAD_REQUEST: { message: 'Malformed or impossible cron expression' },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        expectedRevision: z.number().int().nonnegative(),
+        cron: cronExpressionSchema,
+        spec: workSpecSchema,
+        enabled: z.boolean(),
+      }),
+    )
+    .output(scheduleViewSchema),
+  delete: scheduleBase
+    .meta(
+      openapi({
+        method: 'DELETE',
+        path: '/schedules/{id}',
+        operationId: 'deleteSchedule',
+        summary:
+          'Delete future recurrence; an already admitted occurrence may finish',
+      }),
+    )
+    .errors({
+      NOT_FOUND: { message: 'No such schedule' },
+      FORBIDDEN: { message: 'No grant for this schedule' },
+      CONFLICT: { message: 'Schedule changed; reload before deleting' },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        expectedRevision: z.number().int().nonnegative(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        id: workIdSchema,
+        deleted: z.literal(true),
+        pendingItemId: workIdSchema.optional(),
+      }),
+    ),
   get: scheduleBase
     .meta(
       openapi({
@@ -591,8 +711,20 @@ export const schedulesContract = {
         summary: 'Enable a cron schedule',
       }),
     )
-    .errors({ NOT_FOUND: { message: 'No such schedule' } })
-    .input(z.strictObject({ id: workIdSchema }))
+    .errors({
+      NOT_FOUND: { message: 'No such schedule' },
+      FORBIDDEN: { message: 'No grant for this schedule' },
+      CONFLICT: { message: 'Schedule changed; reload before toggling' },
+      BAD_REQUEST: {
+        message: 'Repair the invalid schedule before enabling it',
+      },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        expectedRevision: z.number().int().nonnegative(),
+      }),
+    )
     .output(scheduleViewSchema),
   disable: scheduleBase
     .meta(
@@ -603,8 +735,20 @@ export const schedulesContract = {
         summary: 'Disable a cron schedule',
       }),
     )
-    .errors({ NOT_FOUND: { message: 'No such schedule' } })
-    .input(z.strictObject({ id: workIdSchema }))
+    .errors({
+      NOT_FOUND: { message: 'No such schedule' },
+      FORBIDDEN: { message: 'No grant for this schedule' },
+      CONFLICT: { message: 'Schedule changed; reload before toggling' },
+      BAD_REQUEST: {
+        message: 'Repair the invalid schedule before enabling it',
+      },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        expectedRevision: z.number().int().nonnegative(),
+      }),
+    )
     .output(scheduleViewSchema),
   tick: scheduleBase
     .meta(
@@ -789,8 +933,45 @@ export const runsContract = {
       }),
     )
     .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
-    .input(z.strictObject({ runId: runIdSchema }))
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        /** Trusted worker observed successful OS spawn of the provider CLI.
+         * Omit for bootstrap/ordinary liveness; server records the first report. */
+        providerProcessStarted: z.literal(true).optional(),
+      }),
+    )
     .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
+  claimStatus: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/claim-status',
+        operationId: 'getRunClaimStatus',
+        summary: "Read the authenticated executor's exact claim liveness",
+        spec: withBearer,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'work.executor scope required' },
+      FORBIDDEN: { message: 'executor may not inspect this claim' },
+      NOT_FOUND: { message: 'unknown run' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string().min(1).max(256),
+        claimFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      }),
+    )
+    .output(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string(),
+        claimFingerprint: z.string(),
+        status: z.enum(['live', 'settled']),
+      }),
+    ),
   /** The executor's own report that the container or Job it launched for
    *  a claimed run has terminated. Authenticated like `claim` (the
    *  executor's `work.executor` bearer, not the run token, which lives only
@@ -819,6 +1000,11 @@ export const runsContract = {
       z.strictObject({
         runId: runIdSchema,
         runner: z.string().min(1).max(256),
+        /** Required for live settlement; absent legacy reports are terminal-only. */
+        claimFingerprint: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
@@ -938,7 +1124,7 @@ export const runsContract = {
     .input(
       z.strictObject({
         runId: runIdSchema,
-        generation: z.string().regex(/^\d+$/u),
+        generation: z.string().regex(/^[1-9]\d*$/u),
         restoredSha256: z.string().regex(/^[0-9a-f]{64}$/u),
         authBase64: z
           .string()

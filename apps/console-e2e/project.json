@@ -6,6 +6,14 @@
   "sourceRoot": "apps/console-e2e/src",
   "implicitDependencies": ["@agent-lcars/console"],
   "targets": {
+    "dev-test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node tools/dev-console-test.mjs",
+        "forwardAllArgs": true
+      }
+    },
     "killports": {
       "executor": "nx:run-commands",
       "options": {

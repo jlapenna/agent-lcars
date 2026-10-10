@@ -24,6 +24,7 @@ import {
 import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
+import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 const { refreshCurrentGithubAnchorProjection } = vi.hoisted(() => ({
@@ -97,20 +98,18 @@ function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
   // spuriously tripping the anchor-closed check (`isStaleReport` in
   // orchestrator-dispatch.ts) that a handful of these tests never intend
   // to exercise.
-  const drain = () =>
+  const drain = (limit = 10) =>
     drainOutbox({
+      limit,
       store,
       orchestrator,
       tokens,
       fetchImpl,
       now: () => clock.now(),
     });
-  (createOrchestratorRuntime as Mock).mockReturnValue({
-    store,
-    orchestrator,
-    drain,
-  });
-  return { store, orchestrator, calls };
+  const runtime = { store, orchestrator, drain };
+  (createOrchestratorRuntime as Mock).mockReturnValue(runtime);
+  return { store, orchestrator, calls, runtime };
 }
 
 describe('closeIssue', () => {
@@ -140,14 +139,14 @@ describe('closeIssue', () => {
     });
   });
 
-  it('sweeps the orchestrator to catch up any expired lease after closing (#1183)', async () => {
+  it('closes without sweeping unrelated expired leases (#2227)', async () => {
     mockOctokit();
     const { orchestrator } = fixtureOrchestratorRuntime();
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await closeIssue(DEFAULT_REPO, 2709);
 
-    expect(sweepSpy).toHaveBeenCalledTimes(1);
+    expect(sweepSpy).not.toHaveBeenCalled();
   });
 
   it('propagates a GitHub API error and never sweeps the orchestrator', async () => {
@@ -344,14 +343,14 @@ describe('clearNeedsHumanLabel', () => {
     });
   });
 
-  it('sweeps the orchestrator after clearing the park state (#1183)', async () => {
+  it('clears the park label without sweeping unrelated expired leases (#2227)', async () => {
     mockOctokit();
     const { orchestrator } = fixtureOrchestratorRuntime();
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await clearNeedsHumanLabel(DEFAULT_REPO, 2709);
 
-    expect(sweepSpy).toHaveBeenCalledTimes(1);
+    expect(sweepSpy).not.toHaveBeenCalled();
   });
 
   it('swallows a 404 (label was already absent) and does not sweep', async () => {
@@ -905,14 +904,130 @@ describe('approveAndMergePr', () => {
     });
   });
 
-  it('sweeps the orchestrator to catch up after the merge (#1183)', async () => {
+  it('merges without sweeping unrelated expired leases (#2227)', async () => {
     mockOctokit();
     const { orchestrator } = fixtureOrchestratorRuntime();
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await approveAndMergePr(DEFAULT_REPO, 42);
 
-    expect(sweepSpy).toHaveBeenCalledTimes(1);
+    expect(sweepSpy).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges exact merge effects while a maintenance pass is held, then delivers durable work once', async () => {
+    const { createReview, merge } = mockOctokit();
+    const {
+      orchestrator,
+      store,
+      calls,
+      runtime: deps,
+    } = fixtureOrchestratorRuntime();
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'unrelated-durable-maintenance',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed refused');
+    const drain = deps.drain;
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    deps.drain = async (limit: number) => {
+      entered();
+      await held;
+      return drain(limit);
+    };
+    const maintenance = handleReconcile(deps);
+    await started;
+    try {
+      await approveAndMergePr(DEFAULT_REPO, 42);
+      expect(createReview).toHaveBeenCalledOnce();
+      expect(merge).toHaveBeenCalledOnce();
+      expect(refreshCurrentGithubAnchorProjection).toHaveBeenCalledOnce();
+      expect(calls).toHaveLength(0);
+      expect(await store.readRun(seeded.run.runId)).toMatchObject({
+        state: 'pending',
+      });
+    } finally {
+      release();
+    }
+    expect((await maintenance).status).toBe(200);
+    expect(calls.map(({ url }) => url)).toEqual([
+      'https://api.github.com/repos/supersprinklesracing/sprinkles/issues/2709/reactions',
+      'https://api.github.com/repos/supersprinklesracing/sprinkles/issues/2709/assignees',
+    ]);
+    expect(await store.readRun(seeded.run.runId)).toMatchObject({
+      queue: { state: 'queued' },
+    });
+    await handleReconcile(deps);
+    expect(calls).toHaveLength(2);
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
+    ).toHaveLength(1);
+  });
+
+  it('acknowledges a merge despite failed unrelated maintenance and retries its durable queue later', async () => {
+    const { merge } = mockOctokit();
+    const { orchestrator, store, runtime } = fixtureOrchestratorRuntime();
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'maintenance-failure-retry',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed refused');
+    const sweep = vi
+      .spyOn(orchestrator, 'sweepExpired')
+      .mockRejectedValueOnce(new Error('unrelated store unavailable'));
+    expect((await handleReconcile(runtime)).status).toBe(500);
+    await expect(approveAndMergePr(DEFAULT_REPO, 42)).resolves.toBeUndefined();
+    expect(merge).toHaveBeenCalledOnce();
+    expect(await store.readRun(seeded.run.runId)).toMatchObject({
+      state: 'pending',
+    });
+    sweep.mockRestore();
+    expect((await handleReconcile(runtime)).status).toBe(200);
+    expect(await store.readRun(seeded.run.runId)).toMatchObject({
+      queue: { state: 'queued' },
+    });
+    expect((await handleReconcile(runtime)).body['dispatched']).toEqual([]);
+  });
+
+  it('waits for authoritative presentation refresh and propagates its failure', async () => {
+    const { merge } = mockOctokit();
+    let release!: () => void;
+    refreshCurrentGithubAnchorProjection.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    let acknowledged = false;
+    const mutation = approveAndMergePr(DEFAULT_REPO, 42).then(() => {
+      acknowledged = true;
+    });
+    await vi.waitFor(() =>
+      expect(refreshCurrentGithubAnchorProjection).toHaveBeenCalledOnce(),
+    );
+    expect(merge).toHaveBeenCalledOnce();
+    expect(acknowledged).toBe(false);
+    release();
+    await mutation;
+    expect(acknowledged).toBe(true);
+    refreshCurrentGithubAnchorProjection.mockRejectedValueOnce(
+      new Error('projection unavailable'),
+    );
+    await expect(approveAndMergePr(DEFAULT_REPO, 43)).rejects.toThrow(
+      'projection unavailable',
+    );
   });
 
   it('propagates a GitHub API error from the approval step and never merges or sweeps', async () => {

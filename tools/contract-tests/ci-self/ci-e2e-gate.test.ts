@@ -15,6 +15,9 @@ interface Workflow {
     {
       if?: string;
       name?: string;
+      needs?: string | string[];
+      'runs-on'?: string;
+      outputs?: Record<string, string>;
       steps?: Array<{
         id?: string;
         if?: string;
@@ -35,9 +38,27 @@ describe('CI E2E operational gate', () => {
       await readFile('.github/workflows/ci.yml', 'utf8'),
     ) as Workflow;
 
-    expect(workflow.jobs?.e2e?.if).toBe("${{ vars.E2E_ENABLED != 'false' }}");
+    expect(workflow.jobs?.e2e?.if).toBe(
+      "${{ always() && vars.E2E_ENABLED != 'false' }}",
+    );
+    expect(workflow.jobs?.e2e?.['runs-on']).toBe('ubuntu-latest');
+    expect(workflow.jobs?.e2e?.needs).toEqual(['e2e-scope', 'e2e-browser']);
+    expect(workflow.jobs?.['e2e-scope']?.['runs-on']).toBe('ubuntu-latest');
+    expect(workflow.jobs?.['e2e-scope']?.if).toBe(
+      "${{ vars.E2E_ENABLED != 'false' }}",
+    );
+    expect(workflow.jobs?.['e2e-scope']?.outputs?.run).toBe(
+      '${{ steps.e2e-scope.outputs.run }}',
+    );
+    expect(workflow.jobs?.['e2e-browser']?.needs).toBe('e2e-scope');
+    expect(workflow.jobs?.['e2e-browser']?.if).toBe(
+      "${{ needs.e2e-scope.outputs.run == 'true' }}",
+    );
+    expect(workflow.jobs?.['e2e-browser']?.['runs-on']).toBe(
+      "${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-e2e' }}",
+    );
     expect(workflow.jobs?.e2e?.name).toBe('E2E');
-    const scopeStep = workflow.jobs?.e2e?.steps?.find(
+    const scopeStep = workflow.jobs?.['e2e-scope']?.steps?.find(
       (step) => step.id === 'e2e-scope',
     );
     expect(scopeStep).toEqual(
@@ -45,14 +66,14 @@ describe('CI E2E operational gate', () => {
         name: 'Determine whether console E2E is affected',
       }),
     );
-    expect(workflow.jobs?.e2e?.steps).toContainEqual(
+    expect(workflow.jobs?.['e2e-browser']?.steps).toContainEqual(
       expect.objectContaining({
-        if: "steps.e2e-scope.outputs.run == 'true'",
+        if: "needs.e2e-scope.outputs.run == 'true'",
         name: 'Run console e2e suite [full-suite]',
         run: './tools/e2e-local.sh',
       }),
     );
-    expect(workflow.jobs?.e2e?.steps).toContainEqual(
+    expect(workflow.jobs?.['e2e-browser']?.steps).toContainEqual(
       expect.objectContaining({
         name: 'Upload console e2e diagnostics',
         'continue-on-error': true,
@@ -179,8 +200,71 @@ describe('CI E2E operational gate', () => {
         },
       });
       await expect(readFile(output, 'utf8')).resolves.toBe('run=true\n');
+      // Unknown events/bases and failed or malformed affected results must
+      // retain browser coverage instead of becoming an unaffected success.
+      for (const [event, baseSha, nxScript] of [
+        ['workflow_dispatch', base.trim(), 'printf "[]"'],
+        ['push', '0'.repeat(40), 'printf "[]"'],
+        ['push', 'f'.repeat(40), 'printf "[]"'],
+        ['pull_request', base.trim(), 'printf "not-json"'],
+        ['pull_request', base.trim(), 'printf "{}"'],
+        ['pull_request', base.trim(), 'printf "[1]"'],
+      ]) {
+        await writeFile(
+          path.join(repo, 'tools', 'nx'),
+          `#!/usr/bin/env bash\n${nxScript}\n`,
+        );
+        await rm(output);
+        await execFileAsync('bash', [scopeScript], {
+          cwd: repo,
+          env: {
+            ...env,
+            EVENT_NAME: event,
+            BASE_SHA: baseSha,
+            HEAD_SHA: documentationHead.trim(),
+          },
+        });
+        await expect(readFile(output, 'utf8')).resolves.toBe('run=true\n');
+      }
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it.each([
+    ['success', 'false', 'skipped', true],
+    ['success', 'true', 'success', true],
+    ['failure', 'false', 'skipped', false],
+    ['cancelled', 'true', 'skipped', false],
+    ['skipped', '', 'skipped', false],
+    ['success', 'true', 'failure', false],
+    ['success', 'true', 'cancelled', false],
+    ['success', 'true', 'skipped', false],
+    ['success', 'false', 'success', false],
+    ['success', '', 'skipped', false],
+    ['success', 'invalid', 'success', false],
+  ])(
+    'aggregates selection=%s run=%s browser=%s into pass=%s',
+    async (selection, run, browser, pass) => {
+      const workflow = parseYaml(
+        await readFile('.github/workflows/ci.yml', 'utf8'),
+      ) as Workflow;
+      const aggregate = workflow.jobs?.e2e?.steps?.find(
+        (step) => step.run,
+      )?.run;
+      expect(aggregate).toBeTruthy();
+      const result = await execFileAsync('bash', ['-c', aggregate!], {
+        env: {
+          ...process.env,
+          SELECTION_RESULT: selection,
+          RUN_BROWSER: run,
+          BROWSER_RESULT: browser,
+        },
+      }).then(
+        () => true,
+        () => false,
+      );
+      expect(result).toBe(pass);
+    },
+  );
 });

@@ -32,11 +32,15 @@ Use this index to retrieve the smallest current contract for a task.
 
 ## Development and fleet adoption
 
+Repeatable local procedures live in [`playbooks/`](playbooks/README.md), starting
+with the [local console/control-plane SUT](playbooks/local-console-sut.md).
+
 | Need                             | Canonical document                                                           |
 | -------------------------------- | ---------------------------------------------------------------------------- |
 | Repository onboarding            | [`onboarding-repo.md`](onboarding-repo.md)                                   |
 | Console and telemetry onboarding | [`onboarding-console-and-telemetry.md`](onboarding-console-and-telemetry.md) |
 | Console visual system            | [`console-design-system.md`](console-design-system.md)                       |
+| Inbox phone interaction budget   | [`inbox-phone-budget.md`](inbox-phone-budget.md)                             |
 | Fleet testing policy             | [`testing-policy.md`](testing-policy.md)                                     |
 | E2E reliability and triage       | [`e2e-reliability.md`](e2e-reliability.md)                                   |
 | Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)           |
@@ -48,6 +52,7 @@ Use this index to retrieve the smallest current contract for a task.
 | Need                                      | Document                                                                                     |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
 | Console product spec (part 1)             | [`product/console-product-spec.md`](product/console-product-spec.md)                         |
+| Inbox notifications and delivery handoff  | [`inbox-notifications.md`](inbox-notifications.md)                                           |
 | Fleet orchestration product spec (part 2) | [`product/fleet-orchestration-product-spec.md`](product/fleet-orchestration-product-spec.md) |
 
 ## Plans, evidence, and generated contracts
@@ -55,6 +60,9 @@ Use this index to retrieve the smallest current contract for a task.
 - `superpowers/specs/` and `superpowers/plans/` record scoped designs and
   implementation plans. Reconcile them with the resulting code and canonical
   docs before treating them as current behavior.
+- [QueueExecutor failover design](superpowers/specs/2026-10-10-queue-executor-ha-design.md)
+  selects proposed durable capacity ownership for R8; implementation and Homelab
+  qualification remain separate gates.
 - Dated audit and support-evidence documents describe the named observation,
   revision, and conditions; they are not live state.
 - [`api/work-v1.openapi.json`](api/work-v1.openapi.json) is generated from the

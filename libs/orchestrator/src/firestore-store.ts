@@ -13,6 +13,7 @@ import {
   isRefusal,
   type Refusal,
   runLeaseExpiresAt,
+  runStartDeadlineAt,
 } from './decide';
 import {
   type LifecycleMetricRead,
@@ -30,6 +31,7 @@ import {
   outboxEntrySchema,
   type RequestSource,
   type Run,
+  runRecoveryDeadline,
   runSchema,
   runStateSchema,
   taskDocumentSchema,
@@ -41,11 +43,17 @@ import {
   providerIsCoolingDown,
 } from './provider-cooldown';
 import {
+  parseProviderCooldown,
+  projectQueueAdmissionStatus,
+  QUEUE_ADMISSION_READ_LIMIT,
+} from './queue-admission-status';
+import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
   type RequestBinding,
   type RequestTransactionState,
+  type RunTransactionState,
   selectFairQueuedRun,
   StoreConflict,
   type TaskListCursor,
@@ -323,10 +331,11 @@ export class FirestoreStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
-    decide(state: {
-      task: VersionedTask | undefined;
-      run: Run | undefined;
-    }): Decision | Refusal;
+    queueEligibilityPipelines?: readonly string[];
+    shouldReadQueueEligibility?: (
+      state: Pick<RunTransactionState, 'task' | 'run'>,
+    ) => boolean;
+    decide(state: RunTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     const runRef = this.#runRef(input.runId);
     return this.#firestore.runTransaction(async (tx) => {
@@ -341,7 +350,43 @@ export class FirestoreStore implements OrchestratorStore {
         taskSnapshot === undefined || !taskSnapshot.exists
           ? undefined
           : taskDocSchema.parse(taskSnapshot.data());
-      const outcome = input.decide({ task, run });
+      let queueEligibility: RunTransactionState['queueEligibility'];
+      if (
+        input.queueEligibilityPipelines !== undefined &&
+        input.shouldReadQueueEligibility?.({ task, run }) !== false
+      ) {
+        const pipelines = [...new Set(input.queueEligibilityPipelines)];
+        const [cooldowns, live] = await Promise.all([
+          Promise.all(
+            pipelines.map((pipeline) =>
+              tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+            ),
+          ),
+          Promise.all(
+            pipelines.flatMap((pipeline) =>
+              LIVE_STATES.map((state) =>
+                tx.get(
+                  this.#runs
+                    .where('pipeline', '==', pipeline)
+                    .where('state', '==', state),
+                ),
+              ),
+            ),
+          ),
+        ]);
+        queueEligibility = {
+          cooldowns: Object.fromEntries(
+            pipelines.map((pipeline, index) => [
+              pipeline,
+              cooldowns[index]?.data(),
+            ]),
+          ),
+          liveRuns: live.flatMap((snapshot) =>
+            snapshot.docs.map((doc) => runSchema.parse(doc.data())),
+          ),
+        };
+      }
+      const outcome = input.decide({ task, run, queueEligibility });
       if (isRefusal(outcome)) return outcome;
 
       if (taskRef === undefined) {
@@ -667,11 +712,10 @@ export class FirestoreStore implements OrchestratorStore {
     // than require one, reuse the per-live-state equality queries
     // `listLiveRuns` already runs (each covered by Firestore's automatic
     // single-field index) and apply the lease-expiry filter client-side.
-    return (await this.listLiveRuns()).filter(
-      (run) =>
-        run.queue?.state !== 'queued' &&
-        Date.parse(run.leaseExpiresAt) <= cutoff,
-    );
+    return (await this.listLiveRuns()).filter((run) => {
+      const deadline = runRecoveryDeadline(run);
+      return deadline !== undefined && Date.parse(deadline) <= cutoff;
+    });
   }
 
   async listLiveRuns(): Promise<Run[]> {
@@ -698,6 +742,56 @@ export class FirestoreStore implements OrchestratorStore {
     return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
   }
 
+  async readQueueAdmissionStatus(input: {
+    pipelines: readonly string[];
+    now: string;
+  }) {
+    const pipelines = [...new Set(input.pipelines)];
+    return this.#firestore.runTransaction(
+      async (tx) => {
+        const [snapshots, cooldownSnapshots] = await Promise.all([
+          Promise.all(
+            LIVE_STATES.map((state) =>
+              tx.get(
+                this.#runs
+                  .where('state', '==', state)
+                  .limit(QUEUE_ADMISSION_READ_LIMIT + 1),
+              ),
+            ),
+          ),
+          Promise.all(
+            pipelines.map((pipeline) =>
+              tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+            ),
+          ),
+        ]);
+        if (
+          snapshots.some(
+            (snapshot) => snapshot.size > QUEUE_ADMISSION_READ_LIMIT,
+          )
+        )
+          throw new Error('Queue admission snapshot exceeds read bound');
+        const cooldowns = new Map();
+        for (const [index, pipeline] of pipelines.entries()) {
+          const cooldown = parseProviderCooldown(
+            cooldownSnapshots[index]?.data(),
+            pipeline,
+          );
+          if (cooldown !== undefined) cooldowns.set(pipeline, cooldown);
+        }
+        return projectQueueAdmissionStatus(
+          snapshots.flatMap((snapshot) =>
+            snapshot.docs.map((doc) => runSchema.parse(doc.data())),
+          ),
+          cooldowns,
+          pipelines,
+          input.now,
+        );
+      },
+      { readOnly: true },
+    );
+  }
+
   async enqueueRun(input: { runId: string; now: string }): Promise<void> {
     const ref = this.#runRef(input.runId);
     await this.#firestore.runTransaction(async (tx) => {
@@ -711,6 +805,18 @@ export class FirestoreStore implements OrchestratorStore {
         updatedAt: input.now,
       });
     });
+  }
+
+  async listCredentialOperations(input: {
+    now: string;
+    limit: number;
+  }): Promise<Run[]> {
+    const snapshot = await this.#runs
+      .where('credentialOperation.recoverAfter', '<=', input.now)
+      .orderBy('credentialOperation.recoverAfter')
+      .limit(input.limit)
+      .get();
+    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
   }
 
   async claimQueuedRun(input: {
@@ -780,6 +886,7 @@ export class FirestoreStore implements OrchestratorStore {
         queue: {
           state: 'claimed',
           claimedAt: input.now,
+          startDeadlineAt: runStartDeadlineAt(input.now),
           claimedBy: input.claimedBy,
           ...(input.claimedBySubject === undefined
             ? {}
@@ -812,6 +919,18 @@ export class FirestoreStore implements OrchestratorStore {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit);
   }
+  async readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>> {
+    const records = await Promise.all(
+      pipelines.map((pipeline) =>
+        this.#providerCooldowns.doc(encodeURIComponent(pipeline)).get(),
+      ),
+    );
+    return Object.fromEntries(
+      pipelines.map((pipeline, index) => [pipeline, records[index]?.data()]),
+    );
+  }
 
   async releaseQueuedRunClaim(input: {
     runId: string;
@@ -827,6 +946,7 @@ export class FirestoreStore implements OrchestratorStore {
       const run = runSchema.parse(snapshot.data());
       if (
         !isLive(run.state) ||
+        run.credentialOperation !== undefined ||
         run.queue?.state !== 'claimed' ||
         run.queue.claimedBy !== input.claimedBy ||
         run.queue.tokenHash !== input.tokenHash

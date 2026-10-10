@@ -35,6 +35,11 @@ import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 
 export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
+  /** Fence journalled credential IO before expiry can admit a successor. */
+  recoverCredentialOperations?: () => Promise<{
+    recovered: string[];
+    unresolved: string[];
+  }>;
   orchestrator: Orchestrator;
   drain: (limit?: number) => Promise<DrainOutboxResult>;
   /** Dispatches `work-session-expiry.yml` for a native item whose open/
@@ -169,6 +174,20 @@ export async function handleWebhookDelivery(
 ): Promise<RouteResult> {
   try {
     const interpreted = interpretDelivery(input);
+    if (interpreted.kind === 'conflict') {
+      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      // Permanent intent conflicts are acknowledged, not retried by Cloud
+      // Tasks. No Work, run, label rewrite, or assignment change is requested.
+      return {
+        status: 200,
+        body: {
+          refused: interpreted.reason,
+          namespace: interpreted.namespace,
+          labels: interpreted.labels,
+          message: interpreted.message,
+        },
+      };
+    }
     if (interpreted.kind === 'ignore') {
       let canceledRunId: string | undefined;
       const closure = githubAnchorClosureFromDelivery(input);
@@ -260,6 +279,9 @@ export async function handleWebhookDelivery(
       requestId: interpreted.requestId,
       params,
       work: interpreted.work,
+      ...(interpreted.labelRouting === undefined
+        ? {}
+        : { labelRouting: interpreted.labelRouting }),
       ...(interpreted.requestBinding === undefined
         ? {}
         : { requestBinding: interpreted.requestBinding }),
@@ -278,7 +300,18 @@ export async function handleWebhookDelivery(
     }
     if (outcome.kind === 'conflict') {
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-      return { status: 200, body: { refused: 'work-spec-mismatch' } };
+      return {
+        status: 200,
+        body:
+          'reason' in outcome
+            ? {
+                refused: outcome.reason,
+                namespace: outcome.namespace,
+                labels: outcome.labels,
+                message: outcome.message,
+              }
+            : { refused: 'work-spec-mismatch' },
+      };
     }
     if (outcome.kind === 'invalid' || outcome.kind === 'forbidden') {
       logger.error(
@@ -311,7 +344,12 @@ export async function handleReconcile(
   deps: OrchestratorRouteDeps,
 ): Promise<RouteResult> {
   try {
+    const credentialRecovery = await deps.recoverCredentialOperations?.();
     const swept = await deps.orchestrator.sweepExpired();
+    // Keep provider-cooldown rerouting in maintenance, outside the executor's
+    // ten-second claim request. Every choice rechecks the requesting grant;
+    // the ordinary claim transaction still enforces the executor grant.
+    const rerouted = await deps.orchestrator.rerouteQueued();
     // One drain owns the whole bounded maintenance pass so its failed-entry
     // exclusion remains effective across all 30 claims. The five-minute
     // ticker continues any larger backlog on its next pass.
@@ -324,8 +362,10 @@ export async function handleReconcile(
     return {
       status: 200,
       body: {
+        ...(credentialRecovery === undefined ? {} : { credentialRecovery }),
         lost: swept.lost.map((run) => run.runId),
         retried: swept.retried,
+        rerouted,
         dispatched: drained.dispatched,
         reported: drained.reported,
         outboxProcessed,

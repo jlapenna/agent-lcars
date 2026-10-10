@@ -65,6 +65,13 @@ func (s consoleQueueExecutorStatus) contentKey() any {
 		active := *s.ActiveRuns
 		s.ActiveRuns = &active
 	}
+	if s.Claims != nil {
+		claims := *s.Claims
+		// An unchanged counter difference needs only the normal heartbeat;
+		// retain the exact sample window on the document that was written.
+		claims.WindowStart, claims.WindowEnd = "", ""
+		s.Claims = &claims
+	}
 	return s
 }
 
@@ -104,24 +111,36 @@ func (g *statusWriteGate) recordWritten(name string, status consoleStatusDocumen
 }
 
 // consoleQueueExecutorStatus is the generic direct-executor health
-// projection. It intentionally has no repository, pipeline, credential, or
-// individual-run fields: durable queue/claim/run lifecycle belongs to the
-// orchestrator Run record, and provider-specific details belong behind the
-// direct-runner adapter.
+// projection. Its additive provider counters are bounded metrics from the
+// claim boundary; durable queue/cooldown state remains in the orchestrator.
+// No credential or individual-run payload is published here.
 //
 // SchemaVersion 2 plus Kind makes this safely distinguishable from the
 // retired scale-set schema (v1), which an older console reader could
 // otherwise mistake this for.
 type consoleQueueExecutorStatus struct {
-	SchemaVersion int       `firestore:"schemaVersion"`
-	Kind          string    `firestore:"kind"`
-	Executor      string    `firestore:"executor"`
-	Ready         bool      `firestore:"ready"`
-	Draining      bool      `firestore:"draining"`
-	ActiveRuns    *int      `firestore:"activeRuns,omitempty"`
-	MaxConcurrent int       `firestore:"maxConcurrent"`
-	UpdatedAt     string    `firestore:"updatedAt"`
-	ExpireAt      time.Time `firestore:"expireAt"`
+	SchemaVersion int                 `firestore:"schemaVersion"`
+	Kind          string              `firestore:"kind"`
+	Executor      string              `firestore:"executor"`
+	Ready         bool                `firestore:"ready"`
+	Draining      bool                `firestore:"draining"`
+	ActiveRuns    *int                `firestore:"activeRuns,omitempty"`
+	MaxConcurrent int                 `firestore:"maxConcurrent"`
+	UpdatedAt     string              `firestore:"updatedAt"`
+	ExpireAt      time.Time           `firestore:"expireAt"`
+	Claims        *consoleClaimWindow `firestore:"claims,omitempty"`
+}
+
+// A bounded difference of the existing successful-claim counters. The exact
+// sampled interval is part of the contract; a restart never pretends to have
+// observed the full preceding fifteen minutes.
+type consoleClaimWindow struct {
+	// Firestore integers are signed; uint64 is rejected even for zero.
+	Claude      int64  `firestore:"claude"`
+	Codex       int64  `firestore:"codex"`
+	OpenCode    int64  `firestore:"opencode"`
+	WindowStart string `firestore:"windowStart"`
+	WindowEnd   string `firestore:"windowEnd"`
 }
 
 // consoleStatusPublisher abstracts the writer for tests and keeps status

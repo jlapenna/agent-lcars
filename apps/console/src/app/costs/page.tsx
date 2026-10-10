@@ -4,7 +4,7 @@ import { cache, Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
-import { getWatchedRepos } from '../../lib/github-client';
+import { getWatchedRepos, repoKey } from '../../lib/github-client';
 import {
   DEFAULT_ARCHIVE_DAYS,
   describeArchiveWindow,
@@ -12,23 +12,28 @@ import {
   parseSessionArchiveQuery,
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
+import { parseCostBudget } from '../../lib/session-spend';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { CostsWorkspace } from './costs-workspace';
 import { LedgerTables } from './ledger-tables';
+import { SpendBreakdowns } from './spend-breakdowns';
 
 // Request-scoped memoization, same reasoning as /sessions': `CostsCount` and
 // `CostsBody` each await from their own Suspense boundary, and this keeps
 // that one Firestore read from being paid twice per page load.
-const getArchive = cache(getSessionArchive);
+const getArchive = cache((query: SessionArchiveQuery) =>
+  getSessionArchive(query, { includeSpend: true }),
+);
 
 interface PageProps {
   searchParams: Promise<{
     days?: string;
     source?: string;
     issue?: string;
+    repo?: string;
   }>;
 }
 
@@ -45,7 +50,7 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
 }
 
 async function CostsBody({ query }: { query: SessionArchiveQuery }) {
-  const { ledger, warnings } = await getArchive(query);
+  const { ledger, warnings, spend } = await getArchive(query);
   const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
 
   return (
@@ -54,6 +59,15 @@ async function CostsBody({ query }: { query: SessionArchiveQuery }) {
         warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
       }
     >
+      {spend && (
+        <SpendBreakdowns
+          spend={spend}
+          budget={parseCostBudget(
+            process.env['AGENT_LCARS_COST_BUDGET_USD'],
+            process.env['AGENT_LCARS_COST_WARNING_PERCENT'],
+          )}
+        />
+      )}
       {hasLedgerData ? (
         <LedgerTables ledger={ledger} />
       ) : (
@@ -79,6 +93,7 @@ function archiveHref(query: SessionArchiveQuery, path: string): string {
   if (query.issueNumber !== undefined) {
     params.set('issue', String(query.issueNumber));
   }
+  if (query.repo) params.set('repo', repoKey(query.repo));
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }

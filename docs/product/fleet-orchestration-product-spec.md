@@ -106,7 +106,7 @@ The core promises:
   returns 202. Deliveries go to the Cloud Tasks queue `dispatch-webhooks`
   (10 concurrent, 100 attempts, 24h, 300s deadline), which calls `/process`.
 - **FL-IN-2 [Shipped]** Interpretation (`orchestrator-ingest.ts`) is a pure
-  function. It returns a run request or an ignore reason: `wrong-repo`,
+  function. It returns a run request, an actionable label conflict, or an ignore reason: `wrong-repo`,
   `malformed-payload`, `unhandled-action`, `anchor-closed`,
   `no-trigger-label`, `no-reply-command`, `untrusted-author`, or
   `unhandled-event`.
@@ -119,9 +119,16 @@ The core promises:
 - **FL-IN-5 [Shipped]** All GitHub-anchored admission goes through one
   boundary, `github-work-admission.ts`. It returns `accepted`, `busy`,
   `duplicate`, `conflict`, `invalid`, `forbidden`, or `not-found`.
-- **FL-IN-6 [Partial]** Each delivery is evaluated on its own. There is no
-  consistency check across an anchor's full label set (for example, two
-  `agent:*` labels) and no stale-label cleanup. See R6.
+- **FL-IN-6 [Shipped]** Label-triggered admission checks the complete delivered
+  anchor label snapshot against the canonical pipeline registry. Multiple
+  choices within the trigger's namespace return `routing-label-conflict`
+  with the namespace, labels, and explicit maintainer resolution guidance;
+  absent/inconsistent snapshots fail closed. `agent:*` and `review:*` are
+  independent, so one of each is valid intent (not a promise of simultaneous
+  runs or different immutable Work pipelines). Replay and concurrent
+  deliveries preserve immutable Work and ownership. The console never
+  rewrites routing labels or removes bot assignment after outcomes. Authorized
+  resolution follows [the label contract](../github-label-contract.md#resolving-ambiguous-routing-intent).
 
 ### 4.2 Pipelines
 
@@ -210,10 +217,16 @@ rule wins:
   `agent-timeout`, `agent-failed`, `verification-failed`, `provider-limit`,
   `worker-control-failed`, `runner-failed`.
 
-`RunResult = {ok, summary ≤4 KiB, ref?, message ≤16 KiB}`. `ref` is set only
-for pull-request outcomes (the PR URL); comment and review outcomes carry no
-ref. `message` is the agent's final turn, shown in the console
-Conversation.
+`RunResult = {ok, summary ≤4 KiB, ref?, relatedRefs?, message ≤16 KiB}`.
+The runner carries the exact bot-authored, attempt-marker-verified PR,
+comment or review permalink through completion into `ref`. Structured
+GitHub park/no-op comments retain their own permalink; a parked partial PR
+retains its PR `ref` and blocker comment in `relatedRefs` (at most one).
+Console outcome, history, deliverable and Conversation links all use
+`safeHttpUrl`. Historical results, missing references, native park/no-op
+files and failed verification have no invented link. Agent final-message
+URLs are never promoted to verified references. `message` is the agent's
+final turn, shown in the console Conversation.
 
 ## 6. Admission, queueing, and execution
 
@@ -263,9 +276,13 @@ Conversation.
   - The Job is created suspended. A per-run token Secret is created, then the
     Job is resumed.
   - `restartPolicy: Never`, `backoffLimit: 0`, a 2h deadline, and a 1-day TTL.
-  - A sweep every 15 minutes deletes orphaned suspended Jobs and prunes
-    finished Jobs, keeping at most five per `max_concurrent` slot within
-    the last 24h.
+  - Normal recovery ticks retire original Jobs only after the existing
+    executor identity confirms that exact claim has settled. Foreground
+    deletion uses UID/resourceVersion preconditions and admission waits for
+    owned Pods to drain. A token refusal or expired live claim is insufficient.
+  - A sweep every 15 minutes prunes finished Jobs, keeping at most five per
+    `max_concurrent` slot within the last 24h. Legacy Secret-less, never-started
+    shells without claim proof retain the guarded two-hour backstop.
 - **FL-EX-3 [Shipped]** Operator controls: `SIGUSR1` toggles drain (stop or
   resume claiming), and `SIGHUP` only revalidates the config. Configuration
   lives in `orchestrator.yml` and is owned by Homelab:
@@ -546,9 +563,17 @@ consumed by every dispatched run in every member repository.
 | R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline, such as 10 minutes, that settles `lost` early            | A failed launch can stall a task for about 2h                                                                                     | P1       |
 | R4  | A priority field on runs (for example `urgent`, `normal`, `background`), honored inside provider-fair selection                      | Scheduled maintenance work and urgent fixes currently share one FIFO                                                              | P1       |
 | R5  | Verify the genuine human Slack reply hop (FL-RC-3) and session continuity on the current Kubernetes backend                          | Historical three-provider continuity and Slack inbound/outbound proofs exist; human Slack reply and current-backend proofs remain | P1       |
-| R6  | Anchor-level label consistency: reject or resolve multiple `agent:*` labels, and clean up stale routing labels after an outcome      | Per-delivery evaluation can leave labels that contradict state                                                                    | P2       |
 | R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit                       | P2       |
 | R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                      | The singleton is a single point of failure                                                                                        | P2       |
+
+R7's explicit opt-in source contract is documented in
+[Lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback).
+[#2198](https://github.com/jlapenna/agent-lcars/issues/2198) tracks delivery and
+real provider-limit qualification separately from local mechanism tests.
+
+The [R8 failover design](../superpowers/specs/2026-10-10-queue-executor-ha-design.md)
+selects server-owned capacity receipts and separates source implementation from
+Homelab fencing/rollout qualification. R8 remains pending those linked gates.
 
 R9 is retired: [#1298](https://github.com/jlapenna/agent-lcars/issues/1298)
 is closed, and the hosted provider workflows whose YAML copies it concerned
@@ -561,7 +586,11 @@ variable remains configuration; registry tests do not validate its live value.
 
 ## 13. Success metrics and SLOs
 
-The SLO targets below are proposed.
+The SLO targets below are proposed. The
+[provider-process observation contract](../provider-process-measurement.md)
+separates admission, queue, claim, bootstrap heartbeat and successful OS spawn.
+Its server-observed process clock is not a model-start or useful-outcome claim;
+missing historical clocks remain unknown.
 
 Use the [measurement contract](../product-lifecycle-metrics.md) for exact
 events, clocks, denominators and unknown handling. The broad definitions
@@ -569,17 +598,22 @@ below are product goals, not currently measured acceptance results:
 `running` can mean queued, raw `ok` includes parks/no-ops, and retained
 claims do not prove provider launch. Never infer those facts from a UI state.
 
-| Metric                      | Definition                                                                                               | Proposed target                    |
-| --------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| Intake latency              | Verified webhook receipt to durable Run admission; receipt join currently unknown                        | p95 < 60s                          |
-| Claim latency               | Queue to retained claim; capacity-eligible/no-cooldown clock currently unknown                           | p95 < 2 min                        |
-| Provider-start latency      | Queue to verified provider invocation; durable start event currently unknown                             | Define after instrumentation       |
-| Evidence coverage           | Independently verified classifications / finished attempts; parks and no-ops classified separately       | > 95%                              |
-| Useful-attempt rate         | Independently verified useful deliverables / settled attempts, not raw `ok`                              | Trend upward; target provisional   |
-| Silent loss                 | Non-queued live runs past execution lease plus one maintenance interval                                  | 0                                  |
-| Outbox health               | `failed` (dead-letter) outbox entries                                                                    | 0 sustained                        |
-| Human-touch rate            | Unique admitted task cohort needing a verified park/manual action before merge; unresolved tasks unknown | Track; reduce                      |
-| Cost per merged deliverable | Actual joined session billing, all retries included / independently verified distinct merged PRs         | Track; unknown prices stay unknown |
+| Metric                      | Definition                                                                                                       | Proposed target                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| Intake latency              | Verified webhook receipt to durable Run admission; receipt join currently unknown                                | p95 < 60s                          |
+| Claim latency               | Queue to retained claim; capacity-eligible/no-cooldown clock currently unknown                                   | p95 < 2 min                        |
+| Provider-process latency    | Queue/claim to server-observed OS spawn; durable clock exists, lifecycle export adoption still pending           | Define after qualified observation |
+| Evidence coverage           | Independently verified classifications / finished attempts; parks and no-ops classified separately               | > 95%                              |
+| Useful-attempt rate         | Independently verified useful deliverables / settled attempts, not raw `ok`                                      | Trend upward; target provisional   |
+| Silent loss                 | Non-queued live runs past execution lease plus one maintenance interval                                          | 0                                  |
+| Outbox health               | `failed` (dead-letter) outbox entries                                                                            | 0 sustained                        |
+| Human-touch rate            | Unique admitted task cohort needing a verified park/manual action before merge; unresolved tasks unknown         | Track; reduce                      |
+| Cost per merged deliverable | [Selected cumulative session cost ÷ unique known-merged PRs](../cost-ledger.md), by pipeline; not joined billing | Track; unknown prices stay unknown |
+
+The Costs view currently exports the selected cumulative-session proxy above.
+The eventual product goal is actual joined session billing (including retries)
+per independently verified distinct merged PR. Neither the proxy nor this
+lifecycle snapshot proves that billing join or a useful-outcome rate.
 
 ## 14. Open questions
 

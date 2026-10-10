@@ -1,7 +1,5 @@
 import 'server-only';
 
-import crypto from 'node:crypto';
-
 import {
   formatAttemptId,
   parseRunGeneration,
@@ -14,6 +12,7 @@ import {
   type Orchestrator,
   type OrchestratorStore,
   type Run,
+  runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
 import { runsContract, workPayloadSchema } from '@agent-lcars/work';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
@@ -21,6 +20,12 @@ import { implement, ORPCError } from '@orpc/server';
 
 import { anchorTarget } from './anchor-target';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
+import {
+  persistCodexCredential,
+  releaseCodexCredentialLease,
+  renewCodexCredentialLease,
+  restoreCodexCredential,
+} from './codex-credential-operations';
 import { consoleUrl } from './deployment';
 import type { GithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type {
@@ -136,7 +141,10 @@ async function requireRunToken(
   if (!isLive(run.state)) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run is no longer live' });
   }
-  if (Date.parse(run.leaseExpiresAt) <= context.now().getTime()) {
+  if (
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+    context.now().getTime()
+  ) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
   }
   return run;
@@ -168,6 +176,7 @@ function codexAuthError(
     INTERNAL_SERVER_ERROR: (options?: { message?: string }) => Error;
   },
 ): never {
+  if (error instanceof ORPCError) throw error;
   if (error instanceof CodexAuthStoreError) {
     if (error.kind === 'not-found' && errors.NOT_FOUND) {
       throw errors.NOT_FOUND();
@@ -185,114 +194,6 @@ function codexAuthError(
 /** `claim` retry budget for a stale queue entry -- see the loop's own
  *  comment below. */
 const MAX_CLAIM_ATTEMPTS = 5;
-const MAX_CODEX_LEASE_ATTEMPTS = 5;
-
-async function acquireCodexLease(
-  context: RunsContext,
-  run: Run,
-  repository: string,
-): Promise<void> {
-  for (let attempt = 0; attempt < MAX_CODEX_LEASE_ATTEMPTS; attempt++) {
-    const lease = await context.codexAuth.readLease();
-    if (lease === undefined) {
-      try {
-        await context.codexAuth.createLease({
-          runId: run.runId,
-          repository,
-          expiresAt: run.leaseExpiresAt,
-        });
-        return;
-      } catch (error) {
-        if (error instanceof CodexAuthStoreError && error.kind === 'conflict') {
-          continue;
-        }
-        throw error;
-      }
-    }
-    if (lease.runId === run.runId && lease.repository === repository) return;
-
-    // This record is also owned by the hosted GitHub lane, whose run ID is
-    // intentionally not a broker run. Its expiry is therefore the shared
-    // stale-takeover authority; consulting only the broker store would let a
-    // direct runner race a hosted single-use refresh token.
-    if (Date.parse(lease.expiresAt) > context.now().getTime()) {
-      throw new CodexAuthStoreError(
-        'conflict',
-        'Codex subscription authentication is already in use',
-      );
-    }
-    try {
-      await context.codexAuth.takeLease({
-        runId: run.runId,
-        repository,
-        expiresAt: run.leaseExpiresAt,
-        expectedGeneration: lease.generation,
-      });
-      return;
-    } catch (error) {
-      if (error instanceof CodexAuthStoreError && error.kind === 'conflict') {
-        continue;
-      }
-      throw error;
-    }
-  }
-  throw new CodexAuthStoreError(
-    'conflict',
-    'Codex subscription lease changed concurrently',
-  );
-}
-
-async function requireCodexLeaseOwner(
-  context: RunsContext,
-  runId: string,
-  repository: string,
-): Promise<void> {
-  const lease = await context.codexAuth.readLease();
-  if (lease?.runId !== runId || lease.repository !== repository) {
-    throw new CodexAuthStoreError(
-      'conflict',
-      'Codex subscription lease is not owned by this run',
-    );
-  }
-}
-
-/** Renew the shared credential lease with the QueueExecutor run's freshly
- * renewed expiry, so no executor may continue using the rotating credential
- * after its record becomes stealable. */
-async function renewCodexLease(
-  context: RunsContext,
-  runId: string,
-  expiresAt: string,
-): Promise<void> {
-  for (let attempt = 0; attempt < MAX_CODEX_LEASE_ATTEMPTS; attempt++) {
-    const lease = await context.codexAuth.readLease();
-    if (lease?.runId !== runId) {
-      throw new CodexAuthStoreError(
-        'conflict',
-        'Codex subscription lease is not owned by this run',
-      );
-    }
-    try {
-      await context.codexAuth.takeLease({
-        runId,
-        repository: lease.repository,
-        expiresAt,
-        expectedGeneration: lease.generation,
-      });
-      return;
-    } catch (error) {
-      if (error instanceof CodexAuthStoreError && error.kind === 'conflict') {
-        continue;
-      }
-      throw error;
-    }
-  }
-  throw new CodexAuthStoreError(
-    'conflict',
-    'Codex subscription lease changed concurrently',
-  );
-}
-
 /**
  * `complete`'s drain, guarded -- unlike every other mutating route's own
  * unguarded `await ...drain()` (`work-router.ts`'s cancel/redispatch,
@@ -534,19 +435,54 @@ export const runsRouter = os.router({
 
   heartbeat: os.heartbeat.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
-    const renewed = await context.orchestrator.renew(run.runId);
-    if (isRefusal(renewed)) {
-      return { runId: run.runId, expiresAt: run.leaseExpiresAt };
-    }
-    const expiresAt = renewed.run?.leaseExpiresAt ?? run.leaseExpiresAt;
-    if (run.pipeline === 'codex') {
-      await renewCodexLease(context, run.runId, expiresAt);
-    }
+    // Preserve the token that authenticated this callback through the atomic
+    // Task+Run decision. A same-run release/reclaim changes this fingerprint.
+    const renew = async () => {
+      const renewed = await context.orchestrator.renew(
+        run.runId,
+        run.queue?.tokenHash ?? '',
+        input.providerProcessStarted,
+      );
+      if (isRefusal(renewed))
+        throw new ORPCError('UNAUTHORIZED', {
+          message: 'Run heartbeat refused',
+        });
+      return renewed.run ?? run;
+    };
+    const renewed =
+      run.pipeline === 'codex'
+        ? await renewCodexCredentialLease(context, run, renew)
+        : await renew();
+    const expiresAt = renewed.leaseExpiresAt;
     return {
       runId: run.runId,
       expiresAt,
     };
   }),
+
+  claimStatus: executor.claimStatus.handler(
+    async ({ input, context, errors }) => {
+      const run = await context.store.readRun(input.runId);
+      if (run === undefined) throw errors.NOT_FOUND();
+      if (
+        !context.principal.pipelines.includes(run.pipeline) ||
+        run.queue?.claimedBySubject !== claimantSubject(context.principal) ||
+        run.queue.claimedBy !== input.runner ||
+        run.queue.tokenHash !== input.claimFingerprint
+      ) {
+        throw errors.FORBIDDEN();
+      }
+      // Expiry is not retirement: a heartbeat admitted before its deadline may
+      // still commit. Only irreversible settlement permits executor cleanup.
+      // The fingerprint also distinguishes same-millisecond release/reclaims.
+      return {
+        runId: run.runId,
+        runner: input.runner,
+        claimFingerprint: input.claimFingerprint,
+        status: isLive(run.state) ? ('live' as const) : ('settled' as const),
+      };
+    },
+  ),
 
   exit: executor.exit.handler(async ({ input, context, errors }) => {
     const run = await context.store.readRun(input.runId);
@@ -567,7 +503,18 @@ export const runsRouter = os.router({
     const settled = await context.orchestrator.executorExited(run.runId, {
       subject: claimantSubject(context.principal),
       runner: input.runner,
+      ...(input.claimFingerprint === undefined
+        ? {}
+        : { claimFingerprint: input.claimFingerprint }),
     });
+    if (
+      isRefusal(settled) &&
+      settled.reason === 'credential-operation-pending'
+    ) {
+      throw new ORPCError('CONFLICT', {
+        message: 'Credential operation pending recovery',
+      });
+    }
     if (isRefusal(settled) && settled.reason === 'not-claimant') {
       logger.warn(
         'agent-lcars: refused exit report for run %s from %s (runner %s): not its claimant',
@@ -589,7 +536,7 @@ export const runsRouter = os.router({
     );
     if (run.pipeline === 'codex') {
       try {
-        await context.codexAuth.releaseLease(run.runId);
+        await releaseCodexCredentialLease(context, run);
       } catch (error) {
         // The lease still expires on its own; never fail the loss report.
         logger.error(
@@ -614,40 +561,70 @@ export const runsRouter = os.router({
         ? (await context.store.readTask(run.task))?.task
         : undefined;
     const target = anchorTarget(run, task);
-    // Reuses orchestrator-routes.ts's own outcome-vocabulary mapping
-    // (OK_OUTCOMES, the pull-request ref shape) rather than a smaller
-    // local reimplementation -- one mapping, one place it can drift.
+    // The shared outcome mapper validates exact references against this
+    // stored run's anchor and mode, not caller-supplied identity metadata.
     const result = toRunResult(
       target.repo,
       input.outcome,
       input.outcomeReference,
       input.message,
+      { issue: target.issue, mode: run.params?.mode },
     );
-    try {
-      const settled = await context.orchestrator.report(run.runId, result);
-      // #1799: this is the route that CREATES the `report-outcome` outbox
-      // entry (`orchestrator.report`'s `settle`), but it used to be the
-      // one mutating route that never drained it -- every other one
-      // (`work-router.ts`'s cancel/redispatch, `work-reply.ts`,
-      // `work-mint.ts`, `github-work-admission.ts`,
-      // `orchestrator-routes.ts`'s reconcile) does. The outcome comment
-      // and `status:needs-human` label then waited on an unrelated
-      // webhook delivery or the 30-minute reconcile tick instead of
-      // landing right away. Only on a settled report: a refusal (stale
-      // lease, already-settled run) created no new entry, so there is
-      // nothing fresh for this drain to deliver.
-      if (!isRefusal(settled)) {
-        await drainAfterCompletion(context, run.runId);
-      }
-      return {
-        runId: run.runId,
-        state: isRefusal(settled) ? settled.reason : 'finished',
-      };
-    } finally {
-      if (run.pipeline === 'codex') {
-        await context.codexAuth.releaseLease(run.runId);
+    const settled = await context.orchestrator.report(
+      run.runId,
+      result,
+      run.queue?.tokenHash ?? '',
+    );
+    if (
+      isRefusal(settled) &&
+      settled.reason === 'credential-operation-pending'
+    ) {
+      throw new ORPCError('CONFLICT', {
+        message: 'Credential operation pending recovery',
+      });
+    }
+    if (isRefusal(settled) && settled.reason === 'not-claimant') {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Run claim changed' });
+    }
+    if (
+      !isRefusal(settled) &&
+      settled.run?.credentialPendingResult !== undefined
+    ) {
+      return { runId: run.runId, state: 'completion-pending' };
+    }
+    // #1799: this is the route that CREATES the `report-outcome` outbox
+    // entry (`orchestrator.report`'s `settle`), but it used to be the
+    // one mutating route that never drained it -- every other one
+    // (`work-router.ts`'s cancel/redispatch, `work-reply.ts`,
+    // `work-mint.ts`, `github-work-admission.ts`,
+    // `orchestrator-routes.ts`'s reconcile) does. The outcome comment
+    // and `status:needs-human` label then waited on an unrelated
+    // webhook delivery or the 30-minute reconcile tick instead of
+    // landing right away. Only on a settled report: a refusal (stale
+    // lease, already-settled run) created no new entry, so there is
+    // nothing fresh for this drain to deliver.
+    // A terminal claim cannot be released/reclaimed. Its transaction snapshot
+    // can safely authorize cleanup of that same credential lease even when
+    // a concurrent cancel/report settled it first. Live refusals and changed
+    // fingerprints never release another attempt's credential ownership.
+    const terminalSameClaim =
+      isRefusal(settled) &&
+      settled.existingRun !== undefined &&
+      !isLive(settled.existingRun.state) &&
+      settled.existingRun.queue?.tokenHash === run.queue?.tokenHash;
+    if (!isRefusal(settled) || terminalSameClaim) {
+      try {
+        if (!isRefusal(settled)) await drainAfterCompletion(context, run.runId);
+      } finally {
+        if (run.pipeline === 'codex') {
+          await releaseCodexCredentialLease(context, run);
+        }
       }
     }
+    return {
+      runId: run.runId,
+      state: isRefusal(settled) ? settled.reason : 'finished',
+    };
   }),
 
   checkoutToken: os.checkoutToken.handler(async ({ input, context }) => {
@@ -719,82 +696,21 @@ export const runsRouter = os.router({
 
   codexAuth: os.codexAuth.handler(async ({ input, context, errors }) => {
     const { run, repository } = await requireCodexRun(context, input.runId);
-    let acquired = false;
     try {
-      await acquireCodexLease(context, run, repository);
-      acquired = true;
-      return await context.codexAuth.read();
+      return await restoreCodexCredential(context, run, repository);
     } catch (error) {
-      if (acquired) await context.codexAuth.releaseLease(run.runId);
       return codexAuthError(error, errors);
     }
   }),
 
   persistCodexAuth: os.persistCodexAuth.handler(
     async ({ input, context, errors }) => {
-      const { repository } = await requireCodexRun(context, input.runId);
-      let persisted = false;
-      let result:
-        | { status: 'skipped-burned' }
-        | { status: 'unchanged' }
-        | { status: 'updated' }
-        | undefined;
-      let operationError: unknown;
+      const { run, repository } = await requireCodexRun(context, input.runId);
       try {
-        await requireCodexLeaseOwner(context, input.runId, repository);
-
-        // #1192: a Codex process that positively reported one of the three
-        // known refresh-failure signatures must never advance the stored
-        // lineage. The direct runner derives this narrow enum from trusted
-        // Codex failure events/stderr; the broker makes the refusal
-        // authoritative before any GCS write.
-        if (input.authFailure !== undefined) {
-          result = { status: 'skipped-burned' };
-        } else {
-          const bytes = Buffer.from(input.authBase64, 'base64');
-          const endSha256 = crypto
-            .createHash('sha256')
-            .update(bytes)
-            .digest('hex');
-          if (endSha256 === input.restoredSha256) {
-            result = { status: 'unchanged' };
-          } else {
-            await context.codexAuth.replace({
-              expectedGeneration: input.generation,
-              authBase64: input.authBase64,
-            });
-            persisted = true;
-            result = { status: 'updated' };
-          }
-        }
+        return await persistCodexCredential(context, run, repository, input);
       } catch (error) {
-        operationError = error;
+        return codexAuthError(error, errors);
       }
-      try {
-        await context.codexAuth.releaseLease(input.runId);
-      } catch (error) {
-        // Once the replacement is durable, a best-effort delete cannot make
-        // that successful rotation look like a 500/no-deliverable. If the
-        // operation failed, retain that operation's original response rather
-        // than letting cleanup mask it.
-        if (persisted || operationError !== undefined) {
-          logger.error('agent-lcars: failed to release Codex auth lease', {
-            runId: input.runId,
-            error,
-          });
-        } else {
-          return codexAuthError(error, errors);
-        }
-      }
-      if (operationError !== undefined)
-        return codexAuthError(operationError, errors);
-      if (result === undefined) {
-        return codexAuthError(
-          new Error('Codex credential persistence produced no result'),
-          errors,
-        );
-      }
-      return result;
     },
   ),
 });

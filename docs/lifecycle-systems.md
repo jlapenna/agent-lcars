@@ -26,8 +26,77 @@ available through Git history.
 5. A lease is renewed while the run is live. When a worker terminates
    without reporting, the QueueExecutor reports the exit and the run is
    settled `lost` at once; reconciliation settles expired leases as the
-   backstop. Both perform bounded retry; an exhausted retry budget parks the
+   backstop. Claims that never deliver a first heartbeat have a separate
+   fifteen-minute startup deadline (normally settled within twenty minutes
+   by the five-minute maintenance tick), followed by the same bounded retry.
+   Normal executor recovery retires the exact settled claim's original Job
+   with guarded foreground deletion; admission waits for its owned Pods to
+   drain. Expiry alone is not deletion authority. Both perform bounded retry; an exhausted retry budget parks the
    task for manual action.
+
+## Explicit provider fallback
+
+Fallback is opt in: Work `spec.fallbackPipelines` names ordered alternatives;
+reply and redispatch may override the list for one request (`[]` disables it).
+Omission preserves the existing provider and label selection. New work's picker
+and `lcars work create/redispatch --fallback-pipelines codex,opencode` expose the
+same contract; `--fallback-pipelines none` disables an inherited list.
+
+Admission intersects the list with the authenticated principal's pipeline
+grant. A failed `provider-limit` report can atomically settle its attempt,
+retain the limited provider's cooldown and mint a fresh authorized successor.
+It prefers an available authorized alternative. When all remaining alternatives
+are temporarily occupied or cooling down, the first authorized unattempted
+alternative remains a fresh queued intent; ordinary claim ceilings and cooldowns
+hold it until it can run. Missing opt-in, revoked authority or exhausted
+alternatives still settle without a successor.
+Claimed Codex terminal transitions reserve exact cleanup authority in the same
+transaction as the original result, successor and outbox. Completion handlers
+reload that reservation under the authenticated claim fingerprint before
+retiring its credential lease; they do not reserve a second cleanup operation
+from the pre-settlement snapshot. A result accepted during credential IO keeps
+its original acceptance time. Exact operation, fingerprint and mutation-sequence
+proof settle it through the same fallback owner with current grants and queue
+eligibility, even when recovery occurs after the original execution deadline.
+Maintenance can similarly replace an exact unclaimed queued attempt blocked by
+another run's cooldown; it does not fabricate an execution failure. Each
+decision rechecks current operator scope, repository admission, any signed OIDC
+repository restriction, provider cooldowns and serialized provider occupancy.
+The ordinary queue claim still enforces the executor's grant and provider
+ceilings. Rerouting runs in a bounded maintenance batch outside the executor's
+claim deadline; deferred, claimed and unavailable work stays untouched.
+
+Run provenance records the original intent, predecessor, triggering failure
+and attempted providers. Alternatives are tried deterministically without
+cycles, and cross-provider successors drop session/transcript resume artifacts
+while retaining the human request and context. Work/task/conversation views
+and outcome delivery identify fresh fallback attempts. Source tests and local
+emulator proof qualify this mechanism; protected CI, normal deployment and a
+real provider-limit journey remain separate delivery and runtime gates.
+
+## Console acknowledgement and maintenance
+
+A Console merge, issue close, or needs-human label cleanup acknowledges its
+GitHub mutation after the authoritative anchor projection refresh completes.
+These writes do not require a fleet lease sweep. Work admission still uses its
+transactional dispatch outbox; closing an anchor is fenced by the close webhook
+and the QueueExecutor claim-time lifecycle check.
+
+The existing `work.cron`-authorized `/api/work/v1/maintenance/tick` owns unrelated
+lease expiry and durable outbox retry. A failed or held maintenance pass cannot
+delay a successful merge acknowledgement. Pending entries and expired drain
+leases remain eligible for the next five-minute tick; no request-lifetime
+background promise carries required work.
+
+Successful merges emit one sanitized phase summary: `githubMutationMs` covers
+approval plus squash merge, `projectionRefreshMs` covers the authoritative
+refresh, and `maintenanceMs: 0` records that maintenance is outside the request.
+Durations use a monotonic clock and saturate at 300,000 ms; the summary contains
+no repository, anchor, actor, provider response, or error text. The hermetic
+Inbox journey also records click-to-visible-success separately. These are action
+acknowledgement measurements, distinct from #2201's navigation-to-ready phone
+p95 contract; compare each milestone against itself under the same fixture and
+profile, and retain the 20-second assertion allowance until latency is qualified.
 
 ## Code map
 

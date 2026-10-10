@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { AGENT_LABELS, REVIEW_LABELS } from '@agent-lcars/dispatch-contracts';
 import {
   decidedRun,
   isRefusal,
@@ -10,9 +11,15 @@ import {
 } from '@agent-lcars/orchestrator';
 import { type WorkPayload, workPayloadSchema } from '@agent-lcars/work';
 
+import {
+  checkGithubLabelRouting,
+  type GithubLabelRouting,
+  type RoutingLabelConflict,
+} from './github-routing-labels';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import { normalizeGithubWorkPayload } from './work-from-github';
 import { forbiddenReason, type GrantsPrincipal, sameSpec } from './work-mint';
+import { authorizeProviderFallback } from './work-provider-fallback';
 
 /** The one internal admission boundary for a GitHub issue or pull-request
  * anchor. HTTP, webhook, and console callers prepare their own identity and
@@ -28,6 +35,9 @@ export interface GithubWorkAdmissionInput {
   /** Always passed, including a Retry of an existing task: a GitHub anchor
    * never relies on a caller default for its target or pipeline. */
   work: WorkPayload;
+  /** Present only for label-triggered requests; validate again at the one
+   * admission boundary before any durable request or executor dispatch. */
+  labelRouting?: GithubLabelRouting;
   /** Work API callers are additionally constrained by their signed GitHub
    * Actions repository and their ordinary Work grant. Webhook and console
    * callers have already established their own admission identity. */
@@ -41,6 +51,7 @@ export interface GithubWorkRedispatchInput {
   anchor: TaskId;
   requestId: string;
   params: Record<string, string>;
+  fallbackPipelines?: readonly string[];
   authorization: {
     sourceRepository?: string;
     grantsPrincipal: GrantsPrincipal;
@@ -52,6 +63,7 @@ export type GithubWorkAdmissionOutcome =
   | { kind: 'busy'; runId: string }
   | { kind: 'duplicate'; runId: string }
   | { kind: 'conflict'; message: string }
+  | RoutingLabelConflict
   | { kind: 'invalid'; message: string }
   | { kind: 'forbidden'; message: string };
 
@@ -108,6 +120,31 @@ export async function admitGithubWork(
     if (forbidden !== undefined)
       return { kind: 'forbidden', message: forbidden };
   }
+  if (
+    work.spec.fallbackPipelines?.length &&
+    input.authorization?.grantsPrincipal === undefined
+  )
+    return {
+      kind: 'forbidden',
+      message:
+        'Explicit provider fallback requires an authenticated Work grant',
+    };
+
+  if (input.labelRouting !== undefined) {
+    const conflict = checkGithubLabelRouting(input.labelRouting);
+    if (conflict !== undefined) return conflict;
+    const choices =
+      input.labelRouting.mode === 'implement' ? AGENT_LABELS : REVIEW_LABELS;
+    if (
+      choices.get(input.labelRouting.trigger) !== work.spec.pipeline ||
+      input.labelRouting.mode !== input.params['mode']
+    ) {
+      return {
+        kind: 'invalid',
+        message: 'Label routing must match requested Work and mode',
+      };
+    }
+  }
 
   const outcome = await runtime.orchestrator.request({
     taskId: anchor,
@@ -116,6 +153,17 @@ export async function admitGithubWork(
       ? {}
       : { requestBinding: input.requestBinding }),
     pipeline: work.spec.pipeline,
+    providerFallback:
+      input.authorization?.grantsPrincipal === undefined
+        ? undefined
+        : authorizeProviderFallback(
+            {
+              ...input.authorization.grantsPrincipal,
+              sourceRepository: input.authorization.sourceRepository,
+            },
+            work.spec.pipeline,
+            work.spec.fallbackPipelines,
+          ),
     params: input.params,
     work,
     // This comparison must execute in the store transaction. A standalone
@@ -202,6 +250,14 @@ export async function redispatchGithubWork(
     taskId: anchor,
     requestId: input.requestId,
     pipeline: work.spec.pipeline,
+    providerFallback: authorizeProviderFallback(
+      {
+        ...input.authorization.grantsPrincipal,
+        sourceRepository: input.authorization.sourceRepository,
+      },
+      work.spec.pipeline,
+      input.fallbackPipelines ?? work.spec.fallbackPipelines,
+    ),
     params: input.params,
   });
   if (isRefusal(outcome)) {

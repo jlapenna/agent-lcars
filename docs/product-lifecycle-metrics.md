@@ -67,8 +67,11 @@ All names below have prefix `lcars_product_`.
 
 - `provider_start`: denominator retained claims in the hour. Neither a claim,
   Kubernetes Job creation, a bootstrap heartbeat, nor `running` proves the
-  provider began. A future measurement needs a durable provider-invocation
-  event bound to exact run/claim identity, with a server observation clock.
+  provider began. The [provider-process contract](provider-process-measurement.md)
+  now retains `Run.queue.providerProcessStartedAt`, a server observation of
+  successful OS spawn bound to the run/claim identity. This snapshot does not
+  yet consume that clock; its `provider_start` series remains unknown. OS spawn
+  is not authentication, model execution, or independently verified usefulness.
 - `verified_evidence`: denominator finished runs in the hour. The ledger has
   a reported outcome but not the artifact verifier result/version/exact
   attempt marker and its durable verification time. Parks and no-ops require

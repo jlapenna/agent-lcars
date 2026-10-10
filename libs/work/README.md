@@ -35,6 +35,34 @@ not counters or proof that a provider started. Exact clocks, unknown facts
 and the unapplied Homelab monitoring handoff live in
 [`product-lifecycle-metrics.md`](../../docs/product-lifecycle-metrics.md).
 
+## Replying from the CLI
+
+```bash
+lcars work reply <id> --text 'Continue with this design.' --request-id turn-2
+lcars work reply <id> --text-file ./reply.txt --pipeline codex --fresh
+```
+
+Supply exactly one of `--text` or `--text-file`. Replies are bounded to
+16,384 characters; file input must be a regular UTF-8 file and is read with
+a bounded buffer. `--pipeline` requests a provider allowed by the caller's
+current grant. `--fresh` disables resume; otherwise the server selects a
+resumable session from this item's own runs, or admits a fresh session.
+
+The CLI prints a request key before sending. Keep it and use `--request-id`
+with the same input to retry a lost response. Keys are scoped to the item
+and authenticated principal. A replay returns the original admitted run,
+even during execution or after newer rounds; changing text, an explicitly
+selected pipeline, or the fresh/resume choice under that key returns a
+conflict. Use a new key for a new human turn. Callers that omit a key get a
+generated ULID. The optional API field is `requestId`.
+
+Success prints the immutable `admittedRunId` and whether resume or a fresh
+session was requested. Admission does not prove an executor has started.
+The API records the verified principal and ingress channel, rather than
+accepting either from CLI input. Invalid input, busy work, and denied grants
+exit nonzero. Authentication uses the bearer transport described above;
+a failed bearer never falls back to a console cookie.
+
 ## Creating items from GitHub Actions
 
 `.github/workflows/work-create.yml` is a `workflow_dispatch` surface for
@@ -82,3 +110,38 @@ generic OIDC POST transport with
 `endpoint=https://lcars.jlapenna.net/api/work/v1/dispatches/github` and
 `audience=agent-lcars-work`. The composite does not interpret this API's
 payload or response; the generated OpenAPI contract is authoritative.
+
+## Schedule edits and occurrence admission
+
+Schedule evaluation uses five-field UTC cron expressions. Views include a
+configuration `revision`, optional `nextDueAt` (UTC), and `disabledReason`.
+Read the current revision, then submit it as `expectedRevision` with `PATCH
+/schedules/{id}`, `DELETE /schedules/{id}`, or either enable/disable POST.
+This required field also applies to existing toggle clients; a missing field
+returns 400, while a stale revision returns 409. `PUT` still creates a new or
+identical schedule; it cannot edit or resurrect a deleted ID.
+
+An operator needs `work.operator` and a pipeline/repository grant to submit
+valid new work. Enabling also checks the creator's current grant. The creator
+can disable or delete an invalid/revoked schedule; another operator requires
+a grant covering the stored configuration. Repairs validate the replacement
+spec and cron before enabling it.
+
+Schedule mutations and tick admission use the same atomic schedule-document
+owner. Admission freezes the spec and creator in `pendingTick` before minting
+its deterministic item. Edits affect future admissions and preserve settled
+watermarks. Disable/delete stop new admissions; a previously admitted
+occurrence may still finish, including after a crash. Deletion retains a
+hidden tombstone so stale reads and idempotent creates cannot revive it.
+
+Unexpected mint/store failures retain pending work for retry. A permanently
+invalid or revoked occurrence can close future admission for its slot:
+`lastClosedSlotAt` is a separate monotonic floor, not evidence of a successful
+mint or guaranteed cancellation. Work admitted by a concurrent earlier tick
+may still execute. Future slots must follow both this floor and `lastSlotAt`;
+`lastItemId` and `lastSlotAt` describe successful mint settlement. Settlement
+checks the full frozen reservation and cannot consume a newer reservation or
+undo an operator edit. Revoked retries first reconcile already-created work.
+
+The console displays the next occurrence in UTC and the browser's explicitly
+labeled local time zone. Local display never changes cron evaluation.

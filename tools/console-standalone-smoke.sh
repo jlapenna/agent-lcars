@@ -22,11 +22,20 @@ fi
 
 smoke_dir="$(mktemp -d)"
 server_pid=''
-cleanup() {
+stop_server() {
   if [ -n "$server_pid" ]; then
     kill "$server_pid" 2>/dev/null || true
+    for _ in {1..20}; do
+      if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+      sleep 0.1
+    done
+    kill -KILL "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
+    server_pid=''
   fi
+}
+cleanup() {
+  stop_server
   rm -rf "$smoke_dir"
 }
 trap cleanup EXIT
@@ -53,13 +62,17 @@ copied_server_dir="$smoke_dir/standalone/dist/apps/console/.next/server"
 cp tools/console-standalone-externals.mjs "$copied_server_dir/"
 timeout 60 env -u NODE_PATH node "$copied_server_dir/console-standalone-externals.mjs"
 
-smoke_port="$((43000 + RANDOM % 10000))"
-smoke_url="http://127.0.0.1:${smoke_port}"
-
 # Generate an unregistered key solely for the boot parser; never persist it.
 smoke_app_key="$(node -e 'process.stdout.write(require("node:crypto").generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } }).privateKey)')"
 
-env -u NODE_PATH \
+# Next's generated standalone launcher does not support PORT=0. Retry only
+# confirmed bind collisions, with one shared startup budget across candidates.
+startup_deadline=$((SECONDS + 30))
+status=''
+for attempt in {1..5}; do
+  smoke_port="$((43000 + RANDOM % 10000))"
+  smoke_url="http://127.0.0.1:${smoke_port}"
+  env -u NODE_PATH \
 AGENT_LCARS_APP_CLIENT_ID=standalone-smoke-app \
 AGENT_LCARS_APP_PRIVATE_KEY="$smoke_app_key" \
 AGENT_LCARS_WORK_AUDIENCE=agent-lcars-work \
@@ -86,27 +99,39 @@ node "$smoke_dir/standalone/apps/console/server.js" \
   >"$smoke_dir/server.log" 2>&1 &
 server_pid=$!
 
-status=''
-for _ in $(seq 1 30); do
-  if ! kill -0 "$server_pid" 2>/dev/null; then
-    break
+  while [ "$SECONDS" -lt "$startup_deadline" ]; do
+    if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+    # An unrelated listener can return 401 while our child has not bound its
+    # port. Probe only after this attempt's own Next readiness signal.
+    if grep -q 'Ready in ' "$smoke_dir/server.log"; then
+      if status="$(curl --silent --connect-timeout 1 --max-time 2 \
+        --output "$smoke_dir/response.json" \
+        --write-out '%{http_code}' \
+        --request POST \
+        --header 'Content-Type: application/json' \
+        --header 'X-GitHub-Event: ping' \
+        --header 'X-GitHub-Delivery: 00000000-0000-4000-8000-000000000000' \
+        --header 'X-Hub-Signature-256: sha256=invalid' \
+        --data '{"zen":"standalone-smoke"}' \
+        "$smoke_url/api/control-plane/webhook")"; then
+        if [ "$status" = 401 ] && kill -0 "$server_pid" 2>/dev/null; then break; fi
+      fi
+      status=''
+    fi
+    sleep 1
+  done
+  if [ "$status" = 401 ]; then break; fi
+  if ! kill -0 "$server_pid" 2>/dev/null &&
+    grep -Fq "listen EADDRINUSE: address already in use 127.0.0.1:${smoke_port}" "$smoke_dir/server.log" &&
+    [ "$attempt" -lt 5 ] && [ "$SECONDS" -lt "$startup_deadline" ]; then
+    echo "Standalone smoke port occupied; retrying owned boot ($attempt/5)."
+    stop_server
+    continue
   fi
-  status="$(curl --silent --output "$smoke_dir/response.json" \
-    --write-out '%{http_code}' \
-    --request POST \
-    --header 'Content-Type: application/json' \
-    --header 'X-GitHub-Event: ping' \
-    --header 'X-GitHub-Delivery: 00000000-0000-4000-8000-000000000000' \
-    --header 'X-Hub-Signature-256: sha256=invalid' \
-    --data '{"zen":"standalone-smoke"}' \
-    "$smoke_url/api/control-plane/webhook" || true)"
-  if [ "$status" = 401 ]; then
-    break
-  fi
-  sleep 1
+  break
 done
 
-if [ "$status" != 401 ]; then
+if [ "$status" != 401 ] || ! kill -0 "$server_pid" 2>/dev/null; then
   echo "Standalone webhook smoke expected HTTP 401; received ${status:-no response}." >&2
   sed -n '1,120p' "$smoke_dir/server.log" >&2
   exit 1

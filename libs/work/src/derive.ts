@@ -1,6 +1,7 @@
 import {
   isLive,
   MAX_AUTO_RETRIES,
+  type ProviderFallback,
   type Run,
   type Task,
   type TaskId,
@@ -58,7 +59,21 @@ export interface ItemRunView {
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
-  queue?: { state: 'queued' | 'claimed'; claimedBy?: string };
+  providerFallback?: Pick<
+    ProviderFallback,
+    | 'allowedPipelines'
+    | 'attemptedPipelines'
+    | 'originalRunId'
+    | 'fromRunId'
+    | 'trigger'
+  >;
+  queue?: {
+    state: 'queued' | 'claimed';
+    claimedBy?: string;
+    claimedAt?: string;
+    firstHeartbeatAt?: string;
+    providerProcessStartedAt?: string;
+  };
   /** The human turn that opened this round, for a `mode: reply` run.
    *  Round 1's human turn is `spec.description`, not a reply. */
   reply?: string;
@@ -135,11 +150,37 @@ export function toItemView(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.providerFallback === undefined
+        ? {}
+        : {
+            providerFallback: {
+              allowedPipelines: [...r.providerFallback.allowedPipelines],
+              attemptedPipelines: [...r.providerFallback.attemptedPipelines],
+              originalRunId: r.providerFallback.originalRunId,
+              ...(r.providerFallback.fromRunId === undefined
+                ? {}
+                : { fromRunId: r.providerFallback.fromRunId }),
+              ...(r.providerFallback.trigger === undefined
+                ? {}
+                : { trigger: { ...r.providerFallback.trigger } }),
+            },
+          }),
       ...(r.queue === undefined
         ? {}
         : {
             queue: {
               state: r.queue.state,
+              ...(r.queue.claimedAt === undefined
+                ? {}
+                : { claimedAt: r.queue.claimedAt }),
+              ...(r.queue.firstHeartbeatAt === undefined
+                ? {}
+                : { firstHeartbeatAt: r.queue.firstHeartbeatAt }),
+              ...(r.queue.providerProcessStartedAt === undefined
+                ? {}
+                : {
+                    providerProcessStartedAt: r.queue.providerProcessStartedAt,
+                  }),
               ...(r.queue.claimedBy === undefined
                 ? {}
                 : { claimedBy: r.queue.claimedBy }),
@@ -186,11 +227,37 @@ export function toWorkSummary(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.providerFallback === undefined
+        ? {}
+        : {
+            providerFallback: {
+              allowedPipelines: [...r.providerFallback.allowedPipelines],
+              attemptedPipelines: [...r.providerFallback.attemptedPipelines],
+              originalRunId: r.providerFallback.originalRunId,
+              ...(r.providerFallback.fromRunId === undefined
+                ? {}
+                : { fromRunId: r.providerFallback.fromRunId }),
+              ...(r.providerFallback.trigger === undefined
+                ? {}
+                : { trigger: { ...r.providerFallback.trigger } }),
+            },
+          }),
       ...(r.queue === undefined
         ? {}
         : {
             queue: {
               state: r.queue.state,
+              ...(r.queue.claimedAt === undefined
+                ? {}
+                : { claimedAt: r.queue.claimedAt }),
+              ...(r.queue.firstHeartbeatAt === undefined
+                ? {}
+                : { firstHeartbeatAt: r.queue.firstHeartbeatAt }),
+              ...(r.queue.providerProcessStartedAt === undefined
+                ? {}
+                : {
+                    providerProcessStartedAt: r.queue.providerProcessStartedAt,
+                  }),
               ...(r.queue.claimedBy === undefined
                 ? {}
                 : { claimedBy: r.queue.claimedBy }),

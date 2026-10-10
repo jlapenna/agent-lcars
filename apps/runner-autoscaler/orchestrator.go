@@ -119,6 +119,9 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					queue.exits = newRunExitReporter(consoleURL, runnerName, func() (string, error) {
 						return idTokenFromSource(tokenSource)
 					}, logger.With("component", "run-exit-reporter"))
+					queue.claimSettled = queueClaimStatus(consoleURL, func() (string, error) {
+						return idTokenFromSource(tokenSource)
+					})
 					queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
 					setQueueExecutorStartupState(queueExecutorStateReady)
 					queueStatus.ready.Store(true)

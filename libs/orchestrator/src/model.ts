@@ -80,6 +80,9 @@ export const githubAnchorProjectionSchema = z.strictObject({
     .max(256)
     .optional(),
   draft: z.boolean().optional(),
+  /** PR merge evidence from GitHub. null means known unmerged; omitted is
+   * unknown (including projections written before this field existed). */
+  mergedAt: isoUtc.nullable().optional(),
   mergeableState: z
     .enum([
       'clean',
@@ -169,7 +172,7 @@ export const RUN_ID_MAX_LENGTH =
   String(GITHUB_ISSUE_MAX + 1).length;
 
 /** Orchestrator-generated dependent IDs must admit the longest run ID too. */
-const RETRY_REQUEST_ID_MAX_LENGTH = 'retry:'.length + RUN_ID_MAX_LENGTH;
+const DEPENDENT_REQUEST_ID_MAX_LENGTH = 'fallback:'.length + RUN_ID_MAX_LENGTH;
 const OUTBOX_ENTRY_ID_MAX_LENGTH = 'dispatch/'.length + RUN_ID_MAX_LENGTH;
 
 /**
@@ -189,7 +192,11 @@ export type RunState = z.infer<typeof runStateSchema>;
 /** Distinguishes arbitrary caller idempotency keys from orchestrator-owned
  * automatic retry keys. The raw requestId remains caller-visible; this source
  * exists only for the durable request-history namespace. */
-export const requestSourceSchema = z.enum(['caller', 'auto-retry']);
+export const requestSourceSchema = z.enum([
+  'caller',
+  'auto-retry',
+  'provider-fallback',
+]);
 export type RequestSource = z.infer<typeof requestSourceSchema>;
 
 /** A collision-proof durable idempotency identity. Caller input is arbitrary,
@@ -217,6 +224,8 @@ export const runResultSchema = z.strictObject({
   summary: z.string().max(4_096).optional(),
   /** e.g. a PR URL; opaque to the orchestrator. */
   ref: z.string().max(1_024).optional(),
+  /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
+  relatedRefs: z.array(z.string().max(1_024)).max(1).optional(),
   /**
    * The agent's own final message for this round -- its question when it
    * parked, its summary when it opened a PR. Durable so every surface can
@@ -237,6 +246,15 @@ export const runQueueSchema = z.strictObject({
    * instant so one broken GitHub anchor cannot block its whole pipeline. */
   deferredUntil: isoUtc.optional(),
   claimedAt: isoUtc.optional(),
+  /** Claim-time bootstrap budget, independent of the renewable execution
+   * lease. Absent on older claims, which retain lease-only recovery. */
+  startDeadlineAt: isoUtc.optional(),
+  /** First accepted worker heartbeat; dispatch/claim alone is not liveness. */
+  firstHeartbeatAt: isoUtc.optional(),
+  /** First accepted run-token report that the provider executable was spawned.
+   * Server observation clock; not claim, heartbeat, authentication or first
+   * model response. Optional on legacy workers; never inferred or backfilled. */
+  providerProcessStartedAt: isoUtc.optional(),
   /** The executor's self-reported runner name. Unauthenticated: it labels
    * the claim and must match a later exit report, but grants nothing alone. */
   claimedBy: z.string().min(1).max(256).optional(),
@@ -265,10 +283,96 @@ export const runEventSchema = z.strictObject({
     'operator',
     'expiry',
     'executor',
+    'provider-fallback',
   ]),
   note: z.string().max(1_024).optional(),
 });
 export type RunEvent = z.infer<typeof runEventSchema>;
+
+/** A recoverable external CAS, authorized by the existing queue claim. No
+ * credential bytes or raw token are persisted here. Each action is prepared
+ * atomically before IO; its generation must be completed/fenced before removal. */
+const credentialFingerprintSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const credentialGenerationSchema = z
+  .string()
+  .regex(/^[0-9]+$/u)
+  .max(32);
+export const credentialMutationSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('lease-write'),
+    id: z.string().min(1).max(128),
+    expectedGeneration: credentialGenerationSchema,
+    repository: z.string().min(1).max(256),
+    expiresAt: isoUtc,
+  }),
+  z.strictObject({
+    kind: z.literal('auth-write'),
+    id: z.string().min(1).max(128),
+    expectedGeneration: z
+      .string()
+      .regex(/^[1-9][0-9]*$/u)
+      .max(32),
+    sha256: credentialFingerprintSchema,
+  }),
+]);
+export type CredentialMutation = z.infer<typeof credentialMutationSchema>;
+export const credentialOperationSchema = z.strictObject({
+  id: z.string().min(1).max(128),
+  kind: z.enum(['restore', 'renew', 'persist', 'cleanup']),
+  claimFingerprint: credentialFingerprintSchema,
+  startedAt: isoUtc,
+  mutationSequence: z.number().int().min(0).max(100),
+  /** Recovery scheduling only: passing this time never removes authority. */
+  recoverAfter: isoUtc,
+  mutation: credentialMutationSchema.optional(),
+});
+export type CredentialOperation = z.infer<typeof credentialOperationSchema>;
+export const credentialWriteReceiptSchema = z.strictObject({
+  operationId: z.string().min(1).max(128),
+  claimFingerprint: credentialFingerprintSchema,
+  expectedGeneration: credentialGenerationSchema,
+  sha256: credentialFingerprintSchema,
+});
+export type CredentialWriteReceipt = z.infer<
+  typeof credentialWriteReceiptSchema
+>;
+
+/** Server-authorized request policy, never accepted as a raw caller identity. */
+const uniquePipelineList = z
+  .array(z.string().min(1).max(128))
+  .refine((pipelines) => new Set(pipelines).size === pipelines.length, {
+    message: 'Provider fallback pipeline lists must be unique',
+  });
+export const providerFallbackSchema = z
+  .strictObject({
+    principal: z.string().min(1).max(128),
+    /** Retain the signed OIDC repository boundary when present at admission. */
+    sourceRepository: githubAnchorSchema.shape.repo.optional(),
+    allowedPipelines: uniquePipelineList.min(1).max(8),
+    attemptedPipelines: uniquePipelineList.min(1).max(9),
+    originalRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
+    fromRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
+    trigger: z
+      .strictObject({
+        reason: z.enum(['provider-limit', 'provider-cooldown']),
+        failureRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
+        limitedPipeline: z.string().min(1).max(128),
+      })
+      .optional(),
+  })
+  .refine(
+    (policy) =>
+      (policy.fromRunId === undefined) === (policy.trigger === undefined),
+    {
+      message: 'Fallback provenance requires both predecessor and trigger',
+    },
+  );
+export type ProviderFallback = z.infer<typeof providerFallbackSchema>;
+export interface ProviderFallbackRequest {
+  readonly principal: string;
+  readonly allowedPipelines: readonly string[];
+  readonly sourceRepository?: string;
+}
 
 export const runSchema = z.strictObject({
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
@@ -278,7 +382,7 @@ export const runSchema = z.strictObject({
   pipeline: z.string().min(1).max(128),
   /** Idempotency: the request that created this run. A retry of the same
    *  request maps to this run instead of creating a second one. */
-  requestId: z.string().min(1).max(RETRY_REQUEST_ID_MAX_LENGTH),
+  requestId: z.string().min(1).max(DEPENDENT_REQUEST_ID_MAX_LENGTH),
   /** Namespace for requestId in the durable idempotency ledger. */
   requestSource: requestSourceSchema,
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
@@ -289,8 +393,24 @@ export const runSchema = z.strictObject({
    *  persisted here without a later `runSchema.parse` read throwing on the
    *  run that stored it. */
   params: z.record(z.string().max(64), z.string().max(16_384)).optional(),
+  /** Explicit provider alternatives and the exact fresh-attempt provenance. */
+  providerFallback: providerFallbackSchema.optional(),
   /** Queue claim state -- see `runQueueSchema`. */
   queue: runQueueSchema.optional(),
+  credentialOperation: credentialOperationSchema.optional(),
+  /** Successful restore receipt; authority remains the current queue hash. */
+  credentialRestoredClaimFingerprint: credentialFingerprintSchema.optional(),
+  /** A timely completion accepted while external IO is unresolved. Recovery
+   * settles this exact result atomically before releasing task ownership. */
+  credentialPendingResult: z
+    .strictObject({
+      claimFingerprint: credentialFingerprintSchema,
+      requestedAt: isoUtc,
+      result: runResultSchema,
+    })
+    .optional(),
+  /** Last confirmed rotation, allowing an exact retry without a second write. */
+  credentialWriteReceipt: credentialWriteReceiptSchema.optional(),
   /** A live run must renew before this instant or it is presumed lost. */
   leaseExpiresAt: isoUtc,
   result: runResultSchema.optional(),
@@ -469,5 +589,28 @@ export type LeasedOutboxEntry = Extract<OutboxEntry, { state: 'leased' }>;
 export function byOutboxClaimFairness(a: OutboxEntry, b: OutboxEntry): number {
   return (
     a.attempts - b.attempts || Date.parse(a.createdAt) - Date.parse(b.createdAt)
+  );
+}
+
+/** Effective recovery deadline. Unclaimed queue waits never expire. Older
+ * claims without startup bookkeeping retain their original lease behavior. */
+export function runRecoveryDeadline(run: Run): string | undefined {
+  if (run.queue?.state === 'queued') return undefined;
+  const start =
+    run.queue?.state === 'claimed' && run.queue.firstHeartbeatAt === undefined
+      ? run.queue.startDeadlineAt
+      : undefined;
+  return start !== undefined &&
+    Date.parse(start) < Date.parse(run.leaseExpiresAt)
+    ? start
+    : run.leaseExpiresAt;
+}
+
+export function startDeadlineElapsed(run: Run, now: string): boolean {
+  return (
+    run.queue?.state === 'claimed' &&
+    run.queue.firstHeartbeatAt === undefined &&
+    run.queue.startDeadlineAt !== undefined &&
+    Date.parse(run.queue.startDeadlineAt) <= Date.parse(now)
   );
 }

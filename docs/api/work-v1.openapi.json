@@ -262,6 +262,22 @@
                         "additionalProperties": false
                       }
                     },
+                    "rerouted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fromRunId": {
+                            "type": "string"
+                          },
+                          "newRunId": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["fromRunId", "newRunId"],
+                        "additionalProperties": false
+                      }
+                    },
                     "dispatched": {
                       "type": "array",
                       "items": {
@@ -360,6 +376,14 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "fallbackPipelines": {
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        }
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -423,6 +447,14 @@
                         "pipeline": {
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -514,12 +546,73 @@
                                 "type": "string",
                                 "maxLength": 1024
                               },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
+                              },
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -542,6 +635,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -706,6 +808,14 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -796,12 +906,73 @@
                                 "type": "string",
                                 "maxLength": 1024
                               },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
+                              },
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -824,6 +995,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -994,6 +1174,14 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -1084,12 +1272,73 @@
                                 "type": "string",
                                 "maxLength": 1024
                               },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
+                              },
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -1112,6 +1361,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -1327,6 +1585,14 @@
                                 "type": "string",
                                 "enum": ["claude", "codex", "opencode"]
                               },
+                              "fallbackPipelines": {
+                                "maxItems": 2,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": ["claude", "codex", "opencode"]
+                                }
+                              },
                               "target": {
                                 "type": "object",
                                 "properties": {
@@ -1423,12 +1689,73 @@
                                       "type": "string",
                                       "maxLength": 1024
                                     },
+                                    "relatedRefs": {
+                                      "maxItems": 1,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "maxLength": 1024
+                                      }
+                                    },
                                     "message": {
                                       "type": "string",
                                       "maxLength": 16384
                                     }
                                   },
                                   "required": ["ok"],
+                                  "additionalProperties": false
+                                },
+                                "providerFallback": {
+                                  "type": "object",
+                                  "properties": {
+                                    "allowedPipelines": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "attemptedPipelines": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "originalRunId": {
+                                      "type": "string"
+                                    },
+                                    "fromRunId": {
+                                      "type": "string"
+                                    },
+                                    "trigger": {
+                                      "type": "object",
+                                      "properties": {
+                                        "reason": {
+                                          "type": "string",
+                                          "enum": [
+                                            "provider-limit",
+                                            "provider-cooldown"
+                                          ]
+                                        },
+                                        "failureRunId": {
+                                          "type": "string"
+                                        },
+                                        "limitedPipeline": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "reason",
+                                        "failureRunId",
+                                        "limitedPipeline"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "allowedPipelines",
+                                    "attemptedPipelines",
+                                    "originalRunId"
+                                  ],
                                   "additionalProperties": false
                                 },
                                 "reply": {
@@ -1451,6 +1778,15 @@
                                       "enum": ["queued", "claimed"]
                                     },
                                     "claimedBy": {
+                                      "type": "string"
+                                    },
+                                    "claimedAt": {
+                                      "type": "string"
+                                    },
+                                    "firstHeartbeatAt": {
+                                      "type": "string"
+                                    },
+                                    "providerProcessStartedAt": {
                                       "type": "string"
                                     }
                                   },
@@ -1602,6 +1938,14 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -1692,12 +2036,73 @@
                                 "type": "string",
                                 "maxLength": 1024
                               },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
+                              },
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -1720,6 +2125,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -1857,6 +2271,14 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256
+                  },
+                  "fallbackPipelines": {
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["claude", "codex", "opencode"]
+                    }
                   }
                 }
               }
@@ -1901,6 +2323,14 @@
                         "pipeline": {
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -1992,12 +2422,73 @@
                                 "type": "string",
                                 "maxLength": 1024
                               },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
+                              },
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -2020,6 +2511,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -2193,12 +2693,25 @@
                     "minLength": 1,
                     "maxLength": 16384
                   },
+                  "requestId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
                   "resume": {
                     "type": "boolean"
                   },
                   "pipeline": {
                     "type": "string",
                     "enum": ["claude", "codex", "opencode"]
+                  },
+                  "fallbackPipelines": {
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["claude", "codex", "opencode"]
+                    }
                   }
                 },
                 "required": ["text"]
@@ -2244,6 +2757,14 @@
                         "pipeline": {
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -2335,12 +2856,73 @@
                                 "type": "string",
                                 "maxLength": 1024
                               },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
+                              },
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -2363,6 +2945,15 @@
                                 "enum": ["queued", "claimed"]
                               },
                               "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
                                 "type": "string"
                               }
                             },
@@ -2545,6 +3136,14 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "fallbackPipelines": {
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        }
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -2601,6 +3200,14 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -2643,6 +3250,25 @@
                     "disabledReason": {
                       "type": "string",
                       "enum": ["grant-revoked", "operator", "invalid"]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "nextDueAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "pendingItemId": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "lastClosedSlotAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     }
                   },
                   "required": [
@@ -2651,7 +3277,8 @@
                     "enabled",
                     "createdBy",
                     "createdAt",
-                    "updatedAt"
+                    "updatedAt",
+                    "revision"
                   ],
                   "additionalProperties": false
                 }
@@ -2694,6 +3321,397 @@
           },
           "409": {
             "description": "Schedule exists with a different cron or spec",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "updateSchedule",
+        "summary": "Edit a schedule at its current configuration revision",
+        "tags": ["schedules"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expectedRevision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "cron": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "spec": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16384
+                      },
+                      "pipeline": {
+                        "type": "string",
+                        "enum": ["claude", "codex", "opencode"]
+                      },
+                      "fallbackPipelines": {
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        }
+                      },
+                      "target": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string",
+                            "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                          }
+                        },
+                        "required": ["repo"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["title", "description", "pipeline", "target"],
+                    "additionalProperties": false
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["expectedRevision", "cron", "spec", "enabled"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "cron": {
+                      "type": "string"
+                    },
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16384
+                        },
+                        "pipeline": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "repo": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                            }
+                          },
+                          "required": ["repo"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "description",
+                        "pipeline",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "lastSlotAt": {
+                      "type": "string"
+                    },
+                    "lastItemId": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "disabledReason": {
+                      "type": "string",
+                      "enum": ["grant-revoked", "operator", "invalid"]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "nextDueAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "pendingItemId": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "lastClosedSlotAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "cron",
+                    "enabled",
+                    "createdBy",
+                    "createdAt",
+                    "updatedAt",
+                    "revision"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed or impossible cron expression",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BadRequest"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant for this schedule or requested pipeline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Schedule changed; reload before editing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteSchedule",
+        "summary": "Delete future recurrence; an already admitted occurrence may finish",
+        "tags": ["schedules"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expectedRevision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["expectedRevision"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "deleted": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "pendingItemId": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    }
+                  },
+                  "required": ["id", "deleted"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant for this schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Schedule changed; reload before deleting",
             "content": {
               "application/json": {
                 "schema": {
@@ -2763,6 +3781,14 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -2805,6 +3831,25 @@
                     "disabledReason": {
                       "type": "string",
                       "enum": ["grant-revoked", "operator", "invalid"]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "nextDueAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "pendingItemId": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "lastClosedSlotAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     }
                   },
                   "required": [
@@ -2813,7 +3858,8 @@
                     "enabled",
                     "createdBy",
                     "createdAt",
-                    "updatedAt"
+                    "updatedAt",
+                    "revision"
                   ],
                   "additionalProperties": false
                 }
@@ -2901,6 +3947,14 @@
                                 "type": "string",
                                 "enum": ["claude", "codex", "opencode"]
                               },
+                              "fallbackPipelines": {
+                                "maxItems": 2,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": ["claude", "codex", "opencode"]
+                                }
+                              },
                               "target": {
                                 "type": "object",
                                 "properties": {
@@ -2943,6 +3997,25 @@
                           "disabledReason": {
                             "type": "string",
                             "enum": ["grant-revoked", "operator", "invalid"]
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "nextDueAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "pendingItemId": {
+                            "type": "string",
+                            "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "lastClosedSlotAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                           }
                         },
                         "required": [
@@ -2951,7 +4024,8 @@
                           "enabled",
                           "createdBy",
                           "createdAt",
-                          "updatedAt"
+                          "updatedAt",
+                          "revision"
                         ],
                         "additionalProperties": false
                       }
@@ -2988,11 +4062,19 @@
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "expectedRevision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["expectedRevision"]
               }
             }
           }
@@ -3028,6 +4110,14 @@
                         "pipeline": {
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -3071,6 +4161,25 @@
                     "disabledReason": {
                       "type": "string",
                       "enum": ["grant-revoked", "operator", "invalid"]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "nextDueAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "pendingItemId": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "lastClosedSlotAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     }
                   },
                   "required": [
@@ -3079,9 +4188,44 @@
                     "enabled",
                     "createdBy",
                     "createdAt",
-                    "updatedAt"
+                    "updatedAt",
+                    "revision"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Repair the invalid schedule before enabling it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BadRequest"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant for this schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
                 }
               }
             }
@@ -3094,6 +4238,23 @@
                   "oneOf": [
                     {
                       "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Schedule changed; reload before toggling",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
                     },
                     {
                       "$ref": "#/components/schemas/UndefinedError"
@@ -3128,11 +4289,19 @@
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "expectedRevision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["expectedRevision"]
               }
             }
           }
@@ -3168,6 +4337,14 @@
                         "pipeline": {
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -3211,6 +4388,25 @@
                     "disabledReason": {
                       "type": "string",
                       "enum": ["grant-revoked", "operator", "invalid"]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "nextDueAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "pendingItemId": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "lastClosedSlotAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     }
                   },
                   "required": [
@@ -3219,9 +4415,44 @@
                     "enabled",
                     "createdBy",
                     "createdAt",
-                    "updatedAt"
+                    "updatedAt",
+                    "revision"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Repair the invalid schedule before enabling it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BadRequest"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant for this schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
                 }
               }
             }
@@ -3234,6 +4465,23 @@
                   "oneOf": [
                     {
                       "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Schedule changed; reload before toggling",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
                     },
                     {
                       "$ref": "#/components/schemas/UndefinedError"
@@ -3393,6 +4641,14 @@
                       "pipeline": {
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
+                      },
+                      "fallbackPipelines": {
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        }
                       },
                       "target": {
                         "type": "object",
@@ -3605,6 +4861,14 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128
+                  },
+                  "fallbackPipelines": {
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["claude", "codex", "opencode"]
+                    }
                   }
                 },
                 "required": ["anchor", "mode", "requestId"],
@@ -3859,6 +5123,14 @@
                               "type": "string",
                               "enum": ["claude", "codex", "opencode"]
                             },
+                            "fallbackPipelines": {
+                              "maxItems": 2,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": ["claude", "codex", "opencode"]
+                              }
+                            },
                             "target": {
                               "type": "object",
                               "properties": {
@@ -4024,6 +5296,14 @@
                                   "type": "string",
                                   "enum": ["claude", "codex", "opencode"]
                                 },
+                                "fallbackPipelines": {
+                                  "maxItems": 2,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": ["claude", "codex", "opencode"]
+                                  }
+                                },
                                 "target": {
                                   "type": "object",
                                   "properties": {
@@ -4165,7 +5445,12 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "providerProcessStarted": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
               }
             }
           }
@@ -4218,6 +5503,135 @@
         ]
       }
     },
+    "/runs/{runId}/claim-status": {
+      "get": {
+        "operationId": "getRunClaimStatus",
+        "summary": "Read the authenticated executor's exact claim liveness",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
+          {
+            "in": "query",
+            "name": "runner",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true,
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "claimFingerprint",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true,
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 175
+                    },
+                    "runner": {
+                      "type": "string"
+                    },
+                    "claimFingerprint": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["live", "settled"]
+                    }
+                  },
+                  "required": ["runId", "runner", "claimFingerprint", "status"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "work.executor scope required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "executor may not inspect this claim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/runs/{runId}/exit": {
       "post": {
         "operationId": "reportRunExit",
@@ -4246,6 +5660,10 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256
+                  },
+                  "claimFingerprint": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
                   }
                 },
                 "required": ["runner"]
@@ -4660,7 +6078,7 @@
                 "properties": {
                   "generation": {
                     "type": "string",
-                    "pattern": "^\\d+$"
+                    "pattern": "^[1-9]\\d*$"
                   },
                   "restoredSha256": {
                     "type": "string",

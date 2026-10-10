@@ -12,15 +12,54 @@ import type {
   TaskId,
 } from './model';
 import { taskKey } from './model';
+import { providerIsCoolingDown } from './provider-cooldown';
+import {
+  isQueueAdmissionCandidate,
+  QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
+  type QueueAdmissionStatus,
+} from './queue-admission-status';
 
 /** Server-owned direct-runner admission ceilings. OpenCode is serialized to
  * protect the shared local inference backend from measured contention. Codex
  * is serialized because its global subscription credential lease rejects a
  * second concurrent session. Claude remains bounded by fleet host capacity.
  * This policy is deliberately absent from the claim request contract. */
-export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
-  Record<string, number | undefined>
-> = Object.freeze({ codex: 1, opencode: 1 });
+export { QUEUE_PIPELINE_MAX_LIVE_CLAIMS } from './queue-admission-status';
+
+/** The same provider cooldowns and admission ceilings used by queue claims. */
+export function availableQueuePipelines(input: {
+  pipelines: readonly string[];
+  cooldowns: Readonly<Record<string, unknown>>;
+  liveRuns: readonly Run[];
+  now: string;
+}): string[] {
+  return [...new Set(input.pipelines)].filter((pipeline) => {
+    if (providerIsCoolingDown(input.cooldowns[pipeline], input.now))
+      return false;
+    const ceiling = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
+    return (
+      ceiling === undefined ||
+      input.liveRuns.filter(
+        (run) =>
+          run.pipeline === pipeline &&
+          run.queue?.state === 'claimed' &&
+          (run.state === 'pending' || run.state === 'running'),
+      ).length < ceiling
+    );
+  });
+}
+
+export interface QueueEligibilitySnapshot {
+  readonly cooldowns: Readonly<Record<string, unknown>>;
+  readonly liveRuns: readonly Run[];
+}
+
+export interface RunTransactionState {
+  readonly task: VersionedTask | undefined;
+  readonly run: Run | undefined;
+  /** Absent unless requested; observed before any writes in this transaction. */
+  readonly queueEligibility?: QueueEligibilitySnapshot;
+}
 
 /** Selects one provider head using least live occupancy, then FIFO age.
  * Callers must pass only server-authorized pipelines. */
@@ -47,14 +86,7 @@ export function selectFairQueuedRun(
 
   const heads = new Map<string, Run>();
   for (const run of queuedRuns) {
-    if (
-      run.queue?.state !== 'queued' ||
-      (run.state !== 'pending' && run.state !== 'running') ||
-      !granted.has(run.pipeline) ||
-      (now !== undefined &&
-        run.queue.deferredUntil !== undefined &&
-        run.queue.deferredUntil > now)
-    )
+    if (!isQueueAdmissionCandidate(run, now) || !granted.has(run.pipeline))
       continue;
     const current = heads.get(run.pipeline);
     if (
@@ -165,10 +197,12 @@ export interface OrchestratorStore {
    */
   transactRun(input: {
     runId: string;
-    decide(state: {
-      task: VersionedTask | undefined;
-      run: Run | undefined;
-    }): Decision | Refusal;
+    queueEligibilityPipelines?: readonly string[];
+    /** Evaluated from the consistent local snapshot before global reads. */
+    shouldReadQueueEligibility?: (
+      state: Pick<RunTransactionState, 'task' | 'run'>,
+    ) => boolean;
+    decide(state: RunTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
   apply(input: {
     decision: Decision;
@@ -276,7 +310,7 @@ export interface OrchestratorStore {
     deliveryFailures?: number;
   }): Promise<boolean>;
 
-  /** Live runs whose lease expired at or before `now`; the sweeper's feed. */
+  /** Live runs whose startup or execution deadline expired at `now`; excludes queued waits. */
   listExpiredRuns(now: string): Promise<Run[]>;
 
   /**
@@ -318,6 +352,20 @@ export interface OrchestratorStore {
 
   /** Every live (`pending`/`running`) run, lease or no lease. */
   listLiveRuns(): Promise<Run[]>;
+  /** One bounded recovery page; retry scheduling rotates unresolved actions.
+   * The time filter is eligibility to fence IO, never permission to unlock. */
+  listCredentialOperations(input: {
+    now: string;
+    limit: number;
+  }): Promise<Run[]>;
+
+  /** Read-only consistent snapshot of durable provider admission. Each live
+   * state is bounded at QUEUE_ADMISSION_READ_LIMIT; overflow or invalid data
+   * rejects instead of implying an empty/partial queue. */
+  readQueueAdmissionStatus(input: {
+    pipelines: readonly string[];
+    now: string;
+  }): Promise<QueueAdmissionStatus>;
 
   /**
    * The most recently updated runs across every anchor, newest first and
@@ -335,7 +383,7 @@ export interface OrchestratorStore {
    *  one of `pipelines`: least live claimed occupancy across providers, then
    *  the oldest provider head, while preserving FIFO within each provider
    *  and enforcing server-owned provider ceilings. Sets `queue.state = 'claimed'`
-   *  plus `claimedAt`/`claimedBy`/`tokenHash` and refreshing the execution
+   *  plus `claimedAt`/`startDeadlineAt`/`claimedBy`/`tokenHash` and refreshing the execution
    *  lease in the same transaction. `undefined` when nothing is queued for
    *  those pipelines. */
   claimQueuedRun(input: {
@@ -363,6 +411,10 @@ export interface OrchestratorStore {
   /** Every live run with `queue.state === 'queued'`, oldest first. An
    * optional `limit` bounds the result after terminal entries are removed. */
   listQueuedRuns(limit?: number): Promise<Run[]>;
+  /** Read-only prefilter; decisions must recheck these records transactionally. */
+  readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>>;
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and

@@ -30,6 +30,7 @@ describe('itemsContract', () => {
       'cancel',
       'create',
       'get',
+      'lifecycleMetrics',
       'list',
       'maintenanceTick',
       'redispatch',
@@ -130,24 +131,27 @@ describe('itemsContract.redispatch', () => {
 });
 
 describe('schedulesContract', () => {
-  it('declares the six schedule procedures', () => {
+  it('declares revision-checked schedule mutation procedures', () => {
     expect(Object.keys(schedulesContract).sort()).toEqual([
       'create',
+      'delete',
       'disable',
       'enable',
       'get',
       'list',
       'tick',
+      'update',
     ]);
   });
 });
 
 describe('runsContract', () => {
-  it('declares the eight run routes with bearer security', () => {
+  it('declares run routes with their authentication contracts', () => {
     const paths = Object.keys(runsContract);
     expect(paths.sort()).toEqual(
       [
         'claim',
+        'claimStatus',
         'brief',
         'heartbeat',
         'exit',
@@ -387,6 +391,7 @@ describe('generateWorkOpenApi', () => {
         '/items/{id}/redispatch',
         '/items/{id}/reply',
         '/maintenance/tick',
+        '/metrics/lifecycle',
         '/schedules',
         '/schedules/tick',
         '/schedules/{id}',
@@ -394,6 +399,7 @@ describe('generateWorkOpenApi', () => {
         '/schedules/{id}/enable',
         '/runs/claim',
         '/runs/{runId}/brief',
+        '/runs/{runId}/claim-status',
         '/runs/{runId}/heartbeat',
         '/runs/{runId}/exit',
         '/runs/{runId}/complete',
@@ -464,16 +470,20 @@ describe('generateWorkOpenApi', () => {
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
       'POST /items/{id}/reply': ['200', '403', '404', '409'],
       'POST /maintenance/tick': ['200'],
+      'GET /metrics/lifecycle': ['200'],
       'POST /dispatches/github': ['200', '400', '403', '409'],
       'POST /dispatches/github/redispatch': ['200', '403', '404', '409'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
       'GET /schedules/{id}': ['200', '404'],
       'GET /schedules': ['200'],
-      'POST /schedules/{id}/enable': ['200', '404'],
-      'POST /schedules/{id}/disable': ['200', '404'],
+      'PATCH /schedules/{id}': ['200', '400', '403', '404', '409'],
+      'DELETE /schedules/{id}': ['200', '403', '404', '409'],
+      'POST /schedules/{id}/enable': ['200', '400', '403', '404', '409'],
+      'POST /schedules/{id}/disable': ['200', '400', '403', '404', '409'],
       'POST /schedules/tick': ['200'],
       'POST /runs/claim': ['200', '401'],
       'GET /runs/{runId}/brief': ['200', '401'],
+      'GET /runs/{runId}/claim-status': ['200', '401', '403', '404'],
       'POST /runs/{runId}/heartbeat': ['200', '401'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],
       'POST /runs/{runId}/complete': ['200', '401'],

@@ -239,6 +239,9 @@ still consume capacity between this observation and scheduling. Optional
 do not tolerate deployment readiness, inference-busy, or maintenance taints.
 `max_concurrent` is a cluster-wide bound for the **singleton** queue controller,
 not a distributed reservation protocol; do not overlap controller generations.
+The [R8 failover design](../../docs/superpowers/specs/2026-10-10-queue-executor-ha-design.md)
+selects proposed server-owned capacity receipts. It does not authorize replicas
+or change the current singleton deployment.
 
 Each run has one deterministic Job name. The controller creates it suspended,
 creates an immutable per-run token Secret owned by that exact Job, and resumes
@@ -257,13 +260,25 @@ which bounds infrastructure launch waits independently of worker heartbeat
 renewal or the normal 80-minute agent budget. They retain
 terminated pod logs for a day through the TTL controller, bounded to five
 completed Jobs per configured capacity slot. The same garbage-collection
-sweep deletes a suspended shell older than the two-hour lease window -- one
-left when the controller died between creating a Job and its run-token
-Secret, which would otherwise hold a `max_concurrent` slot forever -- with
-UID/resourceVersion preconditions; running Jobs are never removed. The sweep
-runs at startup and every 15 minutes off the claim path (single-flight,
-30-second deadline), and is a local Kubernetes API list, never a Work API
-call.
+sweep retains that finished-Job policy at startup and every 15 minutes.
+Normal 15-second recovery ticks also retire original Jobs whose exact claim
+has settled, including unsuspended Pending Jobs. The read-only Work API
+`GET /runs/{runId}/claim-status` uses the existing executor identity and
+requires the same claimant subject, pipeline grant, runner and SHA-256 token
+fingerprint. The fingerprint is persisted on Job creation, before its Secret;
+legacy Jobs can derive it from their owned immutable Secret. An expired but
+still-live run, an ambiguous response, a missing credential, or a mismatched
+claim never authorizes retirement. UID/resourceVersion preconditions and
+foreground deletion protect replacements and concurrent spec changes;
+admission stays closed while the deleting Job or nonterminal owned Pods remain.
+Executed or re-suspended Jobs are never resumed. A Secret-less legacy shell
+without claim proof uses only the two-hour backstop, with original generation,
+identity, no-attempt and no-owned-Pod checks. Recovery remains single-flight,
+with its 20-second sweep deadline, off the reservation/claim path. Independent
+rotating recovery/cleanup cursors resume after the last attempted Job so slow
+early lookups cannot indefinitely hide a later settled claim. Status token
+acquisition shares one outstanding callback, returns promptly on sweep
+cancellation, and uses the real shared source's bounded OAuth HTTP refresh.
 
 A full process restart is required for backend, credentials, topology or
 resource configuration changes. `--check-config` performs the environment
@@ -354,6 +369,16 @@ The metrics endpoint exposes the queue worker's own health:
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
 
+The existing v2 `runner-status` document carries an additive `claims` sample
+for Shuttlebay. It differences these same three provider counters over an
+exact `windowStart`–`windowEnd` interval, bounded to 15 minutes and 92 samples.
+The initial baseline, a metric error, counter reset, or gap beyond the status
+TTL is unavailable; a restart never invents a full preceding window. Changed
+counts publish immediately and unchanged counts follow the normal heartbeat.
+This is successful-claim throughput before launch, not provider execution or
+completed functionality. Durable cooldowns and provider queue eligibility are
+read separately from the orchestrator in a bounded, read-only transaction.
+
 ### Failed launches and pausing
 
 **A failed launch leaves the run claimed on the control plane.** There is no
@@ -364,13 +389,15 @@ sweep deadline, and runs off the reservation/claim path. The one-Pending
 admission gate still blocks another claim until placement; recovery does not
 mint a new run, Job or credential.
 
-If startup cannot safely complete (for example, the credential is missing or
-the run/lease fence refuses it), ordinary lease-expiry recovery remains the
-backstop. After the claim lease expires (`LEASE_MS`, 2h), the run settles to
-`lost`; its `queue.state` stays `claimed`. The orchestrator's bounded auto-retry
-(`MAX_AUTO_RETRIES`, then parked) mints a fresh queue-executor run for the same
-task, which a later poll claims. These cases may still cost a lease window;
-an already executed attempt is never restarted to avoid that wait.
+If startup cannot safely complete, a claim without a first heartbeat has a
+15-minute startup deadline. The five-minute maintenance tick settles it
+`lost` and creates a bounded retry (`MAX_AUTO_RETRIES`, then parked). Subsequent
+normal recovery ticks retire its exact original Job after authoritative
+settlement and Pod drainage, letting a later poll claim the successor. Claims
+that have heartbeated retain the ordinary two-hour renewable lease. Missing
+legacy claim proof or unavailable/mismatched status fails closed; these cases
+can still require the legacy backstop or operator investigation. Recovery does
+not restart an executed attempt or delete on a generic run-token refusal.
 
 **`SIGUSR1` pauses the queue poller from claiming.** The signal toggles an
 in-process flag the poller checks before every claim call and before starting

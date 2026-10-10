@@ -1,4 +1,5 @@
 import type { ItemState, ItemView } from '@agent-lcars/work/derive';
+import { latestRun } from '@agent-lcars/work/derive';
 import {
   Anchor,
   Badge,
@@ -36,6 +37,13 @@ const STATE_COLORS: Record<ItemState, string> = {
   canceled: 'gray',
 };
 
+function pipelineLabel(item: ItemView): string {
+  const latest = latestRun(item.runs);
+  return latest?.providerFallback?.trigger === undefined
+    ? item.spec.pipeline
+    : `${latest.pipeline} (fallback; requested ${item.spec.pipeline})`;
+}
+
 /** One work item, laid out for a phone rather than truncated into a
  *  6-column table row (same "cards below `sm`" split the sessions archive
  *  uses - `session-table.tsx`). */
@@ -52,7 +60,7 @@ function WorkCard({ item }: { item: ItemView }) {
           </Badge>
         </Group>
         <Text size="xs" c="dimmed">
-          {item.spec.target.repo} &middot; {item.spec.pipeline}
+          {item.spec.target.repo} &middot; {pipelineLabel(item)}
         </Text>
         <Text size="xs" c="dimmed">
           {item.origin.principal} · updated {formatRelativeTime(item.updatedAt)}
@@ -121,7 +129,7 @@ export function WorkList({ items }: { items: ItemView[] }) {
                   </Anchor>
                 </TableTd>
                 <TableTd>{item.state}</TableTd>
-                <TableTd>{item.spec.pipeline}</TableTd>
+                <TableTd>{pipelineLabel(item)}</TableTd>
                 <TableTd>{item.spec.target.repo}</TableTd>
                 <TableTd>{item.origin.principal}</TableTd>
                 <TableTd>{formatRelativeTime(item.updatedAt)}</TableTd>

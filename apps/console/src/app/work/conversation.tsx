@@ -1,6 +1,8 @@
 import type { ItemView } from '@agent-lcars/work/derive';
 import { Anchor, Code, Group, Stack, Text } from '@mantine/core';
 
+import { ProviderFallbackSummary } from './provider-fallback-summary';
+import { resultRefs } from './result-refs';
 import { safeHttpUrl } from './safe-url';
 
 /** Same rendering rule `page.tsx`'s `RunRef` already uses: `result.ref` is
@@ -44,7 +46,7 @@ function AgentTurn({
   canViewSessions,
 }: {
   message: string;
-  resultRef: string | undefined;
+  resultRef: string[];
   sessionId: string | undefined;
   canViewSessions: boolean;
 }) {
@@ -55,7 +57,11 @@ function AgentTurn({
       </Text>
       <Text>{message}</Text>
       <Group gap="xs">
-        <TurnRef value={resultRef} />
+        <>
+          {resultRef.map((value) => (
+            <TurnRef key={value} value={value} />
+          ))}
+        </>
         {canViewSessions && sessionId !== undefined && (
           <Anchor href={`/sessions/${encodeURIComponent(sessionId)}`} size="xs">
             session
@@ -99,6 +105,7 @@ export function Conversation({
         const session = item.sessions.find((s) => s.runId === run.runId);
         return (
           <Stack key={run.runId} gap="xs">
+            <ProviderFallbackSummary run={run} />
             {humanText !== undefined && (
               <HumanTurn
                 text={humanText}
@@ -109,7 +116,7 @@ export function Conversation({
             {run.result?.message !== undefined && (
               <AgentTurn
                 message={run.result.message}
-                resultRef={run.result.ref}
+                resultRef={resultRefs(run.result)}
                 sessionId={session?.sessionId}
                 canViewSessions={canViewSessions}
               />

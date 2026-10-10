@@ -289,19 +289,27 @@ the work that has stopped, and the work in flight.
   - Approve & Merge, Approve & Rebase, or Rebase onto base
   - Assign to {pipeline}
   - Clear needs-human
-  - Mute or Unmute
+  - Snooze or Unsnooze
   - Close issue (destructive, with confirmation)
 - **FE-IN-6 [Shipped]** A filter by reason, the `?repo=` scope, and the
   addressable `?item=` selection. On mobile, a command deck provides "Back to
   Inbox list".
-- **FE-IN-7 [Partial]** Mute is stored per browser in localStorage
-  (`agent-lcars:muted-queue-items`). It is not shared across devices.
-  New mutes expire when the signature of `updatedAt`, sorted `actionTypes`,
-  or `ciRunning` changes; migrated legacy mutes retain no-expiry behavior.
-  The owner is [`use-muted-items.ts`](../../apps/console/src/app/use-muted-items.ts),
-  with regression coverage in `use-muted-items.test.ts`.
-  **Proposed:** a server-side snooze with a time-based expiry shared across
-  devices.
+- **FE-IN-7 [Implemented]** Snooze is persisted per authenticated maintainer
+  and stable GitHub or native Work anchor, without changing execution state
+  or GitHub labels. Durations are 15 minutes, 1 hour, 24 hours, and 7 days.
+  A visible Snoozed list/count shows expiry and offers Unsnooze, including
+  anchors no longer loaded in the Inbox. Expiry resurfaces decisions locally;
+  reload, focus, and a 15-second refresh reconcile other devices' changes.
+  A change to GitHub `updatedAt`, sorted `actionTypes`, or `ciRunning`
+  interrupts an old snooze. Native decisions also bind to the latest parked
+  run and its update time, so a new parked question resurfaces.
+  Legacy `agent-lcars:muted-queue-items` preferences never automatically hide
+  decisions: explicit import snoozes currently matching items for 24 hours,
+  removing only acknowledged matching keys and preserving unrelated preferences.
+  Owners are `decision-snooze-store.ts`, `decision-snooze-actions.ts`, and
+  `use-decision-snoozes.ts`. Their focused tests and
+  `decision-snoozes.spec.ts` protect authentication, isolation, concurrent
+  persistence, cross-device visibility, unsnooze, expiry/reload, and new decisions.
 
 ### 6.3 Agents (`/agents`)
 
@@ -345,7 +353,13 @@ the work that has stopped, and the work in flight.
   appears after 180s.
 - **FE-SB-4 [Proposed]** Show claim throughput and provider cooldowns:
   pipeline X is cooling down until T after a `provider-limit` failure.
-  Operators currently have to infer this from failures.
+  Include the authoritative provider queue, deferred and live-claim counts,
+  server-owned provider ceilings, and eligible depth after fresh executor
+  readiness/drain/capacity checks. Claim metrics name their exact observed
+  interval (up to 15 minutes), timestamp and provenance; a restart, missing
+  sample, failed read or stale/reset-crossing observation is unavailable,
+  never an inferred zero. Eligibility does not prove worker placement or
+  successful execution. Track implementation and delivery in #2192.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 
@@ -387,18 +401,28 @@ GitHub issues, and manage recurring work.
     fields, UTC, default `0 * * * *`, validated on the client), and Enabled.
     The server also rejects a cron expression that never fires within a
     year.
-  - The list has columns Title, Cron, Pipeline, Repo, Enabled, and Last item,
-    and supports enable and disable.
-  - The API and store record a `disabledReason` (`grant-revoked`, `operator`,
-    or `invalid`), but the list does not show it.
+  - The list shows Title, Cron, Pipeline, Repo, Enabled, Next occurrence,
+    and Last item. It explains `disabledReason` (`grant-revoked`, `operator`,
+    or `invalid`), pending settlement, and closed occurrences.
+  - Enable, disable, edit, and delete submit the selected configuration
+    revision. Stale changes fail visibly without overwriting a newer edit.
+    Delete requires explicit confirmation and stops future recurrence;
+    work admitted earlier may still finish.
+  - The next occurrence includes UTC and an explicitly labeled browser-local
+    time zone. Cron evaluation remains UTC; local display does not change it.
+  - API/store regression tests cover authorization, invalid/revoked recovery,
+    concurrent operator/tick decisions, deletion and durable mint retries.
+    Browser edit/delete journeys are included; CI and production verification
+    remain required before treating those journeys as qualified.
 - **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
   and cursor-based next-page navigation in the URL. Each page examines up to
   200 native tasks; an empty filtered page can still lead to older matches.
   Bridge stopped work pages over the authoritative all-anchor task feed with
   the same explicit 200-task bound. Bridge, Inbox, and Agents have a repository
   selector and clear action, with scope preserved across their navigation.
-  Schedules still have no edit or delete in the UI or the API (a `PUT` accepts
-  only a new or identical schedule), and no time zone other than UTC. See R8.
+  Schedules support revision-checked editing/deletion in the UI and API,
+  with UTC evaluation and labeled local display. `PUT` remains an idempotent
+  create; `PATCH` edits and `DELETE` stops future recurrence. See R8.
 
 ### 6.6 Task detail (`/task/[owner]/[repo]/[issue]`)
 
@@ -453,7 +477,10 @@ CLI sessions and dispatched runs.
   filters are shared with Sessions. When a provider reports no `costUSD`, cost
   is estimated from `MODEL_RATES`.
 - **FE-CO-2 [Proposed]** Add breakdowns by pipeline and by model, budget
-  thresholds with alerting, and a cost-per-merged-deliverable metric.
+  thresholds with alerting, and a cost-per-merged-deliverable metric. The exact
+  activity-window, reported/estimated, deduplication, attribution, unavailable
+  data and operator-owned alert contract is [Session spend](../cost-ledger.md).
+  Shipping and runtime qualification are tracked in #2195.
 
 ## 7. Server surface owned by the console
 
@@ -482,6 +509,7 @@ counterpart of the Work destination.
 - `lcars work create --repo --pipeline --title (--description | --description-file)`
 - `lcars work status <id> [--watch]`, `list [--state] [--repo]`,
   `cancel <id>`, and `redispatch <id>`
+- `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]`
 - `lcars session title "<text>" | --clear` and `lcars session status "<text>" | --clear`
 
 `status --watch` polls every 15 seconds while the item is `running`, including
@@ -492,20 +520,23 @@ exits 1 for `failed` work, with or without `--watch`; other item states exit 0.
 
 The CLI authenticates with `LCARS_TOKEN`, or with `LCARS_SERVICE_ACCOUNT` and
 `LCARS_AUDIENCE` through impersonation. A bearer token that fails never falls
-back to cookies. **Proposed:** add `lcars work reply` for parity with the
-console Reply action.
+back to cookies. `work reply` prints its retry key before sending, then reports
+the immutable admitted run and its resume/fresh-session request. Reusing the
+key with the same input returns that round; changed input conflicts. Admission
+does not prove execution. Reply input, provenance, and retry semantics are
+defined in `libs/work/README.md` and the generated Work API contract.
 
 ## 9. Non-functional requirements
 
-| ID      | Requirement                                                                                                                                    | Status   |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| FE-NF-1 | Every page streams: a `Suspense` boundary with a `NavPageLoading` header renders before data arrives                                           | Shipped  |
-| FE-NF-2 | No secret (App key, `AUTH_SECRET`, OAuth token, cookies) ever reaches the client or the logs                                                   | Shipped  |
-| FE-NF-3 | External links that come from agent output pass through `safeHttpUrl`                                                                          | Shipped  |
-| FE-NF-4 | Hermetic E2E (Playwright against the standalone build, the Firestore emulator, and fake GitHub) covers each journey                            | Partial  |
-| FE-NF-5 | The production build is a standalone bundle and has a smoke test from an isolated copy; Google Cloud clients are kept out of the server bundle | Shipped  |
-| FE-NF-6 | Deploys happen only through `deploy-console.yml`, triggered by green CI on `main`                                                              | Shipped  |
-| FE-NF-7 | P95 time to interactive on the Inbox under 2s on a mid-range phone                                                                             | Proposed |
+| ID      | Requirement                                                                                                                                                | Status  |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| FE-NF-1 | Every page streams: a `Suspense` boundary with a `NavPageLoading` header renders before data arrives                                                       | Shipped |
+| FE-NF-2 | No secret (App key, `AUTH_SECRET`, OAuth token, cookies) ever reaches the client or the logs                                                               | Shipped |
+| FE-NF-3 | External links that come from agent output pass through `safeHttpUrl`                                                                                      | Shipped |
+| FE-NF-4 | Hermetic E2E (Playwright against the standalone build, the Firestore emulator, and fake GitHub) covers each journey                                        | Partial |
+| FE-NF-5 | The production build is a standalone bundle and has a smoke test from an isolated copy; Google Cloud clients are kept out of the server bundle             | Shipped |
+| FE-NF-6 | Deploys happen only through `deploy-console.yml`, triggered by green CI on `main`                                                                          | Shipped |
+| FE-NF-7 | P95 loaded-decision / working-primary-action readiness under 2s, separately for cold/warm phone journeys; [measurement contract](../inbox-phone-budget.md) | Partial |
 
 **E2E journeys covered today:**
 
@@ -532,7 +563,8 @@ console Reply action.
 
 - `/work` list content, and `/work/[id]` reply, redispatch, cancel, and
   edit.
-- `/work/schedules`: create, enable, and disable.
+- `/work/schedules`: create, enable, disable, edit, and confirmed delete;
+  edit/delete browser journeys still require passing CI qualification.
 - `/task/...` beyond the "Open task" navigation.
 - Inbox reply submission, trigger selection, and dispatch hand-off.
 - Merge and rebase end to end.
@@ -552,10 +584,10 @@ Priorities assume the single-maintainer design center.
 | R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6, implemented)                                                               | Operator grants admit sign-in without granting admin authority             | P1       |
 | R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI      | P1       |
 | R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                              | P2       |
-| R8  | Schedule edit and delete, and a time-zone display                                                                                     | Schedules can currently only be toggled                                    | P2       |
-| R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                           | P2       |
+| R8  | Schedule edit/delete and UTC/local next-occurrence qualification                                                                      | Implemented; required browser CI and production evidence remain            | P2       |
+| R9  | Per-maintainer timed snoozes (FE-IN-7, implemented)                                                                                   | Snooze follows the maintainer across devices without hiding new decisions  | P2       |
 | R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                            | P2       |
-| R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                         | P3       |
+| R11 | Notifications: opt-in browser handoffs while Inbox is open; closed-tab push/digest pending ([contract](../inbox-notifications.md))    | The phone-first maintainer should not have to poll                         | P3       |
 
 ## 11. Success metrics
 

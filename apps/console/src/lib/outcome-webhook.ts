@@ -34,6 +34,14 @@ export interface OutcomeWebhookPayload {
   /** `origin.thread`, echoed back for the adapter to route on. */
   thread: string;
   consoleUrl: string;
+  providerFallback?: {
+    originalRunId: string;
+    fromRunId: string;
+    reason: 'provider-limit' | 'provider-cooldown';
+    failureRunId: string;
+    limitedPipeline: string;
+  };
+  reroutedTo?: { runId: string; pipeline: string };
 }
 
 function isOutcomeWebhookTarget(value: unknown): value is OutcomeWebhookTarget {

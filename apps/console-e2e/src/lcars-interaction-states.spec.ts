@@ -198,6 +198,39 @@ test.describe('pill nav transitions honor prefers-reduced-motion', () => {
 });
 
 test.describe('overlays inherit the LCARS theme', () => {
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1280, height: 900 },
+  ]) {
+    test(`New work restores first-open keyboard focus and retains its draft at ${viewport.width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.goto('/');
+      const trigger = page.getByRole('button', {
+        name: 'New work',
+        exact: true,
+      });
+      await expect(trigger).toBeEnabled();
+      await trigger.focus();
+      await page.keyboard.press('Enter');
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await dialog.getByLabel('Description').fill('Keep the first-open draft');
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(trigger).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByLabel('Description')).toHaveValue(
+        'Keep the first-open draft',
+      );
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(trigger).toBeFocused();
+    });
+  }
+
   test('the New work modal opens, is dismissible, and uses the app fonts', async ({
     page,
   }) => {

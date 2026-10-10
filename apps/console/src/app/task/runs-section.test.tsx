@@ -142,6 +142,34 @@ describe('RunsSection', () => {
     expect(within(row).queryByText(/lease expires/)).toBeNull();
   });
 
+  it('renders the observed queued run lease as a future deadline', () => {
+    const now = vi
+      .spyOn(Date, 'now')
+      .mockReturnValue(new Date('2026-10-10T07:44:39.955Z').getTime());
+    try {
+      const run = makeRun({
+        runId: 'jlapenna/agent-lcars#2379/r1',
+        task: { repo: 'jlapenna/agent-lcars', issue: 2379 },
+        pipeline: 'codex',
+        leaseExpiresAt: '2026-10-10T09:32:27.791Z',
+        createdAt: '2026-10-10T07:32:27.294Z',
+        updatedAt: '2026-10-10T07:32:27.791Z',
+        queue: { state: 'queued' },
+      });
+      renderRuns([run]);
+      const row = screen.getByTestId(`run-${run.runId}`);
+      expect(within(row).getByText(/lease expires/)).toHaveTextContent(
+        'lease expires in 1 hour',
+      );
+      expect(within(row).getByText('in 1 hour')).toHaveAttribute(
+        'datetime',
+        run.leaseExpiresAt,
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('renders every run, newest first, never collapsing history', () => {
     renderRuns([
       makeRun({
@@ -159,4 +187,94 @@ describe('RunsSection', () => {
     const rows = within(section).getAllByText(/^g\d$/);
     expect(rows.map((el) => el.textContent)).toEqual(['g2', 'g1']);
   });
+});
+
+it.each([
+  ['comment', 'https://github.com/octo/example/issues/42#issuecomment-99'],
+  ['review', 'https://github.com/octo/example/pull/42#pullrequestreview-100'],
+  ['no-op', 'https://github.com/octo/example/issues/42#issuecomment-99'],
+  ['park', 'https://github.com/octo/example/issues/42#issuecomment-99'],
+])('renders the exact %s result permalink', (summary, ref) => {
+  renderRuns([
+    makeRun({ state: 'finished', result: { ok: true, summary, ref } }),
+  ]);
+  expect(screen.getByRole('link', { name: ref })).toHaveAttribute('href', ref);
+});
+it('renders both partial PR and blocker links while guarding every related value', () => {
+  const ref = 'https://github.com/octo/example/pull/12';
+  const blocker = 'https://github.com/octo/example/issues/42#issuecomment-99';
+  renderRuns([
+    makeRun({
+      state: 'finished',
+      result: { ok: true, summary: 'park', ref, relatedRefs: [blocker] },
+    }),
+  ]);
+  expect(screen.getByRole('link', { name: ref })).toHaveAttribute('href', ref);
+  expect(screen.getByRole('link', { name: blocker })).toHaveAttribute(
+    'href',
+    blocker,
+  );
+});
+it('keeps a dangerous related reference inert', () => {
+  renderRuns([
+    makeRun({
+      state: 'finished',
+      result: {
+        ok: true,
+        summary: 'park',
+        relatedRefs: ['javascript:alert(1)'],
+      },
+    }),
+  ]);
+  expect(screen.getByText('javascript:alert(1)')).toBeInTheDocument();
+  expect(
+    screen.queryByRole('link', { name: 'javascript:alert(1)' }),
+  ).toBeNull();
+});
+
+it('keeps exact result links and fallback provenance together on the fresh attempt', () => {
+  const originalRunId = 'supersprinklesracing/sprinkles#42/r1';
+  const runId = 'supersprinklesracing/sprinkles#42/r2';
+  const ref = 'https://github.com/supersprinklesracing/sprinkles/pull/77';
+  const blocker =
+    'https://github.com/supersprinklesracing/sprinkles/issues/42#issuecomment-99';
+  renderRuns([
+    makeRun({
+      runId,
+      pipeline: 'codex',
+      state: 'finished',
+      providerFallback: {
+        allowedPipelines: ['codex', 'opencode'],
+        attemptedPipelines: ['claude', 'codex'],
+        originalRunId,
+        fromRunId: originalRunId,
+        trigger: {
+          reason: 'provider-limit',
+          limitedPipeline: 'claude',
+          failureRunId: originalRunId,
+        },
+      },
+      result: {
+        ok: true,
+        summary: 'park',
+        ref,
+        relatedRefs: [blocker, ref, 'javascript:alert(1)'],
+      },
+    }),
+  ]);
+  const row = within(screen.getByTestId(`run-${runId}`));
+  expect(
+    row.getByText(/Fresh attempt on codex.*claude reported a provider limit/),
+  ).toBeInTheDocument();
+  expect(
+    row.getByText(
+      /Original intent:.*\/r1; previous attempt:.*\/r1; triggering failure:.*\/r1/,
+    ),
+  ).toBeInTheDocument();
+  expect(row.getAllByRole('link', { name: ref })).toHaveLength(1);
+  expect(row.getByRole('link', { name: blocker })).toHaveAttribute(
+    'href',
+    blocker,
+  );
+  expect(row.queryByRole('link', { name: 'javascript:alert(1)' })).toBeNull();
 });

@@ -5,6 +5,40 @@
   "sourceRoot": "apps/console/src",
   "projectType": "application",
   "targets": {
+    "serve-emulator": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "cache": false,
+      "options": {
+        "command": "node tools/dev-console.mjs start",
+        "forwardAllArgs": true
+      }
+    },
+    "serve-lan": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "cache": false,
+      "options": {
+        "command": "node tools/dev-console.mjs start --lan",
+        "forwardAllArgs": true
+      }
+    },
+    "dev-reset": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node tools/dev-console.mjs reset",
+        "forwardAllArgs": true
+      }
+    },
+    "dev-status": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node tools/dev-console.mjs status",
+        "forwardAllArgs": true
+      }
+    },
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
@@ -97,6 +131,14 @@
       "cache": false,
       "options": {
         "command": "node tools/saved-session/mint.mjs",
+        "forwardAllArgs": true
+      }
+    },
+    "check-session": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node tools/saved-session/check.mjs",
         "forwardAllArgs": true
       }
     },

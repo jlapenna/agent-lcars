@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	batch "k8s.io/api/batch/v1"
@@ -302,5 +305,36 @@ func TestKubernetesStartupCancellationDoesNotUpdate(t *testing.T) {
 		if a.GetVerb() == "update" {
 			t.Fatal("updated after cancellation")
 		}
+	}
+}
+
+// Recovery consults the same run-token route as bootstrap. Once the control
+// plane's first-heartbeat deadline rejects the token, a delayed executor must
+// leave the original Job suspended rather than launching an expired attempt.
+func TestKubernetesStartupRecoveryFencesFirstHeartbeatDeadline(t *testing.T) {
+	q, c, job, _ := suspendedStartupFixture(t)
+	expired := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer private-token" {
+			t.Error("incorrect recovery credential")
+		}
+		if expired {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = io.WriteString(w, `{"intentId":"work:startup/r1"}`)
+	}))
+	defer server.Close()
+	q.verifyRun = queueRunFence(server.URL)
+	if err := q.verifyRun(context.Background(), "work:startup/r1", "private-token"); err != nil {
+		t.Fatal("valid bootstrap rejected:", err)
+	}
+	expired = true
+	if err := q.recover(context.Background()); err == nil {
+		t.Fatal("expired bootstrap recovered")
+	}
+	current, err := c.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), job.Name, meta.GetOptions{})
+	if err != nil || current.Spec.Suspend == nil || !*current.Spec.Suspend {
+		t.Fatal("expired attempt was unsuspended")
 	}
 }

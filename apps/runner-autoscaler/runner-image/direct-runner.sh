@@ -44,6 +44,9 @@ source "${WORKER_COMPLETION_HELPER:-$RUNTIME_HELPERS_DIR/worker-completion.sh}"
 # shellcheck source=runtime/worker-policy-bootstrap.sh
 source "${WORKER_POLICY_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/worker-policy-bootstrap.sh}"
 CODEX_HOOK_ARGS=()
+# This supervisor observes successful OS spawn, not a bootstrap heartbeat.
+PROVIDER_PROCESS_NODE="${PROVIDER_PROCESS_NODE:-/usr/bin/node}"
+PROVIDER_PROCESS_HELPER="${PROVIDER_PROCESS_HELPER:-$RUNTIME_HELPERS_DIR/provider-process.mjs}"
 
 # The native dispatch helper requires RUNNER_TEMP in its child environment. A
 # direct-mode container is not a GitHub Actions runner, so it does not supply
@@ -749,7 +752,7 @@ if [ "$PIPELINE" = "claude" ]; then
     remaining=$((CLAUDE_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
-      claude --dangerously-skip-permissions \
+      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" claude --dangerously-skip-permissions \
       --allowedTools "Bash,Edit,Write,MultiEdit" \
       --disallowedTools "ScheduleWakeup,SendMessage,Monitor" \
       "$@" --print "$prompt" | tee "$LAST_MESSAGE_FILE"
@@ -920,7 +923,7 @@ CURLCFG
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
-      codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
+      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
       --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
       "$prompt" 2> "$CODEX_STDERR_PIPE" |
       while IFS= read -r codex_event; do
@@ -1109,7 +1112,7 @@ else
     fi
     env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
       timeout --signal=TERM --kill-after=30s "${round_remaining}s" \
-      "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
+      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
         "$@" \
         --auto "$round_prompt"
   }
@@ -1189,72 +1192,20 @@ elif [ "$AGENT_EXIT" -ne 0 ]; then
 fi
 OUTCOME_REFERENCE=null
 VERIFY_OUTPUT="$RUNNER_TEMP/verify-outcome-output"
-# A timeout or provider crash can happen after a PR was published. Always
-# verify exact attempt-bound artifacts before classifying execution failure.
+VERIFIED_OUTCOME_FILE="$RUNNER_TEMP/verified-outcome.json"
+# A timeout or provider crash can happen after publication. The verifier
+# classifies and returns the same exact marker-bound REST objects it checked;
+# completion does not repeat GitHub lookups or inspect agent-supplied links.
 if AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" \
+  VERIFIED_OUTCOME_FILE="$VERIFIED_OUTCOME_FILE" \
   bash "$VERIFY_OUTCOME" >"$VERIFY_OUTPUT" 2>&1; then
   cat "$VERIFY_OUTPUT"
-  # The verifier proves that *some* exact marker-bound artifact exists; the
-  # completion outcome must still name that artifact rather than relabeling
-  # a reply comment or a pull-request review as a pull request.
-  #
-  # Start at `unknown-success`: a transient classification lookup cannot
-  # undo the verifier's success, nor can it assert a nonexistent PR.
   OUTCOME=unknown-success
-  claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
-  if pr_hits="$(gh api "repos/$TARGET_REPO/pulls?state=all&per_page=100" --paginate \
-    --jq ".[] | select(.user.type == \"Bot\") | select(((.title // \"\") + \"\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number")"; then
-    if [ -n "$pr_hits" ]; then
-      OUTCOME=pull-request
-      if [[ "$pr_hits" != *$'\n'* ]]; then
-        OUTCOME_REFERENCE="$(jq -n --argjson n "$pr_hits" '{kind: "pull-request", number: $n}')"
-      fi
-    fi
-  else
-    echo "::warning::Could not classify a pull-request deliverable for the completion callback" >&2
-    pr_hits=""
-  fi
-
-  # A GitHub issue/PR anchor can complete with an evidence comment. Check
-  # park/no-op before a plain comment; these structured comments carry distinct control-plane
-  # semantics even though they use the same GitHub artifact type.
-  if [ -n "$ISSUE" ]; then
-    if comment_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
-      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then
-      if [ -n "$comment_hits" ]; then
-        if park_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
-          --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:park -->\")) | .id")" && \
-          [ -n "$park_hits" ]; then
-          # A structured park wins even if this run also opened a PR. The
-          # PR reference remains attached so the control plane can point at
-          # the partial work alongside the human blocker.
-          OUTCOME=park
-        elif [ "$OUTCOME" = unknown-success ]; then
-          OUTCOME=comment
-          if no_op_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
-            --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id")" && \
-            [ -n "$no_op_hits" ]; then
-            OUTCOME=no-op
-          fi
-        fi
-      fi
-    else
-      echo "::warning::Could not classify a comment deliverable for the completion callback" >&2
-    fi
-  fi
-
-  # A review is a distinct protocol deliverable. It is intentionally after
-  # comments: a marker-stamped comment remains the authoritative artifact if
-  # an agent left both.
-  if [ "$OUTCOME" = unknown-success ] && [ "$MODE" = review ] && [ -n "$ISSUE" ]; then
-    if review_hits="$(gh api "repos/$TARGET_REPO/pulls/$ISSUE/reviews?per_page=100" --paginate \
-      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then
-      if [ -n "$review_hits" ]; then
-        OUTCOME=review
-      fi
-    else
-      echo "::warning::Could not classify a pull-request review deliverable for the completion callback" >&2
-    fi
+  if [ -s "$VERIFIED_OUTCOME_FILE" ] && jq -e '
+    .outcome | IN("pull-request", "comment", "review", "park", "no-op")
+  ' "$VERIFIED_OUTCOME_FILE" >/dev/null; then
+    OUTCOME="$(jq -r .outcome "$VERIFIED_OUTCOME_FILE")"
+    OUTCOME_REFERENCE="$(jq -c .outcomeReference "$VERIFIED_OUTCOME_FILE")"
   fi
 elif [ "$ANCHOR_TYPE" = "work" ]; then
   # A native Work terminal outcome is a deliberately narrow replacement for
