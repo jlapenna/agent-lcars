@@ -1,10 +1,10 @@
+/* eslint-disable vitest/no-import-node-test -- required runner-image shell suite runs this test with node --test, matching neighboring image tests. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-
-import { test } from 'vitest';
+import { test } from 'node:test';
 
 const supervisor = new URL('./provider-process.mjs', import.meta.url).pathname;
 async function fixture(t) {
@@ -44,7 +44,10 @@ test('reports successful spawn once and preserves nonzero workload output/status
     [
       process.execPath,
       '-e',
-      'console.log("workload"); setTimeout(()=>process.exit(23),100)',
+      `console.log("workload"); const fs=require("node:fs");
+         const timer=setInterval(()=>{try{if(fs.readFileSync(process.argv[1],"utf8").includes("providerProcessStarted")){clearInterval(timer);process.exit(23)}}catch{}},10);
+         setTimeout(()=>process.exit(24),5000).unref()`,
+      f.log,
     ],
     f.env,
   );
