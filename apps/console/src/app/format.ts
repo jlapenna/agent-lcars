@@ -15,8 +15,8 @@ const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
  * server-rendered value (see docs/next-auth.md and prior SSR timestamp bugs).
  */
 export function formatRelativeTime(iso: string): string {
-  const elapsed = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  const seconds = Math.abs(elapsed);
+  const elapsed = (Date.now() - new Date(iso).getTime()) / 1000;
+  const seconds = Math.max(elapsed < 0 ? 1 : 0, Math.round(Math.abs(elapsed)));
   if (seconds < 60) {
     return elapsed < 0 ? rtf.format(seconds, 'second') : 'just now';
   }
@@ -29,8 +29,8 @@ export function formatRelativeTime(iso: string): string {
 
 /** Dense queue-row timestamp: "now", "15m ago", "in 2h", "1d ago". */
 export function formatCompactRelativeTime(iso: string): string {
-  const elapsed = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  const seconds = Math.abs(elapsed);
+  const elapsed = (Date.now() - new Date(iso).getTime()) / 1000;
+  const seconds = Math.max(elapsed < 0 ? 1 : 0, Math.round(Math.abs(elapsed)));
   if (seconds < 60) return elapsed < 0 ? `in ${seconds}s` : 'now';
   const units: [string, number][] = [
     ['y', 60 * 60 * 24 * 365],

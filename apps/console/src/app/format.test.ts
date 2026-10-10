@@ -23,6 +23,7 @@ describe('relative deadlines', () => {
   });
 
   it.each([
+    [0.1, 'in 1 second', 'in 1s'],
     [30, 'in 30 seconds', 'in 30s'],
     [60, 'in 1 minute', 'in 1m'],
     [3600, 'in 1 hour', 'in 1h'],
