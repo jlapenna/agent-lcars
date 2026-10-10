@@ -40,6 +40,7 @@ import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { BridgePaneLink } from './bridge-pane-link';
 import { bridgeSelectionHref, runKey, sessionKey } from './bridge-selection';
+import { ExecutionStatus } from './execution-status';
 import { Eyebrow } from './eyebrow';
 import { FleetChip } from './fleet-status';
 import { formatCost, formatDuration } from './format';
@@ -359,15 +360,21 @@ export function LiveRunRow({
             selectHref={selectHref}
           />
           <Group gap="xs" wrap="wrap">
-            <Badge
-              variant="filled"
-              color={run.status === 'running' ? 'blue' : 'gray'}
-              size="xs"
-              style={{ flexShrink: 0 }}
-            >
-              {run.status === 'running' ? 'running' : 'queued'}
-            </Badge>
+            <ExecutionStatus
+              run={{
+                state: run.status === 'queued' ? 'pending' : run.status,
+                queue: run.queue,
+              }}
+            />
             <RepoBadge repo={run.repo} />
+            {(taskHrefForRun(run, item) ?? workHrefForRun(run)) && (
+              <Anchor
+                size="xs"
+                href={`${taskHrefForRun(run, item) ?? workHrefForRun(run)}#run-${encodeURIComponent(run.id)}`}
+              >
+                Task/run
+              </Anchor>
+            )}
             <Text size="xs" c="dimmed">
               {run.status === 'running' ? (
                 <>
@@ -427,16 +434,22 @@ export function LiveRunRow({
         {item ? `#${item.number} ${item.title}` : run.displayTitle}
       </Anchor>
       <Group gap="xs" wrap="wrap">
-        <Badge
-          variant="filled"
-          color={run.status === 'running' ? 'blue' : 'gray'}
-          size="xs"
-          style={{ flexShrink: 0 }}
-        >
-          {run.status === 'running' ? 'running' : 'queued'}
-        </Badge>
+        <ExecutionStatus
+          run={{
+            state: run.status === 'queued' ? 'pending' : run.status,
+            queue: run.queue,
+          }}
+        />
         <PipelineBadge pipeline={run.pipeline} />
         <RepoBadge repo={run.repo} />
+        {(taskHrefForRun(run, item) ?? workHrefForRun(run)) && (
+          <Anchor
+            size="xs"
+            href={`${taskHrefForRun(run, item) ?? workHrefForRun(run)}#run-${encodeURIComponent(run.id)}`}
+          >
+            Task/run
+          </Anchor>
+        )}
       </Group>
       <Group gap={6} wrap="wrap" className="agent-run-meta">
         <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>

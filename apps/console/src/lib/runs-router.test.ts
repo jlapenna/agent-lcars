@@ -1690,6 +1690,97 @@ describe('claimStatus', () => {
     return { ...f, runId, token, fingerprint, path, principal };
   }
 
+  it('records placement without renewing heartbeat, lease or provider start', async () => {
+    const f = await claimed();
+    const before = await f.store.readRun(f.runId);
+    const placement = {
+      phase: 'waiting-for-placement',
+      reason: 'unschedulable',
+      observedAt: NOW,
+      jobCreatedAt: NOW,
+    };
+    const response = await call(
+      { ...f, ...context },
+      'POST',
+      runPath(f.runId, '/placement'),
+      {
+        runner: 'runner-1',
+        claimFingerprint: f.fingerprint,
+        placement,
+      },
+    );
+    expect(response.status).toBe(200);
+    const after = await f.store.readRun(f.runId);
+    expect(after?.queue?.placement).toEqual(placement);
+    expect(after?.leaseExpiresAt).toBe(before?.leaseExpiresAt);
+    expect(after?.queue?.firstHeartbeatAt).toBeUndefined();
+    expect(after?.queue?.providerProcessStartedAt).toBeUndefined();
+    expect(after?.queue?.startDeadlineAt).toBe(before?.queue?.startDeadlineAt);
+    expect(after?.state).toBe(before?.state);
+  });
+
+  it.each([
+    'subject',
+    'runner',
+    'fingerprint',
+    'pipeline',
+    'scope',
+    'expired',
+    'future',
+    'stale',
+    'lost',
+    'reclaimed',
+  ])('fences placement reports for %s', async (kind) => {
+    const f = await claimed();
+    let principal: RunsContext['principal'] = f.principal;
+    let runner = 'runner-1';
+    let claimFingerprint = f.fingerprint;
+    let observedAt = NOW;
+    if (kind === 'subject')
+      principal = { ...f.principal, subject: 'other@example.com' };
+    if (kind === 'runner') runner = 'other';
+    if (kind === 'fingerprint') claimFingerprint = 'a'.repeat(64);
+    if (kind === 'pipeline') principal = executorPrincipal(['codex']);
+    if (kind === 'scope') principal = undefined;
+    if (kind === 'expired') f.setNow('2026-08-26T10:16:00.000Z');
+    if (kind === 'future') observedAt = '2026-08-26T10:00:01.000Z';
+    if (kind === 'stale') observedAt = '2026-08-26T09:59:00.000Z';
+    if (kind === 'lost')
+      await f.orchestrator.executorExited(f.runId, {
+        subject: f.principal.subject,
+        runner: 'runner-1',
+        claimFingerprint: f.fingerprint,
+      });
+    if (kind === 'reclaimed') {
+      await f.store.releaseQueuedRunClaim({
+        runId: f.runId,
+        claimedBy: 'runner-1',
+        tokenHash: f.fingerprint,
+        now: NOW,
+      });
+      await call({ ...f, ...context }, 'POST', '/runs/claim', {
+        runner: 'runner-1',
+      });
+    }
+    const before = await f.store.readRun(f.runId);
+    const response = await call(
+      { ...f, ...context, principal },
+      'POST',
+      runPath(f.runId, '/placement'),
+      {
+        runner,
+        claimFingerprint,
+        placement: {
+          phase: 'waiting-for-placement',
+          reason: 'pending',
+          observedAt,
+        },
+      },
+    );
+    expect(response.status).toBe(kind === 'scope' ? 401 : 403);
+    expect(await f.store.readRun(f.runId)).toEqual(before);
+  });
+
   it('reads only its exact claim, preserving expired live runs until settlement', async () => {
     const f = await claimed();
     f.setNow('2026-08-26T10:16:00.000Z');

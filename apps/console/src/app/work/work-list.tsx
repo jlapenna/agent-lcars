@@ -15,6 +15,7 @@ import {
   Text,
 } from '@mantine/core';
 
+import { ExecutionStatus } from '../execution-status';
 import { formatRelativeTime } from '../format';
 
 /** parked < running < done < canceled - a parked item is the one most
@@ -36,6 +37,11 @@ const STATE_COLORS: Record<ItemState, string> = {
   done: 'green',
   canceled: 'gray',
 };
+
+function WorkExecution({ item }: { item: ItemView }) {
+  const run = latestRun(item.runs);
+  return run ? <ExecutionStatus run={run} /> : null;
+}
 
 function pipelineLabel(item: ItemView): string {
   const latest = latestRun(item.runs);
@@ -59,6 +65,7 @@ function WorkCard({ item }: { item: ItemView }) {
             {item.state}
           </Badge>
         </Group>
+        <WorkExecution item={item} />
         <Text size="xs" c="dimmed">
           {item.spec.target.repo} &middot; {pipelineLabel(item)}
         </Text>
@@ -128,7 +135,10 @@ export function WorkList({ items }: { items: ItemView[] }) {
                     {item.spec.title}
                   </Anchor>
                 </TableTd>
-                <TableTd>{item.state}</TableTd>
+                <TableTd>
+                  {item.state}
+                  <WorkExecution item={item} />
+                </TableTd>
                 <TableTd>{pipelineLabel(item)}</TableTd>
                 <TableTd>{item.spec.target.repo}</TableTd>
                 <TableTd>{item.origin.principal}</TableTd>

@@ -5,6 +5,7 @@ import { Anchor, Badge, Divider, Group, Stack, Text } from '@mantine/core';
 
 import type { AgentPipeline } from '../../lib/agent-activity';
 import { PipelineBadge } from '../agent-activity-panel';
+import { ExecutionStatus } from '../execution-status';
 import { RelativeTime } from '../relative-time';
 import { ProviderFallbackSummary } from '../work/provider-fallback-summary';
 import { resultRefs } from '../work/result-refs';
@@ -143,7 +144,7 @@ function RunRow({ run }: { run: Run }) {
   const badge = runStateBadge(run);
   const generation = parseRunGeneration(run.runId);
   return (
-    <Stack gap={6} data-testid={`run-${run.runId}`}>
+    <Stack gap={6} id={`run-${run.runId}`} data-testid={`run-${run.runId}`}>
       <Group gap="xs" wrap="wrap">
         <Badge
           variant="filled"
@@ -160,7 +161,7 @@ function RunRow({ run }: { run: Run }) {
           </Badge>
         )}
         <Text size="xs" c="dimmed">
-          started <RelativeTime iso={run.createdAt} />
+          admitted <RelativeTime iso={run.createdAt} />
         </Text>
         {isLive(run.state) && (
           <Text size="xs" c="dimmed">
@@ -169,6 +170,7 @@ function RunRow({ run }: { run: Run }) {
         )}
         <RunParamChips params={run.params} />
       </Group>
+      <ExecutionStatus run={run} />
       <ProviderFallbackSummary run={run} />
       {run.events.length > 0 && (
         <Stack gap={2} pl="xs" data-testid={`run-events-${run.runId}`}>

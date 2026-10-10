@@ -297,6 +297,47 @@ export function renewLease(input: {
   };
 }
 
+/** Executor observations never renew execution leases or count as worker heartbeats.
+ * The claim, active lock and recovery deadline are checked at atomic commit. */
+export function observePlacement(input: {
+  now: string;
+  task: Task;
+  run: Run;
+  claimant: ExitClaimant;
+  placement: NonNullable<NonNullable<Run['queue']>['placement']>;
+}): Decision | Refusal {
+  const { now, task, run, claimant } = input;
+  if (
+    run.queue?.state !== 'claimed' ||
+    run.queue.claimedBySubject !== claimant.subject ||
+    run.queue.claimedBy !== claimant.runner ||
+    claimant.claimFingerprint === undefined ||
+    run.queue.tokenHash !== claimant.claimFingerprint
+  )
+    return refused('not-claimant');
+  if (!isLive(run.state)) return refused('run-not-live');
+  if (
+    task.activeRunId !== run.runId ||
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+      Date.parse(now)
+  )
+    return refused('stale-lease');
+  const observed = Date.parse(input.placement.observedAt);
+  if (
+    !Number.isFinite(observed) ||
+    observed > Date.parse(now) ||
+    Date.parse(now) - observed > 30_000 ||
+    (run.queue.placement !== undefined &&
+      observed < Date.parse(run.queue.placement.observedAt))
+  )
+    return refused('stale-lease');
+  return {
+    task,
+    run: { ...run, queue: { ...run.queue, placement: input.placement } },
+    outbox: [],
+  };
+}
+
 /**
  * The run reports its result. The result is recorded verbatim; the lock is
  * released; reporting onward is an outbox effect. A report from a run that

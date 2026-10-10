@@ -162,3 +162,43 @@ runner-variable ownership.
 | Agent label vocabulary    | [GitHub label contract](github-label-contract.md)               |
 | Fleet-consumable actions  | [Published actions](published-actions.md)                       |
 | Variables and credentials | [Deployment boundary](deployment-boundary.md)                   |
+
+## Per-run placement and execution observations
+
+QueueExecutor reports each live Job's placement through
+`POST /api/work/v1/runs/{runId}/placement`, using its existing executor
+identity, original runner name and exact claim fingerprint. The transaction
+rechecks the active task/run, principal, fingerprint and recovery deadline.
+It rejects settled/reclaimed attempts and older, future or more than
+thirty-second-old samples. These observations do not renew a lease, create a
+heartbeat, advance RunState or authorize Job deletion.
+
+The executor samples Jobs and their controller-UID-owned Pods every ten
+seconds in a separate five-second-bounded sweep. It publishes only allowlisted
+`pending`, `unschedulable`, `scheduled` or `inventory-unavailable` reasons;
+raw scheduler messages, node names and credentials are excluded. A missing
+Pod counts as awaiting placement. An assigned Pod means bootstrapping, including
+a Running Pod; only the worker's existing `providerProcessStartedAt` report
+proves the provider executable spawned. This milestone does not assert a first
+model response. Pod API failure is unavailable; Job API failure leaves the
+previous observation to expire after three minutes. Node availability is
+never guessed from GitHub or an unavailable inventory. Rotating the sweep
+cursor prevents a slow report from starving later claims.
+
+The existing startup bound from #2188 remains fifteen minutes from claim to
+first heartbeat, including placement and bootstrap. Observation traffic cannot
+extend it. The five-minute maintenance cadence normally settles an expired
+startup within twenty minutes; it records startup loss, not a model failure.
+A normal temporary capacity wait remains placement until that bound. Accepted
+worker heartbeats then use the renewable run lease. Kubernetes' unchanged
+7200-second active deadline is an independent Job backstop, not permission to
+run after control-plane settlement. Exact-claim foreground retirement and Pod
+drain still precede admission of a successor. The one-Pending gate, provider
+serialization, requests, selectors, taints and `max_concurrent` are unchanged.
+
+Agents, canonical task history and Work show the same execution phase and
+source age; an open tab expires stale placement without replacing its source
+clock with a refresh time. Legacy claimed runs without observations show
+placement unavailable. Admission alone is no longer coarsened to active
+provider work. Runtime qualification requires the normally deployed executor
+and console; fixture/browser evidence does not claim live placement capacity.
