@@ -161,10 +161,21 @@ Run `node tools/verify-onboarding.mjs` with `APP_CLIENT_ID`,
 `APP_PRIVATE_KEY`, and `AGENT_FLEET_LOGIN` supplied by the approved credential
 environment. Do not paste credentials into commands or logs. Use
 `--repo=OWNER/REPO` to narrow repository checks, or `--registrations=PATH` to
-read an operator-supplied autoscaler configuration instead of Homelab's
-committed configuration. The default watches the console's actual repository
-list and reads Homelab's registration data through the GitHub API; it does not
-copy the registration list or import Homelab source code.
+read an operator-supplied registration configuration. The default watches the
+console's actual repository list and reads Homelab's legacy
+`github-runner-autoscaler/orchestrator.yml` through the GitHub API; it does not
+copy the registration list or import Homelab source code. That file now owns
+QueueExecutor, not ARC registrations. If it contains no active registrations,
+the audit emits `registrations/configuration: UNVERIFIED`, explicitly reporting
+that runner coverage was not audited. An empty or entirely disabled operator
+inventory produces the same result; a green workflow is not complete coverage.
+
+For ARC runner-scope checks, an operator must supply current registration data
+from Homelab in the accepted format: `registrations` entries with `name`,
+`github.url`, and resolved `app.client_id` / `app.installation_id`. Homelab's
+public listener-routing lane list alone is insufficient: it does not carry the
+App identity. Supplying this inventory verifies the named targets only; it
+does not establish inventory completeness, live listener polling, or deployment.
 
 The tool emits one JSON result per repository and setup fact: App installation,
 fleet-login push permission and assignability, declared label metadata,

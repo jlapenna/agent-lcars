@@ -390,6 +390,105 @@ describe('read-only onboarding audit', () => {
     ).toThrow('Invalid runner registration URL');
   });
 
+  it.each([
+    ['empty operator inventory', {}],
+    [
+      'QueueExecutor-only configuration',
+      { kubernetes: { namespace: 'agent-lcars' } },
+    ],
+    [
+      'disabled registrations',
+      { registrations: [{ name: 'retired', disabled: true }] },
+    ],
+  ])(
+    'reports missing runner coverage for %s',
+    async (_name, registrationConfig) => {
+      const { privateKey } = generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+      });
+      const calls: string[] = [];
+      const facts = await runAudit({
+        clientId: 'fleet-app',
+        privateKey,
+        repos: [],
+        labels,
+        profiles,
+        fleetLogin: 'fleet',
+        registrationConfig,
+        api: async (path: string) => {
+          calls.push(path);
+          throw new Error('No API request expected');
+        },
+      });
+      expect(facts).toEqual([
+        {
+          repo: 'registrations',
+          fact: 'configuration',
+          status: 'UNVERIFIED',
+          detail: expect.stringContaining('No active runner registrations'),
+        },
+      ]);
+      expect(auditHasFailure(facts)).toBe(false);
+      expect(calls).toEqual([]);
+    },
+  );
+
+  it.each(['kubernetes:\n  namespace: agent-lcars\n', ''])(
+    'reports missing coverage in the default source and revokes its temporary read token (%j)',
+    async (source) => {
+      const { privateKey } = generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+      });
+      const calls: { path: string; method: string; body: unknown }[] = [];
+      const facts = await runAudit({
+        clientId: 'fleet-app',
+        privateKey,
+        repos: [],
+        labels,
+        profiles,
+        fleetLogin: 'fleet',
+        api: async (
+          path: string,
+          _token: string,
+          method = 'GET',
+          body?: unknown,
+        ) => {
+          calls.push({ path, method, body });
+          if (path === '/repos/jlapenna/homelab/installation')
+            return { id: 7, permissions: { contents: 'read' } };
+          if (path === '/app/installations/7/access_tokens')
+            return { token: 'private-read-token' };
+          if (
+            path.endsWith('/contents/github-runner-autoscaler/orchestrator.yml')
+          )
+            return {
+              content: Buffer.from(source).toString('base64'),
+            };
+          if (path === '/installation/token' && method === 'DELETE')
+            return null;
+          throw new Error('Unexpected API request');
+        },
+      });
+      expect(facts).toEqual([
+        {
+          repo: 'registrations',
+          fact: 'configuration',
+          status: 'UNVERIFIED',
+          detail: expect.stringContaining('No active runner registrations'),
+        },
+      ]);
+      expect(calls.filter(({ method }) => method === 'POST')).toEqual([
+        {
+          path: '/app/installations/7/access_tokens',
+          method: 'POST',
+          body: { permissions: { metadata: 'read', contents: 'read' } },
+        },
+      ]);
+      expect(calls.filter(({ method }) => method === 'DELETE')).toHaveLength(1);
+      expect(JSON.stringify(facts)).not.toContain('private-read-token');
+    },
+  );
+
   it('covers every watched repository and every local workflow variable in the manifest', () => {
     const manifest = JSON.parse(
       readFileSync('config/github-variables.json', 'utf8'),
