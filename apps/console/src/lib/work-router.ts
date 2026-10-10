@@ -342,6 +342,7 @@ export const workRouter = os.router({
       // Slack adapter call `requestReply` directly with their own channel.
       channel: context.principal.via === 'session' ? 'console' : 'api',
       principal: context.principal.principal,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
       ...(input.resume === undefined ? {} : { resume: input.resume }),
       ...(input.pipeline === undefined ? {} : { pipeline: input.pipeline }),
     });

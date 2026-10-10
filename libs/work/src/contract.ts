@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { parseCron } from './cron';
 import {
   PIPELINES,
+  WORK_DESCRIPTION_MAX,
   WORK_TITLE_MAX,
   workOriginSchema,
   workSpecSchema,
@@ -23,6 +24,8 @@ import {
 export const WORK_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
 export const workIdSchema = z.string().regex(WORK_ID_PATTERN);
+export const workReplyTextSchema = z.string().min(1).max(WORK_DESCRIPTION_MAX);
+export const workReplyRequestIdSchema = z.string().min(1).max(128);
 
 const githubArtifactIdSchema = z.number().int().positive();
 const githubArtifactReferenceSchema = z.discriminatedUnion('kind', [
@@ -340,7 +343,10 @@ export const itemsContract = {
         id: workIdSchema,
         /** The human's turn. Bounded to WORK_DESCRIPTION_MAX: a reply is
          *  the same kind of prose an item's description is. */
-        text: z.string().min(1).max(16_384),
+        text: workReplyTextSchema,
+        /** Retries with this key return the original admitted round. Scoped
+         * to the item and authenticated principal; changed input conflicts. */
+        requestId: workReplyRequestIdSchema.optional(),
         /** Defaults to true. False starts a fresh session that still
          *  carries the reply text. */
         resume: z.boolean().optional(),

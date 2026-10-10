@@ -2192,6 +2192,11 @@
                     "minLength": 1,
                     "maxLength": 16384
                   },
+                  "requestId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
                   "resume": {
                     "type": "boolean"
                   },
