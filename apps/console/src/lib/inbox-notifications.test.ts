@@ -96,8 +96,12 @@ describe('authenticated Inbox notification accounting', () => {
       const state = advanceNotificationState(
         baseline(),
         {
-          ...snapshot(100_000, []),
-          sourceTimes: { queue: 130_000, activity: 100_000, native: 140_000 },
+          ...snapshot(regressed === 'activity' ? 120_000 : 100_000, []),
+          sourceTimes: {
+            queue: 130_000,
+            activity: regressed === 'activity' ? 120_000 : 100_000,
+            native: 140_000,
+          },
         },
         150_000,
       );
