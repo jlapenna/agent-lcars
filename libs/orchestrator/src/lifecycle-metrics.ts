@@ -19,6 +19,43 @@ const OUTCOMES = [
   'other',
 ] as const;
 const BUCKETS = [60, 120, 300, 900, 3_600] as const;
+const HELP = {
+  snapshot_complete:
+    'One for untruncated durable reads, zero for incomplete reads.',
+  snapshot_observed_timestamp_seconds:
+    'Snapshot observation time in Unix seconds.',
+  snapshot_records: 'Records returned by each bounded durable feed.',
+  admitted_window: 'Run identities admitted during the rolling hour.',
+  auto_retries_window:
+    'Automatic retry generations admitted during the rolling hour.',
+  claims_window:
+    'Retained claims timestamped during the rolling hour, not all claim attempts.',
+  terminal_clock_unknown_window:
+    'Recently updated terminal runs without a valid terminal event clock.',
+  settled_window:
+    'Run identities whose current terminal event falls in the rolling hour.',
+  live_runs: 'Currently live run identities by queue state.',
+  silent_loss_runs:
+    'Non-queued live runs with leases overdue beyond the recovery interval.',
+  oldest_queued_seconds: 'Oldest queued run age since admission in seconds.',
+  latency_window_samples:
+    'Known rolling-hour latency samples at or below upper_bound_seconds; a gauge, not a histogram.',
+  latency_window_observations:
+    'Known nonnegative latency observations in the rolling hour.',
+  latency_window_duration_seconds:
+    'Sum of known rolling-hour latency durations in seconds; a decreasing gauge.',
+  latency_window_unknown:
+    'Rolling-hour latency candidates with missing or reversed clocks.',
+  reported_outcome_window:
+    'Finished rolling-hour run identities by worker-reported outcome, not verified usefulness.',
+  measurement_unknown_window:
+    'Rolling-hour run identities whose named measurement is unavailable.',
+  outbox_entries: 'Outstanding durable outbox entries by kind and state.',
+  outbox_oldest_seconds:
+    'Oldest outstanding outbox entry age since creation in seconds.',
+  outbox_recorded_delivery_failures:
+    'Persisted delivery failures summed over outstanding outbox entries; a stock gauge.',
+} as const;
 
 function terminalAt(run: Run): string | undefined {
   return [...run.events].reverse().find((event) => event.to === run.state)?.at;
@@ -62,12 +99,13 @@ export function lifecycleMetricSnapshot(
   const lines: string[] = [];
   const declared = new Set<string>();
   function gauge(
-    name: string,
+    name: keyof typeof HELP,
     value: number,
     labels: Record<string, string> = {},
   ) {
     const metric = `lcars_product_${name}`;
     if (!declared.has(metric)) {
+      lines.push(`# HELP ${metric} ${HELP[name]}`);
       lines.push(`# TYPE ${metric} gauge`);
       declared.add(metric);
     }
@@ -194,20 +232,23 @@ export function lifecycleMetricSnapshot(
               : (Date.parse(end) - Date.parse(start)) / 1_000;
           if (Number.isFinite(seconds) && seconds >= 0) durations.push(seconds);
         }
-        for (const le of BUCKETS)
+        for (const bound of BUCKETS)
           gauge(
-            'latency_window_bucket',
-            durations.filter((seconds) => seconds <= le).length,
-            { pipeline, stage, le: String(le) },
+            'latency_window_samples',
+            durations.filter((seconds) => seconds <= bound).length,
+            { pipeline, stage, upper_bound_seconds: String(bound) },
           );
-        gauge('latency_window_bucket', durations.length, {
+        gauge('latency_window_samples', durations.length, {
           pipeline,
           stage,
-          le: '+Inf',
+          upper_bound_seconds: '+Inf',
         });
-        gauge('latency_window_count', durations.length, { pipeline, stage });
+        gauge('latency_window_observations', durations.length, {
+          pipeline,
+          stage,
+        });
         gauge(
-          'latency_window_sum',
+          'latency_window_duration_seconds',
           durations.reduce((sum, seconds) => sum + seconds, 0),
           { pipeline, stage },
         );

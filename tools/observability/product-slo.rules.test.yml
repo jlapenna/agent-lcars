@@ -40,15 +40,15 @@ tests:
         values: 1x20
       - series: lcars_product_snapshot_observed_timestamp_seconds{job="lcars-product",instance="one"}
         values: 0+60x20
-      - series: lcars_product_latency_window_count{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
+      - series: lcars_product_latency_window_observations{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
         values: 29x20
-      - series: lcars_product_latency_window_bucket{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue",le="60"}
+      - series: lcars_product_latency_window_samples{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue",upper_bound_seconds="60"}
         values: 0x20
       - series: lcars_product_latency_window_unknown{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
         values: 0x20
-      - series: lcars_product_latency_window_count{job="lcars-product",instance="one",pipeline="codex",stage="admission_to_queue"}
+      - series: lcars_product_latency_window_observations{job="lcars-product",instance="one",pipeline="codex",stage="admission_to_queue"}
         values: 40x20
-      - series: lcars_product_latency_window_bucket{job="lcars-product",instance="one",pipeline="codex",stage="admission_to_queue",le="60"}
+      - series: lcars_product_latency_window_samples{job="lcars-product",instance="one",pipeline="codex",stage="admission_to_queue",upper_bound_seconds="60"}
         values: 0x20
       - series: lcars_product_latency_window_unknown{job="lcars-product",instance="one",pipeline="codex",stage="admission_to_queue"}
         values: 1x20
@@ -124,9 +124,9 @@ tests:
         values: 1x20
       - series: lcars_product_snapshot_observed_timestamp_seconds{job="lcars-product",instance="one"}
         values: 0+60x20
-      - series: lcars_product_latency_window_count{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
+      - series: lcars_product_latency_window_observations{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
         values: 40x20
-      - series: lcars_product_latency_window_bucket{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue",le="60"}
+      - series: lcars_product_latency_window_samples{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue",upper_bound_seconds="60"}
         values: 36x20
       - series: lcars_product_latency_window_unknown{job="lcars-product",instance="one",pipeline="claude",stage="admission_to_queue"}
         values: 0x20

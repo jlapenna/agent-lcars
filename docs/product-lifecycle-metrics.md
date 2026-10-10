@@ -39,6 +39,14 @@ job/instance labels. Only the four pipeline labels `claude`, `codex`,
 `opencode`, `unknown` are possible. No repo, task/run/request ID, principal,
 error prose, token, URL, or monetary estimate becomes a metric label.
 
+Every metric has HELP metadata and gauge TYPE metadata. Latency uses
+`latency_window_samples{upper_bound_seconds="60"}` (and 120/300/900/3600/+Inf),
+`latency_window_observations`, and `latency_window_duration_seconds` instead
+of reserved histogram `_bucket`/`le`/`_count`/`_sum` names. These are rolling
+distributions, not Prometheus histograms; do not apply `histogram_quantile()`
+directly. The admission warning compares the bounded samples with the
+observation denominator. Check a live export with `promtool check metrics`.
+
 All names below have prefix `lcars_product_`.
 
 | Measurement                                    | Exact event/clock and interpretation                                                                                                                                                                                                                                                                                                                   |

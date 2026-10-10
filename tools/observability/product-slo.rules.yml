@@ -8,10 +8,10 @@ groups:
         expr: (lcars_product_snapshot_complete == 1) and (time() - lcars_product_snapshot_observed_timestamp_seconds < 180) and (lcars_product_snapshot_observed_timestamp_seconds <= time())
       - record: lcars_product:admission_bad_ratio_1h
         expr: |
-          ((lcars_product_latency_window_count{stage="admission_to_queue"}
-          - ignoring(le) lcars_product_latency_window_bucket{stage="admission_to_queue",le="60"})
-          / lcars_product_latency_window_count{stage="admission_to_queue"})
-          and (lcars_product_latency_window_count{stage="admission_to_queue"} >= 30)
+          ((lcars_product_latency_window_observations{stage="admission_to_queue"}
+          - ignoring(upper_bound_seconds) lcars_product_latency_window_samples{stage="admission_to_queue",upper_bound_seconds="60"})
+          / lcars_product_latency_window_observations{stage="admission_to_queue"})
+          and (lcars_product_latency_window_observations{stage="admission_to_queue"} >= 30)
           and (lcars_product_latency_window_unknown{stage="admission_to_queue"} == 0)
           and on(job,instance) lcars_product:observation_ready
       - alert: LcarsProductObservationUnavailable

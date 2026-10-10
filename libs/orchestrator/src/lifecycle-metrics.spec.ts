@@ -43,6 +43,22 @@ function snapshot(runs: Run[], over: Partial<LifecycleMetricRecords> = {}) {
 }
 
 describe('durable lifecycle metric accounting', () => {
+  it('declares help and gauge types without reserved histogram names or labels', () => {
+    for (const text of [snapshot([run()]), snapshot([], { complete: false })]) {
+      const names = new Set(
+        text
+          .split('\n')
+          .filter((line) => line.startsWith('lcars_product_'))
+          .map((line) => line.split(/[ {]/u)[0]),
+      );
+      for (const name of names) {
+        expect(text).toContain(`# HELP ${name} `);
+        expect(text).toContain(`# TYPE ${name} gauge\n`);
+        expect(name).not.toMatch(/_(?:bucket|count|sum)$/u);
+      }
+      expect(text).not.toMatch(/[{,]le=/u);
+    }
+  });
   it('deduplicates recent/live feeds, idempotency replays and repeated exports without dynamic labels', () => {
     const original = run();
     const text = snapshot([original, original]);
@@ -62,16 +78,16 @@ describe('durable lifecycle metric accounting', () => {
     });
     const text = snapshot([claimed]);
     expect(text).toContain(
-      'lcars_product_latency_window_sum{pipeline="claude",stage="admission_to_queue"} 30\n',
+      'lcars_product_latency_window_duration_seconds{pipeline="claude",stage="admission_to_queue"} 30\n',
     );
     expect(text).toContain(
-      'lcars_product_latency_window_sum{pipeline="claude",stage="queue_to_claim"} 90\n',
+      'lcars_product_latency_window_duration_seconds{pipeline="claude",stage="queue_to_claim"} 90\n',
     );
     expect(text).toContain(
-      'lcars_product_latency_window_bucket{pipeline="claude",stage="queue_to_claim",le="60"} 0\n',
+      'lcars_product_latency_window_samples{pipeline="claude",stage="queue_to_claim",upper_bound_seconds="60"} 0\n',
     );
     expect(text).toContain(
-      'lcars_product_latency_window_bucket{pipeline="claude",stage="queue_to_claim",le="120"} 1\n',
+      'lcars_product_latency_window_samples{pipeline="claude",stage="queue_to_claim",upper_bound_seconds="120"} 1\n',
     );
     expect(text).toContain(
       'lcars_product_measurement_unknown_window{pipeline="claude",measurement="provider_start"} 1\n',
