@@ -181,7 +181,8 @@ after host/service reserves.
 
 A lower policy limit leaves existing receipts intact and blocks new admission
 until they drain below the new bound. Old policy versions are refused. Server
-enforcement cannot be disabled while receipts occupy the pool. Rollback keeps
+enforcement cannot be disabled while receipts or unresolved legacy claims occupy
+the pool, or while inventory is unknown. Rollback keeps
 one receipt-aware executor and server enforcement; reverting to local legacy
 accounting requires a separately approved, positively fenced empty-pool
 migration.

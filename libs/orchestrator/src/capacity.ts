@@ -782,6 +782,8 @@ export class CapacityProtocol {
         throw new CapacityRefusal('worker');
       if (receipt.worker?.active && receipt.worker.podUid !== input.podUid)
         throw new CapacityRefusal('worker');
+      if (!receipt.worker?.active && receipt.retiredWorkers.length >= 32)
+        throw new CapacityRefusal('bounds');
       const generation = receipt.worker?.active
         ? receipt.worker.generation
         : (receipt.worker?.generation ?? 0) + 1;

@@ -520,12 +520,13 @@ export const runsRouter = os.router({
       if (
         claimed.kind === 'claim' &&
         !isWorkAnchor(claimed.run.task) &&
-        claimed.run.params?.['mode'] === 'implement' &&
-        context.loadGithubAnchorLifecycle !== undefined
+        claimed.run.params?.['mode'] === 'implement'
       ) {
         let lifecycle: GithubAnchorLifecycle | undefined;
         try {
-          lifecycle = await context.loadGithubAnchorLifecycle(claimed.run.task);
+          lifecycle = await context.loadGithubAnchorLifecycle?.(
+            claimed.run.task,
+          );
         } catch {
           lifecycle = undefined;
         }

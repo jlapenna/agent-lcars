@@ -63,7 +63,7 @@ async function call(
     body: text === undefined || text === '' ? undefined : JSON.parse(text),
   };
 }
-async function fixture() {
+async function fixture(anchor?: { repo: string; issue: number }) {
   const store = new MemoryStore();
   const orchestrator = new Orchestrator(store, { now: () => now });
   const context: RunsContext = {
@@ -122,7 +122,7 @@ async function fixture() {
     ).status,
   ).toBe(200);
   const run = await orchestrator.request({
-    taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3A' },
+    taskId: anchor ?? { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3A' },
     requestId: 'capacity-http',
     pipeline: 'claude',
     params: { mode: 'implement' },
@@ -190,6 +190,12 @@ async function attested(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('receipt HTTP authority and activation', () => {
+  it('an unavailable GitHub lifecycle verifier quarantines a receipt without exposing a token', async () => {
+    const f = await fixture({ repo: 'example/capacity', issue: 2311 });
+    expect(f.claim.kind).toBe('quarantined-unrecoverable-token');
+    expect(f.claim).not.toHaveProperty('token');
+    expect((await f.protocol.read(now)).receipts[0]?.state).toBe('quarantined');
+  });
   it('returns a discriminated claim and no reconstructed secret on replay', async () => {
     const { context, claim, request } = await fixture();
     expect(claim.kind).toBe('claim');
