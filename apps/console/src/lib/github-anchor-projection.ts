@@ -33,6 +33,7 @@ const anchorSchema = z.object({
     .optional()
     .nullable(),
   draft: z.boolean().optional(),
+  merged_at: z.iso.datetime({ offset: false }).nullable().optional(),
   mergeable_state: z.string().max(64).optional().nullable(),
   requested_reviewers: z
     .array(userSchema.nullable())
@@ -132,6 +133,9 @@ function toProjection(input: {
     ...(linked === undefined ? {} : { linkedIssueNumbers: linked }),
     ...(input.kind === 'pr' && input.anchor.draft !== undefined
       ? { draft: input.anchor.draft }
+      : {}),
+    ...(input.kind === 'pr' && input.anchor.merged_at !== undefined
+      ? { mergedAt: input.anchor.merged_at }
       : {}),
     ...(input.kind === 'pr' && mergeableState !== undefined
       ? {

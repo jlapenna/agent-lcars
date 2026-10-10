@@ -70,9 +70,17 @@ export interface ToolCallDigest {
   timestamp: string;
 }
 
+export interface QualifiedSessionPR {
+  repo: SessionRepository;
+  number: number;
+}
+
 export interface SessionDeliverables {
   branch?: string;
   prNumbers: number[];
+  /** Qualified URLs from a creating command's correlated tool result.
+   * Legacy numbers and arbitrary mentions do not establish this evidence. */
+  qualifiedPRs?: QualifiedSessionPR[];
   commitShas: string[];
 }
 
