@@ -2057,15 +2057,15 @@ for provider in claude codex opencode; do
   echo "scenario $provider-control-failure-outcomes: OK"
 done
 
-echo "direct-runner.sh: OK"
-
 # Exact-reference verification is part of this required runner contract gate.
 for receipt_provider in claude codex opencode; do
+  unset FAKE_GH_NO_MATCH
   export FAKE_RECEIPT_MODE=active
   run_scenario "receipt-active-$receipt_provider" "$receipt_provider"
   [ "$rc" -eq 0 ] || fail "receipt $receipt_provider did not deliver"
   [ "$(cat "$FIXTURE_ACTIVATION_LOG")" -ge 2 ] || fail "receipt $receipt_provider did not recheck provider activation"
   export FAKE_RECEIPT_MODE=revoked
+  export FAKE_GH_NO_MATCH=1
   run_scenario "receipt-revoked-$receipt_provider" "$receipt_provider"
   [ "$rc" -ne 0 ] || fail "receipt $receipt_provider ignored revoked generation"
   case "$receipt_provider" in
@@ -2073,6 +2073,8 @@ for receipt_provider in claude codex opencode; do
     *) receipt_count_file="$WORKER_RUN_COUNT_FILE" ;;
   esac
   [ ! -s "$receipt_count_file" ] || fail "receipt $receipt_provider invoked provider after refusal"
+  echo "scenario receipt-activation-$receipt_provider: OK"
 done
-unset FAKE_RECEIPT_MODE
+unset FAKE_RECEIPT_MODE FAKE_GH_NO_MATCH
+echo "direct-runner.sh: OK"
 bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
