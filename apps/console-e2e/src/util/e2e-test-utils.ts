@@ -6,6 +6,9 @@ import { Page, test } from '@playwright/test';
 // strict Work admission records the authenticated actor in immutable Work.
 // This header is admitted only by the non-Cloud-Run E2E adapter.
 const E2E_ADMIN_GITHUB_LOGIN = 'e2e-agent-lcars-admin';
+export const E2E_ADMIN_HEADERS = {
+  'X-e2e-auth-user': E2E_ADMIN_GITHUB_LOGIN,
+};
 
 export function useE2eAdminBeforeEach() {
   test.beforeEach(async ({ page }) => {
@@ -19,7 +22,7 @@ export async function setE2eAdminUser(page: Page) {
     await route.continue({
       headers: {
         ...headers,
-        'X-e2e-auth-user': E2E_ADMIN_GITHUB_LOGIN,
+        ...E2E_ADMIN_HEADERS,
       },
     });
   });
