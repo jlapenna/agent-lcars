@@ -29,6 +29,30 @@ available through Git history.
    backstop. Both perform bounded retry; an exhausted retry budget parks the
    task for manual action.
 
+## Console acknowledgement and maintenance
+
+A Console merge, issue close, or needs-human label cleanup acknowledges its
+GitHub mutation after the authoritative anchor projection refresh completes.
+These writes do not require a fleet lease sweep. Work admission still uses its
+transactional dispatch outbox; closing an anchor is fenced by the close webhook
+and the QueueExecutor claim-time lifecycle check.
+
+The existing `work.cron`-authorized `/api/work/v1/maintenance/tick` owns unrelated
+lease expiry and durable outbox retry. A failed or held maintenance pass cannot
+delay a successful merge acknowledgement. Pending entries and expired drain
+leases remain eligible for the next five-minute tick; no request-lifetime
+background promise carries required work.
+
+Successful merges emit one sanitized phase summary: `githubMutationMs` covers
+approval plus squash merge, `projectionRefreshMs` covers the authoritative
+refresh, and `maintenanceMs: 0` records that maintenance is outside the request.
+Durations use a monotonic clock and saturate at 300,000 ms; the summary contains
+no repository, anchor, actor, provider response, or error text. The hermetic
+Inbox journey also records click-to-visible-success separately. These are action
+acknowledgement measurements, distinct from #2201's navigation-to-ready phone
+p95 contract; compare each milestone against itself under the same fixture and
+profile, and retain the 20-second assertion allowance until latency is qualified.
+
 ## Code map
 
 | Need                                                | Source                                                                           |

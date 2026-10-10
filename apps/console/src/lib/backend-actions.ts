@@ -12,7 +12,6 @@ import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
 import { getGithubClient, type WatchedRepo } from './github-client';
 import { admitGithubWork } from './github-work-admission';
-import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { type Pipeline } from './primary-action';
 import {
@@ -117,11 +116,8 @@ export async function clearNeedsHumanLabel(
     return;
   }
   await refreshGithubMutation(repo, issueNumber);
-  // A label write is invisible to the orchestrator (it tracks no GitHub
-  // label state at all - see model.ts), but it may be running behind on an
-  // unrelated expired lease. Catch it up now rather than waiting on the
-  // next maintenance tick.
-  await notifyReconcile(issueNumber);
+  // Label presentation is authoritative now. Unrelated lease/outbox maintenance
+  // stays on the durable work.cron tick; it owns no label state to refresh.
 }
 
 /**
@@ -303,6 +299,7 @@ export async function approveAndMergePr(
   prNumber: number,
 ): Promise<void> {
   const octokit = getGithubClient();
+  const started = performance.now();
 
   await octokit.rest.pulls.createReview({
     owner: repo.owner,
@@ -317,14 +314,24 @@ export async function approveAndMergePr(
     pull_number: prNumber,
     merge_method: 'squash',
   });
+  const mutated = performance.now();
   await refreshGithubMutation(repo, prNumber);
+  const refreshed = performance.now();
 
-  // The orchestrator has no notion of a merged PR either (#1183 - see
-  // model.ts). What still helps is catching up any unrelated run whose
-  // lease has already silently expired, same as every other mutation below
-  // that used to ping the legacy controller - do it now instead of waiting
-  // on the next maintenance tick.
-  await notifyReconcile(prNumber);
+  // No run transition is required by a merge. The durable maintenance tick
+  // owns expired leases and pending outbox deliveries, independently of this
+  // request's lifetime. Never await a whole-fleet sweep to acknowledge it.
+  const elapsed = (start: number, end: number) =>
+    Math.min(300_000, Math.max(0, Math.round(end - start)));
+  logger.info(
+    'agent-lcars: merge acknowledgement phases %s',
+    JSON.stringify({
+      githubMutationMs: elapsed(started, mutated),
+      projectionRefreshMs: elapsed(mutated, refreshed),
+      maintenanceMs: 0,
+      maintenanceOwner: 'work.cron',
+    }),
+  );
 }
 
 // Resolves the `behind` mergeable_state ("Base branch has moved" in
@@ -424,19 +431,13 @@ export async function closeIssue(
     state: 'closed',
   });
   await refreshGithubMutation(repo, issueNumber);
-  // The orchestrator tracks no GitHub issue-state field at all (#1183 - see
-  // model.ts's doc comment: a durable per-task mutex, not a projection of
-  // GitHub state), so this close does not change anything it needs to
-  // learn about. It may still be running behind on an unrelated expired
-  // lease elsewhere, though - catch it up now rather than waiting on the
-  // next maintenance tick.
-  await notifyReconcile(issueNumber);
+  // Queued work is retired by the close webhook or its authoritative claim
+  // check. A maintenance sweep does not read GitHub lifecycle state.
 }
 
 /** Updates the human-authored issue content without changing any dispatch
  * control fields. Title/body edits do not affect the ledger's close/park/
- * pipeline state, so unlike close and label mutations this deliberately
- * does not ping reconciliation. */
+ * pipeline state, so no fleet reconciliation runs on this request. */
 export async function updateIssueContent(
   repo: WatchedRepo,
   issueNumber: number,
@@ -536,47 +537,6 @@ export async function updateIssueContent(
 
 const DISPATCH_CALLER_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-
-// After a console action mutates a GitHub-side fact (a park-state label, an
-// issue close, or a merge), catch the orchestrator up
-// immediately rather than only on the QueueExecutor's next maintenance tick
-// (up to five minutes later - `apps/runner-autoscaler/schedule_ticker.go`).
-// #1183: unlike the legacy dispatch controller this replaced, the
-// orchestrator tracks no GitHub-side state to reconcile *toward* (see
-// model.ts's doc comment - a durable per-task mutex over runs, not a
-// projection of issue/PR fields), so there is no anchor-scoped
-// "reconcile #N" operation left to call. Sweeping every expired lease and
-// draining the outbox is the actual mechanism the
-// maintenance tick itself runs (`orchestrator-routes.ts`'s `handleReconcile`,
-// invoked by `/api/work/v1/maintenance/tick`); reusing it here just runs that
-// same catch-up early instead of waiting for the next tick.
-//
-// The mutation this follows has already landed on GitHub by the time this
-// runs, so any failure here is logged and swallowed rather than surfaced to
-// the caller - a red toast over a best-effort follow-up sweep would be a
-// worse bug than the latency this exists to shrink; the maintenance tick
-// remains the backstop either way.
-//
-// `anchor` is only ever an issue/PR number log-line label; the actual sweep
-// below is anchor-agnostic (see the #1183 comment above).
-async function notifyReconcile(anchor: number | string): Promise<void> {
-  try {
-    const result = await handleReconcile(createOrchestratorRuntime());
-    if (result.status !== 200) {
-      logger.error(
-        'agent-lcars: orchestrator reconcile sweep failed after #%s:',
-        anchor,
-        result.body,
-      );
-    }
-  } catch (error) {
-    logger.error(
-      'agent-lcars: failed to sweep the orchestrator after #%s:',
-      anchor,
-      error,
-    );
-  }
-}
 
 // dispatchUnstickPrs is console-level ops, but its repository is always
 // explicit. There is no primary-repository substitution.
