@@ -17,7 +17,6 @@ concurrency:
 jobs:
   terraform:
     name: repository-owned Terraform
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     # This credential-free check takes seconds; keep it independent of the
     # large self-hosted pool used by full verification and E2E (#2208).
     runs-on: ubuntu-latest
@@ -97,7 +96,6 @@ jobs:
 
   verify-full:
     name: Full verification
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     # Self-hosted for everything trusted (push to main, workflow_dispatch,
     # and a same-repo PR branch -- opening one already
     # requires write access to this repo); ubuntu-latest only for a
@@ -436,11 +434,9 @@ jobs:
         with:
           mode: stop
 
-  # `Verify` is the branch-ruleset check. It must always report: GitHub
-  # treats a skipped required job as passing, so the draft decision belongs in
-  # this always-run gate rather than on the required job itself. Draft PRs
-  # deliberately receive a visible successful short-circuit; ready-for-review
-  # events start `verify-full` and this gate then requires its real result.
+  # `Verify` is the branch-ruleset check. Required success always means the
+  # full gate for this revision actually passed, including while a PR is a
+  # draft. A draft success cannot survive readiness as unearned full proof.
   verify:
     name: Verify
     needs: [verify-full, runner-labels, schedules]
@@ -448,12 +444,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Record deliberate draft short-circuit
-        if: github.event_name == 'pull_request' && github.event.pull_request.draft
-        run: echo 'Verify deliberately short-circuited for this draft pull request.'
-
-      - name: Require full verification when applicable
-        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+      - name: Require full verification
         env:
           VERIFY_FULL_RESULT: ${{ needs.verify-full.result }}
         run: |
