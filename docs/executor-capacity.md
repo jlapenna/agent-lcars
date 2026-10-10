@@ -239,7 +239,12 @@ server timeout or 5xx keeps that write unresolved even if a later GET observes
 an object. Definitive rejections resolve only that operation. A serialized,
 fully drained incarnation can close and rotate without transferring a worker
 permit. Shutdown waits for its owned poll and recovery calls before attempting
-quiescence; a timeout or unknown write leaves it unacknowledged.
+quiescence; a timeout or unknown write leaves it unacknowledged. A lost stop
+response is reconciled against the authenticated exact producer closure before
+rotation. The read-only `inspect-producer` projection uses the caller's existing
+recovery grant and its own pool/subject key; the permanent closed incarnation
+remains observable after the last receipt retires. Unknown, foreign or open
+records, pending writes and unresolved claim requests cannot authorize rotation.
 
 A projected Pod-bound worker identity with the declared audience reaches only
 the trusted bootstrap's fixed identity path. Controller inventory attests one
@@ -266,7 +271,8 @@ a retained barrier after active inventory empties. A label alone never exempts
 an object; a replacement UID or missing server evidence keeps inventory
 unavailable. Instance status reports health separately and omits local pool
 capacity totals; the authenticated application metrics endpoint owns global
-pool/domain occupancy once. Missing or mismatched inventory disables readiness.
+pool/domain occupancy once. Only a complete application and Kubernetes Jobs/Pods inventory observation
+restores readiness; missing, unreadable or mismatched inventory disables it.
 
 Go fake HTTP/Kubernetes, the real Console HTTP contract and actual direct-runner
 fixture tests protect these boundaries. They do not establish controlled live

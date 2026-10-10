@@ -584,6 +584,56 @@ describe('permanent retirement inspection for executor barriers', () => {
     ).toEqual([]);
     expect(
       await call(context, '/runs/capacity', {
+        action: 'inspect-producer',
+        producerId: 'producer-a',
+      }),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        producer: {
+          poolId: 'pool-a',
+          subject: principal.subject,
+          producerId: 'producer-a',
+          closed: true,
+        },
+      },
+    });
+    expect(
+      (
+        await call(
+          {
+            ...context,
+            principal: { ...principal, subject: 'foreign-subject' },
+          },
+          '/runs/capacity',
+          { action: 'inspect-producer', producerId: 'producer-a' },
+        )
+      ).body.producer,
+    ).toBeNull();
+    expect(
+      (
+        await call(context, '/runs/capacity', {
+          action: 'inspect-producer',
+          producerId: 'unknown',
+        })
+      ).body.producer,
+    ).toBeNull();
+    expect(
+      (
+        await call(
+          {
+            ...context,
+            principal: { ...principal, scopes: new Set(['work.executor']) },
+          },
+          '/runs/capacity',
+          { action: 'inspect-producer', producerId: 'producer-a' },
+        )
+      ).status,
+    ).toBe(401);
+
+    expect(
+      await call(context, '/runs/capacity', {
         action: 'inspect-retired',
         runId: claim.runId,
       }),

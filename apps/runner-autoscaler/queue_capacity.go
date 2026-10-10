@@ -97,12 +97,23 @@ type capacityRetirement struct {
 		ResourceVersion string `json:"resourceVersion"`
 	} `json:"barrier"`
 }
+type capacityProducerStatus struct {
+	PoolID     string `json:"poolId"`
+	ProducerID string `json:"producerId"`
+	Subject    string `json:"subject"`
+	Closed     bool   `json:"closed"`
+}
+type capacityStopAttempt struct {
+	ProducerID string
+	Subject    string
+}
 type capacityReply struct {
-	Retirement    *capacityRetirement `json:"retirement"`
-	OK            bool                `json:"ok"`
-	Receipt       *capacityFence      `json:"receipt"`
-	Released      bool                `json:"released"`
-	RetainBarrier bool                `json:"retainBarrier"`
+	Producer      *capacityProducerStatus `json:"producer"`
+	Retirement    *capacityRetirement     `json:"retirement"`
+	OK            bool                    `json:"ok"`
+	Receipt       *capacityFence          `json:"receipt"`
+	Released      bool                    `json:"released"`
+	RetainBarrier bool                    `json:"retainBarrier"`
 }
 type capacityClaimReply struct {
 	Kind      string         `json:"kind"`
@@ -131,6 +142,7 @@ type queueCapacityClient struct {
 	pollMu        sync.Mutex
 	registered    bool
 	requestID     string
+	stopping      *capacityStopAttempt
 }
 
 func newCapacityIdentity() string {
@@ -183,8 +195,8 @@ func (c *queueCapacityClient) call(ctx context.Context, method, path string, inp
 func (c *queueCapacityClient) inventory(ctx context.Context) (capacityInventory, error) {
 	healthy := false
 	defer func() {
-		if c.available != nil {
-			c.available(healthy)
+		if !healthy {
+			c.publishAvailability(false)
 		}
 	}()
 	var x capacityInventory
@@ -207,6 +219,57 @@ func (c *queueCapacityClient) inventory(ctx context.Context) (capacityInventory,
 	}
 	healthy = true
 	return x, nil
+}
+
+// Only the complete application/physical inventory owner may publish true.
+func (c *queueCapacityClient) publishAvailability(available bool) {
+	if c.available != nil {
+		c.available(available)
+	}
+}
+
+// Caller holds mu and the poll fence. A stop attempt survives a lost reply.
+// Observe authenticated exact closure, never infer it from absence or HTTP409.
+func (c *queueCapacityClient) reconcileProducer(ctx context.Context, inv capacityInventory) error {
+	if c.stopping == nil {
+		return nil
+	}
+	if c.stopping.ProducerID != c.producerID {
+		return fmt.Errorf("producer stop identity mismatch")
+	}
+	if c.requestID != "" {
+		return fmt.Errorf("producer stop has unresolved claim request")
+	}
+	closed, open := false, false
+	for _, r := range inv.Receipts {
+		for _, p := range r.Producers {
+			if p.ProducerID != c.producerID {
+				continue
+			}
+			if p.Subject != c.stopping.Subject || len(p.PendingWrites) != 0 {
+				return fmt.Errorf("producer stop has unresolved writes or identity")
+			}
+			closed = closed || p.Stopped
+			open = open || !p.Stopped
+		}
+	}
+	if closed && open {
+		return fmt.Errorf("producer closure inventory mismatch")
+	}
+	if !closed {
+		x, err := c.command(ctx, map[string]any{"action": "inspect-producer", "producerId": c.producerID})
+		if err != nil {
+			return err
+		}
+		p := x.Producer
+		if p == nil || !p.Closed || p.PoolID != c.config.PoolID || p.ProducerID != c.producerID || p.Subject != c.stopping.Subject {
+			return fmt.Errorf("producer closure unproven")
+		}
+	}
+	c.producerID = newCapacityIdentity()
+	c.registered = false
+	c.stopping = nil
+	return nil
 }
 func (c *queueCapacityClient) command(ctx context.Context, input map[string]any) (capacityReply, error) {
 	var x capacityReply
@@ -261,7 +324,11 @@ func (c *queueCapacityClient) claim(ctx context.Context, runner string) (capacit
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var x capacityClaimReply
-	if _, err := c.inventory(ctx); err != nil {
+	inv, err := c.inventory(ctx)
+	if err != nil {
+		return x, err
+	}
+	if err = c.reconcileProducer(ctx, inv); err != nil {
 		return x, err
 	}
 	if !c.registered {

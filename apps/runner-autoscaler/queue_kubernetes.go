@@ -401,7 +401,12 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation, error) {
+func (q *kubernetesQueue) reserve(ctx context.Context) (reservation *directRunnerReservation, err error) {
+	defer func() {
+		if q.capacity != nil && err != nil {
+			q.capacity.publishAvailability(false)
+		}
+	}()
 	if q.capacity != nil {
 		if err := q.validateReceiptInventory(ctx); err != nil {
 			return nil, err

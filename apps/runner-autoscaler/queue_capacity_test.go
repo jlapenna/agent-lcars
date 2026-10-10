@@ -308,3 +308,267 @@ func TestReceiptServerRetirementRequiredToExemptBarrier(t *testing.T) {
 		t.Fatal("replacement tombstone UID was adopted")
 	}
 }
+
+func TestReceiptHealthRejectsUnknownPhysicalInventory(t *testing.T) {
+	for _, kind := range []string{"jobs-list-failed", "unrecognized-job", "pods-list-failed"} {
+		t.Run(kind, func(t *testing.T) {
+			q, _, _ := receiptFixture(t)
+			ready := false
+			q.capacity.available = func(v bool) { ready = v }
+			k := q.client.(*fake.Clientset)
+			switch kind {
+			case "jobs-list-failed":
+				k.PrependReactor("list", "jobs", func(clienttesting.Action) (bool, runtime.Object, error) { return true, nil, io.EOF })
+			case "unrecognized-job":
+				if err := k.Tracker().Add(&batch.Job{ObjectMeta: meta.ObjectMeta{Name: "unknown", Namespace: q.config.Namespace, Labels: map[string]string{queueJobLabel: "true"}}}); err != nil {
+					t.Fatal(err)
+				}
+			case "pods-list-failed":
+				k.PrependReactor("list", "pods", func(clienttesting.Action) (bool, runtime.Object, error) { return true, nil, io.EOF })
+			}
+			var err error
+			if kind == "pods-list-failed" {
+				err = q.reconcileReceipts(context.Background())
+			} else {
+				err = q.validateReceiptInventory(context.Background())
+			}
+			if err == nil {
+				t.Fatal("probe did not reach refused physical inventory")
+			}
+			if ready {
+				t.Fatalf("receipt readiness stayed true after %s; physical inventory error=%v", kind, err)
+			}
+		})
+	}
+}
+
+func TestReceiptStopReplyLossCannotStrandIncarnation(t *testing.T) {
+	for _, kind := range []string{"healthy", "lost-reply", "lost-reply-receipt-already-released"} {
+		t.Run(kind, func(t *testing.T) {
+			q, r, _ := receiptFixture(t)
+			old := q.capacity.producerID
+			q.capacity.registered = true
+			r.Producers = []capacityProducer{{ProducerID: old, Subject: "subject", PendingWrites: []string{}}}
+			j, _ := q.job(directRunnerLaunch{runID: r.RunID, pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
+			j.UID = "original-job"
+			j.ResourceVersion = "1"
+			j.Generation = 1
+			r.JobUID = string(j.UID)
+			if err := q.client.(*fake.Clientset).Tracker().Add(j); err != nil {
+				t.Fatal(err)
+			}
+			var mu sync.Mutex
+			stopped := false
+			released := false
+			stopCalls, registerCalls, claimCalls := 0, 0, 0
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				if req.Method == http.MethodGet {
+					receipts := []capacityReceipt{}
+					if !released {
+						receipts = append(receipts, *r)
+					}
+					json.NewEncoder(w).Encode(map[string]any{"policy": map[string]any{"poolId": "pool", "cluster": "cluster", "namespace": q.config.Namespace, "version": 1, "maxConcurrent": 2, "enforced": true, "inventoryKnown": true}, "receipts": receipts})
+					return
+				}
+				var x map[string]any
+				json.NewDecoder(req.Body).Decode(&x)
+				switch x["action"] {
+				case "register":
+					registerCalls++
+					if x["producerId"] == old {
+						t.Error("reregistered stopped identity")
+					}
+				case "inspect-producer":
+					json.NewEncoder(w).Encode(map[string]any{"ok": true, "producer": capacityProducerStatus{PoolID: "pool", ProducerID: old, Subject: "subject", Closed: stopped}})
+					return
+				case "inspect-retired":
+					json.NewEncoder(w).Encode(map[string]any{"ok": true, "retirement": map[string]any{"runId": r.RunID, "nonce": r.Nonce, "jobName": r.JobName, "released": released, "retainBarrier": false, "barrier": map[string]string{"uid": r.JobUID, "resourceVersion": "1"}}})
+					return
+				case "stop-producer":
+					stopCalls++
+					stopped = true
+					r.Producers[0].Stopped = true
+					if kind != "healthy" {
+						conn, _, _ := w.(http.Hijacker).Hijack()
+						conn.Close()
+						return
+					}
+				case "retire":
+					r.State = "retiring"
+				case "release":
+					released = true
+				}
+				if req.URL.Path == "/api/work/v1/runs/claim" {
+					claimCalls++
+					if stopped && x["producerId"] == old {
+						w.WriteHeader(409)
+						fmt.Fprint(w, `{"error":"closed producer"}`)
+						return
+					}
+					fmt.Fprint(w, `{"kind":"wait","reason":"queue"}`)
+					return
+				}
+				fmt.Fprint(w, `{"ok":true}`)
+			}))
+			defer s.Close()
+			q.capacity.consoleURL = s.URL
+			firstErr := q.reconcileReceipts(context.Background())
+			if (firstErr == nil) != (kind == "healthy") {
+				t.Fatalf("stop schedule not exercised: kind=%s error=%v", kind, firstErr)
+			}
+			mu.Lock()
+			observedStopped := stopped
+			mu.Unlock()
+			if !observedStopped {
+				t.Fatal("server did not durably close incarnation")
+			}
+			if kind == "lost-reply-receipt-already-released" {
+				// Another recovery owner finishes the physical retirement before this
+				// process can observe the stopped producer on an active receipt.
+				if err := q.retireReceipt(context.Background(), *r, "other-recovery-nonce-123456", j, nil); err != nil {
+					t.Fatal("physical retirement setup", err)
+				}
+			}
+			if err := q.reconcileReceipts(context.Background()); err != nil {
+				t.Fatal("known stopped receipt could not retire", err)
+			}
+			mu.Lock()
+			observedReleased := released
+			mu.Unlock()
+			if !observedReleased {
+				t.Fatal("fixture receipt not physically released")
+			}
+			if _, err := q.capacity.claim(context.Background(), "runner"); err != nil {
+				t.Fatalf("durably stopped incarnation stranded subsequent claim after successful reconciliation: producer=%s unchanged=%v error=%v", q.capacity.producerID, q.capacity.producerID == old, err)
+			}
+
+			mu.Lock()
+			observedStops, observedRegisters, observedClaims := stopCalls, registerCalls, claimCalls
+			mu.Unlock()
+			if observedStops != 1 || observedRegisters != 1 || observedClaims != 1 || q.capacity.producerID == old {
+				t.Fatalf("closure repeated a write or stranded progress: stops=%d registers=%d claims=%d", observedStops, observedRegisters, observedClaims)
+			}
+		})
+	}
+}
+
+func TestReceiptReadinessRequiresCompleteInventoryAndRecovers(t *testing.T) {
+	q, _, _ := receiptFixture(t)
+	ready := false
+	q.capacity.available = func(v bool) { ready = v }
+	if _, err := q.capacity.inventory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ready {
+		t.Fatal("application response alone published healthy")
+	}
+	k := q.client.(*fake.Clientset)
+	failed := true
+	k.PrependReactor("list", "pods", func(clienttesting.Action) (bool, runtime.Object, error) {
+		if failed {
+			return true, nil, io.EOF
+		}
+		return false, nil, nil
+	})
+	if err := q.validateReceiptInventory(context.Background()); err == nil || ready {
+		t.Fatal("unreadable Pods inventory stayed healthy")
+	}
+	failed = false
+	if err := q.validateReceiptInventory(context.Background()); err != nil || !ready {
+		t.Fatal("fully valid inventory did not restore health", err)
+	}
+	failed = true
+	if err := q.reconcileReceipts(context.Background()); err == nil || ready {
+		t.Fatal("failed recovery did not clear existing health")
+	}
+	failed = false
+	if err := q.reconcileReceipts(context.Background()); err != nil || !ready {
+		t.Fatal("successful recovery did not restore health", err)
+	}
+	// Existing singleton path has no capacity/readiness projection attached.
+	legacy, _ := kubeQueueFixture(queueReadyNode())
+	if reservation, err := legacy.reserve(context.Background()); err != nil || reservation == nil {
+		t.Fatal("legacy singleton reserve regressed", err)
+	} else {
+		reservation.release()
+	}
+}
+func TestReceiptClosedIncarnationAfterReceiptGone(t *testing.T) {
+	for _, kind := range []string{"closed", "unknown", "open", "foreign-pool", "foreign-subject", "foreign-producer", "pending-write", "pending-request"} {
+		t.Run(kind, func(t *testing.T) {
+			q, _, _ := receiptFixture(t)
+			c := q.capacity
+			old := c.producerID
+			c.registered = true
+			c.stopping = &capacityStopAttempt{ProducerID: old, Subject: "subject"}
+			registrations, claims := 0, 0
+			status := &capacityProducerStatus{PoolID: "pool", ProducerID: old, Subject: "subject", Closed: true}
+			switch kind {
+			case "unknown":
+				status = nil
+			case "open":
+				status.Closed = false
+			case "foreign-pool":
+				status.PoolID = "foreign"
+			case "foreign-subject":
+				status.Subject = "foreign"
+			case "foreign-producer":
+				status.ProducerID = "foreign"
+			case "pending-request":
+				c.requestID = "exact-ambiguous-claim-request"
+			}
+			inv := capacityInventory{}
+			if kind == "pending-write" {
+				inv.Receipts = []capacityReceipt{{Producers: []capacityProducer{{ProducerID: old, Subject: "subject", Stopped: true, PendingWrites: []string{"unknown-create"}}}}}
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				var x map[string]any
+				if req.Method == http.MethodGet {
+					fmt.Fprint(w, `{"policy":{"poolId":"pool","cluster":"cluster","namespace":"lcars-work","version":1,"maxConcurrent":2,"enforced":true,"inventoryKnown":true},"receipts":[]}`)
+					return
+				}
+				json.NewDecoder(req.Body).Decode(&x)
+				switch x["action"] {
+				case "inspect-producer":
+					json.NewEncoder(w).Encode(map[string]any{"ok": true, "producer": status})
+					return
+				case "register":
+					registrations++
+					if x["producerId"] == old {
+						t.Error("reregistered closed producer")
+					}
+				}
+				if req.URL.Path == "/api/work/v1/runs/claim" {
+					claims++
+					if x["producerId"] == old {
+						t.Error("claimed with closed producer")
+					}
+					fmt.Fprint(w, `{"kind":"wait","reason":"queue"}`)
+					return
+				}
+				fmt.Fprint(w, `{"ok":true}`)
+			}))
+			defer server.Close()
+			c.consoleURL = server.URL
+			err := c.reconcileProducer(context.Background(), inv)
+			if kind != "closed" {
+				if err == nil || c.producerID != old || registrations != 0 || claims != 0 {
+					t.Fatalf("unsafe rotation on %s: %v", kind, err)
+				}
+				if kind == "pending-request" && c.requestID != "exact-ambiguous-claim-request" {
+					t.Fatal("ambiguous request identity discarded")
+				}
+				return
+			}
+			if err != nil || c.producerID == old || c.registered || c.stopping != nil {
+				t.Fatal("authenticated durable closure did not rotate after receipt gone", err)
+			}
+			if _, err = c.claim(context.Background(), "runner"); err != nil || registrations != 1 || claims != 1 {
+				t.Fatalf("new producer did not register before next claim: registers=%d claims=%d err=%v", registrations, claims, err)
+			}
+		})
+	}
+}

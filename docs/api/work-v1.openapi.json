@@ -3790,6 +3790,22 @@
                     "properties": {
                       "action": {
                         "type": "string",
+                        "const": "inspect-producer"
+                      },
+                      "producerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 175
+                      }
+                    },
+                    "required": ["action", "producerId"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
                         "const": "configure"
                       },
                       "policy": {
@@ -4754,6 +4770,43 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "producer": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "poolId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "producerId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "subject": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "closed": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "poolId",
+                            "producerId",
+                            "subject",
+                            "closed"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "retirement": {
                       "anyOf": [

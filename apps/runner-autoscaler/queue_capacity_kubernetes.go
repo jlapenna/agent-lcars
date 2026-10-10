@@ -175,11 +175,12 @@ func (q *kubernetesQueue) resumeReceipt(ctx context.Context, r capacityReceipt, 
 		return e
 	})
 }
-func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) error {
+func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) (err error) {
 	q.capacity.pollMu.Lock()
 	defer q.capacity.pollMu.Unlock()
 	q.receiptMu.Lock()
 	defer q.receiptMu.Unlock()
+	defer func() { q.capacity.publishAvailability(err == nil) }()
 	if err := q.capacity.ensureRegistered(ctx); err != nil {
 		return err
 	}
@@ -187,32 +188,22 @@ func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
-	if err != nil {
-		return err
-	}
-	pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
+	jobs, pods, err := q.receiptPhysicalInventory(ctx, inv)
 	if err != nil {
 		return err
 	}
 	byName := map[string]*batch.Job{}
 	for i := range jobs.Items {
-		j := &jobs.Items[i]
-		byName[j.Name] = j
-		found := false
-		for _, r := range inv.Receipts {
-			if receiptJobMatches(j, r) {
-				found = true
-				break
-			}
-		}
-		// A label never grants exemption. Permanent-retired inventory must be
-		// reconciled before barriers no longer matching active receipts are omitted.
-		if !found {
-			if err := q.verifyRetiredBarrier(ctx, j); err != nil {
-				return err
-			}
-		}
+		byName[jobs.Items[i].Name] = &jobs.Items[i]
+	}
+	q.capacity.mu.Lock()
+	err = q.capacity.reconcileProducer(ctx, inv)
+	q.capacity.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err = q.capacity.ensureRegistered(ctx); err != nil {
+		return err
 	}
 	// Close a drained operation incarnation before retiring one of its Jobs.
 	// No claim/launch or recovery RPC can race this poll/receipt fence. Workers
@@ -257,6 +248,9 @@ func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) error {
 			}
 			for _, p := range r.Producers {
 				if p.ProducerID == q.capacity.producerID && !p.Stopped {
+					q.capacity.mu.Lock()
+					q.capacity.stopping = &capacityStopAttempt{ProducerID: p.ProducerID, Subject: p.Subject}
+					q.capacity.mu.Unlock()
 					if _, err := q.capacity.command(ctx, map[string]any{"action": "stop-producer", "fence": r.capacityFence, "producerId": p.ProducerID, "producerSubject": p.Subject, "fenced": false, "evidence": "serialized-controller-rpc-group-drained"}); err != nil {
 						return err
 					}
@@ -265,6 +259,7 @@ func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) error {
 			q.capacity.mu.Lock()
 			q.capacity.producerID = newCapacityIdentity()
 			q.capacity.registered = false
+			q.capacity.stopping = nil
 			q.capacity.mu.Unlock()
 			if err := q.capacity.ensureRegistered(ctx); err != nil {
 				return err
@@ -399,17 +394,33 @@ func (q *kubernetesQueue) verifyRetiredBarrier(ctx context.Context, j *batch.Job
 	}
 	return nil
 }
-func (q *kubernetesQueue) validateReceiptInventory(ctx context.Context) error {
+
+// Serialize complete observations with recovery. API success alone says
+// nothing about readability or identity of the physical worker inventory.
+func (q *kubernetesQueue) validateReceiptInventory(ctx context.Context) (err error) {
+	q.receiptMu.Lock()
+	defer q.receiptMu.Unlock()
+	defer func() { q.capacity.publishAvailability(err == nil) }()
 	inv, err := q.capacity.inventory(ctx)
 	if err != nil {
 		return err
 	}
+	_, _, err = q.receiptPhysicalInventory(ctx, inv)
+	return err
+}
+func (q *kubernetesQueue) receiptPhysicalInventory(ctx context.Context, inv capacityInventory) (*batch.JobList, *core.PodList, error) {
 	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+	pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	byName := map[string]*batch.Job{}
 	for i := range jobs.Items {
 		j := &jobs.Items[i]
+		byName[j.Name] = j
 		found := false
 		for _, r := range inv.Receipts {
 			if receiptJobMatches(j, r) {
@@ -419,11 +430,31 @@ func (q *kubernetesQueue) validateReceiptInventory(ctx context.Context) error {
 		}
 		if !found {
 			if err = q.verifyRetiredBarrier(ctx, j); err != nil {
-				return err
+				return nil, nil, err
 			}
 		}
 	}
-	return nil
+	for _, r := range inv.Receipts {
+		j := byName[r.JobName]
+		if r.JobUID != "" && !receiptJobMatches(j, r) {
+			return nil, nil, fmt.Errorf("receipt original Job inventory unavailable")
+		}
+		if r.Worker != nil && r.Worker.Active {
+			found := false
+			if j != nil && r.Worker.JobUID == string(j.UID) {
+				for _, p := range pods.Items {
+					if string(p.UID) == r.Worker.PodUID && podOwnedBy(p, j) {
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				return nil, nil, fmt.Errorf("receipt active worker inventory unavailable")
+			}
+		}
+	}
+	return jobs, pods, nil
 }
 func allCapacityProducersStopped(r capacityReceipt) bool {
 	if len(r.Producers) == 0 {
