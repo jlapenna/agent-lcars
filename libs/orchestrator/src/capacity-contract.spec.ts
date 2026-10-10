@@ -206,15 +206,19 @@ function contract(
       await protocol.configure(b, policy('pool-b'), now);
       await known(protocol, b);
       await protocol.register(b, 'producer-b', now);
-      const first = await enqueue(store, orchestrator, 'codex');
+      await enqueue(store, orchestrator, 'codex');
       await enqueue(store, orchestrator, 'codex');
       const result = await claimed(protocol, a);
-      expect(result.run.runId).toBe(first.runId);
-      await orchestrator.report(first.runId, { ok: true });
+      // Equal creation timestamps use deterministic run-ID ordering, not
+      // insertion order (for example #100 sorts before #99).
+      expect(result.run.pipeline).toBe('codex');
+      await orchestrator.report(result.run.runId, { ok: true });
       expect(await claim(protocol, b, undefined, 'producer-b')).toMatchObject({
         kind: 'wait',
       });
-      expect((await protocol.read(now)).receipts[0]?.runId).toBe(first.runId);
+      expect((await protocol.read(now)).receipts[0]?.runId).toBe(
+        result.run.runId,
+      );
     });
     it('response-loss replay cannot mint another token/run and missing Secret is explicit', async () => {
       const { store, protocol, a, orchestrator } = await fixture(2);
@@ -902,6 +906,112 @@ function contract(
         reviewedDigest: report.digest,
       });
       expect((await protocol.read(now)).policies[0]?.inventoryKnown).toBe(true);
+    });
+    it('expanding managed pipelines invalidates reviewed inventory around a legacy physical claim', async () => {
+      const store = factory();
+      const protocol = new CapacityProtocol(store);
+      const a = authority();
+      const narrow = {
+        ...policy(),
+        domains: { codex: { domainId: 'codex-global', ceiling: 1 } },
+      };
+      await protocol.configure(a, narrow, now);
+      await known(protocol, a);
+      const orchestrator = new Orchestrator(store, { now: () => now });
+      const legacy = await enqueue(store, orchestrator, 'claude');
+      expect(
+        await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now,
+          claimedBy: 'legacy-runner',
+          tokenHash,
+        }),
+      ).toMatchObject({ runId: legacy.runId });
+      await enqueue(store, orchestrator, 'claude');
+      await protocol.configure(
+        a,
+        { ...policy(), version: 2, inventoryKnown: true },
+        now,
+      );
+      expect((await protocol.read(now)).policies[0]?.inventoryKnown).toBe(
+        false,
+      );
+      await protocol.register(a, 'producer-a', now);
+      const request = {
+        version: 2,
+        runner: 'runner-a',
+        producerId: 'producer-a',
+        claimRequestId: 'expanded-policy-claim',
+        nonce: 'expanded-policy-nonce',
+        tokenHash,
+        now,
+      };
+      await expect(protocol.claim(a, request)).rejects.toThrow('inventory');
+      const input = {
+        now,
+        dryRun: true,
+        known: true,
+        evidence: 'incomplete-expanded-inventory',
+        receipts: [],
+      };
+      const report = await protocol.importInventory(a, input);
+      expect(report).toMatchObject({
+        inventoryKnown: false,
+        missingRunIds: [legacy.runId],
+      });
+      await protocol.importInventory(a, {
+        ...input,
+        dryRun: false,
+        reviewedDigest: report.digest,
+      });
+      await expect(protocol.claim(a, request)).rejects.toThrow('inventory');
+      expect((await protocol.read(now)).receipts).toHaveLength(0);
+      expect((await store.readRun(legacy.runId))?.queue?.state).toBe('claimed');
+    });
+    it('domain changes and re-enforcement require new inventory review while limit-only changes preserve it', async () => {
+      const store = factory();
+      const protocol = new CapacityProtocol(store);
+      const a = authority();
+      await protocol.configure(a, policy(), now);
+      await known(protocol, a);
+      await protocol.configure(a, { ...policy('pool-a', 2), version: 2 }, now);
+      expect((await protocol.read(now)).policies[0]?.inventoryKnown).toBe(true);
+      await protocol.configure(
+        a,
+        {
+          ...policy(),
+          version: 3,
+          domains: {
+            ...policy().domains,
+            claude: { domainId: 'different-credential-domain', ceiling: 128 },
+          },
+        },
+        now,
+      );
+      expect((await protocol.read(now)).policies[0]?.inventoryKnown).toBe(
+        false,
+      );
+      await known(protocol, a);
+      const renamed = (await protocol.read(now)).policies[0];
+      if (renamed === undefined) throw new Error('Expected configured policy');
+      await protocol.configure(
+        a,
+        { ...renamed, version: 4, enforced: false },
+        now,
+      );
+      expect((await protocol.read(now)).policies[0]?.inventoryKnown).toBe(
+        false,
+      );
+      await known(protocol, a);
+      expect((await protocol.read(now)).policies[0]?.inventoryKnown).toBe(true);
+      await protocol.configure(
+        a,
+        { ...renamed, version: 5, enforced: true },
+        now,
+      );
+      expect((await protocol.read(now)).policies[0]?.inventoryKnown).toBe(
+        false,
+      );
     });
     it('unknown migration in another shared-domain pool blocks admission; downward policy drains without freeing', async () => {
       const { store, protocol, a, orchestrator } = await fixture(2);

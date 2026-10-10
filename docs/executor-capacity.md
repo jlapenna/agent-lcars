@@ -165,7 +165,10 @@ require its retention, not authority to ignore other physical obligations.
 
 `configure` fixes the pool cluster/namespace and requires a monotonically
 increasing policy version. It always starts with unknown inventory; submitting
-`inventoryKnown: true` in configuration cannot skip import. Enforced policies
+`inventoryKnown: true` in configuration cannot skip import. Changing managed
+pipeline/domain identities or enforcement invalidates the previous inventory
+review and requires a fresh import; changing only capacity limits preserves the
+reviewed physical inventory so a downward drain can continue. Enforced policies
 refuse the old legacy claim method for every overlapping provider pipeline,
 including callers without the new pool grant. Legacy claim release cannot
 requeue an occupied receipt.

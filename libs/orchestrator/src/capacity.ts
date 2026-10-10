@@ -322,9 +322,23 @@ export class CapacityProtocol {
             ))
         )
           throw new CapacityRefusal('physical');
-        // A configuration update cannot declare migration inventory known. The
-        // operator-reviewed import owns that evidence, not a boolean in config.
-        policy.inventoryKnown = current?.inventoryKnown ?? false;
+        // The reviewed inventory covers exactly its managed pipeline/domain
+        // identities. Expansion can expose legacy physical claims that were
+        // outside that review, and disabled enforcement permits new legacy
+        // claims. Either change requires a fresh reviewed import. Limit-only
+        // updates keep the same inventory so downward draining can continue.
+        const sameDomains =
+          current !== undefined &&
+          Object.keys(current.domains).length ===
+            Object.keys(policy.domains).length &&
+          Object.entries(current.domains).every(
+            ([pipeline, domain]) =>
+              domain.domainId === policy.domains[pipeline]?.domainId,
+          );
+        policy.inventoryKnown =
+          current?.inventoryKnown === true &&
+          sameDomains &&
+          current.enforced === policy.enforced;
         if (
           occupied.some(
             (receipt) =>
