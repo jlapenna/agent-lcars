@@ -15,6 +15,7 @@ import {
   emptyNotificationState,
   type InboxNotificationSnapshot,
   notificationStorageKey,
+  parseNotificationState,
 } from '../lib/inbox-notifications';
 import { InboxNotifications } from './inbox-notifications';
 
@@ -310,5 +311,64 @@ describe('opt-in Inbox notification delivery', () => {
     b.rerender(tree(sample([first, second])));
     await tick();
     expect(showNotification).toHaveBeenCalledOnce();
+  });
+  it('pauses a pending display when its snapshot expires during worker lookup', async () => {
+    const sampledAt = now - 59_000;
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        ...emptyNotificationState(),
+        enabled: true,
+        active: [first],
+        pending: [first],
+        observedAt: now,
+        sourceTimes: {
+          queue: sampledAt,
+          activity: sampledAt,
+          native: sampledAt,
+        },
+      }),
+    );
+    mocks.read.mockImplementation(async () => ({
+      ...sample(),
+      observedAt: sampledAt,
+      sourceTimes: { queue: sampledAt, activity: sampledAt, native: sampledAt },
+    }));
+    getRegistration.mockImplementation(async () => {
+      now += 2_000;
+      vi.setSystemTime(now);
+      return registration;
+    });
+    render(tree(sample()));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(getRegistration).toHaveBeenCalled();
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)).lastSentAt,
+    ).toBe(0);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'notifications paused',
+    );
+  });
+  it('refuses a baseline that expires while registration completes', async () => {
+    const sampledAt = now - 59_000;
+    mocks.read.mockImplementation(async () => ({
+      ...sample(),
+      observedAt: sampledAt,
+      sourceTimes: { queue: sampledAt, activity: sampledAt, native: sampledAt },
+    }));
+    register.mockImplementation(async () => {
+      now += 2_000;
+      vi.setSystemTime(now);
+      return registration;
+    });
+    render(tree(sample()));
+    await click('Enable Inbox notifications');
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'activation unavailable',
+    );
   });
 });

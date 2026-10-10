@@ -144,6 +144,12 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
               return;
             }
             if (stopped.current || generation !== epoch.current) return;
+            if (!notificationSnapshotFresh(fresh, Date.now())) {
+              setStatus(
+                'Authorization or data unavailable — notifications paused',
+              );
+              return;
+            }
             // Record the request BEFORE handing it to the OS. An ambiguous
             // result cannot be retried as another notification by a second tab.
             const href = notificationHref(candidates);
@@ -248,6 +254,8 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
       if (!current()) return;
       await navigator.locks.request(key, () => {
         if (!current()) return;
+        if (!notificationSnapshotFresh(fresh, Date.now()))
+          throw new Error('Activation snapshot expired');
         const stored = parseNotificationState(localStorage.getItem(key));
         if (
           Object.keys(stored.sourceTimes).some(
