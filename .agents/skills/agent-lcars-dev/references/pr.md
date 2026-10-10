@@ -81,6 +81,11 @@
    during the request, inspect its exact merge evidence and rules evaluation
    instead of assuming that the arming command enforced protection.
 
+   For API errors, lost responses or Git publication stalls, follow
+   [delivery-recovery.md](delivery-recovery.md) before retrying. It owns bounded
+   sanitized diagnostics and exact-ref/state recovery; this workflow still
+   owns the reviewed-head, queue-only and protection requirements.
+
    Draft CI can short-circuit without exercising full verification. After a
    draft becomes ready, an old green summary is not full-gate evidence: use
    the ready-event run's actual full-verification result for that exact head.
