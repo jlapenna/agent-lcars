@@ -10,6 +10,23 @@ import { expect, it } from 'vitest';
 const run = promisify(execFile);
 const script = path.resolve('tools/kill-e2e-ports.sh');
 
+async function bounded(promise: Promise<unknown>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Fixture response timed out')),
+          2_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fixtureProcess() {
   const child = spawn(
     process.execPath,
@@ -20,13 +37,19 @@ async function fixtureProcess() {
     { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
   );
   const closed = once(child, 'close');
-  await once(child, 'message');
+  try {
+    await once(child, 'message', { signal: AbortSignal.timeout(2_000) });
+  } catch (error) {
+    await stop(child, closed);
+    throw error;
+  }
   return { child, closed };
 }
 
 async function stop(child: ChildProcess, closed: Promise<unknown>) {
-  if (child.exitCode === null && child.signalCode === null) child.kill();
-  await closed;
+  if (child.exitCode === null && child.signalCode === null)
+    child.kill('SIGKILL');
+  await bounded(closed);
 }
 
 it.each(['lsof', 'fuser'])(
@@ -35,9 +58,11 @@ it.each(['lsof', 'fuser'])(
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'lcars-port-cleanup-'),
     );
-    const owned = await fixtureProcess();
-    const unrelated = await fixtureProcess();
+    let owned: Awaited<ReturnType<typeof fixtureProcess>> | undefined;
+    let unrelated: Awaited<ReturnType<typeof fixtureProcess>> | undefined;
     try {
+      owned = await fixtureProcess();
+      unrelated = await fixtureProcess();
       // Execute the real shell cleanup with bounded discovery shims. Never
       // claim or signal actual ports or JVMs belonging to another session.
       for (const command of ['lsof', 'fuser', 'pkill', 'rm']) {
@@ -64,17 +89,21 @@ it.each(['lsof', 'fuser'])(
         },
         timeout: 5_000,
       });
-      await owned.closed;
+      await bounded(owned.closed);
       expect(owned.child.signalCode).toBe('SIGKILL');
       // A round-trip proves the unrelated process is still responding, not
       // just awaiting asynchronous reaping after an unsafe broad signal.
       expect(unrelated.child.connected).toBe(true);
-      const response = once(unrelated.child, 'message');
+      const response = once(unrelated.child, 'message', {
+        signal: AbortSignal.timeout(2_000),
+      });
       unrelated.child.send('still running');
       expect(await response).toEqual(['still running', undefined]);
     } finally {
-      await stop(owned.child, owned.closed);
-      await stop(unrelated.child, unrelated.closed);
+      await Promise.all([
+        owned && stop(owned.child, owned.closed),
+        unrelated && stop(unrelated.child, unrelated.closed),
+      ]);
       await rm(directory, { recursive: true, force: true });
     }
   },
