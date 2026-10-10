@@ -41,10 +41,9 @@ for port in "${PORTS[@]}"; do
   fi
 done
 
-# The Firestore emulator's underlying process is a separately-forked Java
-# process (not a child that dies with its parent on a hard kill), so it can
-# survive the port-based kill above.
-pkill -f "cloud-firestore-emulator" 2>/dev/null || true
+# An orphaned Java emulator still owns its listening socket and is covered
+# by the port scan above. Never kill by executable name: another worktree's
+# emulator or preview can use a different port on this same host (#2305).
 
 # Stale hub locator file from a crashed run confuses the next `emulators:exec`
 # invocation into thinking a hub is already running. Matches this project's
