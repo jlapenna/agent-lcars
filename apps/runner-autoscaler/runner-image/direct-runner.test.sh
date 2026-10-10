@@ -63,10 +63,25 @@ cp -R "$repo_root/apps/runner-autoscaler/runner-image/runtime/." "$baked/runtime
 sed -i 's/^monotonic_seconds()/fixture_production_monotonic_seconds()/' "$baked/runtime/worker-completion.sh"
 cat >> "$baked/runtime/worker-completion.sh" <<'FAKE'
 monotonic_seconds() {
-  local value deadline
+  local value deadline scenario provider
   value="$(fixture_production_monotonic_seconds)" || return $?
   deadline="${CLAUDE_DEADLINE:-${CODEX_DEADLINE:-${OPENCODE_DEADLINE:-}}}"
-  python3 "$FIXTURE_TIMING_HELPER" clock "$value" "$deadline" || return $?
+  scenario="${FIXTURE_SCENARIO:?}"
+  provider="${FAKE_PIPELINE:?}"
+  # Clock diagnostics must not launch another process inside the deadline
+  # path. Validate every interpolated field before using builtin printf;
+  # append order, rather than another clock sample, relates these readings
+  # to the timeout/workload receipts below.
+  [[ "$scenario" =~ ^[a-z0-9-]{1,96}$ ]] || return 1
+  case "$provider" in claude|codex|opencode) ;; *) return 1 ;; esac
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  if [ -z "$deadline" ]; then
+    deadline=null
+  else
+    [[ "$deadline" =~ ^[0-9]+$ ]] || return 1
+  fi
+  printf '{"scenario":"%s","provider":"%s","event":"clock","clockSeconds":%s,"originalDeadlineSeconds":%s}\n' \
+    "$scenario" "$provider" "$value" "$deadline" >> "$FIXTURE_TIMING_LOG" || return $?
   printf '%s\n' "$value"
 }
 FAKE
@@ -99,10 +114,7 @@ def receipt(event, **facts):
 
 
 mode = sys.argv[1]
-if mode == "clock":
-    receipt("clock", clockSeconds=int(sys.argv[2]),
-            originalDeadlineSeconds=int(sys.argv[3]) if sys.argv[3] else None)
-elif mode == "timeout":
+if mode == "timeout":
     receipt("timeout-" + sys.argv[2], selectedSeconds=int(sys.argv[3]),
             exitStatus=int(sys.argv[4]) if sys.argv[4] else None)
 elif mode == "workload":
@@ -962,7 +974,8 @@ assert [row["selectedSeconds"] for row in rounds] == [5, 4], rounds
 clocks = [row for row in rows if row["event"] == "clock" and row["originalDeadlineSeconds"] is not None]
 assert clocks and all(row["originalDeadlineSeconds"] == 1005 for row in clocks), clocks
 for round_row, expected_clock in zip(rounds, [1000, 1001]):
-    before = [row for row in clocks if row["observedMonotonicNs"] < round_row["observedMonotonicNs"]]
+    before = [row for row in rows[:rows.index(round_row)]
+              if row["event"] == "clock" and row["originalDeadlineSeconds"] is not None]
     assert before[-1]["clockSeconds"] == expected_clock, before
 workloads = [row for row in rows if row["event"] == "workload-exit"]
 assert len(workloads) == 2 and all(row["exitStatus"] == 0 and row["durationMonotonicNs"] >= 0 for row in workloads), workloads
@@ -1689,9 +1702,9 @@ echo "scenario codex-native-park: OK"
 # finalizes and reports the failed/no-deliverable run instead of wedging a
 # queue slot indefinitely.
 export FAKE_OPENCODE_SLEEP_SECONDS=2
-export OPENCODE_TIMEOUT_SECONDS=1 FAKE_GH_NO_MATCH=1
+export OPENCODE_TIMEOUT_SECONDS=1 FAKE_GH_NO_MATCH=1 FAKE_CLOCK=1
 run_scenario opencode-timeout opencode
-unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS FAKE_GH_NO_MATCH
+unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS FAKE_GH_NO_MATCH FAKE_CLOCK
 
 [ "$rc" -ne 0 ] || fail "opencode timeout: expected a non-zero exit, got 0"
 [ -f "$COMPLETE_LOG" ] || fail "opencode timeout: direct-runner.sh never called POST .../complete"
@@ -2135,7 +2148,10 @@ for provider in claude codex; do
       lookup) export FAKE_GH_LOOKUP_FAIL=1 ;;
       native) export FAKE_NATIVE_OUTCOME=no-op ;;
       exit) export FAKE_WORKER_EXIT=1 ;;
-      deadline) export FAKE_WORKER_SLEEP=2 CLAUDE_TIMEOUT_SECONDS=1 CODEX_TIMEOUT_SECONDS=1 ;;
+      # Freeze only admission accounting. GNU timeout still sends a real
+      # signal to the real two-second sleep; setup cannot consume the entire
+      # one-second allowance before that workload starts.
+      deadline) export FAKE_CLOCK=1 FAKE_WORKER_SLEEP=2 CLAUDE_TIMEOUT_SECONDS=1 CODEX_TIMEOUT_SECONDS=1 ;;
       # A round that exits cleanly having used its whole budget leaves no
       # time for a correction; only the shared helper's deadline can say so.
       budget) export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=5 CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5 ;;
