@@ -417,7 +417,7 @@ export function LiveRunRow({
   }
 
   return (
-    <Stack gap={4}>
+    <Stack gap={4} data-testid="current-run-row">
       <Anchor
         href={
           item?.url ?? issueUrlForRun(run) ?? workHrefForRun(run) ?? run.url
