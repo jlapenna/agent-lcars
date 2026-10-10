@@ -169,6 +169,20 @@ export async function handleWebhookDelivery(
 ): Promise<RouteResult> {
   try {
     const interpreted = interpretDelivery(input);
+    if (interpreted.kind === 'conflict') {
+      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      // Permanent intent conflicts are acknowledged, not retried by Cloud
+      // Tasks. No Work, run, label rewrite, or assignment change is requested.
+      return {
+        status: 200,
+        body: {
+          refused: interpreted.reason,
+          namespace: interpreted.namespace,
+          labels: interpreted.labels,
+          message: interpreted.message,
+        },
+      };
+    }
     if (interpreted.kind === 'ignore') {
       let canceledRunId: string | undefined;
       const closure = githubAnchorClosureFromDelivery(input);
@@ -260,6 +274,9 @@ export async function handleWebhookDelivery(
       requestId: interpreted.requestId,
       params,
       work: interpreted.work,
+      ...(interpreted.labelRouting === undefined
+        ? {}
+        : { labelRouting: interpreted.labelRouting }),
       ...(interpreted.requestBinding === undefined
         ? {}
         : { requestBinding: interpreted.requestBinding }),
@@ -278,7 +295,18 @@ export async function handleWebhookDelivery(
     }
     if (outcome.kind === 'conflict') {
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-      return { status: 200, body: { refused: 'work-spec-mismatch' } };
+      return {
+        status: 200,
+        body:
+          'reason' in outcome
+            ? {
+                refused: outcome.reason,
+                namespace: outcome.namespace,
+                labels: outcome.labels,
+                message: outcome.message,
+              }
+            : { refused: 'work-spec-mismatch' },
+      };
     }
     if (outcome.kind === 'invalid' || outcome.kind === 'forbidden') {
       logger.error(

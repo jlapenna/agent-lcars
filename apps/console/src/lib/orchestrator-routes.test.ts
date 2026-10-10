@@ -90,6 +90,10 @@ function fixture(
 }
 
 function labeledIssuePayload(overrides: Record<string, unknown> = {}) {
+  const label = (overrides['label'] ?? { name: 'agent:claude' }) as {
+    name: string;
+  };
+  const issue = overrides['issue'] as Record<string, unknown> | undefined;
   return {
     action: 'labeled',
     repository: { full_name: REPO },
@@ -98,10 +102,12 @@ function labeledIssuePayload(overrides: Record<string, unknown> = {}) {
       number: ISSUE.issue,
       title: 'Issue title',
       body: 'Issue body',
+      labels: [label],
     },
     label: { name: 'agent:claude' },
     sender: { login: 'jlapenna' },
     ...overrides,
+    ...(issue === undefined ? {} : { issue: { labels: [label], ...issue } }),
   };
 }
 
@@ -173,6 +179,115 @@ async function claimDispatchedRun(
 }
 
 describe('handleWebhookDelivery', () => {
+  it.each(['issues', 'pull_request'])(
+    'acknowledges concurrent conflicting %s deliveries and replay without work or GitHub mutations',
+    async (event) => {
+      const { deps, store, calls } = fixture();
+      const request = vi.spyOn(deps.orchestrator, 'request');
+      const labels = [
+        { name: 'agent:codex' },
+        { name: 'agent:claude' },
+        { name: 'review:opencode' },
+      ];
+      const key = event === 'issues' ? 'issue' : 'pull_request';
+      const payload = (trigger: string, reverse = false) => ({
+        action: 'labeled',
+        repository: { full_name: REPO },
+        [key]: {
+          ...completeIssuePayload().issue,
+          labels: reverse ? [...labels].reverse() : labels,
+          assignees: [{ login: 'agent-lcars-bot' }, { login: 'jlapenna' }],
+        },
+        label: { name: trigger },
+        sender: { login: 'jlapenna' },
+      });
+      const first = payload('agent:claude');
+      const original = structuredClone(first);
+      const [left, right] = await Promise.all([
+        handleWebhookDelivery(deps, {
+          event,
+          deliveryId: 'conflict-claude',
+          payload: first,
+        }),
+        handleWebhookDelivery(deps, {
+          event,
+          deliveryId: 'conflict-codex',
+          payload: payload('agent:codex', true),
+        }),
+      ]);
+      expect(left).toEqual(right);
+      expect(left).toMatchObject({
+        status: 200,
+        body: {
+          refused: 'routing-label-conflict',
+          namespace: 'agent',
+          labels: ['agent:claude', 'agent:codex'],
+          message: expect.stringContaining('A maintainer must explicitly'),
+        },
+      });
+      expect(
+        await handleWebhookDelivery(deps, {
+          event,
+          deliveryId: 'conflict-claude',
+          payload: first,
+        }),
+      ).toEqual(left);
+      expect(first).toEqual(original);
+      expect(request).not.toHaveBeenCalled();
+      expect(await store.readTask(ISSUE)).toBeUndefined();
+      expect(await store.listRuns(ISSUE)).toEqual([]);
+      expect(calls).toEqual([]);
+      expect(deps.refreshGithubAnchorProjection).toHaveBeenCalledWith(ISSUE);
+    },
+  );
+
+  it('retains previously admitted Work, run, labels, and ownership when a conflict arrives', async () => {
+    const { deps, store, calls } = fixture();
+    await dispatchedRun(deps);
+    const task = await store.readTask(ISSUE);
+    const runs = await store.listRuns(ISSUE);
+    calls.length = 0;
+    const payload = labeledIssuePayload({
+      issue: {
+        ...completeIssuePayload().issue,
+        labels: [{ name: 'agent:claude' }, { name: 'agent:codex' }],
+        assignees: [{ login: 'agent-lcars-bot' }],
+      },
+      label: { name: 'agent:codex' },
+    });
+    const original = structuredClone(payload);
+    expect(
+      await handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'later-conflict',
+        payload,
+      }),
+    ).toMatchObject({ body: { refused: 'routing-label-conflict' } });
+    expect(await store.readTask(ISSUE)).toEqual(task);
+    expect(await store.listRuns(ISSUE)).toEqual(runs);
+    expect(payload).toEqual(original);
+    expect(calls).toEqual([]);
+  });
+
+  it('keeps a refused delivery retryable if refreshing its projection fails', async () => {
+    const { deps, store } = fixture();
+    deps.refreshGithubAnchorProjection = vi
+      .fn()
+      .mockRejectedValue(new Error('projection unavailable'));
+    await expect(
+      handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'conflict-refresh',
+        payload: labeledIssuePayload({
+          issue: {
+            ...completeIssuePayload().issue,
+            labels: [{ name: 'agent:claude' }, { name: 'agent:codex' }],
+          },
+        }),
+      }),
+    ).rejects.toBeInstanceOf(ProjectionRefreshError);
+    expect(await store.listRuns(ISSUE)).toEqual([]);
+  });
   it('cancels a queued implementation run when its GitHub anchor closes', async () => {
     const { deps, store } = fixture();
     deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
@@ -226,6 +341,7 @@ describe('handleWebhookDelivery', () => {
           number: ISSUE.issue,
           title: 'Implement on this pull request',
           body: 'Queued implementation work.',
+          labels: [{ name: 'agent:claude' }],
         },
         label: { name: 'agent:claude' },
         sender: { login: 'jlapenna' },
@@ -547,7 +663,13 @@ describe('handleWebhookDelivery', () => {
       handleWebhookDelivery(deps, {
         event: 'issues',
         deliveryId: 'admitted-projection-refresh-retry',
-        payload: completeIssuePayload({ label: { name: 'agent:claude' } }),
+        payload: completeIssuePayload({
+          label: { name: 'agent:claude' },
+          issue: {
+            ...completeIssuePayload().issue,
+            labels: [{ name: 'agent:claude' }],
+          },
+        }),
       }),
     ).rejects.toMatchObject({
       name: ProjectionRefreshError.name,
@@ -610,7 +732,13 @@ describe('handleWebhookDelivery', () => {
       payload: {
         action: 'labeled',
         repository: { full_name: 'jlapenna/agent-lcars' },
-        issue: { state: 'open', number: 1, title: 'T', body: 'B' },
+        issue: {
+          state: 'open',
+          number: 1,
+          title: 'T',
+          body: 'B',
+          labels: [{ name: 'agent:claude' }],
+        },
         label: { name: 'agent:claude' },
         sender: { login: 'jlapenna' },
       },
@@ -825,6 +953,7 @@ describe('handleWebhookDelivery', () => {
         number: ISSUE.issue,
         title: 'Pull request title',
         body: 'Pull request body',
+        labels: [{ name: 'review:codex' }],
       },
       label: { name: 'review:codex' },
       sender: { login: 'jlapenna' },

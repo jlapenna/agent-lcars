@@ -35,6 +35,67 @@ function fixture() {
 }
 
 describe('admitGithubWork', () => {
+  it.each(['implement', 'review'] as const)(
+    'refuses conflicting %s label snapshots at shared admission even without interpretation',
+    async (mode) => {
+      const runtime = fixture();
+      const namespace = mode === 'implement' ? 'agent' : 'review';
+      const request = vi.spyOn(runtime.orchestrator, 'request');
+      const input = (pipeline: 'claude' | 'codex') => ({
+        anchor: ANCHOR,
+        requestId: `conflicting-${pipeline}`,
+        params: { mode },
+        work: work(pipeline),
+        labelRouting: {
+          mode,
+          trigger: `${namespace}:${pipeline}`,
+          labels: [
+            { name: `${namespace}:codex` },
+            { name: `${namespace}:claude` },
+          ],
+        },
+      });
+      const [left, right] = await Promise.all([
+        admitGithubWork(runtime, input('claude')),
+        admitGithubWork(runtime, input('codex')),
+      ]);
+      expect(left).toEqual(right);
+      expect(left).toMatchObject({
+        kind: 'conflict',
+        reason: 'routing-label-conflict',
+        namespace,
+      });
+      expect(request).not.toHaveBeenCalled();
+      expect(await runtime.store.readTask(ANCHOR)).toBeUndefined();
+      expect(runtime.drain).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['claude', 'review'],
+    ['codex', 'implement'],
+  ] as const)(
+    'rejects a label snapshot that disagrees with requested Work %s/%s',
+    async (pipeline, mode) => {
+      const runtime = fixture();
+      expect(
+        await admitGithubWork(runtime, {
+          anchor: ANCHOR,
+          requestId: 'mismatched-work',
+          params: { mode },
+          work: work(pipeline),
+          labelRouting: {
+            mode: 'implement',
+            trigger: 'agent:claude',
+            labels: [{ name: 'agent:claude' }],
+          },
+        }),
+      ).toMatchObject({ kind: 'invalid' });
+      expect(await runtime.store.listRuns(ANCHOR)).toEqual([]);
+      expect(runtime.drain).not.toHaveBeenCalled();
+    },
+  );
+
   it('normalizes, accepts, and drains one GitHub anchor request', async () => {
     const runtime = fixture();
 
