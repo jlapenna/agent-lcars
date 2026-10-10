@@ -345,7 +345,13 @@ the work that has stopped, and the work in flight.
   appears after 180s.
 - **FE-SB-4 [Proposed]** Show claim throughput and provider cooldowns:
   pipeline X is cooling down until T after a `provider-limit` failure.
-  Operators currently have to infer this from failures.
+  Include the authoritative provider queue, deferred and live-claim counts,
+  server-owned provider ceilings, and eligible depth after fresh executor
+  readiness/drain/capacity checks. Claim metrics name their exact observed
+  interval (up to 15 minutes), timestamp and provenance; a restart, missing
+  sample, failed read or stale/reset-crossing observation is unavailable,
+  never an inferred zero. Eligibility does not prove worker placement or
+  successful execution. Track implementation and delivery in #2192.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 

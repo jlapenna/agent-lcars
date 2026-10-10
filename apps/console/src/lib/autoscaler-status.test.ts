@@ -193,6 +193,46 @@ describe('authoritative ARC inventory', () => {
       expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('busy');
     }
   });
+
+  it('validates the exact bounded claim window and strips producer-only metadata', async () => {
+    const now = new Date().toISOString();
+    const claims = {
+      claude: 3,
+      codex: 0,
+      opencode: 1,
+      windowStart: new Date(Date.now() - 60_000).toISOString(),
+      windowEnd: now,
+    };
+    const executor = {
+      schemaVersion: 2,
+      kind: 'queue-executor',
+      executor: 'queue',
+      ready: true,
+      draining: false,
+      maxConcurrent: 3,
+      updatedAt: now,
+    };
+    mockStore([
+      { ...executor, claims: { ...claims, expireAt: Timestamp.now() } },
+    ]);
+    expect((await getAutoscalerStatuses()).queueExecutor?.claims).toEqual(
+      claims,
+    );
+    for (const invalid of [
+      { ...claims, claude: -1 },
+      { ...claims, codex: 0.5 },
+      { ...claims, windowEnd: 'invalid' },
+      {
+        ...claims,
+        windowStart: new Date(Date.now() - 16 * 60_000).toISOString(),
+      },
+    ]) {
+      mockStore([{ ...executor, claims: invalid }]);
+      const result = await getAutoscalerStatuses();
+      expect(result.queueExecutor?.ready).toBe(true);
+      expect(result.queueExecutor?.claims).toBeUndefined();
+    }
+  });
 });
 
 describe('subscribeAutoscalerStatuses', () => {
