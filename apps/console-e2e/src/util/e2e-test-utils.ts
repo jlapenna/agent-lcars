@@ -5,7 +5,7 @@ import { Page, test } from '@playwright/test';
 // A GitHub-login-shaped identity, not a serialized profile: the console's
 // strict Work admission records the authenticated actor in immutable Work.
 // This header is admitted only by the non-Cloud-Run E2E adapter.
-const E2E_ADMIN_GITHUB_LOGIN = 'e2e-agent-lcars-admin';
+export const E2E_ADMIN_GITHUB_LOGIN = 'e2e-agent-lcars-admin';
 export const E2E_ADMIN_HEADERS = {
   'X-e2e-auth-user': E2E_ADMIN_GITHUB_LOGIN,
 };

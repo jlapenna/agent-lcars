@@ -579,7 +579,7 @@ Priorities assume the single-maintainer design center.
 | R8  | Schedule edit/delete and UTC/local next-occurrence qualification                                                                      | Implemented; required browser CI and production evidence remain            | P2       |
 | R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                           | P2       |
 | R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                            | P2       |
-| R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                         | P3       |
+| R11 | Notifications: opt-in browser handoffs while Inbox is open; closed-tab push/digest pending ([contract](../inbox-notifications.md))    | The phone-first maintainer should not have to poll                         | P3       |
 
 ## 11. Success metrics
 
