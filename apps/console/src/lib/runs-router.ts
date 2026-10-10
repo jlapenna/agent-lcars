@@ -856,14 +856,14 @@ export const runsRouter = os.router({
         ? (await context.store.readTask(run.task))?.task
         : undefined;
     const target = anchorTarget(run, task);
-    // Reuses orchestrator-routes.ts's own outcome-vocabulary mapping
-    // (OK_OUTCOMES, the pull-request ref shape) rather than a smaller
-    // local reimplementation -- one mapping, one place it can drift.
+    // The shared outcome mapper validates exact references against this
+    // stored run's anchor and mode, not caller-supplied identity metadata.
     const result = toRunResult(
       target.repo,
       input.outcome,
       input.outcomeReference,
       input.message,
+      { issue: target.issue, mode: run.params?.mode },
     );
     try {
       const settled = await context.orchestrator.report(

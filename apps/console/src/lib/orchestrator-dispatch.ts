@@ -915,7 +915,7 @@ export function outcomeCommentBody(run: Run): string {
         ? [`✅ Run ${run.runId} finished.`]
         : [`❌ Run ${run.runId} failed.`];
       if (run.result?.ok && run.result.ref !== undefined) {
-        lines.push(run.result.ref);
+        lines.push(run.result.ref, ...(run.result.relatedRefs ?? []));
       }
       if (run.result?.summary === PARK_OUTCOME_SUMMARY) {
         // Prefer the agent's own final message: on a parked anchor it is

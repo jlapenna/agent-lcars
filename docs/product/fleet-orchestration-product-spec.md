@@ -217,10 +217,16 @@ rule wins:
   `agent-timeout`, `agent-failed`, `verification-failed`, `provider-limit`,
   `worker-control-failed`, `runner-failed`.
 
-`RunResult = {ok, summary ≤4 KiB, ref?, message ≤16 KiB}`. `ref` is set only
-for pull-request outcomes (the PR URL); comment and review outcomes carry no
-ref. `message` is the agent's final turn, shown in the console
-Conversation.
+`RunResult = {ok, summary ≤4 KiB, ref?, relatedRefs?, message ≤16 KiB}`.
+The runner carries the exact bot-authored, attempt-marker-verified PR,
+comment or review permalink through completion into `ref`. Structured
+GitHub park/no-op comments retain their own permalink; a parked partial PR
+retains its PR `ref` and blocker comment in `relatedRefs` (at most one).
+Console outcome, history, deliverable and Conversation links all use
+`safeHttpUrl`. Historical results, missing references, native park/no-op
+files and failed verification have no invented link. Agent final-message
+URLs are never promoted to verified references. `message` is the agent's
+final turn, shown in the console Conversation.
 
 ## 6. Admission, queueing, and execution
 
