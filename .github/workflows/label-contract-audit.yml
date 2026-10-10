@@ -23,6 +23,9 @@ jobs:
           - full_name: jlapenna/homelab
             owner: jlapenna
             repository: homelab
+          - full_name: jlapenna/messages-control
+            owner: jlapenna
+            repository: messages-control
           - full_name: supersprinklesracing/sprinkles
             owner: supersprinklesracing
             repository: sprinkles

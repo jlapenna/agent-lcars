@@ -469,6 +469,47 @@
         "question",
         "wontfix"
       ]
+    },
+    "jlapenna/messages-control": {
+      "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "status:post-deploy-action",
+        "status:ledger",
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "review:claude",
+        "review:codex",
+        "review:opencode",
+        "agent-option:cross-repo",
+        "intake:quick-task",
+        "planning",
+        "bot:renovate"
+      ],
+      "migrations": {
+        "bug": ["type:bug"],
+        "documentation": ["type:docs"],
+        "enhancement": ["type:feature"],
+        "dependencies": ["type:dependency-update", "bot:renovate"],
+        "human-needed": ["status:needs-human"]
+      },
+      "remove": [
+        "agent-option:long-run",
+        "duplicate",
+        "good first issue",
+        "help wanted",
+        "invalid",
+        "question",
+        "wontfix"
+      ]
     }
   }
 }
