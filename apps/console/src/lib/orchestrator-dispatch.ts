@@ -433,14 +433,24 @@ async function handleReportOutcome(
     return;
   }
 
-  const fallbackSuccessor =
-    run.providerFallback === undefined
-      ? undefined
-      : (await store.listRuns(run.task)).find(
-          (candidate) =>
-            candidate.requestSource === 'provider-fallback' &&
-            candidate.providerFallback?.fromRunId === run.runId,
-        );
+  // Failure guidance is selected at delivery time: a later request may
+  // already have progressed or finished while this report waited in outbox.
+  const history =
+    run.providerFallback !== undefined ||
+    (run.state === 'finished' && run.result?.ok === false)
+      ? await store.listRuns(run.task)
+      : [];
+  const fallbackSuccessor = history.find(
+    (candidate) =>
+      candidate.requestSource === 'provider-fallback' &&
+      candidate.providerFallback?.fromRunId === run.runId,
+  );
+  const latestSubsequentRun = history
+    .filter((candidate) => isLaterRun(candidate, run))
+    .sort(
+      (a, b) =>
+        (parseRunGeneration(b.runId) ?? 0) - (parseRunGeneration(a.runId) ?? 0),
+    )[0];
 
   // `anchorTarget` only needs the task for a native anchor's `spec.target
   // .repo`; `describeLostOutcome` below separately needs the full task doc
@@ -510,7 +520,7 @@ async function handleReportOutcome(
     run.state === 'lost'
       ? await describeLostOutcome(store, run, task)
       : {
-          body: outcomeCommentBody(run, fallbackSuccessor),
+          body: outcomeCommentBody(run, fallbackSuccessor, latestSubsequentRun),
           needsHumanLabel: run.state === 'finished' && runNeedsHumanLabel(run),
         };
   const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
@@ -943,7 +953,11 @@ function isLaterRun(candidate: Run, run: Run): boolean {
   );
 }
 
-export function outcomeCommentBody(run: Run, fallbackSuccessor?: Run): string {
+export function outcomeCommentBody(
+  run: Run,
+  fallbackSuccessor?: Run,
+  latestSubsequentRun?: Run,
+): string {
   switch (run.state) {
     case 'finished': {
       const lines = run.result?.ok
@@ -972,6 +986,13 @@ export function outcomeCommentBody(run: Run, fallbackSuccessor?: Run): string {
       if (fallbackSuccessor !== undefined) {
         lines.push(
           `A fresh fallback attempt ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} was created after this provider limit. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
+        );
+      } else if (
+        run.result?.ok === false &&
+        latestSubsequentRun !== undefined
+      ) {
+        lines.push(
+          `A newer request already exists as run ${latestSubsequentRun.runId} on ${latestSubsequentRun.pipeline} (state: ${latestSubsequentRun.state}). This report records the earlier failure.`,
         );
       } else if (run.result?.ok === false) {
         // Mirrors `describeLostOutcome`'s exhausted-budget clause: the run

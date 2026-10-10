@@ -555,3 +555,81 @@ describe('outcomeCommentBody', () => {
     expect(body).toContain("see this run's own comment above");
   });
 });
+
+describe('delayed failure outcome advice', () => {
+  it.each(['pending', 'running', 'finished', 'canceled'] as const)(
+    'names an already requested newer %s run instead of requesting another retry',
+    async (newerState) => {
+      const { store, orchestrator } = fixture();
+      const original = await requested(orchestrator);
+      await orchestrator.report(original.runId, {
+        ok: false,
+        summary: 'provider-limit',
+      });
+      const next = await orchestrator.request({
+        taskId: TASK,
+        requestId: 'manual-next',
+        pipeline: 'claude',
+      });
+      if (isRefusal(next)) throw new Error(next.reason);
+      const newer = decidedRun(next);
+      if (newerState === 'running')
+        await orchestrator.confirmDispatch(newer.runId);
+      if (newerState === 'finished')
+        await orchestrator.report(newer.runId, {
+          ok: true,
+          summary: 'resolved',
+        });
+      if (newerState === 'canceled') await orchestrator.cancel(newer.runId);
+      const comments: string[] = [];
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        now: () => NOW,
+        fetchImpl: (async (url, init) => {
+          if (String(url).endsWith('/comments'))
+            comments.push(JSON.parse(String(init?.body)).body);
+          return new Response(
+            JSON.stringify({ assignees: [{ login: 'agent-lcars-bot' }] }),
+            { status: 201 },
+          );
+        }) as typeof fetch,
+      });
+      expect(result.reported).toContain(original.runId);
+      const historical = comments.find((body) =>
+        body.startsWith(`❌ Run ${original.runId} failed.`),
+      );
+      expect(historical).toContain('provider-limit');
+      expect(historical).toContain(newer.runId);
+      expect(historical).toContain(newerState);
+      expect(historical).not.toContain('re-request manually');
+    },
+  );
+  it('retains manual retry guidance when no newer request exists', async () => {
+    const { store, orchestrator } = fixture();
+    const original = await requested(orchestrator);
+    await orchestrator.report(original.runId, {
+      ok: false,
+      summary: 'provider-limit',
+    });
+    const comments: string[] = [];
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      now: () => NOW,
+      fetchImpl: (async (url, init) => {
+        if (String(url).endsWith('/comments'))
+          comments.push(JSON.parse(String(init?.body)).body);
+        return new Response(
+          JSON.stringify({ assignees: [{ login: 'agent-lcars-bot' }] }),
+          { status: 201 },
+        );
+      }) as typeof fetch,
+    });
+    expect(comments.find((body) => body.includes(original.runId))).toContain(
+      're-request manually',
+    );
+  });
+});
