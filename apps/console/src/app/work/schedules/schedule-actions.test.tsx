@@ -79,9 +79,13 @@ describe('schedule edit/delete controls', () => {
     const dialog = await screen.findByRole('dialog', {
       name: 'Delete schedule?',
     });
-    expect(
-      within(dialog).getByText(/already admitted occurrence may still finish/),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText(
+          /already admitted occurrence may still finish/,
+        ),
+      ).toBeVisible(),
+    );
     rerender(
       element({
         ...schedule,
