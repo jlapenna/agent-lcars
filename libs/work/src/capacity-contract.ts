@@ -33,6 +33,7 @@ export const capacityPolicyInputSchema = z.strictObject({
 });
 export const capacityCommandSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('register'), producerId: id }),
+  z.strictObject({ action: z.literal('inspect-retired'), runId: id }),
   z.strictObject({
     action: z.literal('configure'),
     policy: capacityPolicyInputSchema,
@@ -202,6 +203,19 @@ export const capacityContract = oc
   .output(
     z.strictObject({
       ok: z.boolean(),
+      retirement: z
+        .strictObject({
+          runId: id,
+          nonce,
+          jobName: id,
+          released: z.boolean(),
+          barrier: z
+            .strictObject({ uid: id, resourceVersion: id, evidence: id })
+            .optional(),
+          retainBarrier: z.boolean(),
+        })
+        .nullable()
+        .optional(),
       receipt: capacityFenceSchema.optional(),
       jobName: id.optional(),
       released: z.boolean().optional(),

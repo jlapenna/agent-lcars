@@ -1020,6 +1020,35 @@ export class CapacityProtocol {
     });
   }
 
+  async inspectRetired(
+    authority: CapacityAuthority,
+    runId: string,
+    now: string,
+  ) {
+    requireCapability(authority, 'recover');
+    const key = retiredKey(runId);
+    return this.store.transactCapacity({
+      now,
+      recordKeys: [key],
+      decide: (snapshot) => {
+        policyFor(snapshot, authority);
+        const record = snapshot.records.get(key);
+        if (record?.kind !== 'retired' || record.poolId !== authority.poolId)
+          return { value: null };
+        return {
+          value: {
+            runId: record.runId,
+            nonce: record.nonce,
+            jobName: record.jobName,
+            released: record.released,
+            barrier: record.barrier,
+            retainBarrier: record.pendingWrites.length !== 0,
+          },
+        };
+      },
+    });
+  }
+
   async retiredWriteResolved(
     authority: CapacityAuthority,
     input: {

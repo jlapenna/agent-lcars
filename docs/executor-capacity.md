@@ -222,3 +222,55 @@ The release observation names the barrier’s exact run ID and receipt nonce as
 well as its Job UID and resource version. A mismatched nonce or unproved worker
 exit keeps capacity occupied. A receipt retains up to 32 positively retired
 worker identities; a previously retired Pod UID cannot acquire a later generation.
+
+## Receipt-mode executor implementation
+
+The executor's optional `kubernetes.capacity` configuration declares
+`pool_id`, `cluster`, `version` and `worker_audience`. Its configured namespace
+and `max_concurrent` must also match the server policy. The defaults keep the
+legacy singleton path. Adding this configuration is an approved migration,
+not authority to add replicas or change Job resource envelopes.
+
+Receipt mode registers a random process incarnation and retains one request
+identity through ambiguous claim responses. Recovery uses only the exact
+server receipt, original Job UID and immutable owned Secret. Every launch
+write first enters its receipt-scoped operation ledger; a transport failure,
+server timeout or 5xx keeps that write unresolved even if a later GET observes
+an object. Definitive rejections resolve only that operation. A serialized,
+fully drained incarnation can close and rotate without transferring a worker
+permit. Shutdown waits for its owned poll and recovery calls before attempting
+quiescence; a timeout or unknown write leaves it unacknowledged.
+
+A projected Pod-bound worker identity with the declared audience reaches only
+the trusted bootstrap's fixed identity path. Controller inventory attests one
+exact owned Pod. The bootstrap activates before reading the run brief and
+rechecks the same generation before every Claude, Codex or OpenCode execution
+round. All run-token callbacks include the current projected identity and
+activated generation. An expired, invalid, unactivated or retired identity
+cannot become permission to invoke a provider; existing provider deadlines
+still bound the round and its activation check.
+
+Receipt Jobs have no automatic TTL or independent age-based cleanup. An
+original, never-started missing-Secret shell can retire only after positive
+producer quiescence/fencing and zero owned Pods. An attempted Job requires
+positive termination evidence for every owned worker; a missing Pod or a
+logical completion alone stays unknown. Retirement CASes the original Job's
+UID/resourceVersion into a suspended name barrier. Pre-Job retirement competes
+for the exact deterministic name with a credential-free inert Job. The
+barrier is retained even after physical capacity releases.
+
+The separately granted `inspect-retired` command reads a permanent retirement
+record without mutation, exposing the exact run, nonce, Job name and barrier
+UID plus unresolved-write retention. This permits the executor to authenticate
+a retained barrier after active inventory empties. A label alone never exempts
+an object; a replacement UID or missing server evidence keeps inventory
+unavailable. Instance status reports health separately and omits local pool
+capacity totals; the authenticated application metrics endpoint owns global
+pool/domain occupancy once. Missing or mismatched inventory disables readiness.
+
+Go fake HTTP/Kubernetes, the real Console HTTP contract and actual direct-runner
+fixture tests protect these boundaries. They do not establish controlled live
+Kubernetes crash schedules, imported fleet inventory, trusted issuer delivery,
+normal controller/runner image adoption or failover. Those acceptance gates
+remain open on #2312 and Homelab #2245; receipt mode must stay disabled until
+its reviewed qualification and approval complete.

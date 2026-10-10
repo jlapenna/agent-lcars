@@ -548,3 +548,78 @@ describe('real signed Pod-bound Kubernetes JWT verification', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('permanent retirement inspection for executor barriers', () => {
+  it('active inventory empties after release while authenticated exact retirement remains observable', async () => {
+    const { context, claim } = await fixture();
+    const recovery = { fence: claim.receipt, recoveryNonce };
+    for (const command of [
+      { action: 'recover', ...recovery, purpose: 'retire' },
+      {
+        action: 'stop-producer',
+        fence: claim.receipt,
+        producerId: 'producer-a',
+        producerSubject: principal.subject,
+        fenced: false,
+        evidence: 'serialized-operation-group-drained',
+      },
+      { action: 'retire', ...recovery },
+      {
+        action: 'release',
+        ...recovery,
+        barrierUid: 'retained-inert-job',
+        barrierRunId: claim.runId,
+        barrierNonce: claim.receipt.nonce,
+        resourceVersion: 'barrier-rv',
+        jobName: claim.jobName,
+        evidence: 'never-started-shell-and-zero-owned-pods',
+        inert: true,
+        physicalWorkersEnded: true,
+        neverStarted: true,
+      },
+    ])
+      expect((await call(context, '/runs/capacity', command)).status).toBe(200);
+    expect(
+      (await call(context, '/runs/capacity', undefined, 'GET')).body.receipts,
+    ).toEqual([]);
+    expect(
+      await call(context, '/runs/capacity', {
+        action: 'inspect-retired',
+        runId: claim.runId,
+      }),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        retirement: {
+          runId: claim.runId,
+          nonce: claim.receipt.nonce,
+          jobName: claim.jobName,
+          released: true,
+          retainBarrier: false,
+          barrier: { uid: 'retained-inert-job', resourceVersion: 'barrier-rv' },
+        },
+      },
+    });
+    expect(
+      (
+        await call(
+          {
+            ...context,
+            principal: { ...principal, scopes: new Set(['work.executor']) },
+          },
+          '/runs/capacity',
+          { action: 'inspect-retired', runId: claim.runId },
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(context, '/runs/capacity', {
+          action: 'inspect-retired',
+          runId: 'work:unknown/r1',
+        })
+      ).body.retirement,
+    ).toBeNull();
+  });
+});
