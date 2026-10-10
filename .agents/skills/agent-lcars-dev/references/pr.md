@@ -42,13 +42,48 @@
 
    A PR pushed under the maintainer's own login — every interactive Claude
    Code, Codex, or cloud session — is **not** armed by that workflow. Arm
-   it yourself the moment the PR is open and ready (or the moment you mark
-   a draft ready; a draft cannot be armed), before watching CI or handing
-   off:
+   it yourself when the reviewed, pushed PR is open and ready (a draft cannot
+   be armed), before watching CI or handing off. Interactive maintainer
+   sessions use the **queue-only mutation**, never `gh pr merge --auto`:
+   that CLI command can merge immediately under an administrator's bypass
+   authority even without `--admin`. On #2298, the ready-event checks were
+   still queued and the rules suite recorded a bypass with all four required
+   checks missing. The flag alone does not prove protected delivery.
+
+   Read back the PR state, draft flag and head. Match its head to the exact
+   independently reviewed and pushed revision, then bind the mutation to that
+   revision so a concurrent push cannot silently change what you arm:
 
    ```bash
-   gh pr merge --squash --auto <PR_NUMBER>
+   pr_number="<PR_NUMBER>"
+   reviewed_head="<EXACT_REVIEWED_AND_PUSHED_SHA>"
+   gh pr view "$pr_number" -R jlapenna/agent-lcars \
+     --json id,state,isDraft,headRefOid,autoMergeRequest
+   pr_node="$(gh pr view "$pr_number" -R jlapenna/agent-lcars --json id --jq .id)"
+   gh api graphql \
+     -f query='mutation($id: ID!, $head: GitObjectID!) {
+       enablePullRequestAutoMerge(input: {
+         pullRequestId: $id, expectedHeadOid: $head, mergeMethod: SQUASH
+       }) {
+         pullRequest { id state headRefOid autoMergeRequest { enabledAt mergeMethod } }
+       }
+     }' \
+     -f id="$pr_node" -f head="$reviewed_head"
+   gh pr view "$pr_number" -R jlapenna/agent-lcars \
+     --json state,isDraft,headRefOid,autoMergeRequest
    ```
+
+   Require an open, ready PR at `reviewed_head` before the mutation and a
+   non-null SQUASH `autoMergeRequest` at that same head afterward. This arms
+   delivery; it does not declare checks passed. If queueing fails, re-read the
+   exact PR/head and diagnose the error. Do not fall back to a direct/admin
+   merge, relax checks or treat an unarmed PR as delivered. If the PR merged
+   during the request, inspect its exact merge evidence and rules evaluation
+   instead of assuming that the arming command enforced protection.
+
+   Draft CI can short-circuit without exercising full verification. After a
+   draft becomes ready, an old green summary is not full-gate evidence: use
+   the ready-event run's actual full-verification result for that exact head.
 
    Auto-merge armed under the maintainer's login is the opt-in the fleet
    reconciler honours (it updates a `BEHIND` branch when `main` moves, see
@@ -85,10 +120,18 @@
    the safety net for stale-base breakage (this repo's own PR CI checks
    out the event revision as-is; the `merge-live-base` action published
    here is consumed by sprinkles' E2E, not by this repo's workflows).
-   Admins (`RepositoryRole:5`) hold
-   `bypass_mode: always` as a deliberate escape hatch; if an admin merge
-   is ever refused, update the branch and let `Verify` re-run rather than
-   reaching for a bigger hammer.
+   Admins (`RepositoryRole:5`) hold `bypass_mode: always` as a deliberate
+   escape hatch. It is not routine delivery authority. Keep interactive
+   arming on the queue-only path above; if checks or queueing refuse an
+   operation, diagnose and let the required checks run.
+
+   After merging, identify the rules suite whose `after_sha` is the exact
+   main merge commit (`GET /repos/jlapenna/agent-lcars/rulesets/rule-suites`,
+   then `GET .../rule-suites/<id>`). Require `result: pass` and inspect the
+   required-check evaluation before calling the merge protected. A `bypass`
+   result is an actual delivery incident: record its failed evaluations and
+   root cause, monitor current-main verification, and keep runtime acceptance
+   open. It does not authorize rollback, deployment or a live policy edit.
 
 6. **Resolve every review thread — replying is not enough.** The
    `Protect main` ruleset sets `required_review_thread_resolution: true`
