@@ -1,5 +1,11 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { NativeDecisionCard } from './inbox-card';
@@ -78,10 +84,61 @@ describe('native decision Reply', () => {
           />
         </MantineProvider>,
       );
-      expect(screen.getByRole('status')).toHaveTextContent('Reply admitted');
-      expect(screen.queryByRole('textbox')).toBeNull();
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent('Reply admitted');
+        expect(screen.queryByRole('textbox')).toBeNull();
+      });
     },
   );
+
+  it('retains the in-flight draft when work starts until reply admission settles', async () => {
+    let admit!: (result: [null, { resumed: boolean }]) => void;
+    const admission = new Promise<[null, { resumed: boolean }]>((resolve) => {
+      admit = resolve;
+    });
+    const reply = vi.fn().mockReturnValue(admission);
+    const { rerender } = render(
+      <MantineProvider>
+        <NativeDecisionDetail card={card} replyToWorkItem={reply} />
+      </MantineProvider>,
+    );
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Use Firestore.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reply', exact: true }));
+    await waitFor(() =>
+      expect(reply).toHaveBeenCalledWith({
+        id: card.work.anchor.workId,
+        text: 'Use Firestore.',
+      }),
+    );
+    rerender(
+      <MantineProvider>
+        <NativeDecisionDetail
+          card={{
+            ...card,
+            canReply: false,
+            work: { ...card.work, state: 'running' },
+          }}
+          replyToWorkItem={reply}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByRole('textbox')).toHaveValue('Use Firestore.');
+    expect(
+      screen.getByRole('button', { name: 'Reply', exact: true }),
+    ).toBeDisabled();
+    await act(async () => {
+      admit([null, { resumed: false }]);
+      await admission;
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        /Reply admitted.*fresh session/,
+      );
+      expect(screen.queryByRole('textbox')).toBeNull();
+    });
+  });
 
   it('keeps a refused reply editable with the admission error', async () => {
     const reply = vi

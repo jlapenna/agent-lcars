@@ -30,6 +30,10 @@ cleanup() {
   local result=$?
   trap - EXIT
   if [ "$result" -ne 0 ]; then
+    if [ -f "${FIXTURE_TIMING_LOG:-}" ]; then
+      echo 'direct-runner sanitized timing receipt (last 8KiB):' >&2
+      tail -c 8192 "$FIXTURE_TIMING_LOG" >&2
+    fi
     echo 'direct-runner fixture failure diagnostics (last 4KiB per log):' >&2
     for log in "${scenario_log:-}" "${NODE_ARGS_LOG:-}" "$tmp/sidecar.log"; do
       if [ -f "$log" ]; then
@@ -53,6 +57,87 @@ trap cleanup EXIT
 baked="$tmp/baked"
 mkdir -p "$baked/runtime"
 cp -R "$repo_root/apps/runner-autoscaler/runner-image/runtime/." "$baked/runtime/"
+# Observe the actual production clock implementation and the caller's actual
+# deadline in the private baked fixture. No production debug hook or clock
+# arithmetic is added: each call still delegates to the copied helper.
+sed -i 's/^monotonic_seconds()/fixture_production_monotonic_seconds()/' "$baked/runtime/worker-completion.sh"
+cat >> "$baked/runtime/worker-completion.sh" <<'FAKE'
+monotonic_seconds() {
+  local value deadline scenario provider
+  value="$(fixture_production_monotonic_seconds)" || return $?
+  deadline="${CLAUDE_DEADLINE:-${CODEX_DEADLINE:-${OPENCODE_DEADLINE:-}}}"
+  scenario="${FIXTURE_SCENARIO:?}"
+  provider="${FAKE_PIPELINE:?}"
+  # Clock diagnostics must not launch another process inside the deadline
+  # path. Validate every interpolated field before using builtin printf;
+  # append order, rather than another clock sample, relates these readings
+  # to the timeout/workload receipts below.
+  [[ "$scenario" =~ ^[a-z0-9-]{1,96}$ ]] || return 1
+  case "$provider" in claude|codex|opencode) ;; *) return 1 ;; esac
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  if [ -z "$deadline" ]; then
+    deadline=null
+  else
+    [[ "$deadline" =~ ^[0-9]+$ ]] || return 1
+  fi
+  printf '{"scenario":"%s","provider":"%s","event":"clock","clockSeconds":%s,"originalDeadlineSeconds":%s}\n' \
+    "$scenario" "$provider" "$value" "$deadline" >> "$FIXTURE_TIMING_LOG" || return $?
+  printf '%s\n' "$value"
+}
+FAKE
+
+# Only allowlisted numeric facts and fixture identities enter this receipt.
+# In particular, neither provider argv/prompts nor the requested sleep string
+# (which may be invalid) nor environment/credential values are recorded.
+export FIXTURE_TIMING_HELPER="$tmp/fixture-timing.py"
+cat > "$FIXTURE_TIMING_HELPER" <<'PY'
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+
+def receipt(event, **facts):
+    scenario = os.environ["FIXTURE_SCENARIO"]
+    provider = os.environ["FAKE_PIPELINE"]
+    if not re.fullmatch(r"[a-z0-9-]{1,96}", scenario):
+        raise ValueError("invalid fixture identity")
+    if provider not in ("claude", "codex", "opencode"):
+        raise ValueError("invalid fixture provider")
+    row = dict(scenario=scenario, provider=provider, event=event,
+               observedMonotonicNs=time.monotonic_ns(), **facts)
+    with open(os.environ["FIXTURE_TIMING_LOG"], "a") as log:
+        log.write(json.dumps(row, separators=(",", ":")) + "\n")
+
+
+mode = sys.argv[1]
+if mode == "timeout":
+    receipt("timeout-" + sys.argv[2], selectedSeconds=int(sys.argv[3]),
+            exitStatus=int(sys.argv[4]) if sys.argv[4] else None)
+elif mode == "workload":
+    started = time.monotonic_ns()
+    receipt("workload-start")
+
+    def finished(status):
+        receipt("workload-exit", durationMonotonicNs=time.monotonic_ns() - started,
+                exitStatus=status)
+        return status
+
+    # GNU timeout signals the owned process group. Retain a measured partial
+    # duration even when it terminates this fake workload before sleep returns.
+    def terminated(signum, _frame):
+        sys.exit(finished(128 + signum))
+
+    signal.signal(signal.SIGTERM, terminated)
+    duration = sys.argv[2]
+    status = subprocess.call(["sleep", duration], stderr=subprocess.DEVNULL) if duration else 0
+    sys.exit(finished(status))
+else:
+    raise ValueError("invalid fixture timing mode")
+PY
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
 
@@ -427,7 +512,7 @@ printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
-if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then sleep "$FAKE_WORKER_SLEEP"; fi
+python3 "$FIXTURE_TIMING_HELPER" workload "${FAKE_WORKER_SLEEP:-}" || exit $?
 if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
   read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
   printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
@@ -438,7 +523,7 @@ if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
 fi
 printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
 if [ -n "${FAKE_CREDENTIAL_USE_AFTER_SLEEP:-}" ]; then
-  sleep "$FAKE_CREDENTIAL_USE_AFTER_SLEEP"
+  python3 "$FIXTURE_TIMING_HELPER" workload "$FAKE_CREDENTIAL_USE_AFTER_SLEEP" || exit $?
   git push
   gh api repos/octo/example
 fi
@@ -463,7 +548,7 @@ printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
 if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
 echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
-if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then sleep "$FAKE_WORKER_SLEEP"; fi
+python3 "$FIXTURE_TIMING_HELPER" workload "${FAKE_WORKER_SLEEP:-}" || exit $?
 if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
   read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
   printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
@@ -557,9 +642,7 @@ if [ "${FAKE_OPENCODE_CREATE_AMBIGUOUS_SESSIONS:-}" = 1 ]; then
 elif [ ! -f "$OPENCODE_FAKE_SESSIONS_FILE" ] || [ "$(cat "$OPENCODE_FAKE_SESSIONS_FILE")" = '[]' ]; then
   printf '[{"id":"ses_new_1","directory":"%s"}]\n' "$PWD" > "$OPENCODE_FAKE_SESSIONS_FILE"
 fi
-if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
-  sleep "$FAKE_OPENCODE_SLEEP_SECONDS"
-fi
+python3 "$FIXTURE_TIMING_HELPER" workload "${FAKE_OPENCODE_SLEEP_SECONDS:-}" || exit $?
 if [ -n "${FAKE_OPENCODE_ELAPSED:-}" ]; then
   read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
   printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_OPENCODE_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
@@ -584,7 +667,24 @@ printf '%s\n' "$*" >> "$RUNNER_TEMP/timeout-args.log"
 if [ -n "${TIMEOUT_ARGS_LOG:-}" ] && [ "$TIMEOUT_ARGS_LOG" != "$RUNNER_TEMP/timeout-args.log" ]; then
   printf '%s\n' "$*" >> "$TIMEOUT_ARGS_LOG"
 fi
-exec /usr/bin/timeout "$@"
+# Retain only actual provider-round timeouts. Bootstrap, verifier and sidecar
+# timeouts have different semantics and must not be mistaken for a round.
+args=("$@")
+offset=0
+while [[ "${args[$offset]:-}" == --* ]]; do offset=$((offset + 1)); done
+seconds="${args[$offset]:-}"
+command="${args[$((offset + 1))]:-}"
+round=0
+case "${command##*/}:${args[$((offset + 2))]:-}" in
+  claude:*|codex:exec|opencode:run) round=1 ;;
+esac
+if [ "$round" -eq 0 ]; then exec /usr/bin/timeout "$@"; fi
+[[ "$seconds" =~ ^[0-9]+s$ ]] || exit 2
+python3 "$FIXTURE_TIMING_HELPER" timeout start "${seconds%s}" '' || exit $?
+/usr/bin/timeout "$@"
+status=$?
+python3 "$FIXTURE_TIMING_HELPER" timeout exit "${seconds%s}" "$status" || exit $?
+exit "$status"
 FAKE
   chmod +x "$bindir/timeout"
 
@@ -675,6 +775,7 @@ run_scenario() {
   name="$1"
   rm -f "$tmp/opencode-initialized" "$tmp/opencode-startup-race"
   export FAKE_PIPELINE="${2:-claude}"
+  export FIXTURE_SCENARIO="$name"
   # A QueueExecutor container is not a GitHub Actions worker.  CI itself
   # exports this event context, so clear it explicitly before each fixture to
   # prove the direct adapter neither depends on nor invents an Actions event.
@@ -736,6 +837,7 @@ run_scenario() {
   export OPENCODE_FAKE_SESSIONS_FILE="$dir/opencode-sessions.json"
   export OPENCODE_RUN_COUNT_FILE="$dir/opencode-run-count"
   export TIMEOUT_ARGS_LOG="$dir/timeout-args.log"
+  export FIXTURE_TIMING_LOG="$dir/timing.jsonl"
   # A scenario asserting exact deadline arithmetic opts into a frozen
   # monotonic clock that only a fake provider's *_ELAPSED advances; real
   # elapsed time and node clock steps then cannot change the result.
@@ -857,6 +959,76 @@ fail() {
   echo "$1" >&2
   exit 1
 }
+
+# Assert observed facts from the real runner calls, not a second deadline
+# implementation. These deterministic cases replace the historical 5s/5s
+# incident's missing evidence; that original cause remains unrecoverable.
+assert_budget_receipt() {
+  python3 - "$FIXTURE_TIMING_LOG" <<'PY'
+import json
+import sys
+
+rows = [json.loads(line) for line in open(sys.argv[1])]
+rounds = [row for row in rows if row["event"] == "timeout-start"]
+assert [row["selectedSeconds"] for row in rounds] == [5, 4], rounds
+clocks = [row for row in rows if row["event"] == "clock" and row["originalDeadlineSeconds"] is not None]
+assert clocks and all(row["originalDeadlineSeconds"] == 1005 for row in clocks), clocks
+for round_row, expected_clock in zip(rounds, [1000, 1001]):
+    before = [row for row in rows[:rows.index(round_row)]
+              if row["event"] == "clock" and row["originalDeadlineSeconds"] is not None]
+    assert before[-1]["clockSeconds"] == expected_clock, before
+workloads = [row for row in rows if row["event"] == "workload-exit"]
+assert len(workloads) == 2 and all(row["exitStatus"] == 0 and row["durationMonotonicNs"] >= 0 for row in workloads), workloads
+PY
+}
+
+# Invalid workload input used to report provider success and permit a second
+# round. Exercise the actual fake executables through the production runner,
+# including its completion classification and original-clock accounting.
+for provider in claude codex opencode; do
+  export FAKE_CLOCK=1 FAKE_GH_NO_MATCH=1
+  export FAKE_WORKER_SLEEP=fixture-secret-invalid-duration
+  export FAKE_OPENCODE_SLEEP_SECONDS=fixture-secret-invalid-duration
+  export FAKE_WORKER_ELAPSED=1 FAKE_OPENCODE_ELAPSED=1
+  run_scenario "$provider-workload-failed" "$provider"
+  unset FAKE_CLOCK FAKE_GH_NO_MATCH FAKE_WORKER_SLEEP FAKE_OPENCODE_SLEEP_SECONDS FAKE_WORKER_ELAPSED FAKE_OPENCODE_ELAPSED
+  [ "$rc" -ne 0 ] || fail "$provider accepted a failed fake workload"
+  jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "$provider workload failure lost its classification"
+  [ "$(wc -l < "$FIXTURE_TIMING_LOG")" -lt 30 ] || fail "$provider workload diagnostics unexpectedly unbounded"
+  python3 - "$FIXTURE_TIMING_LOG" "$dir/uptime" <<'PY'
+import json
+import sys
+
+rows = [json.loads(line) for line in open(sys.argv[1])]
+workloads = [row for row in rows if row["event"] == "workload-exit"]
+rounds = [row for row in rows if row["event"] == "timeout-exit"]
+assert len(workloads) == len(rounds) == 1, rows
+assert workloads[0]["exitStatus"] != 0 and workloads[0]["durationMonotonicNs"] >= 0, workloads
+assert rounds[0]["exitStatus"] == workloads[0]["exitStatus"], rounds
+assert open(sys.argv[2]).read() == "1000.00 0.00\n", "failed workload advanced the fake clock"
+assert "fixture-secret-invalid-duration" not in open(sys.argv[1]).read(), "receipt leaked workload input"
+PY
+  # Execute the actual EXIT cleanup in an owned child fixture. The first
+  # failure's receipt must survive removal of its private provider log tree.
+  retained="$dir/retained-diagnostics.log"
+  set +e
+  (
+    tmp="$(mktemp -d)"
+    cp "$FIXTURE_TIMING_LOG" "$tmp/timing.jsonl"
+    FIXTURE_TIMING_LOG="$tmp/timing.jsonl"
+    baked='' scenario_log='' NODE_ARGS_LOG=''
+    trap cleanup EXIT
+    exit 1
+  ) > "$retained" 2>&1
+  retained_status=$?
+  set -e
+  [ "$retained_status" -eq 1 ] || fail 'failure cleanup lost the original status'
+  grep -q '"event":"workload-exit"' "$retained" || fail 'failure cleanup discarded workload timing'
+  grep -q '"event":"timeout-exit"' "$retained" || fail 'failure cleanup discarded selected timeout'
+  [ "$(wc -c < "$retained")" -le 8500 ] || fail 'retained timing receipt exceeded its bound'
+  if grep -q 'fixture-secret-invalid-duration' "$retained"; then fail 'retained receipt exposed invalid workload input'; fi
+  echo "scenario $provider-workload-failed: OK"
+done
 
 # --- Scenario 1: happy path (pull-request outcome) --------------------------
 # `TARGET_REPO` in the fake brief is `octo/example`, not `jlapenna/agent-
@@ -1299,9 +1471,20 @@ mapfile -t opencode_run_timeouts < <(grep 'opencode.* run ' "$TIMEOUT_ARGS_LOG" 
 [ "${#opencode_run_timeouts[@]}" -eq 2 ] ||
   fail "opencode premature stop: did not record two bounded provider rounds ($(cat "$TIMEOUT_ARGS_LOG"))"
 [ "${opencode_run_timeouts[*]}" = "5 4" ] ||
-  fail "opencode premature stop: continuation reset the provider time budget ($(cat "$TIMEOUT_ARGS_LOG"))"
+  fail "opencode premature stop: continuation reset the provider time budget (recorded seconds: ${opencode_run_timeouts[*]})"
+assert_budget_receipt || fail 'OpenCode correction timing receipt did not preserve the original deadline'
 
 echo "scenario opencode-premature-stop: OK"
+
+# Clean provider exit after consuming the entire allowance must not receive
+# another round, even when the verifier would otherwise request correction.
+export FAKE_CLOCK=1 FAKE_OPENCODE_ELAPSED=5 OPENCODE_TIMEOUT_SECONDS=5 FAKE_GH_NO_MATCH=1
+run_scenario opencode-exhausted-budget opencode
+unset FAKE_CLOCK FAKE_OPENCODE_ELAPSED OPENCODE_TIMEOUT_SECONDS FAKE_GH_NO_MATCH
+[ "$rc" -ne 0 ] || fail 'OpenCode exhausted budget reported success without a deliverable'
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] || fail 'OpenCode exhausted budget granted a correction round'
+jq -e '.outcome == "no-deliverable"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail 'OpenCode exhausted budget lost its classification'
+echo 'scenario opencode-exhausted-budget: OK'
 
 # A continuation is a new grant of execution. If the run was cancelled or
 # lost its lease while the first round was active, its authenticated heartbeat
@@ -1519,9 +1702,9 @@ echo "scenario codex-native-park: OK"
 # finalizes and reports the failed/no-deliverable run instead of wedging a
 # queue slot indefinitely.
 export FAKE_OPENCODE_SLEEP_SECONDS=2
-export OPENCODE_TIMEOUT_SECONDS=1 FAKE_GH_NO_MATCH=1
+export OPENCODE_TIMEOUT_SECONDS=1 FAKE_GH_NO_MATCH=1 FAKE_CLOCK=1
 run_scenario opencode-timeout opencode
-unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS FAKE_GH_NO_MATCH
+unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS FAKE_GH_NO_MATCH FAKE_CLOCK
 
 [ "$rc" -ne 0 ] || fail "opencode timeout: expected a non-zero exit, got 0"
 [ -f "$COMPLETE_LOG" ] || fail "opencode timeout: direct-runner.sh never called POST .../complete"
@@ -1956,6 +2139,7 @@ for provider in claude codex; do
   if [ "${round_timeouts[*]}" != "5 4" ]; then
     fail "$provider correction reset its deadline (recorded seconds: ${round_timeouts[*]})"
   fi
+  assert_budget_receipt || fail "$provider correction timing receipt did not preserve the original deadline"
 
   for refusal in heartbeat lookup native exit deadline budget; do
     export FAKE_GH_NO_MATCH=1
@@ -1964,7 +2148,10 @@ for provider in claude codex; do
       lookup) export FAKE_GH_LOOKUP_FAIL=1 ;;
       native) export FAKE_NATIVE_OUTCOME=no-op ;;
       exit) export FAKE_WORKER_EXIT=1 ;;
-      deadline) export FAKE_WORKER_SLEEP=2 CLAUDE_TIMEOUT_SECONDS=1 CODEX_TIMEOUT_SECONDS=1 ;;
+      # Freeze only admission accounting. GNU timeout still sends a real
+      # signal to the real two-second sleep; setup cannot consume the entire
+      # one-second allowance before that workload starts.
+      deadline) export FAKE_CLOCK=1 FAKE_WORKER_SLEEP=2 CLAUDE_TIMEOUT_SECONDS=1 CODEX_TIMEOUT_SECONDS=1 ;;
       # A round that exits cleanly having used its whole budget leaves no
       # time for a correction; only the shared helper's deadline can say so.
       budget) export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=5 CLAUDE_TIMEOUT_SECONDS=5 CODEX_TIMEOUT_SECONDS=5 ;;
