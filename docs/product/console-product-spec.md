@@ -559,6 +559,11 @@ Priorities assume the single-maintainer design center.
 
 ## 11. Success metrics
 
+These are measurement goals, not telemetry guarantees. The
+[lifecycle observation contract](../product-lifecycle-metrics.md) documents
+the durable in-repo measurements and which receipt, decision, render,
+identity, verification and billing joins remain unknown under #2200.
+
 - **Time to decision:** the median time from an item entering the queue (such
   as a `needs-human` park) to the maintainer's action.
 - **Queue health:** open decisions by reason, and the age of the oldest

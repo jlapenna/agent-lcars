@@ -93,6 +93,25 @@ const withBearer = <T extends object>(current: T) => ({
 const base = oc.meta(openapi({ tags: ['items'], spec: withBearer }));
 
 export const itemsContract = {
+  lifecycleMetrics: base
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/metrics/lifecycle',
+        operationId: 'getLifecycleMetrics',
+        summary:
+          'Bounded durable lifecycle observations (work.operator or work.cron)',
+      }),
+    )
+    .input(z.strictObject({}))
+    .output(
+      z.strictObject({
+        observedAt: z.iso.datetime(),
+        windowSeconds: z.literal(3600),
+        complete: z.boolean(),
+        prometheus: z.string().max(65_536),
+      }),
+    ),
   maintenanceTick: base
     .meta(
       openapi({

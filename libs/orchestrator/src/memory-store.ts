@@ -4,6 +4,11 @@ import {
   type Refusal,
   runLeaseExpiresAt,
 } from './decide';
+import {
+  type LifecycleMetricRead,
+  type LifecycleMetricRecords,
+  validateLifecycleMetricRead,
+} from './lifecycle-metrics';
 import type {
   GithubAnchorProjection,
   LeasedOutboxEntry,
@@ -55,6 +60,32 @@ export class MemoryStore implements OrchestratorStore {
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
     return structuredClone(this.#tasks.get(taskKey(id)));
+  }
+
+  async readLifecycleMetricRecords(
+    input: LifecycleMetricRead,
+  ): Promise<LifecycleMetricRecords> {
+    validateLifecycleMetricRead(input);
+    const runs = [...this.#runs.values()];
+    const recent = runs
+      .filter(
+        (run) => run.updatedAt >= input.since && run.updatedAt <= input.until,
+      )
+      .slice(0, input.limit + 1);
+    const live = runs
+      .filter((run) => isLive(run.state))
+      .slice(0, input.limit + 1);
+    const outbox = [...this.#outbox.values()]
+      .filter((entry) => entry.state !== 'done')
+      .slice(0, input.limit + 1);
+    return structuredClone({
+      recentRuns: recent.slice(0, input.limit),
+      liveRuns: live.slice(0, input.limit),
+      outstandingOutbox: outbox.slice(0, input.limit),
+      complete: [recent, live, outbox].every(
+        (feed) => feed.length <= input.limit,
+      ),
+    });
   }
 
   async readRun(runId: string): Promise<Run | undefined> {

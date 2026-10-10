@@ -1,5 +1,9 @@
 import type { Decision, Refusal } from './decide';
 import type {
+  LifecycleMetricRead,
+  LifecycleMetricRecords,
+} from './lifecycle-metrics';
+import type {
   GithubAnchorProjection,
   LeasedOutboxEntry,
   RequestSource,
@@ -118,6 +122,10 @@ export interface OpenGithubAnchorProjectionPage {
  * Firestore transactions provide both guarantees natively.
  */
 export interface OrchestratorStore {
+  /** Bounded, read-only durable feeds; any overflow marks the snapshot incomplete. */
+  readLifecycleMetricRecords(
+    input: LifecycleMetricRead,
+  ): Promise<LifecycleMetricRecords>;
   readTask(id: TaskId): Promise<VersionedTask | undefined>;
   readRun(runId: string): Promise<Run | undefined>;
   /** The task's live run, if its `activeRunId` points at one. */

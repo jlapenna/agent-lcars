@@ -25,6 +25,7 @@ export interface WorkCommandDeps {
 export const WORK_CLI_USAGE =
   'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> --title "<text>" (--description "<text>" | --description-file <path>)\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id>\n' +
+  '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
   '       status exits 1 for failed work (with or without --watch); other states exit 0.';
 
@@ -115,6 +116,24 @@ export async function executeWorkCommand(
   const c = client(deps);
   try {
     switch (sub) {
+      case 'metrics': {
+        if (rest.some((arg) => arg !== '--json') || rest.length > 1)
+          return usageFailure(deps);
+        const snapshot = await c.lifecycleMetrics(
+          {},
+          { signal: AbortSignal.timeout(15_000) },
+        );
+        deps.stdout(
+          rest.includes('--json')
+            ? JSON.stringify(snapshot)
+            : snapshot.prometheus.trimEnd(),
+        );
+        if (!snapshot.complete)
+          deps.stderr(
+            'Lifecycle snapshot truncated; health/latency series suppressed.',
+          );
+        return { ok: snapshot.complete };
+      }
       case 'create': {
         const repo = flag(rest, '--repo');
         const pipeline = flag(rest, '--pipeline');

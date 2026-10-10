@@ -134,6 +134,50 @@ async function call(
 }
 
 describe('items routes', () => {
+  it('gates the read-only metrics endpoint and preserves durable state across repeated exports', async () => {
+    for (const principal of [undefined, executorOnly, reaperOnly])
+      expect(
+        (await call(context({ principal }), 'GET', '/metrics/lifecycle'))
+          .status,
+      ).toBe(401);
+    for (const principal of [operator, cronTick]) {
+      const ctx = context({ principal });
+      const read = vi.spyOn(ctx.runtime.store, 'readLifecycleMetricRecords');
+      const drain = vi.spyOn(ctx.runtime, 'drain');
+      const first = await call(ctx, 'GET', '/metrics/lifecycle');
+      const again = await call(ctx, 'GET', '/metrics/lifecycle');
+      expect(first.status).toBe(200);
+      expect(again.json).toEqual(first.json);
+      expect(first.json).toMatchObject({ complete: true, windowSeconds: 3600 });
+      expect(read).toHaveBeenCalledWith({
+        since: '2026-08-26T09:00:00.000Z',
+        until: '2026-08-26T10:00:00.000Z',
+        limit: 1000,
+      });
+      expect(drain).not.toHaveBeenCalled();
+      expect(await ctx.runtime.store.listLiveRuns()).toEqual([]);
+    }
+  });
+  it('returns explicit incompleteness without health series and sanitizes store failures', async () => {
+    const ctx = context();
+    vi.spyOn(ctx.runtime.store, 'readLifecycleMetricRecords').mockResolvedValue(
+      { recentRuns: [], liveRuns: [], outstandingOutbox: [], complete: false },
+    );
+    const truncated = await call(ctx, 'GET', '/metrics/lifecycle');
+    expect(truncated.status).toBe(200);
+    expect(truncated.json).toMatchObject({ complete: false });
+    expect(JSON.stringify(truncated.json)).not.toContain(
+      'lcars_product_silent_loss_runs',
+    );
+    vi.spyOn(ctx.runtime.store, 'readLifecycleMetricRecords').mockRejectedValue(
+      new Error('private-database-secret'),
+    );
+    const failed = await call(ctx, 'GET', '/metrics/lifecycle');
+    expect(failed.status).toBe(500);
+    expect(JSON.stringify(failed.json)).not.toContain(
+      'private-database-secret',
+    );
+  });
   it('refuses every route without a principal', async () => {
     const ctx = context({ principal: undefined });
     for (const [m, p, b] of [
