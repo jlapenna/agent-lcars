@@ -36,6 +36,9 @@ describe('reduceTranscript', () => {
     expect(summary.title).toBe('Fix flaky login test');
     expect(summary.titleSource).toBe('generated');
     expect(summary.deliverables.prNumbers).toEqual([42]);
+    expect(summary.deliverables.qualifiedPRs).toEqual([
+      { repo: { owner: 'org', name: 'repo' }, number: 42 },
+    ]);
     expect(summary.deliverables.commitShas).toEqual(['abc1234']);
   });
 

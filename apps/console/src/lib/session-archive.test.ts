@@ -390,7 +390,16 @@ describe('costs archive selection', () => {
       cliDoc({
         sessionId: 'selected',
         totalCostUsd: 3,
-        deliverables: { prNumbers: [42, 42], commitShas: [] },
+        deliverables: {
+          prNumbers: [42, 42],
+          qualifiedPRs: [
+            {
+              repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
+              number: 42,
+            },
+          ],
+          commitShas: [],
+        },
       }),
       cliDoc({
         sessionId: 'excluded',

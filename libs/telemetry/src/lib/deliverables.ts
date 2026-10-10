@@ -1,3 +1,4 @@
+import { isCanonicalSessionRepository, type QualifiedSessionPR } from './types';
 import { collectStrings } from './unknown-value';
 
 const PR_URL_PATTERN = /\/pull\/(\d+)/g;
@@ -60,4 +61,30 @@ export function findDeliverables(line: unknown): DeliverablesFound {
     prNumbers: Array.from(prNumbers),
     commitShas: Array.from(commitShas),
   };
+}
+
+/** Preserve the URL's repository. Call only on a correlated creating-command
+ * result, never arbitrary user/assistant transcript text. */
+export function findQualifiedPRs(line: unknown): QualifiedSessionPR[] {
+  const strings: string[] = [];
+  collectStrings(line, strings);
+  const refs = new Map<string, QualifiedSessionPR>();
+  const pattern =
+    /https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/([1-9][0-9]*)(?=[/?#\s"'`]|$)/gu;
+  for (const text of strings)
+    for (const match of text.matchAll(pattern)) {
+      const repo = {
+        owner: match[1]?.toLowerCase(),
+        name: match[2]?.toLowerCase(),
+      };
+      const number = Number(match[3]);
+      if (!isCanonicalSessionRepository(repo) || !Number.isSafeInteger(number))
+        continue;
+      refs.set(`${repo.owner}/${repo.name}#${number}`, { repo, number });
+    }
+  return [...refs.values()];
+}
+
+export function isPRPublicationCommand(command: string): boolean {
+  return /\bgh\s+pr\s+create\b/iu.test(command);
 }

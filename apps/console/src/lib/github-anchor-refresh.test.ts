@@ -305,7 +305,13 @@ describe('failed nullable merge fields (#2299)', () => {
       cacheReadTokens: 0,
     },
     totalCostUsd: 5,
-    deliverables: { prNumbers: [42], commitShas: [] },
+    deliverables: {
+      prNumbers: [42],
+      qualifiedPRs: [
+        { repo: { owner: 'jlapenna', name: 'agent-lcars' }, number: 42 },
+      ],
+      commitShas: [],
+    },
   };
   it.each(
     [

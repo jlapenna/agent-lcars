@@ -1,6 +1,9 @@
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { totalTokens } from '@agent-lcars/telemetry';
+import {
+  isCanonicalSessionRepository,
+  totalTokens,
+} from '@agent-lcars/telemetry';
 
 import { docCost, type LedgerTotals } from './session-ledger';
 
@@ -8,6 +11,7 @@ export interface SpendTotals extends LedgerTotals {
   reportedCostUsd: number;
   estimatedCostUsd: number;
   unpricedSessions: number;
+  unqualifiedPRReferences: number;
 }
 
 export interface SpendBreakdown extends SpendTotals {
@@ -44,15 +48,30 @@ export interface SessionSpend {
 }
 
 export const spendPRKey = (repo: { owner: string; name: string }, n: number) =>
-  `${repo.owner}/${repo.name}#${n}`;
+  `${repo.owner.toLowerCase()}/${repo.name.toLowerCase()}#${n}`;
 
 export function sessionPRKeys(doc: SessionDoc): string[] {
-  const repo = doc.repo;
-  return repo === undefined
-    ? []
-    : [...new Set(doc.deliverables.prNumbers)]
-        .filter((n) => Number.isSafeInteger(n) && n > 0)
-        .map((n) => spendPRKey(repo, n));
+  return [
+    ...new Set(
+      (doc.deliverables.qualifiedPRs ?? [])
+        .filter(
+          (pr) =>
+            isCanonicalSessionRepository(pr.repo) &&
+            Number.isSafeInteger(pr.number) &&
+            pr.number > 0,
+        )
+        .map((pr) => spendPRKey(pr.repo, pr.number)),
+    ),
+  ];
+}
+
+function unqualifiedReferences(doc: SessionDoc): number {
+  const qualifiedNumbers = new Set(
+    (doc.deliverables.qualifiedPRs ?? []).map((pr) => pr.number),
+  );
+  return [...new Set(doc.deliverables.prNumbers)].filter(
+    (n) => !qualifiedNumbers.has(n),
+  ).length;
 }
 
 function emptyTotals(): SpendTotals {
@@ -63,12 +82,14 @@ function emptyTotals(): SpendTotals {
     reportedCostUsd: 0,
     estimatedCostUsd: 0,
     unpricedSessions: 0,
+    unqualifiedPRReferences: 0,
   };
 }
 
 function addSession(totals: SpendTotals, doc: SessionDoc) {
   const cost = docCost(doc);
   totals.sessions++;
+  totals.unqualifiedPRReferences += unqualifiedReferences(doc);
   totals.turns += doc.turns;
   totals.tokens += totalTokens(doc.tokens);
   if (cost.costUsd === undefined) totals.unpricedSessions++;
@@ -133,7 +154,8 @@ export function aggregateSessionSpend(
       const projection = projections.get(key);
       const identityMatches =
         projection !== undefined &&
-        `${projection.anchor.repo}#${projection.anchor.issue}` === key &&
+        `${projection.anchor.repo.toLowerCase()}#${projection.anchor.issue}` ===
+          key &&
         projection.kind === 'pr';
       const status =
         !identityMatches || projection.mergedAt === undefined

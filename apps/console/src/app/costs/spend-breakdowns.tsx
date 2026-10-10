@@ -66,12 +66,17 @@ function Breakdown({
                 <TableTd>{money(row.estimatedCostUsd)}</TableTd>
                 <TableTd>{row.unpricedSessions}</TableTd>
                 <TableTd>
-                  {row.mergedPRs} ({row.unknownPRs} unknown)
+                  {row.mergedPRs} ({row.unknownPRs} unknown;{' '}
+                  {row.unqualifiedPRReferences} unqualified references)
                 </TableTd>
                 <TableTd>
                   {money(row.costPerMergedDeliverableUsd)}
                   {row.costEstimated ? ' est.' : ''}
-                  {row.unpricedSessions || row.unknownPRs ? ' partial' : ''}
+                  {row.unpricedSessions ||
+                  row.unknownPRs ||
+                  row.unqualifiedPRReferences
+                    ? ' partial'
+                    : ''}
                 </TableTd>
               </TableTr>
             ))}
@@ -96,9 +101,14 @@ function Breakdown({
               </Text>
               <Text size="xs" c="dimmed">
                 {row.mergedPRs} merged PRs · {row.unknownPRs} unknown ·{' '}
+                {row.unqualifiedPRReferences} unqualified references ·{' '}
                 {money(row.costPerMergedDeliverableUsd)} / merged PR
                 {row.costEstimated ? ' est.' : ''}
-                {row.unpricedSessions || row.unknownPRs ? ' partial' : ''}
+                {row.unpricedSessions ||
+                row.unknownPRs ||
+                row.unqualifiedPRReferences
+                  ? ' partial'
+                  : ''}
               </Text>
             </div>
           </article>
@@ -137,7 +147,8 @@ export function SpendBreakdowns({
           {money(spend.costPerMergedDeliverableUsd)} per merged deliverable
           {spend.totals.costEstimated ? ' (includes estimates)' : ''} ·{' '}
           {spend.mergedPRs} merged PRs · {spend.unmergedPRs} unmerged ·{' '}
-          {spend.unknownPRs} unknown
+          {spend.unknownPRs} unknown · {spend.totals.unqualifiedPRReferences}{' '}
+          unqualified references
         </Text>
         <Text size="sm" data-testid="cost-budget-state">
           {assessCostBudget(spend, budget)}
@@ -151,8 +162,9 @@ export function SpendBreakdowns({
           spend incurred during that window. Reported costs come from provider
           transcripts; estimates use available model rates. Unknown or unpriced
           data makes totals partial. The denominator counts unique known-merged
-          PRs referenced by these sessions, regardless of merge date. PR counts
-          across groups overlap.
+          PRs with qualified creating-command evidence from these sessions,
+          regardless of merge date. Legacy number-only references are excluded
+          from the denominator. PR counts across groups overlap.
         </Text>
       </section>
       <div className="costs-ledger-grid">
@@ -177,9 +189,9 @@ export function SpendBreakdowns({
           <Eyebrow>Deliverable attribution</Eyebrow>
         </div>
         <Text size="xs" c="dimmed">
-          Each session's known cost is split equally across its unique
-          repository-qualified PR references, including unmerged and unknown
-          PRs. Without PR references: {spend.withoutPR.sessions} sessions,{' '}
+          Each session's known cost is split equally across its unique qualified
+          publication references, including unmerged and unknown PRs. Without
+          qualified publication references: {spend.withoutPR.sessions} sessions,{' '}
           {money(spend.withoutPR.costUsd)} known spend,{' '}
           {spend.withoutPR.unpricedSessions} unpriced.
         </Text>

@@ -52,7 +52,11 @@ function projection(
     ...overrides,
   };
 }
-const refs = (prNumbers: number[]) => ({ prNumbers, commitShas: [] });
+const refs = (prNumbers: number[], referenceRepo = repo) => ({
+  prNumbers,
+  qualifiedPRs: prNumbers.map((number) => ({ repo: referenceRepo, number })),
+  commitShas: [],
+});
 const merged = '2026-09-01T00:00:00Z';
 
 describe('selected session spend', () => {
@@ -165,9 +169,13 @@ describe('selected session spend', () => {
         doc({
           totalCostUsd: 3,
           repo: { owner: 'other', name: 'repo' },
-          deliverables: refs([42]),
+          deliverables: refs([42], { owner: 'other', name: 'repo' }),
         }),
-        doc({ totalCostUsd: 4, repo: undefined, deliverables: refs([42]) }),
+        doc({
+          totalCostUsd: 4,
+          repo: undefined,
+          deliverables: { prNumbers: [42], commitShas: [] },
+        }),
       ],
       new Map([['jlapenna/agent-lcars#42', projection(42, merged)]]),
     );

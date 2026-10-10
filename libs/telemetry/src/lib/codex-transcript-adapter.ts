@@ -1,6 +1,10 @@
-import { findDeliverables } from './deliverables';
+import {
+  findDeliverables,
+  findQualifiedPRs,
+  isPRPublicationCommand,
+} from './deliverables';
 import type { TranscriptAdapter } from './transcript-adapter-types';
-import { SessionSummary, TokenUsage } from './types';
+import { type QualifiedSessionPR, SessionSummary, TokenUsage } from './types';
 import {
   asArray,
   asNumber,
@@ -82,6 +86,8 @@ export const codexAdapter: TranscriptAdapter = {
     let lastToolCall: SessionSummary['lastToolCall'];
     const toolCallCounts: Record<string, number> = {};
     const prNumbers = new Set<number>();
+    const qualifiedPRs = new Map<string, QualifiedSessionPR>();
+    const creatingCalls = new Set<string>();
     const commitShas = new Set<string>();
 
     for (const line of lines) {
@@ -164,6 +170,48 @@ export const codexAdapter: TranscriptAdapter = {
         }
       }
 
+      // Keep historical display hints, but financial attribution requires a
+      // qualified URL from the correlated result of a creating command.
+      if (lineType === 'response_item') {
+        const callId = asString(payload['call_id']);
+        if (
+          callId &&
+          (payloadType === 'function_call' ||
+            payloadType === 'custom_tool_call')
+        ) {
+          const input = payload['arguments'] ?? payload['input'];
+          const command =
+            typeof input === 'string' ? input : JSON.stringify(input);
+          const toolName = asString(payload['name']);
+          if (
+            toolName &&
+            [
+              'exec',
+              'exec_command',
+              'functions.exec',
+              'functions.exec_command',
+              'shell',
+              'Bash',
+              'bash',
+            ].includes(toolName) &&
+            command &&
+            isPRPublicationCommand(command)
+          )
+            creatingCalls.add(callId);
+        } else if (
+          callId &&
+          creatingCalls.has(callId) &&
+          (payloadType === 'function_call_output' ||
+            payloadType === 'custom_tool_call_output')
+        ) {
+          creatingCalls.delete(callId);
+          for (const pr of findQualifiedPRs(payload['output']))
+            qualifiedPRs.set(
+              `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
+              pr,
+            );
+        }
+      }
       const deliverables = findDeliverables(raw);
       for (const number of deliverables.prNumbers) prNumbers.add(number);
       for (const sha of deliverables.commitShas) commitShas.add(sha);
@@ -187,6 +235,9 @@ export const codexAdapter: TranscriptAdapter = {
         ...(title && { title, titleSource: 'inferred' as const }),
         deliverables: {
           prNumbers: Array.from(prNumbers),
+          ...(qualifiedPRs.size > 0 && {
+            qualifiedPRs: [...qualifiedPRs.values()],
+          }),
           commitShas: Array.from(commitShas),
         },
       },

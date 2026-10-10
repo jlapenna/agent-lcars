@@ -1,5 +1,11 @@
-import { findDeliverables, isDeliverableCommand } from './deliverables';
 import {
+  findDeliverables,
+  findQualifiedPRs,
+  isDeliverableCommand,
+  isPRPublicationCommand,
+} from './deliverables';
+import {
+  type QualifiedSessionPR,
   ReduceTranscriptOptions,
   SessionResult,
   SessionSummary,
@@ -33,6 +39,7 @@ interface SessionState {
   lastToolCall?: { name: string; timestamp: string };
   aiTitle?: string;
   firstUserPrompt?: string;
+  qualifiedPRs: Map<string, QualifiedSessionPR>;
   prNumbers: Set<number>;
   commitShas: Set<string>;
   totalCostUsd?: number;
@@ -56,6 +63,7 @@ function createState(sessionId: string, host?: string): SessionState {
       cacheCreationTokens: 0,
       cacheReadTokens: 0,
     },
+    qualifiedPRs: new Map(),
     prNumbers: new Set(),
     commitShas: new Set(),
     pendingBashCommands: new Map(),
@@ -110,6 +118,12 @@ function applyMessage(
         const command = toolUseId && state.pendingBashCommands.get(toolUseId);
         if (command && isDeliverableCommand(command)) {
           const found = findDeliverables(record['content']);
+          if (isPRPublicationCommand(command))
+            for (const pr of findQualifiedPRs(record['content']))
+              state.qualifiedPRs.set(
+                `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
+                pr,
+              );
           for (const prNumber of found.prNumbers) {
             state.prNumbers.add(prNumber);
           }
@@ -275,6 +289,9 @@ function finalizeState(state: SessionState): SessionSummary {
     deliverables: {
       ...(state.branch && { branch: state.branch }),
       prNumbers: Array.from(state.prNumbers),
+      ...(state.qualifiedPRs.size > 0 && {
+        qualifiedPRs: [...state.qualifiedPRs.values()],
+      }),
       commitShas: Array.from(state.commitShas),
     },
   };

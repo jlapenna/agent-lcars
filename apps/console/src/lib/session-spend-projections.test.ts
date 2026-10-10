@@ -21,7 +21,14 @@ function doc(prNumbers: number[]): CliSessionDoc {
       cacheCreationTokens: 0,
       cacheReadTokens: 0,
     },
-    deliverables: { prNumbers, commitShas: [] },
+    deliverables: {
+      prNumbers,
+      qualifiedPRs: prNumbers.map((number) => ({
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+        number,
+      })),
+      commitShas: [],
+    },
   };
 }
 

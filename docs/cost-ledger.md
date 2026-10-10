@@ -27,7 +27,7 @@ field cannot allocate tokens across model switches inside a session.
 Cost per merged deliverable is the selected sessions' **entire known cost**
 (reported plus estimated, including failed attempts, unmerged attempts and
 sessions without PR references) divided by unique repository-qualified,
-known-merged PR references from those sessions. It is an efficiency ratio, not
+known-merged PR references with qualified publication evidence from those sessions. It is an efficiency ratio, not
 the allocated price of a particular successful PR. Repeated references and
 multiple attempts at the same PR count one denominator. Merge date need not
 fall inside the selected activity window. With no known merges or no priced
@@ -36,8 +36,20 @@ make the ratio partial; missing merges can raise it while missing cost can lower
 it. Counts across pipeline/model groups overlap when a PR has multiple attempts
 in different groups and must not be summed.
 
-Per-PR attribution splits each session's cost equally across its unique PR
-references, including unmerged/unknown references. The separate no-PR subtotal
+Qualified publication evidence preserves the full GitHub repository/PR identity
+from a `gh pr create` command's correlated tool result. Arbitrary transcript
+mentions, URLs in user requests, unrelated tool output and legacy number-only
+associations cannot establish this denominator. Their unqualified reference
+count remains visible; costs still contribute to the numerator and the subtotal
+without qualified references. This evidence is a command/output heuristic, not
+proof that every reported PR was successfully created or authored by the session.
+Adapters that cannot supply correlated publication evidence remain unavailable
+for this denominator. Retained summaries must be re-ingested through normal
+telemetry delivery before they can gain qualified evidence; no production
+backfill is performed by this change.
+
+Per-PR attribution splits each session's cost equally across its unique qualified publication
+references, including unmerged/unknown references. The separate no-qualified-PR subtotal
 keeps all spend accounted for. Unpriced session shares are fractional when a
 session references multiple PRs. This deterministic allocation is not inferred
 from individual turns or token traces.
