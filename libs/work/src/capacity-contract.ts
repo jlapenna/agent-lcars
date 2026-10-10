@@ -268,6 +268,7 @@ export const capacityMetricsContract = oc
   .output(z.string());
 
 const inventoryReceiptSchema = capacityFenceSchema.extend({
+  taskKey: id.optional(),
   domainId: id,
   pipeline: id,
   subject: id,

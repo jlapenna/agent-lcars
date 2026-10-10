@@ -5580,6 +5580,11 @@
                             "minLength": 16,
                             "maxLength": 128
                           },
+                          "taskKey": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 175
+                          },
                           "domainId": {
                             "type": "string",
                             "minLength": 1,
@@ -6383,6 +6388,16 @@
         "tags": ["runs"],
         "parameters": [
           {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
+          {
             "name": "x-lcars-worker-identity",
             "in": "header",
             "required": false,
@@ -6741,6 +6756,16 @@
         "tags": ["runs"],
         "parameters": [
           {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
+          {
             "name": "x-lcars-worker-identity",
             "in": "header",
             "required": false,
@@ -6959,6 +6984,16 @@
         "tags": ["runs"],
         "parameters": [
           {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
+          {
             "name": "x-lcars-worker-identity",
             "in": "header",
             "required": false,
@@ -7068,6 +7103,16 @@
         "summary": "Mint a short-lived GitHub token for a claimed run's target repo",
         "tags": ["runs"],
         "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
           {
             "name": "x-lcars-worker-identity",
             "in": "header",
@@ -7190,6 +7235,16 @@
         "summary": "Restore the centrally owned Codex lineage for an authorized run",
         "tags": ["runs"],
         "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
           {
             "name": "x-lcars-worker-identity",
             "in": "header",
@@ -7318,6 +7373,16 @@
         "summary": "Persist an authorized Codex run's conditionally rotated central lineage",
         "tags": ["runs"],
         "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
           {
             "name": "x-lcars-worker-identity",
             "in": "header",

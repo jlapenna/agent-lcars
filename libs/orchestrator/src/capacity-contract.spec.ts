@@ -53,6 +53,38 @@ function contract(
   enabled = true,
 ) {
   describe.skipIf(!enabled)(`Capacity store contract: ${name}`, () => {
+    it('persists optional retirement fields with the same omission semantics', async () => {
+      const store = factory();
+      const record = {
+        kind: 'retired' as const,
+        runId: 'optional-retirement',
+        poolId: 'optional-pool',
+        nonce: 'optional-nonce-123456',
+        jobName: 'optional-job',
+        barrier: undefined,
+        pendingWrites: [],
+        released: false,
+      };
+      await store.transactCapacity({
+        now,
+        recordKeys: ['optional-retirement'],
+        decide: () => ({
+          value: undefined,
+          records: new Map([['optional-retirement', record]]),
+        }),
+      });
+      await store.transactCapacity({
+        now,
+        recordKeys: ['optional-retirement'],
+        decide: ({ records }) => {
+          expect(records.get('optional-retirement')).toEqual(record);
+          expect(records.get('optional-retirement')).not.toHaveProperty(
+            'barrier',
+          );
+          return { value: undefined };
+        },
+      });
+    });
     async function fixture(maxConcurrent = 1) {
       const store = factory();
       const protocol = new CapacityProtocol(store);
@@ -635,6 +667,12 @@ function contract(
           receipts: [{ ...observation, subject: 'substituted-subject' }],
         }),
       ).rejects.toThrow('stale');
+      await expect(
+        protocol.importInventory(a, {
+          ...input,
+          receipts: [{ ...observation, taskKey: 'example/other#123' }],
+        }),
+      ).rejects.toThrow('stale');
       const report = await protocol.importInventory(a, input);
       expect((await protocol.read(now)).receipts).toHaveLength(0);
       await protocol.importInventory(a, {
@@ -662,6 +700,67 @@ function contract(
       expect(
         await claim(protocol, authority('pool-b'), undefined, 'producer-b'),
       ).toMatchObject({ kind: 'wait' });
+    });
+    it('producer bounds refuse new identities while preserving full-set replay', async () => {
+      const { store, protocol, a, orchestrator } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a);
+      await owner(protocol, a, receipt);
+      for (let index = 1; index <= 8; index++) {
+        const producerId = `producer-${index}`;
+        await protocol.register(a, producerId, now);
+        if (index < 8)
+          await protocol.authorizeProducer(a, fence(receipt), {
+            producerId,
+            recoveryNonce,
+            now,
+          });
+      }
+      const before = await protocol.read(now);
+      await expect(
+        protocol.authorizeProducer(a, fence(receipt), {
+          producerId: 'producer-8',
+          recoveryNonce,
+          now,
+        }),
+      ).rejects.toThrow('Capacity protocol refused: bounds');
+      expect(await protocol.read(now)).toEqual(before);
+      await protocol.authorizeProducer(a, fence(receipt), {
+        producerId: 'producer-7',
+        recoveryNonce,
+        now,
+      });
+      expect((await protocol.read(now)).receipts).toEqual(before.receipts);
+    });
+    it('pending-write bounds preserve replay and recover space after a definitive outcome', async () => {
+      const { store, protocol, a, orchestrator } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a);
+      await owner(protocol, a, receipt);
+      const operation = (operationId: string, resolved = false) =>
+        protocol.operation(a, fence(receipt), {
+          producerId: 'producer-a',
+          operationId,
+          resolved,
+          recoveryNonce,
+          now,
+        });
+      for (let index = 0; index < 32; index++)
+        await operation(`write-${index}`);
+      const before = await protocol.read(now);
+      await expect(operation('write-32')).rejects.toThrow(
+        'Capacity protocol refused: bounds',
+      );
+      expect(await protocol.read(now)).toEqual(before);
+      await operation('write-31');
+      expect((await protocol.read(now)).receipts).toEqual(before.receipts);
+      await operation('write-0', true);
+      await operation('write-32');
+      const pending = (await protocol.read(now)).receipts[0]?.producers[0]
+        ?.pendingWrites;
+      expect(pending).toHaveLength(32);
+      expect(pending).not.toContain('write-0');
+      expect(pending).toContain('write-32');
     });
     it('ordinary executor cannot fence another incarnation or quiesce ambiguous writes', async () => {
       const { store, protocol, a, orchestrator } = await fixture();

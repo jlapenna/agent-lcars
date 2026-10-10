@@ -1,4 +1,5 @@
 import { WORK_ID_RE } from '@agent-lcars/orchestrator';
+import type { OpenAPIV3_2 } from '@orpc/openapi';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -419,6 +420,49 @@ describe('generateWorkOpenApi', () => {
     expect(doc.components.securitySchemes).toHaveProperty('runToken');
   });
 
+  it('retains every required runId path parameter beside worker headers', async () => {
+    const doc = (await generateWorkOpenApi()) as OpenAPIV3_2.OpenAPIObject;
+    const operations = Object.entries(doc.paths ?? {})
+      .filter(([path]) => path.includes('{runId}'))
+      .flatMap(([path, item]) =>
+        (['get', 'post', 'put', 'patch', 'delete'] as const).flatMap(
+          (method) => {
+            const operation = item?.[method];
+            return operation === undefined ? [] : [{ path, method, operation }];
+          },
+        ),
+      );
+    expect(operations).toHaveLength(7);
+    for (const { path, method, operation } of operations)
+      expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'runId',
+            in: 'path',
+            required: true,
+          }),
+        ]),
+      );
+    const workers = operations.filter(({ operation }) =>
+      operation.security?.some(
+        (scheme: Record<string, unknown>) => 'runToken' in scheme,
+      ),
+    );
+    expect(workers).toHaveLength(6);
+    for (const { operation } of workers)
+      expect(operation.parameters).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'x-lcars-worker-identity',
+            in: 'header',
+          }),
+          expect.objectContaining({
+            name: 'x-lcars-worker-generation',
+            in: 'header',
+          }),
+        ]),
+      );
+  });
   it('gives tick a distinct presentation: the cron tag and bearer security', async () => {
     // `tick` is a service operation guarded by the server-owned work.cron
     // scope. Its credential is therefore the same Google bearer format as

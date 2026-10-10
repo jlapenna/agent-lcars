@@ -59,6 +59,19 @@ timeout releases a slot or a provider domain. One initial unplaced receipt
 per pool is allowed; only positively attested placement releases that
 allowance.
 
+The same transaction excludes any task lineage with an unreleased physical
+receipt or unretired legacy claim, across every pool and provider. Each new
+receipt binds `taskKey` from its canonical Run. A logical retry, cancellation,
+completion or provider switch cannot admit a successor before its predecessor
+is physically retired, even when another slot or provider domain is free.
+Known unrelated tasks can still use that capacity.
+
+Historical receipt identity is recovered from an authoritative Run read inside
+the claim transaction, including Runs outside the queued/claimed queries. An
+orphan whose task cannot be recovered blocks all new admission until positive
+physical retirement; neither a caller-supplied task hint nor a parsed run-ID
+prefix establishes that it is unrelated.
+
 `GET /runs/capacity` gives a separately granted recovery/operator principal a
 read-only, bounded inventory for its server-granted pool. It includes exact
 receipt fences, Job/Secret UIDs, worker generations, recovery ownership and
@@ -181,6 +194,9 @@ stays unknown. To apply the same reviewed proposal through the application,
 send `dryRun: false` with that `reviewedDigest`. Configuration/claim changes
 invalidate the digest. Imported attempts remain quarantined until exact
 recovery/retirement evidence; a token hash never supplies an absent secret.
+Import binds or verifies each task identity against a canonical Run read in
+the same transaction. A mismatched supplied identity is refused; a genuinely
+missing Run discards the supplied hint and leaves inventory unknown.
 
 The application bounds active state to 16 declared pools, 128 configured
 slots, a 900,000-byte active document, eight authorized producer groups per
@@ -190,6 +206,10 @@ Permanent producer/replay/retired records are individually keyed history
 documents. These bounds are protocol/storage bounds, not approval to request
 matching job resources. Any job still must fit one eligible supported runner
 after host/service reserves.
+Adding a distinct ninth producer or thirty-third unresolved operation returns
+the protocol's `409 bounds` conflict without mutating the receipt. Duplicate
+identities remain replayable at the bound; definitive write resolution restores
+space without discarding uncertain operations.
 
 A lower policy limit leaves existing receipts intact and blocks new admission
 until they drain below the new bound. Old policy versions are refused. Server
@@ -217,6 +237,9 @@ HTTP contract, distinct grants and signed Pod-bound JWT validation. These
 protect admission, response-loss, physical occupancy, generation, retirement,
 migration and policy-drain contracts. They do not replace receipt-aware Go
 client/Kubernetes failure probes or approved staging failover qualification.
+`capacity-lineage.spec.ts` additionally proves same-task retries and provider
+switches wait across pools, unrelated work progresses, canonical historical
+identity is recovered, and orphan admission opens only after physical retirement.
 
 The release observation names the barrier’s exact run ID and receipt nonce as
 well as its Job UID and resource version. A mismatched nonce or unproved worker

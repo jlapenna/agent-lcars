@@ -127,6 +127,7 @@ export interface OrchestratorStore {
     recordKeys: readonly string[];
     claimPipelines?: readonly string[];
     runId?: string;
+    readRunIds?: readonly string[];
     decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
   }): Promise<T>;
   readTask(id: TaskId): Promise<VersionedTask | undefined>;

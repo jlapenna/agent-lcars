@@ -1,5 +1,5 @@
 import { oc } from '@orpc/contract';
-import { openapi } from '@orpc/openapi';
+import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
 
 import {
@@ -827,10 +827,11 @@ export const runBriefSchema = z.union([
  *  other run routes are called by the runner presenting the token
  *  `claim` returned, hence the distinct `runToken` scheme. */
 const runToken = { security: [{ runToken: [] }] };
-const withRunToken = <T extends object>(current: T) => ({
+const withRunToken = (current: OpenAPIV3_2.OperationObject) => ({
   ...current,
   ...runToken,
   parameters: [
+    ...(current.parameters ?? []),
     {
       name: 'x-lcars-worker-identity',
       in: 'header' as const,

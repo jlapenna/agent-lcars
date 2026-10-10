@@ -10,8 +10,10 @@ import { z } from 'zod';
 
 import {
   assertCapacityWorkerPermit,
+  capacityRecordForStorage,
   capacityRecordSchema,
   CapacityRefusal,
+  capacityStateForStorage,
   capacityStateSchema,
   type CapacityWorkerPermit,
   emptyCapacityState,
@@ -148,6 +150,7 @@ export class FirestoreStore implements OrchestratorStore {
     recordKeys: readonly string[];
     claimPipelines?: readonly string[];
     runId?: string;
+    readRunIds?: readonly string[];
     decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
   }): Promise<T> {
     return this.#firestore.runTransaction(async (tx) => {
@@ -172,6 +175,21 @@ export class FirestoreStore implements OrchestratorStore {
         const run = await tx.get(this.#runRef(input.runId));
         if (run.exists) runs = [runSchema.parse(run.data())];
       }
+      const extraIds = [
+        ...new Set([
+          ...(input.readRunIds ?? []),
+          ...(input.claimPipelines === undefined
+            ? []
+            : state.receipts.map((receipt) => receipt.runId)),
+        ]),
+      ].filter((runId) => !runs.some((run) => run.runId === runId));
+      if (runs.length + extraIds.length > 1000)
+        throw new Error('Capacity run inventory exceeds read bound');
+      const extraRuns = await Promise.all(
+        extraIds.map((runId) => tx.get(this.#runRef(runId))),
+      );
+      for (const run of extraRuns)
+        if (run.exists) runs.push(runSchema.parse(run.data()));
       const keys = [
         ...new Set([
           ...input.recordKeys,
@@ -219,11 +237,11 @@ export class FirestoreStore implements OrchestratorStore {
       // The guard document serializes every pool/domain/receipt mutation. History
       // remains separately keyed; no eventually consistent counter is used.
       if (result.state !== undefined)
-        tx.set(stateRef, capacityStateSchema.parse(result.state));
+        tx.set(stateRef, capacityStateForStorage(result.state));
       for (const [key, record] of result.records ?? [])
         tx.set(
           this.#capacityRecords.doc(encodeURIComponent(key)),
-          capacityRecordSchema.parse(record),
+          capacityRecordForStorage(record),
         );
       if (result.run !== undefined)
         tx.set(this.#runRef(result.run.runId), result.run);

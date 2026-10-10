@@ -6,6 +6,9 @@ const time = z.iso.datetime();
 const revision = z.number().int().nonnegative();
 const nonce = z.string().min(16).max(128);
 
+export const CAPACITY_RECEIPT_MAX_PRODUCERS = 8;
+export const CAPACITY_PRODUCER_MAX_PENDING_WRITES = 32;
+
 /** Deployment declares these identities. Requests cannot select a domain. */
 export const capacityPoolPolicySchema = z.strictObject({
   poolId: metricIdentity,
@@ -31,6 +34,9 @@ export const capacityReceiptSchema = z.strictObject({
   slot: revision,
   revision,
   runId: identity,
+  /** Bound from the canonical Run, never an operator-supplied lineage hint.
+   * Missing historical/orphan identity retains a global admission fence. */
+  taskKey: identity.optional(),
   nonce,
   domainId: identity,
   pipeline: identity,
@@ -82,11 +88,13 @@ export const capacityReceiptSchema = z.strictObject({
         subject: identity,
         stopped: z.boolean(),
         fenced: z.boolean(),
-        pendingWrites: z.array(identity).max(32),
+        pendingWrites: z
+          .array(identity)
+          .max(CAPACITY_PRODUCER_MAX_PENDING_WRITES),
       }),
     )
     .min(1)
-    .max(8),
+    .max(CAPACITY_RECEIPT_MAX_PRODUCERS),
   barrier: z
     .strictObject({
       uid: identity,
@@ -158,6 +166,22 @@ export const capacityRecordSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 export type CapacityRecord = z.infer<typeof capacityRecordSchema>;
+
+/** Capacity documents contain only JSON values. Validate before normalization
+ * so undefined optionals are omitted without hiding invalid numbers or shapes.
+ * Both stores use these boundaries to keep durable omission semantics equal. */
+export function capacityStateForStorage(value: CapacityState): CapacityState {
+  const validated = capacityStateSchema.parse(value);
+  return capacityStateSchema.parse(JSON.parse(JSON.stringify(validated)));
+}
+
+export function capacityRecordForStorage(
+  value: CapacityRecord,
+): CapacityRecord {
+  const validated = capacityRecordSchema.parse(value);
+  return capacityRecordSchema.parse(JSON.parse(JSON.stringify(validated)));
+}
+
 export const producerKey = (
   pool: string,
   subject: string,

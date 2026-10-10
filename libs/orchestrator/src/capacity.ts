@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 
 import {
+  CAPACITY_PRODUCER_MAX_PENDING_WRITES,
+  CAPACITY_RECEIPT_MAX_PRODUCERS,
   type CapacityFence,
   type CapacityPoolPolicy,
   capacityPoolPolicySchema,
@@ -12,7 +14,7 @@ import {
   retiredKey,
 } from './capacity-model';
 import { runLeaseExpiresAt } from './decide';
-import { isLive, type Run } from './model';
+import { isLive, type Run, taskKey } from './model';
 import {
   isQueueAdmissionCandidate,
   QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
@@ -120,6 +122,7 @@ export class CapacityProtocol {
         retiredKey(receipt.runId),
       ]),
       claimPipelines: [],
+      readRunIds: input.receipts.map((receipt) => receipt.runId),
       decide: (snapshot) => {
         const policy = snapshot.state.policies.find(
           (value) => value.poolId === authority.poolId,
@@ -175,16 +178,23 @@ export class CapacityProtocol {
             run !== undefined &&
             (run.queue?.tokenHash !== receipt.tokenHash ||
               run.pipeline !== receipt.pipeline ||
+              (receipt.taskKey !== undefined &&
+                receipt.taskKey !== taskKey(run.task)) ||
               (run.queue.claimedBySubject !== undefined &&
                 run.queue.claimedBySubject !== receipt.subject) ||
               (run.queue.claimedBy !== undefined &&
                 run.queue.claimedBy !== receipt.runner))
           )
             throw new CapacityRefusal('stale');
+          if (run === undefined) delete receipt.taskKey;
+          else receipt.taskKey = taskKey(run.task);
           if (snapshot.records.has(retiredKey(receipt.runId)))
             throw new CapacityRefusal('retired');
         }
-        const known = input.known && missing.length === 0;
+        const known =
+          input.known &&
+          missing.length === 0 &&
+          imported.every((receipt) => receipt.taskKey !== undefined);
         const digest = createHash('sha256')
           .update(
             JSON.stringify({
@@ -265,7 +275,9 @@ export class CapacityProtocol {
               value.producerId === input.producerId &&
               value.subject === authority.subject,
           )
-        )
+        ) {
+          if (receipt.producers.length >= CAPACITY_RECEIPT_MAX_PRODUCERS)
+            throw new CapacityRefusal('bounds');
           receipt.producers.push({
             producerId: input.producerId,
             subject: authority.subject,
@@ -273,6 +285,7 @@ export class CapacityProtocol {
             fenced: false,
             pendingWrites: [],
           });
+        }
         return { value: receipt, state: commit(snapshot) };
       },
     });
@@ -513,6 +526,15 @@ export class CapacityProtocol {
         const receiptRuns = new Set(
           snapshot.state.receipts.map((value) => value.runId),
         );
+        const occupiedTasks = new Set<string>();
+        const canonicalTasks = new Map(
+          snapshot.runs.map((run) => [run.runId, taskKey(run.task)]),
+        );
+        for (const receipt of snapshot.state.receipts) {
+          const key = receipt.taskKey ?? canonicalTasks.get(receipt.runId);
+          if (key === undefined) throw new CapacityRefusal('inventory');
+          occupiedTasks.add(key);
+        }
         const occupancy = new Map<string, Set<string>>();
         const occupy = (domain: string, runId: string) => {
           const set = occupancy.get(domain) ?? new Set<string>();
@@ -530,6 +552,7 @@ export class CapacityProtocol {
             !receiptRuns.has(run.runId) &&
             !(retirement?.kind === 'retired' && retirement.released)
           ) {
+            occupiedTasks.add(taskKey(run.task));
             const domains = new Set(
               snapshot.state.policies.flatMap(
                 (value) => value.domains[run.pipeline]?.domainId ?? [],
@@ -547,6 +570,7 @@ export class CapacityProtocol {
               snapshot.coolingPipelines.has(run.pipeline) ||
               !isQueueAdmissionCandidate(run, input.now) ||
               receiptRuns.has(run.runId) ||
+              occupiedTasks.has(taskKey(run.task)) ||
               snapshot.records.has(retiredKey(run.runId))
             )
               return false;
@@ -593,6 +617,7 @@ export class CapacityProtocol {
           slot,
           revision,
           runId: run.runId,
+          taskKey: taskKey(run.task),
           nonce: input.nonce,
           domainId: policy.domains[run.pipeline]?.domainId ?? '',
           pipeline: run.pipeline,
@@ -961,8 +986,13 @@ export class CapacityProtocol {
         producer.pendingWrites = producer.pendingWrites.filter(
           (value) => value !== input.operationId,
         );
-      else if (!producer.pendingWrites.includes(input.operationId))
+      else if (!producer.pendingWrites.includes(input.operationId)) {
+        if (
+          producer.pendingWrites.length >= CAPACITY_PRODUCER_MAX_PENDING_WRITES
+        )
+          throw new CapacityRefusal('bounds');
         producer.pendingWrites.push(input.operationId);
+      }
       return receipt;
     });
   }

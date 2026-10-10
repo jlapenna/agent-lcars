@@ -1,10 +1,10 @@
 import {
   assertCapacityWorkerPermit,
   type CapacityRecord,
-  capacityRecordSchema,
+  capacityRecordForStorage,
   CapacityRefusal,
   type CapacityState,
-  capacityStateSchema,
+  capacityStateForStorage,
   type CapacityWorkerPermit,
   emptyCapacityState,
   retiredKey,
@@ -77,13 +77,18 @@ export class MemoryStore implements OrchestratorStore {
     recordKeys: readonly string[];
     claimPipelines?: readonly string[];
     runId?: string;
+    readRunIds?: readonly string[];
     decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
   }): Promise<T> {
     // No await between snapshot and commit: the same race boundary as claim.
     const runs = [...this.#runs.values()].filter((run) =>
       input.claimPipelines !== undefined
-        ? run.queue?.state === 'queued' || run.queue?.state === 'claimed'
-        : run.runId === input.runId,
+        ? run.queue?.state === 'queued' ||
+          run.queue?.state === 'claimed' ||
+          input.readRunIds?.includes(run.runId) === true ||
+          this.#capacity.receipts.some((receipt) => receipt.runId === run.runId)
+        : run.runId === input.runId ||
+          input.readRunIds?.includes(run.runId) === true,
     );
     if (runs.length > 1000)
       throw new Error('Capacity run inventory exceeds read bound');
@@ -109,9 +114,9 @@ export class MemoryStore implements OrchestratorStore {
     const state =
       result.state === undefined
         ? undefined
-        : capacityStateSchema.parse(result.state);
+        : capacityStateForStorage(result.state);
     const writes = [...(result.records ?? [])].map(
-      ([key, record]) => [key, capacityRecordSchema.parse(record)] as const,
+      ([key, record]) => [key, capacityRecordForStorage(record)] as const,
     );
     if (state !== undefined) this.#capacity = state;
     for (const [key, record] of writes)

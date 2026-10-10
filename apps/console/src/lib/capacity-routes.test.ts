@@ -190,6 +190,92 @@ async function attested(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('receipt HTTP authority and activation', () => {
+  it('returns a bounded conflict for the ninth producer without changing the receipt', async () => {
+    const f = await fixture();
+    const recovery = { fence: f.claim.receipt, recoveryNonce };
+    expect(
+      (
+        await call(f.context, '/runs/capacity', {
+          action: 'recover',
+          ...recovery,
+        })
+      ).status,
+    ).toBe(200);
+    for (let index = 1; index <= 8; index++) {
+      const producerId = `producer-${index}`;
+      expect(
+        (
+          await call(f.context, '/runs/capacity', {
+            action: 'register',
+            producerId,
+          })
+        ).status,
+      ).toBe(200);
+    }
+    for (let index = 1; index < 8; index++) {
+      const producerId = `producer-${index}`;
+      expect(
+        (
+          await call(f.context, '/runs/capacity', {
+            action: 'authorize-producer',
+            ...recovery,
+            producerId,
+          })
+        ).status,
+      ).toBe(200);
+    }
+    const before = await f.protocol.read(now);
+    const rejected = await call(f.context, '/runs/capacity', {
+      action: 'authorize-producer',
+      ...recovery,
+      producerId: 'producer-8',
+    });
+    expect(rejected).toMatchObject({
+      status: 409,
+      body: { message: 'Capacity protocol refused: bounds' },
+    });
+    expect(await f.protocol.read(now)).toEqual(before);
+    expect(
+      (
+        await call(f.context, '/runs/capacity', {
+          action: 'authorize-producer',
+          ...recovery,
+          producerId: 'producer-7',
+        })
+      ).status,
+    ).toBe(200);
+  });
+  it('returns a bounded conflict for the thirty-third write and permits definitive resolution', async () => {
+    const f = await fixture();
+    const recovery = { fence: f.claim.receipt, recoveryNonce };
+    expect(
+      (
+        await call(f.context, '/runs/capacity', {
+          action: 'recover',
+          ...recovery,
+        })
+      ).status,
+    ).toBe(200);
+    const operation = (operationId: string, resolved = false) =>
+      call(f.context, '/runs/capacity', {
+        action: 'operation',
+        ...recovery,
+        producerId: 'producer-a',
+        operationId,
+        resolved,
+      });
+    for (let index = 0; index < 32; index++)
+      expect((await operation(`write-${index}`)).status).toBe(200);
+    const before = await f.protocol.read(now);
+    expect(await operation('write-32')).toMatchObject({
+      status: 409,
+      body: { message: 'Capacity protocol refused: bounds' },
+    });
+    expect(await f.protocol.read(now)).toEqual(before);
+    expect((await operation('write-31')).status).toBe(200);
+    expect((await operation('write-0', true)).status).toBe(200);
+    expect((await operation('write-32')).status).toBe(200);
+  });
   it('an unavailable GitHub lifecycle verifier quarantines a receipt without exposing a token', async () => {
     const f = await fixture({ repo: 'example/capacity', issue: 2311 });
     expect(f.claim.kind).toBe('quarantined-unrecoverable-token');
