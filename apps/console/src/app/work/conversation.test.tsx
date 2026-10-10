@@ -95,3 +95,28 @@ describe('Conversation', () => {
     expect(screen.queryByTestId('agent-turn')).not.toBeInTheDocument();
   });
 });
+
+it('carries both exact PR and blocker links on the agent turn', () => {
+  const ref = 'https://github.com/octo/example/pull/12';
+  const blocker = 'https://github.com/octo/example/issues/42#issuecomment-99';
+  renderConversation({
+    ...baseItem,
+    runs: [
+      {
+        ...itemWithTwoRounds.runs[0],
+        result: {
+          ok: true,
+          summary: 'park',
+          message: 'Choose a database.',
+          ref,
+          relatedRefs: [blocker],
+        },
+      },
+    ],
+  });
+  expect(
+    screen
+      .getAllByRole('link', { name: 'ref' })
+      .map((link) => link.getAttribute('href')),
+  ).toEqual([ref, blocker]);
+});
