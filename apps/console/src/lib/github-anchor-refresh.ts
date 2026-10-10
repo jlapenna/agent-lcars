@@ -77,9 +77,12 @@ async function graphqlTolerantOfPartialErrors<T extends object>(
   query: string,
   variables: Record<string, string>,
   repository: string,
-): Promise<T> {
+): Promise<{
+  data: T;
+  errors: { message?: string; path?: (string | number)[] }[];
+}> {
   try {
-    return await github.graphql<T>(query, variables);
+    return { data: await github.graphql<T>(query, variables), errors: [] };
   } catch (error) {
     const partial = (error as { data?: unknown; errors?: unknown[] }).data;
     if (
@@ -89,13 +92,15 @@ async function graphqlTolerantOfPartialErrors<T extends object>(
     ) {
       throw error;
     }
-    const errors = (error as { errors?: { message?: string }[] }).errors ?? [];
+    const errors = (
+      error as { errors?: { message?: string; path?: (string | number)[] }[] }
+    ).errors ?? [{}];
     logger.warn(
       `agent-lcars: using partial GitHub GraphQL data for ${repository} enrichment (${errors.length} field error${errors.length === 1 ? '' : 's'}: ${errors
         .map((e) => e.message ?? 'unknown')
         .join('; ')})`,
     );
-    return partial as T;
+    return { data: partial as T, errors };
   }
 }
 
@@ -140,8 +145,22 @@ export async function enrichGithubAnchorProjections(
     );
     for (const projection of batch) {
       const detail =
-        response.repository?.[anchorAlias(projection.anchor.issue)];
-      if (detail === undefined) continue;
+        response.data.repository?.[anchorAlias(projection.anchor.issue)];
+      if (detail == null) continue;
+      // Error-null is not a successful unmerged observation. Missing paths
+      // are conservative; unrelated check-run failures preserve valid evidence.
+      const mergePath = [
+        'repository',
+        anchorAlias(projection.anchor.issue),
+        'mergedAt',
+      ];
+      const mergeFieldFailed = response.errors.some(
+        ({ path }) =>
+          !Array.isArray(path) ||
+          path
+            .slice(0, mergePath.length)
+            .every((part, index) => part === mergePath[index]),
+      );
       const contexts =
         detail.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
       const checkRuns = (contexts?.nodes ?? []).flatMap((check) =>
@@ -196,7 +215,7 @@ export async function enrichGithubAnchorProjections(
         ...(projection.kind === 'pr'
           ? {
               draft: detail.isDraft ?? projection.draft ?? false,
-              ...(detail.mergedAt === undefined
+              ...(mergeFieldFailed || detail.mergedAt === undefined
                 ? {}
                 : { mergedAt: detail.mergedAt }),
               mergeableState:

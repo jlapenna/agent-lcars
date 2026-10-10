@@ -20,6 +20,7 @@ import {
   repoKey,
   type WatchedRepo,
 } from './github-client';
+import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
 import { aggregateSessionSpend, type SessionSpend } from './session-spend';
 import { loadSpendProjections } from './session-spend-projections';

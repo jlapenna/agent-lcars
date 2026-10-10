@@ -2796,6 +2796,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .costs-spend-deliverable a {
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   min-height: 44px;
