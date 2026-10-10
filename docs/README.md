@@ -51,6 +51,7 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 | Need                                      | Document                                                                                     |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
 | Console product spec (part 1)             | [`product/console-product-spec.md`](product/console-product-spec.md)                         |
+| Inbox notifications and delivery handoff  | [`inbox-notifications.md`](inbox-notifications.md)                                           |
 | Fleet orchestration product spec (part 2) | [`product/fleet-orchestration-product-spec.md`](product/fleet-orchestration-product-spec.md) |
 
 ## Plans, evidence, and generated contracts
