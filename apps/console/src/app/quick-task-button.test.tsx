@@ -62,11 +62,7 @@ describe('New work creation', () => {
     renderButton();
     fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
     await screen.findByRole('dialog');
-    fireEvent.keyDown(
-      screen.getByRole('combobox', { name: 'Allowed fallback order' }),
-      { key: 'ArrowDown', code: 'ArrowDown' },
-    );
-    fireEvent.click(await screen.findByRole('option', { name: 'codex' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'codex' }));
     fireEvent.change(screen.getByLabelText('Description'), {
       target: { value: 'Try the authorized alternate after a limit' },
     });

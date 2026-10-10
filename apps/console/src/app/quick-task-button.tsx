@@ -4,9 +4,9 @@ import { ulid } from '@agent-lcars/work';
 import {
   Box,
   Button,
+  Checkbox,
   Group,
   Modal,
-  MultiSelect,
   Paper,
   Select,
   Stack,
@@ -433,12 +433,9 @@ export function QuickTaskButton({
             allowDeselect={false}
             disabled={pipelineOptions.length === 0}
           />
-          <MultiSelect
+          <Checkbox.Group
             label="Allowed fallback order"
             description="Optional. After a provider limit, start a fresh attempt in selection order. Your current grants still apply."
-            data={pipelineOptions.filter(
-              (option) => option.value !== effectivePipeline,
-            )}
             value={fallbackPipelines.filter(
               (candidate) =>
                 candidate !== effectivePipeline &&
@@ -447,9 +444,31 @@ export function QuickTaskButton({
             onChange={(values) =>
               setFallbackPipelines(values as AgentPipeline[])
             }
-            maxValues={2}
-            clearable
-          />
+          >
+            <Group gap="md" mt="xs">
+              {pipelineOptions
+                .filter((option) => option.value !== effectivePipeline)
+                .map((option) => (
+                  <Checkbox
+                    key={option.value}
+                    value={option.value}
+                    label={option.label}
+                  />
+                ))}
+            </Group>
+            {fallbackPipelines.length > 0 && (
+              <Text size="xs" c="dimmed">
+                Order:{' '}
+                {fallbackPipelines
+                  .filter(
+                    (candidate) =>
+                      candidate !== effectivePipeline &&
+                      supportedPipelines.includes(candidate),
+                  )
+                  .join(' → ')}
+              </Text>
+            )}
+          </Checkbox.Group>
           <Textarea
             label="Description"
             value={description}
