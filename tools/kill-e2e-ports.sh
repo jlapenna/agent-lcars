@@ -2,10 +2,9 @@
 # Frees the ports the console e2e suite's `e2e` target binds before each run:
 # 4200 (the standalone Next.js server Playwright's webServer starts, see
 # apps/console-e2e/playwright.config.ts) and the Firebase emulator suite's
-# default ports -- this repo's firebase.json has no "emulators" port
-# override, so `firebase emulators:exec` always uses the CLI's own defaults
-# (ui 4000, hub 4400, auth 9099, firestore 8080, eventarc 9299 -- see
-# node_modules/firebase-tools/lib/emulator/constants.js). A prior run that
+# configured ports in firebase.json (ui 4000, firestore 4002, auth 4003,
+# eventarc 4004), plus the CLI defaults for hub 4400 and logging 4500.
+# A prior run that
 # crashed or was killed mid-suite can leave one of these bound, which turns
 # into an opaque EADDRINUSE on the next run instead of a clean retry.
 #
@@ -22,7 +21,7 @@
 
 set -uo pipefail
 
-PORTS=(4200 4000 4400 9099 8080 9299)
+PORTS=(4200 4000 4002 4003 4004 4400 4500)
 
 for port in "${PORTS[@]}"; do
   pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
@@ -41,10 +40,9 @@ for port in "${PORTS[@]}"; do
   fi
 done
 
-# The Firestore emulator's underlying process is a separately-forked Java
-# process (not a child that dies with its parent on a hard kill), so it can
-# survive the port-based kill above.
-pkill -f "cloud-firestore-emulator" 2>/dev/null || true
+# An orphaned Java emulator still owns its listening socket and is covered
+# by the port scan above. Never kill by executable name: another worktree's
+# emulator or preview can use a different port on this same host (#2305).
 
 # Stale hub locator file from a crashed run confuses the next `emulators:exec`
 # invocation into thinking a hub is already running. Matches this project's
