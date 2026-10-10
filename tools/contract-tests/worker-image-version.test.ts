@@ -237,7 +237,12 @@ try { await ${kind === 'version' ? `imageVersion(['fixture'], ${JSON.stringify(r
         let killing = false;
         const cleanupDeadline = performance.now() + 1500;
         while (!killing && performance.now() < cleanupDeadline) {
-          killing = JSON.parse(readFileSync(statePath, 'utf8')).killing;
+          try {
+            killing = JSON.parse(readFileSync(statePath, 'utf8')).killing;
+          } catch {
+            /* The fixture rewrites state.json in place; a poll can land
+               between its truncate and its write under load (#2325 CI). */
+          }
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
         child.kill('SIGHUP');
