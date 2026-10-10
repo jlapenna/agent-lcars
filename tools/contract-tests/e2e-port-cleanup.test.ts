@@ -1,5 +1,6 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +10,15 @@ import { expect, it } from 'vitest';
 
 const run = promisify(execFile);
 const script = path.resolve('tools/kill-e2e-ports.sh');
+const config = JSON.parse(readFileSync('firebase.json', 'utf8')) as {
+  emulators: Record<string, { port?: number }>;
+};
+const configuredPorts = Object.values(config.emulators).flatMap((value) =>
+  value.port === undefined ? [] : [value.port],
+);
+const discoveryCases = ['lsof', 'fuser'].flatMap((discovery) =>
+  configuredPorts.map((port) => [discovery, port] as const),
+);
 
 async function bounded(promise: Promise<unknown>) {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -52,9 +62,9 @@ async function stop(child: ChildProcess, closed: Promise<unknown>) {
   await bounded(closed);
 }
 
-it.each(['lsof', 'fuser'])(
-  'cleans an orphan on the owned port via %s without killing another emulator',
-  async (discovery) => {
+it.each(discoveryCases)(
+  'cleans an orphan via %s on configured port %i without killing another emulator',
+  async (discovery, port) => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'lcars-port-cleanup-'),
     );
@@ -68,9 +78,9 @@ it.each(['lsof', 'fuser'])(
       for (const command of ['lsof', 'fuser', 'pkill', 'rm']) {
         const body =
           command === 'lsof'
-            ? `if (process.env.DISCOVERY === 'lsof' && process.argv.includes('tcp:8080')) console.log(process.env.OWNED_PID);`
+            ? `if (process.env.DISCOVERY === 'lsof' && process.argv.includes('tcp:' + process.env.OWNED_PORT)) console.log(process.env.OWNED_PID);`
             : command === 'fuser'
-              ? `if (process.env.DISCOVERY === 'fuser' && process.argv.includes('8080')) console.log(process.env.OWNED_PID);`
+              ? `if (process.env.DISCOVERY === 'fuser' && process.argv.includes(process.env.OWNED_PORT)) console.log(process.env.OWNED_PID);`
               : command === 'pkill'
                 ? `if (process.argv.includes('cloud-firestore-emulator')) process.kill(Number(process.env.UNRELATED_PID), 'SIGTERM');`
                 : '// Do not remove the real shared hub locator in a test.';
@@ -84,6 +94,7 @@ it.each(['lsof', 'fuser'])(
         env: {
           PATH: directory,
           DISCOVERY: discovery,
+          OWNED_PORT: String(port),
           OWNED_PID: String(owned.child.pid),
           UNRELATED_PID: String(unrelated.child.pid),
         },
