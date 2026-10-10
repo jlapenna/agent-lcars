@@ -143,11 +143,14 @@ describe('schedulesContract', () => {
 });
 
 describe('runsContract', () => {
-  it('declares the eight run routes with bearer security', () => {
+  it('declares run and receipt lifecycle routes with bearer security', () => {
     const paths = Object.keys(runsContract);
     expect(paths.sort()).toEqual(
       [
         'claim',
+        'capacity',
+        'capacityMetrics',
+        'activate',
         'brief',
         'heartbeat',
         'exit',
@@ -393,6 +396,9 @@ describe('generateWorkOpenApi', () => {
         '/schedules/{id}/disable',
         '/schedules/{id}/enable',
         '/runs/claim',
+        '/runs/capacity',
+        '/runs/capacity/metrics',
+        '/runs/activate',
         '/runs/{runId}/brief',
         '/runs/{runId}/heartbeat',
         '/runs/{runId}/exit',
@@ -472,12 +478,15 @@ describe('generateWorkOpenApi', () => {
       'POST /schedules/{id}/enable': ['200', '404'],
       'POST /schedules/{id}/disable': ['200', '404'],
       'POST /schedules/tick': ['200'],
-      'POST /runs/claim': ['200', '401'],
-      'GET /runs/{runId}/brief': ['200', '401'],
-      'POST /runs/{runId}/heartbeat': ['200', '401'],
+      'POST /runs/claim': ['200', '401', '409'],
+      'POST /runs/capacity': ['200', '401', '409'],
+      'GET /runs/capacity/metrics': ['200', '401'],
+      'POST /runs/activate': ['200', '401', '409'],
+      'GET /runs/{runId}/brief': ['200', '401', '409'],
+      'POST /runs/{runId}/heartbeat': ['200', '401', '409'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],
-      'POST /runs/{runId}/complete': ['200', '401'],
-      'GET /runs/{runId}/checkout-token': ['200', '401'],
+      'POST /runs/{runId}/complete': ['200', '401', '409'],
+      'GET /runs/{runId}/checkout-token': ['200', '401', '409'],
       'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
     });

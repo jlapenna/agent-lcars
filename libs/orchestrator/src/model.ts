@@ -232,7 +232,7 @@ export type RunResult = z.infer<typeof runResultSchema>;
  *  state machine". Absent means not yet drained. `tokenHash` is `sha256(token)` hex, never the raw
  *  token; `apps/console/src/lib/run-token.ts` mints/hashes it. */
 export const runQueueSchema = z.strictObject({
-  state: z.enum(['queued', 'claimed']),
+  state: z.enum(['queued', 'claimed', 'retired']),
   /** A lifecycle lookup could not verify this run. Claims skip it until this
    * instant so one broken GitHub anchor cannot block its whole pipeline. */
   deferredUntil: isoUtc.optional(),

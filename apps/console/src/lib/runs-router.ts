@@ -8,11 +8,15 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
+  assertCapacityWorkerPermit,
+  CapacityProtocol,
+  type CapacityWorkerPermit,
   isLive,
   isRefusal,
   isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
+  retiredKey,
   type Run,
 } from '@agent-lcars/orchestrator';
 import { runsContract, workPayloadSchema } from '@agent-lcars/work';
@@ -20,6 +24,14 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { anchorTarget } from './anchor-target';
+import { capacityMetrics } from './capacity-metrics';
+import {
+  applyCapacityCommand,
+  capacityAuthority,
+  capacityCall,
+  receiptFence,
+} from './capacity-routes';
+import { verifyCapacityWorkerIdentity } from './capacity-worker-identity';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
 import { consoleUrl } from './deployment';
 import type { GithubAnchorLifecycle } from './github-anchor-lifecycle';
@@ -39,6 +51,11 @@ export interface RunsContext {
    *  session auth: every run-token route below hashes it and compares
    *  against the claimed run's own `queue.tokenHash`. */
   bearerToken?: string;
+  capacityEnabled?: boolean;
+  workerIdentityToken?: string;
+  workerGeneration?: number;
+  workerPermit?: CapacityWorkerPermit;
+  verifyWorkerIdentity?: typeof verifyCapacityWorkerIdentity;
   /** Set only when the bearer verified as a Google ID token (`claim`'s
    *  gate); `undefined` for a raw run-token bearer, which never resolves
    *  to a `WorkPrincipal`. */
@@ -138,6 +155,63 @@ async function requireRunToken(
   }
   if (Date.parse(run.leaseExpiresAt) <= context.now().getTime()) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
+  }
+  const protocol = new CapacityProtocol(context.store);
+  const state = await protocol.read(context.now().toISOString());
+  const receipt = state.receipts.find((value) => value.runId === runId);
+  if (
+    receipt !== undefined ||
+    state.policies.some(
+      (policy) => policy.enforced && policy.domains[run.pipeline] !== undefined,
+    )
+  ) {
+    if (
+      receipt === undefined ||
+      context.workerIdentityToken === undefined ||
+      context.workerGeneration === undefined
+    )
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Bound active worker identity required',
+      });
+    let identity: Awaited<ReturnType<typeof verifyCapacityWorkerIdentity>>;
+    try {
+      identity = await (
+        context.verifyWorkerIdentity ?? verifyCapacityWorkerIdentity
+      )(context.workerIdentityToken, receipt.poolId);
+    } catch {
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Invalid bound worker identity',
+      });
+    }
+    const policy = state.policies.find(
+      (value) => value.poolId === receipt.poolId,
+    );
+    if (policy?.namespace !== identity.namespace)
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Worker namespace mismatch',
+      });
+    const permit: CapacityWorkerPermit = {
+      poolId: receipt.poolId,
+      runId,
+      podUid: identity.podUid,
+      generation: context.workerGeneration,
+      tokenHash: hashRunToken(token),
+    };
+    await capacityCall(() =>
+      context.store.transactCapacity({
+        now: context.now().toISOString(),
+        recordKeys: [retiredKey(runId)],
+        decide: (snapshot) => {
+          assertCapacityWorkerPermit(
+            snapshot.state,
+            snapshot.records.get(retiredKey(runId)),
+            permit,
+          );
+          return { value: true };
+        },
+      }),
+    );
+    context.workerPermit = permit;
   }
   return run;
 }
@@ -325,6 +399,81 @@ async function drainAfterCompletion(
 }
 
 export const runsRouter = os.router({
+  capacityMetrics: os.capacityMetrics.handler(async ({ context }) => {
+    const authority = capacityAuthority(context.principal);
+    if (
+      !authority.capabilities.has('recover') &&
+      !authority.capabilities.has('operator')
+    )
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Capacity inventory authority required',
+      });
+    const state = await new CapacityProtocol(context.store).read(
+      context.now().toISOString(),
+    );
+    return capacityMetrics(state, context.now().toISOString());
+  }),
+  capacity: os.capacity.handler(async ({ input, context }) => {
+    if (context.capacityEnabled !== true)
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Capacity API is disabled',
+      });
+    const authority = capacityAuthority(context.principal);
+    return capacityCall(
+      () =>
+        applyCapacityCommand(
+          new CapacityProtocol(context.store),
+          authority,
+          input,
+          context.now().toISOString(),
+        ),
+      input.action,
+    );
+  }),
+  activate: os.activate.handler(async ({ input, context }) => {
+    if (context.capacityEnabled !== true)
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Capacity API is disabled',
+      });
+    if (
+      context.bearerToken === undefined ||
+      context.workerIdentityToken === undefined
+    )
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Bound worker identity required',
+      });
+    let identity: Awaited<ReturnType<typeof verifyCapacityWorkerIdentity>>;
+    try {
+      identity = await (
+        context.verifyWorkerIdentity ?? verifyCapacityWorkerIdentity
+      )(context.workerIdentityToken, input.fence.poolId);
+    } catch {
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Invalid bound worker identity',
+      });
+    }
+    const protocol = new CapacityProtocol(context.store);
+    const state = await protocol.read(context.now().toISOString());
+    if (
+      state.policies.find((value) => value.poolId === input.fence.poolId)
+        ?.namespace !== identity.namespace
+    )
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Worker namespace mismatch',
+      });
+    const generation = await capacityCall(
+      () =>
+        protocol.activate({
+          fence: input.fence,
+          podUid: identity.podUid,
+          jobUid: input.jobUid,
+          tokenHash: hashRunToken(context.bearerToken ?? ''),
+          now: context.now().toISOString(),
+        }),
+      'activate',
+    );
+    return { generation };
+  }),
   claim: executor.claim.handler(async ({ input, context }) => {
     // The executor's authenticated grant is the only claim capability
     // source; a caller cannot choose a pipeline set that competes with
@@ -335,6 +484,92 @@ export const runsRouter = os.router({
     // by its credential adapter after a run is claimed; it never changes the
     // shared executor grant or the route used to claim any provider.
     if (context.principal.pipelines.length === 0) return undefined;
+    if (context.principal.capacityPool !== undefined) {
+      if (context.capacityEnabled !== true)
+        throw new ORPCError('CONFLICT', {
+          message: 'Capacity API is disabled',
+        });
+      if (
+        input.capacityVersion === undefined ||
+        input.producerId === undefined ||
+        input.claimRequestId === undefined
+      )
+        throw new ORPCError('CONFLICT', {
+          message: 'Receipt-aware claim identity required',
+        });
+      const token = mintRunToken();
+      const version = input.capacityVersion;
+      const producerId = input.producerId;
+      const claimRequestId = input.claimRequestId;
+      const claimed = await capacityCall(
+        () =>
+          new CapacityProtocol(context.store).claim(
+            capacityAuthority(context.principal),
+            {
+              version,
+              producerId,
+              claimRequestId,
+              runner: input.runner,
+              tokenHash: hashRunToken(token),
+              nonce: crypto.randomBytes(16).toString('hex'),
+              now: context.now().toISOString(),
+            },
+          ),
+        'claim',
+      );
+      if (
+        claimed.kind === 'claim' &&
+        !isWorkAnchor(claimed.run.task) &&
+        claimed.run.params?.['mode'] === 'implement' &&
+        context.loadGithubAnchorLifecycle !== undefined
+      ) {
+        let lifecycle: GithubAnchorLifecycle | undefined;
+        try {
+          lifecycle = await context.loadGithubAnchorLifecycle(claimed.run.task);
+        } catch {
+          lifecycle = undefined;
+        }
+        if (lifecycle === undefined || lifecycle.state === 'closed') {
+          await new CapacityProtocol(context.store).quarantine(
+            capacityAuthority(context.principal),
+            receiptFence(claimed.receipt),
+            context.now().toISOString(),
+          );
+          if (lifecycle?.state === 'closed') {
+            const canceled = await context.orchestrator.cancel(
+              claimed.run.runId,
+              `GitHub anchor confirmed closed at ${lifecycle.sourceUpdatedAt}`,
+            );
+            if (!isRefusal(canceled)) await context.drain();
+          }
+          return {
+            kind: 'quarantined-unrecoverable-token' as const,
+            runId: claimed.run.runId,
+            jobName: claimed.receipt.jobName,
+          };
+        }
+      }
+      if (claimed.kind === 'claim')
+        return {
+          kind: claimed.kind,
+          receipt: receiptFence(claimed.receipt),
+          runId: claimed.run.runId,
+          pipeline: claimed.run.pipeline,
+          token,
+          expiresAt: claimed.run.leaseExpiresAt,
+          jobName: claimed.receipt.jobName,
+        };
+      if (claimed.kind === 'recover-owned-secret')
+        return {
+          kind: claimed.kind,
+          receipt: receiptFence(claimed.receipt),
+          runId: claimed.receipt.runId,
+          jobName: claimed.receipt.jobName,
+          jobUid: claimed.receipt.jobUid,
+          secretUid: claimed.receipt.secretUid ?? '',
+        };
+      return claimed;
+    }
 
     // `claimQueuedRun` claims by `queue.state === 'queued'` alone; it says
     // nothing about whether the run itself is still live. Cancellation and
@@ -357,13 +592,17 @@ export const runsRouter = os.router({
       // `claimQueuedRun` was never designed to compose safely with a race.
       // One call, one transaction, no store signature change.
       const token = mintRunToken();
-      const claimed = await context.store.claimQueuedRun({
-        pipelines: context.principal.pipelines,
-        now: context.now().toISOString(),
-        claimedBy: input.runner,
-        claimedBySubject: claimantSubject(context.principal),
-        tokenHash: hashRunToken(token),
-      });
+      const claimed = await capacityCall(
+        () =>
+          context.store.claimQueuedRun({
+            pipelines: context.principal.pipelines,
+            now: context.now().toISOString(),
+            claimedBy: input.runner,
+            claimedBySubject: claimantSubject(context.principal),
+            tokenHash: hashRunToken(token),
+          }),
+        'claim',
+      );
       if (claimed === undefined) return undefined;
       if (!isLive(claimed.state)) continue;
       if (
@@ -534,7 +773,10 @@ export const runsRouter = os.router({
 
   heartbeat: os.heartbeat.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
-    const renewed = await context.orchestrator.renew(run.runId);
+    const renewed = await context.orchestrator.renew(
+      run.runId,
+      context.workerPermit,
+    );
     if (isRefusal(renewed)) {
       return { runId: run.runId, expiresAt: run.leaseExpiresAt };
     }
@@ -624,7 +866,11 @@ export const runsRouter = os.router({
       input.message,
     );
     try {
-      const settled = await context.orchestrator.report(run.runId, result);
+      const settled = await context.orchestrator.report(
+        run.runId,
+        result,
+        context.workerPermit,
+      );
       // #1799: this is the route that CREATES the `report-outcome` outbox
       // entry (`orchestrator.report`'s `settle`), but it used to be the
       // one mutating route that never drained it -- every other one

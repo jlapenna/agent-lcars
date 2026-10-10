@@ -1,3 +1,8 @@
+import type {
+  CapacityRecord,
+  CapacityState,
+  CapacityWorkerPermit,
+} from './capacity-model';
 import type { Decision, Refusal } from './decide';
 import type {
   GithubAnchorProjection,
@@ -114,6 +119,16 @@ export interface OpenGithubAnchorProjectionPage {
  * Firestore transactions provide both guarantees natively.
  */
 export interface OrchestratorStore {
+  /** Capacity state, replay records, selection, cooldowns and run writes share
+   * one serializable transaction. Callbacks are synchronous and never perform
+   * external reads or writes. */
+  transactCapacity<T>(input: {
+    now: string;
+    recordKeys: readonly string[];
+    claimPipelines?: readonly string[];
+    runId?: string;
+    decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
+  }): Promise<T>;
   readTask(id: TaskId): Promise<VersionedTask | undefined>;
   readRun(runId: string): Promise<Run | undefined>;
   /** The task's live run, if its `activeRunId` points at one. */
@@ -153,6 +168,7 @@ export interface OrchestratorStore {
    */
   transactRun(input: {
     runId: string;
+    workerPermit?: CapacityWorkerPermit;
     decide(state: {
       task: VersionedTask | undefined;
       run: Run | undefined;
@@ -359,6 +375,19 @@ export interface OrchestratorStore {
   /** Every live run with `queue.state === 'queued'`, oldest first. An
    * optional `limit` bounds the result after terminal entries are removed. */
   listQueuedRuns(limit?: number): Promise<Run[]>;
+}
+
+export interface CapacityTransactionSnapshot {
+  state: CapacityState;
+  records: Map<string, CapacityRecord>;
+  runs: Run[];
+  coolingPipelines: ReadonlySet<string>;
+}
+export interface CapacityTransactionResult<T> {
+  value: T;
+  state?: CapacityState;
+  records?: Map<string, CapacityRecord>;
+  run?: Run;
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and

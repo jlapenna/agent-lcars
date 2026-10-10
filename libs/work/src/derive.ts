@@ -58,7 +58,7 @@ export interface ItemRunView {
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
-  queue?: { state: 'queued' | 'claimed'; claimedBy?: string };
+  queue?: { state: 'queued' | 'claimed' | 'retired'; claimedBy?: string };
   /** The human turn that opened this round, for a `mode: reply` run.
    *  Round 1's human turn is `spec.description`, not a reply. */
   reply?: string;

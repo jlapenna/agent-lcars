@@ -1,3 +1,5 @@
+export * from './capacity';
+export * from './capacity-model';
 export * from './decide';
 export {
   FirestoreScheduleStore,

@@ -1,4 +1,15 @@
 import {
+  assertCapacityWorkerPermit,
+  type CapacityRecord,
+  capacityRecordSchema,
+  CapacityRefusal,
+  type CapacityState,
+  capacityStateSchema,
+  type CapacityWorkerPermit,
+  emptyCapacityState,
+  retiredKey,
+} from './capacity-model';
+import {
   type Decision,
   isRefusal,
   type Refusal,
@@ -30,6 +41,8 @@ import {
   QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
 import {
+  type CapacityTransactionResult,
+  type CapacityTransactionSnapshot,
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
@@ -43,6 +56,8 @@ import {
 
 /** Reference implementation; also the test double. */
 export class MemoryStore implements OrchestratorStore {
+  #capacity: CapacityState = emptyCapacityState();
+  readonly #capacityRecords = new Map<string, CapacityRecord>();
   readonly #tasks = new Map<string, VersionedTask>();
   readonly #providerCooldowns = new Map<string, ProviderCooldown>();
   readonly #runs = new Map<string, Run>();
@@ -56,6 +71,55 @@ export class MemoryStore implements OrchestratorStore {
     string,
     { projection?: GithubAnchorProjection; refreshGeneration: number }
   >();
+
+  async transactCapacity<T>(input: {
+    now: string;
+    recordKeys: readonly string[];
+    claimPipelines?: readonly string[];
+    runId?: string;
+    decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
+  }): Promise<T> {
+    // No await between snapshot and commit: the same race boundary as claim.
+    const runs = [...this.#runs.values()].filter((run) =>
+      input.claimPipelines !== undefined
+        ? run.queue?.state === 'queued' || run.queue?.state === 'claimed'
+        : run.runId === input.runId,
+    );
+    if (runs.length > 1000)
+      throw new Error('Capacity run inventory exceeds read bound');
+    const keys = new Set([
+      ...input.recordKeys,
+      ...runs.map((run) => retiredKey(run.runId)),
+    ]);
+    const records = new Map<string, CapacityRecord>();
+    for (const key of keys) {
+      const record = this.#capacityRecords.get(key);
+      if (record !== undefined) records.set(key, structuredClone(record));
+    }
+    const result = input.decide({
+      state: structuredClone(this.#capacity),
+      records,
+      runs: structuredClone(runs),
+      coolingPipelines: new Set(
+        [...this.#providerCooldowns.entries()]
+          .filter(([, value]) => providerIsCoolingDown(value, input.now))
+          .map(([key]) => key),
+      ),
+    });
+    const state =
+      result.state === undefined
+        ? undefined
+        : capacityStateSchema.parse(result.state);
+    const writes = [...(result.records ?? [])].map(
+      ([key, record]) => [key, capacityRecordSchema.parse(record)] as const,
+    );
+    if (state !== undefined) this.#capacity = state;
+    for (const [key, record] of writes)
+      this.#capacityRecords.set(key, structuredClone(record));
+    if (result.run !== undefined)
+      this.#runs.set(result.run.runId, structuredClone(result.run));
+    return structuredClone(result.value);
+  }
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
     return structuredClone(this.#tasks.get(taskKey(id)));
@@ -129,6 +193,7 @@ export class MemoryStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
+    workerPermit?: CapacityWorkerPermit;
     decide(state: {
       task: VersionedTask | undefined;
       run: Run | undefined;
@@ -136,6 +201,12 @@ export class MemoryStore implements OrchestratorStore {
   }): Promise<Decision | Refusal> {
     // Keep the snapshot and write synchronous, matching `transactRequest`'s
     // reference transaction semantics.
+    if (input.workerPermit !== undefined)
+      assertCapacityWorkerPermit(
+        this.#capacity,
+        this.#capacityRecords.get(retiredKey(input.runId)),
+        input.workerPermit,
+      );
     const run = structuredClone(this.#runs.get(input.runId));
     const task =
       run === undefined
@@ -554,6 +625,17 @@ export class MemoryStore implements OrchestratorStore {
     claimedBySubject?: string;
     tokenHash: string;
   }): Promise<Run | undefined> {
+    if (
+      this.#capacity.policies.some(
+        (policy) =>
+          policy.enforced &&
+          input.pipelines.some(
+            (pipeline) => policy.domains[pipeline] !== undefined,
+          ),
+      )
+    ) {
+      throw new CapacityRefusal('policy');
+    }
     const runs = [...this.#runs.values()];
     const eligible = input.pipelines.filter(
       (pipeline) =>
@@ -589,6 +671,10 @@ export class MemoryStore implements OrchestratorStore {
     now: string;
     deferredUntil?: string;
   }): Promise<boolean> {
+    if (
+      this.#capacity.receipts.some((receipt) => receipt.runId === input.runId)
+    )
+      return false;
     const run = this.#runs.get(input.runId);
     if (
       run === undefined ||

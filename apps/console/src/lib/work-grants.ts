@@ -3,7 +3,14 @@ import 'server-only';
 import { PIPELINES, WORK_CHANNELS } from '@agent-lcars/work';
 import { z } from 'zod';
 
-const workScopeSchema = z.enum(['work.operator', 'work.executor', 'work.cron']);
+const workScopeSchema = z.enum([
+  'work.operator',
+  'work.executor',
+  'work.cron',
+  'work.capacity.recover',
+  'work.capacity.fence',
+  'work.capacity.operator',
+]);
 
 /** A pipeline name checked against the same closed set `workSpecSchema`
  *  requires (`libs/work/src/spec.ts`'s `PIPELINES`) -- so a typo in
@@ -22,6 +29,7 @@ const channelSchema = z.enum(WORK_CHANNELS);
 
 const grantSchema = z.strictObject({
   principal: z.string().min(1).max(128),
+  capacityPool: z.string().min(1).max(175).optional(),
   subjects: z.array(z.string().min(1).max(256)).min(1),
   pipelines: z.array(pipelineNameSchema).min(1),
   /** Every grant must name the non-empty authority it confers. */

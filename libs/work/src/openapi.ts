@@ -27,6 +27,13 @@ export async function generateWorkOpenApi(): Promise<object> {
         components: {
           securitySchemes: {
             bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+            capacityWorkerIdentity: {
+              type: 'apiKey',
+              in: 'header',
+              name: 'x-lcars-worker-identity',
+              description:
+                'A Pod-bound Kubernetes projected token from the declared pool issuer, audience, namespace and service account.',
+            },
             runToken: {
               type: 'http',
               scheme: 'bearer',
