@@ -65,6 +65,7 @@ export interface AgentRun {
    * run started. Completed: total run duration.
    */
   elapsedSeconds: number;
+  queue?: import('@agent-lcars/work/derive').ItemRunView['queue'];
 }
 
 /** The server-owned autoscaler telemetry aggregate. Runners are ephemeral,
@@ -291,6 +292,26 @@ function repositoryFromTarget(targetRepo: string): WatchedRepo | undefined {
   return owner && name && rest.length === 0 ? { owner, name } : undefined;
 }
 
+function publicExecutionQueue(run: OrchestratorRun): AgentRun['queue'] {
+  if (!run.queue) return undefined;
+  const {
+    state,
+    claimedAt,
+    startDeadlineAt,
+    firstHeartbeatAt,
+    providerProcessStartedAt,
+    placement,
+  } = run.queue;
+  return {
+    state,
+    claimedAt,
+    startDeadlineAt,
+    firstHeartbeatAt,
+    providerProcessStartedAt,
+    placement,
+  };
+}
+
 function statusFor(run: OrchestratorRun): AgentRunStatus {
   return run.state === 'pending'
     ? 'queued'
@@ -341,6 +362,7 @@ export function agentRunFromOrchestrator(
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
       elapsedSeconds,
+      queue: publicExecutionQueue(run),
     };
   }
 
@@ -362,6 +384,7 @@ export function agentRunFromOrchestrator(
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     elapsedSeconds,
+    queue: publicExecutionQueue(run),
   };
 }
 

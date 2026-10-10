@@ -203,20 +203,18 @@ function nativeRunAnomalies(
   );
 }
 
-/** The run history's own states, coarsened onto `LogicalWorkState` by the
- * same rule the Agents page uses (`coarsenRunStates`): `pending` is
- * "decided, dispatch not yet confirmed", so dispatching; `running` is
- * active; every terminal state (`finished`, `canceled`, `lost`) means the
- * task is not currently being worked. Read off the runs themselves, never
- * off `Task.activeRunId` - the two must agree in a consistent store, but
- * when they do not, the run states are what the Agents page shows, and
- * this page must not say "completed" about a run that page calls live. */
+/** Same durable admission versus provider-start rule as the Agents page. */
 function stateFromOrchestratorTask(
   state: AuthoritativeTaskState,
 ): LogicalWorkState {
   return coarsenRunStates({
     running: state.runs.some((run) => run.state === 'running'),
     queued: state.runs.some((run) => run.state === 'pending'),
+    providerExecution: state.runs.some(
+      (run) =>
+        run.state === 'running' &&
+        run.queue?.providerProcessStartedAt !== undefined,
+    ),
     any: state.runs.length > 0,
   });
 }

@@ -13,6 +13,7 @@ import {
   type ExitClaimant,
   expireLeaseAndRetry,
   isRefusal,
+  observePlacement,
   type Refusal,
   refused,
   renewLease,
@@ -226,6 +227,22 @@ export class Orchestrator {
       undefined,
       undefined,
       workerPermit,
+    );
+  }
+
+  async observePlacement(
+    runId: string,
+    claimant: ExitClaimant,
+    placement: NonNullable<NonNullable<Run['queue']>['placement']>,
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(runId, (task, run) =>
+      observePlacement({
+        now: this.clock.now(),
+        task,
+        run,
+        claimant,
+        placement,
+      }),
     );
   }
 

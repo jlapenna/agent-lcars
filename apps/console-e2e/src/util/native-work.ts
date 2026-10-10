@@ -103,3 +103,64 @@ export async function seedDetailNavigationEvidence(githubIssue?: number) {
   }
   return { ref, sessionId };
 }
+
+/** Placement regression fixtures stay in the guarded hermetic store. */
+export async function seedNativeExecutionPhase(
+  phase:
+    | 'waiting-for-placement'
+    | 'bootstrapping'
+    | 'provider-execution'
+    | 'unavailable'
+    | 'stale',
+) {
+  const store = new FirestoreStore(emulatorOptions());
+  const anchor = { workId: NATIVE_WORK_ID };
+  const runId = `work:${NATIVE_WORK_ID}/r1`;
+  const [task, oldRun] = await Promise.all([
+    store.readTask(anchor),
+    store.readRun(runId),
+  ]);
+  if (!task || !oldRun) throw new Error('Missing native placement fixture');
+  const now = new Date().toISOString();
+  const run = {
+    ...oldRun,
+    state: 'running' as const,
+    queue: {
+      state: 'claimed' as const,
+      claimedAt: now,
+      startDeadlineAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+      placement: {
+        phase:
+          phase === 'bootstrapping'
+            ? ('bootstrapping' as const)
+            : phase === 'unavailable'
+              ? ('unavailable' as const)
+              : ('waiting-for-placement' as const),
+        reason:
+          phase === 'bootstrapping'
+            ? ('scheduled' as const)
+            : phase === 'unavailable'
+              ? ('inventory-unavailable' as const)
+              : ('unschedulable' as const),
+        observedAt:
+          phase === 'stale'
+            ? new Date(Date.now() - 181_000).toISOString()
+            : now,
+        jobCreatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      },
+      ...(phase === 'provider-execution'
+        ? { firstHeartbeatAt: now, providerProcessStartedAt: now }
+        : {}),
+    },
+  };
+  delete run.result;
+  await store.apply({
+    expectedRevision: task.revision,
+    decision: {
+      task: { ...task.task, activeRunId: runId },
+      run,
+      outbox: [],
+    },
+  });
+  return runId;
+}
