@@ -20,9 +20,17 @@ interface Step {
   if?: string;
   run?: string;
 }
+interface Concurrency {
+  group?: string;
+  queue?: unknown;
+  'cancel-in-progress'?: unknown;
+}
 const workflow = parse(
   readFileSync('.github/workflows/deploy-console.yml', 'utf8'),
-) as { jobs: { deploy: { steps: Step[] } } };
+) as {
+  concurrency?: Concurrency;
+  jobs: Record<string, { steps: Step[]; concurrency?: Concurrency }>;
+};
 const OLD = 'a'.repeat(40),
   NEW = 'b'.repeat(40);
 const guard = workflow.jobs.deploy.steps.find((step) => step.id === 'source');
@@ -103,6 +111,52 @@ function executes(
 }
 
 describe('serialized automatic deployment source fence', () => {
+  it('retains latest B behind active X when delayed eligible A arrives', () => {
+    // GitHub defaults to replacing a single pending job. queue:max retains
+    // up to 100, FIFO by admission time. X owns the active slot throughout
+    // both admissions; neither later job can run its guard before X ends.
+    const concurrency = workflow.jobs.deploy.concurrency!;
+    const pending: string[] = [];
+    const canceled: string[] = [];
+    for (const source of [NEW, OLD]) {
+      if (concurrency.queue !== 'max') canceled.push(...pending.splice(0));
+      pending.push(source);
+    }
+    expect(canceled).toEqual([]);
+    const delivered = pending.filter(
+      (source) => sourceDecision(source, NEW).output === 'true',
+    );
+    expect(delivered).toEqual([NEW]);
+    expect(concurrency.group).toBe('deploy-console');
+    expect(concurrency['cancel-in-progress']).toBe(false);
+  });
+
+  it('enforces the supported queue syntax covered by the narrow actionlint compatibility exception', () => {
+    // The pinned linter predates concurrency.queue. Required contracts own
+    // validation of this new key for the one exceptional workflow only.
+    for (const concurrency of [
+      workflow.concurrency,
+      ...Object.values(workflow.jobs).map((job) => job.concurrency),
+    ]) {
+      if (concurrency === undefined || !('queue' in concurrency)) continue;
+      expect(['single', 'max']).toContain(concurrency.queue);
+      expect(
+        concurrency.queue === 'max' &&
+          ![undefined, false].includes(
+            concurrency['cancel-in-progress'] as undefined | boolean,
+          ),
+      ).toBe(false);
+    }
+    const config = parse(readFileSync('.github/actionlint.yaml', 'utf8'));
+    expect(config.paths).toEqual({
+      '.github/workflows/deploy-console.yml': {
+        ignore: [
+          '^unexpected key "queue" for "concurrency" section\\. expected one of "cancel-in-progress", "group"$',
+        ],
+      },
+    });
+  });
+
   it.each(['delayed older gate', 'older CI completes last'])(
     'prevents rollback when %s after a newer source deployed',
     () => {
