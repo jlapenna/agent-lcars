@@ -146,3 +146,49 @@ test('keeps concurrent device snoozes and interrupts an old snooze for new human
     await device.close();
   }
 });
+
+test('an obsolete device cannot unsnooze a replacement decision on the same anchor', async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const device = await browser.newContext({
+    baseURL,
+    extraHTTPHeaders: { 'X-e2e-auth-user': 'e2e-agent-lcars-admin' },
+  });
+  try {
+    // Keep the first device's observed decision stale, as on a suspended phone.
+    await page.clock.install();
+    await page.goto('/inbox');
+    await snooze(page, E2E_ITEM_NUMBERS.humanNeeded);
+    await page.getByText('Snoozed (1)', { exact: true }).click();
+    await page.clock.pauseAt(new Date(Date.now() + 1000));
+    const anchor = `${E2E_FIXTURE_REPOSITORY}#${E2E_ITEM_NUMBERS.humanNeeded}`;
+    const old = (await readSnoozePreferences())?.['decisionSnoozes'][anchor];
+    await updateDashboardAnchor({
+      issue: E2E_ITEM_NUMBERS.humanNeeded,
+      sourceUpdatedAt: new Date(Date.now() + 2000).toISOString(),
+    });
+    const second = await device.newPage();
+    await second.goto('/inbox');
+    await snooze(second, E2E_ITEM_NUMBERS.humanNeeded);
+    const replacement = (await readSnoozePreferences())?.['decisionSnoozes'][
+      anchor
+    ];
+    expect(replacement.signature).not.toBe(old.signature);
+    await page.getByRole('button', { name: 'Unsnooze', exact: true }).click();
+    await expect(page.getByText('Snoozed (1)', { exact: true })).toHaveCount(0);
+    expect(
+      (await readSnoozePreferences())?.['decisionSnoozes'][anchor],
+    ).toEqual(replacement);
+    await second.reload();
+    await expect(
+      second.getByText('Snoozed (1)', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      second.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`),
+    ).toHaveCount(0);
+  } finally {
+    await device.close();
+  }
+});

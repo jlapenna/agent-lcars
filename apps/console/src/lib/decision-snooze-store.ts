@@ -45,8 +45,11 @@ export class DecisionSnoozeStore {
         now,
       );
       for (const { anchor, signature } of anchors) {
-        if (minutes === undefined) delete entries[anchor];
-        else
+        if (minutes === undefined) {
+          // A device may still show the decision it saw before another device
+          // snoozed new activity on this anchor. Remove only that observation.
+          if (entries[anchor]?.signature === signature) delete entries[anchor];
+        } else
           entries[anchor] = {
             signature,
             snoozedAt: new Date(now).toISOString(),
