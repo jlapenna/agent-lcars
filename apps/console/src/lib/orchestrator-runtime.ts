@@ -10,6 +10,8 @@ import {
 } from '@agent-lcars/orchestrator';
 import { required } from '@agent-lcars/util-server';
 
+import { codexAuthStore } from '@/lib/codex-auth-store';
+import { recoverCodexCredentialOperations } from '@/lib/codex-credential-operations';
 import { loadGithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   createDispatchTokenProvider,
@@ -90,6 +92,12 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
   cached = {
     store,
     orchestrator,
+    recoverCredentialOperations: () =>
+      recoverCodexCredentialOperations({
+        store,
+        codexAuth: codexAuthStore('agent-lcars-codex-auth'),
+        now: () => new Date(),
+      }),
     loadGithubAnchorLifecycle: (anchor) => {
       const github = orchestratorGithubRuntimeDeps(process.env);
       return loadGithubAnchorLifecycle(github, anchor);

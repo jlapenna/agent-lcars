@@ -5393,7 +5393,7 @@
                 "properties": {
                   "generation": {
                     "type": "string",
-                    "pattern": "^\\d+$"
+                    "pattern": "^[1-9]\\d*$"
                   },
                   "restoredSha256": {
                     "type": "string",

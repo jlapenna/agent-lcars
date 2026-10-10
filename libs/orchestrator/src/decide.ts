@@ -51,6 +51,7 @@ export interface Refusal {
     | 'work-spec-mismatch' // caller's immutable Work validation rejected it
     | 'unknown-task' // close on a task that was never created
     | 'not-native' // closeTask on a GitHub anchor: closedAt is native-only
+    | 'credential-operation-pending' // external CAS must be resolved before replacement
     | 'not-claimant'; // exit report from a principal/runner that did not claim the run
   /** For `duplicate-request`, the run the request already maps to. */
   readonly existingRun?: Run;
@@ -293,18 +294,47 @@ export function reportResult(input: {
     );
   }
   if (task.activeRunId !== run.runId) return refused('stale-lease');
-  if (startDeadlineElapsed(run, now)) return refused('stale-lease');
+  const pending = run.credentialPendingResult;
+  if (
+    pending !== undefined &&
+    (pending.claimFingerprint !== run.queue?.tokenHash ||
+      (['ok', 'summary', 'ref', 'message'] as const).some(
+        (key) => pending.result[key] !== result[key],
+      ) ||
+      JSON.stringify(pending.result.relatedRefs) !==
+        JSON.stringify(result.relatedRefs))
+  )
+    return refused('credential-operation-pending');
+  const admittedAt = pending?.requestedAt ?? now;
+  if (startDeadlineElapsed(run, admittedAt)) return refused('stale-lease');
   // Token-authenticated callbacks must retain their live deadline through
   // commit as well as the fingerprint; internal server operations keep their
   // existing lease policy.
   if (
     input.claimFingerprint !== undefined &&
     Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(now)
+      Date.parse(admittedAt)
   )
     return refused('stale-lease');
+  if (run.credentialOperation !== undefined) {
+    if (run.queue?.tokenHash === undefined) return refused('not-claimant');
+    return {
+      task,
+      run: {
+        ...run,
+        credentialPendingResult: pending ?? {
+          claimFingerprint: run.queue.tokenHash,
+          requestedAt: now,
+          result,
+        },
+        updatedAt: now,
+      },
+      outbox: [],
+    };
+  }
+  const { credentialPendingResult: _pending, ...withoutPending } = run;
   const settled: Run = {
-    ...run,
+    ...withoutPending,
     state: 'finished',
     result,
     events: [...run.events, { at: now, to: 'finished', by: 'report' }],
@@ -326,6 +356,8 @@ export function cancelRun(input: {
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (!isLive(run.state)) return refused('run-not-live');
+  if (run.credentialOperation !== undefined)
+    return refused('credential-operation-pending');
   const settled: Run = {
     ...run,
     state: 'canceled',
@@ -372,6 +404,8 @@ export function expireLease(input: {
     return refused('stale-lease'); // not actually expired
   }
   if (input.task.activeRunId !== run.runId) return refused('stale-lease');
+  if (input.run.credentialOperation !== undefined)
+    return refused('credential-operation-pending');
   return settleLost(input, 'expiry');
 }
 
@@ -431,6 +465,8 @@ export function executorExited(input: {
   }
   if (!isLive(input.run.state)) return refused('run-not-live');
   if (input.task.activeRunId !== input.run.runId) return refused('stale-lease');
+  if (input.run.credentialOperation !== undefined)
+    return refused('credential-operation-pending');
   return settleLost(input, 'executor');
 }
 

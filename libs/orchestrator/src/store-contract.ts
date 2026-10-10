@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  changeCredentialOperation,
+  reserveCredentialOperation,
+} from './credential-operation';
+import {
   cancelRun,
   confirmDispatch,
   decidedRun,
@@ -876,6 +880,217 @@ export function runOrchestratorStoreContract(
         expect(swept.retried).toHaveLength(1);
         expect(await store.readTask(TASK)).toMatchObject({
           task: { consecutiveLost: 1 },
+        });
+      });
+    });
+
+    describe('original-claim external credential reservation', () => {
+      async function reservedFixture() {
+        const f = await fixture();
+        const outcome = await f.orchestrator.request({
+          taskId: TASK,
+          requestId: 'codex-operation',
+          pipeline: 'codex',
+          work: TASK_WORK,
+        });
+        if (isRefusal(outcome)) throw new Error('request refused');
+        const run = decidedRun(outcome);
+        await f.orchestrator.confirmDispatch(run.runId);
+        await f.store.enqueueRun({ runId: run.runId, now: f.clock.now() });
+        await f.store.claimQueuedRun({
+          pipelines: ['codex'],
+          now: f.clock.now(),
+          claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
+          tokenHash: 'a'.repeat(64),
+        });
+        const reserve = await f.store.transactRun({
+          runId: run.runId,
+          decide: ({ task, run }) => {
+            if (task === undefined || run === undefined)
+              throw new Error('missing');
+            return reserveCredentialOperation({
+              now: f.clock.now(),
+              task: task.task,
+              run,
+              id: 'operation',
+              kind: 'persist',
+              claimFingerprint: 'a'.repeat(64),
+            });
+          },
+        });
+        expect(reserve).not.toHaveProperty('refused');
+        const change = (
+          change: Parameters<typeof changeCredentialOperation>[0]['change'],
+          fingerprint = 'a'.repeat(64),
+        ) =>
+          f.store.transactRun({
+            runId: run.runId,
+            decide: ({ task, run }) => {
+              if (task === undefined || run === undefined)
+                throw new Error('missing');
+              return changeCredentialOperation({
+                now: f.clock.now(),
+                task: task.task,
+                run,
+                id: 'operation',
+                claimFingerprint: fingerprint,
+                change,
+              });
+            },
+          });
+        return { ...f, run, change };
+      }
+
+      it('blocks release, reclaim, cancellation, expiry and exit until its external CAS is resolved', async () => {
+        const f = await reservedFixture();
+        const mutation = {
+          kind: 'auth-write' as const,
+          id: 'operation:1',
+          expectedGeneration: '7',
+          sha256: 'b'.repeat(64),
+        };
+        await f.change({ kind: 'prepare', mutation });
+        const before = await f.store.readRun(f.run.runId);
+        expect(
+          await f.store.releaseQueuedRunClaim({
+            runId: f.run.runId,
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+            now: f.clock.now(),
+          }),
+        ).toBe(false);
+        expect(
+          await f.store.claimQueuedRun({
+            pipelines: ['codex'],
+            now: f.clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'b'.repeat(64),
+          }),
+        ).toBeUndefined();
+        expect(await f.orchestrator.cancel(f.run.runId)).toMatchObject({
+          reason: 'credential-operation-pending',
+        });
+        expect(
+          await f.orchestrator.executorExited(f.run.runId, {
+            subject: 'executor@example.com',
+            runner: 'executor',
+            claimFingerprint: 'a'.repeat(64),
+          }),
+        ).toMatchObject({ reason: 'credential-operation-pending' });
+        f.clock.advanceMinutes(121);
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        expect(await f.store.readRun(f.run.runId)).toEqual(before);
+        expect(await f.change({ kind: 'finish' })).toMatchObject({
+          reason: 'credential-operation-pending',
+        });
+        expect(
+          await f.change(
+            { kind: 'acknowledge', mutationId: mutation.id },
+            'c'.repeat(64),
+          ),
+        ).toMatchObject({ reason: 'not-claimant' });
+        await f.change({ kind: 'acknowledge', mutationId: mutation.id });
+        await f.change({ kind: 'finish' });
+        expect(
+          (await f.orchestrator.sweepExpired()).lost.map((r) => r.runId),
+        ).toEqual([f.run.runId]);
+      });
+
+      it('never reuses an acknowledged mutation identity and refuses a stale recovery acknowledgement', async () => {
+        const f = await reservedFixture();
+        const first = {
+          kind: 'auth-write' as const,
+          id: 'operation:1',
+          expectedGeneration: '7',
+          sha256: 'b'.repeat(64),
+        };
+        await f.change({ kind: 'prepare', mutation: first });
+        await f.change({ kind: 'acknowledge', mutationId: first.id });
+        expect(
+          await f.change({ kind: 'prepare', mutation: first }),
+        ).toMatchObject({ reason: 'not-claimant' });
+        const next = { ...first, id: 'operation:2' };
+        await f.change({ kind: 'prepare', mutation: next });
+        const before = await f.store.readRun(f.run.runId);
+        expect(
+          await f.change({ kind: 'acknowledge', mutationId: first.id }),
+        ).toMatchObject({ reason: 'not-claimant' });
+        expect(await f.store.readRun(f.run.runId)).toEqual(before);
+      });
+
+      it('durably accepts only the first exact completion then settles it atomically after deadline recovery', async () => {
+        const f = await reservedFixture();
+        await f.change({
+          kind: 'prepare',
+          mutation: {
+            kind: 'auth-write',
+            id: 'operation:1',
+            expectedGeneration: '7',
+            sha256: 'b'.repeat(64),
+          },
+        });
+        const result = {
+          ok: true,
+          summary: 'pull-request',
+          ref: 'https://github.com/octo/example/pull/8',
+          relatedRefs: [
+            'https://github.com/octo/example/issues/7#issuecomment-123',
+          ],
+          message: 'Exact pending deliverable',
+        };
+        const accepted = await f.orchestrator.report(
+          f.run.runId,
+          result,
+          'a'.repeat(64),
+        );
+        expect(accepted).toMatchObject({
+          run: {
+            state: 'running',
+            credentialPendingResult: { result, requestedAt: T0 },
+          },
+          outbox: [],
+        });
+        expect(
+          await f.orchestrator.report(
+            f.run.runId,
+            { ok: false },
+            'a'.repeat(64),
+          ),
+        ).toMatchObject({ reason: 'credential-operation-pending' });
+        f.clock.advanceMinutes(121);
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
+        });
+        await f.change({ kind: 'acknowledge', mutationId: 'operation:1' });
+        const settled = await f.change({ kind: 'finish' });
+        expect(settled).toMatchObject({
+          run: { state: 'finished', result },
+          task: { consecutiveLost: 0 },
+        });
+        expect(
+          (await f.store.readTask(TASK))?.task.activeRunId,
+        ).toBeUndefined();
+        expect(
+          (await f.store.readRun(f.run.runId))?.credentialOperation,
+        ).toBeUndefined();
+        expect(
+          (await f.store.readRun(f.run.runId))?.credentialPendingResult,
+        ).toBeUndefined();
+        expect(await f.change({ kind: 'finish' })).toMatchObject({
+          reason: 'not-claimant',
+        });
+        const entries = await claimOutbox(f.store, f.clock.now(), 100);
+        expect(entries.filter((e) => e.kind === 'report-outcome')).toHaveLength(
+          1,
+        );
+        expect(await f.orchestrator.sweepExpired()).toEqual({
+          lost: [],
+          retried: [],
         });
       });
     });

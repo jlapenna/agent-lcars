@@ -1,18 +1,29 @@
 import crypto from 'node:crypto';
 
 import {
+  changeCredentialOperation,
+  type CredentialMutation,
   FirestoreStore,
   MemoryStore,
   Orchestrator,
   type OrchestratorStore,
+  reserveCredentialOperation,
+  type Run,
 } from '@agent-lcars/orchestrator';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CodexAuthStoreError } from './codex-auth-store';
+import {
+  CODEX_GLOBAL_LEASE_OBJECT,
+  CodexAuthStoreError,
+  GcsCodexAuthStore,
+} from './codex-auth-store';
+import { recoverCodexCredentialOperations } from './codex-credential-operations';
+import { codexCentralAuthObject } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
+import { ConditionalCodexBucket, deferred } from './testing/codex-auth-bucket';
 import { truncatedDescription } from './work-from-github';
 
 /**
@@ -286,10 +297,11 @@ const context = {
       sha256: 'a'.repeat(64),
     }),
     readLease: async () => undefined,
-    createLease: async () => undefined,
-    takeLease: async () => undefined,
+    createLease: async (input) => ({ ...input, generation: '11' }),
+    takeLease: async (input) => ({ ...input, generation: '12' }),
     releaseLease: async () => undefined,
     replace: async () => undefined,
+    fenceMutation: async () => ({}),
   },
 };
 
@@ -1543,7 +1555,7 @@ describe('heartbeat', () => {
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(token),
     });
-    const takeLease = vi.fn(async () => undefined);
+    const takeLease = vi.fn(context.codexAuth.takeLease);
     await orchestrator.renew(runId);
     setNow('2026-08-26T11:00:00.000Z');
 
@@ -1561,6 +1573,7 @@ describe('heartbeat', () => {
             repository: 'jlapenna/agent-lcars',
             expiresAt: '2026-08-26T12:00:00.000Z',
             generation: '31',
+            claimFingerprint: hashRunToken(token),
           }),
           takeLease,
         },
@@ -1575,6 +1588,8 @@ describe('heartbeat', () => {
       repository: 'jlapenna/agent-lcars',
       expiresAt: (r.json as { expiresAt: string }).expiresAt,
       expectedGeneration: '31',
+      claimFingerprint: hashRunToken(token),
+      operationId: expect.any(String),
     });
   });
 });
@@ -1943,7 +1958,17 @@ describe('exit', () => {
         orchestrator,
         now,
         ...context,
-        codexAuth: { ...context.codexAuth, releaseLease },
+        codexAuth: {
+          ...context.codexAuth,
+          releaseLease,
+          readLease: async () => ({
+            runId,
+            repository: 'jlapenna/agent-lcars',
+            expiresAt: '2026-08-28T12:00:00.000Z',
+            generation: '11',
+            claimFingerprint: hashRunToken(token),
+          }),
+        },
         principal: executorPrincipal(['codex']),
       },
       'POST',
@@ -1952,7 +1977,14 @@ describe('exit', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(releaseLease).toHaveBeenCalledWith(runId);
+    expect(releaseLease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId,
+        claimFingerprint: hashRunToken(token),
+        generation: expect.any(String),
+      }),
+      expect.any(String),
+    );
   });
 
   it('requires the work.executor scope, the run pipeline grant, and a known run', async () => {
@@ -2355,6 +2387,7 @@ describe('checkoutToken', () => {
 describe('codexAuth', () => {
   function ownedCodexAuth(
     runId: string,
+    claimFingerprint: string,
     overrides: Partial<RunsContext['codexAuth']> = {},
   ): RunsContext['codexAuth'] {
     return {
@@ -2364,6 +2397,7 @@ describe('codexAuth', () => {
         repository: 'jlapenna/agent-lcars',
         expiresAt: '2026-08-28T12:00:00.000Z',
         generation: '11',
+        claimFingerprint,
       }),
       ...overrides,
     };
@@ -2391,7 +2425,7 @@ describe('codexAuth', () => {
     const { store, orchestrator, now, runId, token } =
       await claimedCodexRun('jlapenna/sync-padd');
     const read = vi.fn(context.codexAuth.read);
-    const createLease = vi.fn(async () => undefined);
+    const createLease = vi.fn(context.codexAuth.createLease);
     const r = await call(
       {
         store,
@@ -2410,6 +2444,8 @@ describe('codexAuth', () => {
       runId,
       repository: 'jlapenna/sync-padd',
       expiresAt: (await store.readRun(runId))!.leaseExpiresAt,
+      claimFingerprint: hashRunToken(token),
+      operationId: expect.any(String),
     });
   });
 
@@ -2436,7 +2472,14 @@ describe('codexAuth', () => {
     );
 
     expect(r.status).toBe(404);
-    expect(releaseLease).toHaveBeenCalledWith(runId);
+    expect(releaseLease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId,
+        claimFingerprint: hashRunToken(token),
+        generation: expect.any(String),
+      }),
+      expect.any(String),
+    );
   });
 
   it('refuses the broker routes to a non-Codex run token', async () => {
@@ -2496,7 +2539,7 @@ describe('codexAuth', () => {
         orchestrator,
         now,
         ...context,
-        codexAuth: ownedCodexAuth(runId, { releaseLease }),
+        codexAuth: ownedCodexAuth(runId, hashRunToken(token), { releaseLease }),
         bearerToken: token,
       },
       'POST',
@@ -2505,7 +2548,14 @@ describe('codexAuth', () => {
     );
 
     expect(r.status).toBe(200);
-    expect(releaseLease).toHaveBeenCalledWith(runId);
+    expect(releaseLease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId,
+        claimFingerprint: hashRunToken(token),
+        generation: expect.any(String),
+      }),
+      expect.any(String),
+    );
   });
 
   it('does not write back a byte-identical or positively burned credential', async () => {
@@ -2523,7 +2573,7 @@ describe('codexAuth', () => {
       orchestrator,
       now,
       ...context,
-      codexAuth: ownedCodexAuth(runId, { replace }),
+      codexAuth: ownedCodexAuth(runId, hashRunToken(token), { replace }),
       bearerToken: token,
     };
     const unchanged = await call(ctx, 'PUT', runPath(runId, '/codex-auth'), {
@@ -2555,7 +2605,7 @@ describe('codexAuth', () => {
         orchestrator,
         now,
         ...context,
-        codexAuth: ownedCodexAuth(runId, { replace }),
+        codexAuth: ownedCodexAuth(runId, hashRunToken(token), { replace }),
         bearerToken: token,
       },
       'PUT',
@@ -2570,6 +2620,12 @@ describe('codexAuth', () => {
     expect(replace).toHaveBeenCalledWith({
       expectedGeneration: '1844674407370955161',
       authBase64,
+      receipt: expect.objectContaining({
+        claimFingerprint: hashRunToken(token),
+        expectedGeneration: '1844674407370955161',
+        operationId: expect.any(String),
+        sha256: expect.any(String),
+      }),
     });
   });
 
@@ -2583,7 +2639,7 @@ describe('codexAuth', () => {
         orchestrator,
         now,
         ...context,
-        codexAuth: ownedCodexAuth(runId, { replace }),
+        codexAuth: ownedCodexAuth(runId, hashRunToken(token), { replace }),
         bearerToken: token,
       },
       'PUT',
@@ -2617,7 +2673,10 @@ describe('codexAuth', () => {
         orchestrator,
         now,
         ...context,
-        codexAuth: ownedCodexAuth(runId, { replace, releaseLease }),
+        codexAuth: ownedCodexAuth(runId, hashRunToken(token), {
+          replace,
+          releaseLease,
+        }),
         bearerToken: token,
       },
       'PUT',
@@ -2633,10 +2692,17 @@ describe('codexAuth', () => {
 
     expect(r).toMatchObject({ status: 200, json: { status: 'updated' } });
     expect(replace).toHaveBeenCalledTimes(1);
-    expect(releaseLease).toHaveBeenCalledWith(runId);
+    expect(releaseLease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId,
+        claimFingerprint: hashRunToken(token),
+        generation: expect.any(String),
+      }),
+      expect.any(String),
+    );
     expect(errorSpy).toHaveBeenCalledWith(
-      'agent-lcars: failed to release Codex auth lease',
-      { runId, error: cleanupError },
+      'agent-lcars: credential operation for %s remains reserved pending generation fencing',
+      runId,
     );
     errorSpy.mockRestore();
   });
@@ -2652,7 +2718,7 @@ describe('codexAuth', () => {
         orchestrator,
         now,
         ...context,
-        codexAuth: ownedCodexAuth(runId, { replace }),
+        codexAuth: ownedCodexAuth(runId, hashRunToken(token), { replace }),
         bearerToken: token,
       },
       'PUT',
@@ -2725,7 +2791,7 @@ describe('codexAuth', () => {
       claimedBy: 'runner-2',
       tokenHash: hashRunToken(secondToken),
     });
-    const takeLease = vi.fn(async () => undefined);
+    const takeLease = vi.fn(context.codexAuth.takeLease);
     const r = await call(
       {
         store,
@@ -2754,6 +2820,8 @@ describe('codexAuth', () => {
       repository: 'jlapenna/agent-lcars',
       expiresAt: expect.any(String),
       expectedGeneration: '22',
+      claimFingerprint: hashRunToken(secondToken),
+      operationId: expect.any(String),
     });
   });
 });
@@ -3172,7 +3240,17 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
               ...context,
               bearerToken: token,
               drain,
-              codexAuth: { ...context.codexAuth, releaseLease },
+              codexAuth: {
+                ...context.codexAuth,
+                releaseLease,
+                readLease: async () => ({
+                  runId,
+                  repository: 'jlapenna/agent-lcars',
+                  expiresAt: '2026-08-28T12:00:00.000Z',
+                  generation: '11',
+                  claimFingerprint: hashRunToken(token),
+                }),
+              },
             },
             'POST',
             runPath(runId, '/complete'),
@@ -3185,7 +3263,14 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           });
           expect(await store.readRun(runId)).toEqual(terminalRun);
           expect(drain).not.toHaveBeenCalled();
-          expect(releaseLease).toHaveBeenCalledExactlyOnceWith(runId);
+          expect(releaseLease).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({
+              runId,
+              claimFingerprint: hashRunToken(token),
+              generation: '11',
+            }),
+            expect.any(String),
+          );
         } finally {
           store.transactRun = transactRun;
         }
@@ -3265,7 +3350,17 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           ...context,
           principal,
           drain,
-          codexAuth: { ...context.codexAuth, releaseLease },
+          codexAuth: {
+            ...context.codexAuth,
+            releaseLease,
+            readLease: async () => ({
+              runId,
+              repository: 'jlapenna/agent-lcars',
+              expiresAt: '2026-08-28T12:00:00.000Z',
+              generation: '11',
+              claimFingerprint: freshFingerprint,
+            }),
+          },
         };
         try {
           const stale = await call(ctx, 'POST', runPath(runId, '/exit'), {
@@ -3313,5 +3408,806 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         }
       },
     );
+  });
+}
+
+for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
+  describe.skipIf(
+    backend === 'FirestoreStore' &&
+      process.env.FIRESTORE_EMULATOR_HOST === undefined,
+  )(`${backend}: Codex external generation boundary`, () => {
+    async function brokerFixture(ownedLease = true) {
+      const store: OrchestratorStore =
+        backend === 'MemoryStore'
+          ? new MemoryStore()
+          : new FirestoreStore({
+              projectId: 'demo-orchestrator',
+              databaseId: '(default)',
+              collectionPrefix: `broker-${crypto.randomUUID()}-`,
+              emulatorHost: process.env.FIRESTORE_EMULATOR_HOST!,
+            });
+      let instant = NOW;
+      const now = () => new Date(instant);
+      const orchestrator = new Orchestrator(store, { now: () => instant });
+      const runId = await seedQueuedGithubRun(
+        store,
+        orchestrator,
+        42,
+        'implement',
+        'codex',
+      );
+      const principal = executorPrincipal(['codex']);
+      const claimed = await call(
+        { ...context, store, orchestrator, now, principal },
+        'POST',
+        '/runs/claim',
+        { runner: 'same-runner' },
+      );
+      expect(claimed.status).toBe(200);
+      const token = (claimed.json as { token: string }).token;
+      const fingerprint = hashRunToken(token);
+      const fake = new ConditionalCodexBucket();
+      const auth = fake.seed(
+        codexCentralAuthObject(),
+        Buffer.from('{"tokens":{"access":"original"}}'),
+      );
+      if (ownedLease)
+        fake.seed(
+          CODEX_GLOBAL_LEASE_OBJECT,
+          Buffer.from(
+            JSON.stringify({
+              runId,
+              repository: 'jlapenna/agent-lcars',
+              expiresAt: '2026-08-26T12:00:00.000Z',
+              claimFingerprint: fingerprint,
+              operationId: 'restored:1',
+            }),
+          ),
+        );
+      const codexAuth = new GcsCodexAuthStore(fake.bucket);
+      const ctx = {
+        ...context,
+        store,
+        orchestrator,
+        now,
+        principal,
+        bearerToken: token,
+        codexAuth,
+      };
+      const payload = {
+        generation: auth.generation,
+        restoredSha256: '0'.repeat(64),
+        authBase64: Buffer.from('{"tokens":{"access":"rotated"}}').toString(
+          'base64',
+        ),
+      };
+      return {
+        store,
+        orchestrator,
+        now,
+        runId,
+        token,
+        fingerprint,
+        fake,
+        codexAuth,
+        ctx,
+        payload,
+        setNow: (value: string) => {
+          instant = value;
+        },
+      };
+    }
+    const request = (
+      f: Awaited<ReturnType<typeof brokerFixture>>,
+      route: string,
+    ) =>
+      route === 'persist'
+        ? call(f.ctx, 'PUT', runPath(f.runId, '/codex-auth'), f.payload)
+        : route === 'restore'
+          ? call(f.ctx, 'GET', runPath(f.runId, '/codex-auth'))
+          : call(f.ctx, 'POST', runPath(f.runId, '/heartbeat'));
+
+    it.each(['restore', 'persist', 'heartbeat'])(
+      'refuses old %s authority reclaimed before the atomic reservation without broker IO',
+      async (route) => {
+        const f = await brokerFixture();
+        const original = f.store.transactRun.bind(f.store);
+        let changed = false;
+        let released: boolean | undefined;
+        let fresh: Awaited<ReturnType<OrchestratorStore['readRun']>>;
+        f.store.transactRun = async (input) => {
+          if (!changed) {
+            changed = true;
+            released = await f.store.releaseQueuedRunClaim({
+              runId: f.runId,
+              claimedBy: 'same-runner',
+              tokenHash: f.fingerprint,
+              now: NOW,
+            });
+            await f.store.claimQueuedRun({
+              pipelines: ['codex'],
+              now: NOW,
+              claimedBy: 'same-runner',
+              claimedBySubject: f.ctx.principal.subject.toLowerCase(),
+              tokenHash: 'f'.repeat(64),
+            });
+            fresh = await f.store.readRun(f.runId);
+          }
+          return original(input);
+        };
+        const readLease = vi.spyOn(f.codexAuth, 'readLease');
+        const response = await request(f, route);
+        expect(response.status).toBe(401);
+        expect(released).toBe(true);
+        expect(await f.store.readRun(f.runId)).toEqual(fresh);
+        expect(readLease).not.toHaveBeenCalled();
+        expect(f.fake.attempts).toHaveLength(0);
+      },
+    );
+
+    it.each(['restore', 'persist', 'heartbeat'])(
+      'serializes %s IO with a real release/reclaim attempt at the lease-read boundary',
+      async (route) => {
+        const f = await brokerFixture();
+        const original = f.codexAuth.readLease.bind(f.codexAuth);
+        let interleaved = false;
+        let released: boolean | undefined;
+        let reclaimed: Run | undefined;
+        let exitStatus: number | undefined;
+        f.codexAuth.readLease = async () => {
+          if (!interleaved) {
+            interleaved = true;
+            released = await f.store.releaseQueuedRunClaim({
+              runId: f.runId,
+              claimedBy: 'same-runner',
+              tokenHash: f.fingerprint,
+              now: NOW,
+            });
+            reclaimed = await f.store.claimQueuedRun({
+              pipelines: ['codex'],
+              now: NOW,
+              claimedBy: 'same-runner',
+              tokenHash: 'f'.repeat(64),
+            });
+            const exit = await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
+              runner: 'same-runner',
+              claimFingerprint: f.fingerprint,
+            });
+            exitStatus = exit.status;
+          }
+          return original();
+        };
+        const response = await request(f, route);
+        expect(response.status).toBe(200);
+        expect(interleaved).toBe(true);
+        expect(released).toBe(false);
+        expect(reclaimed).toBeUndefined();
+        expect(exitStatus).toBe(409);
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation,
+        ).toBeUndefined();
+        expect(
+          await f.store.releaseQueuedRunClaim({
+            runId: f.runId,
+            claimedBy: 'same-runner',
+            tokenHash: f.fingerprint,
+            now: NOW,
+          }),
+        ).toBe(true);
+        expect(
+          (
+            await f.store.claimQueuedRun({
+              pipelines: ['codex'],
+              now: NOW,
+              claimedBy: 'same-runner',
+              claimedBySubject: f.ctx.principal.subject.toLowerCase(),
+              tokenHash: 'f'.repeat(64),
+            })
+          )?.queue?.tokenHash,
+        ).toBe('f'.repeat(64));
+      },
+    );
+
+    it('keeps a one-shot exact completion durable through lost cleanup response and recovery after its deadline', async () => {
+      const f = await brokerFixture();
+      let lost = false;
+      f.fake.afterSave = async (attempt) => {
+        if (
+          !lost &&
+          attempt.name === CODEX_GLOBAL_LEASE_OBJECT &&
+          JSON.parse(attempt.bytes.toString()).expiresAt ===
+            '1970-01-01T00:00:00.000Z'
+        ) {
+          lost = true;
+          throw Object.assign(new Error('lost response'), { code: 503 });
+        }
+      };
+      expect(await request(f, 'persist')).toEqual({
+        status: 200,
+        json: { status: 'updated' },
+      });
+      expect(
+        (await f.store.readRun(f.runId))?.credentialOperation?.mutation?.kind,
+      ).toBe('lease-write');
+      const intended = {
+        outcome: 'pull-request',
+        outcomeReference: {
+          kind: 'pull-request',
+          number: 99,
+          related: [
+            {
+              kind: 'comment',
+              number: 42,
+              id: 123,
+              url: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-123',
+            },
+          ],
+        },
+        message: 'Exact durable deliverable',
+      };
+      expect(
+        await call(f.ctx, 'POST', runPath(f.runId, '/complete'), intended),
+      ).toEqual({
+        status: 200,
+        json: { runId: f.runId, state: 'completion-pending' },
+      });
+      const first = (await f.store.readRun(f.runId))?.credentialPendingResult;
+      expect(first?.result).toMatchObject({
+        ok: true,
+        ref: 'https://github.com/jlapenna/agent-lcars/pull/99',
+        relatedRefs: [
+          'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-123',
+        ],
+        message: intended.message,
+      });
+      expect(
+        (
+          await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+            outcome: 'no-deliverable',
+            outcomeReference: null,
+          })
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
+            runner: 'same-runner',
+            claimFingerprint: f.fingerprint,
+          })
+        ).status,
+      ).toBe(409);
+      f.setNow('2026-08-26T13:00:00.000Z');
+      expect(await f.orchestrator.sweepExpired()).toEqual({
+        lost: [],
+        retried: [],
+      });
+      const [a, b] = await Promise.all([
+        recoverCodexCredentialOperations(f.ctx),
+        recoverCodexCredentialOperations(f.ctx),
+      ]);
+      expect([...a.recovered, ...b.recovered]).toEqual([f.runId]);
+      const settled = await f.store.readRun(f.runId);
+      expect(settled?.state).toBe('finished');
+      expect(settled?.result).toEqual(first?.result);
+      expect(settled?.credentialOperation).toBeUndefined();
+      expect(settled?.credentialPendingResult).toBeUndefined();
+      expect(
+        (await f.store.readTask(settled!.task))?.task.activeRunId,
+      ).toBeUndefined();
+      const entries = await f.store.claimPendingOutbox({
+        limit: 30,
+        now: f.now().toISOString(),
+        leaseExpiresAt: '2026-08-26T13:05:00.000Z',
+      });
+      expect(
+        entries.filter((entry) => entry.kind === 'report-outcome'),
+      ).toHaveLength(1);
+      expect(await f.orchestrator.sweepExpired()).toEqual({
+        lost: [],
+        retried: [],
+      });
+      expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+        recovered: [],
+        unresolved: [],
+      });
+      expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+        '1970-01-01T00:00:00.000Z',
+      );
+    });
+
+    it.each(['write-wins', 'fence-wins'])(
+      'resolves an unknown auth RPC without admitting a late overwrite (%s)',
+      async (ordering) => {
+        const f = await brokerFixture();
+        const entered = deferred(),
+          delay = deferred();
+        if (ordering === 'fence-wins')
+          f.fake.beforeSave = async (attempt) => {
+            if (
+              attempt.name === codexCentralAuthObject() &&
+              attempt.metadata.lcarsClaimFingerprint === f.fingerprint
+            ) {
+              entered.resolve();
+              await delay.promise;
+            }
+          };
+        else
+          f.fake.afterSave = async (attempt) => {
+            if (attempt.name === codexCentralAuthObject())
+              throw Object.assign(new Error('lost response'), { code: 503 });
+          };
+        const old = request(f, 'persist');
+        const initialStatus =
+          ordering === 'write-wins' ? (await old).status : undefined;
+        if (ordering === 'fence-wins') await entered.promise;
+        expect(initialStatus).toBe(ordering === 'write-wins' ? 500 : undefined);
+        expect(
+          await f.store.releaseQueuedRunClaim({
+            runId: f.runId,
+            claimedBy: 'same-runner',
+            tokenHash: f.fingerprint,
+            now: NOW,
+          }),
+        ).toBe(false);
+        f.setNow('2026-08-26T10:06:00.000Z');
+        expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+          recovered: [f.runId],
+          unresolved: [],
+        });
+        let retry: Awaited<ReturnType<typeof call>> | undefined;
+        let released: boolean | undefined;
+        let lateStatus: number | undefined;
+        let preserved: boolean | undefined;
+        const count = f.fake.commits.filter(
+          (c) => c.name === codexCentralAuthObject(),
+        ).length;
+        if (ordering === 'write-wins') {
+          f.fake.afterSave = undefined;
+          retry = await request(f, 'persist');
+        } else {
+          released = await f.store.releaseQueuedRunClaim({
+            runId: f.runId,
+            claimedBy: 'same-runner',
+            tokenHash: f.fingerprint,
+            now: f.now().toISOString(),
+          });
+          const nextToken = mintRunToken();
+          await f.store.claimQueuedRun({
+            pipelines: ['codex'],
+            now: f.now().toISOString(),
+            claimedBy: 'same-runner',
+            claimedBySubject: f.ctx.principal.subject.toLowerCase(),
+            tokenHash: hashRunToken(nextToken),
+          });
+          const fresh = await f.store.readRun(f.runId);
+          const credential = await f.codexAuth.read();
+          delay.resolve();
+          lateStatus = (await old).status;
+          preserved =
+            JSON.stringify(await f.store.readRun(f.runId)) ===
+              JSON.stringify(fresh) &&
+            JSON.stringify(await f.codexAuth.read()) ===
+              JSON.stringify(credential);
+        }
+        expect(retry).toEqual(
+          ordering === 'write-wins'
+            ? { status: 200, json: { status: 'updated' } }
+            : undefined,
+        );
+        expect(
+          f.fake.commits.filter((c) => c.name === codexCentralAuthObject()),
+        ).toHaveLength(count);
+        expect(released).toBe(ordering === 'fence-wins' ? true : undefined);
+        expect(lateStatus).toBe(ordering === 'fence-wins' ? 401 : undefined);
+        expect(preserved).toBe(ordering === 'fence-wins' ? true : undefined);
+      },
+    );
+
+    it('fences a lost-response cleanup before completing and permits a full successor cycle without late release', async () => {
+      const f = await brokerFixture();
+      const delayed = deferred();
+      let captured = false;
+      f.fake.delayAndLoseResponse = (attempt) => {
+        if (
+          !captured &&
+          attempt.name === CODEX_GLOBAL_LEASE_OBJECT &&
+          JSON.parse(attempt.bytes.toString()).expiresAt ===
+            '1970-01-01T00:00:00.000Z'
+        ) {
+          captured = true;
+          return delayed.promise;
+        }
+        return undefined;
+      };
+      expect(await request(f, 'persist')).toEqual({
+        status: 200,
+        json: { status: 'updated' },
+      });
+      expect(
+        (
+          await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+            outcome: 'pull-request',
+            outcomeReference: { kind: 'pull-request', number: 99 },
+          })
+        ).json,
+      ).toEqual({ runId: f.runId, state: 'completion-pending' });
+      f.setNow('2026-08-26T10:06:00.000Z');
+      expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+        recovered: [f.runId],
+        unresolved: [],
+      });
+      expect((await f.store.readRun(f.runId))?.state).toBe('finished');
+      expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+        '1970-01-01T00:00:00.000Z',
+      );
+      const next = await f.orchestrator.request({
+        taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+        requestId: 'successor',
+        pipeline: 'codex',
+      });
+      if ('refused' in next || next.run === undefined)
+        throw new Error('successor was not admitted');
+      await f.store.enqueueRun({
+        runId: next.run.runId,
+        now: f.now().toISOString(),
+      });
+      await f.orchestrator.confirmDispatch(next.run.runId);
+      const claim = await call(f.ctx, 'POST', '/runs/claim', {
+        runner: 'same-runner',
+      });
+      const nextCtx = {
+        ...f.ctx,
+        bearerToken: (claim.json as { token: string }).token,
+      };
+      const restored = await call(
+        nextCtx,
+        'GET',
+        runPath(next.run.runId, '/codex-auth'),
+      );
+      expect(restored.status).toBe(200);
+      const snapshot = restored.json as {
+        generation: string;
+        authBase64: string;
+        sha256: string;
+      };
+      expect(
+        (
+          await call(nextCtx, 'PUT', runPath(next.run.runId, '/codex-auth'), {
+            generation: snapshot.generation,
+            authBase64: snapshot.authBase64,
+            restoredSha256: snapshot.sha256,
+          })
+        ).json,
+      ).toEqual({ status: 'unchanged' });
+      const successorLease = await f.codexAuth.readLease();
+      delayed.resolve();
+      expect(await f.fake.delayedResults[0]).toMatchObject({ code: 412 });
+      expect(await f.codexAuth.readLease()).toEqual(successorLease);
+      expect(
+        (await f.store.readRun(next.run.runId))?.credentialOperation,
+      ).toBeUndefined();
+    });
+
+    it('retires a failed first restore without a ghost reservation or credential lease', async () => {
+      const f = await brokerFixture(false);
+      f.fake.objects.delete(codexCentralAuthObject());
+      expect((await request(f, 'restore')).status).toBe(404);
+      expect(
+        (await f.store.readRun(f.runId))?.credentialOperation,
+      ).toBeUndefined();
+      expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+        '1970-01-01T00:00:00.000Z',
+      );
+    });
+
+    it.each(['live-historical', 'expired-historical'])(
+      'preserves readable historical lease authority while restoring: %s',
+      async (kind) => {
+        const f = await brokerFixture(false);
+        f.fake.seed(
+          CODEX_GLOBAL_LEASE_OBJECT,
+          Buffer.from(
+            JSON.stringify({
+              runId: f.runId,
+              repository: 'jlapenna/agent-lcars',
+              expiresAt:
+                kind === 'live-historical'
+                  ? '2026-08-26T12:00:00.000Z'
+                  : '1970-01-01T00:00:00.000Z',
+            }),
+          ),
+        );
+        const response = await request(f, 'restore');
+        expect(response.status).toBe(kind === 'live-historical' ? 409 : 200);
+        expect(f.fake.commits).toHaveLength(kind === 'live-historical' ? 0 : 1);
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation,
+        ).toBeUndefined();
+      },
+    );
+
+    it.each(['absent', 'expired-foreign', 'historical'])(
+      'allows bootstrap heartbeat with %s lease without foreign mutation',
+      async (kind) => {
+        const f = await brokerFixture(false);
+        if (kind !== 'absent')
+          f.fake.seed(
+            CODEX_GLOBAL_LEASE_OBJECT,
+            Buffer.from(
+              JSON.stringify({
+                runId: kind === 'historical' ? f.runId : 'other-run',
+                repository: 'jlapenna/agent-lcars',
+                expiresAt:
+                  kind === 'historical'
+                    ? '2026-08-26T12:00:00.000Z'
+                    : '1970-01-01T00:00:00.000Z',
+              }),
+            ),
+          );
+        expect((await request(f, 'heartbeat')).status).toBe(200);
+        expect(f.fake.commits).toHaveLength(0);
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation,
+        ).toBeUndefined();
+      },
+    );
+
+    it('refuses a stale recovery acknowledgement when the original actor has prepared its next action', async () => {
+      const f = await brokerFixture();
+      f.fake.afterSave = async (attempt) => {
+        if (attempt.name === codexCentralAuthObject())
+          throw Object.assign(new Error('lost response'), { code: 503 });
+      };
+      expect((await request(f, 'persist')).status).toBe(500);
+      f.fake.afterSave = undefined;
+      const originalFence = f.codexAuth.fenceMutation.bind(f.codexAuth);
+      let advanced = false;
+      let acknowledger: unknown;
+      let preparer: unknown;
+      let nextAction: CredentialMutation | undefined;
+      f.codexAuth.fenceMutation = async (input) => {
+        const fenced = await originalFence(input);
+        if (!advanced) {
+          advanced = true;
+          acknowledger = await f.store.transactRun({
+            runId: f.runId,
+            decide: ({ task, run }) => {
+              if (task === undefined || run === undefined)
+                throw new Error('missing acknowledgement fixture');
+              return changeCredentialOperation({
+                now: f.now().toISOString(),
+                task: task.task,
+                run,
+                id: input.operation.id,
+                claimFingerprint: f.fingerprint,
+                change: {
+                  kind: 'acknowledge',
+                  mutationId: input.mutation.id,
+                  receipt: fenced.receipt,
+                },
+              });
+            },
+          });
+          const lease = await f.codexAuth.readLease();
+          if (lease === undefined) throw new Error('missing lease fixture');
+          nextAction = {
+            kind: 'lease-write',
+            id: `${input.operation.id}:2`,
+            expectedGeneration: lease.generation,
+            repository: lease.repository,
+            expiresAt: '1970-01-01T00:00:00.000Z',
+          };
+          preparer = await f.store.transactRun({
+            runId: f.runId,
+            decide: ({ task, run }) => {
+              if (task === undefined || run === undefined)
+                throw new Error('missing prepare fixture');
+              return changeCredentialOperation({
+                now: f.now().toISOString(),
+                task: task.task,
+                run,
+                id: input.operation.id,
+                claimFingerprint: f.fingerprint,
+                change: {
+                  kind: 'prepare',
+                  mutation: nextAction as CredentialMutation,
+                },
+              });
+            },
+          });
+        }
+        return fenced;
+      };
+      f.setNow('2026-08-26T10:06:00.000Z');
+      expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+        recovered: [],
+        unresolved: [],
+      });
+      expect(acknowledger).not.toHaveProperty('refused');
+      expect(preparer).not.toHaveProperty('refused');
+      expect(
+        (await f.store.readRun(f.runId))?.credentialOperation?.mutation,
+      ).toEqual(nextAction);
+      expect(
+        await f.store.releaseQueuedRunClaim({
+          runId: f.runId,
+          claimedBy: 'same-runner',
+          tokenHash: f.fingerprint,
+          now: f.now().toISOString(),
+        }),
+      ).toBe(false);
+      f.setNow('2026-08-26T10:12:00.000Z');
+      expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+        recovered: [f.runId],
+        unresolved: [],
+      });
+      expect(
+        (await f.store.readRun(f.runId))?.credentialOperation,
+      ).toBeUndefined();
+      expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+        '1970-01-01T00:00:00.000Z',
+      );
+    });
+
+    it.each(['restore', 'heartbeat'])(
+      'fences an unknown %s lease RPC and permits original matching-claim progress before it resumes',
+      async (route) => {
+        const f = await brokerFixture(route !== 'restore');
+        const delayed = deferred();
+        let captured = false;
+        f.fake.delayAndLoseResponse = (attempt) => {
+          if (
+            !captured &&
+            attempt.name === CODEX_GLOBAL_LEASE_OBJECT &&
+            JSON.parse(attempt.bytes.toString()).expiresAt !==
+              '1970-01-01T00:00:00.000Z'
+          ) {
+            captured = true;
+            return delayed.promise;
+          }
+          return undefined;
+        };
+        expect((await request(f, route)).status).toBe(500);
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation?.mutation?.kind,
+        ).toBe('lease-write');
+        expect(
+          await f.store.releaseQueuedRunClaim({
+            runId: f.runId,
+            claimedBy: 'same-runner',
+            tokenHash: f.fingerprint,
+            now: NOW,
+          }),
+        ).toBe(false);
+        f.setNow('2026-08-26T10:06:00.000Z');
+        expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+          recovered: [f.runId],
+          unresolved: [],
+        });
+        expect((await request(f, route)).status).toBe(200);
+        const current = await f.codexAuth.readLease();
+        delayed.resolve();
+        expect(await f.fake.delayedResults[0]).toMatchObject({ code: 412 });
+        expect(await f.codexAuth.readLease()).toEqual(current);
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation,
+        ).toBeUndefined();
+      },
+    );
+
+    it('rotates beyond thirty unresolved recovery candidates without unlocking any unknown action', async () => {
+      const f = await brokerFixture();
+      const runIds: string[] = [];
+      for (let index = 0; index < 31; index++) {
+        const runId =
+          index === 0
+            ? f.runId
+            : await seedQueuedGithubRun(
+                f.store,
+                f.orchestrator,
+                100 + index,
+                'implement',
+                'codex',
+              );
+        if (index !== 0)
+          await f.store.claimQueuedRun({
+            pipelines: ['codex'],
+            now: NOW,
+            claimedBy: 'same-runner',
+            tokenHash: f.fingerprint,
+          });
+        await f.orchestrator.cancel(runId);
+        const operationId = `unknown-${index}`;
+        const reserve = await f.store.transactRun({
+          runId,
+          decide: ({ task, run }) => {
+            if (task === undefined || run === undefined)
+              throw new Error('missing recovery fixture');
+            return reserveCredentialOperation({
+              now: NOW,
+              task: task.task,
+              run,
+              claimFingerprint: f.fingerprint,
+              id: operationId,
+              kind: 'cleanup',
+            });
+          },
+        });
+        expect(reserve).not.toHaveProperty('refused');
+        const prepare = await f.store.transactRun({
+          runId,
+          decide: ({ task, run }) => {
+            if (task === undefined || run === undefined)
+              throw new Error('missing recovery fixture');
+            return changeCredentialOperation({
+              now: NOW,
+              task: task.task,
+              run,
+              claimFingerprint: f.fingerprint,
+              id: operationId,
+              change: {
+                kind: 'prepare',
+                mutation: {
+                  kind: 'lease-write',
+                  id: `${operationId}:1`,
+                  expectedGeneration: '7',
+                  repository: 'jlapenna/agent-lcars',
+                  expiresAt: '1970-01-01T00:00:00.000Z',
+                },
+              },
+            });
+          },
+        });
+        expect(prepare).not.toHaveProperty('refused');
+        runIds.push(runId);
+      }
+      const fence = vi
+        .spyOn(f.codexAuth, 'fenceMutation')
+        .mockRejectedValue(
+          new CodexAuthStoreError(
+            'unavailable',
+            'isolated unknown storage outcome',
+          ),
+        );
+      f.setNow('2026-08-26T10:06:00.000Z');
+      const first = await recoverCodexCredentialOperations(f.ctx);
+      const next = await recoverCodexCredentialOperations(f.ctx);
+      expect(first.recovered).toEqual([]);
+      expect(first.unresolved).toHaveLength(30);
+      expect(next.recovered).toEqual([]);
+      expect(next.unresolved).toHaveLength(1);
+      expect(new Set([...first.unresolved, ...next.unresolved])).toEqual(
+        new Set(runIds),
+      );
+      expect(fence).toHaveBeenCalledTimes(31);
+      for (const runId of runIds) {
+        const run = await f.store.readRun(runId);
+        expect(run?.credentialOperation?.mutation).toBeDefined();
+        expect(run?.credentialOperation?.recoverAfter).toBe(
+          '2026-08-26T10:11:00.000Z',
+        );
+      }
+      expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+        recovered: [],
+        unresolved: [],
+      });
+      fence.mockRestore();
+    }, 30_000);
+
+    it('refuses zero credential generation at actual HTTP before any external mutation', async () => {
+      const f = await brokerFixture();
+      expect(
+        (
+          await call(f.ctx, 'PUT', runPath(f.runId, '/codex-auth'), {
+            ...f.payload,
+            generation: '0',
+          })
+        ).status,
+      ).toBe(400);
+      expect(f.fake.attempts).toHaveLength(0);
+      expect(
+        (await f.store.readRun(f.runId))?.credentialOperation,
+      ).toBeUndefined();
+    });
   });
 }

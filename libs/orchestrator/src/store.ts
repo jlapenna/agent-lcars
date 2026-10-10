@@ -306,6 +306,12 @@ export interface OrchestratorStore {
 
   /** Every live (`pending`/`running`) run, lease or no lease. */
   listLiveRuns(): Promise<Run[]>;
+  /** One bounded recovery page; retry scheduling rotates unresolved actions.
+   * The time filter is eligibility to fence IO, never permission to unlock. */
+  listCredentialOperations(input: {
+    now: string;
+    limit: number;
+  }): Promise<Run[]>;
 
   /** Read-only consistent snapshot of durable provider admission. Each live
    * state is bounded at QUEUE_ADMISSION_READ_LIMIT; overflow or invalid data

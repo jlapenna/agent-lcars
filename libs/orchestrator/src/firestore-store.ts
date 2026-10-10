@@ -728,6 +728,18 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
+  async listCredentialOperations(input: {
+    now: string;
+    limit: number;
+  }): Promise<Run[]> {
+    const snapshot = await this.#runs
+      .where('credentialOperation.recoverAfter', '<=', input.now)
+      .orderBy('credentialOperation.recoverAfter')
+      .limit(input.limit)
+      .get();
+    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+  }
+
   async claimQueuedRun(input: {
     pipelines: readonly string[];
     now: string;
@@ -843,6 +855,7 @@ export class FirestoreStore implements OrchestratorStore {
       const run = runSchema.parse(snapshot.data());
       if (
         !isLive(run.state) ||
+        run.credentialOperation !== undefined ||
         run.queue?.state !== 'claimed' ||
         run.queue.claimedBy !== input.claimedBy ||
         run.queue.tokenHash !== input.tokenHash

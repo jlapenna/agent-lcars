@@ -1064,7 +1064,7 @@ export const runsContract = {
     .input(
       z.strictObject({
         runId: runIdSchema,
-        generation: z.string().regex(/^\d+$/u),
+        generation: z.string().regex(/^[1-9]\d*$/u),
         restoredSha256: z.string().regex(/^[0-9a-f]{64}$/u),
         authBase64: z
           .string()

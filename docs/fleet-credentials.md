@@ -169,10 +169,38 @@ unchanged.
 
 The shared `gs://agent-lcars-codex-auth/_leases/codex-subscription.json`
 record serializes the single-use subscription refresh token. A run first takes
-that record with generation CAS, then restores the central object. A changed
-`auth.json` is written only with its restored generation; a conflict is
-terminal and must not be retried. Normal persistence/completion releases the
-lease, while an expired owner may be taken over by CAS.
+that record with generation CAS, then restores the central object. Every
+mutation binds both the original run claim fingerprint and the exact object
+generation. An unexpired historical lease without a fingerprint is readable
+but cannot be adopted or changed; an expired lease may be adopted by CAS.
+A changed `auth.json` requires a positive restored generation. A conflict is
+terminal and must not be retried against a newer lineage.
+
+The canonical Run reserves restore, renew, persistence, and cleanup before
+external IO. An ambiguous write keeps its prepared action and blocks claim
+release, replacement, cancellation, exit, and expiry settlement. Reconciliation
+attempts at most thirty due operations per pass, rotating unresolved candidates.
+Five minutes schedules recovery; elapsed time never unlocks an unknown RPC.
+Recovery acknowledges the exact action only after observing its write receipt
+or establishing a conditional generation barrier. Action IDs are never reused.
+
+Lease cleanup writes an expired, generation-conditional tombstone rather than
+deleting the live object. Retaining this live tombstone prevents a delayed
+create-if-generation-zero request from becoming valid after later owners finish.
+The declared bucket lifecycle removes archived versions, not this live barrier.
+Cleanup uses the original owned lease snapshot, so it cannot release a successor.
+The current writer is Console App Hosting; direct containers receive no GCS IAM.
+
+A timely, authenticated completion during unresolved credential IO records its
+first exact result on the Run and returns `completion-pending`. Recovery settles
+that accepted result, releases the Task, and creates the normal outcome outbox
+atomically, even after the deadline. A different later result cannot replace it.
+Confirmed credential receipts permit exact persistence retries without rewriting
+a newer generation. Recovery errors log the run ID without credential material.
+
+These storage barriers do not revoke OAuth credentials already restored by a
+still-running worker. Existing worker termination and claim-release preconditions
+still apply; production provider-use revocation requires separate runtime evidence.
 
 The central activation contract is:
 
