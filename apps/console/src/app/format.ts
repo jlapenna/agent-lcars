@@ -15,22 +15,23 @@ const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
  * server-rendered value (see docs/next-auth.md and prior SSR timestamp bugs).
  */
 export function formatRelativeTime(iso: string): string {
-  const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
+  const elapsed = (Date.now() - new Date(iso).getTime()) / 1000;
+  const seconds = Math.max(elapsed < 0 ? 1 : 0, Math.round(Math.abs(elapsed)));
+  if (seconds < 60) {
+    return elapsed < 0 ? rtf.format(seconds, 'second') : 'just now';
+  }
   for (const [unit, secondsPerUnit] of UNITS) {
     const value = Math.floor(seconds / secondsPerUnit);
-    if (value >= 1) return rtf.format(-value, unit);
+    if (value >= 1) return rtf.format(elapsed < 0 ? value : -value, unit);
   }
   return 'just now';
 }
 
-/** Dense queue-row timestamp: "now", "15m ago", "2h ago", "1d ago". */
+/** Dense queue-row timestamp: "now", "15m ago", "in 2h", "1d ago". */
 export function formatCompactRelativeTime(iso: string): string {
-  const seconds = Math.max(
-    0,
-    Math.round((Date.now() - new Date(iso).getTime()) / 1000),
-  );
-  if (seconds < 60) return 'now';
+  const elapsed = (Date.now() - new Date(iso).getTime()) / 1000;
+  const seconds = Math.max(elapsed < 0 ? 1 : 0, Math.round(Math.abs(elapsed)));
+  if (seconds < 60) return elapsed < 0 ? `in ${seconds}s` : 'now';
   const units: [string, number][] = [
     ['y', 60 * 60 * 24 * 365],
     ['mo', 60 * 60 * 24 * 30],
@@ -41,7 +42,9 @@ export function formatCompactRelativeTime(iso: string): string {
   ];
   for (const [unit, secondsPerUnit] of units) {
     const value = Math.floor(seconds / secondsPerUnit);
-    if (value >= 1) return `${value}${unit} ago`;
+    if (value >= 1) {
+      return elapsed < 0 ? `in ${value}${unit}` : `${value}${unit} ago`;
+    }
   }
   return 'now';
 }
