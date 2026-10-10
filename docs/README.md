@@ -6,17 +6,20 @@ Use this index to retrieve the smallest current contract for a task.
 
 ## System and operations
 
-| Need                                          | Canonical document                                                         |
-| --------------------------------------------- | -------------------------------------------------------------------------- |
-| Dispatch ownership and failure routing        | [`lifecycle-systems.md`](lifecycle-systems.md)                             |
-| Application/deployment/Homelab boundary       | [`deployment-boundary.md`](deployment-boundary.md)                         |
-| Work API access and parked-item cleanup       | [`../OPERATIONS.md`](../OPERATIONS.md)                                     |
-| Product lifecycle measurement and SLO handoff | [`product-lifecycle-metrics.md`](product-lifecycle-metrics.md)             |
-| Published actions and reusable workflows      | [`published-actions.md`](published-actions.md)                             |
-| CI control flags                              | [`ci-control-flags.md`](ci-control-flags.md)                               |
-| Runner image publication                      | [`image-publish-routing.md`](image-publish-routing.md)                     |
-| Nx remote cache                               | [`nx-remote-cache.md`](nx-remote-cache.md)                                 |
-| App Hosting stale revision audit              | [`apphosting-stale-revision-audit.md`](apphosting-stale-revision-audit.md) |
+| Need                                                               | Canonical document                                                             |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| Dispatch ownership and failure routing                             | [`lifecycle-systems.md`](lifecycle-systems.md)                                 |
+| Application/deployment/Homelab boundary                            | [`deployment-boundary.md`](deployment-boundary.md)                             |
+| Work API access and parked-item cleanup                            | [`../OPERATIONS.md`](../OPERATIONS.md)                                         |
+| Product lifecycle measurement and SLO handoff                      | [`product-lifecycle-metrics.md`](product-lifecycle-metrics.md)                 |
+| Published actions and reusable workflows                           | [`published-actions.md`](published-actions.md)                                 |
+| CI control flags                                                   | [`ci-control-flags.md`](ci-control-flags.md)                                   |
+| Runner image publication                                           | [`image-publish-routing.md`](image-publish-routing.md)                         |
+| Nx remote cache                                                    | [`nx-remote-cache.md`](nx-remote-cache.md)                                     |
+| App Hosting stale revision audit                                   | [`apphosting-stale-revision-audit.md`](apphosting-stale-revision-audit.md)     |
+| Provider-process start event contract                              | [`provider-process-measurement.md`](provider-process-measurement.md)           |
+| Native Work production smoke (maintainer-approved runbook)         | [`native-work-smoke-runbook.md`](native-work-smoke-runbook.md)                 |
+| Screenshot evidence production smoke (maintainer-approved runbook) | [`quick-task-evidence-smoke-runbook.md`](quick-task-evidence-smoke-runbook.md) |
 
 ## Identity, credentials, and security
 
@@ -49,11 +52,13 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 
 ## Product specification
 
-| Need                                      | Document                                                                                     |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Console product spec (part 1)             | [`product/console-product-spec.md`](product/console-product-spec.md)                         |
-| Inbox notifications and delivery handoff  | [`inbox-notifications.md`](inbox-notifications.md)                                           |
-| Fleet orchestration product spec (part 2) | [`product/fleet-orchestration-product-spec.md`](product/fleet-orchestration-product-spec.md) |
+| Need                                        | Document                                                                                     |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Product spec overview and status vocabulary | [`product/README.md`](product/README.md)                                                     |
+| Console product spec (part 1)               | [`product/console-product-spec.md`](product/console-product-spec.md)                         |
+| Session spend and cost ledger accounting    | [`cost-ledger.md`](cost-ledger.md)                                                           |
+| Inbox notifications and delivery handoff    | [`inbox-notifications.md`](inbox-notifications.md)                                           |
+| Fleet orchestration product spec (part 2)   | [`product/fleet-orchestration-product-spec.md`](product/fleet-orchestration-product-spec.md) |
 
 ## Plans, evidence, and generated contracts
 
@@ -64,7 +69,14 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
   selects proposed durable capacity ownership for R8; implementation and Homelab
   qualification remain separate gates.
 - Dated audit and support-evidence documents describe the named observation,
-  revision, and conditions; they are not live state.
+  revision, and conditions; they are not live state:
+  [failed-work audit, 2026-09-11](failed-work-audit-2026-09-11.md),
+  [scale-set Support evidence](scale-set-support-evidence.md) (#1716),
+  [setup-invariant audit](setup-invariant-audit.md) (#2033), and the
+  [2026-10-09 worker-policy source evidence](worker-policy-source-evidence-2026-10-09.json)
+  read through [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md).
+  The smoke runbooks above also carry dated historical sections below their
+  current procedure.
 - [`api/work-v1.openapi.json`](api/work-v1.openapi.json) is generated from the
   Work contract. Regenerate it through the repository command rather than
   editing it by hand.

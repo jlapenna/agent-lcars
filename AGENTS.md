@@ -57,12 +57,13 @@ boundaries and [`docs/README.md`](docs/README.md) for the documentation index.
 | Tests, required checks, or E2E                                        | [`docs/testing-policy.md`](docs/testing-policy.md), [`docs/e2e-reliability.md`](docs/e2e-reliability.md), and the verification workflow                                                                                        |
 | Console UI, theme, or route shell                                     | [`docs/console-design-system.md`](docs/console-design-system.md) before changing appearance                                                                                                                                    |
 | Repository onboarding, labels, or identity                            | [`docs/onboarding-repo.md`](docs/onboarding-repo.md), [`docs/github-label-contract.md`](docs/github-label-contract.md), and [`docs/bot-identity-formats.md`](docs/bot-identity-formats.md)                                     |
-| A failed or stuck agent run                                           | Use the `debug-agent-run` skill; use `issue-triage` for a requested issue-queue audit                                                                                                                                          |
-| Approved live authenticated console verification                      | Use the `verifying-console-session` skill                                                                                                                                                                                      |
+| A failed or stuck agent run                                           | [`debug-agent-run`](.agents/skills/debug-agent-run/SKILL.md); [`issue-triage`](.agents/skills/issue-triage/SKILL.md) for a requested issue-queue audit                                                                         |
+| Approved live authenticated console verification                      | [`verifying-console-session`](.agents/skills/verifying-console-session/SKILL.md)                                                                                                                                               |
 
-`docs/superpowers/plans/` and dated audit/evidence documents describe a
-specific design or observation. They are not automatically current policy;
-reconcile them against live code and canonical contracts.
+`docs/superpowers/plans/` and the dated audit/evidence documents listed under
+[plans and evidence](docs/README.md#plans-evidence-and-generated-contracts)
+describe a specific design or observation. They are not automatically current
+policy; reconcile them against live code and canonical contracts.
 
 ## Cross-repository and authority boundaries
 
