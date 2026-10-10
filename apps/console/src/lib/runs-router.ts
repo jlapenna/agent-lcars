@@ -460,6 +460,24 @@ export const runsRouter = os.router({
     };
   }),
 
+  placement: executor.placement.handler(async ({ input, context, errors }) => {
+    const run = await context.store.readRun(input.runId);
+    if (run === undefined) throw errors.NOT_FOUND();
+    if (!context.principal.pipelines.includes(run.pipeline))
+      throw errors.FORBIDDEN();
+    const result = await context.orchestrator.observePlacement(
+      input.runId,
+      {
+        subject: claimantSubject(context.principal),
+        runner: input.runner,
+        claimFingerprint: input.claimFingerprint,
+      },
+      input.placement,
+    );
+    if (isRefusal(result)) throw errors.FORBIDDEN();
+    return { runId: input.runId };
+  }),
+
   claimStatus: executor.claimStatus.handler(
     async ({ input, context, errors }) => {
       const run = await context.store.readRun(input.runId);

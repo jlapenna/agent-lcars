@@ -1,3 +1,4 @@
+import { runPlacementSchema } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 /**
@@ -242,6 +243,7 @@ export type RunResult = z.infer<typeof runResultSchema>;
  *  token; `apps/console/src/lib/run-token.ts` mints/hashes it. */
 export const runQueueSchema = z.strictObject({
   state: z.enum(['queued', 'claimed']),
+  placement: runPlacementSchema.optional(),
   /** A lifecycle lookup could not verify this run. Claims skip it until this
    * instant so one broken GitHub anchor cannot block its whole pipeline. */
   deferredUntil: isoUtc.optional(),

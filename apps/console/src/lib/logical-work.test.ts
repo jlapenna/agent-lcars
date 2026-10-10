@@ -40,7 +40,7 @@ describe('deriveLogicalWork', () => {
     expect(work).toHaveLength(1);
     expect(work[0]).toMatchObject({
       title: 'Fix the thing',
-      state: 'active',
+      state: 'dispatching',
       provenance: { kind: 'authoritative' },
     });
     expect(work[0].runs.map((item) => item.id)).toEqual([
@@ -70,9 +70,17 @@ describe('deriveLogicalWork', () => {
 });
 
 describe('coarsenRunStates', () => {
-  it('ranks running over queued over any history over none', () => {
+  it('requires provider start for active and otherwise preserves admission and history', () => {
+    expect(
+      coarsenRunStates({
+        running: true,
+        queued: true,
+        any: true,
+        providerExecution: true,
+      }),
+    ).toBe('active');
     expect(coarsenRunStates({ running: true, queued: true, any: true })).toBe(
-      'active',
+      'dispatching',
     );
     expect(coarsenRunStates({ running: false, queued: true, any: true })).toBe(
       'dispatching',

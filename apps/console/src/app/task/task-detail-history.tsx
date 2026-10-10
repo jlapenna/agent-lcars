@@ -17,6 +17,7 @@ import {
 } from '@mantine/core';
 import type { ReactNode } from 'react';
 
+import { ExecutionStatus } from '../execution-status';
 import { Conversation } from '../work/conversation';
 import { resultRefs } from '../work/result-refs';
 import { safeHttpUrl } from '../work/safe-url';
@@ -74,9 +75,12 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
         </TableThead>
         <TableTbody>
           {runs.map((run) => (
-            <TableTr key={run.runId}>
+            <TableTr key={run.runId} id={`run-${run.runId}`}>
               <TableTd>{run.runId}</TableTd>
-              <TableTd>{run.state}</TableTd>
+              <TableTd>
+                {run.state}
+                <ExecutionStatus run={run} />
+              </TableTd>
               <TableTd>
                 <Stack gap={0}>
                   <Text size="xs">Queue executor</Text>

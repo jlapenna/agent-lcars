@@ -5,6 +5,7 @@ import { Anchor, Badge, Divider, Group, Stack, Text } from '@mantine/core';
 
 import type { AgentPipeline } from '../../lib/agent-activity';
 import { PipelineBadge } from '../agent-activity-panel';
+import { ExecutionStatus } from '../execution-status';
 import { RelativeTime } from '../relative-time';
 import { ProviderFallbackSummary } from '../work/provider-fallback-summary';
 import { resultRefs } from '../work/result-refs';
@@ -139,11 +140,15 @@ function RunResultView({ result }: { result: Run['result'] }) {
  * One authoritative Run from the orchestrator's own history. `LogicalWorkCard`
  * renders this whenever a task has recorded Runs.
  */
-function RunRow({ run }: { run: Run }) {
+function RunRow({ run, anchorPrefix }: { run: Run; anchorPrefix: string }) {
   const badge = runStateBadge(run);
   const generation = parseRunGeneration(run.runId);
   return (
-    <Stack gap={6} data-testid={`run-${run.runId}`}>
+    <Stack
+      gap={6}
+      id={`${anchorPrefix}-${run.runId}`}
+      data-testid={`${anchorPrefix}-${run.runId}`}
+    >
       <Group gap="xs" wrap="wrap">
         <Badge
           variant="filled"
@@ -160,7 +165,7 @@ function RunRow({ run }: { run: Run }) {
           </Badge>
         )}
         <Text size="xs" c="dimmed">
-          started <RelativeTime iso={run.createdAt} />
+          admitted <RelativeTime iso={run.createdAt} />
         </Text>
         {isLive(run.state) && (
           <Text size="xs" c="dimmed">
@@ -169,6 +174,7 @@ function RunRow({ run }: { run: Run }) {
         )}
         <RunParamChips params={run.params} />
       </Group>
+      <ExecutionStatus run={run} />
       <ProviderFallbackSummary run={run} />
       {run.events.length > 0 && (
         <Stack gap={2} pl="xs" data-testid={`run-events-${run.runId}`}>
@@ -189,7 +195,13 @@ function RunRow({ run }: { run: Run }) {
  * result renders directly from `@agent-lcars/orchestrator`'s `Run` model
  * (libs/orchestrator/src/model.ts) instead of a lossy re-derivation.
  */
-export function RunsSection({ runs }: { runs: Run[] }) {
+export function RunsSection({
+  runs,
+  anchorPrefix = 'run',
+}: {
+  runs: Run[];
+  anchorPrefix?: string;
+}) {
   const sorted = [...runs].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
   );
@@ -201,7 +213,7 @@ export function RunsSection({ runs }: { runs: Run[] }) {
       {sorted.map((run, index) => (
         <Stack key={run.runId} gap={10}>
           {index > 0 && <Divider />}
-          <RunRow run={run} />
+          <RunRow run={run} anchorPrefix={anchorPrefix} />
         </Stack>
       ))}
     </Stack>

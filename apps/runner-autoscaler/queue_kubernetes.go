@@ -164,6 +164,7 @@ type kubernetesQueue struct {
 	held                  int
 	recoveryCursor        queueSweepCursor
 	cleanupCursor         queueSweepCursor
+	placementCursor       queueSweepCursor
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
 	verifyRun    func(context.Context, string, string) error
