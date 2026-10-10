@@ -20,6 +20,11 @@ boundaries and use CI delegation below.
 
 ## CI delegation
 
+For a failed or stalled publication, use
+[delivery-recovery.md](delivery-recovery.md) to distinguish transport, hook and
+ambiguous-response failures before retrying. A transport error does not waive
+any verification gate below.
+
 Don't run the full gate above locally before every push — see "Push early"
 in [SKILL.md](../SKILL.md#hard-guardrails). The pre-push hook only runs the
 fast slice (`format:check`, affected `lint`/`typecheck`); `test` and
