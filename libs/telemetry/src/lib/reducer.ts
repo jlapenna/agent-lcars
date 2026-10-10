@@ -116,9 +116,10 @@ function applyMessage(
       if (blockType === 'tool_result') {
         const toolUseId = asString(record['tool_use_id']);
         const command = toolUseId && state.pendingBashCommands.get(toolUseId);
+        if (toolUseId) state.pendingBashCommands.delete(toolUseId);
         if (command && isDeliverableCommand(command)) {
           const found = findDeliverables(record['content']);
-          if (isPRPublicationCommand(command))
+          if (record['is_error'] !== true && isPRPublicationCommand(command))
             for (const pr of findQualifiedPRs(record['content']))
               state.qualifiedPRs.set(
                 `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,

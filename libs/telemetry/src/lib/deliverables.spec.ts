@@ -44,6 +44,9 @@ describe('actual PR creation invocation', () => {
     'gh pr create --dry-run=true',
     'gh pr create --help',
     'gh pr create -h',
+    'gh pr create -dh',
+    'gh pr create -dw',
+    'gh pr create --unknown-flag',
     'echo "gh pr create"',
     "rg 'gh pr create' docs",
     '# gh pr create',
@@ -54,6 +57,8 @@ describe('actual PR creation invocation', () => {
   it.each([
     'gh pr create',
     'gh pr create --draft --body-file /tmp/body.md',
+    'gh pr create -df -t--help -bbody',
+    'gh pr create --milestone next --recover saved',
     'gh pr create --title "--dry-run" --body "mentions gh pr create --help"',
   ])('retains actual creation: %s', (command) =>
     expect(isPRPublicationCommand(command)).toBe(true),

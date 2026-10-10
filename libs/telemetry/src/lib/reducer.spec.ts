@@ -500,3 +500,47 @@ describe('Claude qualified PR publication invocation', () => {
     );
   });
 });
+
+describe('failed Claude publication evidence', () => {
+  it('does not qualify a failed result or replay a consumed publication call', () => {
+    const rows = [
+      {
+        type: 'assistant',
+        uuid: 'a',
+        sessionId: 'failed-create',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              name: 'Bash',
+              id: 'create',
+              input: { command: 'gh pr create' },
+            },
+          ],
+        },
+      },
+      ...[true, false].map((is_error, index) => ({
+        type: 'user',
+        uuid: `u${index}`,
+        sessionId: 'failed-create',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'create',
+              is_error,
+              content: 'https://github.com/octo/example/pull/42',
+            },
+          ],
+        },
+      })),
+    ];
+    const summary = reduceTranscript(
+      rows.map((row) => JSON.stringify(row)).join('\n'),
+    )[0];
+    expect(summary.deliverables.qualifiedPRs).toBeUndefined();
+    expect(summary.deliverables.prNumbers).toEqual([42]);
+  });
+});

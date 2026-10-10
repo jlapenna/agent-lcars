@@ -128,15 +128,40 @@ export function isPRPublicationCommand(command: string): boolean {
     '-p',
     '--template',
     '-T',
+    '--milestone',
+    '-m',
+    '--recover',
+  ]);
+  const booleanFlags = new Set([
+    '--draft',
+    '--editor',
+    '--fill',
+    '--fill-first',
+    '--fill-verbose',
+    '--no-maintainer-edit',
   ]);
   for (let index = 3; index < words.length; index++) {
     const word = words[index];
-    const flag = word.split('=', 1)[0];
-    if (['--dry-run', '--help', '-h', '--web', '-w', '--'].includes(flag))
-      return false;
-    if (valueFlags.has(word)) {
-      if (++index >= words.length) return false;
-    } else if (!word.startsWith('-')) return false;
+    if (word.startsWith('--')) {
+      const flag = word.split('=', 1)[0];
+      if (valueFlags.has(flag)) {
+        if (!word.includes('=') && ++index >= words.length) return false;
+      } else if (!booleanFlags.has(flag)) return false;
+      continue;
+    }
+    if (!word.startsWith('-') || word.length === 1) return false;
+    // Cobra accepts combined shorthand flags (-dh means draft + help).
+    // A value-taking flag consumes the remainder, so -t--help is title data.
+    for (let shorthand = 1; shorthand < word.length; shorthand++) {
+      const flag = `-${word[shorthand]}`;
+      if (valueFlags.has(flag)) {
+        if (shorthand === word.length - 1 && ++index >= words.length)
+          return false;
+        break;
+      }
+      if (!['d', 'e', 'f'].includes(word[shorthand])) return false;
+      if (word[shorthand + 1] === '=') break;
+    }
   }
   return true;
 }

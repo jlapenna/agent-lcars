@@ -3,6 +3,7 @@ import {
   buildSessionDoc,
   codexAdapter,
   parseSessionDoc,
+  reduceTranscript,
 } from '@agent-lcars/telemetry';
 import { describe, expect, it } from 'vitest';
 
@@ -60,6 +61,8 @@ describe('qualified publication → retained session → spend boundary (#2301)'
     'gh pr create --dry-run',
     'gh pr create "--dry-run"',
     'gh pr create --help',
+    'gh pr create -dh',
+    'gh pr create -dw',
     'printf "%s" "gh pr create"',
     "rg 'gh pr create' docs/product",
     'gh pr view 42 --json body --jq "gh pr create"',
@@ -68,6 +71,55 @@ describe('qualified publication → retained session → spend boundary (#2301)'
       call('inspect', command),
       output('inspect', local.url),
     ]);
+    const spend = aggregateSessionSpend(
+      [doc],
+      new Map([['jlapenna/agent-lcars#42', local]]),
+    );
+    expect(doc.deliverables.qualifiedPRs).toBeUndefined();
+    expect(spend.mergedPRs).toBe(0);
+    expect(spend.totals.costUsd).toBe(5);
+  });
+
+  it('retains failed Claude cost without attributing an unrelated merged URL', () => {
+    const summary = reduceTranscript(
+      [
+        {
+          type: 'assistant',
+          sessionId: 'failed-claude',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                name: 'Bash',
+                id: 'create',
+                input: { command: 'gh pr create' },
+              },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          sessionId: 'failed-claude',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'create',
+                is_error: true,
+                content: local.url,
+              },
+            ],
+          },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join('\n'),
+    )[0];
+    const doc = parseSessionDoc(
+      buildSessionDoc({ ...summary, totalCostUsd: 5 }, 'ended', { repo }),
+    );
     const spend = aggregateSessionSpend(
       [doc],
       new Map([['jlapenna/agent-lcars#42', local]]),
