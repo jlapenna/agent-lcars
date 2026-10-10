@@ -19,13 +19,27 @@ export const workTargetSchema = z.strictObject({
   repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/u),
 });
 
-export const workSpecSchema = z.strictObject({
-  title: z.string().min(1).max(WORK_TITLE_MAX),
-  description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
-  /** Required: invoking a pipeline is a granted capability. */
-  pipeline: z.enum(PIPELINES),
-  target: workTargetSchema,
-});
+/** Ordered alternatives, explicitly supplied; omission/empty means no reroute. */
+export const fallbackPipelinesSchema = z
+  .array(z.enum(PIPELINES))
+  .max(PIPELINES.length - 1)
+  .refine((pipelines) => new Set(pipelines).size === pipelines.length, {
+    message: 'Fallback pipelines must be unique',
+  });
+
+export const workSpecSchema = z
+  .strictObject({
+    title: z.string().min(1).max(WORK_TITLE_MAX),
+    description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+    /** Required: invoking a pipeline is a granted capability. */
+    pipeline: z.enum(PIPELINES),
+    fallbackPipelines: fallbackPipelinesSchema.optional(),
+    target: workTargetSchema,
+  })
+  .refine((spec) => !spec.fallbackPipelines?.includes(spec.pipeline), {
+    path: ['fallbackPipelines'],
+    message: 'Fallback pipelines must differ from the requested pipeline',
+  });
 export type WorkSpec = z.infer<typeof workSpecSchema>;
 
 /** The closed set of delivery channels a work item's origin may name.

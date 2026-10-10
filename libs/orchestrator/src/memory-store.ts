@@ -37,6 +37,7 @@ import {
   type OrchestratorStore,
   type RequestBinding,
   type RequestTransactionState,
+  type RunTransactionState,
   selectFairQueuedRun,
   StoreConflict,
   type TaskListCursor,
@@ -131,10 +132,11 @@ export class MemoryStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
-    decide(state: {
-      task: VersionedTask | undefined;
-      run: Run | undefined;
-    }): Decision | Refusal;
+    queueEligibilityPipelines?: readonly string[];
+    shouldReadQueueEligibility?: (
+      state: Pick<RunTransactionState, 'task' | 'run'>,
+    ) => boolean;
+    decide(state: RunTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     // Keep the snapshot and write synchronous, matching `transactRequest`'s
     // reference transaction semantics.
@@ -143,7 +145,28 @@ export class MemoryStore implements OrchestratorStore {
       run === undefined
         ? undefined
         : structuredClone(this.#tasks.get(taskKey(run.task)));
-    const outcome = input.decide({ task, run });
+    const outcome = input.decide({
+      task,
+      run,
+      ...(input.queueEligibilityPipelines === undefined ||
+      input.shouldReadQueueEligibility?.({ task, run }) === false
+        ? {}
+        : {
+            queueEligibility: {
+              cooldowns: Object.fromEntries(
+                input.queueEligibilityPipelines.map((pipeline) => [
+                  pipeline,
+                  structuredClone(this.#providerCooldowns.get(pipeline)),
+                ]),
+              ),
+              liveRuns: structuredClone(
+                [...this.#runs.values()].filter((candidate) =>
+                  input.queueEligibilityPipelines?.includes(candidate.pipeline),
+                ),
+              ),
+            },
+          }),
+    });
     if (isRefusal(outcome)) return outcome;
     this.#apply({ decision: outcome, expectedRevision: task?.revision });
     return outcome;
@@ -643,6 +666,16 @@ export class MemoryStore implements OrchestratorStore {
         .filter((run) => run.queue?.state === 'queued' && isLive(run.state))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .slice(0, limit),
+    );
+  }
+  async readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>> {
+    return Object.fromEntries(
+      pipelines.map((pipeline) => [
+        pipeline,
+        structuredClone(this.#providerCooldowns.get(pipeline)),
+      ]),
     );
   }
 }

@@ -19,6 +19,7 @@ import {
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import { normalizeGithubWorkPayload } from './work-from-github';
 import { forbiddenReason, type GrantsPrincipal, sameSpec } from './work-mint';
+import { authorizeProviderFallback } from './work-provider-fallback';
 
 /** The one internal admission boundary for a GitHub issue or pull-request
  * anchor. HTTP, webhook, and console callers prepare their own identity and
@@ -50,6 +51,7 @@ export interface GithubWorkRedispatchInput {
   anchor: TaskId;
   requestId: string;
   params: Record<string, string>;
+  fallbackPipelines?: readonly string[];
   authorization: {
     sourceRepository?: string;
     grantsPrincipal: GrantsPrincipal;
@@ -118,6 +120,15 @@ export async function admitGithubWork(
     if (forbidden !== undefined)
       return { kind: 'forbidden', message: forbidden };
   }
+  if (
+    work.spec.fallbackPipelines?.length &&
+    input.authorization?.grantsPrincipal === undefined
+  )
+    return {
+      kind: 'forbidden',
+      message:
+        'Explicit provider fallback requires an authenticated Work grant',
+    };
 
   if (input.labelRouting !== undefined) {
     const conflict = checkGithubLabelRouting(input.labelRouting);
@@ -142,6 +153,17 @@ export async function admitGithubWork(
       ? {}
       : { requestBinding: input.requestBinding }),
     pipeline: work.spec.pipeline,
+    providerFallback:
+      input.authorization?.grantsPrincipal === undefined
+        ? undefined
+        : authorizeProviderFallback(
+            {
+              ...input.authorization.grantsPrincipal,
+              sourceRepository: input.authorization.sourceRepository,
+            },
+            work.spec.pipeline,
+            work.spec.fallbackPipelines,
+          ),
     params: input.params,
     work,
     // This comparison must execute in the store transaction. A standalone
@@ -228,6 +250,14 @@ export async function redispatchGithubWork(
     taskId: anchor,
     requestId: input.requestId,
     pipeline: work.spec.pipeline,
+    providerFallback: authorizeProviderFallback(
+      {
+        ...input.authorization.grantsPrincipal,
+        sourceRepository: input.authorization.sourceRepository,
+      },
+      work.spec.pipeline,
+      input.fallbackPipelines ?? work.spec.fallbackPipelines,
+    ),
     params: input.params,
   });
   if (isRefusal(outcome)) {

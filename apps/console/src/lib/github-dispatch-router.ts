@@ -87,6 +87,9 @@ export const githubDispatchRouter = os.router({
         anchor: input.anchor,
         requestId: input.requestId,
         params,
+        ...(input.fallbackPipelines === undefined
+          ? {}
+          : { fallbackPipelines: input.fallbackPipelines }),
         authorization: {
           ...(principal.sourceRepository === undefined
             ? {}

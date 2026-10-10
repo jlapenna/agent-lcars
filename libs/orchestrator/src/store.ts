@@ -8,6 +8,7 @@ import type {
   TaskId,
 } from './model';
 import { taskKey } from './model';
+import { providerIsCoolingDown } from './provider-cooldown';
 import {
   isQueueAdmissionCandidate,
   QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
@@ -20,6 +21,41 @@ import {
  * second concurrent session. Claude remains bounded by fleet host capacity.
  * This policy is deliberately absent from the claim request contract. */
 export { QUEUE_PIPELINE_MAX_LIVE_CLAIMS } from './queue-admission-status';
+
+/** The same provider cooldowns and admission ceilings used by queue claims. */
+export function availableQueuePipelines(input: {
+  pipelines: readonly string[];
+  cooldowns: Readonly<Record<string, unknown>>;
+  liveRuns: readonly Run[];
+  now: string;
+}): string[] {
+  return [...new Set(input.pipelines)].filter((pipeline) => {
+    if (providerIsCoolingDown(input.cooldowns[pipeline], input.now))
+      return false;
+    const ceiling = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
+    return (
+      ceiling === undefined ||
+      input.liveRuns.filter(
+        (run) =>
+          run.pipeline === pipeline &&
+          run.queue?.state === 'claimed' &&
+          (run.state === 'pending' || run.state === 'running'),
+      ).length < ceiling
+    );
+  });
+}
+
+export interface QueueEligibilitySnapshot {
+  readonly cooldowns: Readonly<Record<string, unknown>>;
+  readonly liveRuns: readonly Run[];
+}
+
+export interface RunTransactionState {
+  readonly task: VersionedTask | undefined;
+  readonly run: Run | undefined;
+  /** Absent unless requested; observed before any writes in this transaction. */
+  readonly queueEligibility?: QueueEligibilitySnapshot;
+}
 
 /** Selects one provider head using least live occupancy, then FIFO age.
  * Callers must pass only server-authorized pipelines. */
@@ -153,10 +189,12 @@ export interface OrchestratorStore {
    */
   transactRun(input: {
     runId: string;
-    decide(state: {
-      task: VersionedTask | undefined;
-      run: Run | undefined;
-    }): Decision | Refusal;
+    queueEligibilityPipelines?: readonly string[];
+    /** Evaluated from the consistent local snapshot before global reads. */
+    shouldReadQueueEligibility?: (
+      state: Pick<RunTransactionState, 'task' | 'run'>,
+    ) => boolean;
+    decide(state: RunTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
   apply(input: {
     decision: Decision;
@@ -365,6 +403,10 @@ export interface OrchestratorStore {
   /** Every live run with `queue.state === 'queued'`, oldest first. An
    * optional `limit` bounds the result after terminal entries are removed. */
   listQueuedRuns(limit?: number): Promise<Run[]>;
+  /** Read-only prefilter; decisions must recheck these records transactionally. */
+  readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>>;
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and

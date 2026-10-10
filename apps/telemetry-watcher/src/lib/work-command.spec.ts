@@ -62,6 +62,58 @@ const item = (state: string) => ({
 });
 
 describe('lcars work', () => {
+  it('sends explicit ordered alternatives and supports disabling them per redispatch', async () => {
+    const d = deps({
+      'PUT /api/work/v1/items/{id}': (init) => {
+        expect(JSON.parse(String(init.body)).spec.fallbackPipelines).toEqual([
+          'opencode',
+          'codex',
+        ]);
+        return item('running');
+      },
+      'POST /api/work/v1/items/{id}/redispatch': (init) => {
+        expect(JSON.parse(String(init.body)).fallbackPipelines).toEqual([]);
+        return item('running');
+      },
+    });
+    expect(
+      await executeWorkCommand(
+        [
+          'create',
+          '--repo',
+          'o/r',
+          '--pipeline',
+          'claude',
+          '--title',
+          't',
+          '--description',
+          'd',
+          '--fallback-pipelines',
+          'opencode,codex',
+        ],
+        d,
+      ),
+    ).toEqual({ ok: true });
+    expect(
+      await executeWorkCommand(
+        ['redispatch', item('running').id, '--fallback-pipelines', 'none'],
+        d,
+      ),
+    ).toEqual({ ok: true });
+  });
+  it.each(['codex,codex', 'unknown'])(
+    'rejects invalid fallback choices %s without a request',
+    async (choices) => {
+      const d = deps({});
+      expect(
+        await executeWorkCommand(
+          ['redispatch', item('running').id, '--fallback-pipelines', choices],
+          d,
+        ),
+      ).toEqual({ ok: false });
+      expect(d.calls).toEqual([]);
+    },
+  );
   describe('reply', () => {
     const id = item('parked').id;
     const replyUrl = `POST /api/work/v1/items/${id}/reply`;

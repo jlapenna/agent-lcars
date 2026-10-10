@@ -22,6 +22,7 @@ import { isControlPlaneRepository } from './deployment';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal } from './work-auth';
 import type { WorkGrant } from './work-grants';
+import { authorizeProviderFallback } from './work-provider-fallback';
 
 export interface WorkContext {
   /** Resolved by the route from the request's bearer token or session;
@@ -68,6 +69,7 @@ export async function view(
 export interface GrantsPrincipal {
   principal: string;
   pipelines: readonly string[];
+  sourceRepository?: string;
 }
 
 /** Shared scope gate for every native Work creation adapter. */
@@ -163,6 +165,11 @@ export async function mintItem(
     taskId: { workId: input.id },
     requestId: input.id,
     pipeline: input.spec.pipeline,
+    providerFallback: authorizeProviderFallback(
+      input.grantsPrincipal,
+      input.spec.pipeline,
+      input.spec.fallbackPipelines,
+    ),
     params: { mode: 'implement' },
     work: { origin: input.origin, spec: input.spec },
     // This comparison must execute in the store transaction. Two native

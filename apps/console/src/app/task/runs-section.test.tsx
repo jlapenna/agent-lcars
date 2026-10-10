@@ -231,3 +231,50 @@ it('keeps a dangerous related reference inert', () => {
     screen.queryByRole('link', { name: 'javascript:alert(1)' }),
   ).toBeNull();
 });
+
+it('keeps exact result links and fallback provenance together on the fresh attempt', () => {
+  const originalRunId = 'supersprinklesracing/sprinkles#42/r1';
+  const runId = 'supersprinklesracing/sprinkles#42/r2';
+  const ref = 'https://github.com/supersprinklesracing/sprinkles/pull/77';
+  const blocker =
+    'https://github.com/supersprinklesracing/sprinkles/issues/42#issuecomment-99';
+  renderRuns([
+    makeRun({
+      runId,
+      pipeline: 'codex',
+      state: 'finished',
+      providerFallback: {
+        allowedPipelines: ['codex', 'opencode'],
+        attemptedPipelines: ['claude', 'codex'],
+        originalRunId,
+        fromRunId: originalRunId,
+        trigger: {
+          reason: 'provider-limit',
+          limitedPipeline: 'claude',
+          failureRunId: originalRunId,
+        },
+      },
+      result: {
+        ok: true,
+        summary: 'park',
+        ref,
+        relatedRefs: [blocker, ref, 'javascript:alert(1)'],
+      },
+    }),
+  ]);
+  const row = within(screen.getByTestId(`run-${runId}`));
+  expect(
+    row.getByText(/Fresh attempt on codex.*claude reported a provider limit/),
+  ).toBeInTheDocument();
+  expect(
+    row.getByText(
+      /Original intent:.*\/r1; previous attempt:.*\/r1; triggering failure:.*\/r1/,
+    ),
+  ).toBeInTheDocument();
+  expect(row.getAllByRole('link', { name: ref })).toHaveLength(1);
+  expect(row.getByRole('link', { name: blocker })).toHaveAttribute(
+    'href',
+    blocker,
+  );
+  expect(row.queryByRole('link', { name: 'javascript:alert(1)' })).toBeNull();
+});

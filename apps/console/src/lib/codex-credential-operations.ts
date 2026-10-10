@@ -11,6 +11,7 @@ import {
   decidedRun,
   type Decision,
   isRefusal,
+  type Orchestrator,
   type OrchestratorStore,
   type Refusal,
   refused,
@@ -28,6 +29,7 @@ import {
 
 interface BrokerContext {
   store: OrchestratorStore;
+  orchestrator: Orchestrator;
   codexAuth: CodexAuthStore;
   now: () => Date;
 }
@@ -46,20 +48,31 @@ async function finishCredentialOperation(
   const change = (
     next: Parameters<typeof changeCredentialOperation>[0]['change'],
   ) =>
-    context.store.transactRun({
-      runId,
-      decide: ({ task, run }) =>
-        task === undefined || run === undefined
-          ? refused('unknown-run')
-          : changeCredentialOperation({
-              now: context.now().toISOString(),
-              task: task.task,
-              run,
-              id: operationId,
-              claimFingerprint,
-              change: next,
-            }),
-    });
+    next.kind === 'finish'
+      ? context.orchestrator.finishCredentialOperation({
+          runId,
+          operationId,
+          claimFingerprint,
+          now: () => context.now().toISOString(),
+          ...(next.restored === undefined ? {} : { restored: next.restored }),
+          ...(next.leaseRetiredAtSequence === undefined
+            ? {}
+            : { leaseRetiredAtSequence: next.leaseRetiredAtSequence }),
+        })
+      : context.store.transactRun({
+          runId,
+          decide: ({ task, run }) =>
+            task === undefined || run === undefined
+              ? refused('unknown-run')
+              : changeCredentialOperation({
+                  now: context.now().toISOString(),
+                  task: task.task,
+                  run,
+                  id: operationId,
+                  claimFingerprint,
+                  change: next,
+                }),
+        });
   let leaseRetiredAtSequence: number | undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
     const finished = await change({
@@ -83,7 +96,8 @@ async function finishCredentialOperation(
       return refused('not-claimant');
     if (
       operation.mutation !== undefined ||
-      current?.credentialPendingResult === undefined
+      (operation.kind !== 'cleanup' &&
+        current?.credentialPendingResult === undefined)
     )
       return finished;
     const lease = await context.codexAuth.readLease();
@@ -133,7 +147,7 @@ async function finishCredentialOperation(
 /** Serialized by the canonical Run, including across separate server processes.
  * External IO is always outside retryable Firestore transaction callbacks. */
 class ReservedCodexOperation {
-  readonly id = crypto.randomUUID();
+  readonly id: string;
   readonly claimFingerprint: string;
   private mutationSequence = 0;
   nextMutationId(): string {
@@ -142,7 +156,10 @@ class ReservedCodexOperation {
   constructor(
     readonly context: BrokerContext,
     readonly run: Run,
+    reserved?: CredentialOperation,
   ) {
+    this.id = reserved?.id ?? crypto.randomUUID();
+    this.mutationSequence = reserved?.mutationSequence ?? 0;
     this.claimFingerprint = run.queue?.tokenHash ?? '';
   }
 
@@ -435,13 +452,42 @@ export async function releaseCodexCredentialLease(
   context: BrokerContext,
   run: Run,
 ): Promise<void> {
-  const operation = new ReservedCodexOperation(context, run);
-  await operation.begin('cleanup');
+  // Completion callers hold the authenticated pre-settlement snapshot. The
+  // canonical terminal transition may already have reserved cleanup; resume
+  // that exact operation, without granting a replacement claim its authority.
+  const currentRun = await context.store.readRun(run.runId);
+  if (
+    currentRun === undefined ||
+    currentRun.queue?.tokenHash !== run.queue?.tokenHash
+  )
+    throw new ORPCError('UNAUTHORIZED', { message: 'Run claim changed' });
+  const reserved =
+    currentRun.credentialOperation?.kind === 'cleanup'
+      ? currentRun.credentialOperation
+      : undefined;
+  const operation = new ReservedCodexOperation(context, currentRun, reserved);
+  if (reserved === undefined) {
+    await operation.begin('cleanup');
+  } else {
+    // Accepted completion already reserved this server operation atomically.
+    // Resume its exact journal; never ask a retired worker to start new IO.
+    const current = await context.store.readRun(run.runId);
+    if (current?.credentialOperation === undefined) return;
+    if (
+      current.credentialOperation.id !== reserved.id ||
+      current.credentialOperation.claimFingerprint !==
+        operation.claimFingerprint
+    )
+      throw new ORPCError('UNAUTHORIZED', { message: 'Run claim changed' });
+    if (current.credentialOperation.mutation !== undefined) {
+      throw new ORPCError('CONFLICT', {
+        message: 'Credential operation pending recovery',
+      });
+    }
+  }
   try {
-    const lease = await context.codexAuth.readLease();
-    // Historical/missing-generation ownership is readable but cannot delete
-    // or expire a replacement lease. Retain its ordinary expiry backstop.
-    if (operation.owned(lease)) await operation.release(lease);
+    // Finish owns the exact-sequence lease read/CAS/proof handshake. Do not
+    // release once here and then repeat it while proving cleanup completion.
     await operation.finish();
   } catch (error) {
     await operation.finishIfResolved();
