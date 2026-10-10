@@ -67,3 +67,16 @@ func TestClaimWindowDoesNotForceUnchangedStatusWrites(t *testing.T) {
 		t.Fatal("unavailability must publish")
 	}
 }
+
+func TestConsoleClaimWindowRejectsUnsafeIntegerConversion(t *testing.T) {
+	start := time.Date(2026, 10, 10, 5, 23, 42, 0, time.UTC)
+	for i := range 3 {
+		for _, unsafe := range []uint64{maxQueueClaimCounter + 1, 1 << 63, ^uint64(0)} {
+			counts := [3]uint64{}
+			counts[i] = unsafe
+			if got := newConsoleClaimWindow(counts, start, start.Add(consoleStatusInterval)); got != nil {
+				t.Fatalf("unsafe provider %d count %d became %#v", i, unsafe, got)
+			}
+		}
+	}
+}

@@ -135,9 +135,10 @@ type consoleQueueExecutorStatus struct {
 // sampled interval is part of the contract; a restart never pretends to have
 // observed the full preceding fifteen minutes.
 type consoleClaimWindow struct {
-	Claude      uint64 `firestore:"claude"`
-	Codex       uint64 `firestore:"codex"`
-	OpenCode    uint64 `firestore:"opencode"`
+	// Firestore integers are signed; uint64 is rejected even for zero.
+	Claude      int64  `firestore:"claude"`
+	Codex       int64  `firestore:"codex"`
+	OpenCode    int64  `firestore:"opencode"`
 	WindowStart string `firestore:"windowStart"`
 	WindowEnd   string `firestore:"windowEnd"`
 }

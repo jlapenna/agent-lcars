@@ -33,6 +33,22 @@ type queueClaimSample struct {
 	counts [3]uint64
 }
 
+// Both Prometheus's float64 counters and the Console's JavaScript reader
+// must retain exact integer values across the signed Firestore boundary.
+const maxQueueClaimCounter = uint64(1<<53 - 1)
+
+func newConsoleClaimWindow(counts [3]uint64, start, end time.Time) *consoleClaimWindow {
+	for _, count := range counts {
+		if count > maxQueueClaimCounter {
+			return nil
+		}
+	}
+	return &consoleClaimWindow{
+		Claude: int64(counts[0]), Codex: int64(counts[1]), OpenCode: int64(counts[2]),
+		WindowStart: start.UTC().Format(time.RFC3339Nano), WindowEnd: end.UTC().Format(time.RFC3339Nano),
+	}
+}
+
 func newQueueExecutorStatusSource(
 	draining func() bool,
 	logger *slog.Logger,
@@ -100,7 +116,7 @@ func currentQueueClaimCounters() ([3]uint64, error) {
 			return counts, err
 		}
 		value := metric.GetCounter().GetValue()
-		if value < 0 || value > 9007199254740991 || math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) {
+		if value < 0 || value > float64(maxQueueClaimCounter) || math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) {
 			return counts, fmt.Errorf("invalid claim counter")
 		}
 		counts[i] = uint64(value)
@@ -142,7 +158,7 @@ func (s *queueExecutorStatusSource) claimWindow(now time.Time) *consoleClaimWind
 	if !now.After(first.at) {
 		return nil
 	}
-	return &consoleClaimWindow{Claude: counts[0] - first.counts[0], Codex: counts[1] - first.counts[1], OpenCode: counts[2] - first.counts[2], WindowStart: first.at.UTC().Format(time.RFC3339Nano), WindowEnd: now.UTC().Format(time.RFC3339Nano)}
+	return newConsoleClaimWindow([3]uint64{counts[0] - first.counts[0], counts[1] - first.counts[1], counts[2] - first.counts[2]}, first.at, now)
 }
 
 // runQueueExecutorStatusPublisher shares the scale-set publisher's bounded

@@ -233,6 +233,36 @@ describe('authoritative ARC inventory', () => {
       expect(result.queueExecutor?.claims).toBeUndefined();
     }
   });
+
+  it.each([0, 1, Number.MAX_SAFE_INTEGER])(
+    'preserves signed Firestore claim integers through the reader: %s',
+    (count) => {
+      const updatedAt = new Date(now).toISOString();
+      const claims = {
+        claude: count,
+        codex: count,
+        opencode: count,
+        windowStart: new Date(now - 10_000).toISOString(),
+        windowEnd: updatedAt,
+      };
+      // Firestore integer_value fields decode to these exact JS numbers.
+      // The Go SDK Commit regression verifies the producer's wire types.
+      const result = projectAutoscalerStatuses(
+        [
+          status({
+            updatedAt,
+            expireAt: Timestamp.fromMillis(now + 180_000),
+            claims,
+          }),
+        ],
+        now,
+      );
+      expect(result.queueExecutor?.claims).toEqual(claims);
+      expect(JSON.parse(JSON.stringify(result.queueExecutor))?.claims).toEqual(
+        claims,
+      );
+    },
+  );
 });
 
 describe('subscribeAutoscalerStatuses', () => {
