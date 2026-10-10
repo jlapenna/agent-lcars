@@ -79,6 +79,7 @@ export async function updateDashboardAnchor(params: {
   remove?: boolean;
   mergeableState?: 'clean' | 'behind';
   requestedReviewerLogins?: string[];
+  sourceUpdatedAt?: string;
 }) {
   const store = firestoreStore();
   const anchor = { repo: E2E_FIXTURE_REPOSITORY, issue: params.issue };
@@ -94,6 +95,7 @@ export async function updateDashboardAnchor(params: {
           projection: {
             ...current,
             title: params.title ?? current.title,
+            sourceUpdatedAt: params.sourceUpdatedAt ?? current.sourceUpdatedAt,
             ...(params.mergeableState
               ? { mergeableState: params.mergeableState }
               : {}),
