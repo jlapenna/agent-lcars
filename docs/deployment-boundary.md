@@ -261,8 +261,68 @@ those trust decisions in its own canonical infrastructure, not through an
 Agent LCARS repository variable. This repository sends Homelab no rollout
 signal: Homelab and Agent LCARS are separate systems, so no workflow here uses
 the Agent LCARS App to dispatch Homelab. Homelab delivers `main` on its own
-daily backstop, when it applies new configuration, or when the maintainer runs
-`gh workflow run source-reconcile.yml -R jlapenna/homelab -f source=agent-lcars`.
+daily backstop, when it applies new configuration, or through the maintainer
+handoff below.
+
+#### Homelab-owned source delivery
+
+After required CI succeeds for a reviewed commit on Agent LCARS `main`, record
+that full lowercase 40-character commit SHA and its successful CI run. Obtain
+approval for the specific reconciliation command and target before dispatching
+from a maintainer environment with Homelab access:
+
+```sh
+# Replace this value with the full main commit SHA validated by required CI.
+validated_sha='<40-character-lowercase-main-commit-sha>'
+gh workflow run source-reconcile.yml -R jlapenna/homelab \
+  -f source=agent-lcars -f sha="$validated_sha"
+```
+
+Both `source` and `sha` are required by Homelab's
+[source reconciliation workflow](https://github.com/jlapenna/homelab/blob/main/.github/workflows/source-reconcile.yml).
+The SHA identifies the CI-validated request; it does not install a new version
+pin. The reconciler delivers latest reviewed `main`. Read the current remote
+workflow inputs before preparing this handoff; comparing its input declarations
+does not require dispatching it. Record the resulting reconciliation run and
+verify adoption by each affected consumer rather than treating workflow
+submission or Console deployment success as delivery evidence.
+
+#### CLI consumers and adoption gates
+
+The `lcars` CLI is built from telemetry-watcher source, but its consumers have
+independent delivery paths:
+
+| Consumer                      | Delivery owner and existing contract                                                                                                                                                                                                                                                                                                                        | Adoption evidence                                                                                                                        |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Workstation CLI               | The maintainer explicitly reruns the supported [installer](../apps/telemetry-watcher/deploy/install-session-title-cli.sh), which copies the bundle and launcher to stable locations outside the checkout. It does not update automatically after a merge.                                                                                                   | Invoke the actually installed launcher and record its resolved path and copied bundle hash.                                              |
+| Runner CLI and watcher daemon | Homelab owns publication and reconciliation under the [image-publish routing contract](image-publish-routing.md). The [runner Dockerfile](../apps/runner-autoscaler/runner-image/Dockerfile) bakes the CLI bundle and launcher; the [watcher Dockerfile](../apps/telemetry-watcher/Dockerfile) ships the daemon bundle, not a workstation CLI installation. | Record the running image digest and source revision; test the CLI baked into that runner digest separately from watcher daemon adoption. |
+
+For a CLI source change, hand the maintainer the reviewed main SHA and CI
+receipt, affected workstation installation targets and image consumers, the
+supported installer/image-publish links above, and the verification command
+below. Obtain approval for the specific host installation and any Homelab
+rollout before executing them. Follow the existing image selection contract;
+Console rollout does not update copied workstation bundles or prove image
+adoption.
+
+After installation or rollout, invoke the installed workstation launcher or
+the runner image's baked `/usr/local/bin/lcars`, using an existing failed Work
+item that the caller is authorized to read:
+
+```sh
+lcars work status <failed-work-id> --watch
+```
+
+It must print `failed` and exit **1 promptly**, without waiting for another
+poll when the first response is already terminal. Record the launcher path,
+bundle hash or immutable image digest, output, elapsed time and exit status.
+A bounded loopback fixture with a fixture-only token and an explicitly
+local API origin can verify the same behavior without production reads or
+Work mutation. Exercise the installed/baked artifact, not a freshly built
+source bundle. A stale bundle that rejects `work status` or `--watch` is an
+**unmet delivery gate**, even if CI, Console deployment or the source issue
+is already complete. Retain that gate and its installation/rollout resume
+trigger in the delivery handoff.
 
 One further exception:
 
