@@ -29,6 +29,10 @@ func placementForJob(job batch.Job, pods []core.Pod, inventoryError error, now t
 	if !job.CreationTimestamp.IsZero() {
 		p.JobCreatedAt = job.CreationTimestamp.UTC().Format(time.RFC3339Nano)
 	}
+	if job.Spec.Suspend != nil && *job.Spec.Suspend {
+		p.Phase, p.Reason = "bootstrapping", "launch-pending"
+		return p
+	}
 	if inventoryError != nil {
 		p.Phase, p.Reason = "unavailable", "inventory-unavailable"
 		return p
@@ -68,6 +72,7 @@ func (q *kubernetesQueue) observePlacements(ctx context.Context, report func(con
 		return fmt.Errorf("placement Job inventory unavailable")
 	}
 	pods, podErr := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
+	observedAt := time.Now()
 	var items []core.Pod
 	if podErr == nil {
 		items = pods.Items
@@ -81,7 +86,7 @@ func (q *kubernetesQueue) observePlacements(ctx context.Context, report func(con
 		if queueJobTerminal(job) || job.DeletionTimestamp != nil || job.UID == "" || runID == "" || job.Name != queueJobName(runID) || job.Annotations[queueClaimAnnotation] == "" || job.Annotations[queueRunnerAnnotation] == "" {
 			continue
 		}
-		if err := report(ctx, job, placementForJob(job, items, podErr, time.Now())); err != nil {
+		if err := report(ctx, job, placementForJob(job, items, podErr, observedAt)); err != nil {
 			q.logger.Warn("Placement observation unavailable")
 		}
 	}

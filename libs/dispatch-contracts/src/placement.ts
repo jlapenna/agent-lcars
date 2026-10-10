@@ -8,9 +8,10 @@ export const runPlacementSchema = z.strictObject({
     'unschedulable',
     'scheduled',
     'inventory-unavailable',
+    'launch-pending',
   ]),
-  observedAt: z.iso.datetime({ offset: false }),
-  jobCreatedAt: z.iso.datetime({ offset: false }).optional(),
+  observedAt: z.iso.datetime({ offset: false }).max(32),
+  jobCreatedAt: z.iso.datetime({ offset: false }).max(32).optional(),
 });
 export type RunPlacement = z.infer<typeof runPlacementSchema>;
 

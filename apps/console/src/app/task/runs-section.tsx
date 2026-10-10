@@ -140,11 +140,15 @@ function RunResultView({ result }: { result: Run['result'] }) {
  * One authoritative Run from the orchestrator's own history. `LogicalWorkCard`
  * renders this whenever a task has recorded Runs.
  */
-function RunRow({ run }: { run: Run }) {
+function RunRow({ run, anchorPrefix }: { run: Run; anchorPrefix: string }) {
   const badge = runStateBadge(run);
   const generation = parseRunGeneration(run.runId);
   return (
-    <Stack gap={6} id={`run-${run.runId}`} data-testid={`run-${run.runId}`}>
+    <Stack
+      gap={6}
+      id={`${anchorPrefix}-${run.runId}`}
+      data-testid={`${anchorPrefix}-${run.runId}`}
+    >
       <Group gap="xs" wrap="wrap">
         <Badge
           variant="filled"
@@ -191,7 +195,13 @@ function RunRow({ run }: { run: Run }) {
  * result renders directly from `@agent-lcars/orchestrator`'s `Run` model
  * (libs/orchestrator/src/model.ts) instead of a lossy re-derivation.
  */
-export function RunsSection({ runs }: { runs: Run[] }) {
+export function RunsSection({
+  runs,
+  anchorPrefix = 'run',
+}: {
+  runs: Run[];
+  anchorPrefix?: string;
+}) {
   const sorted = [...runs].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
   );
@@ -203,7 +213,7 @@ export function RunsSection({ runs }: { runs: Run[] }) {
       {sorted.map((run, index) => (
         <Stack key={run.runId} gap={10}>
           {index > 0 && <Divider />}
-          <RunRow run={run} />
+          <RunRow run={run} anchorPrefix={anchorPrefix} />
         </Stack>
       ))}
     </Stack>
