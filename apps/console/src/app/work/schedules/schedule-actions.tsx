@@ -3,7 +3,7 @@
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 
 import { showErrorToast } from '../../show-error-toast';
 import {
@@ -36,10 +36,16 @@ export function ScheduleActions({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  // Streamed markup can appear before its event handlers. Do not accept a
+  // first click that cannot yet open the dialog or execute the mutation.
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    setReady(true);
+  }, []);
   // Freeze the selected revision while the dialog is open. A refreshed row
   // cannot silently approve deletion/editing of a different configuration.
   const [editPending, setEditPending] = useState(false);
-  const busy = isPending || editPending;
+  const busy = !ready || isPending || editPending;
   const [editing, setEditing] = useState<EditableSchedule>();
   const [deleting, setDeleting] = useState<EditableSchedule>();
   const [error, setError] = useState<string>();

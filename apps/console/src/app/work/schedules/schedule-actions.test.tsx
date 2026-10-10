@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
+import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ScheduleActions } from './schedule-actions';
@@ -47,6 +48,28 @@ function setup() {
 }
 
 describe('schedule edit/delete controls', () => {
+  it('keeps server-rendered schedule controls disabled until their handlers hydrate', async () => {
+    const action = vi.fn().mockResolvedValue([null, {}]);
+    const html = renderToString(
+      <MantineProvider>
+        <ScheduleActions
+          schedule={schedule}
+          enable={action}
+          disable={action}
+          update={action}
+          remove={action}
+        />
+      </MantineProvider>,
+    );
+    const fragment = document.createElement('div');
+    fragment.innerHTML = html;
+    const buttons = [...fragment.querySelectorAll('button')].filter((button) =>
+      ['Edit', 'Disable', 'Delete'].includes(button.textContent ?? ''),
+    );
+    expect(buttons).toHaveLength(3);
+    expect(buttons.every((button) => button.disabled)).toBe(true);
+    expect(action).not.toHaveBeenCalled();
+  });
   it('requires explicit deletion confirmation and freezes the revision selected before refresh', async () => {
     const { actions, rerender, element } = setup();
     fireEvent.click(
