@@ -23,7 +23,7 @@ kubernetes:
   limits:
     cpu: '1'
     memory: 2Gi
-    ephemeral-storage: 4Gi
+    ephemeral-storage: 24Gi
 `
 
 func writeConfig(t *testing.T, body string) string {
@@ -113,7 +113,7 @@ func TestOrchestratorConfigRejectsRetiredKeysByName(t *testing.T) {
 }
 
 // TestLoadOrchestratorConfigAcceptsLiveHomelabOrchestratorYAMLShape pins the
-// exact key set homelab's rendered .orchestrator.runtime.yml carries today
+// supported Homelab shape and rendered controller key set
 // (version, server, kubernetes, arc_lanes), so removing a backend can never
 // make the live controller refuse to start.
 func TestLoadOrchestratorConfigAcceptsLiveHomelabOrchestratorYAMLShape(t *testing.T) {
@@ -139,12 +139,12 @@ kubernetes:
       value: 'true'
       effect: NoSchedule
   requests:
-    cpu: '6'
-    memory: 12Gi
-    ephemeral-storage: 4Gi
+    cpu: '2'
+    memory: 6Gi
+    ephemeral-storage: 24Gi
   limits:
-    cpu: '6'
-    memory: 12Gi
+    cpu: '2'
+    memory: 6Gi
     ephemeral-storage: 24Gi
 arc_lanes:
 - name: lcars-ci

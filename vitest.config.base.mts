@@ -13,6 +13,7 @@ import { defineConfig, mergeConfig, type UserConfig } from 'vitest/config';
 // 15s testTimeout below). Direct runs (plain `vitest`) keep Vitest's own
 // default fan-out.
 const underNx = Boolean(process.env.NX_TASK_TARGET_PROJECT);
+const inCi = process.env.CI === 'true' || process.env.CI === '1';
 const nxCappedMaxWorkers = Math.max(
   2,
   Math.floor(os.availableParallelism() / 4),
@@ -84,7 +85,7 @@ export function createVitestConfig(options: {
     ...additionalSetupFiles,
   ];
 
-  return mergeConfig(
+  const config = mergeConfig(
     defineConfig({
       root: dirname,
       cacheDir: path.join(
@@ -140,4 +141,10 @@ export function createVitestConfig(options: {
     }),
     defineConfig(overrides),
   );
+  // A task must fit the 6 GiB job even on a host with many visible CPUs.
+  // Apply after project overrides so they cannot widen the CI worker pool.
+  if (inCi) {
+    config.test = { ...config.test, maxWorkers: 1, minWorkers: 1 };
+  }
+  return config;
 }

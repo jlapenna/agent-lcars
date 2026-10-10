@@ -51,9 +51,10 @@ grep -qF "some-other-registry/agent-lcars/e2e:${expected_tag}" "$TEST_DIR/regist
 # A fresh E2E_DOCKER_CACHE_DIR has no install.stamp, so this must be a miss:
 # the inner command installs first, then writes the stamp, then runs nx.
 grep -qx -- 'docker' "$TEST_DIR/default.log"
-grep -qx -- '--ipc=host' "$TEST_DIR/default.log"
-grep -qx -- '--memory=12g' "$TEST_DIR/default.log"
-grep -qx -- '--memory-swap=14g' "$TEST_DIR/default.log"
+grep -qx -- '--ipc=private' "$TEST_DIR/default.log"
+grep -qx -- '--cpus=2' "$TEST_DIR/default.log"
+grep -qx -- '--memory=6g' "$TEST_DIR/default.log"
+grep -qx -- '--memory-swap=6g' "$TEST_DIR/default.log"
 grep -qx -- '--pids-limit=8192' "$TEST_DIR/default.log"
 grep -qF "$REPO:/work" "$TEST_DIR/default.log"
 grep -qF "/node_modules:/work/node_modules" "$TEST_DIR/default.log"
@@ -99,3 +100,13 @@ override_stamp="$(E2E_DOCKER_PRINT_STAMP=1 E2E_DOCKER_IMAGE=some-other-registry/
 [ "$default_stamp" != "$override_stamp" ]
 
 echo "e2e-docker-isolation: PASS"
+
+# Resource overrides fail before any Docker or workspace mutation.
+for assignment in E2E_DOCKER_MEMORY=12g E2E_DOCKER_MEMORY=7g E2E_DOCKER_CPUS=4 E2E_DOCKER_MEMORY_SWAP=8g NODE_OPTIONS=--max-old-space-size=8192; do
+  set +e
+  env "$assignment" E2E_DOCKER_DRY_RUN=1 "$SCRIPT" @agent-lcars/console-e2e >"$TEST_DIR/oversized.log" 2>&1
+  budget_status=$?
+  set -e
+  [ "$budget_status" -eq 2 ]
+  ! grep -qx docker "$TEST_DIR/oversized.log"
+done

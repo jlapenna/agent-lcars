@@ -50,9 +50,9 @@
 #                       container and read by playwright.config.ts to scope a
 #                       run to one spec/suite.
 #
-# Resource caps (override for bigger/smaller machines):
-#   E2E_DOCKER_MEMORY=12g  E2E_DOCKER_MEMORY_SWAP=14g  E2E_DOCKER_PIDS=8192
-#   NX_MAX_PARALLEL=2      NODE_OPTIONS=--max-old-space-size=8192
+# Resource caps (overrides may only select a smaller supported job):
+#   E2E_DOCKER_MEMORY=6g  E2E_DOCKER_MEMORY_SWAP=6g  E2E_DOCKER_PIDS=8192
+#   NX_PARALLEL=1      NODE_OPTIONS=--max-old-space-size=4096
 #
 # App config comes only from tools/e2e/ci.env. The implementation target reads
 # that file directly and points its optional local override at the container's
@@ -104,6 +104,26 @@ done
 DRY_RUN=0
 if [ "${E2E_DOCKER_DRY_RUN:-}" = "1" ]; then
   DRY_RUN=1
+fi
+
+# The supported instance ceiling is 7 GB; reserve host headroom. Bigger
+# jobs must be split, never enabled by an environment override.
+MEM="${E2E_DOCKER_MEMORY:-6g}"
+MEM_SWAP="${E2E_DOCKER_MEMORY_SWAP:-$MEM}"
+CPUS="${E2E_DOCKER_CPUS:-2}"
+NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
+case "$MEM" in
+  [1-6]g | 1024m | 2048m | 3072m | 4096m | 5120m | 6144m) ;;
+  *) echo "e2e-docker: memory must fit the supported 6 GiB job cap" >&2; exit 2 ;;
+esac
+if [ "$MEM_SWAP" != "$MEM" ] || [[ ! "$CPUS" =~ ^[12]$ ]]; then
+  echo "e2e-docker: at most 2 CPUs and no additional swap are supported" >&2
+  exit 2
+fi
+if [[ ! "$NODE_OPTIONS" =~ ^--max-old-space-size=([0-9]{1,4})$ ]] ||
+  (( 10#${BASH_REMATCH[1]} < 1 || 10#${BASH_REMATCH[1]} > 4096 )); then
+  echo "e2e-docker: NODE_OPTIONS must declare a heap of 1..4096 MiB" >&2
+  exit 2
 fi
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -274,6 +294,14 @@ INSTALL_STAMP="$DK_DIR/install.stamp"
 # minutes on a local rebuild here masked both cases rather than surfacing
 # them (the same tradeoff sprinkles' tools/e2e-docker.sh makes, and the
 # reconciliation #908 exists to converge on).
+if [ "$DRY_RUN" -eq 0 ]; then
+  LOCAL_CAPACITY_LOCK_DIR="$HOME/.cache/fleet-e2e-local"
+  mkdir -p -m 700 "$LOCAL_CAPACITY_LOCK_DIR"
+  exec {LOCAL_CAPACITY_LOCK_FD}>"$LOCAL_CAPACITY_LOCK_DIR/run.lock"
+  flock -x "$LOCAL_CAPACITY_LOCK_FD"
+  python3 "$ROOT/tools/e2e-docker-capacity.py" "$ROOT" "$DK_DIR" >/dev/null
+fi
+
 if [ "$DRY_RUN" -eq 0 ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo ">> e2e-docker: pulling $IMAGE ..." >&2
   if ! docker pull "$IMAGE"; then
@@ -326,10 +354,8 @@ fi
 
 # Resource caps so an overweight run (Next build + emulator JVM + Chromium +
 # parallel nx workers) is OOM-killed *inside* the container instead of
-# starving the host. 12g is sized for the Next.js production build (the
-# heaviest step); 8g intermittently OOM-kills it.
-MEM="${E2E_DOCKER_MEMORY:-12g}"
-MEM_SWAP="${E2E_DOCKER_MEMORY_SWAP:-14g}"
+# starving the host. Builds are serialized and heaps leave room for the
+# emulators, browser and runner inside the supported 6 GiB job.
 PIDS="${E2E_DOCKER_PIDS:-8192}"
 
 QUOTED_PASSTHROUGH=""
@@ -376,7 +402,9 @@ fi
 # specifically to avoid this same trap.
 DOCKER_ARGS=(
   run --rm -t
-  --ipc=host
+  --ipc=private
+  --shm-size=1g
+  --cpus="$CPUS"
   --memory="$MEM"
   --memory-swap="$MEM_SWAP"
   --pids-limit="$PIDS"
@@ -386,8 +414,9 @@ DOCKER_ARGS=(
   -v "$DK_DIR_HOST:/e2e-cache"
   -e HOME=/e2e-cache/home
   -e NX_CACHE_DIRECTORY=/e2e-cache/nx-cache
-  -e NX_MAX_PARALLEL="${NX_MAX_PARALLEL:-2}"
-  -e NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}"
+  -e NX_PARALLEL="1"
+  -e NODE_OPTIONS="$NODE_OPTIONS"
+  -e JAVA_TOOL_OPTIONS="-Xmx1024m"
   -e HUSKY=0
   -e CI=1
   -e E2E_GREP="${E2E_GREP:-}"

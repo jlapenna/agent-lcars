@@ -80,7 +80,7 @@
         "env": {
           "PORT": "4203",
           "HOSTNAME": "127.0.0.1",
-          "NODE_OPTIONS": "--max-old-space-size=8192"
+          "NODE_OPTIONS": "--max-old-space-size=1024"
         }
       }
     },

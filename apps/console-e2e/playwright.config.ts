@@ -71,7 +71,7 @@ export default defineConfig({
       }).privateKey,
       PORT: '4200',
       HOSTNAME: '127.0.0.1',
-      NODE_OPTIONS: '--max-old-space-size=8192',
+      NODE_OPTIONS: '--max-old-space-size=1024',
       AUTH_URL: 'http://localhost:4200',
       E2E_TESTING: 'true',
       AGENT_CONSOLE_GITHUB_API_BASE_URL: 'http://localhost:4200/api/e2e/github',

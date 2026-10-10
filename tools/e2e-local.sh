@@ -209,7 +209,9 @@ SAFE_ENV=(
   # capability pair below.
   "NX_CACHE_DIRECTORY=$TEMP_HOME/nx-cache"
   "E2E_HERMETIC=1"
-  "NODE_OPTIONS=--max-old-space-size=6144"
+  "NODE_OPTIONS=--max-old-space-size=4096"
+  "JAVA_TOOL_OPTIONS=-Xmx1024m"
+  "NX_PARALLEL=1"
   "E2E_ENV_FILE=$CI_ENV"
   "E2E_ENV_LOCAL_FILE=$TEMP_HOME/.env.e2e.local"
 )

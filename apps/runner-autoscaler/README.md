@@ -200,8 +200,8 @@ kubernetes:
   max_concurrent: 5
   node_selector:
     homelab.jlapenna.net/queue-runner: 'true'
-  requests: { cpu: '500m', memory: 2Gi, ephemeral-storage: 4Gi }
-  limits: { cpu: '8', memory: 16Gi, ephemeral-storage: 24Gi }
+  requests: { cpu: '2', memory: 6Gi, ephemeral-storage: 24Gi }
+  limits: { cpu: '2', memory: 6Gi, ephemeral-storage: 24Gi }
 ```
 
 The deployment owns namespace, RBAC, node labels/readiness taints, Secret values,

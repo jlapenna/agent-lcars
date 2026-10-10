@@ -327,7 +327,9 @@ jobs:
         run: node --test tools/e2e-hermetic-env.test.mjs tools/e2e/run-console-emulators.test.mjs
 
       - name: Test e2e-docker isolation (#908)
-        run: bash tools/e2e-docker-isolation.test.sh
+        run: |
+          bash tools/e2e-docker-isolation.test.sh
+          node --test tools/ci-worker-budget.test.mjs tools/e2e-docker-capacity.test.mjs
 
       - name: Test Nx remote-cache read failure is non-fatal (#942)
         run: bash tools/nx-remote-cache-read-failure.test.sh
@@ -373,8 +375,8 @@ jobs:
 
       - name: Test, typecheck, and build
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
-          NX_MAX_PARALLEL: 2
+          NODE_OPTIONS: --max-old-space-size=4096
+          NX_PARALLEL: 1
           # actions/setup-go's cache key (OS/arch/go-version/dependency-file
           # hash) has no notion of "does this environment have a C
           # compiler" -- a self-hosted run cached before the runner image
@@ -383,7 +385,7 @@ jobs:
           # CGO_ENABLED='0' even now that gcc is actually installed).
           # Force it rather than trust the cached auto-detection.
           CGO_ENABLED: '1'
-        run: ./tools/nx run-many -t test typecheck build test-race --all --parallel=2
+        run: ./tools/nx run-many -t test typecheck build test-race --all --parallel=1
 
       # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
       # emulator; ubuntu-latest (the fork-PR carve-out above) still

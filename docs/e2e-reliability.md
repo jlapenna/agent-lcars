@@ -130,3 +130,28 @@ For every E2E change, reviewers should be able to answer:
 See [E2E security boundary](e2e-security-boundary.md) for environment isolation
 and [the contributor verification guide](../.agents/skills/agent-lcars-dev/references/verify.md#console-e2e)
 for commands.
+
+## Supported runner size
+
+The fleet supports instances with at most 7 GB RAM. Homelab owns the current
+[runner capacity contract](https://github.com/jlapenna/homelab/blob/main/docs/k3s.md#supported-job-envelope):
+LCARS CI/E2E jobs use at most 2 CPU / 6 GiB RAM / 40 GiB ephemeral storage.
+Verify the complete shape on one eligible node after host/service reserves
+before publishing resource changes. Temporary contention queues work.
+
+CI runs Nx tasks serially. Next CI builds use one worker and a 4096 MiB Node
+heap; E2E builds finish before emulators and browsers start. Runtime Next uses
+a 1024 MiB heap, Firestore Java uses 1024 MiB, and Playwright uses one worker.
+The local Docker wrapper caps jobs at 2 CPU / 6 GiB with no additional swap
+and rejects larger overrides before pulling images or changing the workspace.
+A build that exceeds this budget must be split or reduced, never retried with
+an oversized reservation. Heap settings alone do not prove total RSS; use real
+CI completion and container measurements for runtime evidence.
+
+Local Docker is a separate lane. Its preflight accepts only a local Linux
+Unix-socket daemon with known cgroup v2 capacity, checks CPU affinity and quota,
+available/cgroup memory, and free storage on the daemon and bind-mount filesystems.
+It retains 1 CPU, 6 GiB RAM and 4 GiB disk for host/services, then requires the
+complete 2 CPU / 6 GiB / 40 GiB job to fit. Unknown or insufficient capacity
+fails before image pulls or workspace writes. One account-wide lock spans both repositories, every worktree and both
+installation and suite execution, in addition to the existing checkout lock.

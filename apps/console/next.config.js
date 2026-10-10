@@ -106,7 +106,7 @@ const nextConfig = {
   // the operative ceiling there (fleet finding, sprinkles#4474). Cap it in
   // CI/E2E only; local dev builds keep full parallelism.
   experimental: {
-    ...(process.env.CI ? { cpus: 2 } : {}),
+    ...(process.env.CI ? { cpus: 1 } : {}),
     // Screenshot evidence accepts a 10 MiB file. Server Actions default to
     // 1 MiB; leave room for the multipart envelope and validated JSON intent.
     serverActions: { bodySizeLimit: '11mb' },
