@@ -2,7 +2,7 @@ import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { NativeDecisionCard } from './inbox-card';
+import { inboxCardSignature, type NativeDecisionCard } from './inbox-card';
 import { NativeDecisionDetail } from './native-decision';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -39,6 +39,26 @@ const card: NativeDecisionCard = {
 };
 
 describe('native decision Reply', () => {
+  it('interrupts a snooze when a later parked question arrives', () => {
+    const before = inboxCardSignature(card);
+    expect(inboxCardSignature({ ...card, canReply: false })).toBe(before);
+    const latest = card.work.runs[0];
+    expect(
+      inboxCardSignature({
+        ...card,
+        work: {
+          ...card.work,
+          runs: [...card.work.runs, { ...latest, runId: 'r2' }],
+        },
+      }),
+    ).not.toBe(before);
+    expect(
+      inboxCardSignature({
+        ...card,
+        work: { ...card.work, updatedAt: '2026-10-09T01:00:00Z' },
+      }),
+    ).not.toBe(before);
+  });
   it.each([true, false])(
     'reports admission honestly for resumed=%s and retains it when work starts',
     async (resumed) => {

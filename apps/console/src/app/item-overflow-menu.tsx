@@ -288,7 +288,7 @@ export function useItemOverflowMenu(
       )}
       {canMute && (
         <Menu.Item onClick={onToggleMute}>
-          {muted ? 'Unmute' : 'Mute'}
+          {muted ? 'Unsnooze' : 'Snooze'}
         </Menu.Item>
       )}
       {canClose && (
@@ -368,9 +368,8 @@ export function ItemOverflowMenu({
   onToggleMute,
 }: {
   item: ActionItem;
-  /** Current per-browser mute state (#59) - see use-muted-items.ts. Omit
-   * `onToggleMute` entirely on rows that don't offer muting (only "Your
-   * Queue" does today). */
+  /** Current authenticated viewer's snooze state. The Inbox owns duration
+   * selection and persistence. Omit the callback on non-decision surfaces. */
   muted?: boolean;
   onToggleMute?: () => void;
 }) {

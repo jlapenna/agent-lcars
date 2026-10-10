@@ -280,19 +280,27 @@ the work that has stopped, and the work in flight.
   - Approve & Merge, Approve & Rebase, or Rebase onto base
   - Assign to {pipeline}
   - Clear needs-human
-  - Mute or Unmute
+  - Snooze or Unsnooze
   - Close issue (destructive, with confirmation)
 - **FE-IN-6 [Shipped]** A filter by reason, the `?repo=` scope, and the
   addressable `?item=` selection. On mobile, a command deck provides "Back to
   Inbox list".
-- **FE-IN-7 [Partial]** Mute is stored per browser in localStorage
-  (`agent-lcars:muted-queue-items`). It is not shared across devices.
-  New mutes expire when the signature of `updatedAt`, sorted `actionTypes`,
-  or `ciRunning` changes; migrated legacy mutes retain no-expiry behavior.
-  The owner is [`use-muted-items.ts`](../../apps/console/src/app/use-muted-items.ts),
-  with regression coverage in `use-muted-items.test.ts`.
-  **Proposed:** a server-side snooze with a time-based expiry shared across
-  devices.
+- **FE-IN-7 [Implemented]** Snooze is persisted per authenticated maintainer
+  and stable GitHub or native Work anchor, without changing execution state
+  or GitHub labels. Durations are 15 minutes, 1 hour, 24 hours, and 7 days.
+  A visible Snoozed list/count shows expiry and offers Unsnooze, including
+  anchors no longer loaded in the Inbox. Expiry resurfaces decisions locally;
+  reload, focus, and a 15-second refresh reconcile other devices' changes.
+  A change to GitHub `updatedAt`, sorted `actionTypes`, or `ciRunning`
+  interrupts an old snooze. Native decisions also bind to the latest parked
+  run and its update time, so a new parked question resurfaces.
+  Legacy `agent-lcars:muted-queue-items` preferences never automatically hide
+  decisions: explicit import snoozes currently matching items for 24 hours,
+  removing only acknowledged matching keys and preserving unrelated preferences.
+  Owners are `decision-snooze-store.ts`, `decision-snooze-actions.ts`, and
+  `use-decision-snoozes.ts`. Their focused tests and
+  `decision-snoozes.spec.ts` protect authentication, isolation, concurrent
+  persistence, cross-device visibility, unsnooze, expiry/reload, and new decisions.
 
 ### 6.3 Agents (`/agents`)
 
@@ -538,7 +546,7 @@ Priorities assume the single-maintainer design center.
 | R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | One pipeline and all interactive sessions cannot be audited in the UI      | P1       |
 | R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4)                                                                       | Makes "why isn't my run starting?" answerable                              | P2       |
 | R8  | Schedule edit and delete, and a time-zone display                                                                                     | Schedules can currently only be toggled                                    | P2       |
-| R9  | Server-side snooze to replace localStorage mute (FE-IN-7)                                                                             | Mute should follow the maintainer across devices                           | P2       |
+| R9  | Per-maintainer timed snoozes (FE-IN-7, implemented)                                                                                   | Snooze follows the maintainer across devices without hiding new decisions  | P2       |
 | R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Turns spend data into decisions                                            | P2       |
 | R11 | Notifications: web push or digest for new `needs-human` items                                                                         | The phone-first maintainer should not have to poll                         | P3       |
 | R12 | Re-point the fleet chip at the queue-executor and ARC lane documents, or remove it, and drop the legacy scale-set row from Shuttlebay | Both read status documents that are no longer published                    | P2       |

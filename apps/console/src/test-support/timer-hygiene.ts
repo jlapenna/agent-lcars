@@ -37,7 +37,7 @@
  * - **jsdom's own 0 ms event timers.** `localStorage.setItem` queues a
  *   `storage` event, `focus()` a selection change, `<details>` a `toggle`,
  *   an anchor click a navigation -- each via `setTimeout(..., 0)` inside
- *   jsdom. The stack names *our* call site (`use-muted-items.ts`,
+ *   jsdom. The stack names *our* call site (`use-decision-snoozes.ts`,
  *   `persisted-details.tsx`, ...), which makes them read like application
  *   leaks; they are not. They fire on the next tick and never touch React.
  * - **`@octokit/plugin-throttling`'s bottleneck housekeeping**, a 60 s
