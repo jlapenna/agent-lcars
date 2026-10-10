@@ -30,7 +30,12 @@ export interface CapacityAuthority {
 export type CapacityClaim =
   | { kind: 'claim'; receipt: CapacityReceipt; run: Run }
   | { kind: 'recover-owned-secret'; receipt: CapacityReceipt }
-  | { kind: 'quarantined-unrecoverable-token'; runId: string; jobName: string }
+  | {
+      kind: 'quarantined-unrecoverable-token';
+      runId: string;
+      jobName: string;
+      receipt?: CapacityFence;
+    }
   | { kind: 'wait'; reason: 'capacity' | 'queue' };
 
 function requireCapability(
@@ -451,6 +456,17 @@ export class CapacityProtocol {
               kind: 'quarantined-unrecoverable-token' as const,
               runId: replay.runId,
               jobName: replay.jobName,
+              ...(receipt === undefined
+                ? {}
+                : {
+                    receipt: {
+                      poolId: receipt.poolId,
+                      slot: receipt.slot,
+                      revision: receipt.revision,
+                      runId: receipt.runId,
+                      nonce: receipt.nonce,
+                    },
+                  }),
             },
             ...(receipt === undefined || receipt.state === 'retiring'
               ? {}

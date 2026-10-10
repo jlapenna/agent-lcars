@@ -91,9 +91,10 @@ export function capacityMetrics(state: CapacityState, now: string): string {
       lines.push(
         `lcars_capacity_slots{pool=${label(policy.poolId)},state=${label(status)}} ${receipts.filter((receipt) => receipt.state === status).length}`,
       );
-    lines.push(
-      `lcars_capacity_slots{pool=${label(policy.poolId)},state="free"} ${Math.max(0, policy.maxConcurrent - receipts.length)}`,
-    );
+    if (policy.inventoryKnown)
+      lines.push(
+        `lcars_capacity_slots{pool=${label(policy.poolId)},state="free"} ${Math.max(0, policy.maxConcurrent - receipts.length)}`,
+      );
     lines.push(
       `lcars_capacity_inventory_known{pool=${label(policy.poolId)}} ${Number(policy.inventoryKnown)}`,
     );
@@ -116,9 +117,19 @@ export function capacityMetrics(state: CapacityState, now: string): string {
     lines.push(
       `lcars_capacity_domain_workers{domain=${label(domain)}} ${state.receipts.filter((receipt) => receipt.domainId === domain && receipt.worker?.active).length}`,
     );
-    lines.push(
-      `lcars_capacity_domain_occupied{domain=${label(domain)}} ${state.receipts.filter((receipt) => receipt.domainId === domain).length}`,
-    );
+    const inventoryKnown = state.policies
+      .filter(
+        (policy) =>
+          policy.enforced &&
+          Object.values(policy.domains).some(
+            (value) => value.domainId === domain,
+          ),
+      )
+      .every((policy) => policy.inventoryKnown);
+    if (inventoryKnown)
+      lines.push(
+        `lcars_capacity_domain_occupied{domain=${label(domain)}} ${state.receipts.filter((receipt) => receipt.domainId === domain).length}`,
+      );
   }
   for (const [action, value] of transitions)
     lines.push(

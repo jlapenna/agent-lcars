@@ -169,6 +169,7 @@ export const capacityClaimResponseSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({
     kind: z.literal('quarantined-unrecoverable-token'),
+    receipt: capacityFenceSchema.optional(),
     runId: id,
     jobName: id,
   }),
@@ -265,3 +266,86 @@ export const capacityMetricsContract = oc
   })
   .input(z.strictObject({}))
   .output(z.string());
+
+const inventoryReceiptSchema = capacityFenceSchema.extend({
+  domainId: id,
+  pipeline: id,
+  subject: id,
+  runner: id,
+  producerId: id,
+  claimedAt: z.iso.datetime(),
+  state: z.enum(['unplaced', 'placed', 'quarantined', 'retiring']),
+  unplaced: z.boolean(),
+  jobUid: id.optional(),
+  secretUid: id.optional(),
+  jobName: id,
+  worker: z
+    .strictObject({
+      generation: z.number().int().positive(),
+      podUid: id,
+      jobUid: id,
+      active: z.boolean(),
+      retiredEvidence: id.optional(),
+    })
+    .optional(),
+  retiredWorkers: z
+    .array(
+      z.strictObject({
+        podUid: id,
+        generation: z.number().int().positive(),
+        evidence: id,
+      }),
+    )
+    .max(32),
+  attestedPod: z
+    .strictObject({
+      podUid: id,
+      jobUid: id,
+      generation: z.number().int().positive(),
+    })
+    .optional(),
+  recovery: z
+    .strictObject({ subject: id, nonce, expiresAt: z.iso.datetime() })
+    .optional(),
+  producers: z
+    .array(
+      z.strictObject({
+        producerId: id,
+        subject: id,
+        stopped: z.boolean(),
+        fenced: z.boolean(),
+        pendingWrites: z.array(id).max(32),
+      }),
+    )
+    .min(1)
+    .max(8),
+  barrier: z
+    .strictObject({ uid: id, resourceVersion: id, evidence: id })
+    .optional(),
+});
+export const capacityInventoryContract = oc
+  .meta(
+    openapi({
+      tags: ['capacity'],
+      spec: (current) => ({ ...current, security: [{ bearerAuth: [] }] }),
+    }),
+  )
+  .meta(
+    openapi({
+      method: 'GET',
+      path: '/runs/capacity',
+      operationId: 'getCapacityInventory',
+      summary: 'Bounded redacted inventory for the server-granted pool',
+    }),
+  )
+  .errors({
+    UNAUTHORIZED: { message: 'Capacity inventory authority required' },
+  })
+  .input(z.strictObject({}))
+  .output(
+    z.strictObject({
+      revision: natural,
+      policy: capacityPolicyInputSchema.optional(),
+      receipts: z.array(inventoryReceiptSchema).max(128),
+    }),
+  );

@@ -14,7 +14,11 @@ const identitiesSchema = z
       serviceAccountUid: z.string().min(1).max(175),
     }),
   )
-  .max(16);
+  .max(16)
+  .refine(
+    (values) =>
+      new Set(values.map((value) => value.poolId)).size === values.length,
+  );
 const clients = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 /** Trust roots are deployment-owned configuration, never supplied in an API
@@ -43,6 +47,7 @@ export async function verifyCapacityWorkerIdentity(
     issuer: identity.issuer,
     audience: identity.audience,
     algorithms: ['RS256', 'ES256'],
+    requiredClaims: ['exp', 'iat'],
   });
   const bound = z
     .object({

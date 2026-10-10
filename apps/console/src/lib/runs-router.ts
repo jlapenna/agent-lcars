@@ -399,6 +399,35 @@ async function drainAfterCompletion(
 }
 
 export const runsRouter = os.router({
+  capacityInventory: os.capacityInventory.handler(async ({ context }) => {
+    const authority = capacityAuthority(context.principal);
+    if (
+      !authority.capabilities.has('recover') &&
+      !authority.capabilities.has('operator')
+    )
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Capacity inventory authority required',
+      });
+    const state = await new CapacityProtocol(context.store).read(
+      context.now().toISOString(),
+    );
+    return {
+      revision: state.revision,
+      policy: state.policies.find(
+        (policy) => policy.poolId === authority.poolId,
+      ),
+      receipts: state.receipts
+        .filter(
+          (receipt) =>
+            receipt.poolId === authority.poolId &&
+            authority.pipelines.includes(receipt.pipeline),
+        )
+        .map((receipt) => {
+          const { tokenHash: _tokenHash, ...redacted } = receipt;
+          return redacted;
+        }),
+    };
+  }),
   capacityMetrics: os.capacityMetrics.handler(async ({ context }) => {
     const authority = capacityAuthority(context.principal);
     if (
@@ -545,6 +574,7 @@ export const runsRouter = os.router({
           }
           return {
             kind: 'quarantined-unrecoverable-token' as const,
+            receipt: receiptFence(claimed.receipt),
             runId: claimed.run.runId,
             jobName: claimed.receipt.jobName,
           };

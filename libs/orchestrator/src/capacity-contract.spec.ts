@@ -223,6 +223,7 @@ function contract(
       const first = await claimed(protocol, a, 'same-request');
       expect(await claim(protocol, a, 'same-request')).toEqual({
         kind: 'quarantined-unrecoverable-token',
+        receipt: fence(first.receipt),
         runId: first.run.runId,
         jobName: first.receipt.jobName,
       });

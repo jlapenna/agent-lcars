@@ -196,6 +196,65 @@ describe('receipt HTTP authority and activation', () => {
     expect(f.claim).not.toHaveProperty('token');
     expect((await f.protocol.read(now)).receipts[0]?.state).toBe('quarantined');
   });
+  it('successor inventory is read-only, pool/grant bounded and never exposes run token hashes', async () => {
+    const f = await fixture();
+    const successor = {
+      ...f.context,
+      principal: {
+        ...principal,
+        subject: 'successor-inventory',
+        scopes: new Set(['work.capacity.recover'] as const),
+      },
+    };
+    const before = await f.protocol.read(now);
+    const inventory = await call(successor, '/runs/capacity', undefined, 'GET');
+    expect(inventory.status).toBe(200);
+    expect(inventory.body.receipts[0]).toMatchObject(f.claim.receipt);
+    expect(JSON.stringify(inventory.body)).not.toContain(
+      hashRunToken(f.claim.token),
+    );
+    expect(JSON.stringify(inventory.body)).not.toContain(f.claim.token);
+    expect(await f.protocol.read(now)).toEqual(before);
+    expect(
+      (
+        await call(
+          {
+            ...successor,
+            principal: { ...successor.principal, capacityPool: 'pool-b' },
+          },
+          '/runs/capacity',
+          undefined,
+          'GET',
+        )
+      ).body.receipts,
+    ).toEqual([]);
+    expect(
+      (
+        await call(
+          {
+            ...f.context,
+            principal: {
+              ...principal,
+              scopes: new Set(['work.executor'] as const),
+            },
+          },
+          '/runs/capacity',
+          undefined,
+          'GET',
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(
+          { ...successor, capacityEnabled: false },
+          '/runs/capacity',
+          undefined,
+          'GET',
+        )
+      ).status,
+    ).toBe(200);
+  });
   it('returns a discriminated claim and no reconstructed secret on replay', async () => {
     const { context, claim, request } = await fixture();
     expect(claim.kind).toBe('claim');
@@ -203,6 +262,7 @@ describe('receipt HTTP authority and activation', () => {
     const replay = await call(context, '/runs/claim', request);
     expect(replay.body).toEqual({
       kind: 'quarantined-unrecoverable-token',
+      receipt: claim.receipt,
       runId: claim.runId,
       jobName: claim.jobName,
     });
@@ -367,6 +427,27 @@ describe('receipt HTTP authority and activation', () => {
       ).status,
     ).toBe(401);
   });
+  it('metrics suppress free capacity and domain totals while shared inventory is unknown', async () => {
+    const f = await fixture();
+    const a = { ...capacityAuthority(principal), poolId: 'pool-b' };
+    await f.protocol.configure(a, { ...policy, poolId: 'pool-b' }, now);
+    const metrics = await call(
+      f.context,
+      '/runs/capacity/metrics',
+      undefined,
+      'GET',
+    );
+    expect(metrics.status).toBe(200);
+    expect(metrics.body).toContain(
+      'lcars_capacity_inventory_known{pool="pool-b"} 0',
+    );
+    expect(metrics.body).not.toContain(
+      'lcars_capacity_slots{pool="pool-b",state="free"}',
+    );
+    expect(metrics.body).not.toContain(
+      'lcars_capacity_domain_occupied{domain="claude-global"}',
+    );
+  });
   it('metrics expose declared pool/domain bounds and fencing refusals without run/token labels', async () => {
     const f = await fixture();
     const metrics = await call(
@@ -409,6 +490,21 @@ describe('real signed Pod-bound Kubernetes JWT verification', () => {
         { ...(await exportJWK(publicKey)), kid: 'local-key', alg: 'RS256' },
       ],
     });
+    const withoutExpiry = await new SignJWT({
+      'kubernetes.io': {
+        namespace: 'lcars',
+        pod: { uid: 'pod-original' },
+        serviceaccount: { uid: 'sa-uid' },
+      },
+    })
+      .setProtectedHeader({ alg: 'RS256', kid: 'local-key' })
+      .setIssuer('https://cluster.example')
+      .setAudience('lcars-capacity')
+      .setIssuedAt()
+      .sign(privateKey);
+    await expect(
+      verifyCapacityWorkerIdentity(withoutExpiry, 'pool-a', jwks),
+    ).rejects.toThrow();
     const token = (bound: unknown, audience = 'lcars-capacity') =>
       new SignJWT({ 'kubernetes.io': bound })
         .setProtectedHeader({ alg: 'RS256', kid: 'local-key' })

@@ -59,6 +59,13 @@ timeout releases a slot or a provider domain. One initial unplaced receipt
 per pool is allowed; only positively attested placement releases that
 allowance.
 
+`GET /runs/capacity` gives a separately granted recovery/operator principal a
+read-only, bounded inventory for its server-granted pool. It includes exact
+receipt fences, Job/Secret UIDs, worker generations, recovery ownership and
+pending producer operations, with run token hashes removed. A successor uses
+this inventory rather than impersonating the original claimant. Read-only
+inventory remains available while new lifecycle operations are disabled.
+
 The receipt reply contains the exact pool, slot, revision, run and nonce fence
 plus the deterministic Job name. Clients must retain that fence for every
 lifecycle operation.
@@ -70,6 +77,8 @@ lifecycle operation.
 | `quarantined-unrecoverable-token` | No recoverable immutable Secret/live token exists, or the attempt has retired; preserve occupancy and follow physical retirement   |
 | `wait`                            | No eligible queue head or no physical capacity; no run was claimed                                                                 |
 
+An unrecoverable replay includes the active receipt fence when that receipt
+still occupies capacity, so its recovery authority can retire it.
 The request record stores only a token hash. It cannot reconstruct a secret.
 An identical retry cannot claim another run; a different request ID cannot
 bypass an unresolved producer claim lacking an owned Secret. A closed
@@ -195,7 +204,8 @@ transition/refusal enums bound every label. Metrics include physical/free
 slots, reviewed inventory, policy version, oldest quarantine age, domain
 occupancy, active worker permits, and process-lifetime transition/refusal
 counts. No run IDs, tokens, producer IDs or arbitrary errors become labels.
-Failed reads fail the scrape; missing samples do not mean zero capacity.
+Failed reads fail the scrape; unknown inventory suppresses free-capacity and
+domain occupancy totals. Missing samples do not mean zero capacity.
 Homelab owns collector identity, alert consumers and live monitoring setup.
 
 `capacity-contract.spec.ts` runs the same observable races against MemoryStore

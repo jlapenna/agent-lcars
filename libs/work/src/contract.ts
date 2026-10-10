@@ -6,6 +6,7 @@ import {
   activationContract,
   capacityClaimResponseSchema,
   capacityContract,
+  capacityInventoryContract,
   capacityMetricsContract,
 } from './capacity-contract';
 import { parseCron } from './cron';
@@ -770,6 +771,7 @@ const runBase = oc.meta(openapi({ tags: ['runs'] }));
 
 export const runsContract = {
   capacity: capacityContract,
+  capacityInventory: capacityInventoryContract,
   capacityMetrics: capacityMetricsContract,
   activate: activationContract,
   claim: runBase
