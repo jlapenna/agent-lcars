@@ -124,6 +124,55 @@ test environment.
 
 ## Reuse and verify
 
+Run the read-only readiness check before a production acceptance run. It needs
+only access to the saved state, checks the live Auth.js role without launching
+a browser, and reports the cookie deadline and the last safe rotation time for
+the default 14-day validity window:
+
+```bash
+./tools/nx run @agent-lcars/console:check-session -- \
+  --role admin --storage secret --origin https://lcars.jlapenna.net \
+  --project agent-lcars --minimum-valid-days 14
+```
+
+Exit codes are `0` ready, `1` unavailable/invalid request, `2` expired or
+revoked, `3` wrong role, and `4` expiring or unknown expiry. The request has a
+10-second timeout; Secret Manager access has a 20-second timeout. The command
+does not rotate or refresh a credential and never saves response cookies.
+`verify-session --minimum-valid-days 14` uses the same expiry classifier before
+page navigation. A readiness pass proves authentication and the rotation
+window; use the browser verifier below for rendered-page acceptance.
+
+For a daily operator-owned check, configure the following command in the
+existing private monitoring environment, with its saved-state read identity
+and absolute repository path. Keep stdout/stderr in private operator logs;
+alert routing and installation of the schedule belong to that environment.
+This is a configuration handoff, not an installed cron job or public alert:
+
+```bash
+# Daily at 08:00 in the operator scheduler's timezone
+0 8 * * * cd /absolute/path/to/agent-lcars && timeout 60s node tools/saved-session/check.mjs --role admin --storage secret --origin https://lcars.jlapenna.net --project agent-lcars --minimum-valid-days 14
+```
+
+On an expiry warning, an approved maintainer rotates the dedicated admin state
+with this exact scoped command (read-only workers must not run it):
+
+```bash
+./tools/nx run @agent-lcars/console:mint-session -- \
+  --storage secret --origin https://lcars.jlapenna.net --project agent-lcars \
+  --secret-name AGENT_LCARS_ADMIN_STORAGE_STATE --auth-secret-name AUTH_SECRET
+```
+
+After rotation, run `check-session` above, then prove the admin session and
+the intended page with the supported browser verifier:
+
+```bash
+./tools/nx run @agent-lcars/console:verify-session -- \
+  --role admin --storage secret --origin https://lcars.jlapenna.net \
+  --project agent-lcars --minimum-valid-days 14 --path / \
+  --wait-for main --assert-text Bridge
+```
+
 Install the Chromium headless shell that matches this checkout's installed
 Playwright package before using the read-only verifier lane:
 
