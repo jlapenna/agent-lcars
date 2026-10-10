@@ -41,6 +41,72 @@ graph itself, where you want to see the affected-project computation
 directly. Otherwise: fast layer locally, push, let CI's `Verify` job carry
 the rest.
 
+## Bounded local verification
+
+Size each local phase for one eligible runner after host/service reserves and
+record the selected CPU, memory, storage, accelerator and time bounds before
+starting it.
+Use supported supervisors and accounting capabilities; repository verification
+does not authorize changing host delegation or understating requests to fit a run.
+
+Before each local phase, record fresh, read-only host and cluster occupancy for
+that selected host: supported capacity and reserves, systemd/cgroup, container
+and cluster workloads, their owners and full resource envelopes, and available
+storage. Include queued or physically retained work that could start there
+during the phase. First qualify Pending work for the selected host using its
+actual node selectors, required affinity, and relevant node taints and workload
+tolerations. Preferred affinity is a preference, not a required placement
+constraint. Check scheduler-feasible request combinations for CPU, memory and
+storage together on that host before assessing full declared limits/envelopes
+for credible overlap with the local phase and reserves. Save changed raw node
+and workload rows before issuing the capacity verdict. Kubernetes allocatable
+and Pod inventory alone do not prove complete host safety.
+Reconcile declared reserve coverage and count nested
+unit/container/Pod/cgroup workloads once. If placement, ownership, accounting
+visibility, reserve coverage or overlap fit is unknown, hold the phase. Verify
+the full proposed envelope fits together on that one supported host under the
+credible overlap. Temporary contention changes when work can start, not its
+supported size; wait or split/resize actual work while retaining required
+reserves and truthful requests. Never understate demand, rely on overcommit,
+change host controls or stop another owner's workload to make the phase fit.
+
+A required resource monitor must prove readiness before the supervisor starts
+any workload: validate the accounting paths/counters and record a successful
+baseline and first sample. Do not assume `io.stat` exists in a user cgroup.
+When IO accounting is unavailable, select and validate a supported filesystem
+measurement before execution, or stop with a setup failure. Record the method,
+filesystem identities, observed paths, baseline, sample interval and stop limit;
+include owned outputs, temporary files and caches in the declared scope.
+
+Before claiming cache or store isolation, query the actual paths with the
+pinned package manager in the worktree's command environment. An exported
+setting alone does not prove selection. Include the resulting paths in
+filesystem accounting; ordinary author setup may use the supported shared
+store. If a review requires an owned store, use supported explicit
+configuration and verify selection before installation. Record setup and
+observer exits separately: a postsetup assertion does not erase successful
+installation or justify reinstalling an unchanged worktree.
+
+Propagate startup and later measurement failures to the supervisor. A required
+monitor exiting unexpectedly, including exit 0, fails the phase and stops only
+its owned workload/process group. Capture actual child exits and termination;
+check cleanup separately from workload success. A background task without a
+readiness handshake, or `wait ... || true` suppressing a required monitor's
+failure, cannot establish guarded execution. Validate this boundary with bounded
+subprocess fixtures: failed readiness must start no workload, and a later
+failure must terminate the owned child while an unrelated witness stays alive.
+Use the actual supervisor, with isolated accounting probes and inert children;
+do not replace it with a test implementation or add tests that mirror this text.
+
+Filesystem free-byte samples can provide a conservative sampled growth stop;
+shared filesystem activity is not attributable solely to the workload. Record
+sampled maxima, final footprint and before/after free-byte observations under
+those names. Sampling does not prove an unsampled peak or enforce a hard disk
+quota; cumulative IO bytes are a different metric from allocated disk growth.
+If a required guard failed, preserve that failure and distinguish any valid
+source/test/commit evidence from unproven resource enforcement. Do not rerun a
+completed operation to erase its original receipt.
+
 ## Frozen Console test reviews
 
 Use a separate, normally installed Git worktree at the exact reviewed commit
@@ -64,6 +130,19 @@ helpers or inventing another Vitest configuration.
    pnpm install --frozen-lockfile --ignore-scripts
    bash tools/setup-nx-native-file-cache.sh
    ```
+
+   If using `env -i`, preserve the existing user `HOME` or pass an explicit
+   owned `XDG_CACHE_HOME` on the budgeted filesystem to cache setup and the
+   selected commands. Use the supported
+   [cache setup](../../../../tools/setup-nx-native-file-cache.sh) and
+   [cache helper](../../../../tools/nx-native-file-cache.sh); these own cache
+   selection, validation and the install receipt. Do not repurpose `HOME`,
+   copy their logic, disable setup guards or set `CI` merely to bypass cache
+   readiness. Confirm setup actually exits 0 and the selected cache artifacts
+   are available before running tests. If setup fails, stop and retain its
+   true exit/log as zero executed tests; a completed install does not prove
+   the isolated environment is ready. Keep the corrected environment's receipt
+   separate, and reuse an already successful frozen install when unchanged.
 
    Do not run `setup-worktree.sh`, `setup-git-hooks.sh` or the workspace
    `prepare` script from the frozen review. Git stores the Husky bootstrap
