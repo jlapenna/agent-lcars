@@ -1,6 +1,10 @@
-import { findDeliverables } from './deliverables';
+import {
+  findDeliverables,
+  findQualifiedPRs,
+  isPRPublicationCommand,
+} from './deliverables';
 import type { TranscriptAdapter } from './transcript-adapter-types';
-import { SessionSummary, TokenUsage } from './types';
+import { type QualifiedSessionPR, SessionSummary, TokenUsage } from './types';
 import {
   asArray,
   asNumber,
@@ -9,6 +13,45 @@ import {
   isSafeIdentifier,
   truncateTitle,
 } from './unknown-value';
+
+/** Codex records exec stdout inside a JSON result envelope. Code-mode
+ * orchestration can add prose plus one envelope per line. Decode only known
+ * stdout envelopes; unrelated metadata does not become publication evidence. */
+function publicationOutput(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const outputs: unknown[] = [];
+  let recognized = false;
+  for (const candidate of [value, ...value.split('\n')]) {
+    let parsed: Record<string, unknown> | undefined;
+    try {
+      parsed = asRecord(JSON.parse(candidate));
+    } catch {
+      continue;
+    }
+    if (parsed && 'output' in parsed) {
+      recognized = true;
+      // A recognized failed result is not publication evidence.
+      if (parsed['exit_code'] === undefined || parsed['exit_code'] === 0)
+        outputs.push(parsed['output']);
+      if (candidate === value) return outputs;
+    }
+  }
+  return recognized ? outputs : value;
+}
+
+/** Decode the supported shell tool argument, not unrelated JSON properties
+ * or code-mode orchestration source that merely mentions a command. */
+function publicationCommand(input: unknown): string | undefined {
+  if (typeof input === 'string') {
+    try {
+      return publicationCommand(JSON.parse(input));
+    } catch {
+      return input;
+    }
+  }
+  const record = asRecord(input);
+  return asString(record?.['cmd']) ?? asString(record?.['command']);
+}
 
 function emptyTokens(): TokenUsage {
   return {
@@ -82,6 +125,8 @@ export const codexAdapter: TranscriptAdapter = {
     let lastToolCall: SessionSummary['lastToolCall'];
     const toolCallCounts: Record<string, number> = {};
     const prNumbers = new Set<number>();
+    const qualifiedPRs = new Map<string, QualifiedSessionPR>();
+    const creatingCalls = new Set<string>();
     const commitShas = new Set<string>();
 
     for (const line of lines) {
@@ -164,6 +209,49 @@ export const codexAdapter: TranscriptAdapter = {
         }
       }
 
+      // Keep historical display hints, but financial attribution requires a
+      // qualified URL from the correlated result of a creating command.
+      if (lineType === 'response_item') {
+        const callId = asString(payload['call_id']);
+        if (
+          callId &&
+          (payloadType === 'function_call' ||
+            payloadType === 'custom_tool_call')
+        ) {
+          const input = payload['arguments'] ?? payload['input'];
+          const command = publicationCommand(input);
+          const toolName = asString(payload['name']);
+          if (
+            toolName &&
+            [
+              'exec',
+              'exec_command',
+              'functions.exec',
+              'functions.exec_command',
+              'shell',
+              'Bash',
+              'bash',
+            ].includes(toolName) &&
+            command &&
+            isPRPublicationCommand(command)
+          )
+            creatingCalls.add(callId);
+        } else if (
+          callId &&
+          creatingCalls.has(callId) &&
+          (payloadType === 'function_call_output' ||
+            payloadType === 'custom_tool_call_output')
+        ) {
+          creatingCalls.delete(callId);
+          for (const pr of findQualifiedPRs(
+            publicationOutput(payload['output']),
+          ))
+            qualifiedPRs.set(
+              `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
+              pr,
+            );
+        }
+      }
       const deliverables = findDeliverables(raw);
       for (const number of deliverables.prNumbers) prNumbers.add(number);
       for (const sha of deliverables.commitShas) commitShas.add(sha);
@@ -187,6 +275,9 @@ export const codexAdapter: TranscriptAdapter = {
         ...(title && { title, titleSource: 'inferred' as const }),
         deliverables: {
           prNumbers: Array.from(prNumbers),
+          ...(qualifiedPRs.size > 0 && {
+            qualifiedPRs: [...qualifiedPRs.values()],
+          }),
           commitShas: Array.from(commitShas),
         },
       },

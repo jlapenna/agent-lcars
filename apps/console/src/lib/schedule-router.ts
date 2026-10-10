@@ -1,9 +1,10 @@
 import 'server-only';
 
+import { isDeepStrictEqual } from 'node:util';
+
 import { logger } from '@agent-lcars/logging';
 import type { Schedule } from '@agent-lcars/orchestrator';
 import {
-  type CronSpec,
   latestDueSlot,
   nextDueSlot,
   parseCron,
@@ -18,20 +19,22 @@ import { grantForPrincipal } from './work-grants';
 import { forbiddenReason, mintItem, type WorkContext } from './work-mint';
 
 const os = implement(schedulesContract).$context<WorkContext>();
-
 const operator = os.use(async ({ context, next }) => {
-  const { principal } = context;
-  if (principal === undefined || !principal.scopes.has('work.operator')) {
+  if (
+    context.principal === undefined ||
+    !context.principal.scopes.has('work.operator')
+  ) {
     throw new ORPCError('UNAUTHORIZED', {
       message: 'work.operator scope required',
     });
   }
-  return next({ context: { principal } });
+  return next({ context: { principal: context.principal } });
 });
-
 const cronTick = os.use(async ({ context, next }) => {
-  const { principal } = context;
-  if (principal === undefined || !principal.scopes.has('work.cron')) {
+  if (
+    context.principal === undefined ||
+    !context.principal.scopes.has('work.cron')
+  ) {
     throw new ORPCError('UNAUTHORIZED', {
       message: 'work.cron scope required',
     });
@@ -39,39 +42,87 @@ const cronTick = os.use(async ({ context, next }) => {
   return next({ context });
 });
 
-function view(schedule: Schedule) {
-  return {
-    id: schedule.scheduleId,
-    cron: schedule.cron,
-    spec: workSpecSchema.parse(schedule.spec),
-    enabled: schedule.enabled,
-    createdBy: schedule.createdBy,
-    createdAt: schedule.createdAt,
-    updatedAt: schedule.updatedAt,
-    ...(schedule.lastSlotAt === undefined
-      ? {}
-      : { lastSlotAt: schedule.lastSlotAt }),
-    ...(schedule.lastItemId === undefined
-      ? {}
-      : { lastItemId: schedule.lastItemId }),
-    ...(schedule.disabledReason === undefined
-      ? {}
-      : { disabledReason: schedule.disabledReason }),
-  };
+function samePending(
+  current: Schedule['pendingTick'],
+  admitted: NonNullable<Schedule['pendingTick']>,
+): boolean {
+  return (
+    current !== undefined &&
+    current.itemId === admitted.itemId &&
+    current.slotAt === admitted.slotAt &&
+    current.revision === admitted.revision &&
+    current.createdBy === admitted.createdBy &&
+    // Persistence may reorder map keys; reservation values define identity.
+    isDeepStrictEqual(current.spec, admitted.spec)
+  );
 }
-
-/**
- * `view`, but for a caller that must survive a schedule whose stored
- * `spec` no longer validates. A `spec` tightened out from under an
- * already-stored schedule, or a hand-edited document, is exactly the
- * "invalid" case the tick handler already disables a schedule for; a
- * listing or a single `get`/`enable`/`disable` must not 500 over it the
- * way the strict `view` above would. This omits only `spec` -- the rest of the schedule
- * (id, cron, enabled, watermark) is still meaningful, and the operator
- * needs it to find and fix -- or simply disable -- the broken row.
- */
-function viewSafe(schedule: Schedule) {
+function laterSlot(previous: string | undefined, slot: string): string {
+  return previous === undefined || new Date(previous) < new Date(slot)
+    ? slot
+    : previous;
+}
+function requiredPrincipal(context: WorkContext) {
+  if (context.principal === undefined) throw new ORPCError('UNAUTHORIZED');
+  return context.principal;
+}
+function admissionWatermark(schedule: Schedule): string | undefined {
+  const marks = [schedule.lastSlotAt, schedule.lastClosedSlotAt].filter(
+    (value): value is string => value !== undefined,
+  );
+  return marks.length === 0 ? undefined : marks.sort().at(-1);
+}
+async function closePending(
+  context: WorkContext,
+  id: string,
+  admitted: NonNullable<Schedule['pendingTick']>,
+  reason: 'invalid' | 'grant-revoked',
+  now: Date,
+) {
+  return context.scheduleStore.mutateSchedule(id, (current) => {
+    if (current === undefined || !samePending(current.pendingTick, admitted))
+      return undefined;
+    const { pendingTick: _pending, ...rest } = current;
+    const disable =
+      current.enabled &&
+      current.deletedAt === undefined &&
+      (current.revision ?? 0) === admitted.revision;
+    return {
+      ...rest,
+      // Closing future admission does not cancel work a concurrent tick
+      // already admitted. Preserve the successful-mint watermark separately.
+      lastClosedSlotAt: laterSlot(current.lastClosedSlotAt, admitted.slotAt),
+      ...(disable
+        ? {
+            enabled: false,
+            disabledReason: reason,
+            revision: (current.revision ?? 0) + 1,
+            updatedAt: now.toISOString(),
+          }
+        : {}),
+    };
+  });
+}
+function nextDueAt(schedule: Schedule, now: Date): string | undefined {
+  if (!schedule.enabled) return undefined;
+  try {
+    const after = Math.max(
+      now.getTime(),
+      new Date(admissionWatermark(schedule) ?? schedule.createdAt).getTime() +
+        1,
+      new Date(schedule.pendingTick?.slotAt ?? schedule.createdAt).getTime() +
+        1,
+    );
+    // nextDueSlot truncates to the minute; round up and remain strictly after
+    // the settled/admitted slot so the display never promises its replay.
+    const from = new Date(Math.ceil(after / 60_000) * 60_000);
+    return nextDueSlot(parseCron(schedule.cron), from)?.toISOString();
+  } catch {
+    return undefined;
+  }
+}
+function viewSafe(schedule: Schedule, now: Date) {
   const parsed = workSpecSchema.safeParse(schedule.spec);
+  const due = nextDueAt(schedule, now);
   return {
     id: schedule.scheduleId,
     cron: schedule.cron,
@@ -80,6 +131,7 @@ function viewSafe(schedule: Schedule) {
     createdBy: schedule.createdBy,
     createdAt: schedule.createdAt,
     updatedAt: schedule.updatedAt,
+    revision: schedule.revision ?? 0,
     ...(schedule.lastSlotAt === undefined
       ? {}
       : { lastSlotAt: schedule.lastSlotAt }),
@@ -89,291 +141,404 @@ function viewSafe(schedule: Schedule) {
     ...(schedule.disabledReason === undefined
       ? {}
       : { disabledReason: schedule.disabledReason }),
+    ...(schedule.lastClosedSlotAt === undefined
+      ? {}
+      : { lastClosedSlotAt: schedule.lastClosedSlotAt }),
+    ...(due === undefined ? {} : { nextDueAt: due }),
+    ...(schedule.pendingTick === undefined
+      ? {}
+      : { pendingItemId: schedule.pendingTick.itemId }),
   };
 }
-
-/**
- * Re-reads a schedule immediately before a tick writes back to it (a
- * success watermark or an auto-disable): an operator's `disable` (or a
- * delete) landing between this schedule's `listEnabledSchedules()`
- * snapshot at the top of `tick` and now must win the race. Returns
- * `undefined` when it did -- gone, or no longer enabled -- so the caller
- * skips the write instead of resurrecting a disabled/deleted schedule
- * with a stale watermark; otherwise returns the fresh record, which the
- * write spreads onto instead of the loop's now-possibly-stale snapshot.
- */
-async function freshEnabledOrSkip(
-  context: WorkContext,
-  scheduleId: string,
-): Promise<Schedule | undefined> {
-  const fresh = await context.scheduleStore.readSchedule(scheduleId);
-  return fresh === undefined || !fresh.enabled ? undefined : fresh;
+function checkedCron(cron: string, now: Date) {
+  try {
+    if (nextDueSlot(parseCron(cron), now) !== undefined) return;
+  } catch {
+    throw new ORPCError('BAD_REQUEST', {
+      message: 'Malformed cron expression',
+    });
+  }
+  throw new ORPCError('BAD_REQUEST', {
+    message: 'cron expression never fires within a year',
+  });
 }
-
-function sameSchedule(
-  a: Schedule,
-  b: { cron: string; spec: unknown },
-): boolean {
-  return (
-    a.cron === b.cron &&
-    JSON.stringify(workSpecSchema.parse(a.spec)) ===
-      JSON.stringify(workSpecSchema.parse(b.spec))
+function currentSchedule(
+  current: Schedule | undefined,
+  expectedRevision?: number,
+): Schedule {
+  if (current === undefined || current.deletedAt !== undefined)
+    throw new ORPCError('NOT_FOUND');
+  if (
+    expectedRevision !== undefined &&
+    (current.revision ?? 0) !== expectedRevision
+  ) {
+    throw new ORPCError('CONFLICT', {
+      message: 'Schedule changed; reload before applying your change',
+    });
+  }
+  return current;
+}
+function authorizeSchedule(context: WorkContext, schedule: Schedule) {
+  // The creator can remove/repair their invalid or revoked schedule. Other
+  // operators require a grant covering its stored pipeline and repository.
+  if (context.principal?.principal === schedule.createdBy) return;
+  const parsed = workSpecSchema.safeParse(schedule.spec);
+  if (
+    !parsed.success ||
+    forbiddenReason(requiredPrincipal(context), parsed.data) !== undefined
+  ) {
+    throw new ORPCError('FORBIDDEN', { message: 'No grant for this schedule' });
+  }
+}
+function authorizeSpec(context: WorkContext, spec: WorkSpec) {
+  const forbidden = forbiddenReason(requiredPrincipal(context), spec);
+  if (forbidden !== undefined)
+    throw new ORPCError('FORBIDDEN', { message: forbidden });
+}
+function enabledConfiguration(
+  context: WorkContext,
+  schedule: Pick<Schedule, 'cron' | 'spec' | 'createdBy'>,
+) {
+  const parsed = workSpecSchema.safeParse(schedule.spec);
+  if (!parsed.success)
+    throw new ORPCError('BAD_REQUEST', {
+      message: 'Repair the invalid schedule before enabling it',
+    });
+  checkedCron(schedule.cron, context.now());
+  authorizeSpec(context, parsed.data);
+  const grant = grantForPrincipal(schedule.createdBy, context.grants());
+  const forbidden = forbiddenReason(
+    { principal: schedule.createdBy, pipelines: grant?.pipelines ?? [] },
+    parsed.data,
   );
+  if (forbidden !== undefined)
+    throw new ORPCError('FORBIDDEN', {
+      message:
+        'The schedule creator no longer has a grant for this pipeline or repository',
+    });
+}
+function withoutReason(schedule: Schedule) {
+  const { disabledReason: _reason, ...rest } = schedule;
+  return rest;
+}
+async function toggle(
+  context: WorkContext,
+  id: string,
+  expectedRevision: number,
+  enabled: boolean,
+) {
+  const next = await context.scheduleStore.mutateSchedule(id, (current) => {
+    const schedule = currentSchedule(current, expectedRevision);
+    authorizeSchedule(context, schedule);
+    if (enabled) enabledConfiguration(context, schedule);
+    return {
+      ...withoutReason(schedule),
+      enabled,
+      ...(enabled ? {} : { disabledReason: 'operator' as const }),
+      revision: (schedule.revision ?? 0) + 1,
+      updatedAt: context.now().toISOString(),
+    };
+  });
+  return viewSafe(currentSchedule(next), context.now());
 }
 
 export const scheduleRouter = os.router({
-  create: operator.create.handler(async ({ input, context, errors }) => {
-    const { principal } = context;
-    // The same check `items.create` runs: pipeline grant + control-plane
-    // repo admission. One ruling, one function -- `schedule-router.ts`
-    // does not fork it.
-    const forbidden = forbiddenReason(principal, input.spec);
-    if (forbidden !== undefined) throw errors.FORBIDDEN({ message: forbidden });
-
-    // `cronExpressionSchema` (Task 3) already refuses a malformed
-    // expression before the handler runs; re-parsing here is what lets
-    // this throw the exact documented BAD_REQUEST message rather than
-    // trusting zod's own refine message. It also produces the `CronSpec`
-    // `nextDueSlot` needs next.
-    let cron: CronSpec;
-    try {
-      cron = parseCron(input.cron);
-    } catch {
-      throw errors.BAD_REQUEST({ message: 'Malformed cron expression' });
-    }
-    // A syntactically valid expression that can never actually fire (e.g.
-    // `0 0 31 2 *` -- no February has a 31st) would otherwise sit enabled
-    // forever, costing a full `MAX_LOOKBACK_MINUTES` walk on every tick
-    // for nothing. Reject it once, here, instead.
-    if (nextDueSlot(cron, context.now()) === undefined) {
-      throw errors.BAD_REQUEST({
-        message: 'cron expression never fires within a year',
-      });
-    }
-
-    const existing = await context.scheduleStore.readSchedule(input.id);
-    if (existing !== undefined) {
-      if (!sameSchedule(existing, { cron: input.cron, spec: input.spec })) {
-        throw errors.CONFLICT({
-          message: `schedule ${input.id} already exists with a different cron or spec`,
-        });
-      }
-      return view(existing);
-    }
-
+  create: operator.create.handler(async ({ input, context }) => {
+    authorizeSpec(context, input.spec);
+    checkedCron(input.cron, context.now());
     const now = context.now().toISOString();
-    const schedule: Schedule = {
-      scheduleId: input.id,
-      cron: input.cron,
-      spec: input.spec,
-      enabled: input.enabled ?? true,
-      createdBy: principal.principal,
-      createdAt: now,
-      updatedAt: now,
-      // Seeded to the creation instant, not left `undefined`: `tick`'s
-      // `latestDueSlot(cron, now, lastSlotAt)` only ever mints a boundary
-      // strictly AFTER `lastSlotAt`, so a schedule's first slot is the
-      // first boundary after its creation -- never one already in the
-      // past at the moment it was created (see the spec's "Tick
-      // semantics" section).
-      lastSlotAt: now,
+    const next = await context.scheduleStore.mutateSchedule(
+      input.id,
+      (existing) => {
+        if (existing !== undefined) {
+          const parsed = workSpecSchema.safeParse(existing.spec);
+          if (
+            existing.deletedAt !== undefined ||
+            !parsed.success ||
+            existing.cron !== input.cron ||
+            JSON.stringify(parsed.data) !== JSON.stringify(input.spec)
+          ) {
+            throw new ORPCError('CONFLICT', {
+              message: `schedule ${input.id} already exists with a different cron or spec`,
+            });
+          }
+          return existing;
+        }
+        return {
+          scheduleId: input.id,
+          cron: input.cron,
+          spec: input.spec,
+          enabled: input.enabled ?? true,
+          createdBy: context.principal.principal,
+          createdAt: now,
+          updatedAt: now,
+          lastSlotAt: now,
+          revision: 1,
+        };
+      },
+    );
+    return viewSafe(currentSchedule(next), context.now());
+  }),
+  get: operator.get.handler(async ({ input, context }) =>
+    viewSafe(
+      currentSchedule(await context.scheduleStore.readSchedule(input.id)),
+      context.now(),
+    ),
+  ),
+  list: operator.list.handler(async ({ input, context }) => ({
+    schedules: (await context.scheduleStore.listSchedules(input.limit)).map(
+      (schedule) => viewSafe(schedule, context.now()),
+    ),
+  })),
+  update: operator.update.handler(async ({ input, context }) => {
+    authorizeSpec(context, input.spec);
+    checkedCron(input.cron, context.now());
+    const next = await context.scheduleStore.mutateSchedule(
+      input.id,
+      (current) => {
+        const schedule = currentSchedule(current, input.expectedRevision);
+        authorizeSchedule(context, schedule);
+        if (input.enabled)
+          enabledConfiguration(context, {
+            cron: input.cron,
+            spec: input.spec,
+            createdBy: schedule.createdBy,
+          });
+        return {
+          ...withoutReason(schedule),
+          cron: input.cron,
+          spec: input.spec,
+          enabled: input.enabled,
+          ...(input.enabled ? {} : { disabledReason: 'operator' as const }),
+          updatedAt: context.now().toISOString(),
+          revision: (schedule.revision ?? 0) + 1,
+        };
+      },
+    );
+    return viewSafe(currentSchedule(next), context.now());
+  }),
+  delete: operator.delete.handler(async ({ input, context }) => {
+    const next = await context.scheduleStore.mutateSchedule(
+      input.id,
+      (current) => {
+        const schedule = currentSchedule(current, input.expectedRevision);
+        authorizeSchedule(context, schedule);
+        return {
+          ...schedule,
+          enabled: false,
+          disabledReason: 'operator',
+          deletedAt: context.now().toISOString(),
+          updatedAt: context.now().toISOString(),
+          revision: (schedule.revision ?? 0) + 1,
+        };
+      },
+    );
+    return {
+      id: input.id,
+      deleted: true as const,
+      ...(next?.pendingTick === undefined
+        ? {}
+        : { pendingItemId: next.pendingTick.itemId }),
     };
-    await context.scheduleStore.writeSchedule(schedule);
-    return view(schedule);
   }),
-
-  get: operator.get.handler(async ({ input, context, errors }) => {
-    const schedule = await context.scheduleStore.readSchedule(input.id);
-    if (schedule === undefined) throw errors.NOT_FOUND();
-    return viewSafe(schedule);
-  }),
-
-  list: operator.list.handler(async ({ input, context }) => {
-    const schedules = await context.scheduleStore.listSchedules(input.limit);
-    return { schedules: schedules.map(viewSafe) };
-  }),
-
-  enable: operator.enable.handler(async ({ input, context, errors }) => {
-    const schedule = await context.scheduleStore.readSchedule(input.id);
-    if (schedule === undefined) throw errors.NOT_FOUND();
-    // Clears `disabledReason` unconditionally, regardless of which reason
-    // disabled it ('operator', 'grant-revoked', or 'invalid') -- the next
-    // tick re-validates the grant and re-parses the stored cron/spec from
-    // scratch, so there is nothing left here worth distinguishing.
-    const { disabledReason: _disabledReason, ...rest } = schedule;
-    const next: Schedule = {
-      ...rest,
-      enabled: true,
-      updatedAt: context.now().toISOString(),
-    };
-    await context.scheduleStore.writeSchedule(next);
-    return viewSafe(next);
-  }),
-
-  disable: operator.disable.handler(async ({ input, context, errors }) => {
-    const schedule = await context.scheduleStore.readSchedule(input.id);
-    if (schedule === undefined) throw errors.NOT_FOUND();
-    const next: Schedule = {
-      ...schedule,
-      enabled: false,
-      disabledReason: 'operator',
-      updatedAt: context.now().toISOString(),
-    };
-    await context.scheduleStore.writeSchedule(next);
-    return viewSafe(next);
-  }),
-
+  enable: operator.enable.handler(({ input, context }) =>
+    toggle(context, input.id, input.expectedRevision, true),
+  ),
+  disable: operator.disable.handler(({ input, context }) =>
+    toggle(context, input.id, input.expectedRevision, false),
+  ),
   tick: cronTick.tick.handler(async ({ context }) => {
-    const schedules = await context.scheduleStore.listEnabledSchedules();
+    const schedules = await context.scheduleStore.listTickSchedules();
     const now = context.now();
     const minted: { scheduleId: string; itemId: string }[] = [];
-    // Retained in the response for existing clients; intake no longer caps.
-    const skippedCap: string[] = [];
     const disabled: string[] = [];
-    const tickErrors: { scheduleId: string; message: string }[] = [];
-
-    for (const schedule of schedules) {
-      // Everything below is per-schedule work (parsing the stored cron,
-      // computing the due slot and item id, minting, writing the
-      // watermark back) inside one try/catch: one schedule's failure --
-      // an unexpected `mintItem` throw, a store write that rejects, ...
-      // -- must never abort the remaining schedules' ticks. It is logged
-      // with the scheduleId and reported in `errors` instead of thrown.
+    const errors: { scheduleId: string; message: string }[] = [];
+    for (const snapshot of schedules) {
       try {
-        // A stored `cron` is validated by `cronExpressionSchema` at create
-        // time, so one that no longer parses here is not a caller mistake
-        // -- it is a bug (a grammar tightened out from under an
-        // already-stored schedule, or a hand-edited document). Disable
-        // with 'invalid' rather than letting `parseCron` throw and abort
-        // every other schedule's tick.
-        let cron: CronSpec;
-        try {
-          cron = parseCron(schedule.cron);
-        } catch (error) {
-          logger.error(
-            'agent-lcars: schedule has a cron expression that no longer parses, disabling',
-            { scheduleId: schedule.scheduleId, error },
+        let pending = snapshot.pendingTick;
+        if (pending === undefined) {
+          let spec: WorkSpec;
+          let slot: Date | undefined;
+          const watermark = admissionWatermark(snapshot);
+          try {
+            spec = workSpecSchema.parse(snapshot.spec);
+            const cron = parseCron(snapshot.cron);
+            if (nextDueSlot(cron, now) === undefined)
+              throw new Error('cron expression never fires');
+            slot = latestDueSlot(
+              cron,
+              now,
+              watermark === undefined ? undefined : new Date(watermark),
+            );
+          } catch {
+            const changed = await context.scheduleStore.mutateSchedule(
+              snapshot.scheduleId,
+              (current) => {
+                if (
+                  current === undefined ||
+                  !current.enabled ||
+                  current.deletedAt !== undefined ||
+                  (current.revision ?? 0) !== (snapshot.revision ?? 0)
+                )
+                  return undefined;
+                return {
+                  ...current,
+                  enabled: false,
+                  disabledReason: 'invalid',
+                  revision: (current.revision ?? 0) + 1,
+                  updatedAt: now.toISOString(),
+                };
+              },
+            );
+            if (changed !== undefined) disabled.push(snapshot.scheduleId);
+            continue;
+          }
+          if (slot === undefined) continue;
+          const itemId = await slotItemId(snapshot.scheduleId, slot);
+          const admitted = await context.scheduleStore.mutateSchedule(
+            snapshot.scheduleId,
+            (current) => {
+              if (
+                current === undefined ||
+                !current.enabled ||
+                current.deletedAt !== undefined ||
+                current.pendingTick !== undefined ||
+                (current.revision ?? 0) !== (snapshot.revision ?? 0) ||
+                (admissionWatermark(current) ?? '') >= slot.toISOString()
+              )
+                return undefined;
+              return {
+                ...current,
+                pendingTick: {
+                  slotAt: slot.toISOString(),
+                  itemId,
+                  revision: current.revision ?? 0,
+                  spec,
+                  createdBy: current.createdBy,
+                },
+              };
+            },
           );
-          const fresh = await freshEnabledOrSkip(context, schedule.scheduleId);
-          if (fresh === undefined) continue;
-          await context.scheduleStore.writeSchedule({
-            ...fresh,
-            enabled: false,
-            disabledReason: 'invalid',
-            updatedAt: now.toISOString(),
+          pending = admitted?.pendingTick;
+          if (pending === undefined) continue;
+        }
+        // The atomic pending record is the tick's admission point. Changes
+        // after it affect future occurrences; this one retries the frozen
+        // spec even after a delete, and never vanishes on a crash.
+        const admitted = pending;
+        const parsed = workSpecSchema.safeParse(admitted.spec);
+        if (!parsed.success) {
+          const changed = await closePending(
+            context,
+            snapshot.scheduleId,
+            admitted,
+            'invalid',
+            now,
+          );
+          if (changed?.disabledReason === 'invalid')
+            disabled.push(snapshot.scheduleId);
+          errors.push({
+            scheduleId: snapshot.scheduleId,
+            message:
+              'Invalid admitted schedule specification; occurrence closed',
           });
-          disabled.push(schedule.scheduleId);
           continue;
         }
-
-        const lastSlotAt =
-          schedule.lastSlotAt === undefined
-            ? undefined
-            : new Date(schedule.lastSlotAt);
-        const slot = latestDueSlot(cron, now, lastSlotAt);
-        if (slot === undefined) continue;
-
-        const itemId = await slotItemId(schedule.scheduleId, slot);
-
-        // Same reasoning as the cron case above: a stored `spec` is
-        // validated with `workSpecSchema` at create time, so one that no
-        // longer parses here is a bug in the stored data, disabled with
-        // the same 'invalid' reason.
-        let spec: WorkSpec;
-        try {
-          spec = workSpecSchema.parse(schedule.spec);
-        } catch (error) {
-          logger.error(
-            'agent-lcars: schedule has a spec that no longer validates, disabling',
-            { scheduleId: schedule.scheduleId, error },
-          );
-          const fresh = await freshEnabledOrSkip(context, schedule.scheduleId);
-          if (fresh === undefined) continue;
-          await context.scheduleStore.writeSchedule({
-            ...fresh,
-            enabled: false,
-            disabledReason: 'invalid',
-            updatedAt: now.toISOString(),
-          });
-          disabled.push(schedule.scheduleId);
-          continue;
-        }
-
-        const grant = grantForPrincipal(schedule.createdBy, context.grants());
-
+        const spec = parsed.data;
+        const grant = grantForPrincipal(admitted.createdBy, context.grants());
         const result = await mintItem(context, {
-          id: itemId,
+          id: admitted.itemId,
           spec,
-          origin: {
-            principal: `cron:${schedule.scheduleId}`,
-            channel: 'cron',
-          },
+          origin: { principal: `cron:${snapshot.scheduleId}`, channel: 'cron' },
           grantsPrincipal: {
-            principal: schedule.createdBy,
+            principal: admitted.createdBy,
             pipelines: grant?.pipelines ?? [],
           },
         });
-
         if (result.kind === 'forbidden') {
-          const fresh = await freshEnabledOrSkip(context, schedule.scheduleId);
-          if (fresh === undefined) continue;
-          await context.scheduleStore.writeSchedule({
-            ...fresh,
-            enabled: false,
-            disabledReason: 'grant-revoked',
-            updatedAt: now.toISOString(),
+          // Another tick may have minted before this caller's grant snapshot.
+          // Reconcile that durable result first; a denied retry cannot undo it.
+          const task = await context.runtime.store.readTask({
+            workId: admitted.itemId,
           });
-          disabled.push(schedule.scheduleId);
-          continue;
+          if (task === undefined) {
+            const changed = await closePending(
+              context,
+              snapshot.scheduleId,
+              admitted,
+              'grant-revoked',
+              now,
+            );
+            if (changed?.disabledReason === 'grant-revoked')
+              disabled.push(snapshot.scheduleId);
+            continue;
+          }
+          const stored = workSpecSchema.safeParse(
+            (task.task.work as { spec?: unknown } | undefined)?.spec,
+          );
+          if (
+            !stored.success ||
+            JSON.stringify(stored.data) !== JSON.stringify(spec)
+          )
+            throw new Error(
+              'scheduled item conflicts with the admitted occurrence',
+            );
         }
-        // `result.kind === 'conflict'` is reachable here for exactly one
-        // reason: `mintItem`'s own "existing item with a different spec"
-        // conflict can never trigger -- `itemId` is deterministic per
-        // (scheduleId, slot) (`slotItemId`), always paired with the same
-        // `spec`, so a same-slot re-tick always replays the identical spec
-        // `mintItem` already stored. What CAN: two ticks racing the
-        // identical due slot both call `orchestrator.request` for the same
-        // requestId, and the loser gets back the orchestrator's own
-        // idempotency refusal, `reason: 'duplicate-request'`. Either way
-        // the item already exists exactly as an uncontested mint would
-        // have left it, so 'conflict' shares this write-back with
-        // 'existing' (idempotent replay) and 'minted' (a fresh mint) --
-        // every one of `MintOutcome`'s five kinds is matched explicitly by
-        // a branch in this function.
-        if (
-          result.kind === 'conflict' ||
-          result.kind === 'existing' ||
-          result.kind === 'minted'
-        ) {
-          // Checked -- and, on a lost race, skipped -- BEFORE `minted` is
-          // touched: an operator win here means this tick reports nothing,
-          // not a phantom entry for a watermark it never wrote.
-          const fresh = await freshEnabledOrSkip(context, schedule.scheduleId);
-          if (fresh === undefined) continue;
-          minted.push({ scheduleId: schedule.scheduleId, itemId });
-          await context.scheduleStore.writeSchedule({
-            ...fresh,
-            lastSlotAt: slot.toISOString(),
-            lastItemId: itemId,
-            updatedAt: now.toISOString(),
+        if (result.kind === 'conflict') {
+          // A duplicate-request race is safe only if the actual item matches
+          // this frozen reservation; an arbitrary same-id conflict must not
+          // consume the schedule watermark or claim success.
+          const task = await context.runtime.store.readTask({
+            workId: admitted.itemId,
           });
+          const stored = workSpecSchema.safeParse(
+            (task?.task.work as { spec?: unknown } | undefined)?.spec,
+          );
+          if (
+            !stored.success ||
+            JSON.stringify(stored.data) !== JSON.stringify(spec)
+          )
+            throw new Error(
+              'scheduled item conflicts with the admitted occurrence',
+            );
         }
+        const settled = await context.scheduleStore.mutateSchedule(
+          snapshot.scheduleId,
+          (current) => {
+            if (
+              current === undefined ||
+              !samePending(current.pendingTick, admitted)
+            )
+              return undefined;
+            const { pendingTick: _pending, ...rest } = current;
+            return {
+              ...rest,
+              lastSlotAt: laterSlot(current.lastSlotAt, admitted.slotAt),
+              lastItemId: admitted.itemId,
+              updatedAt: now.toISOString(),
+            };
+          },
+        );
+        if (settled !== undefined)
+          minted.push({
+            scheduleId: snapshot.scheduleId,
+            itemId: admitted.itemId,
+          });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logger.error('agent-lcars: schedule tick failed', {
-          scheduleId: schedule.scheduleId,
+          scheduleId: snapshot.scheduleId,
           error,
         });
-        tickErrors.push({ scheduleId: schedule.scheduleId, message });
+        errors.push({ scheduleId: snapshot.scheduleId, message });
       }
     }
-
     return {
       ticked: schedules.length,
       minted,
-      skippedCap,
+      skippedCap: [] as string[],
       disabled,
-      errors: tickErrors,
+      errors,
     };
   }),
 });

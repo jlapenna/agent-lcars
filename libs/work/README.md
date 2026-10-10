@@ -81,3 +81,38 @@ disabled in production unless explicitly enabled through the approved
 deployment path. See [the capacity contract](../../docs/executor-capacity.md)
 for authority, durable replay, physical retirement, migration and qualification
 boundaries.
+
+## Schedule edits and occurrence admission
+
+Schedule evaluation uses five-field UTC cron expressions. Views include a
+configuration `revision`, optional `nextDueAt` (UTC), and `disabledReason`.
+Read the current revision, then submit it as `expectedRevision` with `PATCH
+/schedules/{id}`, `DELETE /schedules/{id}`, or either enable/disable POST.
+This required field also applies to existing toggle clients; a missing field
+returns 400, while a stale revision returns 409. `PUT` still creates a new or
+identical schedule; it cannot edit or resurrect a deleted ID.
+
+An operator needs `work.operator` and a pipeline/repository grant to submit
+valid new work. Enabling also checks the creator's current grant. The creator
+can disable or delete an invalid/revoked schedule; another operator requires
+a grant covering the stored configuration. Repairs validate the replacement
+spec and cron before enabling it.
+
+Schedule mutations and tick admission use the same atomic schedule-document
+owner. Admission freezes the spec and creator in `pendingTick` before minting
+its deterministic item. Edits affect future admissions and preserve settled
+watermarks. Disable/delete stop new admissions; a previously admitted
+occurrence may still finish, including after a crash. Deletion retains a
+hidden tombstone so stale reads and idempotent creates cannot revive it.
+
+Unexpected mint/store failures retain pending work for retry. A permanently
+invalid or revoked occurrence can close future admission for its slot:
+`lastClosedSlotAt` is a separate monotonic floor, not evidence of a successful
+mint or guaranteed cancellation. Work admitted by a concurrent earlier tick
+may still execute. Future slots must follow both this floor and `lastSlotAt`;
+`lastItemId` and `lastSlotAt` describe successful mint settlement. Settlement
+checks the full frozen reservation and cannot consume a newer reservation or
+undo an operator edit. Revoked retries first reconcile already-created work.
+
+The console displays the next occurrence in UTC and the browser's explicitly
+labeled local time zone. Local display never changes cron evaluation.

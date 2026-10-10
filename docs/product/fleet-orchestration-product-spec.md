@@ -570,16 +570,16 @@ variable remains configuration; registry tests do not validate its live value.
 
 The SLO targets below are proposed.
 
-| Metric                      | Definition                                                                | Proposed target     |
-| --------------------------- | ------------------------------------------------------------------------- | ------------------- |
-| Admission latency           | Time from webhook receipt to run `running` (queued)                       | p95 < 60s           |
-| Claim latency               | Time from queued to claimed, with capacity available and no cooldown      | p95 < 2 min         |
-| Evidence rate               | Share of finished runs with a verified deliverable, park, or no-op        | > 95%               |
-| Successful-attempt rate     | Share of attempts ending `ok`; the 2026-09-11 audit baseline was 18 of 77 | Trend upward; > 60% |
-| Silent loss                 | Runs that are live past `leaseExpiresAt` plus one tick                    | 0                   |
-| Outbox health               | `failed` (dead-letter) outbox entries                                     | 0 sustained         |
-| Human-touch rate            | Share of tasks that need a park or manual action before merge             | Track; reduce       |
-| Cost per merged deliverable | Session cost ÷ merged PRs, by pipeline                                    | Track               |
+| Metric                      | Definition                                                                                   | Proposed target     |
+| --------------------------- | -------------------------------------------------------------------------------------------- | ------------------- |
+| Admission latency           | Time from webhook receipt to run `running` (queued)                                          | p95 < 60s           |
+| Claim latency               | Time from queued to claimed, with capacity available and no cooldown                         | p95 < 2 min         |
+| Evidence rate               | Share of finished runs with a verified deliverable, park, or no-op                           | > 95%               |
+| Successful-attempt rate     | Share of attempts ending `ok`; the 2026-09-11 audit baseline was 18 of 77                    | Trend upward; > 60% |
+| Silent loss                 | Runs that are live past `leaseExpiresAt` plus one tick                                       | 0                   |
+| Outbox health               | `failed` (dead-letter) outbox entries                                                        | 0 sustained         |
+| Human-touch rate            | Share of tasks that need a park or manual action before merge                                | Track; reduce       |
+| Cost per merged deliverable | [Selected cumulative session cost ÷ unique known-merged PRs](../cost-ledger.md), by pipeline | Track               |
 
 ## 14. Open questions
 

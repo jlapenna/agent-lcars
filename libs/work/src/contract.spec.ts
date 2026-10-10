@@ -130,14 +130,16 @@ describe('itemsContract.redispatch', () => {
 });
 
 describe('schedulesContract', () => {
-  it('declares the six schedule procedures', () => {
+  it('declares revision-checked schedule mutation procedures', () => {
     expect(Object.keys(schedulesContract).sort()).toEqual([
       'create',
+      'delete',
       'disable',
       'enable',
       'get',
       'list',
       'tick',
+      'update',
     ]);
   });
 });
@@ -476,8 +478,10 @@ describe('generateWorkOpenApi', () => {
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
       'GET /schedules/{id}': ['200', '404'],
       'GET /schedules': ['200'],
-      'POST /schedules/{id}/enable': ['200', '404'],
-      'POST /schedules/{id}/disable': ['200', '404'],
+      'PATCH /schedules/{id}': ['200', '400', '403', '404', '409'],
+      'DELETE /schedules/{id}': ['200', '403', '404', '409'],
+      'POST /schedules/{id}/enable': ['200', '400', '403', '404', '409'],
+      'POST /schedules/{id}/disable': ['200', '400', '403', '404', '409'],
       'POST /schedules/tick': ['200'],
       'POST /runs/claim': ['200', '401', '409'],
       'POST /runs/capacity': ['200', '401', '409'],
