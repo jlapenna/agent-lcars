@@ -497,15 +497,15 @@ console Reply action.
 
 ## 9. Non-functional requirements
 
-| ID      | Requirement                                                                                                                                    | Status   |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| FE-NF-1 | Every page streams: a `Suspense` boundary with a `NavPageLoading` header renders before data arrives                                           | Shipped  |
-| FE-NF-2 | No secret (App key, `AUTH_SECRET`, OAuth token, cookies) ever reaches the client or the logs                                                   | Shipped  |
-| FE-NF-3 | External links that come from agent output pass through `safeHttpUrl`                                                                          | Shipped  |
-| FE-NF-4 | Hermetic E2E (Playwright against the standalone build, the Firestore emulator, and fake GitHub) covers each journey                            | Partial  |
-| FE-NF-5 | The production build is a standalone bundle and has a smoke test from an isolated copy; Google Cloud clients are kept out of the server bundle | Shipped  |
-| FE-NF-6 | Deploys happen only through `deploy-console.yml`, triggered by green CI on `main`                                                              | Shipped  |
-| FE-NF-7 | P95 time to interactive on the Inbox under 2s on a mid-range phone                                                                             | Proposed |
+| ID      | Requirement                                                                                                                                                | Status  |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| FE-NF-1 | Every page streams: a `Suspense` boundary with a `NavPageLoading` header renders before data arrives                                                       | Shipped |
+| FE-NF-2 | No secret (App key, `AUTH_SECRET`, OAuth token, cookies) ever reaches the client or the logs                                                               | Shipped |
+| FE-NF-3 | External links that come from agent output pass through `safeHttpUrl`                                                                                      | Shipped |
+| FE-NF-4 | Hermetic E2E (Playwright against the standalone build, the Firestore emulator, and fake GitHub) covers each journey                                        | Partial |
+| FE-NF-5 | The production build is a standalone bundle and has a smoke test from an isolated copy; Google Cloud clients are kept out of the server bundle             | Shipped |
+| FE-NF-6 | Deploys happen only through `deploy-console.yml`, triggered by green CI on `main`                                                                          | Shipped |
+| FE-NF-7 | P95 loaded-decision / working-primary-action readiness under 2s, separately for cold/warm phone journeys; [measurement contract](../inbox-phone-budget.md) | Partial |
 
 **E2E journeys covered today:**
 
