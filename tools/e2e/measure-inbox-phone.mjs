@@ -102,6 +102,8 @@ async function milestone(page, origin) {
   const measured = await page.evaluate(() => {
     const navigation = performance.getEntriesByType('navigation')[0];
     const resources = performance.getEntriesByType('resource');
+    const diagnostics = window.__inboxPhoneDiagnostics;
+    diagnostics.collect(diagnostics.observer.takeRecords());
     return {
       readyMs: performance.now(),
       responseStartMs: navigation.responseStart,
@@ -109,8 +111,9 @@ async function milestone(page, origin) {
       domInteractiveMs: navigation.domInteractive,
       domContentLoadedMs: navigation.domContentLoadedEventEnd,
       loadEventMs: navigation.loadEventEnd,
-      primaryClickDispatchedMs: window.__inboxPhoneDiagnostics.clickMs,
-      longTasks: window.__inboxPhoneDiagnostics.longTasks,
+      primaryClickDispatchedMs: diagnostics.clickMs,
+      longTasks: diagnostics.longTasks,
+      longTasksTruncated: diagnostics.longTasksTruncated,
 
       resources: resources.map((entry) => ({
         path: new URL(entry.name).pathname,
@@ -124,6 +127,8 @@ async function milestone(page, origin) {
       })),
     };
   });
+  if (!Number.isFinite(measured.primaryClickDispatchedMs))
+    throw new Error('Primary click diagnostic was not captured.');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   return { documentLoadObservedMs, clickRequestedMs, ...measured };
 }
@@ -195,17 +200,26 @@ export async function measure(options) {
           const page = await context.newPage();
           page.setDefaultTimeout(SAMPLE_TIMEOUT_MS);
           await page.addInitScript(() => {
-            const diagnostics = { clickMs: null, longTasks: [] };
+            const diagnostics = {
+              clickMs: null,
+              longTasks: [],
+              longTasksTruncated: false,
+            };
             window.__inboxPhoneDiagnostics = diagnostics;
-            new PerformanceObserver((list) => {
-              for (const entry of list.getEntries()) {
+            diagnostics.collect = (entries) => {
+              for (const entry of entries) {
                 if (diagnostics.longTasks.length < 200)
                   diagnostics.longTasks.push({
                     startMs: entry.startTime,
                     durationMs: entry.duration,
                   });
+                else diagnostics.longTasksTruncated = true;
               }
-            }).observe({ type: 'longtask', buffered: true });
+            };
+            diagnostics.observer = new PerformanceObserver((list) =>
+              diagnostics.collect(list.getEntries()),
+            );
+            diagnostics.observer.observe({ type: 'longtask', buffered: true });
             document.addEventListener(
               'click',
               (event) => {

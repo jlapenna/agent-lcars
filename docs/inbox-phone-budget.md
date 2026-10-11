@@ -107,3 +107,15 @@ A gap between click request and dispatch can include hydration, Playwright
 visibility/stability checks and scheduling; inspect a browser trace when further
 attribution is needed. The instrumentation itself adds observation overhead;
 compare before/after with the same probe revision.
+
+The selected console E2E suite also executes `inbox-phone-lab.spec.ts` with 30
+interleaved samples per case and no retries, retaining `inbox-phone-lab.json`
+in its normal diagnostics artifact (14-day CI retention). This gives the
+maintainer an owned controlled-CI timing signal and exercises the probe against
+an actual hermetic production bundle. E2E fails on a broken probe or journey;
+it does not fail solely because `targetMet` is false. Runner/browser changes and
+contention mean CI artifacts are a separate lab series from earlier host runs.
+Compare exact revisions on the same runner/profile before claiming improvement.
+Download and preserve the raw artifact before retention expires when using it
+as acceptance evidence. The test has a 16-minute bound around the probe's
+15-minute deadline; the existing serial CI job retains its 30-minute bound.
