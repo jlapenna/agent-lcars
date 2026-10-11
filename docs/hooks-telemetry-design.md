@@ -286,12 +286,17 @@ this fleet (`~/.claude/hooks/herdr-agent-state.sh`,
 Its choices were made under the same constraints and this design adopts
 them:
 
-- **Self-installing integration.** `lcars integration install claude|codex|opencode`
-  writes the hook entries and the launcher script itself, idempotently,
-  with `# LCARS_INTEGRATION_ID` / `# LCARS_INTEGRATION_VERSION` headers so
-  `lcars integration status` (and `--doctor`) can report an outdated or
-  hand-edited install. homegit then owns one `run_onchange_` line per host
-  instead of hook JSON inside `modify_settings.json` and `modify_hooks.json`.
+- **Self-installing integration.** `lcars integration install claude|codex|all`
+  writes the launcher script, idempotently, with `# LCARS_INTEGRATION_ID` /
+  `# LCARS_INTEGRATION_VERSION` headers so `lcars integration status` can
+  report an outdated or hand-edited install, and appends the hook entries on
+  hosts nobody else manages. On homegit-managed hosts the entries live in
+  homegit's managed hook JSON instead, because `modify_settings.json`
+  replaces the whole `hooks` key on every apply and would erase anything the
+  installer added; the entries are constant strings, so both owners agree
+  byte for byte. homegit's `run_onchange_after_35-homegit-lcars-telemetry`
+  runs the installer for the stub and writes `config.json`/`telemetry.env`
+  only once the host's `AGENT_LCARS_TELEMETRY_TOKEN_<HOST>` secret exists.
   `uninstall` removes exactly what `install` added and nothing else.
 - **Constant hook entry, versioned script.** The settings entry is
   `[ -x "$HOME/.claude/hooks/lcars-hook.sh" ] && sh "$HOME/.claude/hooks/lcars-hook.sh" || true`
