@@ -576,6 +576,7 @@ func (q *kubernetesQueue) resume(ctx context.Context, job *batch.Job) error {
 	// Create's resourceVersion is immediately stale if the Job controller
 	// writes Suspended status. Re-read and revalidate every bounded conflict
 	// retry; never adopt a replacement Job or restart an executed attempt.
+	updateAttempt := 0
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -634,9 +635,17 @@ func (q *kubernetesQueue) resume(ctx context.Context, job *batch.Job) error {
 			return err
 		}
 		current.Spec.Suspend = ptr(false)
+		updateAttempt++
 		_, err = q.client.BatchV1().Jobs(q.config.Namespace).Update(ctx, current, meta.UpdateOptions{})
+		// Successful retries otherwise hide the race from operator evidence.
+		// Record only validated Job identity and the submitted version; API
+		// errors and run credentials do not belong in these records.
+		fields := []any{slog.String("runId", runID), slog.String("job", current.Name), slog.String("jobUid", string(current.UID)), slog.String("resourceVersion", current.ResourceVersion), slog.Int("updateAttempt", updateAttempt)}
+		if apierrors.IsConflict(err) {
+			q.logger.Info("Kubernetes startup update conflict", fields...)
+		}
 		if err == nil {
-			q.logger.Info("Started Kubernetes direct runner", slog.String("runId", runID), slog.String("job", current.Name))
+			q.logger.Info("Started Kubernetes direct runner", fields...)
 		}
 		return err
 	})
