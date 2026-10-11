@@ -3945,7 +3945,12 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       });
     });
 
-    it.each(['healthy', 'before-exit', 'after-settlement'] as const)(
+    it.each([
+      'healthy',
+      'before-exit',
+      'after-settlement',
+      'concurrent-release',
+    ] as const)(
       'restored HTTP exit retains cleanup authority with retirement=%s',
       async (retirement) => {
         const f = await brokerFixture(false, false, true);
@@ -3956,7 +3961,10 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         const assertReleaseHeld = async () => {
           await expect(releaseBroker(f)).rejects.toThrow('physical');
         };
-        if (retirement === 'before-exit') {
+        if (
+          retirement === 'before-exit' ||
+          retirement === 'concurrent-release'
+        ) {
           await retireBroker(f);
           await assertReleaseHeld();
         }
@@ -3985,23 +3993,27 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           expect(await f.store.readRun(f.runId)).toEqual(settled.run);
           return settled;
         };
+        let concurrentRelease: Promise<void> | undefined;
         let checked = false;
         f.fake.beforeSave = async (attempt) => {
           if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
+          // Keep conditional cleanup outstanding until the racing release has
+          // decided. Either transaction order must retain the exact claim.
+          await concurrentRelease;
           checked = true;
           expect(
             (await f.store.readRun(f.runId))?.credentialOperation?.kind,
           ).toBe('cleanup');
           if (retirement !== 'healthy') await assertReleaseHeld();
         };
-        expect(
-          (
-            await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
-              runner: 'same-runner',
-              claimFingerprint: f.fingerprint,
-            })
-          ).status,
-        ).toBe(200);
+        if (retirement === 'concurrent-release')
+          concurrentRelease = assertReleaseHeld();
+        const exitResponse = call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
+          runner: 'same-runner',
+          claimFingerprint: f.fingerprint,
+        });
+        const [response] = await Promise.all([exitResponse, concurrentRelease]);
+        expect(response.status).toBe(200);
         expect(checked).toBe(true);
         expect((await f.codexAuth.readLease())?.expiresAt).toBe(
           '1970-01-01T00:00:00.000Z',
@@ -4013,6 +4025,26 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           terminal?.events.filter((event) => event.to === 'lost'),
         ).toHaveLength(1);
         if (retirement === 'healthy') await retireBroker(f);
+
+        // Publish the durable retry just as the dispatch outbox does. It must
+        // wait for physical release, then restore its own conditional lease.
+        const successor = await f.store.readActiveRun({
+          repo: 'jlapenna/agent-lcars',
+          issue: 42,
+        });
+        if (successor === undefined) throw new Error('missing exit retry');
+        await f.store.enqueueRun({ runId: successor.runId, now: NOW });
+        await f.protocol.register(f.capacityOwner, 'exit-retry-producer', NOW);
+        const claimRetry = (claimRequestId: string) =>
+          call(f.ctx, 'POST', '/runs/claim', {
+            runner: 'same-runner',
+            capacityVersion: 1,
+            producerId: 'exit-retry-producer',
+            claimRequestId,
+          });
+        const waiting = await claimRetry('before-exit-release');
+        expect(waiting.status).toBe(200);
+        expect(waiting.json).toMatchObject({ kind: 'wait' });
         expect(await releaseBroker(f)).toEqual({
           released: true,
           retainBarrier: false,
@@ -4028,6 +4060,72 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           ).status,
         ).toBe(200);
         expect(await f.store.readRun(f.runId)).toEqual(released);
+
+        const claimedRetry = await claimRetry('after-exit-release');
+        expect(claimedRetry.status).toBe(200);
+        expect(claimedRetry.json).toMatchObject({ runId: successor.runId });
+        const retryToken = (claimedRetry.json as { token: string }).token;
+        const retryFingerprint = hashRunToken(retryToken);
+        const retryReceipt = (await f.protocol.read(NOW)).receipts[0];
+        const retryFence = {
+          poolId: retryReceipt.poolId,
+          slot: retryReceipt.slot,
+          revision: retryReceipt.revision,
+          runId: retryReceipt.runId,
+          nonce: retryReceipt.nonce,
+        };
+        await f.protocol.recover(f.capacityOwner, retryFence, {
+          nonce: 'retry-recovery-nonce',
+          now: NOW,
+          expiresAt: '2026-08-26T10:01:00.000Z',
+        });
+        await f.protocol.bind(f.capacityOwner, retryFence, {
+          recoveryNonce: 'retry-recovery-nonce',
+          jobUid: 'retry-job',
+          jobName: retryReceipt.jobName,
+          podUid: 'retry-pod',
+          secretUid: 'retry-secret',
+          secretTokenHash: retryFingerprint,
+          placed: true,
+          deleting: false,
+          owned: true,
+          now: NOW,
+        });
+        await f.protocol.attest(f.capacityOwner, retryFence, {
+          recoveryNonce: 'retry-recovery-nonce',
+          jobUid: 'retry-job',
+          podUid: 'retry-pod',
+          generation: 1,
+          owned: true,
+          now: NOW,
+        });
+        await f.protocol.activate({
+          fence: retryFence,
+          jobUid: 'retry-job',
+          podUid: 'retry-pod',
+          tokenHash: retryFingerprint,
+          now: NOW,
+        });
+        f.fake.beforeSave = undefined;
+        const restoredRetry = await call(
+          {
+            ...f.ctx,
+            bearerToken: retryToken,
+            verifyWorkerIdentity: async () => ({
+              podUid: 'retry-pod',
+              namespace: 'broker-ns',
+            }),
+          },
+          'GET',
+          runPath(successor.runId, '/codex-auth'),
+        );
+        expect(restoredRetry.status).toBe(200);
+        const retryLease = await f.codexAuth.readLease();
+        expect(retryLease).toMatchObject({
+          runId: successor.runId,
+          claimFingerprint: retryFingerprint,
+        });
+        expect(retryLease?.expiresAt).toBe('2026-08-26T12:00:00.000Z');
       },
     );
 
