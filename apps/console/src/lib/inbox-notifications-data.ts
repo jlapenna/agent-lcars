@@ -4,16 +4,12 @@ import type { InboxCard } from '../app/inbox-card';
 import { inboxCardKey } from '../app/inbox-card';
 import { context as workContext } from '../app/work/context';
 import { auth } from '../auth';
-import {
-  getCachedAgentActivity,
-  getCachedQueueItems,
-  oldestFetchedAt,
-} from './dashboard-data';
+import { getCachedAgentActivity, getCachedQueueItems } from './dashboard-data';
 import type {
   InboxNotificationSnapshot,
   NotificationDecision,
 } from './inbox-notifications';
-import { NOTIFICATION_FRESH_MS } from './inbox-notifications';
+import { notificationSnapshotFresh } from './inbox-notifications';
 import { getNativeInboxCards } from './native-inbox';
 import { buildQueueView } from './queue-view';
 import { getRunnerSessionsByRunId } from './runner-sessions';
@@ -59,26 +55,21 @@ export async function loadInboxNotificationSnapshot(): Promise<InboxNotification
     activity.data,
     sessions.sessionsByRunId,
   );
-  const dataAsOf = Date.parse(
-    oldestFetchedAt(queue.fetchedAt, activity.fetchedAt),
-  );
-  return {
+  const sourceTimes = {
+    queue: Date.parse(queue.fetchedAt),
+    activity: Date.parse(activity.fetchedAt),
+    native: nativeReadStartedAt,
+  };
+  const snapshot: InboxNotificationSnapshot = {
     principalId: session.user.id,
-    observedAt: Math.min(dataAsOf, nativeReadStartedAt),
-    sourceTimes: {
-      queue: Date.parse(queue.fetchedAt),
-      activity: Date.parse(activity.fetchedAt),
-      native: nativeReadStartedAt,
-    },
+    observedAt: Math.min(...Object.values(sourceTimes)),
+    sourceTimes,
     available:
-      activity.data.warnings.length === 0 &&
-      sessions.warnings.length === 0 &&
-      Number.isFinite(dataAsOf) &&
-      dataAsOf <= now &&
-      now - dataAsOf < NOTIFICATION_FRESH_MS,
+      activity.data.warnings.length === 0 && sessions.warnings.length === 0,
     decisions: notificationDecisions([
       ...view.yourQueue.map((item) => ({ item })),
       ...native,
     ]),
   };
+  return { ...snapshot, available: notificationSnapshotFresh(snapshot, now) };
 }

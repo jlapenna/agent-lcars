@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	batch "k8s.io/api/batch/v1"
@@ -48,6 +52,8 @@ func startupConflict(name string) error {
 // revalidate the credential and durable run before using the fresh version.
 func TestKubernetesLaunchRetriesFreshVersionAfterControllerConflict(t *testing.T) {
 	q, c := kubeQueueFixture()
+	var logs bytes.Buffer
+	q.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	c.PrependReactor("create", "jobs", func(a clienttesting.Action) (bool, runtime.Object, error) {
 		a.(clienttesting.CreateAction).GetObject().(*batch.Job).ResourceVersion = "1"
 		return false, nil, nil
@@ -92,6 +98,25 @@ func TestKubernetesLaunchRetriesFreshVersionAfterControllerConflict(t *testing.T
 	secrets, _ := c.CoreV1().Secrets(q.config.Namespace).List(context.Background(), meta.ListOptions{})
 	if updates != 2 || fences != 2 || len(jobs.Items) != 1 || len(secrets.Items) != 1 || *jobs.Items[0].Spec.Suspend {
 		t.Fatalf("updates=%d fences=%d jobs=%d secrets=%d", updates, fences, len(jobs.Items), len(secrets.Items))
+	}
+	// Operators must be able to correlate the real conflict and successful
+	// fresh-version retry without disclosing the original run credential.
+	if strings.Contains(logs.String(), l.runToken) {
+		t.Fatal("startup evidence disclosed the run credential")
+	}
+	decoder := json.NewDecoder(&logs)
+	for i, message := range []string{"Kubernetes startup update conflict", "Started Kubernetes direct runner"} {
+		var record map[string]any
+		if err := decoder.Decode(&record); err != nil {
+			t.Fatal(err)
+		}
+		if record["msg"] != message || record["runId"] != l.runID || record["job"] != jobs.Items[0].Name || record["jobUid"] != string(jobs.Items[0].UID) || record["resourceVersion"] != fmt.Sprint(i+1) || record["updateAttempt"] != float64(i+1) {
+			t.Fatalf("startup evidence lost conflict/recovery identity: %v", record)
+		}
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		t.Fatal("idempotent launch emitted duplicate startup evidence")
 	}
 }
 

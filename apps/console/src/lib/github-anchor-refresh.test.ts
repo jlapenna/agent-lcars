@@ -318,6 +318,7 @@ describe('failed nullable merge fields (#2299)', () => {
       ['repository', 'i42', 'mergedAt'],
       ['repository', 'i42'],
       ['repository'],
+      [],
       undefined,
     ].map((path) => ({ path })),
   )(
@@ -344,6 +345,73 @@ describe('failed nullable merge fields (#2299)', () => {
         expect(spend.unmergedPRs).toBe(0);
         expect(spend.mergedPRs).toBe(previous.mergedAt ? 1 : 0);
         expect(spend.unknownPRs).toBe(previous.mergedAt ? 0 : 1);
+      }
+    },
+  );
+  it.each([{ errors: undefined }, { errors: [] }])(
+    'retains merge evidence when a partial failure has no error provenance: $errors',
+    async ({ errors }) => {
+      const graphql = vi.fn().mockRejectedValue({
+        data: { repository: { i42: { mergedAt: null, body: 'Available' } } },
+        ...(errors === undefined ? {} : { errors }),
+      });
+      for (const previous of [
+        projection(),
+        { ...projection(), mergedAt: timestamp },
+      ]) {
+        const [actual] = await enrichGithubAnchorProjections(
+          anchor.repo,
+          [{ ...previous, state: 'closed' }],
+          { graphql },
+        );
+        expect(actual?.body).toBe('Available');
+        expect(actual?.mergedAt).toBe(previous.mergedAt);
+        const spend = aggregateSessionSpend(
+          [session],
+          new Map(actual ? [['jlapenna/agent-lcars#42', actual]] : []),
+        );
+        expect(spend.unmergedPRs).toBe(0);
+        expect(spend.mergedPRs).toBe(previous.mergedAt ? 1 : 0);
+        expect(spend.unknownPRs).toBe(previous.mergedAt ? 0 : 1);
+        expect(spend.costPerMergedDeliverableUsd).toBe(
+          previous.mergedAt ? 5 : undefined,
+        );
+      }
+    },
+  );
+
+  it.each([null, timestamp])(
+    'accounts for successfully read mergedAt %s despite unrelated check errors',
+    async (mergedAt) => {
+      for (const partial of [false, true]) {
+        const data = { repository: { i42: { mergedAt } } };
+        const graphql = partial
+          ? vi.fn().mockRejectedValue({
+              data,
+              errors: [
+                {
+                  message: 'Check forbidden',
+                  path: ['repository', 'i42', 'commits', 'nodes', 0],
+                },
+              ],
+            })
+          : vi.fn().mockResolvedValue(data);
+        const [actual] = await enrichGithubAnchorProjections(
+          anchor.repo,
+          [{ ...projection(), state: 'closed', mergedAt: timestamp }],
+          { graphql },
+        );
+        const spend = aggregateSessionSpend(
+          [session],
+          new Map(actual ? [['jlapenna/agent-lcars#42', actual]] : []),
+        );
+        expect(actual?.mergedAt).toBe(mergedAt);
+        expect(spend.mergedPRs).toBe(mergedAt ? 1 : 0);
+        expect(spend.unmergedPRs).toBe(mergedAt ? 0 : 1);
+        expect(spend.unknownPRs).toBe(0);
+        expect(spend.costPerMergedDeliverableUsd).toBe(
+          mergedAt ? 5 : undefined,
+        );
       }
     },
   );

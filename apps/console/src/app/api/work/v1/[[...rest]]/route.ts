@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { auth } from '@/auth';
+import { capacityMetricsHttpResponse } from '@/lib/capacity-metrics';
 import { codexAuthStore } from '@/lib/codex-auth-store';
 import {
   controlPlaneRepositories,
@@ -93,7 +94,21 @@ async function handle(request: Request): Promise<Response> {
     prefix: PREFIX,
     context: {
       ...(bearerToken === undefined ? {} : { bearerToken }),
+      ...(request.headers.get('x-lcars-worker-identity') === null
+        ? {}
+        : {
+            workerIdentityToken:
+              request.headers.get('x-lcars-worker-identity') ?? '',
+          }),
+      ...(/^\d+$/u.test(request.headers.get('x-lcars-worker-generation') ?? '')
+        ? {
+            workerGeneration: Number(
+              request.headers.get('x-lcars-worker-generation'),
+            ),
+          }
+        : {}),
       ...(principal === undefined ? {} : { principal }),
+      capacityEnabled: process.env['AGENT_LCARS_CAPACITY_ENABLED'] === 'true',
       store: runtime.store,
       orchestrator: runtime.orchestrator,
       ...(runtime.loadGithubAnchorLifecycle === undefined
@@ -127,7 +142,12 @@ async function handle(request: Request): Promise<Response> {
     },
   });
   if (runsResult.matched && runsResult.response !== undefined) {
-    return withNoStore(runsResult.response);
+    const response =
+      request.method === 'GET' &&
+      new URL(request.url).pathname === `${PREFIX}/runs/capacity/metrics`
+        ? await capacityMetricsHttpResponse(runsResult.response)
+        : runsResult.response;
+    return withNoStore(response);
   }
 
   const { matched, response } = await handler.handle(request, {

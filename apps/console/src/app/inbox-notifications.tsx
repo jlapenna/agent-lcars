@@ -51,7 +51,6 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
   const latest = useRef(principalId);
   const stopped = useRef(false);
   const epoch = useRef(0);
-  const running = useRef(false);
   const baseline = useRef(true);
   const key = notificationStorageKey(principalId);
   const tag = `inbox:${encodeURIComponent(principalId)}`;
@@ -61,6 +60,8 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
 
   useEffect(() => {
     const controlEpoch = epoch;
+    // A retired observer must not release the next account's in-flight guard.
+    let running = false;
     stopped.current = false;
     setBusy(false);
     baseline.current = true;
@@ -69,8 +70,12 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
     const write = (state: ReturnType<typeof read>) =>
       localStorage.setItem(key, JSON.stringify(state));
     const observe = async () => {
-      if (running.current || stopped.current) return;
+      if (running || stopped.current || latest.current !== principalId) return;
       const generation = epoch.current;
+      const current = () =>
+        !stopped.current &&
+        generation === epoch.current &&
+        latest.current === principalId;
       try {
         const stored = read();
         setEnabled(stored.enabled);
@@ -84,9 +89,9 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
           );
           return;
         }
-        running.current = true;
+        running = true;
         const fresh = await bounded(readInboxNotificationSnapshot());
-        if (stopped.current || generation !== epoch.current) return;
+        if (!current()) return;
         if (
           fresh.principalId !== latest.current ||
           !notificationSnapshotFresh(fresh, Date.now())
@@ -98,8 +103,15 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
           key,
           { ifAvailable: true },
           async (lock) => {
-            if (!lock || stopped.current || generation !== epoch.current)
+            if (!lock || !current()) return;
+            // Lock acquisition can outlive the authenticated snapshot. Pause
+            // before resetting a baseline or changing the pending ledger.
+            if (!notificationSnapshotFresh(fresh, Date.now())) {
+              setStatus(
+                'Authorization or data unavailable — notifications paused',
+              );
               return;
+            }
             let state = read();
             if (!state.enabled) return;
             if (baseline.current) {
@@ -134,6 +146,7 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
             const registration = await bounded(
               navigator.serviceWorker.getRegistration(NOTIFICATION_SCOPE),
             );
+            if (!current()) return;
             if (
               !registration?.active ||
               Notification.permission !== 'granted'
@@ -143,7 +156,6 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
               );
               return;
             }
-            if (stopped.current || generation !== epoch.current) return;
             if (!notificationSnapshotFresh(fresh, Date.now())) {
               setStatus(
                 'Authorization or data unavailable — notifications paused',
@@ -168,17 +180,17 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
             await bounded(
               registration.showNotification('Agent LCARS', options),
             );
-            if (!stopped.current && generation === epoch.current)
+            if (current())
               setStatus(
                 'Notification requested — browser or OS may suppress display',
               );
           },
         );
       } catch {
-        if (!stopped.current && generation === epoch.current)
+        if (current())
           setStatus('Notification delivery or preferences unavailable');
       } finally {
-        running.current = false;
+        running = false;
       }
     };
     void observe();
@@ -195,7 +207,7 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
       clearInterval(timer);
       window.removeEventListener('storage', changed);
     };
-  }, [key, tag]);
+  }, [key, tag, principalId]);
 
   async function enable() {
     const identity = principalId;
@@ -317,9 +329,11 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
       const registration = await bounded(
         navigator.serviceWorker.getRegistration(NOTIFICATION_SCOPE),
       );
+      if (!current()) return;
       const notifications = await bounded(
         registration?.getNotifications({ tag }) ?? Promise.resolve([]),
       );
+      if (!current()) return;
       for (const notification of notifications) notification.close();
     } catch {
       if (current())

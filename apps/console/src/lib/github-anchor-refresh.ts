@@ -92,9 +92,11 @@ async function graphqlTolerantOfPartialErrors<T extends object>(
     ) {
       throw error;
     }
-    const errors = (
+    const reportedErrors = (
       error as { errors?: { message?: string; path?: (string | number)[] }[] }
-    ).errors ?? [{}];
+    ).errors;
+    // A rejected response without field provenance cannot certify merge nulls.
+    const errors = reportedErrors?.length ? reportedErrors : [{}];
     logger.warn(
       `agent-lcars: using partial GitHub GraphQL data for ${repository} enrichment (${errors.length} field error${errors.length === 1 ? '' : 's'}: ${errors
         .map((e) => e.message ?? 'unknown')

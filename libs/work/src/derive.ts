@@ -69,7 +69,7 @@ export interface ItemRunView {
     | 'trigger'
   >;
   queue?: {
-    state: 'queued' | 'claimed';
+    state: 'queued' | 'claimed' | 'retired';
     claimedBy?: string;
     claimedAt?: string;
     firstHeartbeatAt?: string;

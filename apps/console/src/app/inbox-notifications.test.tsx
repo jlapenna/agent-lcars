@@ -115,6 +115,7 @@ describe('opt-in Inbox notification delivery', () => {
     await tick();
     expect(requestPermission).not.toHaveBeenCalled();
     expect(register).not.toHaveBeenCalled();
+    expect(mocks.read).not.toHaveBeenCalled();
     await click('Enable Inbox notifications');
     expect(requestPermission).toHaveBeenCalledOnce();
     expect(register).toHaveBeenCalledWith('/inbox-notifications-sw.js', {
@@ -229,9 +230,49 @@ describe('opt-in Inbox notification delivery', () => {
   it('discovers new decisions without an RSC rerender or manual refresh', async () => {
     render(tree(sample()));
     await click('Enable Inbox notifications');
+    await tick();
+    await tick();
+    await tick();
+    expect(showNotification).not.toHaveBeenCalled();
     mocks.read.mockImplementation(async () => sample([first, second]));
     await tick();
     expect(showNotification).toHaveBeenCalledOnce();
+  });
+  it('discovers an observed reopening without rerendering unchanged props', async () => {
+    render(tree(sample()));
+    await click('Enable Inbox notifications');
+    mocks.read.mockImplementation(async () => sample([]));
+    await tick();
+    expect(showNotification).not.toHaveBeenCalled();
+    mocks.read.mockImplementation(async () => sample());
+    await tick();
+    expect(showNotification).toHaveBeenCalledOnce();
+    expect(showNotification).toHaveBeenCalledWith(
+      'Agent LCARS',
+      expect.objectContaining({
+        data: { href: '/inbox?item=owner%2Frepo%231' },
+      }),
+    );
+    await tick();
+    await tick();
+    expect(showNotification).toHaveBeenCalledOnce();
+  });
+  it('stops source reads when permission is revoked or notifications are disabled', async () => {
+    render(tree(sample()));
+    await click('Enable Inbox notifications');
+    mocks.read.mockClear();
+    vi.stubGlobal('Notification', { permission: 'denied', requestPermission });
+    await tick();
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(requestPermission).toHaveBeenCalledOnce();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'check browser permission',
+    );
+    await click('Disable Inbox notifications');
+    vi.stubGlobal('Notification', { permission: 'granted', requestPermission });
+    await tick();
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(showNotification).not.toHaveBeenCalled();
   });
   it('retains the one-minute limit across unsubscribe and explicit re-enable', async () => {
     render(tree(sample()));
@@ -248,32 +289,137 @@ describe('opt-in Inbox notification delivery', () => {
     await tick();
     expect(showNotification).toHaveBeenCalledTimes(2);
   });
-  it('never sends prior pending native work omitted by the current same-watermark authorization', async () => {
-    const boundary = now;
-    const sourceTimes = {
-      queue: boundary,
-      activity: boundary,
-      native: boundary,
-    };
+  it.each([0, -1_000])(
+    'never sends omitted native work with watermark offset %i',
+    async (offset) => {
+      const sourceTimes = { queue: now, activity: now, native: now };
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          ...emptyNotificationState(),
+          enabled: true,
+          active: [first, second],
+          pending: [second],
+          observedAt: now,
+          sourceTimes,
+        }),
+      );
+      mocks.read.mockImplementation(async () => ({
+        ...sample([first]),
+        sourceTimes: {
+          queue: sourceTimes.queue + offset,
+          activity: sourceTimes.activity + offset,
+          native: sourceTimes.native + offset,
+        },
+      }));
+      render(tree(sample()));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(showNotification).not.toHaveBeenCalled();
+      expect(getRegistration).not.toHaveBeenCalled();
+      expect(
+        parseNotificationState(localStorage.getItem(storageKey)),
+      ).toMatchObject({
+        active: [first, second],
+        pending: [second],
+        sourceTimes,
+        lastSentAt: 0,
+      });
+    },
+  );
+  it.each([0, -1_000])(
+    'sends only currently authorized pending generations with watermark offset %i',
+    async (offset) => {
+      const sourceTimes = { queue: now, activity: now, native: now };
+      const replacement = { ...second, generation: 'work:01ABC/r3' };
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          ...emptyNotificationState(),
+          enabled: true,
+          active: [first, second],
+          pending: [second, first],
+          observedAt: now,
+          sourceTimes,
+        }),
+      );
+      // An eligible replacement generation cannot authorize its predecessor.
+      // Equal/older source clocks retain history independently of permission.
+      mocks.read.mockImplementation(async () => ({
+        ...sample([first, replacement]),
+        sourceTimes: {
+          queue: sourceTimes.queue + offset,
+          activity: sourceTimes.activity + offset,
+          native: sourceTimes.native + offset,
+        },
+      }));
+      render(tree(sample()));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(showNotification).toHaveBeenCalledExactlyOnceWith(
+        'Agent LCARS',
+        expect.objectContaining({
+          data: { href: '/inbox?item=owner%2Frepo%231' },
+        }),
+      );
+      expect(
+        parseNotificationState(localStorage.getItem(storageKey)),
+      ).toMatchObject({
+        active: [first, second],
+        pending: [second],
+        sourceTimes,
+        lastSentAt: now,
+      });
+    },
+  );
+  it.each([
+    'account mismatch',
+    'unavailable source',
+    'stale observation',
+    'stale queue',
+    'stale activity',
+    'stale native',
+    'denied permission',
+  ])('pauses retained pending work on %s', async (failure) => {
+    const sourceTimes = { queue: now, activity: now, native: now };
     localStorage.setItem(
       storageKey,
       JSON.stringify({
         ...emptyNotificationState(),
         enabled: true,
-        active: [first, second],
+        active: [second],
         pending: [second],
-        observedAt: boundary,
+        observedAt: now,
         sourceTimes,
       }),
     );
-    mocks.read.mockImplementation(async () => ({
-      ...sample([first]),
-      observedAt: boundary,
-      sourceTimes,
-    }));
-    render(tree(sample([first, second])));
-    await tick();
+    const fresh = sample([second]);
+    if (failure === 'account mismatch') fresh.principalId = 'other-viewer';
+    if (failure === 'unavailable source') fresh.available = false;
+    if (failure === 'stale observation') fresh.observedAt -= 60_000;
+    for (const source of ['queue', 'activity', 'native'] as const) {
+      if (failure === `stale ${source}`) fresh.sourceTimes[source] -= 60_000;
+    }
+    if (failure === 'denied permission')
+      vi.stubGlobal('Notification', {
+        permission: 'denied',
+        requestPermission,
+      });
+    mocks.read.mockResolvedValue(fresh);
+    render(tree(sample()));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(showNotification).not.toHaveBeenCalled();
+    expect(getRegistration).not.toHaveBeenCalled();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)),
+    ).toMatchObject({
+      pending: [second],
+      lastSentAt: 0,
+    });
   });
   it('does not attribute an old pending enable to a newly signed-in account', async () => {
     let resolveRegistration: ((value: typeof registration) => void) | undefined;
@@ -298,6 +444,174 @@ describe('opt-in Inbox notification delivery', () => {
     ).toBeNull();
     expect(localStorage.getItem(storageKey)).toBeNull();
   });
+  it.each(['permission', 'snapshot', 'activation', 'lock'] as const)(
+    'abandons pending %s on an account change, even after returning to that account',
+    async (stage) => {
+      let release: (() => void) | undefined;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (stage === 'permission')
+        requestPermission.mockImplementation(async () => {
+          await pending;
+          return 'granted';
+        });
+      if (stage === 'snapshot')
+        mocks.read.mockImplementation(async () => {
+          await pending;
+          return sample();
+        });
+      if (stage === 'activation') {
+        const worker = new EventTarget();
+        Object.assign(worker, { state: 'installing' });
+        register.mockResolvedValue({ active: null, installing: worker });
+        release = () => {
+          Object.assign(worker, { state: 'activated' });
+          worker.dispatchEvent(new Event('statechange'));
+        };
+      }
+      if (stage === 'lock')
+        locks.request.mockImplementationOnce(async (_key, options) => {
+          await pending;
+          return typeof options === 'function' ? options({}) : undefined;
+        });
+      const view = render(tree(sample()));
+      await click('Enable Inbox notifications');
+      view.rerender(tree(sample([first], 'other-viewer')));
+      expect(
+        screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+      ).toBeEnabled();
+      view.rerender(tree(sample()));
+      await act(async () => {
+        release?.();
+      });
+      expect(
+        screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+      ).toBeEnabled();
+      expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+      expect(localStorage.getItem(storageKey)).toBeNull();
+      expect(
+        localStorage.getItem(notificationStorageKey('other-viewer')),
+      ).toBeNull();
+      expect(showNotification).not.toHaveBeenCalled();
+    },
+  );
+  it('abandons pending registration on unmount without persisting consent', async () => {
+    let release: ((value: typeof registration) => void) | undefined;
+    register.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const view = render(tree(sample()));
+    await click('Enable Inbox notifications');
+    view.unmount();
+    await act(async () => {
+      release?.(registration);
+    });
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+  it('does not publish an old observer worker failure into the next account', async () => {
+    let release: ((value: undefined) => void) | undefined;
+    const view = render(tree(sample()));
+    await click('Enable Inbox notifications');
+    mocks.read.mockImplementation(async () => sample([first, second]));
+    getRegistration.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await tick();
+    view.rerender(tree(sample([first], 'other-viewer')));
+    await act(async () => {
+      release?.(undefined);
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+    expect(
+      screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+    ).toBeEnabled();
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(
+      localStorage.getItem(notificationStorageKey('other-viewer')),
+    ).toBeNull();
+  });
+  it('starts observing the next opted-in account while the old source read is pending', async () => {
+    let release: ((value: InboxNotificationSnapshot) => void) | undefined;
+    const view = render(tree(sample()));
+    await click('Enable Inbox notifications');
+    mocks.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await tick();
+    const otherKey = notificationStorageKey('other-viewer');
+    localStorage.setItem(
+      otherKey,
+      JSON.stringify({ ...emptyNotificationState(), enabled: true }),
+    );
+    mocks.read.mockImplementation(async () => sample([first], 'other-viewer'));
+    await act(async () => {
+      view.rerender(tree(sample([first], 'other-viewer')));
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Watching for new human decisions',
+    );
+    expect(
+      parseNotificationState(localStorage.getItem(otherKey)).active,
+    ).toEqual([first]);
+    await act(async () => {
+      release?.(sample());
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Watching for new human decisions',
+    );
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+  it.each(['worker lookup', 'notification lookup'] as const)(
+    'stops unsubscribe cleanup after an account change during %s',
+    async (stage) => {
+      let release: (() => void) | undefined;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const view = render(tree(sample()));
+      await click('Enable Inbox notifications');
+      if (stage === 'worker lookup')
+        getRegistration.mockImplementation(async () => {
+          await pending;
+          return registration;
+        });
+      else
+        registration.getNotifications.mockImplementation(async () => {
+          await pending;
+          return [{ close }];
+        });
+      await click('Disable Inbox notifications');
+      view.rerender(tree(sample([first], 'other-viewer')));
+      await act(async () => {
+        release?.();
+      });
+      expect(close).not.toHaveBeenCalled();
+      expect(registration.getNotifications).toHaveBeenCalledTimes(
+        stage === 'worker lookup' ? 0 : 1,
+      );
+      expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+      expect(
+        screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+      ).toBeEnabled();
+      expect(
+        parseNotificationState(localStorage.getItem(storageKey)).enabled,
+      ).toBe(false);
+      expect(
+        localStorage.getItem(notificationStorageKey('other-viewer')),
+      ).toBeNull();
+    },
+  );
   it('deduplicates the same observed handoff across two Inbox tabs', async () => {
     localStorage.setItem(
       storageKey,
@@ -351,6 +665,75 @@ describe('opt-in Inbox notification delivery', () => {
     expect(screen.getByRole('status')).toHaveTextContent(
       'notifications paused',
     );
+  });
+  it('preserves pending history when a snapshot expires while acquiring the observation lock', async () => {
+    const sampledAt = now - 59_000;
+    const stored = {
+      ...emptyNotificationState(),
+      enabled: true,
+      active: [first],
+      pending: [first],
+      observedAt: sampledAt,
+      lastSentAt: sampledAt,
+      sourceTimes: { queue: sampledAt, activity: sampledAt, native: sampledAt },
+    };
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    mocks.read.mockResolvedValue({
+      ...sample(),
+      observedAt: sampledAt,
+      sourceTimes: stored.sourceTimes,
+    });
+    locks.request.mockImplementationOnce(async (_key, _options, callback) => {
+      now += 2_000;
+      vi.setSystemTime(now);
+      return callback?.({});
+    });
+    render(tree(sample()));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(parseNotificationState(localStorage.getItem(storageKey))).toEqual(
+      stored,
+    );
+    expect(getRegistration).not.toHaveBeenCalled();
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'notifications paused',
+    );
+
+    // A valid observation establishes the quiet baseline; later arrivals
+    // still deliver using the preserved rate accounting.
+    mocks.read.mockImplementation(async () => sample());
+    await tick();
+    expect(showNotification).not.toHaveBeenCalled();
+    mocks.read.mockImplementation(async () => sample([first, second]));
+    await tick();
+    expect(showNotification).toHaveBeenCalledExactlyOnceWith(
+      'Agent LCARS',
+      expect.objectContaining({ data: { href: '/inbox?item=work%3A01ABC' } }),
+    );
+  });
+  it('refuses a baseline that expires while acquiring the activation lock', async () => {
+    const sampledAt = now - 59_000;
+    mocks.read.mockResolvedValue({
+      ...sample(),
+      observedAt: sampledAt,
+      sourceTimes: { queue: sampledAt, activity: sampledAt, native: sampledAt },
+    });
+    locks.request.mockImplementationOnce(async (_key, options) => {
+      now += 2_000;
+      vi.setSystemTime(now);
+      if (typeof options === 'function') return options({});
+    });
+    render(tree(sample()));
+    await click('Enable Inbox notifications');
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'activation unavailable',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+    ).toBeEnabled();
   });
   it('refuses a baseline that expires while registration completes', async () => {
     const sampledAt = now - 59_000;
