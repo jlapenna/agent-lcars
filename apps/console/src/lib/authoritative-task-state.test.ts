@@ -35,35 +35,53 @@ async function seedTask(task: Task) {
 }
 
 describe('readAuthoritativeTaskState', () => {
-  it("surfaces the task doc's work.spec with historical priority normalized", async () => {
-    await seedTask({
-      task: { repo: 'jlapenna/agent-lcars', issue: 42 },
-      runCount: 0,
-      updatedAt: T0,
-      work: {
-        origin: { principal: 'github:jlapenna', channel: 'github' },
-        spec: {
-          title: 'T',
-          description: 'D',
-          pipeline: 'claude',
-          target: { repo: 'jlapenna/agent-lcars' },
+  it.each([
+    [undefined, 'normal'],
+    ['normal', 'normal'],
+    ['urgent', 'urgent'],
+    ['background', 'background'],
+  ] as const)(
+    'surfaces durable Work with priority %s as %s without rewriting storage',
+    async (priority, expectedPriority) => {
+      await seedTask({
+        task: { repo: 'jlapenna/agent-lcars', issue: 42 },
+        runCount: 0,
+        updatedAt: T0,
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'T',
+            description: 'D',
+            pipeline: 'claude',
+            ...(priority === undefined ? {} : { priority }),
+            target: { repo: 'jlapenna/agent-lcars' },
+          },
         },
-      },
-    });
+      });
 
-    const state = await readAuthoritativeTaskState({
-      repository: 'jlapenna/agent-lcars',
-      issue: 42,
-    });
+      const before = structuredClone(
+        await store.readTask({
+          repo: 'jlapenna/agent-lcars',
+          issue: 42,
+        }),
+      );
+      const state = await readAuthoritativeTaskState({
+        repository: 'jlapenna/agent-lcars',
+        issue: 42,
+      });
 
-    expect(state?.spec).toEqual({
-      title: 'T',
-      description: 'D',
-      pipeline: 'claude',
-      priority: 'normal',
-      target: { repo: 'jlapenna/agent-lcars' },
-    });
-  });
+      expect(state?.spec).toEqual({
+        title: 'T',
+        description: 'D',
+        pipeline: 'claude',
+        priority: expectedPriority,
+        target: { repo: 'jlapenna/agent-lcars' },
+      });
+      expect(
+        await store.readTask({ repo: 'jlapenna/agent-lcars', issue: 42 }),
+      ).toEqual(before);
+    },
+  );
 
   it('rejects a task with no immutable Work payload', async () => {
     await seedTask({
