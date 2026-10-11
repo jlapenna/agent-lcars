@@ -295,13 +295,31 @@ func TestReceiptServerRetirementRequiredToExemptBarrier(t *testing.T) {
 	if err = q.verifyRetiredBarrier(context.Background(), j); err == nil {
 		t.Fatal("a barrier label bypassed server retirement")
 	}
+	verifications := 0
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		verifications++
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "retirement": map[string]any{"runId": r.RunID, "nonce": r.Nonce, "jobName": j.Name, "released": true, "retainBarrier": true, "barrier": map[string]string{"uid": string(j.UID), "resourceVersion": j.ResourceVersion}}})
 	}))
 	defer s.Close()
 	q.capacity.consoleURL = s.URL
 	if err = q.verifyRetiredBarrier(context.Background(), j); err != nil {
 		t.Fatal("exact server-retired barrier remains unavailable", err)
+	}
+	for i := 0; i < 100; i++ {
+		if err = q.verifyRetiredBarrier(context.Background(), j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if verifications != 1 {
+		t.Fatalf("unchanged barriers repeated remote verification: %d", verifications)
+	}
+	changed := j.DeepCopy()
+	changed.ResourceVersion = "2"
+	if err = q.verifyRetiredBarrier(context.Background(), changed); err != nil {
+		t.Fatal(err)
+	}
+	if verifications != 2 {
+		t.Fatal("changed object bypassed authenticated verification")
 	}
 	replacement := j.DeepCopy()
 	replacement.UID = "replacement"

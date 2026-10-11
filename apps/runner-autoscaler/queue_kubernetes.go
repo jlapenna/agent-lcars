@@ -159,19 +159,20 @@ func directRunnerWorkerPolicyProviders() (string, error) {
 }
 
 type kubernetesQueue struct {
-	config                queueKubernetesConfig
-	client                kubernetes.Interface
-	workerPolicyProviders string
-	image                 string
-	logger                *slog.Logger
-	mu                    sync.Mutex
-	held                  int
-	recoveryCursor        queueSweepCursor
-	cleanupCursor         queueSweepCursor
-	capacity              *queueCapacityClient
-	receiptMu             sync.Mutex
-	receiptCursor         queueSweepCursor
-	receiptClosureCursor  queueSweepCursor
+	config                  queueKubernetesConfig
+	client                  kubernetes.Interface
+	workerPolicyProviders   string
+	image                   string
+	logger                  *slog.Logger
+	mu                      sync.Mutex
+	held                    int
+	recoveryCursor          queueSweepCursor
+	cleanupCursor           queueSweepCursor
+	capacity                *queueCapacityClient
+	receiptMu               sync.Mutex
+	receiptCursor           queueSweepCursor
+	receiptClosureCursor    queueSweepCursor
+	verifiedReceiptBarriers map[string]string
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
 	verifyRun    func(context.Context, string, string) error

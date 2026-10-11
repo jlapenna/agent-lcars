@@ -429,14 +429,22 @@ func (q *kubernetesQueue) verifyRetiredBarrier(ctx context.Context, j *batch.Job
 	if json.Unmarshal([]byte(j.Annotations[queueReceiptAnnotation]), &f) != nil || !f.valid(q.capacity.config.PoolID, j.Annotations[queueRunAnnotation]) || j.Name != queueJobName(f.RunID) || j.UID == "" || j.ResourceVersion == "" || j.DeletionTimestamp != nil || j.Spec.Suspend == nil || !*j.Spec.Suspend || j.Spec.TTLSecondsAfterFinished != nil || j.Annotations[queueBarrierAnnotation] != f.Nonce {
 		return fmt.Errorf("unrecognized queue Job inventory")
 	}
-	x, err := q.capacity.command(ctx, map[string]any{"action": "inspect-retired", "runId": f.RunID})
-	if err != nil {
-		return err
+	identity := string(j.UID) + "/" + j.ResourceVersion
+	if q.verifiedReceiptBarriers[j.Name] != identity {
+		x, err := q.capacity.command(ctx, map[string]any{"action": "inspect-retired", "runId": f.RunID})
+		if err != nil {
+			return err
+		}
+		r := x.Retirement
+		if r == nil || !r.Released || r.RunID != f.RunID || r.Nonce != f.Nonce || r.JobName != j.Name || r.Barrier == nil || r.Barrier.UID != string(j.UID) {
+			return fmt.Errorf("unverified queue retirement barrier")
+		}
+		if q.verifiedReceiptBarriers == nil {
+			q.verifiedReceiptBarriers = map[string]string{}
+		}
+		q.verifiedReceiptBarriers[j.Name] = identity
 	}
-	r := x.Retirement
-	if r == nil || !r.Released || r.RunID != f.RunID || r.Nonce != f.Nonce || r.JobName != j.Name || r.Barrier == nil || r.Barrier.UID != string(j.UID) {
-		return fmt.Errorf("unverified queue retirement barrier")
-	}
+
 	// Release removes the active receipt, not the original exit obligation.
 	// The authenticated permanent barrier remains its observation source.
 	if fingerprint := j.Annotations[queueClaimAnnotation]; fingerprint != "" && j.Annotations[queueRunnerAnnotation] != "" {
@@ -482,6 +490,12 @@ func (q *kubernetesQueue) receiptPhysicalInventory(ctx context.Context, inv capa
 			if err = q.verifyRetiredBarrier(ctx, j); err != nil {
 				return nil, nil, err
 			}
+		}
+	}
+	// Cache only exact observed object versions and discard vanished objects.
+	for name := range q.verifiedReceiptBarriers {
+		if byName[name] == nil {
+			delete(q.verifiedReceiptBarriers, name)
 		}
 	}
 	for _, r := range inv.Receipts {
