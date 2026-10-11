@@ -399,6 +399,14 @@ legacy claim proof or unavailable/mismatched status fails closed; these cases
 can still require the legacy backstop or operator investigation. Recovery does
 not restart an executed attempt or delete on a generic run-token refusal.
 
+The regression in `queue_claim_status_test.go`,
+`TestKubernetesRetirementAllowsSuccessorAndUnrelatedLaunch`, exercises the
+authenticated status client, retirement, foreground admission fence, and fresh
+credential/unsuspend path for both successor and unrelated runs. Its fake
+Kubernetes API explicitly simulates garbage collection; deployed controller
+adoption, real owned-Pod drainage, and useful successor execution require
+separate live evidence.
+
 **`SIGUSR1` pauses the queue poller from claiming.** The signal toggles an
 in-process flag the poller checks before every claim call and before starting
 a recovery sweep: the first `SIGUSR1` pauses both, a second resumes them.
