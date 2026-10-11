@@ -86,3 +86,24 @@ mutation is activated by this measurement tool. Keep FE-NF-7 unqualified until
 the actual target and production acceptance have evidence; preserve dated
 baseline/after observations in the issue and PR rather than treating them as
 live policy.
+
+## Cold-path diagnosis
+
+Schema 2 retains the same journey and adds navigation-relative resource start,
+response-start and response-end timestamps, DOM/load events, document-load
+observation, click request, captured primary click and confirmation observation
+(`readyMs`). Compare the document response, the last required script transfer,
+load event, click dispatch and visible confirmation before selecting an owner.
+Observation checkpoints include Playwright scheduling and are upper bounds.
+The click event proves dispatch; it does not identify the exact hydration instant.
+
+Long-task entries cover tasks of at least 50 ms from navigation to confirmation,
+with a 200-entry cap. CDP task/script/layout/style counter deltas cover the timed
+journey **and Cancel cleanup**, through the final metrics read. They are diagnostic
+CPU counters, not a hydration profile. Script/layout/style durations are subsets
+of task duration. Tasks can overlap resource transfers: do not add them to a
+waterfall or subtract their sum from total readiness to invent a causal split.
+A gap between click request and dispatch can include hydration, Playwright
+visibility/stability checks and scheduling; inspect a browser trace when further
+attribution is needed. The instrumentation itself adds observation overhead;
+compare before/after with the same probe revision.
