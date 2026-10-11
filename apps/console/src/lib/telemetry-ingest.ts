@@ -88,6 +88,18 @@ export function summaryFromSessionDoc(doc: SessionDoc): SessionSummary {
   };
 }
 
+/** A host-bound token may only touch CLI sessions that the same host
+ *  recorded (by `host`, or by hook provenance). Anything else, including a
+ *  runner's issue-agent session whose id a workstation learned, is not
+ *  its to overwrite. */
+function ownedByHost(existing: SessionDoc, boundHost: string): boolean {
+  if (existing.source !== 'cli') return false;
+  if (existing.host !== undefined && existing.host !== boundHost) return false;
+  const observer = existing.observer;
+  if (observer !== undefined && observer.host !== boundHost) return false;
+  return true;
+}
+
 function isStale(
   existing: SessionDoc | undefined,
   event: SessionEventV1,
@@ -114,8 +126,12 @@ export function sessionWriteForEvent(
   const liveness = livenessForSessionEvent(event.kind);
   const write = buildSessionWrite({ ...summary, host: event.host }, liveness, {
     observedAt: now,
+    // The caller's verified identity decides the source, never the
+    // summary's own `source` field: a host token can only ever produce a
+    // `cli` doc, and only runner context (service identities) an
+    // `issue-agent` one.
+    forceSource: event.runner ? 'issue-agent' : 'cli',
     ...(event.runner && {
-      forceSource: 'issue-agent',
       runId: event.runner.runId,
       repo: event.runner.repo,
       ...(event.runner.intentId && { intentId: event.runner.intentId }),
@@ -181,6 +197,13 @@ export async function handleSessionEventRequest(
   }
 
   const existing = await deps.readSessionDoc(sessionId);
+  if (
+    principal.boundHost !== undefined &&
+    existing !== undefined &&
+    !ownedByHost(existing, principal.boundHost)
+  ) {
+    return json({ error: 'session not owned by this host' }, 403);
+  }
   if (isStale(existing, event)) {
     const outcome: IngestOutcome = { accepted: false, reason: 'stale' };
     return json(outcome, 200);

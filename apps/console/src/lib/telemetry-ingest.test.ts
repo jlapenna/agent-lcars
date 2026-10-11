@@ -277,6 +277,78 @@ describe('handleSessionEventRequest', () => {
     expect(d.writes).toHaveLength(0);
   });
 
+  it('never trusts the summary source: a host token always yields a cli doc', async () => {
+    const d = deps();
+    const response = await handleSessionEventRequest(
+      request(event({ summary: { ...summary, source: 'issue-agent' } })),
+      SESSION_ID,
+      d,
+    );
+    expect(response.status).toBe(202);
+    expect(d.writes[0].doc.source).toBe('cli');
+  });
+
+  it('refuses a host token writing a session recorded by another host or a runner', async () => {
+    const base = {
+      sessionId: SESSION_ID,
+      agent: 'claude-code',
+      liveness: 'live',
+      startedAt: summary.startedAt,
+      lastActivityAt: summary.lastActivityAt,
+      turns: 1,
+      toolCallCounts: {},
+      tokens: summary.tokens,
+      deliverables: summary.deliverables,
+    };
+    const otherHost = { ...base, source: 'cli', host: 'pike' } as SessionDoc;
+    const runnerDoc = {
+      ...base,
+      source: 'issue-agent',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      runId: 'run-1',
+    } as SessionDoc;
+    const hookFromOther = {
+      ...base,
+      source: 'cli',
+      observer: {
+        kind: 'hook',
+        runtime: 'claude-code',
+        host: 'pike',
+        seq: 1,
+        eventId: 'e',
+        occurredAt: NOW,
+      },
+    } as SessionDoc;
+    for (const existing of [otherHost, runnerDoc, hookFromOther]) {
+      const d = deps({ readSessionDoc: vi.fn(async () => existing) });
+      const response = await handleSessionEventRequest(
+        request(event({ seq: 9 })),
+        SESSION_ID,
+        d,
+      );
+      expect(response.status).toBe(403);
+      expect(d.writes).toHaveLength(0);
+    }
+    const own = { ...base, source: 'cli', host: 'laforge' } as SessionDoc;
+    const d = deps({ readSessionDoc: vi.fn(async () => own) });
+    expect(
+      (await handleSessionEventRequest(request(event()), SESSION_ID, d)).status,
+    ).toBe(202);
+    const svc = deps({
+      authenticate: vi.fn(async () => servicePrincipal),
+      readSessionDoc: vi.fn(async () => otherHost),
+    });
+    expect(
+      (
+        await handleSessionEventRequest(
+          request(event({ host: 'pike' })),
+          SESSION_ID,
+          svc,
+        )
+      ).status,
+    ).toBe(202);
+  });
+
   it('binds host tokens to their host and runner context to service identities', async () => {
     const d = deps();
     expect(
