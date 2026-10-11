@@ -241,12 +241,15 @@ export class MemoryStore implements OrchestratorStore {
   }): Promise<Decision | Refusal> {
     // Keep the snapshot and write synchronous, matching `transactRequest`'s
     // reference transaction semantics.
-    if (input.workerPermit !== undefined)
+    if (input.workerPermit !== undefined) {
+      if (input.workerPermit.runId !== input.runId)
+        throw new CapacityRefusal('worker');
       assertCapacityWorkerPermit(
         this.#capacity,
         this.#capacityRecords.get(retiredKey(input.runId)),
         input.workerPermit,
       );
+    }
     const run = structuredClone(this.#runs.get(input.runId));
     const task =
       run === undefined

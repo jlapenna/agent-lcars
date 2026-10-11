@@ -615,6 +615,34 @@ function contract(
       ).rejects.toThrow('worker');
       expect((await protocol.read(now)).receipts).toHaveLength(1);
     });
+    it('a valid active worker permit cannot authorize another Run transaction', async () => {
+      const { store, protocol, a, orchestrator } = await fixture(2);
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a);
+      await activate(protocol, a, receipt);
+      const other = await enqueue(store, orchestrator);
+      const before = await store.readRun(other.runId);
+      let decided = false;
+      await expect(
+        store.transactRun({
+          runId: other.runId,
+          workerPermit: {
+            poolId: a.poolId,
+            runId: receipt.runId,
+            podUid: 'pod-original',
+            generation: 1,
+            tokenHash,
+          },
+          decide: () => {
+            decided = true;
+            return { refused: true, reason: 'unknown-run' };
+          },
+        }),
+      ).rejects.toThrow('worker');
+      expect(decided).toBe(false);
+      expect(await store.readRun(other.runId)).toEqual(before);
+    });
+
     it('positive worker retirement permits a new generation but never reattests an older Pod UID', async () => {
       const { store, protocol, a, orchestrator } = await fixture();
       await enqueue(store, orchestrator);

@@ -710,11 +710,13 @@ export const runsRouter = os.router({
     // Preserve the token that authenticated this callback through the atomic
     // Task+Run decision. A same-run release/reclaim changes this fingerprint.
     const renew = async () => {
-      const renewed = await context.orchestrator.renew(
-        run.runId,
-        run.queue?.tokenHash ?? '',
-        input.providerProcessStarted,
-        context.workerPermit,
+      const renewed = await capacityCall(() =>
+        context.orchestrator.renew(
+          run.runId,
+          run.queue?.tokenHash ?? '',
+          input.providerProcessStarted,
+          context.workerPermit,
+        ),
       );
       if (isRefusal(renewed))
         throw new ORPCError('UNAUTHORIZED', {
@@ -843,12 +845,14 @@ export const runsRouter = os.router({
       input.message,
       { issue: target.issue, mode: run.params?.mode },
     );
-    const settled = await context.orchestrator.report(
-      run.runId,
-      result,
-      run.queue?.tokenHash ?? '',
-      undefined,
-      context.workerPermit,
+    const settled = await capacityCall(() =>
+      context.orchestrator.report(
+        run.runId,
+        result,
+        run.queue?.tokenHash ?? '',
+        undefined,
+        context.workerPermit,
+      ),
     );
     if (
       isRefusal(settled) &&

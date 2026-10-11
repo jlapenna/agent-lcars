@@ -3887,6 +3887,42 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       expect(next.json).toMatchObject({ pipeline: 'claude' });
     });
 
+    it.each(['restore', 'persist', 'heartbeat', 'complete'])(
+      'refuses capacity %s retired between the token gate and reservation transaction without credential IO',
+      async (route) => {
+        const f = await brokerFixture(true, false, true);
+        const before = await f.store.readRun(f.runId);
+        const original = f.store.transactRun.bind(f.store);
+        let retired = false;
+        f.store.transactRun = async (input) => {
+          if (!retired) {
+            retired = true;
+            await retireBroker(f);
+          }
+          return original(input);
+        };
+        const readLease = vi.spyOn(f.codexAuth, 'readLease');
+        const response =
+          route === 'complete'
+            ? await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+                outcome: 'worker-control-failed',
+                outcomeReference: null,
+              })
+            : await request(f, route);
+        expect(retired).toBe(true);
+        expect(response.status).toBe(409);
+        expect(readLease).not.toHaveBeenCalled();
+        expect(f.fake.attempts).toHaveLength(0);
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation,
+        ).toBeUndefined();
+        expect(await f.store.readRun(f.runId)).toEqual(before);
+        expect((await f.protocol.read(NOW)).receipts[0]?.state).toBe(
+          'retiring',
+        );
+      },
+    );
+
     it.each(['restore', 'persist', 'heartbeat'])(
       'refuses old %s authority reclaimed before the atomic reservation without broker IO',
       async (route) => {

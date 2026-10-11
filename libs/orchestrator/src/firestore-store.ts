@@ -466,6 +466,8 @@ export class FirestoreStore implements OrchestratorStore {
     const runRef = this.#runRef(input.runId);
     return this.#firestore.runTransaction(async (tx) => {
       if (input.workerPermit !== undefined) {
+        if (input.workerPermit.runId !== input.runId)
+          throw new CapacityRefusal('worker');
         const [capacity, retired] = await Promise.all([
           tx.get(this.#capacity.doc('active')),
           tx.get(

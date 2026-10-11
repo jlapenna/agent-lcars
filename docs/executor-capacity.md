@@ -240,6 +240,14 @@ Failed reads fail the scrape; unknown inventory suppresses free-capacity and
 domain occupancy totals. Missing samples do not mean zero capacity.
 Homelab owns collector identity, alert consumers and live monitoring setup.
 
+`./tools/nx run @agent-lcars/orchestrator:test-firestore` is consumed by required
+Verify. Its owning script runs the Store capacity/lineage contracts and the
+actual authenticated run/fallback HTTP contracts with the same live emulator,
+without cached test results. These also cover cleanup-versus-release and
+retirement-versus-new-credential-reservation races. Worker identity signature
+validation has separate signed-JWT HTTP coverage; the conditional broker fixtures
+inject an already verified exact Pod identity and use isolated conditional GCS.
+
 `capacity-contract.spec.ts` runs the same observable races against MemoryStore
 and a real Firestore emulator. `capacity-routes.test.ts` exercises the real
 HTTP contract, distinct grants and signed Pod-bound JWT validation. These
