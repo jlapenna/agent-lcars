@@ -298,7 +298,12 @@ export class CapacityProtocol {
   ) {
     requireCapability(authority, 'operator');
     const policy = capacityPoolPolicySchema.parse(proposed);
+    const domainCeilings = new Map<string, number>();
     for (const [pipeline, domain] of Object.entries(policy.domains)) {
+      const existingCeiling = domainCeilings.get(domain.domainId);
+      if (existingCeiling !== undefined && existingCeiling !== domain.ceiling)
+        throw new CapacityRefusal('policy');
+      domainCeilings.set(domain.domainId, domain.ceiling);
       const maximum = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
       if (maximum !== undefined && domain.ceiling > maximum)
         throw new CapacityRefusal('policy');

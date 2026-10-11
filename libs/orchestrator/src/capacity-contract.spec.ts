@@ -53,6 +53,42 @@ function contract(
   enabled = true,
 ) {
   describe.skipIf(!enabled)(`Capacity store contract: ${name}`, () => {
+    it('refuses conflicting ceilings within one policy without replacing it', async () => {
+      const store = factory();
+      const protocol = new CapacityProtocol(store);
+      const a = authority();
+      await protocol.configure(a, policy(), now);
+      const before = await protocol.read(now);
+      await expect(
+        protocol.configure(
+          a,
+          {
+            ...policy(),
+            version: 2,
+            domains: {
+              codex: { domainId: 'shared', ceiling: 1 },
+              claude: { domainId: 'shared', ceiling: 128 },
+            },
+          },
+          now,
+        ),
+      ).rejects.toThrow('policy');
+      expect(await protocol.read(now)).toEqual(before);
+      await expect(
+        protocol.configure(
+          a,
+          {
+            ...policy(),
+            version: 2,
+            domains: {
+              codex: { domainId: 'shared', ceiling: 1 },
+              claude: { domainId: 'shared', ceiling: 1 },
+            },
+          },
+          now,
+        ),
+      ).resolves.toMatchObject({ version: 2 });
+    });
     it('persists optional retirement fields with the same omission semantics', async () => {
       const store = factory();
       const record = {
