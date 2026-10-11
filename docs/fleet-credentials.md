@@ -374,3 +374,41 @@ These are plain `gh variable set` calls and safe to provision from any
 session — the 2026-08 onboarding left all four new repos at 5/5 vars and
 2/2 automatable secrets, with only the maintainer-mintable tokens above
 outstanding.
+
+### Provisioning them with `tools/fleet-onboard-github.mjs`
+
+After `tools/fleet-onboard.mjs scaffold` has generated a repository's fleet
+surface, one command performs the GitHub-side steps the runbook otherwise
+leaves to hand-typed `gh` calls:
+
+```bash
+node tools/fleet-onboard-github.mjs --repo OWNER/NAME \
+  --copy-from jlapenna/sync-padd \
+  --private-key-command 'gcloud secrets versions access latest --secret=AGENT_LCARS_APP_PRIVATE_KEY --project=agent-lcars' \
+  [--dry-run | --verify] [--rotate-secret]
+```
+
+It sets `AGENT_BOT_LOGINS`, `AGENT_FLEET_LOGIN`, and `AGENT_LCARS_CLIENT_ID`,
+sets the `AGENT_LCARS_PRIVATE_KEY` secret, checks that the fleet and
+autoscaler App installations include the repository, and runs
+`tools/sync-github-labels.mjs --apply` for it. Its secrecy guarantees:
+
+- Variable values come only from same-named environment variables or
+  `gh variable get` on the `--copy-from` repository (`APP_CLIENT_ID` also
+  serves `AGENT_LCARS_CLIENT_ID`). No flag accepts a value.
+- The private key is never copied from a repository. It is read from
+  `APP_PRIVATE_KEY`, `GITHUB_APP_PRIVATE_KEY`, or the stdout of
+  `--private-key-command`, and reaches `gh secret set` through stdin only,
+  never argv. A present secret is skipped unless `--rotate-secret` is given.
+- Output is one JSON line per fact (`PASS`, `FAIL`, `SKIP`, `PLAN`, or
+  `UNVERIFIED`) naming variables, installation ids, and counts; it never
+  prints a value, token, or raw GitHub error body.
+- Every write compares before setting, so re-running is a no-op. `--dry-run`
+  reports `PLAN` for each write it would make and performs none; `--verify`
+  is read-only (its only non-GET requests mint and revoke the short-lived
+  metadata-read installation tokens used for the membership check).
+- Installation membership is checked with the fleet App
+  (`APP_CLIENT_ID`/`APP_PRIVATE_KEY`) and the autoscaler App
+  (`RUNNER_APP_CLIENT_ID`/`RUNNER_APP_PRIVATE_KEY`; `UNVERIFIED` when
+  absent). It never modifies an installation: a missing membership fails
+  with the exact settings-page instruction for the maintainer.

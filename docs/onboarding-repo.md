@@ -4,9 +4,18 @@ Use this runbook to add a repository to Agent LCARS. It is the entry point
 for the whole process: console discovery, QueueExecutor capacity, GitHub Apps,
 repository integration, and an end-to-end dispatch.
 
-It deliberately coordinates the focused runbooks rather than copying them.
-Those documents own their domains and should be updated there when the
-underlying system changes:
+`tools/fleet-onboard.mjs` owns the repetitive file edits this runbook used to
+prescribe by hand. It edits files in a checkout and prints the remaining
+operator steps with the repository's values filled in; it never touches
+GitHub, credentials, Homelab, or Terraform state. Homelab-side and GitHub-side
+helpers for those remaining steps are being added in parallel; until they
+land, follow the procedures in steps 2 and 3 below and, for the Homelab half,
+"Onboarding or changing a repository" in `jlapenna/homelab`'s
+`terraform/README.md`.
+
+This runbook deliberately coordinates the focused runbooks rather than
+copying them. Those documents own their domains and should be updated there
+when the underlying system changes:
 
 - [Console and telemetry onboarding](onboarding-console-and-telemetry.md) —
   protocol, telemetry, console configuration, and the telemetry IAM boundary.
@@ -14,6 +23,71 @@ underlying system changes:
   and centrally owned Codex authentication.
 - [Published actions](published-actions.md) — supported reusable workflows
   and composite actions.
+
+## At a glance
+
+One command runs the repository-change steps end to end:
+
+```sh
+node tools/fleet-onboard-run.mjs --repo OWNER/NAME \
+  [--runner-label NAME-default] [--ci-workflow ci.yml --ci-checks "A,B"] \
+  [--copy-from OWNER/MEMBER] [--homelab ../homelab] [--dry-run]
+```
+
+It scaffolds the target repository and opens its draft PR, opens this
+repository's admission PR and Homelab's membership PR, then runs the
+GitHub-side helper (`tools/fleet-onboard-github.mjs`) for variables, the
+secret, the App-installation check, and labels. Every step is idempotent: an
+open PR on the step's branch counts as done, so a rerun resumes. It leaves
+the App installations and the Homelab Terraform apply to a human and prints
+them. The numbered steps below are what it does, and how to do each by hand.
+
+Run the commands from a dedicated worktree of this repository. Each step
+links to the section that owns its policy and evidence.
+
+1. **Scaffold** the target repository's fleet surface —
+   `node tools/fleet-onboard.mjs scaffold --repo OWNER/NAME --target ../NAME`
+   ([step 1](#1-bootstrap-the-target-repository)).
+2. **Target PR merges** — review the generated files, open the target
+   repository PR, and confirm its `main` carries the merged contract
+   ([step 1](#1-bootstrap-the-target-repository)).
+3. **Homelab PR** — `node tools/fleet-onboard.mjs plan --repo OWNER/NAME`
+   lists the Homelab edits; capacity and ruleset execution stay with
+   `jlapenna/homelab` ([step 2](#2-give-it-runner-capacity)).
+4. **App installations and variables** — maintainer adds the repository to
+   both GitHub App installations in the GitHub UI and provisions the
+   variables and secret the plan output names
+   ([step 3](#3-install-both-github-apps-and-provision-variables)).
+5. **Admit** — `node tools/fleet-onboard.mjs admit --repo OWNER/NAME`, then
+   `node tools/fleet-onboard.mjs check`; open and merge this repository's PR
+   only after the target PR has landed
+   ([step 4](#4-add-the-repository-to-agent-lcars)).
+6. **Audit** — `node tools/verify-onboarding.mjs --repo=OWNER/NAME` from the
+   approved credential environment
+   ([step 5](#5-audit-setup-before-dispatch)).
+7. **Prove** — label exactly one real issue `agent:*` and record the
+   evidence ([step 6](#6-prove-the-complete-path)).
+
+### What still needs a human
+
+The tool stops at the file edits. These actions stay with a maintainer or
+the separately approved operation that owns them:
+
+- **GitHub App installations.** Adding the repository to the fleet and
+  autoscaler App installations happens in GitHub's App-installation UI; the
+  REST endpoint only accepts a GitHub-App user token, so `gh` cannot do it
+  (step 3).
+- **Variable and secret provisioning.** Values come from the approved
+  credential environment described in [fleet credentials](fleet-credentials.md)
+  and are set with `gh variable set` / `gh secret set`; the plan output
+  prints the commands with placeholders, never values (step 3).
+- **Terraform import and apply.** Homelab's executor imports the live
+  ruleset id into the repository's isolated state and applies the reviewed
+  plan; Terraform plan/apply remains a separately approved maintainer
+  operation (step 2).
+- **Lane capacity decisions.** Whether the repository needs a dedicated ARC
+  lane, and sizing it, is a measured Homelab decision, not a scaffold
+  default (step 2).
 
 ## What “onboarded” means
 
@@ -60,30 +134,89 @@ repository agent workflow callers.
 
 ## 1. Bootstrap the target repository
 
-Open a target-repository PR for its label, hook, validation, and local
-instruction contract; do not vendor fleet execution implementation.
+Generate the repository's fleet surface with the scaffolder instead of
+copying files from the last onboarded repository:
 
-- Add the thin `agent-automerge` and `repo-validation` callers. Keep
-  repository validation runnable on GitHub-hosted runners so it can establish
-  a baseline before self-hosted capacity is healthy. Declare the repository's
-  runner scale-set labels under `self-hosted-runner.labels` in
+```sh
+node tools/fleet-onboard.mjs scaffold --repo OWNER/NAME --target ../NAME \
+  [--runner-label NAME-default] \
+  [--ci-workflow ci.yml --ci-checks "Check A,Check B" [--ci-workflow-name CI]] \
+  [--hooks auto|pre-commit|husky|none] [--repo-tools-rev SHA] \
+  [--check] [--force]
+```
+
+### What the scaffolder generates
+
+This is the one list of generated files; later steps refer back to it rather
+than restating it.
+
+- `.claude/settings.json` and `.codex/hooks.json`: the issue-workflow
+  guardrail hook, merged into any existing hook configuration.
+- `.github/workflows/validate.yml`, `gitleaks.yml`, `ruleset.yml`, and
+  `agent-automerge.yml`: thin callers of the published reusable workflows
+  (`repo-validation` and App-token `agent-automerge`), plus the repository's
+  secret scan and ruleset plan.
+- `infra/github-ruleset/main.tf`: the repository-owned ruleset root carrying
+  the baseline required checks (`gitleaks`,
+  `validate / repository validation`, `repository-owned Terraform`) plus any
+  `--ci-checks`; `infra/github-ruleset/README.md` and
+  `.terraform.lock.hcl` are seeded once.
+- `tools/github-ruleset-root.test.sh`: the root's contract test.
+- `repo-require-worktree` wiring: a `.pre-commit-config.yaml` block
+  pinned to `--repo-tools-rev` (resolved from `jlapenna/repo-tools` `main`
+  when omitted), or seeded `.husky/pre-commit` and `.husky/pre-push` hooks
+  for Node repositories. `--hooks` overrides the auto-detection; the tool
+  prints the install note for the mechanism it chose.
+- `renovate.json`: seeded once, extending the repo-tools preset.
+- `AGENTS.md`: a marker-delimited fleet-membership section merged into the
+  existing file.
+- `.github/actionlint.yaml`: only with `--runner-label`, declaring that
+  label under `self-hosted-runner.labels`.
+
+Ownership rule: a generated file carries a `fleet-onboard: managed` line and
+is refreshed on re-run. A file without that line is reported as locally
+owned and left alone unless `--force` is given; delete the line to own a
+file locally. Seeded files are created once and then kept; merged files are
+updated in place. `--check` reports drift without writing and exits nonzero
+when any file would change. Without `--runner-label`, glue and validation
+jobs run GitHub-hosted and no Homelab lane is needed.
+
+After writing, the tool prints the `plan` output for this repository: the
+remaining operator steps with its values filled in. Keep that output for
+steps 2 through 5.
+
+### Review the generated files before opening the PR
+
+Open a target-repository PR for its label, hook, validation, and local
+instruction contract; do not vendor fleet execution implementation. The
+scaffolder covers the items below; review its output against them rather
+than re-deriving them by hand.
+
+- The thin `agent-automerge` and `repo-validation` callers. Keep repository
+  validation runnable on GitHub-hosted runners so it can establish a
+  baseline before self-hosted capacity is healthy. The repository's runner
+  scale-set labels must be declared under `self-hosted-runner.labels` in
   `.github/actionlint.yaml`; repository validation uses that list to reject
-  `self-hosted` paired with a scale-set label. Give App-enabled
-  `agent-automerge` callers event triggers and at most a daily backstop.
-- Add `.github/workflows/gitleaks.yml` before making the `gitleaks` context
-  required. Start from homelab's pinned, full-history scanner shape: read-only
-  `contents` and `pull-requests` permissions, `fetch-depth: 0`, a named
-  `gitleaks` job, and a bounded timeout. Its workflow must run on pull
+  `self-hosted` paired with a scale-set label. App-enabled `agent-automerge`
+  callers get event triggers and at most a daily backstop.
+- `.github/workflows/gitleaks.yml` must exist before the `gitleaks` context
+  is made required. It follows homelab's pinned, full-history scanner shape:
+  read-only `contents` and `pull-requests` permissions, `fetch-depth: 0`, a
+  named `gitleaks` job, and a bounded timeout. Its workflow must run on pull
   requests and pushes to `main`; retain every `main` scan while cancelling
   superseded pull-request scans. Use the repository's approved runner and
   scanner integration, then prove the check appears on this bootstrap PR.
-- Add the issue-workflow guardrail hook to `.claude/settings.json` and
-  `.codex/hooks.json`, and the `repo-require-worktree` check to the
-  repository’s Git hook mechanism. The published workflow documentation owns
+- The issue-workflow guardrail hook in `.claude/settings.json` and
+  `.codex/hooks.json`, and the `repo-require-worktree` check in the
+  repository's Git hook mechanism. The published workflow documentation owns
   the exact supported caller shapes.
-- Add or refresh `AGENTS.md`. It should link to the shared fleet protocol and
-  distinguish fleet-specific commands from public `repo-tools` commands; it
-  must not copy either instruction set into the repository.
+- `AGENTS.md` links to the shared fleet protocol and distinguishes
+  fleet-specific commands from public `repo-tools` commands; it must not
+  copy either instruction set into the repository.
+- Add the repository's own CI checks to the ruleset only once they emit
+  stably, using the exact, case-sensitive contexts observed on successful
+  default-branch runs (`--ci-workflow`/`--ci-checks`, or edit the managed
+  root and re-run `--check`).
 - Do not add a project `opencode.json` unless a setting is genuinely local to
   that repository. The shared runner image already supplies its fleet-wide
   OpenCode configuration.
@@ -96,20 +229,33 @@ merged label and instruction contract — before admitting it to the Console.
 
 ## 2. Give it runner capacity
 
+`node tools/fleet-onboard.mjs plan --repo OWNER/NAME [--runner-label L]`
+prints the Homelab edits for this repository: the
+`bin/plan-fleet-github-ruleset.sh` allowlist case with its repository-owned
+root and isolated state prefix, the `bin/check-drift.sh` fleet ruleset loop,
+the GitHub Actions exporter's `GITHUB_REPOSITORIES` list, and whether a
+dedicated lane is requested. Open one `jlapenna/homelab` PR with those edits.
+The import, plan review, apply, and post-apply verification procedure for the
+ruleset is owned by "Onboarding or changing a repository" in that
+repository's `terraform/README.md`.
+
 Every GitHub Actions runner lane runs on Actions Runner Controller (k3s),
 owned and deployed by `jlapenna/homelab` (homelab#1623); `apps/runner-autoscaler`
 in this repo no longer manages GitHub scale-set runner registrations, only the
 LCARS QueueExecutor's shared direct-runner pool. Confirm QueueExecutor's
 shared runner pool has capacity for the target repository's work, and provision
 a dedicated ARC lane in `jlapenna/homelab` only when measured workload
-duration or isolation demands it. Add the repository to
-homelab's `protect-main` ruleset module as
-well. Every repository starts with required `gitleaks` and
+duration or isolation demands it. Register the repository's ruleset with
+homelab's `protect-main` policy as well: new repositories carry the
+scaffolded repository-owned root and are added to the central executor's
+allowlist. Every repository starts with required `gitleaks` and
 `validate / repository validation` checks: secret scanning is the fleet's
 minimum security baseline, and a reusable validation workflow has no consumer
 until its result blocks merges. It must also retain linear history, protection
 against force-push and deletion, and required review-thread resolution.
 Terraform plan/apply remains a separately approved maintainer operation.
+After the executor applies, record the live ruleset id in the target
+repository's `infra/github-ruleset/README.md`.
 
 The registration uses the autoscaler GitHub App, not the fleet App. Its App
 key belongs in the homelab encrypted secret store; it never belongs in this
@@ -117,7 +263,7 @@ repository or the target repository. After the homelab change deploys, verify
 the real listener is polling for the new scale set. A configuration merge or
 healthy container alone does not prove registration coverage.
 
-## 3. Install both GitHub Apps
+## 3. Install both GitHub Apps and provision variables
 
 A maintainer performs this in GitHub’s App-installation UI. Add the target
 repository to both installations:
@@ -136,19 +282,40 @@ than assuming that an account-wide installation includes it. The exact App
 identifiers and installation guidance live in
 [fleet credentials](fleet-credentials.md).
 
+Provision the target repository's variables and secret from the approved
+credential environment. The plan output prints the baseline
+`gh variable set` and `gh secret set` commands (`AGENT_BOT_LOGINS`,
+`AGENT_FLEET_LOGIN`, `AGENT_LCARS_CLIENT_ID`, `AGENT_LCARS_PRIVATE_KEY`) with
+placeholders; [fleet credentials](fleet-credentials.md) owns the complete
+list, including provider credentials, and the fan-out loop for the fleet App
+key. Never paste a value into a command line, log, PR, or chat.
+
 ## 4. Add the repository to Agent LCARS
 
 Open one PR in this repository to make the control plane recognize the new
 repository:
 
-- Add the repository’s label manifest to `config/github-labels.json`, using
+```sh
+node tools/fleet-onboard.mjs admit --repo OWNER/NAME [--alias NAME] [--like OWNER/NAME]
+node tools/fleet-onboard.mjs check
+```
+
+`admit` makes all three edits below, copying the standard member label
+profile (`--like` names a different member to copy from). `check`, and the
+`fleet-onboard` contract test on every CI run, fail when any projection of
+fleet membership disagrees with the others; `admit --check` reports the
+projections a repository is missing from without writing.
+
+- The repository’s label manifest in `config/github-labels.json`, using
   the fleet’s standard `type:*`, `status:*`, `agent:*`, and `review:*` labels.
-- Add it to both console settings in `apps/console/apphosting.yaml`:
+- Both console settings in `apps/console/apphosting.yaml`:
   `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` and
-  `AGENT_LCARS_WATCHED_REPOS`. Use the repository name as its console alias
-  unless a distinct human-facing alias is needed.
-- Add it to the matrix in `.github/workflows/label-contract-audit.yml`; a
-  manifest entry without this matrix entry will not be reconciled.
+  `AGENT_LCARS_WATCHED_REPOS`. The repository name is its console alias
+  unless a distinct human-facing alias is needed (`--alias`). `admit`
+  refuses to proceed when a repository is already in only one of the two
+  lists; repair that by hand first.
+- The matrix in `.github/workflows/label-contract-audit.yml`; a manifest
+  entry without this matrix entry will not be reconciled.
 
 The normal deployment path deploys the console after green CI on `main`.
 Do not run a direct deploy merely to accelerate this step. Do this step only
