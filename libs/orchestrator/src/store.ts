@@ -168,13 +168,18 @@ export function selectFairQueuedRun(
   if (provider === undefined) return undefined;
   const providerRuns = candidates.get(provider.pipeline) ?? [];
   return selectPriorityQueuedRun(
-    providerRuns,
+    providerRuns.sort(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        (left.runId < right.runId ? -1 : left.runId > right.runId ? 1 : 0),
+    ),
     priorityPositions.get(provider.pipeline) ?? 0,
   );
 }
 
-/** Select within an already admitted provider; capacity owners retain their
- * own physical/domain eligibility and provider-fairness decisions. */
+/** Select a class within an admitted provider's FIFO-ordered candidates.
+ * Each claim owner retains its existing FIFO tie-break, physical/domain
+ * eligibility and provider-fairness decisions. */
 export function selectPriorityQueuedRun(
   providerRuns: readonly Run[],
   position: number,
@@ -182,13 +187,9 @@ export function selectPriorityQueuedRun(
   for (let step = 0; step < QUEUE_PRIORITY_TURNS.length; step++) {
     const priority =
       QUEUE_PRIORITY_TURNS[(position + step) % QUEUE_PRIORITY_TURNS.length];
-    const head = providerRuns
-      .filter((run) => (run.priority ?? 'normal') === priority)
-      .sort(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
-          (left.runId < right.runId ? -1 : left.runId > right.runId ? 1 : 0),
-      )[0];
+    const head = providerRuns.find(
+      (run) => (run.priority ?? 'normal') === priority,
+    );
     if (head !== undefined) return head;
   }
   return undefined;

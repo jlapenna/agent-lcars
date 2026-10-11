@@ -289,6 +289,27 @@ function contract(
       );
     });
 
+    it('preserves the capacity FIFO run-ID tie-break for normal work', async () => {
+      const { store, protocol, a, orchestrator } = await fixture(2);
+      const runs = [];
+      for (const repo of ['example/a-a', 'example/a_a']) {
+        const result = await orchestrator.request({
+          taskId: { repo, issue: 1 },
+          requestId: `fifo-${repo}`,
+          pipeline: 'claude',
+          work: { spec: { title: 'Capacity FIFO tie regression' } },
+        });
+        if (isRefusal(result)) throw new Error(result.reason);
+        const run = decidedRun(result);
+        await store.enqueueRun({ runId: run.runId, now });
+        runs.push(run);
+      }
+      const first = await claimed(protocol, a);
+      expect(first.run.runId).toBe(runs[1]?.runId);
+      await bind(protocol, a, first.receipt);
+      expect((await claimed(protocol, a)).run.runId).toBe(runs[0]?.runId);
+    });
+
     async function owner(
       protocol: CapacityProtocol,
       a: CapacityAuthority,
