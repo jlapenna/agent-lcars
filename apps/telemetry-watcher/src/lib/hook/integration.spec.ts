@@ -46,7 +46,7 @@ describe('lcars integration', () => {
       },
       statusLine: { type: 'command', command: 'x' },
     };
-    fs.writeFileSync(settingsPath, JSON.stringify(existing));
+    fs.writeFileSync(settingsPath, JSON.stringify(existing), { mode: 0o600 });
 
     const status = installIntegration('claude', home);
     expect(status).toMatchObject({
@@ -64,8 +64,9 @@ describe('lcars integration', () => {
     );
     expect(stub).toContain('hook "$runtime"');
     expect(
-      fs.statSync(path.join(home, '.claude/hooks/lcars-hook.sh')).mode & 0o111,
-    ).not.toBe(0);
+      fs.statSync(path.join(home, '.claude/hooks/lcars-hook.sh')).mode & 0o777,
+    ).toBe(0o700);
+    expect(fs.statSync(settingsPath).mode & 0o077).toBe(0);
 
     const written = readJson(settingsPath);
     expect(Object.keys(written)).toEqual([

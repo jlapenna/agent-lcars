@@ -134,8 +134,20 @@ function readSettings(filePath: string): JsonRecord {
   return parsed;
 }
 
+/** Mode for a settings file: keep what the runtime already chose for it,
+ *  otherwise owner-only, since these files can carry environment values. */
+function settingsMode(filePath: string): number {
+  try {
+    return fs.statSync(filePath).mode & 0o777;
+  } catch {
+    return 0o600;
+  }
+}
+
 function writeAtomically(filePath: string, body: string, mode: number): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  // Owner-only parent: the stub is executed by the owner's agent, and a
+  // directory anyone else could write to would let them replace it.
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
     fs.writeFileSync(temporaryPath, body, { mode });
@@ -236,7 +248,7 @@ export function installIntegration(
   writeAtomically(
     path.join(homeDirectory, target.stubPath),
     stubScript(runtime),
-    0o755,
+    0o700,
   );
   const settingsPath = path.join(homeDirectory, target.settingsPath);
   const settings = readSettings(settingsPath);
@@ -250,7 +262,7 @@ export function installIntegration(
   writeAtomically(
     settingsPath,
     `${JSON.stringify(settings, null, 2)}\n`,
-    0o644,
+    settingsMode(settingsPath),
   );
   return integrationStatus(runtime, homeDirectory);
 }
@@ -274,7 +286,7 @@ export function uninstallIntegration(
       writeAtomically(
         settingsPath,
         `${JSON.stringify(settings, null, 2)}\n`,
-        0o644,
+        settingsMode(settingsPath),
       );
     }
   }
