@@ -156,7 +156,7 @@ async function fixture(anchor?: { repo: string; issue: number }) {
     },
   };
 }
-async function attested(f: Awaited<ReturnType<typeof fixture>>) {
+async function bound(f: Awaited<ReturnType<typeof fixture>>) {
   const { context, claim } = f;
   const recovery = { fence: claim.receipt, recoveryNonce };
   expect(
@@ -179,6 +179,11 @@ async function attested(f: Awaited<ReturnType<typeof fixture>>) {
       })
     ).status,
   ).toBe(200);
+}
+async function attested(f: Awaited<ReturnType<typeof fixture>>) {
+  await bound(f);
+  const { context, claim } = f;
+  const recovery = { fence: claim.receipt, recoveryNonce };
   expect(
     (
       await call(context, '/runs/capacity', {
@@ -194,6 +199,50 @@ async function attested(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('receipt HTTP authority and activation', () => {
+  it('verified pending attestation is retryable without granting a permit; invalid credentials remain fatal', async () => {
+    const f = await fixture();
+    await bound(f);
+    const worker = {
+      ...f.context,
+      principal: undefined,
+      bearerToken: f.claim.token,
+      workerIdentityToken: 'bound-jwt',
+      verifyWorkerIdentity: async () => ({
+        podUid: 'pod-original',
+        namespace: 'lcars',
+      }),
+    };
+    const input = { fence: f.claim.receipt, jobUid: 'job-original' };
+    const before = await f.protocol.read(now);
+    expect((await call(worker, '/runs/activate', input)).status).toBe(409);
+    expect(await f.protocol.read(now)).toEqual(before);
+    expect(before.receipts[0]?.worker).toBeUndefined();
+    expect(
+      (
+        await call(worker, '/runs/activate', {
+          ...input,
+          jobUid: 'foreign-job',
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(
+          { ...worker, bearerToken: 'invalid-token' },
+          '/runs/activate',
+          input,
+        )
+      ).status,
+    ).toBe(401);
+    await attested(f);
+    expect((await call(worker, '/runs/activate', input)).status).toBe(200);
+    expect((await f.protocol.read(now)).receipts[0]?.worker).toMatchObject({
+      podUid: 'pod-original',
+      generation: 1,
+      active: true,
+    });
+  });
+
   it('verified worker cannot activate at the first-heartbeat deadline before expiry sweep', async () => {
     const f = await fixture();
     await attested(f);

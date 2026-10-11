@@ -894,9 +894,17 @@ export class CapacityProtocol {
           throw new CapacityRefusal('retired');
         if (
           input.tokenHash !== receipt.tokenHash ||
-          receipt.attestedPod?.podUid !== input.podUid ||
-          receipt.attestedPod.jobUid !== input.jobUid ||
           receipt.jobUid !== input.jobUid
+        )
+          throw new CapacityRefusal('authority');
+        // A verified newly started Pod can race the controller's first
+        // inventory sweep. Pending attestation grants no permit, but is a
+        // retryable conflict rather than invalid credentials.
+        if (receipt.attestedPod === undefined)
+          throw new CapacityRefusal('worker');
+        if (
+          receipt.attestedPod.podUid !== input.podUid ||
+          receipt.attestedPod.jobUid !== input.jobUid
         )
           throw new CapacityRefusal('authority');
         if (

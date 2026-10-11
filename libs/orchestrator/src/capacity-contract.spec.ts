@@ -993,6 +993,30 @@ function contract(
       });
       expect(result).toMatchObject({ kind: 'wait' });
     });
+    it('pending attestation retains occupancy and grants no permit until the exact Pod is attested', async () => {
+      const { store, protocol, a, orchestrator } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a);
+      await bind(protocol, a, receipt);
+      const input = {
+        fence: fence(receipt),
+        jobUid: 'job-original',
+        podUid: 'pod-original',
+        tokenHash,
+        now,
+      };
+      const before = await protocol.read(now);
+      await expect(protocol.activate(input)).rejects.toThrow('worker');
+      await expect(
+        protocol.activate({ ...input, tokenHash: '0'.repeat(64) }),
+      ).rejects.toThrow('authority');
+      await expect(
+        protocol.activate({ ...input, jobUid: 'foreign-job' }),
+      ).rejects.toThrow('authority');
+      expect(await protocol.read(now)).toEqual(before);
+      expect(before.receipts[0]?.worker).toBeUndefined();
+      expect(await activate(protocol, a, receipt)).toBe(1);
+    });
     it('one exact attested Pod activates; duplicate Pod/generation/UID cannot acquire the permit', async () => {
       const { store, protocol, a, orchestrator } = await fixture();
       await enqueue(store, orchestrator);
@@ -1025,7 +1049,7 @@ function contract(
           tokenHash,
           now,
         }),
-      ).rejects.toThrow('authority');
+      ).rejects.toThrow('worker');
       const results = await Promise.allSettled([
         protocol
           .attest(a, fence(receipt), {

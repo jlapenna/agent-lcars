@@ -669,3 +669,51 @@ func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
 		t.Fatalf("retained barrier stranded cleanup: released=%v cleaned=%v exits=%d releases=%d", released, cleaned, exits, releases)
 	}
 }
+
+func TestReceiptRecoveryReplaysActiveLeaseAfterLostReplyAndRestart(t *testing.T) {
+	q, r, _ := receiptFixture(t)
+	var mu sync.Mutex
+	original := ""
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		var x map[string]any
+		json.NewDecoder(req.Body).Decode(&x)
+		calls++
+		nonce, _ := x["recoveryNonce"].(string)
+		if original == "" {
+			original = nonce
+		}
+		if nonce != original {
+			w.WriteHeader(409)
+			return
+		}
+		if calls == 1 {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+	q.capacity.consoleURL = server.URL
+	first, err := q.capacity.recovery(context.Background(), *r, "recover")
+	if err == nil {
+		t.Fatal("lost acquisition reply not injected")
+	}
+	second, err := q.capacity.recovery(context.Background(), *r, "retire")
+	if err != nil || second != first {
+		t.Fatal("active lease nonce rotated after lost reply", err)
+	}
+	// Durable authenticated inventory, rather than a process-local cache,
+	// preserves the lease acquired by the original controller incarnation.
+	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"nonce":%q}`, first)), &r.Recovery); err != nil {
+		t.Fatal(err)
+	}
+	q.capacity.producerID = "restarted-controller"
+	third, err := q.capacity.recovery(context.Background(), *r, "recover")
+	if err != nil || third != first {
+		t.Fatal("restart discarded durable recovery identity", err)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -73,6 +74,9 @@ type capacityReceipt struct {
 	State     string             `json:"state"`
 	Worker    *capacityWorker    `json:"worker"`
 	Producers []capacityProducer `json:"producers"`
+	Recovery  *struct {
+		Nonce string `json:"nonce"`
+	} `json:"recovery"`
 }
 type capacityInventory struct {
 	Policy *struct {
@@ -280,7 +284,15 @@ func (c *queueCapacityClient) command(ctx context.Context, input map[string]any)
 	return x, err
 }
 func (c *queueCapacityClient) recovery(ctx context.Context, r capacityReceipt, purpose string) (string, error) {
-	n := newCapacityIdentity()
+	// Replaying the exact active recovery lease is valid; rotating its nonce
+	// strands attestation until expiry. The authenticated inventory carries
+	// the original nonce after process death or a lost acquisition response.
+	fence, _ := json.Marshal(r.capacityFence)
+	hash := sha256.Sum256(append(append(fence, 0), []byte(c.producerID)...))
+	n := hex.EncodeToString(hash[:])
+	if r.Recovery != nil && r.Recovery.Nonce != "" {
+		n = r.Recovery.Nonce
+	}
 	_, err := c.command(ctx, map[string]any{"action": "recover", "fence": r.capacityFence, "recoveryNonce": n, "purpose": purpose})
 	return n, err
 }
