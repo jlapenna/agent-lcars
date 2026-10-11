@@ -22,6 +22,9 @@ async function fixture(t) {
     LCARS_RUN_TOKEN: 'private-token',
     LCARS_CONSOLE_URL: 'https://console.example',
   };
+  delete env.LCARS_CAPACITY_RECEIPT;
+  delete env.LCARS_WORKER_GENERATION;
+  delete env.LCARS_WORKER_IDENTITY_FILE;
   return { dir, log, env };
 }
 function run(args, env) {

@@ -290,7 +290,7 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 	defer background.Wait()
 	recoveryRunning := make(chan struct{}, 1)
 	recoverStartup := func() {
-		if cfg.recover == nil || (cfg.draining != nil && cfg.draining()) {
+		if cfg.recover == nil || (cfg.capacity == nil && cfg.draining != nil && cfg.draining()) {
 			return
 		}
 		select {
