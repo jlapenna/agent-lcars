@@ -1443,7 +1443,7 @@ export function runOrchestratorStoreContract(
         expect((await f.orchestrator.sweepExpired()).retried).toHaveLength(1);
       });
 
-      it('does not let expiry overwrite a claim released and reclaimed at its commit boundary', async () => {
+      it('does not let concurrent expiry sweeps overwrite a claim released and reclaimed at their commit boundary', async () => {
         const { store, orchestrator, clock } = await fixture();
         const { run } = await started(orchestrator, 'startup-reclaim-race');
         await store.enqueueRun({ runId: run.runId, now: T0 });
@@ -1484,19 +1484,47 @@ export function runOrchestratorStoreContract(
         // must instead observe the fresh claim inside its transaction.
         const apply = store.apply.bind(store);
         const transactRun = store.transactRun.bind(store);
+        const listExpiredRuns = store.listExpiredRuns.bind(store);
+        let listed = 0;
+        let releaseListings!: () => void;
+        const bothListed = new Promise<void>((resolve) => {
+          releaseListings = resolve;
+        });
+        // Both sweeps must select the old claim before either reaches its
+        // committing transaction. No timing sleeps or scheduler luck needed.
+        store.listExpiredRuns = async (now) => {
+          const expired = await listExpiredRuns(now);
+          expect(expired.map((candidate) => candidate.runId)).toEqual([
+            run.runId,
+          ]);
+          listed += 1;
+          if (listed === 2) releaseListings();
+          await bothListed;
+          return expired;
+        };
+        let reclaiming: Promise<void> | undefined;
+        let freshTask: Awaited<ReturnType<OrchestratorStore['readTask']>>;
+        const reclaimOnce = () =>
+          (reclaiming ??= reclaim().then(async () => {
+            freshTask = await store.readTask(run.task);
+          }));
         store.apply = async (input) => {
-          if (input.decision.run?.state === 'lost') await reclaim();
+          if (input.decision.run?.state === 'lost') await reclaimOnce();
           return apply(input);
         };
         store.transactRun = async (input) => {
-          await reclaim();
+          await reclaimOnce();
           return transactRun(input);
         };
         try {
-          expect(await orchestrator.sweepExpired()).toEqual({
-            lost: [],
-            retried: [],
-          });
+          const sweeps = await Promise.all([
+            orchestrator.sweepExpired(),
+            orchestrator.sweepExpired(),
+          ]);
+          expect(sweeps).toEqual([
+            { lost: [], retried: [] },
+            { lost: [], retried: [] },
+          ]);
           expect(interleaved).toBe(true);
           expect(await store.readRun(run.runId)).toMatchObject({
             state: 'running',
@@ -1506,12 +1534,19 @@ export function runOrchestratorStoreContract(
               startDeadlineAt: '2026-08-15T12:30:00.000Z',
             },
           });
-          expect((await store.readTask(run.task))?.task.activeRunId).toBe(
+          expect(await store.readTask(run.task)).toEqual(freshTask);
+          expect((await store.listRuns(run.task)).map((r) => r.runId)).toEqual([
             run.runId,
-          );
+          ]);
+          expect(
+            (await claimOutbox(store, clock.now())).map(
+              (entry) => entry.entryId,
+            ),
+          ).toEqual([`dispatch/${run.runId}`]);
         } finally {
           store.apply = apply;
           store.transactRun = transactRun;
+          store.listExpiredRuns = listExpiredRuns;
         }
       });
 
