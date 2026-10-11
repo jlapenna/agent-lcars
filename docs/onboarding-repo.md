@@ -26,6 +26,22 @@ when the underlying system changes:
 
 ## At a glance
 
+One command runs the repository-change steps end to end:
+
+```sh
+node tools/fleet-onboard-run.mjs --repo OWNER/NAME \
+  [--runner-label NAME-default] [--ci-workflow ci.yml --ci-checks "A,B"] \
+  [--copy-from OWNER/MEMBER] [--homelab ../homelab] [--dry-run]
+```
+
+It scaffolds the target repository and opens its draft PR, opens this
+repository's admission PR and Homelab's membership PR, then runs the
+GitHub-side helper (`tools/fleet-onboard-github.mjs`) for variables, the
+secret, the App-installation check, and labels. Every step is idempotent: an
+open PR on the step's branch counts as done, so a rerun resumes. It leaves
+the App installations and the Homelab Terraform apply to a human and prints
+them. The numbered steps below are what it does, and how to do each by hand.
+
 Run the commands from a dedicated worktree of this repository. Each step
 links to the section that owns its policy and evidence.
 
