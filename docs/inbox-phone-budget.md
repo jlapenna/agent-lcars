@@ -105,7 +105,9 @@ of task duration. Tasks can overlap resource transfers: do not add them to a
 waterfall or subtract their sum from total readiness to invent a causal split.
 A gap between click request and dispatch can include hydration, Playwright
 visibility/stability checks and scheduling; inspect a browser trace when further
-attribution is needed. The instrumentation itself adds observation overhead;
+attribution is needed. Start/end system load averages and free-memory observations accompany CPU model
+and browser version. They are contention diagnostics, not host-capacity proof
+or a guarantee of an uncontended run. The instrumentation itself adds observation overhead;
 compare before/after with the same probe revision.
 
 The selected console E2E suite also executes `inbox-phone-lab.spec.ts` with 30

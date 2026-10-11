@@ -56,6 +56,7 @@ test.describe('Inbox phone measurement artifact', () => {
             (entry: { type: string }) => entry.type === 'script',
           ),
         ).toBe(true);
+        expect(sample.mainThreadMs.TaskDuration).toBeGreaterThan(0);
         for (const value of Object.values(sample.mainThreadMs)) {
           expect(value).toBeGreaterThanOrEqual(0);
         }

@@ -141,6 +141,11 @@ export async function measure(options) {
       host: os.hostname(),
       platform: os.platform(),
       arch: os.arch(),
+      cpuModel: os.cpus()[0]?.model,
+      systemObservationsAtStart: {
+        loadAverage: os.loadavg(),
+        freeMemoryBytes: os.freemem(),
+      },
     },
     profile: PROFILE,
     targetMs: TARGET_MS,
@@ -316,6 +321,10 @@ export async function measure(options) {
       error instanceof Error ? error.message : 'Measurement failed';
   } finally {
     clearTimeout(deadline);
+    report.environment.systemObservationsAtEnd = {
+      loadAverage: os.loadavg(),
+      freeMemoryBytes: os.freemem(),
+    };
     try {
       await browser?.close();
     } catch (error) {
