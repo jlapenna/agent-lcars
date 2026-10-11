@@ -349,10 +349,10 @@ jobs:
           path: ${{ steps.python-tooling.outputs.cache_dir }}
           key: uv-baked-${{ runner.os }}-${{ runner.arch }}-${{ steps.python-tooling.outputs.uv_version }}-${{ steps.python-tooling.outputs.python_version }}-${{ hashFiles('apps/github-actions-exporter/requirements.lock') }}
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         if: steps.python-tooling.outputs.ready != 'true'
         with:
-          version: 0.12.23
+          version: 0.13.0
           python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: apps/github-actions-exporter/requirements.lock
