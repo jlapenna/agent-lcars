@@ -104,7 +104,7 @@ describe('provider fallback at the authenticated Work boundary', () => {
             spec: { ...spec, ...(priority === undefined ? {} : { priority }) },
           })
         ).status,
-      ).toBe(200);
+      ).toBe(201);
       const durableWork = structuredClone(
         (await f.store.readTask({ workId: ID }))!.task.work,
       );
