@@ -8,12 +8,12 @@ directly (they load bundled fonts from `assets/fonts/` with no build step).
 source of truth is `apps/console/src/theme.ts`. Where a prototype and the
 design system disagree, the design system wins.
 
-| Artifact                                              | Purpose                                              |
-| ----------------------------------------------------- | ---------------------------------------------------- |
-| [`fleet-console.html`](fleet-console.html)            | Full console dashboard / overview mockup             |
-| [`agent-lcars-ui-kit.html`](agent-lcars-ui-kit.html)  | Component and pattern reference sheet                |
-| [`brand-spec.md`](brand-spec.md)                      | Design brief: voice, palette direction, constraints  |
-| `assets/fonts/`                                       | Subset webfonts used by the artifacts (see licenses) |
+| Artifact                                             | Purpose                                              |
+| ---------------------------------------------------- | ---------------------------------------------------- |
+| [`fleet-console.html`](fleet-console.html)           | Full console dashboard / overview mockup             |
+| [`agent-lcars-ui-kit.html`](agent-lcars-ui-kit.html) | Component and pattern reference sheet                |
+| [`brand-spec.md`](brand-spec.md)                     | Design brief: voice, palette direction, constraints  |
+| `assets/fonts/`                                      | Subset webfonts used by the artifacts (see licenses) |
 
 `*.html.artifact.json` sidecars are OpenDesign metadata and can be ignored by
 readers.

@@ -9,14 +9,14 @@ flat square controls, and a single concentric elbow that frames the page.
 
 ## Core tokens
 
-| token       | hex (repo)  | OKLch (approx)          | repo name                 |
-| ----------- | ----------- | ----------------------- | ------------------------- |
-| `--bg`      | `#060709`   | `oklch(0.12 0.004 265)` | `--lcars-surface` dark-9  |
-| `--surface` | `#08090c`   | `oklch(0.13 0.005 265)` | `--lcars-surface-raised`  |
-| `--fg`      | `#eeeff2`   | `oklch(0.95 0.004 270)` | `--lcars-ink` gray-0      |
-| `--muted`   | `#a5adc0`   | `oklch(0.75 0.025 265)` | `--lcars-ink-dim` dark-2  |
-| `--border`  | `#212736`   | `oklch(0.27 0.025 265)` | `--lcars-hairline` dark-6 |
-| `--accent`  | `#ff9f45`   | `oklch(0.79 0.15 62)`   | `--lcars-amber` (Bridge)  |
+| token       | hex (repo) | OKLch (approx)          | repo name                 |
+| ----------- | ---------- | ----------------------- | ------------------------- |
+| `--bg`      | `#060709`  | `oklch(0.12 0.004 265)` | `--lcars-surface` dark-9  |
+| `--surface` | `#08090c`  | `oklch(0.13 0.005 265)` | `--lcars-surface-raised`  |
+| `--fg`      | `#eeeff2`  | `oklch(0.95 0.004 270)` | `--lcars-ink` gray-0      |
+| `--muted`   | `#a5adc0`  | `oklch(0.75 0.025 265)` | `--lcars-ink-dim` dark-2  |
+| `--border`  | `#212736`  | `oklch(0.27 0.025 265)` | `--lcars-hairline` dark-6 |
+| `--accent`  | `#ff9f45`  | `oklch(0.79 0.15 62)`   | `--lcars-amber` (Bridge)  |
 
 Destination accents: amber `#ff9f45` (Bridge), blue `#6c8fe0` (Inbox,
 Shuttlebay), periwinkle `#8c8fde` (Agents), violet `#b15fc7` (Work), teal
