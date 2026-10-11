@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"testing"
@@ -14,8 +15,11 @@ import (
 )
 
 func TestKubernetesBoundedSweepsEventuallyReachLaterSettledClaim(t *testing.T) {
-	for _, cleanup := range []bool{false, true} {
-		t.Run(fmt.Sprintf("cleanup=%v", cleanup), func(t *testing.T) {
+	for _, scenario := range []struct {
+		cleanup     bool
+		statusError bool
+	}{{false, false}, {true, false}, {false, true}, {true, true}} {
+		t.Run(fmt.Sprintf("cleanup=%v/statusError=%v", scenario.cleanup, scenario.statusError), func(t *testing.T) {
 			q, c := kubeQueueFixture(queueReadyNode())
 			ctx := context.Background()
 			var jobs []*batch.Job
@@ -48,6 +52,7 @@ func TestKubernetesBoundedSweepsEventuallyReachLaterSettledClaim(t *testing.T) {
 			}
 			attempts := map[string]int{}
 			var exhaust context.CancelFunc
+			statusErr := errors.New("claim-status API unavailable")
 			q.claimSettled = func(ctx context.Context, runID, runner, fingerprint string) (bool, error) {
 				if err := ctx.Err(); err != nil {
 					return false, err
@@ -56,26 +61,38 @@ func TestKubernetesBoundedSweepsEventuallyReachLaterSettledClaim(t *testing.T) {
 				if runID == target.Annotations[queueRunAnnotation] {
 					return true, nil
 				}
-				// An earlier successful live lookup consumes the whole sweep.
+				// An earlier live lookup or API failure consumes the whole sweep.
 				// Cancellation pins this boundary without a flaky wall-clock race.
 				exhaust()
+				if scenario.statusError {
+					return false, statusErr
+				}
 				return false, nil
 			}
-			for range 5 {
+			for i := range 5 {
 				sweep, cancel := context.WithCancel(ctx)
 				exhaust = cancel
-				if cleanup {
-					q.cleanup(sweep)
+				var err error
+				if scenario.cleanup {
+					err = q.cleanup(sweep)
 				} else {
-					q.recover(sweep)
+					err = q.recover(sweep)
 				}
 				cancel()
+				if scenario.statusError && i < 4 && !errors.Is(err, statusErr) {
+					t.Fatalf("sweep lost claim-status API error: %v", err)
+				}
 			}
 			if attempts[target.Annotations[queueRunAnnotation]] != 1 {
 				t.Fatalf("later settled claim starved: %v", attempts)
 			}
 			if _, err := c.BatchV1().Jobs(q.config.Namespace).Get(ctx, target.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
 				t.Fatal("settled target retained")
+			}
+			for _, job := range jobs[:len(jobs)-1] {
+				if _, err := c.BatchV1().Jobs(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{}); err != nil {
+					t.Fatalf("live or unavailable claim was retired: %v", err)
+				}
 			}
 			r, err := q.reserve(ctx)
 			if err != nil || r == nil {
