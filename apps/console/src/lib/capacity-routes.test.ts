@@ -222,6 +222,42 @@ describe('receipt HTTP authority and activation', () => {
     expect((await f.protocol.read(now)).receipts[0]?.worker).toBeUndefined();
   });
 
+  it('verified active generation replay refuses expiry without freeing its worker receipt', async () => {
+    const f = await fixture();
+    await attested(f);
+    const worker = {
+      ...f.context,
+      principal: undefined,
+      bearerToken: f.claim.token,
+      workerIdentityToken: 'bound-jwt',
+      verifyWorkerIdentity: async () => ({
+        podUid: 'pod-original',
+        namespace: 'lcars',
+      }),
+    };
+    expect(
+      (
+        await call(worker, '/runs/activate', {
+          fence: f.claim.receipt,
+          jobUid: 'job-original',
+        })
+      ).status,
+    ).toBe(200);
+    const before = await f.context.store.readRun(f.claim.runId);
+    f.setNow('2026-10-10T04:15:00.000Z');
+    expect(
+      (
+        await call(worker, '/runs/activate', {
+          fence: f.claim.receipt,
+          jobUid: 'job-original',
+        })
+      ).status,
+    ).toBe(409);
+    expect(await f.context.store.readRun(f.claim.runId)).toEqual(before);
+    expect((await f.protocol.read(now)).receipts).toHaveLength(1);
+    expect((await f.protocol.read(now)).receipts[0]?.worker?.active).toBe(true);
+  });
+
   it('verified timely heartbeat keeps activation valid beyond the startup deadline', async () => {
     const f = await fixture();
     await attested(f);

@@ -413,6 +413,65 @@ function contract(
       ).toMatchObject({ kind: 'recover-owned-secret' });
     });
 
+    it('startup expiry refuses an already active generation replay without retiring its physical worker', async () => {
+      const { store, protocol, a, orchestrator } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a);
+      await activate(protocol, a, receipt);
+      const before = await store.readRun(receipt.runId);
+      await expect(
+        protocol.activate({
+          fence: fence(receipt),
+          jobUid: 'job-original',
+          podUid: 'pod-original',
+          tokenHash,
+          now: runStartDeadlineAt(now),
+        }),
+      ).rejects.toThrow('retired');
+      expect(await store.readRun(receipt.runId)).toEqual(before);
+      expect((await protocol.read(now)).receipts).toHaveLength(1);
+      expect((await protocol.read(now)).receipts[0]?.worker?.active).toBe(true);
+    });
+
+    it('legacy claims without startup deadline retain execution-lease activation and recovery', async () => {
+      const { store, protocol, a, orchestrator } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a, 'legacy-deadline');
+      await activate(protocol, a, receipt);
+      await store.transactRun({
+        runId: receipt.runId,
+        decide: ({ task, run }) => {
+          if (task === undefined || run?.queue === undefined)
+            throw new Error('missing legacy claim');
+          const { startDeadlineAt: _deadline, ...queue } = run.queue;
+          return { task: task.task, run: { ...run, queue }, outbox: [] };
+        },
+      });
+      const before = await store.readRun(receipt.runId);
+      expect(before?.queue?.startDeadlineAt).toBeUndefined();
+      expect(
+        await protocol.activate({
+          fence: fence(receipt),
+          jobUid: 'job-original',
+          podUid: 'pod-original',
+          tokenHash,
+          now: '2026-10-10T04:16:00.000Z',
+        }),
+      ).toBe(1);
+      expect(
+        await protocol.claim(a, {
+          version: 1,
+          runner: 'runner-a',
+          producerId: 'producer-a',
+          claimRequestId: 'legacy-deadline',
+          nonce: 'legacy-replay-nonce-123456',
+          tokenHash,
+          now: '2026-10-10T04:16:00.000Z',
+        }),
+      ).toMatchObject({ kind: 'recover-owned-secret' });
+      expect(await store.readRun(receipt.runId)).toEqual(before);
+    });
+
     async function credentialFixture() {
       const f = await fixture();
       await enqueue(f.store, f.orchestrator, 'codex');
