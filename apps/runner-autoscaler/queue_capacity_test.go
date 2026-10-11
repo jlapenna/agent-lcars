@@ -225,7 +225,7 @@ func TestReceiptPhysicalRetirementRequiresAllOwnedWorkersEnded(t *testing.T) {
 	for _, kind := range []string{"never-started", "active", "completed-live-pod", "completed-terminal-pod", "completed-no-pod", "terminating-pod"} {
 		t.Run(kind, func(t *testing.T) {
 			j := &batch.Job{ObjectMeta: meta.ObjectMeta{Name: "job", UID: "job-uid", Generation: 1}, Spec: batch.JobSpec{Suspend: ptr(true)}}
-			p := core.Pod{ObjectMeta: meta.ObjectMeta{Name: "worker", UID: "pod", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: j.Name, UID: j.UID, Controller: ptr(true)}}}, Status: core.PodStatus{Phase: core.PodRunning, ContainerStatuses: []core.ContainerStatus{{Name: "runner", State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}}}
+			p := core.Pod{ObjectMeta: meta.ObjectMeta{Name: "worker", UID: "pod", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: j.Name, UID: j.UID, Controller: ptr(true)}}}, Spec: core.PodSpec{Containers: []core.Container{{Name: "runner"}}}, Status: core.PodStatus{Phase: core.PodRunning, ContainerStatuses: []core.ContainerStatus{{Name: "runner", State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}}}
 			var pods []core.Pod
 			if kind != "never-started" {
 				j.Generation = 2
@@ -242,7 +242,7 @@ func TestReceiptPhysicalRetirementRequiresAllOwnedWorkersEnded(t *testing.T) {
 			}
 			if kind == "completed-terminal-pod" || kind == "terminating-pod" {
 				pods[0].Status.Phase = core.PodSucceeded
-				pods[0].Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{}}
+				pods[0].Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{FinishedAt: meta.Now()}}
 			}
 			if kind == "terminating-pod" {
 				at := meta.Now()
@@ -593,7 +593,7 @@ func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
 			j.Status.Conditions = []batch.JobCondition{{Type: batch.JobComplete, Status: core.ConditionTrue}}
 			r.JobUID = string(j.UID)
 			r.Worker = &capacityWorker{Generation: 1, JobUID: r.JobUID, PodUID: "original-pod-uid", Active: true}
-			pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "original-pod", Namespace: q.config.Namespace, UID: "original-pod-uid", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: j.Name, UID: j.UID, Controller: ptr(true)}}}, Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: "direct-runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 0}}}}}}
+			pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "original-pod", Namespace: q.config.Namespace, UID: "original-pod-uid", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: j.Name, UID: j.UID, Controller: ptr(true)}}}, Spec: core.PodSpec{Containers: []core.Container{{Name: "direct-runner"}}}, Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: "direct-runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 0, FinishedAt: meta.Now()}}}}}}
 			k := q.client.(*fake.Clientset)
 			if err = k.Tracker().Add(j); err != nil {
 				t.Fatal(err)
@@ -760,7 +760,7 @@ func TestReceiptProducerRotationPreservesConcurrentUsefulWork(t *testing.T) {
 			targetJob.ResourceVersion = "1"
 			targetJob.Generation = 1
 			target.JobUID = string(targetJob.UID)
-			terminalPod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "finished-pod", Namespace: q.config.Namespace, UID: "finished-pod", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: finishedJob.Name, UID: finishedJob.UID, Controller: ptr(true)}}}, Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: "direct-runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{}}}}}}
+			terminalPod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "finished-pod", Namespace: q.config.Namespace, UID: "finished-pod", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: finishedJob.Name, UID: finishedJob.UID, Controller: ptr(true)}}}, Spec: core.PodSpec{Containers: []core.Container{{Name: "direct-runner"}}}, Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: "direct-runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{FinishedAt: meta.Now()}}}}}}
 			secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: target.JobName, Namespace: q.config.Namespace, UID: "target-secret", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: targetJob.Name, UID: targetJob.UID, Controller: ptr(true)}}}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte("target-token")}}
 			k := q.client.(*fake.Clientset)
 			if kind == "started-awaiting-attestation" {
@@ -898,6 +898,62 @@ func TestReceiptAbsentJobClosesOnlyDefinitivelyDrainedClaim(t *testing.T) {
 			barrier, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), r.JobName, meta.GetOptions{})
 			if err != nil || barrier.Spec.Suspend == nil || !*barrier.Spec.Suspend || barrier.Annotations[queueBarrierAnnotation] != r.Nonce || barrier.Spec.Template.Spec.Containers[0].Command[0] != "/bin/false" {
 				t.Fatal("absence retired without inert deterministic barrier", err)
+			}
+		})
+	}
+}
+
+// A synthetic Kubernetes terminated status is not positive runtime evidence.
+// Neither it nor incomplete container inventory may retire an active permit.
+func TestReceiptUnknownTerminationCannotRetireWorker(t *testing.T) {
+	for _, kind := range []string{"healthy", "runtime-unknown", "missing-finish", "missing-init-status", "running-ephemeral", "node-lost"} {
+		t.Run(kind, func(t *testing.T) {
+			q, r, ops := receiptFixture(t)
+			r.Producers = []capacityProducer{{ProducerID: "original", Subject: "subject", Stopped: true}}
+			j, err := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.UID = "original-job"
+			j.ResourceVersion = "1"
+			j.Generation = 2
+			j.Spec.Suspend = ptr(false)
+			j.Status.Conditions = []batch.JobCondition{{Type: batch.JobComplete, Status: core.ConditionTrue}}
+			r.JobUID = string(j.UID)
+			r.Worker = &capacityWorker{Generation: 1, PodUID: "original-pod", JobUID: r.JobUID, Active: true}
+			p := core.Pod{ObjectMeta: meta.ObjectMeta{Name: "original-pod", UID: "original-pod", Namespace: q.config.Namespace, OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: j.Name, UID: j.UID, Controller: ptr(true)}}}, Spec: *j.Spec.Template.Spec.DeepCopy(), Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: "direct-runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 0, FinishedAt: meta.Now()}}}}}}
+			switch kind {
+			case "runtime-unknown":
+				p.Status.Phase = core.PodFailed
+				p.Status.ContainerStatuses[0].State.Terminated.Reason = "ContainerStatusUnknown"
+			case "missing-finish":
+				p.Status.ContainerStatuses[0].State.Terminated.FinishedAt = meta.Time{}
+			case "missing-init-status":
+				p.Spec.InitContainers = []core.Container{{Name: "bootstrap"}}
+			case "running-ephemeral":
+				p.Spec.EphemeralContainers = []core.EphemeralContainer{{EphemeralContainerCommon: core.EphemeralContainerCommon{Name: "debug-worker"}}}
+				p.Status.EphemeralContainerStatuses = []core.ContainerStatus{{Name: "debug-worker", State: core.ContainerState{Running: &core.ContainerStateRunning{}}}}
+			case "node-lost":
+				p.Status.Phase = core.PodFailed
+				p.Status.Reason = "NodeLost"
+			}
+			if err = q.client.(*fake.Clientset).Tracker().Add(j); err != nil {
+				t.Fatal(err)
+			}
+			err = q.retireReceipt(context.Background(), *r, "recovery-nonce-123456", j, []core.Pod{p})
+			if kind == "healthy" {
+				if err != nil {
+					t.Fatal("positive physical runtime evidence refused", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("unknown/incomplete physical evidence retired an active worker")
+			}
+			for _, op := range *ops {
+				if op["action"] == "worker-retired" || op["action"] == "release" {
+					t.Fatal("unknown evidence transferred worker/capacity authority", op)
+				}
 			}
 		})
 	}

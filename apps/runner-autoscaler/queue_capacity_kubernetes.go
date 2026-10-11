@@ -499,12 +499,43 @@ func physicalReceiptWorkersEnded(j *batch.Job, pods []core.Pod) (bool, bool) {
 		}
 		observed++
 		never = false
-		if p.DeletionTimestamp != nil || (p.Status.Phase != core.PodFailed && p.Status.Phase != core.PodSucceeded) || len(p.Status.ContainerStatuses) == 0 {
+		if p.Status.Reason == "NodeLost" || p.DeletionTimestamp != nil || (p.Status.Phase != core.PodFailed && p.Status.Phase != core.PodSucceeded) || len(p.Status.ContainerStatuses) == 0 {
 			return false, false
 		}
-		for _, s := range append(append([]core.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...) {
-			if s.State.Terminated == nil {
+		// Terminal Pod phase can include synthesized unknown container exits.
+		// Require complete, positive runtime evidence for every declared worker.
+		groups := []struct {
+			names    []string
+			statuses []core.ContainerStatus
+		}{{statuses: p.Status.ContainerStatuses}, {statuses: p.Status.InitContainerStatuses}, {statuses: p.Status.EphemeralContainerStatuses}}
+		for _, c := range p.Spec.Containers {
+			groups[0].names = append(groups[0].names, c.Name)
+		}
+		for _, c := range p.Spec.InitContainers {
+			groups[1].names = append(groups[1].names, c.Name)
+		}
+		for _, c := range p.Spec.EphemeralContainers {
+			groups[2].names = append(groups[2].names, c.Name)
+		}
+		if len(groups[0].names) == 0 {
+			return false, false
+		}
+		for _, group := range groups {
+			if len(group.names) != len(group.statuses) {
 				return false, false
+			}
+			ended := make(map[string]bool, len(group.statuses))
+			for _, status := range group.statuses {
+				term := status.State.Terminated
+				if ended[status.Name] || term == nil || term.FinishedAt.IsZero() || term.Reason == "ContainerStatusUnknown" || term.Reason == "NodeLost" {
+					return false, false
+				}
+				ended[status.Name] = true
+			}
+			for _, name := range group.names {
+				if !ended[name] {
+					return false, false
+				}
 			}
 		}
 	}
