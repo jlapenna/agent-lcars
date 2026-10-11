@@ -8,15 +8,16 @@ A provider passes independently. Offline success never means graduation.
 
 ## Candidate qualification
 
-Before claiming bounded provider execution or starting an approval window, land
-the monotonic budget/fence prerequisite
-[#2223](https://github.com/jlapenna/agent-lcars/issues/2223), including deterministic
-forward/backward wall-clock cases and all provider correction branches. Keep
-[#2217](https://github.com/jlapenna/agent-lcars/issues/2217)'s diagnostic work and
-[Homelab #2186](https://github.com/jlapenna/homelab/issues/2186)'s clock investigation
-separate. A successful unchanged deadline test does not settle either cause. Offline
-canaries can retain independent evidence before this prerequisite passes;
-they cannot establish the production execution bound or authorize activation.
+The monotonic budget/fence prerequisite
+[#2223](https://github.com/jlapenna/agent-lcars/issues/2223) is closed, with
+deterministic clock/correction controls and actual runner adoption qualified.
+See the [current budget and fleet-adoption boundaries](worker-behavior-enforcement.md#current-qualification-boundary)
+for the immutable image/source binding and the later provider OS-spawn clock
+wrapper's separate adoption gate. Keep
+[#2217](https://github.com/jlapenna/agent-lcars/issues/2217)'s retained diagnostics
+and [Homelab #2186](https://github.com/jlapenna/homelab/issues/2186)'s clock
+investigation separate. A previously qualified image does not qualify a changed
+candidate, and offline canaries cannot authorize activation.
 
 Agree on the reviewed source revision with the platform owner before any image
 publish. Follow [canonical image publishing](image-publish-routing.md). Record
@@ -82,7 +83,8 @@ writes. It is still offline qualification.
 
 Keep #2181 open until the current candidate's normal dispatch and activation
 gates have evidence. [#2044](https://github.com/jlapenna/agent-lcars/issues/2044)
-retains the fresh native Claude interactive instruction-compliance gate.
+is closed for its fresh native Claude interactive instruction-compliance scope;
+it does not qualify a new worker image or policy-enabled dispatch.
 Historical #2031/#2032 evidence establishes its named workstation/dispatch
 checkpoint, not adoption of a newly built image.
 

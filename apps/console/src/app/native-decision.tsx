@@ -25,11 +25,13 @@ export function NativeDecisionRow({
   href,
   selected,
   onNavigate,
+  onSnooze,
 }: {
   card: NativeDecisionCard;
   href: string;
   selected: boolean;
   onNavigate: () => void;
+  onSnooze?: () => void;
 }) {
   const { work } = card;
   return (
@@ -73,6 +75,16 @@ export function NativeDecisionRow({
           </Text>
         </Stack>
       </Link>
+      {onSnooze && (
+        <Button
+          variant="subtle"
+          size="compact-xs"
+          aria-label={`Snooze ${work.spec.title}`}
+          onClick={onSnooze}
+        >
+          Snooze
+        </Button>
+      )}
     </div>
   );
 }

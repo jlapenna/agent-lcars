@@ -36,6 +36,37 @@ function renderList(items: ItemView[]) {
 // pattern elsewhere in this repo), so any row content shared by both views
 // appears twice and needs getAllBy* rather than getBy*.
 describe('WorkList', () => {
+  it('shows the actual fallback pipeline while retaining the requested provider', () => {
+    renderList([
+      {
+        ...item,
+        state: 'running',
+        runs: [
+          {
+            runId: 'work:x/r2',
+            state: 'running',
+            pipeline: 'codex',
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+            providerFallback: {
+              allowedPipelines: ['codex'],
+              attemptedPipelines: ['claude', 'codex'],
+              originalRunId: 'work:x/r1',
+              fromRunId: 'work:x/r1',
+              trigger: {
+                reason: 'provider-limit',
+                failureRunId: 'work:x/r1',
+                limitedPipeline: 'claude',
+              },
+            },
+          },
+        ],
+      },
+    ]);
+    expect(
+      screen.getAllByText(/codex \(fallback; requested claude\)/),
+    ).toHaveLength(2);
+  });
   it('renders parked items first with their state and pipeline', () => {
     renderList([
       { ...item, id: '01J5Z3K9QX8F0N2B4V6C8D1E3H', state: 'running' },

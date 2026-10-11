@@ -491,8 +491,13 @@ consumed by every dispatched run in every member repository.
   `work-session-expiry.yml`, which gives the item's telemetry sessions an
   `expireAt` retention deadline (`lib/session-expiry.ts`,
   `bin/session-expiry.ts`). Reopening the item clears it again.
-- **FL-OB-5 [Proposed]** Define fleet SLOs (§13) as recording rules and
-  alerts, rather than leaving them to ad hoc investigation.
+- **FL-OB-5 [Partial]** The [durable observation contract](../product-lifecycle-metrics.md)
+  exposes bounded queue/claim/settlement/outbox metrics and a tested,
+  unapplied recording/alert handoff. Provider-start, independently verified
+  useful evidence, task-level human-touch and billing/merge joins remain
+  unknown. Homelab collection/alert installation and elapsed SLO
+  qualification remain open under #2200; no production monitoring apply is
+  implied by an in-repository template.
 
 ## 11. Fleet, identity, and infrastructure boundaries
 
@@ -567,6 +572,11 @@ consumed by every dispatched run in every member repository.
 | R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit                       | P2       |
 | R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                      | The singleton is a single point of failure                                                                                        | P2       |
 
+R7's explicit opt-in source contract is documented in
+[Lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback).
+[#2198](https://github.com/jlapenna/agent-lcars/issues/2198) tracks delivery and
+real provider-limit qualification separately from local mechanism tests.
+
 The [R8 failover design](../superpowers/specs/2026-10-10-queue-executor-ha-design.md)
 selects server-owned capacity receipts and separates source implementation from
 Homelab fencing/rollout qualification. R8 remains pending those linked gates.
@@ -588,16 +598,28 @@ separates admission, queue, claim, bootstrap heartbeat and successful OS spawn.
 Its server-observed process clock is not a model-start or useful-outcome claim;
 missing historical clocks remain unknown.
 
-| Metric                      | Definition                                                                                   | Proposed target     |
-| --------------------------- | -------------------------------------------------------------------------------------------- | ------------------- |
-| Admission latency           | Time from webhook receipt to run `running` (queued)                                          | p95 < 60s           |
-| Claim latency               | Time from queued to claimed, with capacity available and no cooldown                         | p95 < 2 min         |
-| Evidence rate               | Share of finished runs with a verified deliverable, park, or no-op                           | > 95%               |
-| Successful-attempt rate     | Share of attempts ending `ok`; the 2026-09-11 audit baseline was 18 of 77                    | Trend upward; > 60% |
-| Silent loss                 | Runs that are live past `leaseExpiresAt` plus one tick                                       | 0                   |
-| Outbox health               | `failed` (dead-letter) outbox entries                                                        | 0 sustained         |
-| Human-touch rate            | Share of tasks that need a park or manual action before merge                                | Track; reduce       |
-| Cost per merged deliverable | [Selected cumulative session cost ÷ unique known-merged PRs](../cost-ledger.md), by pipeline | Track               |
+Use the [measurement contract](../product-lifecycle-metrics.md) for exact
+events, clocks, denominators and unknown handling. The broad definitions
+below are product goals, not currently measured acceptance results:
+`running` can mean queued, raw `ok` includes parks/no-ops, and retained
+claims do not prove provider launch. Never infer those facts from a UI state.
+
+| Metric                      | Definition                                                                                                       | Proposed target                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| Intake latency              | Verified webhook receipt to durable Run admission; receipt join currently unknown                                | p95 < 60s                          |
+| Claim latency               | Queue to retained claim; capacity-eligible/no-cooldown clock currently unknown                                   | p95 < 2 min                        |
+| Provider-process latency    | Queue/claim to server-observed OS spawn; durable clock exists, lifecycle export adoption still pending           | Define after qualified observation |
+| Evidence coverage           | Independently verified classifications / finished attempts; parks and no-ops classified separately               | > 95%                              |
+| Useful-attempt rate         | Independently verified useful deliverables / settled attempts, not raw `ok`                                      | Trend upward; target provisional   |
+| Silent loss                 | Non-queued live runs past execution lease plus one maintenance interval                                          | 0                                  |
+| Outbox health               | `failed` (dead-letter) outbox entries                                                                            | 0 sustained                        |
+| Human-touch rate            | Unique admitted task cohort needing a verified park/manual action before merge; unresolved tasks unknown         | Track; reduce                      |
+| Cost per merged deliverable | [Selected cumulative session cost ÷ unique known-merged PRs](../cost-ledger.md), by pipeline; not joined billing | Track; unknown prices stay unknown |
+
+The Costs view currently exports the selected cumulative-session proxy above.
+The eventual product goal is actual joined session billing (including retries)
+per independently verified distinct merged PR. Neither the proxy nor this
+lifecycle snapshot proves that billing join or a useful-outcome rate.
 
 ## 14. Open questions
 

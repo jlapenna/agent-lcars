@@ -12,7 +12,6 @@ to create a feature worktree. In that worktree, run:
 ```sh
 ./tools/setup-worktree.sh
 node --version
-pnpm --version
 java -version
 ```
 
@@ -21,7 +20,7 @@ repository's emulator CI setup. Dependencies include the Firebase CLI
 and Playwright; browser journeys require an installed Playwright Chromium:
 
 ```sh
-pnpm exec playwright install chromium
+node node_modules/@playwright/test/cli.js install chromium
 ```
 
 No production credentials, cloud deployment, or production data are needed.
@@ -35,9 +34,7 @@ For a browser on another machine, select a real fully qualified DNS name
 resolving to a private IPv4 interface on the serving host:
 
 ```sh
-FQDN=dev.example.net pnpm dev:lan -- --port-base 4320
-# Equivalent Nx target:
-# FQDN=dev.example.net ./tools/nx run @agent-lcars/console:serve-lan --port-base 4320
+FQDN=dev.example.net ./tools/nx run @agent-lcars/console:serve-lan --port-base 4320
 ```
 
 Replace `dev.example.net` with your host's FQDN. Wait for the supervisor's
@@ -48,7 +45,8 @@ protect the synthetic administrator from unapproved requests. This is a
 trusted-LAN fixture preview, not a public authenticated service. Never forward
 the port to the public internet.
 
-For host-only iteration, use `pnpm dev` (Nx `serve-emulator`). It defaults to
+For host-only iteration, use
+`./tools/nx run @agent-lcars/console:serve-emulator`. It defaults to
 loopback and port base 4300. Ambient `FQDN` does not opt this command into LAN
 exposure. `--fqdn dev.example.net` explicitly enables LAN mode too. Next.js
 receives the preview FQDN for hot reload; dotenv files are not changed.
@@ -76,9 +74,9 @@ another stack to claim them.
 Use another terminal in the same worktree with the same port base:
 
 ```sh
-pnpm dev:status -- --port-base 4320
-pnpm dev:reset -- --port-base 4320
-pnpm dev:test -- --port-base 4320
+./tools/nx run @agent-lcars/console:dev-status --port-base 4320
+./tools/nx run @agent-lcars/console:dev-reset --port-base 4320
+./tools/nx run @agent-lcars/console-e2e:dev-test --port-base 4320
 ```
 
 These are uncached Nx targets. They verify the stack's worktree and port
@@ -90,8 +88,8 @@ The default test exercises the native Work edit/save/reload journey. To run
 all native Work journeys or select one:
 
 ```sh
-pnpm dev:test -- --port-base 4320 native-work.spec.ts
-pnpm dev:test -- --port-base 4320 native-work.spec.ts --grep 'reply persists'
+./tools/nx run @agent-lcars/console-e2e:dev-test --port-base 4320 native-work.spec.ts
+./tools/nx run @agent-lcars/console-e2e:dev-test --port-base 4320 native-work.spec.ts --grep 'reply persists'
 ```
 
 Tests reuse the running server and existing Playwright specs. They reset
@@ -124,6 +122,13 @@ Press Ctrl-C in the foreground serve terminal. The supervisor closes browser
 connections and shuts down its owned Next.js/Firebase processes, including
 detached Firestore Java processes. Fixture state is disposable; a fresh start
 seeds it again. Stop the stack before removing its worktree.
+
+Keep the serve command in an owned terminal with a live output reader, not a
+tool process whose lifetime ends when an agent turn is interrupted. If either
+output pipe fails (for example `EPIPE` after its reader disconnects), the
+supervisor stops its owned processes and exits nonzero instead of letting
+Next.js repeatedly log to the broken pipe. This shutdown discards ephemeral
+fixture state, just like Ctrl-C; it does not restart automatically.
 
 | Symptom                            | Action                                                                                                                                          |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |

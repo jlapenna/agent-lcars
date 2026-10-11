@@ -73,7 +73,7 @@ test.describe('mobile console layout contracts @mobile-layout', () => {
         itemMenu.getByRole('menuitem', { name: 'Approve & Rebase' }),
       ).toBeVisible();
       await expect(
-        itemMenu.getByRole('menuitem', { name: 'Mute' }),
+        itemMenu.getByRole('menuitem', { name: 'Snooze' }),
       ).toBeVisible();
       await expectWithinViewport(page, itemMenu);
       await expectNoHorizontalOverflow(page);

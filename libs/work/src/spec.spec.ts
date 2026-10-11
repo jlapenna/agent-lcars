@@ -29,6 +29,28 @@ describe('workSpecSchema', () => {
       workSpecSchema.parse({ ...old, priority: 'superurgent' }),
     ).toThrow();
   });
+  it('keeps fallback opt-in, ordered and restricted to distinct alternative providers', () => {
+    expect(workSpecSchema.parse(spec)).not.toHaveProperty('fallbackPipelines');
+    expect(
+      workSpecSchema.parse({
+        ...spec,
+        fallbackPipelines: ['opencode', 'codex'],
+      }).fallbackPipelines,
+    ).toEqual(['opencode', 'codex']);
+    expect(
+      workSpecSchema.parse({ ...spec, fallbackPipelines: [] })
+        .fallbackPipelines,
+    ).toEqual([]);
+    for (const fallbackPipelines of [
+      ['claude'],
+      ['codex', 'codex'],
+      ['gemini'],
+      ['codex', 'opencode', 'claude'],
+    ])
+      expect(() =>
+        workSpecSchema.parse({ ...spec, fallbackPipelines }),
+      ).toThrow();
+  });
   it('accepts a complete spec', () => {
     expect(workSpecSchema.parse(spec)).toEqual(spec);
   });

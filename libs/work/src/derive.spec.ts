@@ -1,6 +1,7 @@
 import type { Run, Task } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
+import { itemRunViewSchema } from './contract';
 import {
   deriveItemState,
   latestRun,
@@ -275,5 +276,68 @@ it('projects known queue clocks without claim credentials or invented historical
       sessions: [],
     });
     expect(legacy.runs[0]?.queue).toEqual({ state: 'claimed' });
+  }
+});
+
+it('projects fallback lineage together with queue clocks without private run authority', () => {
+  const clocks = {
+    state: 'claimed' as const,
+    claimedAt: T,
+    firstHeartbeatAt: T,
+    providerProcessStartedAt: '2026-08-26T10:02:00.000Z',
+  };
+  const lineage = {
+    allowedPipelines: ['codex', 'claude'],
+    attemptedPipelines: ['codex', 'claude'],
+    originalRunId: `work:${WORK_ID}/r1`,
+    fromRunId: `work:${WORK_ID}/r1`,
+    trigger: {
+      reason: 'provider-limit' as const,
+      failureRunId: `work:${WORK_ID}/r1`,
+      limitedPipeline: 'codex',
+    },
+  };
+  const current = run(2, 'running', {
+    queue: {
+      ...clocks,
+      tokenHash: 'a'.repeat(64),
+      claimedBySubject: 'private-executor',
+    },
+    providerFallback: {
+      ...lineage,
+      principal: 'private-admission',
+      sourceRepository: 'private/source',
+    },
+    credentialRestoredClaimFingerprint: 'b'.repeat(64),
+  });
+  for (const makeView of [toItemView, toWorkSummary]) {
+    const view = makeView({
+      task: task(),
+      workId: WORK_ID,
+      runs: [current],
+      sessions: [],
+    });
+    const projected = view.runs[0]!;
+    expect(projected.queue).toEqual(clocks);
+    expect(projected.providerFallback).toEqual(lineage);
+    expect(itemRunViewSchema.parse(projected)).toEqual(projected);
+    for (const privateValue of [
+      'private-executor',
+      'private-admission',
+      'private/source',
+      'a'.repeat(64),
+      'b'.repeat(64),
+    ]) {
+      expect(JSON.stringify(projected)).not.toContain(privateValue);
+    }
+    const legacy = makeView({
+      task: task(),
+      workId: WORK_ID,
+      runs: [run(1, 'finished')],
+      sessions: [],
+    }).runs[0]!;
+    expect(legacy).not.toHaveProperty('queue');
+    expect(legacy).not.toHaveProperty('providerFallback');
+    expect(itemRunViewSchema.parse(legacy)).toEqual(legacy);
   }
 });

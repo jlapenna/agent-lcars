@@ -1,0 +1,36 @@
+# Reviewed handoff only. Homelab owns installation, collection and paging.
+# Window values are GAUGES. Never apply rate()/increase() or sum HA replicas.
+groups:
+  - name: lcars-product-lifecycle
+    interval: 1m
+    rules:
+      - record: lcars_product:observation_ready
+        expr: (lcars_product_snapshot_complete == 1) and (time() - lcars_product_snapshot_observed_timestamp_seconds < 180) and (lcars_product_snapshot_observed_timestamp_seconds <= time())
+      - record: lcars_product:admission_bad_ratio_1h
+        expr: |
+          ((lcars_product_latency_window_observations{stage="admission_to_queue"}
+          - ignoring(upper_bound_seconds) lcars_product_latency_window_samples{stage="admission_to_queue",upper_bound_seconds="60"})
+          / lcars_product_latency_window_observations{stage="admission_to_queue"})
+          and (lcars_product_latency_window_observations{stage="admission_to_queue"} >= 30)
+          and (lcars_product_latency_window_unknown{stage="admission_to_queue"} == 0)
+          and on(job,instance) lcars_product:observation_ready
+      - alert: LcarsProductObservationUnavailable
+        expr: (lcars_product_snapshot_complete == 0) or (time() - lcars_product_snapshot_observed_timestamp_seconds >= 180) or (lcars_product_snapshot_observed_timestamp_seconds > time()) or (lcars_product_snapshot_complete unless on(job,instance) lcars_product_snapshot_observed_timestamp_seconds) or absent(lcars_product_snapshot_complete)
+        for: 10m
+        labels:
+          severity: warning
+      - alert: LcarsProductSilentLoss
+        expr: (lcars_product_silent_loss_runs > 0) and on(job,instance) lcars_product:observation_ready
+        for: 10m
+        labels:
+          severity: warning
+      - alert: LcarsProductDeadLetters
+        expr: (lcars_product_outbox_entries{state="failed"} > 0) and on(job,instance) lcars_product:observation_ready
+        for: 10m
+        labels:
+          severity: warning
+      - alert: LcarsProductAdmissionBudget
+        expr: lcars_product:admission_bad_ratio_1h > 0.05
+        for: 15m
+        labels:
+          severity: warning

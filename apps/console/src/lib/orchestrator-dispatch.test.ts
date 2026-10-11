@@ -501,6 +501,38 @@ describe.each([
 });
 
 describe('outcomeCommentBody', () => {
+  it('identifies a created fresh fallback instead of requesting a manual retry', () => {
+    const original = run({ result: { ok: false, summary: 'provider-limit' } });
+    const successor = run({
+      runId: `${TASK.repo}#${TASK.issue}/r2`,
+      pipeline: 'codex',
+      state: 'running',
+      providerFallback: {
+        principal: 'user:operator',
+        allowedPipelines: ['codex'],
+        attemptedPipelines: ['claude', 'codex'],
+        originalRunId: original.runId,
+        fromRunId: original.runId,
+        trigger: {
+          reason: 'provider-limit',
+          failureRunId: original.runId,
+          limitedPipeline: 'claude',
+        },
+      },
+    });
+    const body = outcomeCommentBody(original, successor);
+    expect(body).toContain(
+      `fresh fallback attempt ${successor.runId} on codex`,
+    );
+    expect(body).not.toContain('re-request manually');
+    expect(
+      outcomeCommentBody({
+        ...successor,
+        state: 'finished',
+        result: { ok: true },
+      }),
+    ).toContain(`triggering failure: ${original.runId}`);
+  });
   it('includes the agent final message on a parked run', () => {
     const body = outcomeCommentBody(
       run({

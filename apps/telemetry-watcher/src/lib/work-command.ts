@@ -14,6 +14,7 @@ import {
   type QueuePriority,
 } from '@agent-lcars/dispatch-contracts';
 import {
+  fallbackPipelinesSchema,
   type ItemsContract,
   itemsContract,
   itemStateSchema,
@@ -39,9 +40,10 @@ export interface WorkCommandDeps {
 }
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>)\n' +
-  '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id>\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>]\n' +
+  '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
+  '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
   '       status exits 1 for failed work (with or without --watch); other states exit 0.';
 
@@ -163,6 +165,24 @@ export async function executeWorkCommand(
   const c = client(deps);
   try {
     switch (sub) {
+      case 'metrics': {
+        if (rest.some((arg) => arg !== '--json') || rest.length > 1)
+          return usageFailure(deps);
+        const snapshot = await c.lifecycleMetrics(
+          {},
+          { signal: AbortSignal.timeout(15_000) },
+        );
+        deps.stdout(
+          rest.includes('--json')
+            ? JSON.stringify(snapshot)
+            : snapshot.prometheus.trimEnd(),
+        );
+        if (!snapshot.complete)
+          deps.stderr(
+            'Lifecycle snapshot truncated; health/latency series suppressed.',
+          );
+        return { ok: snapshot.complete };
+      }
       case 'reply': {
         const parsed = parseArgs({
           args: rest,
@@ -229,6 +249,15 @@ export async function executeWorkCommand(
           return usageFailure(deps);
         }
         const description = readDescription(rest);
+        const fallback = flag(rest, '--fallback-pipelines');
+        if (rest.includes('--fallback-pipelines') && fallback === undefined)
+          return usageFailure(deps);
+        const fallbackPipelines =
+          fallback === undefined
+            ? undefined
+            : fallbackPipelinesSchema.parse(
+                fallback === 'none' ? [] : fallback.split(','),
+              );
         if (!repo || !pipeline || !title || !description) {
           return usageFailure(deps);
         }
@@ -240,6 +269,7 @@ export async function executeWorkCommand(
             description,
             pipeline: pipeline as 'claude' | 'codex' | 'opencode',
             priority: (priority ?? 'normal') as QueuePriority,
+            ...(fallbackPipelines === undefined ? {} : { fallbackPipelines }),
             target: { repo },
           },
         });
@@ -281,10 +311,24 @@ export async function executeWorkCommand(
       case 'redispatch': {
         const id = rest[0];
         if (!id) return usageFailure(deps);
+        const fallback = flag(rest, '--fallback-pipelines');
+        if (rest.includes('--fallback-pipelines') && fallback === undefined)
+          return usageFailure(deps);
+        const fallbackPipelines =
+          fallback === undefined
+            ? undefined
+            : fallbackPipelinesSchema.parse(
+                fallback === 'none' ? [] : fallback.split(','),
+              );
         const updated =
           sub === 'cancel'
             ? await c.cancel({ id })
-            : await c.redispatch({ id });
+            : await c.redispatch({
+                id,
+                ...(fallbackPipelines === undefined
+                  ? {}
+                  : { fallbackPipelines }),
+              });
         deps.stdout(line(updated));
         return { ok: true };
       }

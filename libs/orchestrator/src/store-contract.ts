@@ -11,6 +11,7 @@ import {
   isRefusal,
   requestRun,
 } from './decide';
+import { lifecycleMetricSnapshot } from './lifecycle-metrics';
 import {
   type LeasedOutboxEntry,
   type QueuePriority,
@@ -90,6 +91,154 @@ export function runOrchestratorStoreContract(
       const orchestrator = new Orchestrator(store, clock);
       return { clock, store, orchestrator };
     }
+
+    describe('bounded lifecycle observations', () => {
+      it('reads durable identities once across replay, claims and outbox settlement without changing them', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const first = await started(orchestrator);
+        await orchestrator.request({
+          taskId: TASK,
+          requestId: 'req-1',
+          pipeline: 'claude',
+        });
+        await store.enqueueRun({ runId: first.run.runId, now: T0 });
+        clock.advanceMinutes(1);
+        const claimed = await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: clock.now(),
+          claimedBy: 'fixture',
+          tokenHash: 'a'.repeat(64),
+        });
+        expect(claimed?.runId).toBe(first.run.runId);
+        const leased = onlyClaim(await claimOutbox(store, clock.now()));
+        await store.settleOutbox({
+          entryId: leased.entryId,
+          claimId: leased.claimId,
+          state: 'failed',
+          now: clock.now(),
+          deliveryFailures: 3,
+        });
+        const read = { since: T0, until: clock.now(), limit: 10 };
+        const before = await store.readRun(first.run.runId);
+        const records = await store.readLifecycleMetricRecords(read);
+        expect(records.complete).toBe(true);
+        expect(records.recentRuns).toHaveLength(1);
+        expect(records.liveRuns).toHaveLength(1);
+        expect(records.outstandingOutbox).toMatchObject([
+          { state: 'failed', deliveryFailures: 3, attempts: 1 },
+        ]);
+        const text = lifecycleMetricSnapshot(records, clock.now()).prometheus;
+        expect(text).toContain(
+          'lcars_product_admitted_window{pipeline="claude"} 1\n',
+        );
+        expect(text).toContain(
+          'lcars_product_claims_window{pipeline="claude"} 1\n',
+        );
+        expect(text).toContain(
+          'lcars_product_outbox_entries{kind="dispatch-run",state="failed"} 1\n',
+        );
+        expect(await store.readLifecycleMetricRecords(read)).toEqual(records);
+        expect(await store.readRun(first.run.runId)).toEqual(before);
+      });
+      it('detects overflow at each bounded feed and rejects excessive caller limits', async () => {
+        const { store, orchestrator } = await fixture();
+        await started(orchestrator);
+        await orchestrator.request({
+          taskId: { repo: 'octo/example', issue: 8 },
+          requestId: 'another',
+          pipeline: 'codex',
+          work: TASK_WORK,
+        });
+        const records = await store.readLifecycleMetricRecords({
+          since: T0,
+          until: T0,
+          limit: 1,
+        });
+        expect(records.complete).toBe(false);
+        expect(records.recentRuns).toHaveLength(1);
+        expect(records.liveRuns).toHaveLength(1);
+        expect(records.outstandingOutbox).toHaveLength(1);
+        expect(lifecycleMetricSnapshot(records, T0).prometheus).not.toContain(
+          'lcars_product_silent_loss_runs',
+        );
+        await expect(
+          store.readLifecycleMetricRecords({
+            since: T0,
+            until: T0,
+            limit: 1001,
+          }),
+        ).rejects.toThrow('Invalid lifecycle metric read bounds');
+      });
+
+      it.each(['recent', 'live', 'outbox'] as const)(
+        'fails closed when only the %s feed overflows',
+        async (feed) => {
+          const { store, orchestrator, clock } = await fixture();
+          const first = await started(orchestrator);
+          if (feed !== 'outbox')
+            await orchestrator.request({
+              taskId: { repo: 'octo/example', issue: 8 },
+              requestId: 'another',
+              pipeline: 'codex',
+              work: TASK_WORK,
+            });
+          if (feed === 'recent' || feed === 'outbox') {
+            await orchestrator.report(first.run.runId, {
+              ok: true,
+              summary: 'park',
+            });
+            if (feed === 'recent')
+              await orchestrator.report('octo/example#8/r1', {
+                ok: true,
+                summary: 'no-op',
+              });
+          }
+          if (feed !== 'outbox')
+            for (const entry of await claimOutbox(store, T0, 10))
+              await store.settleOutbox({
+                entryId: entry.entryId,
+                claimId: entry.claimId,
+                state: 'done',
+                now: T0,
+              });
+          if (feed !== 'recent') clock.advanceMinutes(120);
+          const records = await store.readLifecycleMetricRecords({
+            since: clock.now(),
+            until: clock.now(),
+            limit: 1,
+          });
+          expect(records.complete).toBe(false);
+          expect(records.recentRuns).toHaveLength(feed === 'recent' ? 1 : 0);
+          expect(records.liveRuns).toHaveLength(feed === 'live' ? 1 : 0);
+          expect(records.outstandingOutbox).toHaveLength(
+            feed === 'outbox' ? 1 : 0,
+          );
+        },
+      );
+      it('keeps old live/dead-letter inventory but excludes old completions and done outbox entries', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const first = await started(orchestrator);
+        const leased = onlyClaim(await claimOutbox(store, T0));
+        await store.settleOutbox({
+          entryId: leased.entryId,
+          claimId: leased.claimId,
+          state: 'done',
+          now: T0,
+        });
+        clock.advanceMinutes(120);
+        const records = await store.readLifecycleMetricRecords({
+          since: clock.now(),
+          until: clock.now(),
+          limit: 10,
+        });
+        expect(records.complete).toBe(true);
+        expect(records.recentRuns).toEqual([]);
+        expect(records.liveRuns.map((run) => run.runId)).toEqual([
+          first.run.runId,
+        ]);
+        expect(records.outstandingOutbox).toEqual([]);
+      });
+    });
 
     describe('the per-task mutex', () => {
       it('starts a run, takes the lock, and enqueues its dispatch', async () => {
@@ -1295,7 +1444,7 @@ export function runOrchestratorStoreContract(
         expect((await f.orchestrator.sweepExpired()).retried).toHaveLength(1);
       });
 
-      it('does not let expiry overwrite a claim released and reclaimed at its commit boundary', async () => {
+      it('does not let concurrent expiry sweeps overwrite a claim released and reclaimed at their commit boundary', async () => {
         const { store, orchestrator, clock } = await fixture();
         const { run } = await started(orchestrator, 'startup-reclaim-race');
         await store.enqueueRun({ runId: run.runId, now: T0 });
@@ -1336,19 +1485,47 @@ export function runOrchestratorStoreContract(
         // must instead observe the fresh claim inside its transaction.
         const apply = store.apply.bind(store);
         const transactRun = store.transactRun.bind(store);
+        const listExpiredRuns = store.listExpiredRuns.bind(store);
+        let listed = 0;
+        let releaseListings!: () => void;
+        const bothListed = new Promise<void>((resolve) => {
+          releaseListings = resolve;
+        });
+        // Both sweeps must select the old claim before either reaches its
+        // committing transaction. No timing sleeps or scheduler luck needed.
+        store.listExpiredRuns = async (now) => {
+          const expired = await listExpiredRuns(now);
+          expect(expired.map((candidate) => candidate.runId)).toEqual([
+            run.runId,
+          ]);
+          listed += 1;
+          if (listed === 2) releaseListings();
+          await bothListed;
+          return expired;
+        };
+        let reclaiming: Promise<void> | undefined;
+        let freshTask: Awaited<ReturnType<OrchestratorStore['readTask']>>;
+        const reclaimOnce = () =>
+          (reclaiming ??= reclaim().then(async () => {
+            freshTask = await store.readTask(run.task);
+          }));
         store.apply = async (input) => {
-          if (input.decision.run?.state === 'lost') await reclaim();
+          if (input.decision.run?.state === 'lost') await reclaimOnce();
           return apply(input);
         };
         store.transactRun = async (input) => {
-          await reclaim();
+          await reclaimOnce();
           return transactRun(input);
         };
         try {
-          expect(await orchestrator.sweepExpired()).toEqual({
-            lost: [],
-            retried: [],
-          });
+          const sweeps = await Promise.all([
+            orchestrator.sweepExpired(),
+            orchestrator.sweepExpired(),
+          ]);
+          expect(sweeps).toEqual([
+            { lost: [], retried: [] },
+            { lost: [], retried: [] },
+          ]);
           expect(interleaved).toBe(true);
           expect(await store.readRun(run.runId)).toMatchObject({
             state: 'running',
@@ -1358,12 +1535,19 @@ export function runOrchestratorStoreContract(
               startDeadlineAt: '2026-08-15T12:30:00.000Z',
             },
           });
-          expect((await store.readTask(run.task))?.task.activeRunId).toBe(
+          expect(await store.readTask(run.task)).toEqual(freshTask);
+          expect((await store.listRuns(run.task)).map((r) => r.runId)).toEqual([
             run.runId,
-          );
+          ]);
+          expect(
+            (await claimOutbox(store, clock.now())).map(
+              (entry) => entry.entryId,
+            ),
+          ).toEqual([`dispatch/${run.runId}`]);
         } finally {
           store.apply = apply;
           store.transactRun = transactRun;
+          store.listExpiredRuns = listExpiredRuns;
         }
       });
 

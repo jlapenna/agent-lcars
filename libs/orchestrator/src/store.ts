@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 import type { Decision, Refusal } from './decide';
 import type {
+  LifecycleMetricRead,
+  LifecycleMetricRecords,
+} from './lifecycle-metrics';
+import type {
   GithubAnchorProjection,
   LeasedOutboxEntry,
   QueuePriority,
@@ -11,6 +15,7 @@ import type {
   TaskId,
 } from './model';
 import { taskKey } from './model';
+import { providerIsCoolingDown } from './provider-cooldown';
 import {
   isQueueAdmissionCandidate,
   QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
@@ -56,6 +61,41 @@ export function queuePriorityTurnAfter(
     }
   }
   throw new Error('Invalid queue priority turn');
+}
+
+/** The same provider cooldowns and admission ceilings used by queue claims. */
+export function availableQueuePipelines(input: {
+  pipelines: readonly string[];
+  cooldowns: Readonly<Record<string, unknown>>;
+  liveRuns: readonly Run[];
+  now: string;
+}): string[] {
+  return [...new Set(input.pipelines)].filter((pipeline) => {
+    if (providerIsCoolingDown(input.cooldowns[pipeline], input.now))
+      return false;
+    const ceiling = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
+    return (
+      ceiling === undefined ||
+      input.liveRuns.filter(
+        (run) =>
+          run.pipeline === pipeline &&
+          run.queue?.state === 'claimed' &&
+          (run.state === 'pending' || run.state === 'running'),
+      ).length < ceiling
+    );
+  });
+}
+
+export interface QueueEligibilitySnapshot {
+  readonly cooldowns: Readonly<Record<string, unknown>>;
+  readonly liveRuns: readonly Run[];
+}
+
+export interface RunTransactionState {
+  readonly task: VersionedTask | undefined;
+  readonly run: Run | undefined;
+  /** Absent unless requested; observed before any writes in this transaction. */
+  readonly queueEligibility?: QueueEligibilitySnapshot;
 }
 
 /** Selects the provider using least live occupancy, then its oldest FIFO age.
@@ -173,6 +213,10 @@ export interface OpenGithubAnchorProjectionPage {
  * Firestore transactions provide both guarantees natively.
  */
 export interface OrchestratorStore {
+  /** Bounded, read-only durable feeds; any overflow marks the snapshot incomplete. */
+  readLifecycleMetricRecords(
+    input: LifecycleMetricRead,
+  ): Promise<LifecycleMetricRecords>;
   readTask(id: TaskId): Promise<VersionedTask | undefined>;
   readRun(runId: string): Promise<Run | undefined>;
   /** The task's live run, if its `activeRunId` points at one. */
@@ -212,10 +256,12 @@ export interface OrchestratorStore {
    */
   transactRun(input: {
     runId: string;
-    decide(state: {
-      task: VersionedTask | undefined;
-      run: Run | undefined;
-    }): Decision | Refusal;
+    queueEligibilityPipelines?: readonly string[];
+    /** Evaluated from the consistent local snapshot before global reads. */
+    shouldReadQueueEligibility?: (
+      state: Pick<RunTransactionState, 'task' | 'run'>,
+    ) => boolean;
+    decide(state: RunTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
   apply(input: {
     decision: Decision;
@@ -425,6 +471,10 @@ export interface OrchestratorStore {
   /** Every live run with `queue.state === 'queued'`, oldest first. An
    * optional `limit` bounds the result after terminal entries are removed. */
   listQueuedRuns(limit?: number): Promise<Run[]>;
+  /** Read-only prefilter; decisions must recheck these records transactionally. */
+  readProviderCooldowns(
+    pipelines: readonly string[],
+  ): Promise<Readonly<Record<string, unknown>>>;
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and

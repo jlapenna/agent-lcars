@@ -17,6 +17,27 @@ export function inboxCardKey(card: InboxCard): string {
     : repoItemKey(card.item.repo, card.item.number);
 }
 
+/** Any new human activity or derived CI/action classification interrupts the
+ * old snooze. Native decisions also bind to the latest parked run. */
+export function inboxCardSignature(card: InboxCard): string {
+  if ('work' in card) {
+    const parked = [...card.work.runs]
+      .reverse()
+      .find((run) => run.result?.summary === 'park');
+    return [
+      card.work.updatedAt,
+      parked?.runId ?? '',
+      parked?.updatedAt ?? '',
+      'needs-human',
+    ].join('|');
+  }
+  return [
+    card.item.updatedAt,
+    [...card.item.actionTypes].sort().join('+'),
+    card.item.ciRunning ? 'ci' : '',
+  ].join('|');
+}
+
 export function nativeDecisionQuestion(
   work: NativeDecisionCard['work'],
 ): string {

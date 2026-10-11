@@ -6,6 +6,7 @@ import {
   Button,
   Group,
   Menu,
+  Modal,
   Stack,
   Text,
   TextInput,
@@ -18,17 +19,25 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ActionType } from '../lib/action-items';
+import {
+  MAX_DECISION_SNOOZES,
+  SNOOZE_DURATIONS,
+} from '../lib/decision-snooze-contract';
 import type { WatchedRepo } from '../lib/watched-repo';
-import { repoItemKey } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
-import type { BoardCard } from './board-card';
-import { type InboxCard, inboxCardKey, inboxCardMetadata } from './inbox-card';
+import { formatAbsoluteLocal } from './format';
+import {
+  type InboxCard,
+  inboxCardKey,
+  inboxCardMetadata,
+  inboxCardSignature,
+} from './inbox-card';
 import { InboxMobileCommandDeck } from './inbox-mobile-command-deck';
 import { NativeDecisionDetail, NativeDecisionRow } from './native-decision';
 import { PersistedDetails } from './persisted-details';
 import { QueueItemRow } from './queue-item-row';
 import { INBOX_FILTER_REASONS } from './queue-reason';
-import { muteSignatureFor, useMutedItems } from './use-muted-items';
+import { useDecisionSnoozes } from './use-decision-snoozes';
 import type { ReplyAction } from './work/work-actions';
 
 type QueueFilter = 'all' | ActionType;
@@ -117,7 +126,17 @@ export function QueueWorkspace({
   }>();
   const [draftCard, setDraftCard] = useState<InboxCard>();
   const [loadingItemKey, setLoadingItemKey] = useState<string>();
-  const { isMuted, mute, unmute } = useMutedItems();
+  const {
+    entries,
+    legacy,
+    pending,
+    error,
+    isSnoozed,
+    snooze,
+    unsnooze,
+    importLegacy,
+  } = useDecisionSnoozes();
+  const [snoozeCard, setSnoozeCard] = useState<InboxCard>();
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keyboardNavigated = useRef(false);
@@ -173,11 +192,7 @@ export function QueueWorkspace({
     const needle = search.trim().toLowerCase();
     const filtered = cards.filter((card) => {
       const meta = inboxCardMetadata(card);
-      if (
-        !('work' in card) &&
-        isMuted(inboxCardKey(card), muteSignatureFor(card.item))
-      )
-        return false;
+      if (isSnoozed(inboxCardKey(card), inboxCardSignature(card))) return false;
       if (needle && !meta.search.toLowerCase().includes(needle)) return false;
       return (
         filter === 'all' || meta.actionTypes.some((type) => type === filter)
@@ -193,13 +208,24 @@ export function QueueWorkspace({
       }
       return inboxCardMetadata(a).rank - inboxCardMetadata(b).rank;
     });
-  }, [cards, filter, isMuted, search, sort]);
+  }, [cards, filter, isSnoozed, search, sort]);
 
-  const mutedCards = cards
-    .filter((card): card is BoardCard => !('work' in card))
-    .filter(({ item }) =>
-      isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)),
-    );
+  const cardsByKey = new Map(cards.map((card) => [inboxCardKey(card), card]));
+  const snoozedItems = Object.entries(entries).filter(([key, entry]) => {
+    const card = cardsByKey.get(key);
+    return !card || entry.signature === inboxCardSignature(card);
+  });
+  const legacyAnchors = cards
+    .flatMap((card) => {
+      const anchor = inboxCardKey(card);
+      const signature = inboxCardSignature(card);
+      return !entries[anchor] &&
+        Object.hasOwn(legacy, anchor) &&
+        (legacy[anchor] === null || legacy[anchor] === signature)
+        ? [{ anchor, signature }]
+        : [];
+    })
+    .slice(0, MAX_DECISION_SNOOZES);
   const currentCard = selectedItemKey
     ? resolvedSelectedCard &&
       inboxCardKey(resolvedSelectedCard) === selectedItemKey
@@ -326,6 +352,27 @@ export function QueueWorkspace({
       />
 
       <div className="queue-workspace__list">
+        {error && (
+          <Text role="alert" size="sm" p="xs">
+            {error}
+          </Text>
+        )}
+        {legacyAnchors.length > 0 && (
+          <Stack p="xs" gap="xs">
+            <Text size="xs">
+              This browser has {legacyAnchors.length} old mutes without a
+              recorded owner. Import them into your account as 24-hour snoozes?
+            </Text>
+            <Button
+              size="compact-xs"
+              variant="default"
+              disabled={pending}
+              onClick={() => void importLegacy(legacyAnchors)}
+            >
+              Import this browser’s mutes
+            </Button>
+          </Stack>
+        )}
         <div className="queue-workspace__list-header">
           <div>
             <Text size="xs" c="dimmed">
@@ -476,6 +523,7 @@ export function QueueWorkspace({
                       inboxCardKey(selectedCard) === key
                     }
                     onNavigate={() => setLoadingItemKey(key)}
+                    onSnooze={() => setSnoozeCard(card)}
                   />
                 );
               return (
@@ -490,34 +538,56 @@ export function QueueWorkspace({
                   loading={loadingItemKey === key}
                   onNavigate={() => setLoadingItemKey(key)}
                   muted={false}
-                  onToggleMute={() => mute(key, muteSignatureFor(card.item))}
+                  onToggleMute={() => setSnoozeCard(card)}
                 />
               );
             })
           )}
         </div>
 
-        {mutedCards.length > 0 && (
+        {snoozedItems.length > 0 && (
           <PersistedDetails
             className="queue-muted-items"
             storageKey="inbox:muted"
-            summary={<>Muted ({mutedCards.length})</>}
+            summary={<>Snoozed ({snoozedItems.length})</>}
           >
             <Stack gap={4} mt="xs">
-              {mutedCards.map(({ item }) => {
-                const key = repoItemKey(item.repo, item.number);
+              {snoozedItems.map(([key, entry]) => {
+                const card = cardsByKey.get(key);
+                const title = card
+                  ? 'work' in card
+                    ? card.work.spec.title
+                    : `#${card.item.number} ${card.item.title}`
+                  : key;
                 return (
                   <Group key={key} justify="space-between" wrap="nowrap">
                     <Text size="xs" truncate>
-                      #{item.number} {item.title}
+                      {title}
+                      <Text
+                        component="span"
+                        display="block"
+                        size="xs"
+                        c="dimmed"
+                      >
+                        Until{' '}
+                        <time dateTime={entry.expiresAt}>
+                          {formatAbsoluteLocal(entry.expiresAt)}
+                        </time>
+                      </Text>
                     </Text>
                     <Button
                       variant="subtle"
                       color="gray"
                       size="compact-xs"
-                      onClick={() => unmute(key)}
+                      disabled={pending}
+                      onClick={() =>
+                        void unsnooze({
+                          anchor: key,
+                          signature: entry.signature,
+                        })
+                      }
                     >
-                      Unmute
+                      Unsnooze
                     </Button>
                   </Group>
                 );
@@ -545,35 +615,49 @@ export function QueueWorkspace({
           </Stack>
         )}
         {selectedCard && 'work' in selectedCard ? (
-          <NativeDecisionDetail
-            key={selectedCard.work.id}
-            card={
-              draftLeftQueue
-                ? { ...selectedCard, canReply: false }
-                : selectedCard
-            }
-            onReplyDraftChange={onReplyDraftChange}
-            replyToWorkItem={replyToWorkItem}
-            onReplyAdmitted={(message) =>
-              setReplyConfirmation({
-                workId: selectedCard.work.anchor.workId,
-                title: selectedCard.work.spec.title,
-                message,
-              })
-            }
-          />
+          <Stack gap="xs">
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              disabled={pending}
+              onClick={() => setSnoozeCard(selectedCard)}
+            >
+              Snooze decision
+            </Button>
+            <NativeDecisionDetail
+              key={selectedCard.work.id}
+              card={
+                draftLeftQueue
+                  ? { ...selectedCard, canReply: false }
+                  : selectedCard
+              }
+              onReplyDraftChange={onReplyDraftChange}
+              replyToWorkItem={replyToWorkItem}
+              onReplyAdmitted={(message) =>
+                setReplyConfirmation({
+                  workId: selectedCard.work.anchor.workId,
+                  title: selectedCard.work.spec.title,
+                  message,
+                })
+              }
+            />
+          </Stack>
         ) : selectedCard ? (
           <ActionItemCard
             item={selectedCard.item}
             primaryAction={selectedCard.primaryAction}
             multiRepo={watchedRepos.length > 1}
-            muted={false}
-            onToggleMute={() =>
-              mute(
-                inboxCardKey(selectedCard),
-                muteSignatureFor(selectedCard.item),
-              )
-            }
+            muted={isSnoozed(
+              inboxCardKey(selectedCard),
+              inboxCardSignature(selectedCard),
+            )}
+            onToggleMute={() => {
+              const anchor = inboxCardKey(selectedCard);
+              const signature = inboxCardSignature(selectedCard);
+              if (isSnoozed(anchor, signature))
+                void unsnooze({ anchor, signature });
+              else setSnoozeCard(selectedCard);
+            }}
             variant="workspace"
             onReplyDraftChange={onReplyDraftChange}
           />
@@ -600,6 +684,50 @@ export function QueueWorkspace({
           </div>
         )}
       </div>
+      <Modal
+        opened={Boolean(snoozeCard)}
+        onClose={() => {
+          if (!pending) setSnoozeCard(undefined);
+        }}
+        title="Snooze decision"
+        size="sm"
+        closeOnClickOutside={!pending}
+        closeOnEscape={!pending}
+        withCloseButton={!pending}
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            Hide this decision only for your account, across devices. New
+            activity or a changed decision brings it back sooner. No work or
+            GitHub labels are changed.
+          </Text>
+          {error && (
+            <Text role="alert" size="sm">
+              {error}
+            </Text>
+          )}
+          {SNOOZE_DURATIONS.map((duration) => (
+            <Button
+              key={duration.minutes}
+              variant="default"
+              disabled={pending}
+              onClick={async () => {
+                if (
+                  snoozeCard &&
+                  (await snooze({
+                    anchor: inboxCardKey(snoozeCard),
+                    signature: inboxCardSignature(snoozeCard),
+                    minutes: duration.minutes,
+                  }))
+                )
+                  setSnoozeCard(undefined);
+              }}
+            >
+              {duration.label}
+            </Button>
+          ))}
+        </Stack>
+      </Modal>
     </section>
   );
 }

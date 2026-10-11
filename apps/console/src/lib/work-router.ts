@@ -5,6 +5,9 @@ import {
   isLive,
   isRefusal,
   isWorkAnchor,
+  LIFECYCLE_METRICS_READ_LIMIT,
+  LIFECYCLE_METRICS_WINDOW_SECONDS,
+  lifecycleMetricSnapshot,
 } from '@agent-lcars/orchestrator';
 import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
@@ -21,6 +24,7 @@ import {
   view,
   type WorkContext,
 } from './work-mint';
+import { authorizeProviderFallback } from './work-provider-fallback';
 import { requestReply } from './work-reply';
 
 export type { WorkContext } from './work-mint';
@@ -59,6 +63,18 @@ const cron = os.use(async ({ context, next }) => {
   return next({ context });
 });
 
+const metricsReader = os.use(async ({ context, next }) => {
+  if (
+    !context.principal?.scopes.has('work.operator') &&
+    !context.principal?.scopes.has('work.cron')
+  ) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.operator or work.cron scope required',
+    });
+  }
+  return next({ context });
+});
+
 /** `list`/`get` additionally accept `work.reaper` (the session-expiry
  *  workflow, a read-only caller) -- `create`/`cancel`/`redispatch`
  *  stay `operator`-only; a reaper-scoped principal must never mint or
@@ -78,6 +94,19 @@ const reader = os.use(async ({ context, next }) => {
 });
 
 export const workRouter = os.router({
+  lifecycleMetrics: metricsReader.lifecycleMetrics.handler(
+    async ({ context }) => {
+      const observedAt = context.now().toISOString();
+      const records = await context.runtime.store.readLifecycleMetricRecords({
+        since: new Date(
+          Date.parse(observedAt) - LIFECYCLE_METRICS_WINDOW_SECONDS * 1_000,
+        ).toISOString(),
+        until: observedAt,
+        limit: LIFECYCLE_METRICS_READ_LIMIT,
+      });
+      return lifecycleMetricSnapshot(records, observedAt);
+    },
+  ),
   maintenanceTick: cron.maintenanceTick.handler(async ({ context }) => {
     const result = await handleReconcile(context.runtime);
     if (result.status !== 200) {
@@ -318,6 +347,11 @@ export const workRouter = os.router({
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
         priority: spec.priority,
+        providerFallback: authorizeProviderFallback(
+          context.principal,
+          spec.pipeline,
+          input.fallbackPipelines ?? spec.fallbackPipelines,
+        ),
         params: { mode: 'implement', ...resumeParams },
       });
       if (isRefusal(outcome)) {
@@ -346,6 +380,9 @@ export const workRouter = os.router({
       ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
       ...(input.resume === undefined ? {} : { resume: input.resume }),
       ...(input.pipeline === undefined ? {} : { pipeline: input.pipeline }),
+      ...(input.fallbackPipelines === undefined
+        ? {}
+        : { fallbackPipelines: input.fallbackPipelines }),
     });
     if (!outcome.ok) {
       if (outcome.code === 'NOT_FOUND') throw errors.NOT_FOUND();

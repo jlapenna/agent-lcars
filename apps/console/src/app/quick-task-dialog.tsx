@@ -8,6 +8,7 @@ import { ulid } from '@agent-lcars/work';
 import {
   Box,
   Button,
+  Checkbox,
   Group,
   Modal,
   NativeSelect,
@@ -79,6 +80,7 @@ interface QuickTaskSubmission {
   repository: { owner: string; name: string };
   pipeline: AgentPipeline;
   priority: QueuePriority;
+  fallbackPipelines?: AgentPipeline[];
   description: string;
   source: QuickTaskSourceContext;
   file?: File;
@@ -134,6 +136,9 @@ export function QuickTaskDialog({
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
   const [priority, setPriority] = useState<QueuePriority>('normal');
+  const [fallbackPipelines, setFallbackPipelines] = useState<AgentPipeline[]>(
+    [],
+  );
   const submitInFlightRef = useRef(false);
 
   // The modal is closed during hydration, so applying browser-local defaults
@@ -271,6 +276,9 @@ export function QuickTaskDialog({
                 title: deriveQuickTaskTitle(request.description),
                 pipeline: request.pipeline,
                 priority: request.priority,
+                ...(request.fallbackPipelines === undefined
+                  ? {}
+                  : { fallbackPipelines: request.fallbackPipelines }),
                 description: composeQuickTaskIssueBody(
                   {
                     description: request.description,
@@ -366,12 +374,22 @@ export function QuickTaskDialog({
       },
       pipeline: effectivePipeline,
       priority,
+      ...(fallbackPipelines.length === 0
+        ? {}
+        : {
+            fallbackPipelines: fallbackPipelines.filter(
+              (candidate) =>
+                candidate !== effectivePipeline &&
+                supportedPipelines.includes(candidate),
+            ),
+          }),
       description,
       source,
       ...(screenshot ? { file: screenshot } : {}),
     };
     setDescription('');
     setPriority('normal');
+    setFallbackPipelines([]);
     setScreenshot(null);
     setSource(emptySourceContext());
     close();
@@ -445,6 +463,42 @@ export function QuickTaskDialog({
               setPriority(event.currentTarget.value as QueuePriority)
             }
           />
+          <Checkbox.Group
+            label="Allowed fallback order"
+            description="Optional. After a provider limit, start a fresh attempt in selection order. Your current grants still apply."
+            value={fallbackPipelines.filter(
+              (candidate) =>
+                candidate !== effectivePipeline &&
+                supportedPipelines.includes(candidate),
+            )}
+            onChange={(values) =>
+              setFallbackPipelines(values as AgentPipeline[])
+            }
+          >
+            <Group gap="md" mt="xs">
+              {pipelineOptions
+                .filter((option) => option.value !== effectivePipeline)
+                .map((option) => (
+                  <Checkbox
+                    key={option.value}
+                    value={option.value}
+                    label={option.label}
+                  />
+                ))}
+            </Group>
+            {fallbackPipelines.length > 0 && (
+              <Text size="xs" c="dimmed">
+                Order:{' '}
+                {fallbackPipelines
+                  .filter(
+                    (candidate) =>
+                      candidate !== effectivePipeline &&
+                      supportedPipelines.includes(candidate),
+                  )
+                  .join(' → ')}
+              </Text>
+            )}
+          </Checkbox.Group>
           <Textarea
             label="Description"
             value={description}

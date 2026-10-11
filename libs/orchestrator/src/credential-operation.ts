@@ -105,12 +105,12 @@ export function changeCredentialOperation(input: {
     return refused('not-claimant');
   if (change.kind === 'finish' && op.mutation !== undefined)
     return refused('credential-operation-pending');
-  // A completion may arrive after an external cleanup decision. Its atomic
-  // settlement must observe a positive lease resolution for this same IO
-  // sequence; any later prepare invalidates an earlier read/CAS proof.
+  // Terminal cleanup debt and a completion accepted during external IO both
+  // require positive lease resolution for this exact IO sequence. Any later
+  // prepare invalidates an earlier read/CAS proof; failed reads cannot unlock.
   if (
     change.kind === 'finish' &&
-    run.credentialPendingResult !== undefined &&
+    (op.kind === 'cleanup' || run.credentialPendingResult !== undefined) &&
     change.leaseRetiredAtSequence !== op.mutationSequence
   )
     return refused('credential-operation-pending');

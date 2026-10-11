@@ -62,6 +62,100 @@ const item = (state: string) => ({
 });
 
 describe('lcars work', () => {
+  it.each([true, false])(
+    'exports a bounded metrics snapshot and fails closed when complete=%s',
+    async (complete) => {
+      const prometheus = `# TYPE lcars_product_snapshot_complete gauge\nlcars_product_snapshot_complete ${complete ? 1 : 0}\n`;
+      const d = deps({
+        'GET /api/work/v1/metrics/lifecycle': () => ({
+          observedAt: '2026-08-26T10:00:00.000Z',
+          windowSeconds: 3600,
+          complete,
+          prometheus,
+        }),
+      });
+      expect(await executeWorkCommand(['metrics'], d)).toEqual({
+        ok: complete,
+      });
+      expect(d.calls).toEqual(['GET /api/work/v1/metrics/lifecycle']);
+      expect(d.out).toEqual([prometheus.trimEnd()]);
+      expect(d.err.length).toBe(complete ? 0 : 1);
+    },
+  );
+  it('supports JSON metrics and rejects unrecognized flags before authentication', async () => {
+    const snapshot = {
+      observedAt: '2026-08-26T10:00:00.000Z',
+      windowSeconds: 3600,
+      complete: true,
+      prometheus: 'lcars_product_snapshot_complete 1\n',
+    };
+    const d = deps({ 'GET /api/work/v1/metrics/lifecycle': () => snapshot });
+    expect(await executeWorkCommand(['metrics', '--json'], d)).toEqual({
+      ok: true,
+    });
+    expect(JSON.parse(d.out[0] ?? '')).toEqual(snapshot);
+    const invalid = deps({});
+    invalid.token = vi.fn(async () => {
+      throw new Error('Must not request credentials');
+    });
+    expect(
+      (await executeWorkCommand(['metrics', '--unsafe'], invalid)).ok,
+    ).toBe(false);
+    expect(invalid.calls).toEqual([]);
+    expect(invalid.token).not.toHaveBeenCalled();
+  });
+  it('sends explicit ordered alternatives and supports disabling them per redispatch', async () => {
+    const d = deps({
+      'PUT /api/work/v1/items/{id}': (init) => {
+        expect(JSON.parse(String(init.body)).spec.fallbackPipelines).toEqual([
+          'opencode',
+          'codex',
+        ]);
+        return item('running');
+      },
+      'POST /api/work/v1/items/{id}/redispatch': (init) => {
+        expect(JSON.parse(String(init.body)).fallbackPipelines).toEqual([]);
+        return item('running');
+      },
+    });
+    expect(
+      await executeWorkCommand(
+        [
+          'create',
+          '--repo',
+          'o/r',
+          '--pipeline',
+          'claude',
+          '--title',
+          't',
+          '--description',
+          'd',
+          '--fallback-pipelines',
+          'opencode,codex',
+        ],
+        d,
+      ),
+    ).toEqual({ ok: true });
+    expect(
+      await executeWorkCommand(
+        ['redispatch', item('running').id, '--fallback-pipelines', 'none'],
+        d,
+      ),
+    ).toEqual({ ok: true });
+  });
+  it.each(['codex,codex', 'unknown'])(
+    'rejects invalid fallback choices %s without a request',
+    async (choices) => {
+      const d = deps({});
+      expect(
+        await executeWorkCommand(
+          ['redispatch', item('running').id, '--fallback-pipelines', choices],
+          d,
+        ),
+      ).toEqual({ ok: false });
+      expect(d.calls).toEqual([]);
+    },
+  );
   describe('reply', () => {
     const id = item('parked').id;
     const replyUrl = `POST /api/work/v1/items/${id}/reply`;

@@ -307,31 +307,31 @@ describe('ItemOverflowMenu', () => {
     );
   });
 
-  it('offers Mute when onToggleMute is passed, even with no other action', async () => {
+  it('offers Snooze when onToggleMute is passed, even with no other action', async () => {
     renderMenu(makeItem({ kind: 'pr' }), { onToggleMute: vi.fn() });
     await openMenu();
 
-    expect(screen.getByText('Mute')).toBeTruthy();
-    expect(screen.queryByText('Unmute')).toBeNull();
+    expect(screen.getByText('Snooze')).toBeTruthy();
+    expect(screen.queryByText('Unsnooze')).toBeNull();
   });
 
-  it('offers Unmute instead of Mute once muted is true', async () => {
+  it('offers Unsnooze instead of Snooze once muted is true', async () => {
     renderMenu(makeItem({ kind: 'pr' }), {
       muted: true,
       onToggleMute: vi.fn(),
     });
     await openMenu();
 
-    expect(screen.getByText('Unmute')).toBeTruthy();
-    expect(screen.queryByText('Mute')).toBeNull();
+    expect(screen.getByText('Unsnooze')).toBeTruthy();
+    expect(screen.queryByText('Snooze')).toBeNull();
   });
 
-  it('calls onToggleMute, with no confirm modal, when Mute is clicked', async () => {
+  it('calls onToggleMute, with no confirm modal, when Snooze is clicked', async () => {
     const onToggleMute = vi.fn();
     renderMenu(makeItem(), { onToggleMute });
     await openMenu();
 
-    fireEvent.click(screen.getByText('Mute'));
+    fireEvent.click(screen.getByText('Snooze'));
 
     expect(onToggleMute).toHaveBeenCalledTimes(1);
     expect(modals.openConfirmModal).not.toHaveBeenCalled();

@@ -406,7 +406,7 @@ describe('ActionItemCard', () => {
   });
 
   describe('mute (#59)', () => {
-    it('offers Mute in the overflow menu when onToggleMute is passed, and calls it on click', async () => {
+    it('offers Snooze in the overflow menu when onToggleMute is passed, and calls it on click', async () => {
       const onToggleMute = vi.fn();
       render(
         <MantineProvider>
@@ -415,18 +415,18 @@ describe('ActionItemCard', () => {
       );
 
       fireEvent.click(screen.getByRole('button', { name: /more actions/i }));
-      fireEvent.click(await screen.findByText('Mute'));
+      fireEvent.click(await screen.findByText('Snooze'));
 
       expect(onToggleMute).toHaveBeenCalledTimes(1);
     });
 
-    it('omits Mute from the overflow menu when no onToggleMute is passed', async () => {
+    it('omits Snooze from the overflow menu when no onToggleMute is passed', async () => {
       renderCard(makeItem());
 
       fireEvent.click(screen.getByRole('button', { name: /more actions/i }));
       await screen.findByText('Close issue');
 
-      expect(screen.queryByText('Mute')).toBeNull();
+      expect(screen.queryByText('Snooze')).toBeNull();
     });
   });
 

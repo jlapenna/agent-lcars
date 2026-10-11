@@ -10,7 +10,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import type { BoardCard } from './board-card';
-import type { InboxCard, NativeDecisionCard } from './inbox-card';
+import {
+  type InboxCard,
+  inboxCardSignature,
+  type NativeDecisionCard,
+} from './inbox-card';
 import {
   parseQueueFilter,
   parseQueueSort,
@@ -24,6 +28,12 @@ let mockSearch = 'repo=agent%2Flcars';
 // resync effect keys off that identity.
 let cachedParams: [string, URLSearchParams] | undefined;
 const mockReplace = vi.fn();
+vi.mock('./decision-snooze-actions', () => ({
+  readDecisionSnoozes: vi.fn().mockResolvedValue({ ok: true, entries: {} }),
+  snoozeDecision: vi.fn().mockResolvedValue({ ok: true, entries: {} }),
+  unsnoozeDecision: vi.fn().mockResolvedValue({ ok: true, entries: {} }),
+  importDecisionSnoozes: vi.fn().mockResolvedValue({ ok: true, entries: {} }),
+}));
 vi.mock('next/navigation', () => ({
   useSearchParams: () => {
     if (!cachedParams || cachedParams[0] !== mockSearch) {
@@ -75,6 +85,29 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
 function makeCard(overrides: Partial<ActionItem> = {}): BoardCard {
   return { item: makeItem(overrides) };
 }
+
+describe('GitHub snooze interruption', () => {
+  it('ignores action order but resurfaces activity, classification, and CI changes', () => {
+    const initial = makeCard({ actionTypes: ['needs-human', 'ci-failed'] });
+    const signature = inboxCardSignature(initial);
+    expect(
+      inboxCardSignature(
+        makeCard({ actionTypes: ['ci-failed', 'needs-human'] }),
+      ),
+    ).toBe(signature);
+    for (const update of [
+      { updatedAt: '2026-07-30T01:00:00Z' },
+      { actionTypes: ['needs-human'] as ActionItem['actionTypes'] },
+      { ciRunning: true },
+    ])
+      expect(
+        inboxCardSignature({
+          ...initial,
+          item: { ...initial.item, ...update },
+        }),
+      ).not.toBe(signature);
+  });
+});
 
 function renderWorkspace(
   cards: BoardCard[],

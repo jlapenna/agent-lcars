@@ -166,6 +166,55 @@
   },
   "openapi": "3.2.0",
   "paths": {
+    "/metrics/lifecycle": {
+      "get": {
+        "operationId": "getLifecycleMetrics",
+        "summary": "Bounded durable lifecycle observations (work.operator or work.cron)",
+        "tags": ["items"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "windowSeconds": {
+                      "type": "number",
+                      "const": 3600
+                    },
+                    "complete": {
+                      "type": "boolean"
+                    },
+                    "prometheus": {
+                      "type": "string",
+                      "maxLength": 65536
+                    }
+                  },
+                  "required": [
+                    "observedAt",
+                    "windowSeconds",
+                    "complete",
+                    "prometheus"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/maintenance/tick": {
       "post": {
         "operationId": "tickMaintenance",
@@ -210,6 +259,22 @@
                           }
                         },
                         "required": ["lostRunId", "newRunId"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "rerouted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fromRunId": {
+                            "type": "string"
+                          },
+                          "newRunId": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["fromRunId", "newRunId"],
                         "additionalProperties": false
                       }
                     },
@@ -316,6 +381,14 @@
                         "type": "string",
                         "enum": ["urgent", "normal", "background"]
                       },
+                      "fallbackPipelines": {
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        }
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -384,6 +457,14 @@
                           "default": "normal",
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -495,6 +576,59 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -696,6 +830,14 @@
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -806,6 +948,59 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -1013,6 +1208,14 @@
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -1123,6 +1326,59 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -1375,6 +1631,14 @@
                                 "type": "string",
                                 "enum": ["urgent", "normal", "background"]
                               },
+                              "fallbackPipelines": {
+                                "maxItems": 2,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": ["claude", "codex", "opencode"]
+                                }
+                              },
                               "target": {
                                 "type": "object",
                                 "properties": {
@@ -1491,6 +1755,59 @@
                                     }
                                   },
                                   "required": ["ok"],
+                                  "additionalProperties": false
+                                },
+                                "providerFallback": {
+                                  "type": "object",
+                                  "properties": {
+                                    "allowedPipelines": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "attemptedPipelines": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "originalRunId": {
+                                      "type": "string"
+                                    },
+                                    "fromRunId": {
+                                      "type": "string"
+                                    },
+                                    "trigger": {
+                                      "type": "object",
+                                      "properties": {
+                                        "reason": {
+                                          "type": "string",
+                                          "enum": [
+                                            "provider-limit",
+                                            "provider-cooldown"
+                                          ]
+                                        },
+                                        "failureRunId": {
+                                          "type": "string"
+                                        },
+                                        "limitedPipeline": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "reason",
+                                        "failureRunId",
+                                        "limitedPipeline"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "allowedPipelines",
+                                    "attemptedPipelines",
+                                    "originalRunId"
+                                  ],
                                   "additionalProperties": false
                                 },
                                 "reply": {
@@ -1679,6 +1996,14 @@
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -1789,6 +2114,59 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -1958,6 +2336,14 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256
+                  },
+                  "fallbackPipelines": {
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["claude", "codex", "opencode"]
+                    }
                   }
                 }
               }
@@ -2007,6 +2393,14 @@
                           "default": "normal",
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -2118,6 +2512,59 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -2334,6 +2781,14 @@
                   "pipeline": {
                     "type": "string",
                     "enum": ["claude", "codex", "opencode"]
+                  },
+                  "fallbackPipelines": {
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["claude", "codex", "opencode"]
+                    }
                   }
                 },
                 "required": ["text"]
@@ -2384,6 +2839,14 @@
                           "default": "normal",
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -2495,6 +2958,59 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
                             "additionalProperties": false
                           },
                           "reply": {
@@ -2714,6 +3230,14 @@
                         "type": "string",
                         "enum": ["urgent", "normal", "background"]
                       },
+                      "fallbackPipelines": {
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        }
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -2774,6 +3298,14 @@
                           "default": "normal",
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -2965,6 +3497,14 @@
                         "type": "string",
                         "enum": ["urgent", "normal", "background"]
                       },
+                      "fallbackPipelines": {
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        }
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -3025,6 +3565,14 @@
                           "default": "normal",
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -3349,6 +3897,14 @@
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
                         },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -3513,6 +4069,14 @@
                                 "type": "string",
                                 "enum": ["urgent", "normal", "background"]
                               },
+                              "fallbackPipelines": {
+                                "maxItems": 2,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": ["claude", "codex", "opencode"]
+                                }
+                              },
                               "target": {
                                 "type": "object",
                                 "properties": {
@@ -3674,6 +4238,14 @@
                           "default": "normal",
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -3899,6 +4471,14 @@
                           "default": "normal",
                           "type": "string",
                           "enum": ["urgent", "normal", "background"]
+                        },
+                        "fallbackPipelines": {
+                          "maxItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["claude", "codex", "opencode"]
+                          }
                         },
                         "target": {
                           "type": "object",
@@ -4202,6 +4782,14 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "fallbackPipelines": {
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        }
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -4413,6 +5001,14 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128
+                  },
+                  "fallbackPipelines": {
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["claude", "codex", "opencode"]
+                    }
                   }
                 },
                 "required": ["anchor", "mode", "requestId"],
@@ -4672,6 +5268,14 @@
                               "type": "string",
                               "enum": ["urgent", "normal", "background"]
                             },
+                            "fallbackPipelines": {
+                              "maxItems": 2,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": ["claude", "codex", "opencode"]
+                              }
+                            },
                             "target": {
                               "type": "object",
                               "properties": {
@@ -4842,6 +5446,14 @@
                                   "default": "normal",
                                   "type": "string",
                                   "enum": ["urgent", "normal", "background"]
+                                },
+                                "fallbackPipelines": {
+                                  "maxItems": 2,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": ["claude", "codex", "opencode"]
+                                  }
                                 },
                                 "target": {
                                   "type": "object",

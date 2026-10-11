@@ -1,6 +1,10 @@
 'use server';
 
-import { workIdSchema, workSpecSchema } from '@agent-lcars/work';
+import {
+  fallbackPipelinesSchema,
+  workIdSchema,
+  workSpecSchema,
+} from '@agent-lcars/work';
 import { createServerFunctionable } from '@orpc/next';
 import { z } from 'zod';
 
@@ -33,6 +37,7 @@ const evidenceIntentSchema = z.strictObject({
   }),
   pipeline: z.enum(['claude', 'codex', 'opencode']),
   priority: workSpecSchema.shape.priority,
+  fallbackPipelines: fallbackPipelinesSchema.optional(),
   description: z.string().min(1),
   source: z.strictObject({
     route: z.string(),
@@ -110,6 +115,9 @@ export async function createItemWithEvidence(form: FormData) {
     ),
     pipeline: intent.pipeline,
     priority: intent.priority,
+    ...(intent.fallbackPipelines === undefined
+      ? {}
+      : { fallbackPipelines: intent.fallbackPipelines }),
     target: { repo: `${repository.owner}/${repository.name}` },
   });
   const capabilityReason = forbiddenReason(principal, spec);

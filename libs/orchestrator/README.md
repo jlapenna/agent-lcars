@@ -85,6 +85,8 @@ intake. Replies inherit the newest run's priority (falling back to the stored
 spec, then normal); redispatch uses the immutable stored spec; automatic
 loss retries copy the lost run's priority. Priority is not a new capability
 grant and cannot be used to override provider/repository authorization.
+Fresh provider-fallback successors also retain the previous run's priority,
+including reroutes caused by another task's provider cooldown.
 
 `src/decide.ts` is pure: given current state and one input (`requestRun`,
 `confirmDispatch`, `renewLease`, `reportResult`, `cancelRun`, `expireLease`),

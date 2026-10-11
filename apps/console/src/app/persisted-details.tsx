@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
-// Same per-browser posture as use-muted-items.ts (#59): which sections a
+// Disclosure preferences remain per-browser: which sections a
 // maintainer keeps open is their own console's ergonomics, never a signal
 // any other viewer or automation should see.
 const STORAGE_PREFIX = 'agent-lcars:disclosure:';
@@ -16,7 +16,7 @@ const STORAGE_PREFIX = 'agent-lcars:disclosure:';
  *
  * The server renders `defaultOpen`, then the stored preference applies
  * after hydration (localStorage does not exist during SSR - the same
- * hydrate-then-correct shape as use-muted-items.ts). Passing no
+ * hydrate-then-correct shape). Passing no
  * `storageKey` renders a plain uncontrolled disclosure pinned to
  * `defaultOpen` - the escape hatch for data-driven force-opens like the
  * task page's anomaly view, where a stored "closed" must not win over a

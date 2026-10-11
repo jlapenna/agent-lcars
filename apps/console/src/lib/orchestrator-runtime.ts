@@ -20,6 +20,7 @@ import {
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
 import { dispatchSessionExpiry } from '@/lib/session-expiry';
+import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed
@@ -87,7 +88,11 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     projectId: required('PROJECT_ID'),
     databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
   });
-  const orchestrator = new Orchestrator(store, utcClock);
+  const orchestrator = new Orchestrator(
+    store,
+    utcClock,
+    providerFallbackAuthority,
+  );
 
   cached = {
     store,
@@ -95,6 +100,7 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     recoverCredentialOperations: () =>
       recoverCodexCredentialOperations({
         store,
+        orchestrator,
         codexAuth: codexAuthStore('agent-lcars-codex-auth'),
         now: () => new Date(),
       }),
