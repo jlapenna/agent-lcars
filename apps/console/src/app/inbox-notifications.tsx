@@ -104,6 +104,14 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
           { ifAvailable: true },
           async (lock) => {
             if (!lock || !current()) return;
+            // Lock acquisition can outlive the authenticated snapshot. Pause
+            // before resetting a baseline or changing the pending ledger.
+            if (!notificationSnapshotFresh(fresh, Date.now())) {
+              setStatus(
+                'Authorization or data unavailable — notifications paused',
+              );
+              return;
+            }
             let state = read();
             if (!state.enabled) return;
             if (baseline.current) {
