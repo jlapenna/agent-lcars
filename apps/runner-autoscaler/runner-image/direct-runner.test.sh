@@ -2278,8 +2278,9 @@ for receipt_provider in claude codex opencode; do
   export FAKE_GH_NO_MATCH=1
   run_scenario "receipt-revoked-$receipt_provider" "$receipt_provider"
   [ "$rc" -ne 0 ] || fail "receipt $receipt_provider ignored revoked generation"
-  jq -e '.outcome == "no-deliverable"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-    fail "receipt $receipt_provider retained completion evidence after refusal"
+  jq -e '.outcomeReference == null and (.outcome | IN("no-deliverable", "agent-failed"))' \
+    < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+    fail "receipt $receipt_provider retained completion evidence after refusal ($(cat "$COMPLETE_LOG"))"
   [ ! -s "$WORKER_RUN_COUNT_FILE" ] && [ ! -s "$OPENCODE_RUN_COUNT_FILE" ] ||
     fail "receipt $receipt_provider invoked a provider after refusal"
   echo "scenario receipt-activation-$receipt_provider: OK"
