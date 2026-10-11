@@ -94,10 +94,11 @@ export function summaryFromSessionDoc(doc: SessionDoc): SessionSummary {
  *  its to overwrite. */
 function ownedByHost(existing: SessionDoc, boundHost: string): boolean {
   if (existing.source !== 'cli') return false;
-  if (existing.host !== undefined && existing.host !== boundHost) return false;
+  // Fail closed: a doc that never recorded its host (the watcher daemon
+  // always does) is nobody's to take over with a host-bound token.
+  if (existing.host !== boundHost) return false;
   const observer = existing.observer;
-  if (observer !== undefined && observer.host !== boundHost) return false;
-  return true;
+  return observer === undefined || observer.host === boundHost;
 }
 
 function isStale(

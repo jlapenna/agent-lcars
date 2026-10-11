@@ -172,6 +172,7 @@ describe('handleSessionEventRequest', () => {
     const existing = {
       sessionId: SESSION_ID,
       source: 'cli',
+      host: 'laforge',
       agent: 'claude-code',
       liveness: 'live',
       startedAt: summary.startedAt,
@@ -210,6 +211,7 @@ describe('handleSessionEventRequest', () => {
     const existing = {
       sessionId: SESSION_ID,
       source: 'cli',
+      host: 'laforge',
       agent: 'claude-code',
       liveness: 'live',
       startedAt: summary.startedAt,
@@ -319,7 +321,8 @@ describe('handleSessionEventRequest', () => {
         occurredAt: NOW,
       },
     } as SessionDoc;
-    for (const existing of [otherHost, runnerDoc, hookFromOther]) {
+    const hostless = { ...base, source: 'cli' } as SessionDoc;
+    for (const existing of [otherHost, runnerDoc, hookFromOther, hostless]) {
       const d = deps({ readSessionDoc: vi.fn(async () => existing) });
       const response = await handleSessionEventRequest(
         request(event({ seq: 9 })),
