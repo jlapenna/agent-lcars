@@ -26,7 +26,9 @@ activation; permission alone is not proof of display.
 ## Delivery contract
 
 An opted-in Inbox checks an authenticated, private no-store GET snapshot every
-30 seconds. Browser fetch and server response waits have five-second deadlines;
+30 seconds independently of rendered Inbox props or a manual refresh. Disabled
+notifications and revoked browser permission make no snapshot reads. Browser
+fetch and server response waits have five-second deadlines;
 optional polling does not enter the Server Action mutation queue used by Work
 replies. Aborting or timing out cannot cancel an underlying read-store call,
 which has no side effects. The

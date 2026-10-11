@@ -115,6 +115,7 @@ describe('opt-in Inbox notification delivery', () => {
     await tick();
     expect(requestPermission).not.toHaveBeenCalled();
     expect(register).not.toHaveBeenCalled();
+    expect(mocks.read).not.toHaveBeenCalled();
     await click('Enable Inbox notifications');
     expect(requestPermission).toHaveBeenCalledOnce();
     expect(register).toHaveBeenCalledWith('/inbox-notifications-sw.js', {
@@ -229,9 +230,49 @@ describe('opt-in Inbox notification delivery', () => {
   it('discovers new decisions without an RSC rerender or manual refresh', async () => {
     render(tree(sample()));
     await click('Enable Inbox notifications');
+    await tick();
+    await tick();
+    await tick();
+    expect(showNotification).not.toHaveBeenCalled();
     mocks.read.mockImplementation(async () => sample([first, second]));
     await tick();
     expect(showNotification).toHaveBeenCalledOnce();
+  });
+  it('discovers an observed reopening without rerendering unchanged props', async () => {
+    render(tree(sample()));
+    await click('Enable Inbox notifications');
+    mocks.read.mockImplementation(async () => sample([]));
+    await tick();
+    expect(showNotification).not.toHaveBeenCalled();
+    mocks.read.mockImplementation(async () => sample());
+    await tick();
+    expect(showNotification).toHaveBeenCalledOnce();
+    expect(showNotification).toHaveBeenCalledWith(
+      'Agent LCARS',
+      expect.objectContaining({
+        data: { href: '/inbox?item=owner%2Frepo%231' },
+      }),
+    );
+    await tick();
+    await tick();
+    expect(showNotification).toHaveBeenCalledOnce();
+  });
+  it('stops source reads when permission is revoked or notifications are disabled', async () => {
+    render(tree(sample()));
+    await click('Enable Inbox notifications');
+    mocks.read.mockClear();
+    vi.stubGlobal('Notification', { permission: 'denied', requestPermission });
+    await tick();
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(requestPermission).toHaveBeenCalledOnce();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'check browser permission',
+    );
+    await click('Disable Inbox notifications');
+    vi.stubGlobal('Notification', { permission: 'granted', requestPermission });
+    await tick();
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(showNotification).not.toHaveBeenCalled();
   });
   it('retains the one-minute limit across unsubscribe and explicit re-enable', async () => {
     render(tree(sample()));
