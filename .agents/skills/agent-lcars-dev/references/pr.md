@@ -174,3 +174,12 @@
    Do this for every actionable thread once its fix is pushed, before
    assuming `--auto` will ever land the merge — a queued auto-merge gives
    no error and no signal that it's stuck on this.
+
+7. After verifying the merge, follow the shared
+   [worktree-hygiene workflow](https://github.com/jlapenna/repo-tools/blob/main/plugins/repo-tools/skills/worktree-hygiene/SKILL.md)
+   for task cleanup. From outside the target worktree, audit with
+   `repo-prune-merged-worktrees --repo <primary-path> --base origin/main <worktree-path>`;
+   add `--delete` only for the completed task. The shared command owns merge,
+   PR, cleanliness, lock and process checks and local branch deletion. Keep
+   any refused target and investigate its reason, then synchronize the clean
+   primary checkout as specified in this skill.
