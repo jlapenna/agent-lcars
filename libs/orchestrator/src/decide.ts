@@ -485,7 +485,8 @@ export function executorExited(input: {
     return refused('run-not-live');
   }
   if (
-    queue?.state !== 'claimed' ||
+    (queue?.state !== 'claimed' &&
+      !(queue?.state === 'retired' && !isLive(input.run.state))) ||
     queue.claimedBySubject === undefined ||
     queue.claimedBySubject !== input.claimant.subject ||
     queue.claimedBy !== input.claimant.runner ||

@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 
 import {
+  type CapacityAuthority,
+  CapacityProtocol,
   changeCredentialOperation,
   type CredentialMutation,
   FirestoreStore,
@@ -3491,7 +3493,11 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
     backend === 'FirestoreStore' &&
       process.env.FIRESTORE_EMULATOR_HOST === undefined,
   )(`${backend}: Codex external generation boundary`, () => {
-    async function brokerFixture(ownedLease = true, fallback = false) {
+    async function brokerFixture(
+      ownedLease = true,
+      fallback = false,
+      capacity = false,
+    ) {
       const store: OrchestratorStore =
         backend === 'MemoryStore'
           ? new MemoryStore()
@@ -3522,16 +3528,127 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         'codex',
         fallback,
       );
-      const principal = executorPrincipal(['codex']);
+      const principal = {
+        ...executorPrincipal(capacity ? ['codex', 'claude'] : ['codex']),
+        ...(capacity ? { capacityPool: 'broker-pool' } : {}),
+      };
+      const protocol = new CapacityProtocol(store);
+      const capacityOwner: CapacityAuthority = {
+        poolId: 'broker-pool',
+        subject: principal.subject.toLowerCase(),
+        pipelines: ['codex', 'claude'],
+        capabilities: new Set(['claim', 'recover', 'operator']),
+      };
+      if (capacity) {
+        await protocol.configure(
+          capacityOwner,
+          {
+            poolId: capacityOwner.poolId,
+            cluster: 'broker-cluster',
+            namespace: 'broker-ns',
+            version: 1,
+            maxConcurrent: 2,
+            maxUnplaced: 1,
+            enforced: true,
+            inventoryKnown: false,
+            domains: {
+              codex: { domainId: 'broker-codex', ceiling: 1 },
+              claude: { domainId: 'broker-claude', ceiling: 2 },
+            },
+          },
+          NOW,
+        );
+        const proposal = {
+          now: NOW,
+          receipts: [],
+          known: true,
+          evidence: 'reviewed-empty-broker-inventory',
+          dryRun: true,
+        };
+        const report = await protocol.importInventory(capacityOwner, proposal);
+        await protocol.importInventory(capacityOwner, {
+          ...proposal,
+          dryRun: false,
+          reviewedDigest: report.digest,
+        });
+        await protocol.register(capacityOwner, 'broker-producer', NOW);
+      }
       const claimed = await call(
-        { ...context, store, orchestrator, now, principal },
+        {
+          ...context,
+          store,
+          orchestrator,
+          now,
+          principal,
+          capacityEnabled: capacity,
+          loadGithubAnchorLifecycle: async () => ({
+            state: 'open' as const,
+            sourceUpdatedAt: NOW,
+          }),
+        },
         'POST',
         '/runs/claim',
-        { runner: 'same-runner' },
+        {
+          runner: 'same-runner',
+          ...(capacity
+            ? {
+                capacityVersion: 1,
+                producerId: 'broker-producer',
+                claimRequestId: 'broker-claim',
+              }
+            : {}),
+        },
       );
       expect(claimed.status).toBe(200);
+      const receipt = capacity
+        ? (await protocol.read(NOW)).receipts[0]
+        : undefined;
+      const receiptFence =
+        receipt === undefined
+          ? undefined
+          : {
+              poolId: receipt.poolId,
+              slot: receipt.slot,
+              revision: receipt.revision,
+              runId: receipt.runId,
+              nonce: receipt.nonce,
+            };
       const token = (claimed.json as { token: string }).token;
       const fingerprint = hashRunToken(token);
+      if (receiptFence !== undefined && receipt !== undefined) {
+        await protocol.recover(capacityOwner, receiptFence, {
+          nonce: 'broker-recovery-nonce',
+          now: NOW,
+          expiresAt: '2026-08-26T10:01:00.000Z',
+        });
+        await protocol.bind(capacityOwner, receiptFence, {
+          recoveryNonce: 'broker-recovery-nonce',
+          jobUid: 'broker-job',
+          jobName: receipt.jobName,
+          podUid: 'broker-pod',
+          secretUid: 'broker-secret',
+          secretTokenHash: fingerprint,
+          placed: true,
+          deleting: false,
+          owned: true,
+          now: NOW,
+        });
+        await protocol.attest(capacityOwner, receiptFence, {
+          recoveryNonce: 'broker-recovery-nonce',
+          jobUid: 'broker-job',
+          podUid: 'broker-pod',
+          generation: 1,
+          owned: true,
+          now: NOW,
+        });
+        await protocol.activate({
+          fence: receiptFence,
+          jobUid: 'broker-job',
+          podUid: 'broker-pod',
+          tokenHash: fingerprint,
+          now: NOW,
+        });
+      }
       const fake = new ConditionalCodexBucket();
       const auth = fake.seed(
         codexCentralAuthObject(),
@@ -3559,6 +3676,21 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         principal,
         bearerToken: token,
         codexAuth,
+        capacityEnabled: capacity,
+        loadGithubAnchorLifecycle: async () => ({
+          state: 'open' as const,
+          sourceUpdatedAt: NOW,
+        }),
+        ...(capacity
+          ? {
+              workerIdentityToken: 'isolated-broker-worker-token',
+              workerGeneration: 1,
+              verifyWorkerIdentity: async () => ({
+                podUid: 'broker-pod',
+                namespace: 'broker-ns',
+              }),
+            }
+          : {}),
       };
       const payload = {
         generation: auth.generation,
@@ -3578,6 +3710,10 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         codexAuth,
         ctx,
         payload,
+        protocol,
+        capacityOwner,
+        receipt,
+        receiptFence,
         revokeFallback: () => {
           fallbackGrants = ['codex'];
         },
@@ -3595,6 +3731,197 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         : route === 'restore'
           ? call(f.ctx, 'GET', runPath(f.runId, '/codex-auth'))
           : call(f.ctx, 'POST', runPath(f.runId, '/heartbeat'));
+
+    async function retireBroker(f: Awaited<ReturnType<typeof brokerFixture>>) {
+      if (f.receiptFence === undefined)
+        throw new Error('missing capacity fence');
+      await f.protocol.workerRetired(f.capacityOwner, f.receiptFence, {
+        recoveryNonce: 'broker-recovery-nonce',
+        podUid: 'broker-pod',
+        generation: 1,
+        evidence: 'exact-owned-pod-terminated',
+        now: NOW,
+      });
+      await f.protocol.retire(f.capacityOwner, f.receiptFence, {
+        recoveryNonce: 'broker-recovery-nonce',
+        now: NOW,
+      });
+      await f.protocol.stopProducer(f.capacityOwner, f.receiptFence, {
+        producerId: 'broker-producer',
+        producerSubject: f.capacityOwner.subject,
+        fenced: false,
+        evidence: 'definitive-producer-quiescence',
+        now: NOW,
+      });
+    }
+    const releaseBroker = (f: Awaited<ReturnType<typeof brokerFixture>>) => {
+      if (f.receiptFence === undefined || f.receipt === undefined)
+        throw new Error('missing capacity receipt');
+      return f.protocol.release(f.capacityOwner, f.receiptFence, {
+        recoveryNonce: 'broker-recovery-nonce',
+        barrierUid: 'broker-inert-barrier',
+        barrierRunId: f.runId,
+        barrierNonce: f.receipt.nonce,
+        resourceVersion: 'broker-inert-rv',
+        jobName: f.receipt.jobName,
+        evidence: 'exact-barrier-and-physical-retirement',
+        inert: true,
+        physicalWorkersEnded: true,
+        neverStarted: false,
+        originalJobUid: 'broker-job',
+        now: NOW,
+      });
+    };
+
+    it('capacity retirement preserves restored HTTP exit until conditional cleanup releases the receipt', async () => {
+      const f = await brokerFixture(false, false, true);
+      expect((await request(f, 'restore')).status).toBe(200);
+      expect(
+        (await f.store.readRun(f.runId))?.credentialRestoredClaimFingerprint,
+      ).toBe(f.fingerprint);
+      await retireBroker(f);
+      await expect(releaseBroker(f)).rejects.toThrow('physical');
+      let checked = false;
+      f.fake.beforeSave = async (attempt) => {
+        if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
+        checked = true;
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation?.kind,
+        ).toBe('cleanup');
+        await expect(releaseBroker(f)).rejects.toThrow('physical');
+      };
+      expect(
+        (
+          await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
+            runner: 'same-runner',
+            claimFingerprint: f.fingerprint,
+          })
+        ).status,
+      ).toBe(200);
+      expect(checked).toBe(true);
+      expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+        '1970-01-01T00:00:00.000Z',
+      );
+      expect(await releaseBroker(f)).toEqual({
+        released: true,
+        retainBarrier: false,
+      });
+      expect(
+        (
+          await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
+            runner: 'same-runner',
+            claimFingerprint: f.fingerprint,
+          })
+        ).status,
+      ).toBe(200);
+    });
+
+    it('capacity direct fallback report reserves cleanup before physical release and successor admission', async () => {
+      const f = await brokerFixture(true, true, true);
+      await f.protocol.register(
+        f.capacityOwner,
+        'broker-waiting-producer',
+        NOW,
+      );
+      let checked = false;
+      f.fake.beforeSave = async (attempt) => {
+        if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
+        checked = true;
+        const terminal = await f.store.readRun(f.runId);
+        expect(terminal?.state).toBe('finished');
+        expect(terminal?.credentialOperation?.kind).toBe('cleanup');
+        const successor = await f.store.readActiveRun({
+          repo: 'jlapenna/agent-lcars',
+          issue: 42,
+        });
+        expect(successor?.pipeline).toBe('claude');
+        if (successor === undefined)
+          throw new Error('missing fallback successor');
+        // The fixture's drain is inert; publish the actual durable successor
+        // through the same Store enqueue consumed by the dispatch outbox.
+        await f.store.enqueueRun({ runId: successor.runId, now: NOW });
+        await retireBroker(f);
+        await expect(releaseBroker(f)).rejects.toThrow('physical');
+        const waiting = await call(f.ctx, 'POST', '/runs/claim', {
+          runner: 'same-runner',
+          capacityVersion: 1,
+          producerId: 'broker-waiting-producer',
+          claimRequestId: 'blocked-successor',
+        });
+        expect(waiting.status).toBe(200);
+        expect(waiting.json).toMatchObject({ kind: 'wait' });
+        expect((await f.protocol.read(NOW)).receipts).toHaveLength(1);
+      };
+      expect(
+        (
+          await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+            outcome: 'provider-limit',
+            outcomeReference: null,
+            message: 'accepted capacity fallback',
+          })
+        ).status,
+      ).toBe(200);
+      expect(checked).toBe(true);
+      expect(
+        (await f.store.readRun(f.runId))?.credentialOperation,
+      ).toBeUndefined();
+      expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+        '1970-01-01T00:00:00.000Z',
+      );
+      expect(await releaseBroker(f)).toEqual({
+        released: true,
+        retainBarrier: false,
+      });
+      await f.protocol.register(
+        f.capacityOwner,
+        'broker-successor-producer',
+        NOW,
+      );
+      const next = await call(f.ctx, 'POST', '/runs/claim', {
+        runner: 'same-runner',
+        capacityVersion: 1,
+        producerId: 'broker-successor-producer',
+        claimRequestId: 'after-release',
+      });
+      expect(next.status).toBe(200);
+      expect(next.json).toMatchObject({ pipeline: 'claude' });
+    });
+
+    it.each(['restore', 'persist', 'heartbeat', 'complete'])(
+      'refuses capacity %s retired between the token gate and reservation transaction without credential IO',
+      async (route) => {
+        const f = await brokerFixture(true, false, true);
+        const before = await f.store.readRun(f.runId);
+        const original = f.store.transactRun.bind(f.store);
+        let retired = false;
+        f.store.transactRun = async (input) => {
+          if (!retired) {
+            retired = true;
+            await retireBroker(f);
+          }
+          return original(input);
+        };
+        const readLease = vi.spyOn(f.codexAuth, 'readLease');
+        const response =
+          route === 'complete'
+            ? await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+                outcome: 'worker-control-failed',
+                outcomeReference: null,
+              })
+            : await request(f, route);
+        expect(retired).toBe(true);
+        expect(response.status).toBe(409);
+        expect(readLease).not.toHaveBeenCalled();
+        expect(f.fake.attempts).toHaveLength(0);
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation,
+        ).toBeUndefined();
+        expect(await f.store.readRun(f.runId)).toEqual(before);
+        expect((await f.protocol.read(NOW)).receipts[0]?.state).toBe(
+          'retiring',
+        );
+      },
+    );
 
     it.each(['restore', 'persist', 'heartbeat'])(
       'refuses old %s authority reclaimed before the atomic reservation without broker IO',

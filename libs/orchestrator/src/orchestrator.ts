@@ -1,3 +1,4 @@
+import type { CapacityWorkerPermit } from './capacity-model';
 import {
   changeCredentialOperation,
   reserveCredentialOperation,
@@ -210,15 +211,21 @@ export class Orchestrator {
     runId: string,
     claimFingerprint?: string,
     providerProcessStarted?: boolean,
+    workerPermit?: CapacityWorkerPermit,
   ): Promise<Decision | Refusal> {
-    return this.transactOnRun(runId, (task, run) =>
-      renewLease({
-        now: this.clock.now(),
-        task,
-        run,
-        providerProcessStarted,
-        ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
-      }),
+    return this.transactOnRun(
+      runId,
+      (task, run) =>
+        renewLease({
+          now: this.clock.now(),
+          task,
+          run,
+          providerProcessStarted,
+          ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+        }),
+      undefined,
+      undefined,
+      workerPermit,
     );
   }
 
@@ -228,6 +235,7 @@ export class Orchestrator {
     claimFingerprint?: string,
     /** Server-owned cleanup identity, captured before the retryable transaction. */
     credentialCleanupId?: string,
+    workerPermit?: CapacityWorkerPermit,
   ): Promise<Decision | Refusal> {
     if (this.fallbackAuthority !== undefined && !result.ok) {
       return this.transactOnRun(
@@ -275,6 +283,7 @@ export class Orchestrator {
               this.fallbackAuthority?.pipelines ?? [],
             ) !== undefined,
         },
+        workerPermit,
       );
     }
     return this.transactOnRun(
@@ -288,6 +297,8 @@ export class Orchestrator {
           ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
         }),
       credentialCleanupId,
+      undefined,
+      workerPermit,
     );
   }
 
@@ -614,6 +625,7 @@ export class Orchestrator {
       Parameters<OrchestratorStore['transactRun']>[0],
       'queueEligibilityPipelines' | 'shouldReadQueueEligibility'
     >,
+    workerPermit?: CapacityWorkerPermit,
   ): Promise<Decision | Refusal> {
     // Queue release/reclaim changes Run without advancing Task revision.
     // Decide against both documents inside the existing store transaction,
@@ -621,6 +633,7 @@ export class Orchestrator {
     return this.store.transactRun({
       runId,
       ...queueEligibilityOptions,
+      ...(workerPermit === undefined ? {} : { workerPermit }),
       decide: ({ task, run, queueEligibility }) => {
         if (task === undefined || run === undefined) {
           return { refused: true, reason: 'unknown-run' };
