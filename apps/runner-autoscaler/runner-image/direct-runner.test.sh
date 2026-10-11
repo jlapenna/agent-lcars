@@ -2268,15 +2268,21 @@ for receipt_provider in claude codex opencode; do
   run_scenario "receipt-active-$receipt_provider" "$receipt_provider"
   [ "$rc" -eq 0 ] || fail "receipt $receipt_provider did not deliver"
   [ "$(cat "$FIXTURE_ACTIVATION_LOG")" -ge 2 ] || fail "receipt $receipt_provider did not recheck provider activation"
-  export FAKE_RECEIPT_MODE=revoked
-  export FAKE_GH_NO_MATCH=1
-  run_scenario "receipt-revoked-$receipt_provider" "$receipt_provider"
-  [ "$rc" -ne 0 ] || fail "receipt $receipt_provider ignored revoked generation"
   case "$receipt_provider" in
     opencode) receipt_count_file="$OPENCODE_RUN_COUNT_FILE" ;;
     *) receipt_count_file="$WORKER_RUN_COUNT_FILE" ;;
   esac
-  [ ! -s "$receipt_count_file" ] || fail "receipt $receipt_provider invoked provider after refusal"
+  [ -s "$receipt_count_file" ] && [ "$(cat "$receipt_count_file")" -ge 1 ] ||
+    fail "receipt $receipt_provider delivered without invoking its provider"
+  export FAKE_RECEIPT_MODE=revoked
+  export FAKE_GH_NO_MATCH=1
+  run_scenario "receipt-revoked-$receipt_provider" "$receipt_provider"
+  [ "$rc" -ne 0 ] || fail "receipt $receipt_provider ignored revoked generation"
+  jq -e '.outcomeReference == null and (.outcome | IN("no-deliverable", "agent-failed"))' \
+    < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+    fail "receipt $receipt_provider retained completion evidence after refusal ($(cat "$COMPLETE_LOG"))"
+  [ ! -s "$WORKER_RUN_COUNT_FILE" ] && [ ! -s "$OPENCODE_RUN_COUNT_FILE" ] ||
+    fail "receipt $receipt_provider invoked a provider after refusal"
   echo "scenario receipt-activation-$receipt_provider: OK"
 done
 unset FAKE_RECEIPT_MODE FAKE_GH_NO_MATCH
