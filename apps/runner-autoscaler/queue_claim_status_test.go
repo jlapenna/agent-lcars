@@ -250,6 +250,82 @@ func TestKubernetesRetirementAdmissionWaitsForForegroundDeletion(t *testing.T) {
 	}
 }
 
+// Exercise retirement through authenticated status, foreground drainage,
+// reservation, credential creation and unsuspend, rather than treating a free
+// reservation as proof that the next attempt can actually launch.
+func TestKubernetesRetirementAllowsSuccessorAndUnrelatedLaunch(t *testing.T) {
+	for _, runID := range []string{"work:startup/r2", "work:unrelated/r1"} {
+		t.Run(runID, func(t *testing.T) {
+			q, c, original, _ := suspendedStartupFixture(t)
+			ctx := context.Background()
+			if _, err := c.CoreV1().Nodes().Create(ctx, queueReadyNode(), meta.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer executor-identity" || r.URL.Query().Get("runner") != "executor" || r.URL.Query().Get("claimFingerprint") != queueClaimFingerprint("private-token") || r.URL.Path != "/api/work/v1/runs/work:startup/r1/claim-status" {
+					t.Error("status authority was not bound to the original claim")
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				json.NewEncoder(w).Encode(map[string]string{"runId": "work:startup/r1", "runner": "executor", "claimFingerprint": queueClaimFingerprint("private-token"), "status": "settled"})
+			}))
+			defer server.Close()
+			q.claimSettled = queueClaimStatus(server.URL, func() (string, error) { return "executor-identity", nil })
+			c.PrependReactor("delete", "jobs", func(a clienttesting.Action) (bool, runtime.Object, error) {
+				options := a.(clienttesting.DeleteAction).GetDeleteOptions()
+				if options.Preconditions == nil || *options.Preconditions.UID != original.UID || *options.Preconditions.ResourceVersion != original.ResourceVersion || options.PropagationPolicy == nil || *options.PropagationPolicy != meta.DeletePropagationForeground {
+					t.Fatal("retirement lost its original identity or foreground fence")
+				}
+				deleting := original.DeepCopy()
+				deleting.DeletionTimestamp = ptr(meta.Now())
+				return true, nil, c.Tracker().Update(batch.SchemeGroupVersion.WithResource("jobs"), deleting, q.config.Namespace)
+			})
+			if reservation, err := q.reserve(ctx); err != nil || reservation != nil {
+				t.Fatal("original never-started Job did not block admission")
+			}
+			if err := q.recover(ctx); err != nil {
+				t.Fatal(err)
+			}
+			retiring, err := c.BatchV1().Jobs(q.config.Namespace).Get(ctx, original.Name, meta.GetOptions{})
+			if err != nil || retiring.DeletionTimestamp == nil {
+				t.Fatalf("settled original was not retired by recovery: %v", err)
+			}
+			if reservation, err := q.reserve(ctx); err != nil || reservation != nil {
+				t.Fatal("admission opened before foreground Job drainage")
+			}
+			// The fake API has no garbage collector. Complete its foreground
+			// deletion explicitly, without changing the executor's admission path.
+			if err := c.Tracker().Delete(batch.SchemeGroupVersion.WithResource("jobs"), q.config.Namespace, original.Name); err != nil {
+				t.Fatal(err)
+			}
+			reservation, err := q.reserve(ctx)
+			if err != nil || reservation == nil {
+				t.Fatalf("drained original still blocked admission: %v", err)
+			}
+			defer reservation.release()
+			verified := false
+			q.verifyRun = func(_ context.Context, admittedID, token string) error {
+				if admittedID != runID || token != "fresh-token" {
+					return fmt.Errorf("new launch reused original claim")
+				}
+				verified = true
+				return nil
+			}
+			if err := reservation.launch(directRunnerLaunch{runID: runID, runner: "executor", pipeline: "codex", runToken: "fresh-token"}); err != nil {
+				t.Fatal(err)
+			}
+			job, err := c.BatchV1().Jobs(q.config.Namespace).Get(ctx, queueJobName(runID), meta.GetOptions{})
+			if err != nil || !verified || job.Spec.Suspend == nil || *job.Spec.Suspend {
+				t.Fatalf("admitted attempt did not pass its own fence and launch: %v", err)
+			}
+			secret, err := c.CoreV1().Secrets(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
+			if err != nil || string(secret.Data["run-token"]) != "fresh-token" || secret.OwnerReferences[0].Name != job.Name || secret.OwnerReferences[0].UID != job.UID {
+				t.Fatalf("admitted attempt lacks its own owned credential: %v", err)
+			}
+		})
+	}
+}
+
 func TestKubernetesStatusFailurePreservesTerminalRetention(t *testing.T) {
 	q, c := kubeQueueFixture()
 	q.config.MaxConcurrent = 1
