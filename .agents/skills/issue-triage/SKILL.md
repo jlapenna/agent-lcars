@@ -66,6 +66,12 @@ do not wait for an unrelated event to happen naturally unless the requirement
 itself demands natural or elapsed evidence. Preserve normal scheduling,
 placement, resource, and branch-protection controls.
 
+For colocated Pod/process turnover, use the canonical
+[requalification rule](../agent-lcars-dev/references/verify.md#requalify-colocated-worker-turnover).
+Fresh passing qualification preserves authorization for an unchanged planned
+phase; distinguish that turnover from replacement of the issue's own
+author/native worker and retain the rule's mandatory holds.
+
 State precisely what a test proves. A synthetic or scaled experiment can
 support a mechanism or safety claim, but it does not replace an acceptance
 criterion requiring the exact production workload, hardware, role, or time
