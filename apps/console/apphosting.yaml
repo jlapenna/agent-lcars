@@ -126,6 +126,22 @@ env:
     availability:
       - RUNTIME
 
+  # Hook telemetry ingest (docs/hooks-telemetry-design.md, phase 0 spike):
+  # `1` serves POST /api/telemetry/v1/sessions/{id}/events. Not sensitive.
+  - variable: AGENT_LCARS_TELEMETRY_INGEST
+    value: '1'
+    availability:
+      - RUNTIME
+
+  # Not sensitive - SHA-256 of each enrolled host's bearer token, bound to
+  # the host label the `lcars hook` client stamps on every event. The raw
+  # token is that host's AGENT_LCARS_TELEMETRY_TOKEN_<HOST> homegit secret;
+  # rotate by replacing both. Enrolled: laptop (phase 0 spike host).
+  - variable: AGENT_LCARS_TELEMETRY_HOST_TOKENS
+    value: '[{"host":"laptop","tokenSha256":"3702254418b9d54688ca3aed4b9129f06f3eff1a10b7e30f3cf099fb1024eed5"}]'
+    availability:
+      - RUNTIME
+
   # Resumable-conversations plan 5: a JSON map from a native item's
   # `origin.channel` to its outbound delivery target, read by
   # lib/outcome-webhook.ts's outcomeWebhookFor. A settled native item whose

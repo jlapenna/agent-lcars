@@ -101,10 +101,12 @@ regardless of how it authenticated. A GitHub Actions caller's signed
 repository maps generically to `github-actions:<owner/repo>`; it is neither a
 Sprinkles-specific branch nor a provider-routing selector.
 
-| Value                    | Env var                     | This deployment                                                                                                                           |
-| ------------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                        |
+| Value                      | Env var                             | This deployment                                                                                                                           |
+| -------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| grants                     | `AGENT_LCARS_WORK_GRANTS`           | operators, allowed `github-actions:<owner/repo>` automation, and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
+| Google ID token audience   | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                                                                        |
+| hook telemetry ingest      | `AGENT_LCARS_TELEMETRY_INGEST`      | `1` serves `/api/telemetry/v1/`; unset is a 404 (docs/hooks-telemetry-design.md)                                                          |
+| hook telemetry host tokens | `AGENT_LCARS_TELEMETRY_HOST_TOKENS` | `[{ host, tokenSha256 }]`; the raw token is the host's `AGENT_LCARS_TELEMETRY_TOKEN_<HOST>` homegit secret                                |
 
 Authorized native Work creation, redispatch, replies, and due schedule slots
 enter the durable queue even when the fleet is full. QueueExecutor reserves
