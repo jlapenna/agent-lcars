@@ -123,6 +123,11 @@ export function resolveSpec(options) {
   const hooks = options.hooks ?? 'auto';
   if (!['auto', 'pre-commit', 'husky', 'none'].includes(hooks))
     throw new OnboardError(`Unknown --hooks mode ${hooks}`);
+  const defaultBranch = options['default-branch'] || 'main';
+  if (!/^[\w][\w./-]*$/.test(defaultBranch) || defaultBranch.includes('..'))
+    throw new OnboardError(
+      `--default-branch must be a branch name, got ${defaultBranch}`,
+    );
   return {
     repo,
     alias: options.alias || repo.name,
@@ -132,6 +137,7 @@ export function resolveSpec(options) {
     requiredChecks,
     hooks,
     repoToolsRev: options['repo-tools-rev'] || null,
+    defaultBranch,
   };
 }
 
@@ -168,13 +174,13 @@ function workflowRunList(spec) {
     .join(', ')}]`;
 }
 
-export function renderValidateWorkflow() {
+export function renderValidateWorkflow(spec) {
   return `# ${MANAGED_NOTE}
 name: validate
 
 on:
   push:
-    branches: [main]
+    branches: [${spec.defaultBranch}]
   pull_request:
   workflow_dispatch:
 
@@ -183,7 +189,7 @@ permissions:
 
 concurrency:
   group: \${{ github.workflow }}-\${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: \${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: \${{ github.ref != 'refs/heads/${spec.defaultBranch}' }}
 
 jobs:
   # The job key composes the required check name "validate / repository
@@ -200,7 +206,7 @@ name: gitleaks
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [${spec.defaultBranch}]
   workflow_dispatch:
 
 concurrency:
@@ -208,7 +214,7 @@ concurrency:
   # PR revisions supersede each other, but every main revision must retain a
   # full-history scan: cancelling an earlier main run can leave a secret from
   # that commit outside the replacement run's diff range.
-  cancel-in-progress: \${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: \${{ github.ref != 'refs/heads/${spec.defaultBranch}' }}
 
 permissions:
   contents: read
@@ -229,13 +235,13 @@ jobs:
 `;
 }
 
-export function renderRulesetWorkflow() {
+export function renderRulesetWorkflow(spec) {
   return `# ${MANAGED_NOTE}
 name: ruleset
 
 on:
   push:
-    branches: [main]
+    branches: [${spec.defaultBranch}]
   pull_request:
   workflow_dispatch:
 
@@ -244,7 +250,7 @@ permissions:
 
 concurrency:
   group: \${{ github.workflow }}-\${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: \${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: \${{ github.ref != 'refs/heads/${spec.defaultBranch}' }}
 
 jobs:
   terraform:
@@ -290,7 +296,7 @@ on:
   # behind and when a PR still armed by github-actions[bot] is re-armed as
   # the App.
   push:
-    branches: [main]
+    branches: [${spec.defaultBranch}]
   # Every workflow that posts checks on a PR head: a PR turns green when the
   # last one succeeds. The reusable admits only successful same-repository
   # pull_request runs.
@@ -682,9 +688,95 @@ function hasRepoToolsHooks(text) {
   return (parsed?.repos ?? []).some((entry) => entry?.repo === REPO_TOOLS_URL);
 }
 
+const REPO_TOOLS_HOOK_IDS = Object.freeze([
+  'repo-require-worktree',
+  'repo-require-worktree-push',
+]);
+
+/**
+ * An existing repo-tools entry is not enough: a repository that adopted
+ * repo-tools for another hook, or only the commit guard, still lacks the
+ * push guard. Complete the entry in place and re-parse to prove it.
+ */
+export function ensureRepoToolsHookIds(text) {
+  const hookIds = (parsed) =>
+    (Array.isArray(parsed?.repos) ? parsed.repos : [])
+      .find((item) => item?.repo === REPO_TOOLS_URL)
+      ?.hooks?.map((hook) => hook?.id)
+      .filter(Boolean) ?? null;
+  let parsed;
+  try {
+    parsed = parseYaml(text);
+  } catch {
+    throw new OnboardError('.pre-commit-config.yaml does not parse as YAML');
+  }
+  const present = hookIds(parsed);
+  if (present === null)
+    throw new OnboardError(
+      '.pre-commit-config.yaml mentions repo-tools without a repos entry for it; add the entry by hand',
+    );
+  const missing = REPO_TOOLS_HOOK_IDS.filter((id) => !present.includes(id));
+  if (!missing.length) return text;
+  const lines = text.split('\n');
+  const start = lines.findIndex(
+    (line) =>
+      /^\s*-\s+repo:/.test(line) && line.includes(`repo: ${REPO_TOOLS_URL}`),
+  );
+  if (start === -1)
+    throw new OnboardError(
+      '.pre-commit-config.yaml repo-tools entry has an unexpected layout; add the guard hooks by hand',
+    );
+  const itemIndent = lines[start].match(/^(\s*)-/)[1];
+  let end = start + 1;
+  while (end < lines.length) {
+    const line = lines[end];
+    if (line.trim() && !line.trim().startsWith('#')) {
+      const indent = line.match(/^\s*/)[0];
+      if (indent.length <= itemIndent.length) break;
+    }
+    end++;
+  }
+  const hooksOffset = lines
+    .slice(start + 1, end)
+    .findIndex((line) => /^\s*hooks:\s*(\[\]\s*)?(#.*)?$/.test(line));
+  const insertion = [];
+  let insertAt;
+  let hookIndent = `${itemIndent}    `;
+  if (hooksOffset === -1) {
+    insertion.push(`${itemIndent}  hooks:`);
+    insertAt = end;
+    while (insertAt > start + 1 && !lines[insertAt - 1].trim()) insertAt--;
+  } else {
+    const hooksLine = start + 1 + hooksOffset;
+    lines[hooksLine] = lines[hooksLine].replace(/\[\]\s*/, '');
+    const firstHook = lines
+      .slice(hooksLine + 1, end)
+      .find((line) => /^\s*-\s+id:/.test(line));
+    if (firstHook) hookIndent = firstHook.match(/^(\s*)-/)[1];
+    insertAt = hooksLine + 1;
+    for (let i = hooksLine + 1; i < end; i++)
+      if (lines[i].trim()) insertAt = i + 1;
+  }
+  for (const id of missing) insertion.push(`${hookIndent}- id: ${id}`);
+  lines.splice(insertAt, 0, ...insertion);
+  const merged = lines.join('\n');
+  let check = null;
+  try {
+    check = hookIds(parseYaml(merged));
+  } catch {
+    check = null;
+  }
+  if (!REPO_TOOLS_HOOK_IDS.every((id) => check?.includes(id)))
+    throw new OnboardError(
+      '.pre-commit-config.yaml repo-tools entry could not be completed automatically; add repo-require-worktree and repo-require-worktree-push by hand',
+    );
+  return merged;
+}
+
 export function mergePreCommitConfig(existingText, rev) {
   if (!existingText) return renderPreCommitConfig(rev);
-  if (existingText.includes(`repo: ${REPO_TOOLS_URL}`)) return existingText;
+  if (existingText.includes(`repo: ${REPO_TOOLS_URL}`))
+    return ensureRepoToolsHookIds(existingText);
   const lines = existingText.split('\n');
   const index = lines.findIndex((line) => /^repos:(\s|$)/.test(line));
   if (index === -1)
@@ -940,7 +1032,7 @@ export function planScaffold(target, spec, { resolveRev, check = false } = {}) {
     {
       file: '.github/workflows/validate.yml',
       kind: 'managed',
-      render: renderValidateWorkflow,
+      render: () => renderValidateWorkflow(spec),
       conflict: (text) =>
         workflowConflict(text, 'validate', {
           context: 'validate / repository validation',
@@ -963,7 +1055,7 @@ export function planScaffold(target, spec, { resolveRev, check = false } = {}) {
     {
       file: '.github/workflows/ruleset.yml',
       kind: 'managed',
-      render: renderRulesetWorkflow,
+      render: () => renderRulesetWorkflow(spec),
       conflict: (text) =>
         workflowConflict(text, 'ruleset', {
           context: 'repository-owned Terraform',
@@ -1481,7 +1573,7 @@ const USAGE = `usage:
   fleet-onboard.mjs scaffold --repo OWNER/NAME --target DIR [--runner-label L]
       [--ci-workflow FILE[,FILE] [--ci-workflow-name NAME[,NAME]] --ci-checks "A,B"]
       [--hooks auto|pre-commit|husky|none] [--repo-tools-rev SHA]
-      [--check] [--force]
+      [--default-branch NAME] [--check] [--force]
   fleet-onboard.mjs admit --repo OWNER/NAME [--alias NAME] [--like OWNER/NAME] [--check]
   fleet-onboard.mjs plan --repo OWNER/NAME [--runner-label L]
       [--ci-workflow FILE --ci-workflow-name NAME --ci-checks "A,B"]
@@ -1507,6 +1599,7 @@ export function parseCli(argv) {
       'ci-checks': { type: 'string' },
       hooks: { type: 'string' },
       'repo-tools-rev': { type: 'string' },
+      'default-branch': { type: 'string' },
       check: { type: 'boolean', default: false },
       force: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },

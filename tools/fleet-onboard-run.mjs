@@ -7,7 +7,13 @@
 // perform are the ones GitHub and Homelab reserve for a human: adding the
 // repository to the two App installations and the reviewed Terraform apply.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,8 +111,12 @@ function defaultBranch(run, repo) {
   return result.stdout.trim() || 'main';
 }
 
-function commitAndPush(run, cwd, { branch, message, paths }) {
-  run('git', ['add', '--', ...paths], { cwd, mutate: true });
+function commitAndPush(run, cwd, { branch, message, paths, all = false }) {
+  // `-A` is an option, so it must precede `--`; a pathspec list goes after.
+  run('git', all ? ['add', '-A'] : ['add', '--', ...paths], {
+    cwd,
+    mutate: true,
+  });
   const staged = run('git', ['diff', '--cached', '--quiet'], {
     cwd,
     allowFailure: true,
@@ -164,7 +174,7 @@ function ensureWorktree(run, { primary, worktree, branch, base }) {
   return 'created';
 }
 
-function scaffoldArgs(spec) {
+function scaffoldArgs(spec, extra = []) {
   const args = ['--repo', spec.repo.full];
   if (spec.runnerLabel) args.push('--runner-label', spec.runnerLabel);
   for (const file of spec.ciWorkflows) args.push('--ci-workflow', file);
@@ -173,7 +183,7 @@ function scaffoldArgs(spec) {
   if (spec.ciChecks) args.push('--ci-checks', spec.ciChecks);
   if (spec.hooks) args.push('--hooks', spec.hooks);
   if (spec.repoToolsRev) args.push('--repo-tools-rev', spec.repoToolsRev);
-  return args;
+  return [...args, ...extra];
 }
 
 export function stepTarget(ctx) {
@@ -201,7 +211,7 @@ export function stepTarget(ctx) {
     [
       path.join(toolsDir, 'fleet-onboard.mjs'),
       'scaffold',
-      ...scaffoldArgs(spec),
+      ...scaffoldArgs(spec, ['--default-branch', base]),
       '--target',
       clone,
       ...(run.dryRun ? ['--check'] : []),
@@ -229,7 +239,7 @@ export function stepTarget(ctx) {
   const changed = commitAndPush(run, clone, {
     branch,
     message: 'chore: join the Agent LCARS fleet',
-    paths: ['-A'],
+    all: true,
   });
   if (!changed)
     return {
@@ -238,7 +248,11 @@ export function stepTarget(ctx) {
     };
   const plan = run(
     'node',
-    [path.join(toolsDir, 'fleet-onboard.mjs'), 'plan', ...scaffoldArgs(spec)],
+    [
+      path.join(toolsDir, 'fleet-onboard.mjs'),
+      'plan',
+      ...scaffoldArgs(spec, ['--default-branch', base]),
+    ],
     { allowFailure: true },
   ).stdout;
   const url = createDraft(run, {
@@ -253,6 +267,15 @@ export function stepTarget(ctx) {
 }
 
 export function stepLcars(ctx) {
+  const result = stepLcarsInner(ctx);
+  const worktree = path.join(
+    ctx.workdir,
+    `agent-lcars-admit-${ctx.spec.repo.name}`,
+  );
+  return existsSync(worktree) ? { ...result, worktree } : result;
+}
+
+function stepLcarsInner(ctx) {
   const { run, spec, workdir, root } = ctx;
   const branch = `fleet/admit-${spec.repo.name}`;
   const existing = openPullRequest(run, LCARS_REPO, branch);
@@ -390,15 +413,43 @@ export function stepHomelab(ctx) {
   return { status: 'done', detail: url, url };
 }
 
+function manifestLists(file, repo) {
+  try {
+    return Boolean(JSON.parse(readFileSync(file, 'utf8')).repositories?.[repo]);
+  } catch {
+    return false;
+  }
+}
+
 export function stepGithub(ctx) {
-  const { run, spec, toolsDir, log, copyFrom, privateKeyCommand } = ctx;
+  const {
+    run,
+    spec,
+    toolsDir,
+    log,
+    copyFrom,
+    privateKeyCommand,
+    lcarsWorktree,
+  } = ctx;
+  // The helper syncs labels from the manifest beside its own module. Until
+  // the admission PR merges, only the admission worktree's manifest lists
+  // the repository, so run the helper from there; with neither, defer the
+  // label sync to a human instead of reporting a guaranteed failure.
+  const helperDir = lcarsWorktree
+    ? path.join(lcarsWorktree, 'tools')
+    : toolsDir;
+  const admitted = manifestLists(
+    path.join(helperDir, '..', 'config', 'github-labels.json'),
+    spec.repo.full,
+  );
   const args = [
-    path.join(toolsDir, 'fleet-onboard-github.mjs'),
+    path.join(helperDir, 'fleet-onboard-github.mjs'),
     '--repo',
     spec.repo.full,
     '--copy-from',
     copyFrom,
   ];
+  if (!admitted) args.push('--skip-labels');
   if (privateKeyCommand) args.push('--private-key-command', privateKeyCommand);
   if (run.dryRun) args.push('--dry-run');
   const result = run('node', args, { allowFailure: true });
@@ -420,10 +471,17 @@ export function stepGithub(ctx) {
   );
   if (result.status === 2)
     throw new RunError(`fleet-onboard-github failed: ${result.stderr.trim()}`);
+  const humanItems = human.map(
+    (fact) => `${fact.fact}: ${fact.detail ?? fact.status}`,
+  );
+  if (!admitted)
+    humanItems.push(
+      `labels: after the admission PR merges, run node tools/sync-github-labels.mjs --apply --repo=${spec.repo.full} from a current checkout`,
+    );
   return {
     status: result.status === 0 ? 'done' : 'attention',
-    detail: `${facts.length} facts, ${human.length} needing a maintainer`,
-    human: human.map((fact) => `${fact.fact}: ${fact.detail ?? fact.status}`),
+    detail: `${facts.length} facts, ${humanItems.length} needing a maintainer`,
+    human: humanItems,
   };
 }
 
@@ -514,6 +572,7 @@ export function runAll({
         log,
         copyFrom: spec.copyFrom,
         privateKeyCommand,
+        lcarsWorktree: results.lcars?.worktree,
       });
     } catch (error) {
       if (!(error instanceof RunError)) throw error;

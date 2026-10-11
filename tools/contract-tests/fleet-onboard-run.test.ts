@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -11,7 +11,9 @@ import {
   resolveRunSpec,
   runAll,
   RunError,
+  stepGithub,
   STEPS,
+  stepTarget,
 } from '../fleet-onboard-run.mjs';
 
 type Call = { command: string; args: string[]; cwd?: string };
@@ -116,9 +118,13 @@ describe('dry run', () => {
     expect(results.lcars.status).toBe('planned');
     expect(results.homelab.status).toBe('blocked');
     expect(results.github.status).toBe('done');
-    expect(results.github.human).toEqual([
+    expect(results.github.human[0]).toBe(
       'installation:fleet: credential absent',
-    ]);
+    );
+    // Not admitted in this checkout's manifest: labels are deferred, not failed.
+    expect(results.github.human[1]).toContain('sync-github-labels.mjs');
+    const github = calls.find(has('fleet-onboard-github.mjs'));
+    expect(github?.args).toContain('--skip-labels');
 
     const mutating = calls.filter(
       (call) =>
@@ -147,7 +153,6 @@ describe('dry run', () => {
       ]),
     );
     // The GitHub helper receives --dry-run and the copy-from source.
-    const github = calls.find(has('fleet-onboard-github.mjs'));
     expect(github?.args).toEqual(
       expect.arrayContaining([
         '--copy-from',
@@ -279,5 +284,65 @@ describe('summary and CLI', () => {
       { root: '/repo/agent-lcars', exec, log: quiet },
     );
     expect(blocked).toBe(1);
+  });
+});
+
+describe('apply path', () => {
+  it('stages with git add -A, bases on the real default branch, and opens the PR', () => {
+    const ctx = context();
+    const { exec, calls } = fakeExec([
+      [has('pr list'), { stdout: '[]' }],
+      [has('repo view'), { stdout: 'trunk\n' }],
+      [has('fleet-onboard.mjs scaffold'), { status: 0 }],
+      [has('diff --cached --quiet'), { status: 1 }],
+      [
+        has('pr create'),
+        { stdout: 'https://github.com/example/project/pull/3\n' },
+      ],
+    ]);
+    const run = createRunner({ exec, dryRun: false, log: quiet });
+    const result = stepTarget({ ...ctx, run, log: quiet });
+    expect(result).toMatchObject({
+      status: 'done',
+      url: 'https://github.com/example/project/pull/3',
+    });
+    const add = calls.find(
+      (call) => call.command === 'git' && call.args[0] === 'add',
+    );
+    expect(add?.args).toEqual(['add', '-A']);
+    expect(calls.find(has('checkout -q -B'))?.args).toContain('origin/trunk');
+    const scaffold = calls.find(has('fleet-onboard.mjs scaffold'));
+    expect(scaffold?.args).toEqual(
+      expect.arrayContaining(['--default-branch', 'trunk']),
+    );
+    expect(scaffold?.args).not.toContain('--check');
+  });
+
+  it('runs the GitHub helper from the admission worktree once it lists the repo', () => {
+    const ctx = context();
+    const worktree = mkdtempSync(path.join(tmpdir(), 'lcars-admit-'));
+    mkdirSync(path.join(worktree, 'tools'));
+    mkdirSync(path.join(worktree, 'config'));
+    writeFileSync(
+      path.join(worktree, 'config', 'github-labels.json'),
+      JSON.stringify({ repositories: { 'example/project': { labels: [] } } }),
+    );
+    const { exec, calls } = fakeExec([
+      [has('fleet-onboard-github.mjs'), { stdout: '' }],
+    ]);
+    const run = createRunner({ exec, dryRun: false, log: quiet });
+    const result = stepGithub({
+      ...ctx,
+      run,
+      log: quiet,
+      copyFrom: ctx.spec.copyFrom,
+      lcarsWorktree: worktree,
+    });
+    const helper = calls.find(has('fleet-onboard-github.mjs'));
+    expect(helper?.args[0]).toBe(
+      path.join(worktree, 'tools', 'fleet-onboard-github.mjs'),
+    );
+    expect(helper?.args).not.toContain('--skip-labels');
+    expect(result.human).toEqual([]);
   });
 });

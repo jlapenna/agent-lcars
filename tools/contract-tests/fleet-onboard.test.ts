@@ -18,6 +18,7 @@ import {
   applyAdmit,
   applyScaffold,
   BASELINE_CHECKS,
+  ensureRepoToolsHookIds,
   GENERATED_WORKFLOW_NAMES,
   GUARDRAIL_COMMAND,
   main,
@@ -856,5 +857,70 @@ describe('scaffold', () => {
       status = (error as { status?: number }).status;
     }
     expect(status).toBe(2);
+  });
+});
+
+describe('review follow-ups', () => {
+  it('threads a non-main default branch through every generated trigger', () => {
+    const target = scratch('fleet-onboard-target');
+    scaffold(target, { 'default-branch': 'trunk' });
+    for (const file of [
+      '.github/workflows/validate.yml',
+      '.github/workflows/gitleaks.yml',
+      '.github/workflows/ruleset.yml',
+      '.github/workflows/agent-automerge.yml',
+    ]) {
+      const text = read(target, file);
+      expect(text).toContain('branches: [trunk]');
+      expect(text).not.toContain('refs/heads/main');
+      expect(text).not.toMatch(/branches: \[main\]/);
+    }
+    expect(() =>
+      resolveSpec({ repo: 'a/b', 'default-branch': 'bad branch' }),
+    ).toThrow(OnboardError);
+  });
+
+  it('completes a repo-tools entry that lacks a guard hook', () => {
+    const partial = [
+      'repos:',
+      '  - repo: https://github.com/jlapenna/repo-tools',
+      '    rev: abc',
+      '    hooks:',
+      '      - id: repo-require-worktree',
+      '  - repo: https://github.com/pre-commit/pre-commit-hooks',
+      '    rev: v5.0.0',
+      '    hooks:',
+      '      - id: check-yaml',
+      '',
+    ].join('\n');
+    const merged = ensureRepoToolsHookIds(partial);
+    const entry = parseYaml(merged).repos[0];
+    expect(entry.hooks.map((hook: { id: string }) => hook.id)).toEqual([
+      'repo-require-worktree',
+      'repo-require-worktree-push',
+    ]);
+    expect(parseYaml(merged).repos[1].hooks).toEqual([{ id: 'check-yaml' }]);
+    expect(ensureRepoToolsHookIds(merged)).toBe(merged);
+
+    const other = partial.replace(
+      '      - id: repo-require-worktree\n',
+      '      - id: repo-check-schedules\n',
+    );
+    const ids = parseYaml(ensureRepoToolsHookIds(other)).repos[0].hooks.map(
+      (hook: { id: string }) => hook.id,
+    );
+    expect(ids).toEqual([
+      'repo-check-schedules',
+      'repo-require-worktree',
+      'repo-require-worktree-push',
+    ]);
+
+    const empty = partial.replace(
+      '    hooks:\n      - id: repo-require-worktree\n',
+      '    hooks: []\n',
+    );
+    expect(
+      parseYaml(ensureRepoToolsHookIds(empty)).repos[0].hooks,
+    ).toHaveLength(2);
   });
 });
