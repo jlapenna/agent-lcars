@@ -586,7 +586,7 @@ export function runAll({
 const USAGE = `usage:
   fleet-onboard-run.mjs --repo OWNER/NAME [--runner-label L]
       [--ci-workflow FILE]... [--ci-workflow-name NAME]... [--ci-checks "A,B"]
-      [--hooks auto|pre-commit|husky|none] [--repo-tools-rev SHA] [--alias NAME]
+      [--hooks auto|pre-commit|husky|none] [--repo-tools-rev TAG] [--alias NAME]
       [--copy-from OWNER/NAME] [--private-key-command CMD]
       [--homelab DIR] [--workdir DIR] [--dry-run] [--skip STEP]...
 
