@@ -165,9 +165,10 @@ describe('admit', () => {
     write(
       root,
       file,
+      // Append to the control-plane list regardless of which member is last.
       read(root, file).replace(
-        "jlapenna/sync-padd'",
-        "jlapenna/sync-padd,example/project'",
+        /(AGENT_LCARS_CONTROL_PLANE_REPOSITORIES\n\s+value: '[^']*)'/,
+        "$1,example/project'",
       ),
     );
     expect(() => planAdmit(root, spec(), 'jlapenna/sync-padd')).toThrow(
