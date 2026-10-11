@@ -5,7 +5,14 @@
 // runbook; this tool owns the repetitive file edits it used to prescribe by
 // hand. It never touches GitHub, credentials, or Homelab.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -16,6 +23,10 @@ export const MANAGED_MARKER = 'fleet-onboard: managed';
 const MANAGED_NOTE = `${MANAGED_MARKER} by jlapenna/agent-lcars tools/fleet-onboard.mjs. Re-run it to refresh; delete this line to own the file locally.`;
 export const GUARDRAIL_COMMAND =
   'guard=$(command -v fleet-codex-issue-guardrail || true); if [ -n "$guard" ]; then fleet-codex-issue-guardrail; fi; exit 0';
+// Every shape the fleet guardrail hook has shipped as (an in-repo
+// tools/codex-issue-guardrail.cjs, the packaged bin, or the PATH command).
+// A hook matching this is the same guardrail and is replaced, never doubled.
+const LEGACY_GUARDRAIL = /codex-issue-guardrail/;
 export const BASELINE_CHECKS = Object.freeze([
   'gitleaks',
   'validate / repository validation',
@@ -39,27 +50,75 @@ function parseRepo(value) {
   return { full: value, owner, name };
 }
 
+// A comma list, a repeated option (array), or nothing.
 function splitList(value) {
-  return (value ?? '')
-    .split(',')
+  return []
+    .concat(value ?? [])
+    .flatMap((item) => String(item).split(','))
     .map((item) => item.trim())
     .filter(Boolean);
 }
 
+// A YAML single-quoted scalar; the only escape is a doubled apostrophe.
+function yamlSingleQuoted(text) {
+  return `'${text.replace(/'/g, "''")}'`;
+}
+
 function jsonArray(values) {
-  return `'${JSON.stringify(values)}'`;
+  return yamlSingleQuoted(JSON.stringify(values));
+}
+
+// Required-check contexts are embedded in HCL strings, a bash loop, and a
+// YAML scalar; reject the characters that would change meaning in any of them.
+function validateContext(context) {
+  const control = [...context].some((char) => {
+    const code = char.charCodeAt(0);
+    return code < 0x20 || code === 0x7f;
+  });
+  if (control || /["\\]/.test(context) || /[$%]\{/.test(context))
+    throw new OnboardError(
+      `check name ${JSON.stringify(context)} may not contain double quotes, backslashes, control characters, or \${ / %{`,
+    );
+  return context;
+}
+
+function validateRunnerLabel(label) {
+  if (!/^[A-Za-z0-9][\w.-]*$/.test(label))
+    throw new OnboardError(
+      `--runner-label must be a scale-set name ([A-Za-z0-9][A-Za-z0-9_.-]*), got ${label}`,
+    );
+  return label;
 }
 
 /** Resolve the repository shape the generated files depend on. */
 export function resolveSpec(options) {
   const repo = parseRepo(options.repo);
-  const runnerLabel = options['runner-label'] || null;
-  const ciWorkflow = options['ci-workflow'] || null;
-  const ciChecks = splitList(options['ci-checks']);
-  if (ciChecks.length && !ciWorkflow)
+  const runnerLabel = options['runner-label']
+    ? validateRunnerLabel(options['runner-label'])
+    : null;
+  const ciFiles = splitList(options['ci-workflow']);
+  const ciNames = splitList(options['ci-workflow-name']);
+  const ciChecks = splitList(options['ci-checks']).map(validateContext);
+  if (ciChecks.length && !ciFiles.length)
     throw new OnboardError('--ci-checks requires --ci-workflow');
-  const ciWorkflowName =
-    options['ci-workflow-name'] || (ciWorkflow ? 'CI' : null);
+  if (ciNames.length && !ciFiles.length)
+    throw new OnboardError('--ci-workflow-name requires --ci-workflow');
+  if (ciNames.length && ciNames.length !== ciFiles.length)
+    throw new OnboardError(
+      `--ci-workflow-name names ${ciNames.length} workflows but --ci-workflow lists ${ciFiles.length}; give one name per workflow, in order`,
+    );
+  for (const file of ciFiles)
+    if (file !== path.basename(file) || !/\.ya?ml$/.test(file))
+      throw new OnboardError(
+        `--ci-workflow must be a file name under .github/workflows, got ${file}`,
+      );
+  // A single unnamed workflow keeps the conventional default; scaffold reads
+  // the real name: from the target when the file exists.
+  const ciWorkflows = ciFiles.map((file, index) => ({
+    file,
+    name: ciNames[index] ?? (ciFiles.length === 1 ? 'CI' : null),
+    explicit: index < ciNames.length,
+  }));
   const requiredChecks = [...new Set([...BASELINE_CHECKS, ...ciChecks])];
   const hooks = options.hooks ?? 'auto';
   if (!['auto', 'pre-commit', 'husky', 'none'].includes(hooks))
@@ -68,8 +127,8 @@ export function resolveSpec(options) {
     repo,
     alias: options.alias || repo.name,
     runnerLabel,
-    ciWorkflow,
-    ciWorkflowName,
+    ciWorkflows,
+    ciChecks,
     requiredChecks,
     hooks,
     repoToolsRev: options['repo-tools-rev'] || null,
@@ -83,10 +142,30 @@ function glueRunsOn(spec) {
   return `\${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || '${spec.runnerLabel}' }}`;
 }
 
+// workflow_run.workflows entries are the `name:` of each workflow that posts
+// a check on a PR head; they must match the generated workflows below.
+export const GENERATED_WORKFLOW_NAMES = Object.freeze([
+  'validate',
+  'gitleaks',
+  'ruleset',
+]);
+
+export function workflowRunNames(spec) {
+  const names = spec.ciWorkflows.map((workflow) => {
+    if (!workflow.name)
+      throw new OnboardError(
+        `.github/workflows/${workflow.file} needs --ci-workflow-name (its name: is only read when scaffold can see the target)`,
+      );
+    return workflow.name;
+  });
+  return [...new Set([...names, ...GENERATED_WORKFLOW_NAMES])];
+}
+
 function workflowRunList(spec) {
-  const names = ['validate', 'gitleaks', 'ruleset'];
-  if (spec.ciWorkflowName) names.unshift(spec.ciWorkflowName);
-  return `[${names.join(', ')}]`;
+  const names = workflowRunNames(spec);
+  return `[${names
+    .map((name) => (/^[\w.-]+$/.test(name) ? name : JSON.stringify(name)))
+    .join(', ')}]`;
 }
 
 export function renderValidateWorkflow() {
@@ -440,12 +519,14 @@ export function renderRenovateConfig() {
   )}\n`;
 }
 
-export function renderPreCommitBlock(rev) {
-  return `  - repo: ${REPO_TOOLS_URL}
-    rev: ${rev}
-    hooks:
-      - id: repo-require-worktree
-      - id: repo-require-worktree-push
+export function renderPreCommitBlock(rev, { item = '  ', inner } = {}) {
+  const key = inner ?? `${item}  `;
+  const step = key.slice(item.length) || '  ';
+  return `${item}- repo: ${REPO_TOOLS_URL}
+${key}rev: ${rev}
+${key}hooks:
+${key}${step}- id: repo-require-worktree
+${key}${step}- id: repo-require-worktree-push
 `;
 }
 
@@ -458,28 +539,31 @@ ${renderPreCommitBlock(rev)}
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
+      # Content-rewriting hooks (trailing-whitespace, end-of-file-fixer) are
+      # deliberately not seeded: they rewrite tracked artifacts such as
+      # exported G-code or JSON summaries. Add them per repository.
       - id: check-yaml
       - id: check-added-large-files
 `;
 }
 
-export function renderHuskyHook(stage) {
-  const guard =
-    stage === 'pre-push'
-      ? `refs="$(cat)"
+function huskyGuard(stage) {
+  return stage === 'pre-push'
+    ? `refs="$(cat)"
 if command -v repo-require-worktree >/dev/null 2>&1; then
   printf '%s\\n' "$refs" | repo-require-worktree pushes
 fi`
-      : `if command -v repo-require-worktree >/dev/null 2>&1; then repo-require-worktree commits; fi`;
+    : `if command -v repo-require-worktree >/dev/null 2>&1; then repo-require-worktree commits; fi`;
+}
+
+export function renderHuskyHook(stage) {
   return `#!/bin/sh
 # ${MANAGED_NOTE}
 set -e
 
 # The public repo-tools worktree guard, guarded with command -v so a machine
 # without the package still commits and pushes.
-${guard}
+${huskyGuard(stage)}
 `;
 }
 
@@ -527,46 +611,145 @@ export function mergeGuardrailHooks(existingText, matcher, description) {
       throw new OnboardError('Existing hooks file is not valid JSON');
     }
   }
+  if (!config || typeof config !== 'object' || Array.isArray(config))
+    throw new OnboardError('Existing hooks file is not a JSON object');
   if (description && !config.description) config.description = description;
   config.hooks ??= {};
+  if (typeof config.hooks !== 'object' || Array.isArray(config.hooks))
+    throw new OnboardError('Existing hooks file has a non-object "hooks"');
   const post = (config.hooks.PostToolUse ??= []);
-  const present = post.some((entry) =>
-    (entry.hooks ?? []).some((hook) => hook.command === GUARDRAIL_COMMAND),
+  if (!Array.isArray(post))
+    throw new OnboardError(
+      'Existing hooks file has a non-array "hooks.PostToolUse"',
+    );
+  const isLegacy = (hook) =>
+    typeof hook?.command === 'string' &&
+    hook.command !== GUARDRAIL_COMMAND &&
+    LEGACY_GUARDRAIL.test(hook.command);
+  let present = post.some((entry) =>
+    (entry?.hooks ?? []).some((hook) => hook?.command === GUARDRAIL_COMMAND),
   );
-  if (!present) post.push(guardrailHook(matcher));
+  // Replace the first legacy guardrail in place (keeping its matcher and any
+  // sibling hooks) and drop every other copy, so a re-run converges on one.
+  const emptied = new Set();
+  for (const entry of post) {
+    if (!Array.isArray(entry?.hooks)) continue;
+    const before = entry.hooks.length;
+    entry.hooks = entry.hooks.flatMap((hook) => {
+      if (!isLegacy(hook)) return [hook];
+      if (present) return [];
+      present = true;
+      return [{ ...hook, ...guardrailHook(matcher).hooks[0] }];
+    });
+    if (before > 0 && entry.hooks.length === 0) emptied.add(entry);
+  }
+  config.hooks.PostToolUse = post.filter((entry) => !emptied.has(entry));
+  if (!present) config.hooks.PostToolUse.push(guardrailHook(matcher));
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
 export function mergeAgentsSection(existingText, section) {
   const text = existingText ?? '';
+  // Follow the file's own line endings so a CRLF file stays CRLF and the
+  // drift check does not flip-flop between runs.
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const body = section.replace(/\r?\n/g, eol);
+  const begins = text.split(AGENTS_BEGIN).length - 1;
+  const ends = text.split(AGENTS_END).length - 1;
+  if (begins > 1 || ends > 1)
+    throw new OnboardError(
+      `AGENTS.md has ${Math.max(begins, ends)} fleet-onboard blocks; keep exactly one`,
+    );
   const start = text.indexOf(AGENTS_BEGIN);
   const end = text.indexOf(AGENTS_END);
   if (start !== -1 && end !== -1 && end > start)
-    return text.slice(0, start) + section + text.slice(end + AGENTS_END.length);
+    return text.slice(0, start) + body + text.slice(end + AGENTS_END.length);
   if (start !== -1 || end !== -1)
-    throw new OnboardError('AGENTS.md has an unterminated fleet-onboard block');
-  if (!text.trim()) return `# Agent guide\n\n${section}\n`;
-  return `${text.replace(/\s*$/, '')}\n\n${section}\n`;
+    throw new OnboardError(
+      `AGENTS.md has a broken fleet-onboard block: ${AGENTS_BEGIN} must come before ${AGENTS_END}, and both must be present`,
+    );
+  if (!text.trim()) return `# Agent guide${eol}${eol}${body}${eol}`;
+  return `${text.replace(/\s*$/, '')}${eol}${eol}${body}${eol}`;
+}
+
+function hasRepoToolsHooks(text) {
+  let parsed;
+  try {
+    parsed = parseYaml(text);
+  } catch {
+    return false;
+  }
+  return (parsed?.repos ?? []).some((entry) => entry?.repo === REPO_TOOLS_URL);
 }
 
 export function mergePreCommitConfig(existingText, rev) {
   if (!existingText) return renderPreCommitConfig(rev);
   if (existingText.includes(`repo: ${REPO_TOOLS_URL}`)) return existingText;
   const lines = existingText.split('\n');
-  const index = lines.findIndex((line) => /^repos:\s*$/.test(line));
+  const index = lines.findIndex((line) => /^repos:(\s|$)/.test(line));
   if (index === -1)
-    throw new OnboardError('.pre-commit-config.yaml has no top-level repos:');
-  lines.splice(index + 1, 0, renderPreCommitBlock(rev));
-  return lines.join('\n');
+    throw new OnboardError(
+      '.pre-commit-config.yaml has no top-level repos: list; add one (or pass --hooks none) and re-run',
+    );
+  const inline = lines[index]
+    .replace(/^repos:/, '')
+    .replace(/#.*$/, '')
+    .trim();
+  if (inline && inline !== '[]')
+    throw new OnboardError(
+      '.pre-commit-config.yaml repos: is not a block list; convert it and re-run',
+    );
+  // Match the existing list's indentation: YAML rejects sibling sequence
+  // items at different indents. `repos: []` becomes a block list.
+  let indent = {};
+  if (inline === '[]') lines[index] = 'repos:';
+  else {
+    const first = lines
+      .slice(index + 1)
+      .find((line) => line.trim() && !line.trim().startsWith('#'));
+    const item = first?.match(/^(\s*)- /)?.[1];
+    if (item === undefined)
+      throw new OnboardError(
+        '.pre-commit-config.yaml repos: is not a block list; convert it and re-run',
+      );
+    const firstIndex = lines.indexOf(first);
+    const inner = lines
+      .slice(firstIndex + 1)
+      .find((line) => line.trim() && !line.trim().startsWith('#'))
+      ?.match(/^(\s+)\S/)?.[1];
+    indent = {
+      item,
+      inner: inner && inner.length > item.length ? inner : null,
+    };
+    if (indent.inner === null) delete indent.inner;
+  }
+  lines.splice(
+    index + 1,
+    0,
+    renderPreCommitBlock(rev, indent).replace(/\n$/, ''),
+  );
+  const merged = lines.join('\n');
+  if (!hasRepoToolsHooks(merged))
+    throw new OnboardError(
+      '.pre-commit-config.yaml merge did not parse back as YAML; add the repo-tools hooks by hand',
+    );
+  return merged;
 }
 
 export function resolveRepoToolsRev(spec, exec = execFileSync) {
   if (spec.repoToolsRev) return spec.repoToolsRev;
-  const output = exec('git', ['ls-remote', `${REPO_TOOLS_URL}.git`, 'main'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-    timeout: 30_000,
-  });
+  let output;
+  try {
+    output = exec('git', ['ls-remote', `${REPO_TOOLS_URL}.git`, 'main'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 30_000,
+    });
+  } catch (error) {
+    throw new OnboardError(
+      `Could not resolve jlapenna/repo-tools main (${error.message}); pass --repo-tools-rev`,
+    );
+  }
   const sha = output.split(/\s+/)[0];
   if (!/^[0-9a-f]{40}$/.test(sha ?? ''))
     throw new OnboardError(
@@ -590,11 +773,154 @@ function detectHooks(target, spec) {
  *   seed     — written only when absent (Terraform- or operator-maintained);
  *   merge    — existing content is merged structurally.
  */
-export function planScaffold(target, spec, { resolveRev } = {}) {
+const TERRAFORM_IGNORE = 'infra/github-ruleset/.terraform/';
+
+/** Ensure the ruleset root's provider cache is ignored. */
+export function mergeGitignore(existingText) {
+  const text = existingText ?? '';
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const covered = new Set([
+    TERRAFORM_IGNORE,
+    TERRAFORM_IGNORE.replace(/\/$/, ''),
+    `/${TERRAFORM_IGNORE}`,
+    '.terraform/',
+    '.terraform',
+    '**/.terraform/',
+    '**/.terraform',
+  ]);
+  if (text.split(/\r?\n/).some((line) => covered.has(line.trim()))) return text;
+  if (!text.trim()) return `${TERRAFORM_IGNORE}${eol}`;
+  return `${text.replace(/\s*$/, '')}${eol}${TERRAFORM_IGNORE}${eol}`;
+}
+
+function parseWorkflow(text) {
+  try {
+    return parseYaml(text) ?? {};
+  } catch {
+    return null;
+  }
+}
+
+// The check name a job posts: its `name:` or its key. A reusable-workflow job
+// posts `<key> / <inner job name>` instead, which callers below special-case.
+function jobCheckNames(doc) {
+  return Object.entries(doc?.jobs ?? {}).map(([key, job]) => job?.name ?? key);
+}
+
+/**
+ * A locally owned workflow still has to produce what the generated ruleset
+ * requires and what agent-automerge subscribes to; otherwise merging the
+ * scaffold locks main. Returns a reason string or null.
+ */
+function workflowConflict(text, expectedName, emits) {
+  const doc = parseWorkflow(text);
+  if (!doc) return 'is not valid YAML';
+  const problems = [];
+  const name = doc.name ?? null;
+  if (name !== expectedName)
+    problems.push(
+      `workflow name is ${JSON.stringify(name)} but agent-automerge's workflow_run trigger lists ${JSON.stringify(expectedName)}`,
+    );
+  if (emits && !emits.test(doc))
+    problems.push(
+      `no job posts the required check ${JSON.stringify(emits.context)}`,
+    );
+  return problems.length ? problems.join('; ') : null;
+}
+
+function automergeConflict(text, spec) {
+  const doc = parseWorkflow(text);
+  if (!doc) return 'is not valid YAML';
+  const problems = [];
+  let required = null;
+  try {
+    required = JSON.parse(
+      doc.jobs?.automerge?.with?.['required-checks'] ?? 'null',
+    );
+  } catch {
+    required = null;
+  }
+  const missing = spec.requiredChecks.filter((c) => !required?.includes(c));
+  if (!Array.isArray(required) || missing.length)
+    problems.push(
+      `required-checks does not include ${JSON.stringify(missing.length ? missing : spec.requiredChecks)}`,
+    );
+  const subscribed = doc.on?.workflow_run?.workflows ?? [];
+  const unsubscribed = workflowRunNames(spec).filter(
+    (n) => !subscribed.includes(n),
+  );
+  if (unsubscribed.length)
+    problems.push(
+      `workflow_run.workflows does not list ${JSON.stringify(unsubscribed)}`,
+    );
+  return problems.length ? problems.join('; ') : null;
+}
+
+function rulesetMainConflict(text, spec) {
+  const missing = spec.requiredChecks.filter(
+    (context) => !text.includes(`context = "${context}"`),
+  );
+  return missing.length
+    ? `does not require ${JSON.stringify(missing)}, which tools/github-ruleset-root.test.sh and agent-automerge expect`
+    : null;
+}
+
+// --check must stay offline: when the hook block is absent the file drifts
+// whatever the revision would be, so no lookup is needed to decide.
+const UNRESOLVED_REV = '<unresolved: --check does not resolve repo-tools>';
+
+export function planScaffold(target, spec, { resolveRev, check = false } = {}) {
   const read = (file) => {
     const full = path.join(target, file);
     return existsSync(full) ? readFileSync(full, 'utf8') : null;
   };
+  const notes = [];
+  const ciJobs = [];
+  let sawCiFile = false;
+  const ciWorkflows = spec.ciWorkflows.map((workflow) => {
+    const file = `.github/workflows/${workflow.file}`;
+    const text = read(file);
+    if (text === null) {
+      if (!workflow.name)
+        throw new OnboardError(
+          `${file} does not exist; pass --ci-workflow-name for it so agent-automerge's workflow_run trigger has a name to subscribe to`,
+        );
+      notes.push(
+        `${file} does not exist yet; its name: must be ${JSON.stringify(workflow.name)} for agent-automerge's workflow_run trigger to fire.`,
+      );
+      return workflow;
+    }
+    const doc = parseWorkflow(text);
+    if (!doc) throw new OnboardError(`${file} is not valid YAML`);
+    sawCiFile = true;
+    ciJobs.push(...Object.keys(doc.jobs ?? {}), ...jobCheckNames(doc));
+    const actual = doc.name ?? null;
+    if (workflow.explicit && actual !== workflow.name)
+      throw new OnboardError(
+        `${file} is named ${JSON.stringify(actual)}, not ${JSON.stringify(workflow.name)}; agent-automerge's workflow_run trigger would never fire`,
+      );
+    if (!actual)
+      throw new OnboardError(
+        `${file} has no name:; agent-automerge's workflow_run trigger subscribes by workflow name`,
+      );
+    return { ...workflow, name: actual };
+  });
+  spec = { ...spec, ciWorkflows };
+  if (sawCiFile) {
+    const ciFiles = spec.ciWorkflows.map((w) => w.file).join(', ');
+    for (const check of spec.ciChecks)
+      if (!ciJobs.includes(check))
+        notes.push(
+          `--ci-checks ${JSON.stringify(check)} is not a job id or name in ${ciFiles}; the ruleset will wait on a check that never posts.`,
+        );
+    // sync-padd runs its Terraform job inside CI; a generated ruleset.yml
+    // would then post a second check run under the same name.
+    for (const context of BASELINE_CHECKS)
+      if (ciJobs.includes(context))
+        notes.push(
+          `${ciFiles} already posts the check ${JSON.stringify(context)}; the generated fleet workflow posts it too. Remove the local job, or delete the generated file's managed line to own that check locally.`,
+        );
+  }
   const files = [
     {
       file: '.claude/settings.json',
@@ -615,26 +941,47 @@ export function planScaffold(target, spec, { resolveRev } = {}) {
       file: '.github/workflows/validate.yml',
       kind: 'managed',
       render: renderValidateWorkflow,
+      conflict: (text) =>
+        workflowConflict(text, 'validate', {
+          context: 'validate / repository validation',
+          test: (doc) =>
+            String(doc.jobs?.validate?.uses ?? '').includes(
+              'jlapenna/agent-lcars/.github/workflows/repo-validation.yml',
+            ),
+        }),
     },
     {
       file: '.github/workflows/gitleaks.yml',
       kind: 'managed',
       render: () => renderGitleaksWorkflow(spec),
+      conflict: (text) =>
+        workflowConflict(text, 'gitleaks', {
+          context: 'gitleaks',
+          test: (doc) => jobCheckNames(doc).includes('gitleaks'),
+        }),
     },
     {
       file: '.github/workflows/ruleset.yml',
       kind: 'managed',
       render: renderRulesetWorkflow,
+      conflict: (text) =>
+        workflowConflict(text, 'ruleset', {
+          context: 'repository-owned Terraform',
+          test: (doc) =>
+            jobCheckNames(doc).includes('repository-owned Terraform'),
+        }),
     },
     {
       file: '.github/workflows/agent-automerge.yml',
       kind: 'managed',
       render: () => renderAutomergeWorkflow(spec),
+      conflict: (text) => automergeConflict(text, spec),
     },
     {
       file: 'infra/github-ruleset/main.tf',
       kind: 'managed',
       render: () => renderRulesetMain(spec),
+      conflict: (text) => rulesetMainConflict(text, spec),
     },
     {
       file: 'infra/github-ruleset/README.md',
@@ -653,6 +1000,7 @@ export function planScaffold(target, spec, { resolveRev } = {}) {
       mode: 0o755,
     },
     { file: 'renovate.json', kind: 'seed', render: renderRenovateConfig },
+    { file: '.gitignore', kind: 'merge', render: mergeGitignore },
     {
       file: 'AGENTS.md',
       kind: 'merge',
@@ -664,18 +1012,31 @@ export function planScaffold(target, spec, { resolveRev } = {}) {
       file: '.github/actionlint.yaml',
       kind: 'managed',
       render: () => renderActionlintConfig(spec),
+      conflict: (text) =>
+        (parseWorkflow(text)?.['self-hosted-runner']?.labels ?? []).includes(
+          spec.runnerLabel,
+        )
+          ? null
+          : `self-hosted-runner.labels does not declare ${spec.runnerLabel}`,
     });
   const hooks = detectHooks(target, spec);
-  const notes = [];
   if (hooks === 'pre-commit') {
     const existing = read('.pre-commit-config.yaml');
     const needsRev = !existing || !existing.includes(`repo: ${REPO_TOOLS_URL}`);
-    const rev = needsRev ? (resolveRev ?? resolveRepoToolsRev)(spec) : null;
+    let rev = null;
+    if (needsRev)
+      rev = check
+        ? spec.repoToolsRev || UNRESOLVED_REV
+        : (resolveRev ?? resolveRepoToolsRev)(spec);
     files.push({
       file: '.pre-commit-config.yaml',
       kind: 'merge',
       render: (text) => mergePreCommitConfig(text, rev),
     });
+    if (!existing)
+      notes.push(
+        'Seeded .pre-commit-config.yaml without content-rewriting hooks (trailing-whitespace, end-of-file-fixer); add them only after confirming no tracked artifact would be rewritten.',
+      );
     notes.push(
       'Install both hook stages in the primary checkout and in every linked worktree: `pre-commit install --install-hooks -t pre-commit -t pre-push` (pre-commit >= 4.4.0).',
     );
@@ -684,19 +1045,29 @@ export function planScaffold(target, spec, { resolveRev } = {}) {
       const existing = read(`.husky/${stage}`);
       if (existing && !existing.includes('repo-require-worktree'))
         notes.push(
-          `.husky/${stage} exists without the repo-require-worktree guard; add the guarded call from sprinkles' hook of the same name.`,
+          `.husky/${stage} exists without the repo-require-worktree guard; add this guarded call to it: ${huskyGuard(stage).replace(/\n/g, ' ')}`,
         );
-      else if (!existing)
+      // An already guarded hook is reported as unchanged rather than omitted.
+      else
         files.push({
           file: `.husky/${stage}`,
           kind: 'seed',
-          render: () => renderHuskyHook(stage),
+          render: (text) => text ?? renderHuskyHook(stage),
           mode: 0o755,
         });
     }
-    notes.push(
-      'Wire Husky through package.json `prepare` and run `repo-install-husky-hooks` so linked worktrees keep the hooks.',
-    );
+    let hasPrepare;
+    try {
+      hasPrepare = Boolean(
+        JSON.parse(read('package.json') ?? '{}')?.scripts?.prepare,
+      );
+    } catch {
+      hasPrepare = false;
+    }
+    if (!hasPrepare)
+      notes.push(
+        'Wire Husky through package.json `prepare` and run `repo-install-husky-hooks` so linked worktrees keep the hooks.',
+      );
   }
 
   const actions = [];
@@ -710,9 +1081,13 @@ export function planScaffold(target, spec, { resolveRev } = {}) {
     else if (entry.kind === 'merge') action = 'update';
     else if (existing.includes(MANAGED_MARKER)) action = 'update';
     else action = 'locally-owned';
-    actions.push({ ...entry, existing, desired, action });
+    const conflict =
+      action === 'locally-owned' && entry.conflict
+        ? entry.conflict(existing)
+        : null;
+    actions.push({ ...entry, existing, desired, action, conflict });
   }
-  return { actions, notes, hooks };
+  return { actions, notes, hooks, spec };
 }
 
 export function applyScaffold(target, plan, { force = false, check = false }) {
@@ -725,8 +1100,17 @@ export function applyScaffold(target, plan, { force = false, check = false }) {
       const full = path.join(target, entry.file);
       mkdirSync(path.dirname(full), { recursive: true });
       writeFileSync(full, entry.desired, { mode: entry.mode });
+      // writeFileSync applies mode only on create; a refreshed script must
+      // stay executable.
+      if (entry.mode !== undefined) chmodSync(full, entry.mode);
     }
-    results.push({ file: entry.file, action, drift: writes });
+    results.push({
+      file: entry.file,
+      action,
+      drift: writes,
+      // --force rewrites the file, which resolves the conflict.
+      conflict: writes ? null : (entry.conflict ?? null),
+    });
   }
   return results;
 }
@@ -747,14 +1131,8 @@ function envValue(text, variable) {
   return entry.value;
 }
 
-/** Read every membership projection from the control plane's own files. */
-export function readMembership(root) {
-  const text = Object.fromEntries(
-    Object.entries(PROJECTIONS).map(([key, file]) => [
-      key,
-      readFileSync(path.join(root, file), 'utf8'),
-    ]),
-  );
+/** Parse every membership projection from its file text. */
+export function parseMembership(text) {
   const labels = Object.keys(JSON.parse(text.labels).repositories ?? {});
   const controlPlane = envValue(
     text.apphosting,
@@ -762,13 +1140,26 @@ export function readMembership(root) {
   )
     .split(',')
     .filter(Boolean);
-  const watched = JSON.parse(
+  const watchedEntries = JSON.parse(
     envValue(text.apphosting, 'AGENT_LCARS_WATCHED_REPOS'),
-  ).map((repo) => `${repo.owner}/${repo.name}`);
+  );
+  const watched = watchedEntries.map((repo) => `${repo.owner}/${repo.name}`);
   const audit = (
     parseYaml(text.audit).jobs?.audit?.strategy?.matrix?.include ?? []
   ).map((entry) => entry.full_name);
-  return { text, labels, controlPlane, watched, audit };
+  return { text, labels, controlPlane, watched, watchedEntries, audit };
+}
+
+/** Read every membership projection from the control plane's own files. */
+export function readMembership(root) {
+  return parseMembership(
+    Object.fromEntries(
+      Object.entries(PROJECTIONS).map(([key, file]) => [
+        key,
+        readFileSync(path.join(root, file), 'utf8'),
+      ]),
+    ),
+  );
 }
 
 /** Repositories missing from at least one projection, keyed by projection. */
@@ -788,29 +1179,89 @@ export function membershipGaps(membership) {
   return gaps;
 }
 
+// Brace depth of one line with string contents blanked out.
+function braceDelta(line) {
+  const bare = line.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  let delta = 0;
+  for (const char of bare) {
+    if (char === '{' || char === '[') delta++;
+    else if (char === '}' || char === ']') delta--;
+  }
+  return delta;
+}
+
+const LABEL_LAYOUT_HINT =
+  'copy the template entry by hand in config/github-labels.json (one "OWNER/NAME": { ... } entry per line-delimited block under "repositories")';
+
+/**
+ * Copy one repository's block under "repositories" to a new key, preserving
+ * the file's formatting. The manifest is prettier-formatted JSON whose short
+ * arrays are inline, so a parse/re-serialize round trip would reformat it;
+ * instead the copy is line-based and then verified structurally.
+ */
 function copyLabelEntry(text, like, repo) {
+  const parsed = JSON.parse(text);
+  const repositories = parsed.repositories ?? {};
+  if (!(like in repositories))
+    throw new OnboardError(
+      `${like} has no entry in config/github-labels.json (pass --like with an onboarded repository)`,
+    );
   const lines = text.split('\n');
-  const start = lines.findIndex((line) => line === `    "${like}": {`);
-  if (start === -1)
-    throw new OnboardError(`${like} has no entry in config/github-labels.json`);
-  let end = start;
-  while (end < lines.length && !/^ {4}\}(,?)$/.test(lines[end])) end++;
-  if (end === lines.length)
-    throw new OnboardError('Could not find the end of the label entry');
-  const block = lines.slice(start, end + 1);
-  block[0] = `    "${repo}": {`;
-  block[block.length - 1] = '    }';
-  // The repositories object closes with the first `  }` after the last entry.
-  let close = end + 1;
-  while (close < lines.length && lines[close] !== '  }') close++;
-  if (close === lines.length)
-    throw new OnboardError('Could not find the end of the repositories object');
-  const last = close - 1;
-  if (lines[last] !== '    }')
-    throw new OnboardError('Unexpected label manifest layout');
-  lines[last] = '    },';
-  lines.splice(close, 0, ...block);
-  return lines.join('\n');
+  const open = lines.findIndex((line) =>
+    /^\s*"repositories":\s*\{\s*$/.test(line),
+  );
+  if (open === -1)
+    throw new OnboardError(
+      `Unexpected label manifest layout; ${LABEL_LAYOUT_HINT}`,
+    );
+  const entries = [];
+  let depth = 0;
+  let close = -1;
+  let current = null;
+  for (let index = open; index < lines.length; index++) {
+    const line = lines[index];
+    const key =
+      depth === 1 && line.match(/^(\s*)"((?:[^"\\]|\\.)*)":\s*\{\s*$/);
+    if (key) current = { key: key[2], indent: key[1], start: index };
+    depth += braceDelta(line);
+    if (depth === 1 && current && index > current.start) {
+      entries.push({ ...current, end: index });
+      current = null;
+    }
+    if (depth === 0) {
+      close = index;
+      break;
+    }
+  }
+  const template = entries.find((entry) => entry.key === like);
+  const last = entries.at(-1);
+  if (close === -1 || !template || !last)
+    throw new OnboardError(
+      `Unexpected label manifest layout; ${LABEL_LAYOUT_HINT}`,
+    );
+  const block = lines.slice(template.start, template.end + 1);
+  block[0] = `${template.indent}"${repo}": {`;
+  block[block.length - 1] = block[block.length - 1].replace(/,\s*$/, '');
+  if (!/,\s*$/.test(lines[last.end])) lines[last.end] = `${lines[last.end]},`;
+  lines.splice(last.end + 1, 0, ...block);
+  const merged = lines.join('\n');
+  let check;
+  try {
+    check = JSON.parse(merged);
+  } catch {
+    throw new OnboardError(
+      `Label manifest edit did not parse as JSON; ${LABEL_LAYOUT_HINT}`,
+    );
+  }
+  const expected = {
+    ...parsed,
+    repositories: { ...repositories, [repo]: repositories[like] },
+  };
+  if (JSON.stringify(check) !== JSON.stringify(expected))
+    throw new OnboardError(
+      `Label manifest edit changed more than the new entry; ${LABEL_LAYOUT_HINT}`,
+    );
+  return merged;
 }
 
 function appendApphosting(text, spec) {
@@ -823,9 +1274,16 @@ function appendApphosting(text, spec) {
   ]);
   const replaceValue = (source, previous, next) => {
     const needle = `value: '${previous}'`;
-    if (!source.includes(needle))
-      throw new OnboardError('apphosting.yaml value is not single-quoted');
-    return source.replace(needle, `value: '${next}'`);
+    const parts = source.split(needle);
+    if (parts.length !== 2)
+      throw new OnboardError(
+        parts.length === 1
+          ? 'apphosting.yaml value is not single-quoted'
+          : 'apphosting.yaml value appears more than once',
+      );
+    // Join rather than String.replace: a replacement string would interpret
+    // `$&`, `$1`, and `$'` sequences inside the JSON.
+    return parts.join(`value: '${next}'`);
   };
   return replaceValue(
     replaceValue(text, control, nextControl),
@@ -855,28 +1313,43 @@ function appendAuditMatrix(text, spec) {
 export function planAdmit(root, spec, like) {
   const membership = readMembership(root);
   const { text } = membership;
+  const next = { ...text };
   const edits = [];
-  if (!membership.labels.includes(spec.repo.full))
-    edits.push({
-      file: PROJECTIONS.labels,
-      desired: copyLabelEntry(text.labels, like, spec.repo.full),
-    });
+  if (!membership.labels.includes(spec.repo.full)) {
+    next.labels = copyLabelEntry(text.labels, like, spec.repo.full);
+    edits.push({ file: PROJECTIONS.labels, desired: next.labels });
+  }
   const inControl = membership.controlPlane.includes(spec.repo.full);
   const inWatched = membership.watched.includes(spec.repo.full);
   if (inControl !== inWatched)
     throw new OnboardError(
       `${spec.repo.full} is in only one of the two apphosting.yaml lists`,
     );
-  if (!inControl)
-    edits.push({
-      file: PROJECTIONS.apphosting,
-      desired: appendApphosting(text.apphosting, spec),
-    });
-  if (!membership.audit.includes(spec.repo.full))
-    edits.push({
-      file: PROJECTIONS.audit,
-      desired: appendAuditMatrix(text.audit, spec),
-    });
+  // Aliases must stay unique across the watched list; an already watched
+  // repository keeps whatever alias it has.
+  const collision = membership.watchedEntries.find(
+    (entry) =>
+      entry.alias === spec.alias &&
+      `${entry.owner}/${entry.name}` !== spec.repo.full,
+  );
+  if (!inControl && collision)
+    throw new OnboardError(
+      `alias ${spec.alias} is already used by ${collision.owner}/${collision.name}; pass a distinct --alias`,
+    );
+  if (!inControl) {
+    next.apphosting = appendApphosting(text.apphosting, spec);
+    edits.push({ file: PROJECTIONS.apphosting, desired: next.apphosting });
+  }
+  if (!membership.audit.includes(spec.repo.full)) {
+    next.audit = appendAuditMatrix(text.audit, spec);
+    edits.push({ file: PROJECTIONS.audit, desired: next.audit });
+  }
+  // Every edit is textual; prove the result still parses and now agrees.
+  const gaps = membershipGaps(parseMembership(next));
+  if (Object.keys(gaps).length)
+    throw new OnboardError(
+      `admit would leave projections disagreeing: ${JSON.stringify(gaps)}`,
+    );
   return edits;
 }
 
@@ -889,9 +1362,10 @@ export function applyAdmit(root, edits, { check = false }) {
 
 // --- plan: the steps this tool cannot perform -----------------------------
 
-export function renderPlan(spec) {
+export function renderPlan(spec, plan = null) {
   const lane = spec.runnerLabel;
-  const checks = spec.requiredChecks.map((c) => `\`${c}\``).join(', ');
+  const code = (value) => `\`${value}\``;
+  const checks = spec.requiredChecks.map(code).join(', ');
   const parts = [
     `# Remaining onboarding steps for ${spec.repo.full}`,
     '',
@@ -900,8 +1374,48 @@ export function renderPlan(spec) {
     '',
     '## 1. Target repository pull request',
     '',
-    `- Review the scaffolded files, add the repository's own CI checks to the`,
-    `  ruleset only once they emit stably, and merge. Required contexts: ${checks}.`,
+  ];
+  if (spec.ciChecks.length)
+    parts.push(
+      `- Review the scaffolded files and merge. Required contexts: ${checks}`,
+      `  (repository CI checks included: ${spec.ciChecks.map(code).join(', ')}).`,
+    );
+  else
+    parts.push(
+      `- Review the scaffolded files, add the repository's own CI checks to the`,
+      `  ruleset only once they emit stably, and merge. Required contexts: ${checks}.`,
+    );
+  parts.push(
+    `- agent-automerge subscribes to workflow_run from: ${workflowRunNames(spec).map(code).join(', ')}.`,
+  );
+  const conflicts = (plan?.actions ?? []).filter((action) => action.conflict);
+  const locallyOwned = (plan?.actions ?? []).filter(
+    (action) => action.action === 'locally-owned' && !action.conflict,
+  );
+  if (conflicts.length)
+    parts.push(
+      '- CONFLICTS: these locally owned files do not match what the generated',
+      '  ruleset requires or what agent-automerge must subscribe to; merging',
+      '  as-is can lock main or strand green PRs. Re-run with `--force`, or',
+      '  rename/retarget the local file and re-run:',
+      ...conflicts.map((a) => `  - ${code(a.file)}: ${a.conflict}`),
+    );
+  if (locallyOwned.length)
+    parts.push(
+      `- Left untouched (no ${code(MANAGED_MARKER)} line): ${locallyOwned.map((a) => code(a.file)).join(', ')}.`,
+    );
+  if (
+    plan?.hooks === 'pre-commit' &&
+    plan.actions.some(
+      (a) => a.file === '.pre-commit-config.yaml' && a.action === 'create',
+    )
+  )
+    parts.push(
+      '- The seeded pre-commit config has no content-rewriting hooks; add',
+      '  trailing-whitespace/end-of-file-fixer only if no tracked artifact',
+      '  would be rewritten.',
+    );
+  parts.push(
     '- Set the repository variables and secret from the approved credential',
     '  environment (docs/fleet-credentials.md); never paste values into a log:',
     '',
@@ -925,7 +1439,7 @@ export function renderPlan(spec) {
     `- \`bin/check-drift.sh\`: add \`${spec.repo.name}\` to the fleet ruleset loop.`,
     `- \`observability/docker-compose.yml\`: append \`${spec.repo.full}\` to`,
     '  `GITHUB_REPOSITORIES` for the GitHub Actions exporter.',
-  ];
+  );
   if (lane)
     parts.push(
       `- \`ansible/deploy_k3s.yml\`: add the \`${lane}\` ARC lane (next free`,
@@ -965,12 +1479,18 @@ export function renderPlan(spec) {
 
 const USAGE = `usage:
   fleet-onboard.mjs scaffold --repo OWNER/NAME --target DIR [--runner-label L]
-      [--ci-workflow FILE --ci-checks "A,B" [--ci-workflow-name NAME]]
+      [--ci-workflow FILE[,FILE] [--ci-workflow-name NAME[,NAME]] --ci-checks "A,B"]
       [--hooks auto|pre-commit|husky|none] [--repo-tools-rev SHA]
       [--check] [--force]
   fleet-onboard.mjs admit --repo OWNER/NAME [--alias NAME] [--like OWNER/NAME] [--check]
-  fleet-onboard.mjs plan --repo OWNER/NAME [--runner-label L] [--ci-workflow FILE --ci-checks "A,B"]
-  fleet-onboard.mjs check          # every membership projection agrees`;
+  fleet-onboard.mjs plan --repo OWNER/NAME [--runner-label L]
+      [--ci-workflow FILE --ci-workflow-name NAME --ci-checks "A,B"]
+  fleet-onboard.mjs check          # every membership projection agrees
+
+--ci-workflow may be repeated or comma-separated; each workflow's name: joins
+agent-automerge's workflow_run list (scaffold reads it from the target when
+the file exists). Exit codes: 0 ok, 1 drift (--check) or conflicts, 2 usage
+or input error, 64 unknown command.`;
 
 export function parseCli(argv) {
   const { values, positionals } = parseArgs({
@@ -982,8 +1502,8 @@ export function parseCli(argv) {
       alias: { type: 'string' },
       like: { type: 'string', default: 'jlapenna/sync-padd' },
       'runner-label': { type: 'string' },
-      'ci-workflow': { type: 'string' },
-      'ci-workflow-name': { type: 'string' },
+      'ci-workflow': { type: 'string', multiple: true },
+      'ci-workflow-name': { type: 'string', multiple: true },
       'ci-checks': { type: 'string' },
       hooks: { type: 'string' },
       'repo-tools-rev': { type: 'string' },
@@ -1017,14 +1537,18 @@ export function main(argv, { root, log = console.log } = {}) {
     const target = path.resolve(options.target);
     if (!existsSync(target))
       throw new OnboardError(`target directory does not exist: ${target}`);
-    const plan = planScaffold(target, spec);
+    const plan = planScaffold(target, spec, { check: options.check });
     const results = applyScaffold(target, plan, options);
-    for (const result of results) log(`${result.action}\t${result.file}`);
+    for (const result of results) {
+      log(`${result.action}\t${result.file}`);
+      if (result.conflict) log(`conflict\t${result.file}\t${result.conflict}`);
+    }
     for (const note of plan.notes) log(`note\t${note}`);
     const drift = results.some((result) => result.drift);
-    if (options.check) return drift ? 1 : 0;
-    log(`\n${renderPlan(spec)}`);
-    return 0;
+    const conflicts = results.some((result) => result.conflict);
+    if (options.check) return drift || conflicts ? 1 : 0;
+    log(`\n${renderPlan(plan.spec, plan)}`);
+    return conflicts ? 1 : 0;
   }
   if (command === 'admit') {
     const edits = planAdmit(root, spec, options.like);
@@ -1041,10 +1565,19 @@ export function main(argv, { root, log = console.log } = {}) {
   return 64;
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === new URL(`file://${process.argv[1]}`).href
-) {
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return (
+      realpathSync(process.argv[1]) ===
+      realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
   const root = fileURLToPath(new URL('../', import.meta.url));
   try {
     process.exitCode = main(process.argv.slice(2), { root });
