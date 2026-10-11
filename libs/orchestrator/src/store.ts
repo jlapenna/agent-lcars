@@ -1,3 +1,8 @@
+import type {
+  CapacityRecord,
+  CapacityState,
+  CapacityWorkerPermit,
+} from './capacity-model';
 import type { Decision, Refusal } from './decide';
 import type {
   LifecycleMetricRead,
@@ -158,6 +163,17 @@ export interface OrchestratorStore {
   readLifecycleMetricRecords(
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords>;
+  /** Capacity state, replay records, selection, cooldowns and run writes share
+   * one serializable transaction. Callbacks are synchronous and never perform
+   * external reads or writes. */
+  transactCapacity<T>(input: {
+    now: string;
+    recordKeys: readonly string[];
+    claimPipelines?: readonly string[];
+    runId?: string;
+    readRunIds?: readonly string[];
+    decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
+  }): Promise<T>;
   readTask(id: TaskId): Promise<VersionedTask | undefined>;
   readRun(runId: string): Promise<Run | undefined>;
   /** The task's live run, if its `activeRunId` points at one. */
@@ -197,6 +213,7 @@ export interface OrchestratorStore {
    */
   transactRun(input: {
     runId: string;
+    workerPermit?: CapacityWorkerPermit;
     queueEligibilityPipelines?: readonly string[];
     /** Evaluated from the consistent local snapshot before global reads. */
     shouldReadQueueEligibility?: (
@@ -415,6 +432,19 @@ export interface OrchestratorStore {
   readProviderCooldowns(
     pipelines: readonly string[],
   ): Promise<Readonly<Record<string, unknown>>>;
+}
+
+export interface CapacityTransactionSnapshot {
+  state: CapacityState;
+  records: Map<string, CapacityRecord>;
+  runs: Run[];
+  coolingPipelines: ReadonlySet<string>;
+}
+export interface CapacityTransactionResult<T> {
+  value: T;
+  state?: CapacityState;
+  records?: Map<string, CapacityRecord>;
+  run?: Run;
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and

@@ -45,6 +45,7 @@ worker_authorize_correction() {
 url = "$RUNS_API/heartbeat"
 request = "POST"
 header = "$AUTH_HEADER"
+$(worker_identity_config)
 $CURL_TIMEOUT_CONFIG
 CURLCFG
 }

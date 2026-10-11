@@ -904,3 +904,38 @@ func TestPollOnceDoesNotClaimWhenCapacityInventoryFails(t *testing.T) {
 		t.Fatalf("inventory failure made %d claim requests, want 0", requests)
 	}
 }
+
+func TestReceiptPollerMaintainsClaimedWorkersWhileDraining(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	recovered := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runQueueExecutorPoller(ctx, queueExecutorConfig{
+			capacity: &queueCapacityClient{}, draining: func() bool { return true },
+			reserve: func() (*directRunnerReservation, error) {
+				t.Error("draining executor reserved new work")
+				return nil, nil
+			},
+			recover: func(context.Context) error {
+				select {
+				case recovered <- struct{}{}:
+				default:
+				}
+				return nil
+			},
+		}, 5*time.Millisecond, discardLogger())
+	}()
+	select {
+	case <-recovered:
+	case <-time.After(time.Second):
+		t.Error("draining suppressed receipt maintenance")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("poller did not stop")
+	}
+}

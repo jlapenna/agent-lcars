@@ -58,6 +58,23 @@ from the pre-settlement snapshot. A result accepted during credential IO keeps
 its original acceptance time. Exact operation, fingerprint and mutation-sequence
 proof settle it through the same fallback owner with current grants and queue
 eligibility, even when recovery occurs after the original execution deadline.
+The shared `Orchestrator.transactOnRun` boundary also reserves cleanup for
+accepted executor exit, operator cancellation and lease/startup expiry
+(including `sweepExpired`). It preserves the terminal decision's outcome,
+deterministic retry and outbox, with a cleanup identity captured outside the
+retryable callback and a timestamp from the accepted decision. Physical
+retirement cannot discard the claim while that operation or its restored
+credential authority remains unresolved. The exit HTTP handler consumes that
+reservation; physical release attempted between settlement and conditional
+lease cleanup must still refuse.
+
+Lifecycle `cancelUnclaimedBefore` bypasses this wrapper but refuses claimed
+runs in its store transaction. Queued cooldown rerouting similarly requires
+an unclaimed run. Neither owns a restored claimed credential lease.
+`closeTask` and `updateTaskWork` refuse a live active run and change task
+metadata rather than settling it. These distinctions qualify the applicable
+terminal cleanup races; they do not establish deployed executor behavior.
+
 Maintenance can similarly replace an exact unclaimed queued attempt blocked by
 another run's cooldown; it does not fabricate an execution failure. Each
 decision rechecks current operator scope, repository admission, any signed OIDC

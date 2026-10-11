@@ -122,3 +122,29 @@ describe('GET /api/work/v1/runs/{runId}/brief', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
 });
+
+describe('GET /api/work/v1/runs/capacity/metrics', () => {
+  it('serves authenticated Prometheus text through the production HTTP owner', async () => {
+    authenticateWorkRequest.mockResolvedValue({
+      ...operatorPrincipal,
+      capacityPool: 'pool-a',
+      scopes: new Set(['work.capacity.recover']),
+    });
+    const response = await GET(
+      new Request('https://lcars.test/api/work/v1/runs/capacity/metrics'),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe(
+      'text/plain; version=0.0.4; charset=utf-8',
+    );
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(await response.text()).toMatch(/^# HELP lcars_capacity_slots/u);
+  });
+  it('keeps an unauthorized scrape as an ordinary uncached authorization error', async () => {
+    const response = await GET(
+      new Request('https://lcars.test/api/work/v1/runs/capacity/metrics'),
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+});

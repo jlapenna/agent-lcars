@@ -1,0 +1,470 @@
+{
+  "source": {
+    "run": 38091770013,
+    "job": 114329680600,
+    "artifact": 11685215734,
+    "head": "ca72d58be8536400a6c44d6dabf1dfe9b884bf70",
+    "jobLogSha256": "183ed4ace34d1cd573d811b73f890935a832d59162854125eda9a5b06316838f",
+    "jobLogDownloadCommand": "gh api --allow-escape-sequences repos/jlapenna/agent-lcars/actions/jobs/114329680600/logs > job-114329680600.log",
+    "jobLogRepresentation": "Raw individual job endpoint output; no transformations."
+  },
+  "title": "repository selection and clearing remain reachable on phones across Bridge, Inbox and Agents",
+  "result": {
+    "duration": 1815,
+    "startTime": "2026-10-10T22:54:30.481Z",
+    "retry": 0,
+    "steps": [
+      {
+        "title": "Before Hooks",
+        "startTime": "2026-10-10T22:54:30.482Z",
+        "duration": 365,
+        "steps": [
+          {
+            "title": "beforeEach hook",
+            "startTime": "2026-10-10T22:54:30.482Z",
+            "duration": 49,
+            "steps": [
+              {
+                "title": "Fixture \"context\"",
+                "startTime": "2026-10-10T22:54:30.490Z",
+                "duration": 4,
+                "steps": [
+                  {
+                    "title": "Create context",
+                    "startTime": "2026-10-10T22:54:30.490Z",
+                    "duration": 2,
+                    "steps": [],
+                    "attachments": [],
+                    "count": 1,
+                    "skipped": false
+                  }
+                ],
+                "attachments": [],
+                "count": 1,
+                "skipped": false
+              },
+              {
+                "title": "Fixture \"page\"",
+                "startTime": "2026-10-10T22:54:30.495Z",
+                "duration": 30,
+                "steps": [
+                  {
+                    "title": "Create page",
+                    "startTime": "2026-10-10T22:54:30.495Z",
+                    "duration": 30,
+                    "steps": [],
+                    "attachments": [],
+                    "count": 1,
+                    "skipped": false
+                  }
+                ],
+                "attachments": [],
+                "count": 1,
+                "skipped": false
+              }
+            ],
+            "attachments": [],
+            "location": {
+              "file": "util/e2e-test-utils.ts",
+              "line": 14,
+              "column": 8
+            },
+            "count": 1,
+            "skipped": false,
+            "snippet": " \u001b[90m 13 |\u001b[39m \u001b[36mexport\u001b[39m \u001b[36mfunction\u001b[39m useE2eAdminBeforeEach() {\n \u001b[90m 14 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page }) \u001b[33m=>\u001b[39m {\n \u001b[90m    |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 15 |\u001b[39m     \u001b[36mawait\u001b[39m setE2eAdminUser(page)\u001b[33m;\u001b[39m"
+          },
+          {
+            "title": "beforeEach hook",
+            "startTime": "2026-10-10T22:54:30.531Z",
+            "duration": 316,
+            "steps": [
+              {
+                "title": "Fixture \"request\"",
+                "startTime": "2026-10-10T22:54:30.532Z",
+                "duration": 3,
+                "steps": [
+                  {
+                    "title": "Create request context",
+                    "startTime": "2026-10-10T22:54:30.533Z",
+                    "duration": 0,
+                    "steps": [],
+                    "attachments": [],
+                    "count": 1,
+                    "skipped": false
+                  }
+                ],
+                "attachments": [],
+                "count": 1,
+                "skipped": false
+              },
+              {
+                "title": "POST",
+                "subtitle": "/api/e2e/seed",
+                "startTime": "2026-10-10T22:54:30.825Z",
+                "duration": 21,
+                "steps": [],
+                "attachments": [],
+                "location": {
+                  "file": "work-pagination.spec.ts",
+                  "line": 21,
+                  "column": 21
+                },
+                "count": 1,
+                "skipped": false,
+                "snippet": " \u001b[90m  20 |\u001b[39m     (\n \u001b[90m  21 |\u001b[39m       \u001b[36mawait\u001b[39m request\u001b[33m.\u001b[39mpost(\u001b[32m'/api/e2e/seed'\u001b[39m\u001b[33m,\u001b[39m {\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                    ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m  22 |\u001b[39m         data\u001b[33m:\u001b[39m { action\u001b[33m:\u001b[39m \u001b[32m'seed-inbox-only'\u001b[39m }\u001b[33m,\u001b[39m"
+              },
+              {
+                "title": "Expect \"toBe\"",
+                "startTime": "2026-10-10T22:54:30.847Z",
+                "duration": 0,
+                "steps": [],
+                "attachments": [],
+                "location": {
+                  "file": "work-pagination.spec.ts",
+                  "line": 25,
+                  "column": 5
+                },
+                "count": 1,
+                "skipped": false,
+                "snippet": " \u001b[90m  24 |\u001b[39m     )\u001b[33m.\u001b[39mok()\u001b[33m,\u001b[39m\n \u001b[90m  25 |\u001b[39m   )\u001b[33m.\u001b[39mtoBe(\u001b[36mtrue\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m    ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m  26 |\u001b[39m })\u001b[33m;\u001b[39m"
+              }
+            ],
+            "attachments": [],
+            "location": {
+              "file": "work-pagination.spec.ts",
+              "line": 17,
+              "column": 6
+            },
+            "count": 1,
+            "skipped": false,
+            "snippet": " \u001b[90m  16 |\u001b[39m\n \u001b[90m  17 |\u001b[39m test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ request }) \u001b[33m=>\u001b[39m {\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m     ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m  18 |\u001b[39m   \u001b[36mawait\u001b[39m resetCliSessions()\u001b[33m;\u001b[39m"
+          }
+        ],
+        "attachments": [],
+        "count": 1,
+        "skipped": false
+      },
+      {
+        "title": "Set viewport size",
+        "startTime": "2026-10-10T22:54:30.847Z",
+        "duration": 5,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 289,
+          "column": 14
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 288 |\u001b[39m }) \u001b[33m=>\u001b[39m {\n \u001b[90m 289 |\u001b[39m   \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39msetViewportSize({ width\u001b[33m:\u001b[39m \u001b[35m320\u001b[39m\u001b[33m,\u001b[39m height\u001b[33m:\u001b[39m \u001b[35m740\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m             ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 290 |\u001b[39m   \u001b[36mfor\u001b[39m (\u001b[36mconst\u001b[39m [route\u001b[33m,\u001b[39m destination] \u001b[36mof\u001b[39m ["
+      },
+      {
+        "title": "Navigate",
+        "subtitle": "/",
+        "startTime": "2026-10-10T22:54:30.853Z",
+        "duration": 278,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 295,
+          "column": 16
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 294 |\u001b[39m   ]) {\n \u001b[90m 295 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(route)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m               ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 296 |\u001b[39m     \u001b[36mawait\u001b[39m page"
+      },
+      {
+        "title": "Select option",
+        "subtitle": "getByLabel('Repository', { exact: true })",
+        "startTime": "2026-10-10T22:54:31.131Z",
+        "duration": 190,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 298,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 297 |\u001b[39m       \u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 298 |\u001b[39m       \u001b[33m.\u001b[39mselectOption(\u001b[33mE2E_FIXTURE_REPOSITORY\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 299 |\u001b[39m     \u001b[36mawait\u001b[39m page"
+      },
+      {
+        "title": "Click",
+        "subtitle": "getByRole('button', { name: 'Apply repository', exact: true })",
+        "startTime": "2026-10-10T22:54:31.322Z",
+        "duration": 105,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 301,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 300 |\u001b[39m       \u001b[33m.\u001b[39mgetByRole(\u001b[32m'button'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[32m'Apply repository'\u001b[39m\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 301 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 302 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m"
+      },
+      {
+        "title": "Expect \"toHaveURL\"",
+        "startTime": "2026-10-10T22:54:31.430Z",
+        "duration": 80,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 302,
+          "column": 24
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 301 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 302 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 303 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue("
+      },
+      {
+        "title": "Expect \"toHaveValue\"",
+        "subtitle": "getByLabel('Repository', { exact: true })",
+        "startTime": "2026-10-10T22:54:31.511Z",
+        "duration": 103,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 303,
+          "column": 66
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 302 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 303 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue(\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                                                                 ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 304 |\u001b[39m       \u001b[33mE2E_FIXTURE_REPOSITORY\u001b[39m\u001b[33m,\u001b[39m"
+      },
+      {
+        "title": "Expect \"toBeVisible\"",
+        "subtitle": "getByRole('link', { name: 'Clear repository', exact: true })",
+        "startTime": "2026-10-10T22:54:31.615Z",
+        "duration": 80,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 308,
+          "column": 7
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 307 |\u001b[39m       page\u001b[33m.\u001b[39mgetByRole(\u001b[32m'link'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[32m'Clear repository'\u001b[39m\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\u001b[33m,\u001b[39m\n \u001b[90m 308 |\u001b[39m     )\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m      ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 309 |\u001b[39m     expect("
+      },
+      {
+        "title": "Evaluate",
+        "startTime": "2026-10-10T22:54:31.695Z",
+        "duration": 28,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 310,
+          "column": 18
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 309 |\u001b[39m     expect(\n \u001b[90m 310 |\u001b[39m       \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mevaluate(\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                 ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 311 |\u001b[39m         () \u001b[33m=>\u001b[39m document\u001b[33m.\u001b[39mdocumentElement\u001b[33m.\u001b[39mscrollWidth \u001b[33m<=\u001b[39m innerWidth\u001b[33m,\u001b[39m"
+      },
+      {
+        "title": "Expect \"toBe\"",
+        "startTime": "2026-10-10T22:54:31.723Z",
+        "duration": 0,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 313,
+          "column": 7
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 312 |\u001b[39m       )\u001b[33m,\u001b[39m\n \u001b[90m 313 |\u001b[39m     )\u001b[33m.\u001b[39mtoBe(\u001b[36mtrue\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m      ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 314 |\u001b[39m     \u001b[90m// The phone utility menu must carry scope to the next destination.\u001b[39m"
+      },
+      {
+        "title": "Click",
+        "subtitle": "getByRole('button', { name: 'More console options', exact: true })",
+        "startTime": "2026-10-10T22:54:31.724Z",
+        "duration": 52,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 317,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 316 |\u001b[39m       \u001b[33m.\u001b[39mgetByRole(\u001b[32m'button'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[32m'More console options'\u001b[39m\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 317 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 318 |\u001b[39m     \u001b[36mawait\u001b[39m page"
+      },
+      {
+        "title": "Click",
+        "subtitle": "getByRole('menuitem', { name: 'Inbox', exact: true })",
+        "startTime": "2026-10-10T22:54:31.776Z",
+        "duration": 230,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 320,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 319 |\u001b[39m       \u001b[33m.\u001b[39mgetByRole(\u001b[32m'menuitem'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m destination\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 320 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 321 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m"
+      },
+      {
+        "title": "Expect \"toHaveURL\"",
+        "startTime": "2026-10-10T22:54:32.009Z",
+        "duration": 60,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 321,
+          "column": 24
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 320 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 321 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 322 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue("
+      },
+      {
+        "title": "Expect \"toHaveValue\"",
+        "subtitle": "getByLabel('Repository', { exact: true })",
+        "startTime": "2026-10-10T22:54:32.070Z",
+        "duration": 77,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 322,
+          "column": 66
+        },
+        "error": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveValue\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByLabel('Repository', { exact: true })\nExpected: \u001b[32m\"supersprinklesracing/sprinkles\"\u001b[39m\nError: strict mode violation: getByLabel('Repository', { exact: true }) resolved to 2 elements:\n    1) <select name=\"repo\" data-variant=\"default\" id=\"mantine-8f1guw8n4\" class=\"m_8fb7ebe7 mantine-Input-input mantine-NativeSelect-input\">\u2026</select> aka getByRole('combobox')\n    2) <select name=\"repo\" data-variant=\"default\" id=\"mantine-i5bqsjkop\" class=\"m_8fb7ebe7 mantine-Input-input mantine-NativeSelect-input\">\u2026</select> aka locator('#mantine-i5bqsjkop')\n\nCall log:\n\u001b[2m  - Expect \"toHaveValue\" getByLabel('Repository', { exact: true }) with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByLabel('Repository', { exact: true })\u001b[22m\n",
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 321 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 322 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue(\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                                                                 ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 323 |\u001b[39m       \u001b[33mE2E_FIXTURE_REPOSITORY\u001b[39m\u001b[33m,\u001b[39m"
+      },
+      {
+        "title": "After Hooks",
+        "startTime": "2026-10-10T22:54:32.148Z",
+        "duration": 198,
+        "steps": [
+          {
+            "title": "Fixture \"request\"",
+            "startTime": "2026-10-10T22:54:32.193Z",
+            "duration": 13,
+            "steps": [],
+            "attachments": [],
+            "count": 1,
+            "skipped": false
+          },
+          {
+            "title": "Fixture \"page\"",
+            "startTime": "2026-10-10T22:54:32.206Z",
+            "duration": 0,
+            "steps": [],
+            "attachments": [],
+            "count": 1,
+            "skipped": false
+          },
+          {
+            "title": "Fixture \"context\"",
+            "startTime": "2026-10-10T22:54:32.207Z",
+            "duration": 101,
+            "steps": [
+              {
+                "title": "Close context",
+                "startTime": "2026-10-10T22:54:32.303Z",
+                "duration": 5,
+                "steps": [],
+                "attachments": [],
+                "count": 1,
+                "skipped": false
+              }
+            ],
+            "attachments": [],
+            "count": 1,
+            "skipped": false
+          },
+          {
+            "title": "afterAll hook",
+            "startTime": "2026-10-10T22:54:32.313Z",
+            "duration": 33,
+            "steps": [],
+            "attachments": [],
+            "location": {
+              "file": "work-pagination.spec.ts",
+              "line": 28,
+              "column": 6
+            },
+            "count": 1,
+            "skipped": false,
+            "snippet": " \u001b[90m  27 |\u001b[39m\n \u001b[90m  28 |\u001b[39m test\u001b[33m.\u001b[39mafterAll(\u001b[36masync\u001b[39m () \u001b[33m=>\u001b[39m {\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m     ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m  29 |\u001b[39m   \u001b[36mawait\u001b[39m resetCliSessions()\u001b[33m;\u001b[39m"
+          }
+        ],
+        "attachments": [0],
+        "count": 1,
+        "skipped": false
+      },
+      {
+        "title": "Worker Cleanup",
+        "startTime": "2026-10-10T22:54:32.346Z",
+        "duration": 24,
+        "steps": [
+          {
+            "title": "Fixture \"browser\"",
+            "startTime": "2026-10-10T22:54:32.347Z",
+            "duration": 22,
+            "steps": [],
+            "attachments": [],
+            "count": 1,
+            "skipped": false
+          }
+        ],
+        "attachments": [],
+        "count": 1,
+        "skipped": false
+      }
+    ],
+    "errors": [
+      {
+        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveValue\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByLabel('Repository', { exact: true })\nExpected: \u001b[32m\"supersprinklesracing/sprinkles\"\u001b[39m\nError: strict mode violation: getByLabel('Repository', { exact: true }) resolved to 2 elements:\n    1) <select name=\"repo\" data-variant=\"default\" id=\"mantine-8f1guw8n4\" class=\"m_8fb7ebe7 mantine-Input-input mantine-NativeSelect-input\">\u2026</select> aka getByRole('combobox')\n    2) <select name=\"repo\" data-variant=\"default\" id=\"mantine-i5bqsjkop\" class=\"m_8fb7ebe7 mantine-Input-input mantine-NativeSelect-input\">\u2026</select> aka locator('#mantine-i5bqsjkop')\n\nCall log:\n\u001b[2m  - Expect \"toHaveValue\" getByLabel('Repository', { exact: true }) with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByLabel('Repository', { exact: true })\u001b[22m\n\n\n\u001b[0m \u001b[90m 320 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 321 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 322 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue(\n \u001b[90m     |\u001b[39m                                                                  \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 323 |\u001b[39m       \u001b[33mE2E_FIXTURE_REPOSITORY\u001b[39m\u001b[33m,\u001b[39m\n \u001b[90m 324 |\u001b[39m     )\u001b[33m;\u001b[39m\n \u001b[90m 325 |\u001b[39m     \u001b[36mawait\u001b[39m expect(\u001b[0m\n\u001b[2m    at /home/runner/_work/agent-lcars/agent-lcars/apps/console-e2e/src/work-pagination.spec.ts:322:66\u001b[22m",
+        "codeframe": "  222 |     if (frame === page.mainFrame()) record('main-frame-commit');\n  223 |   };\n  224 |   const onDomContentLoaded = () => record('dom-content-loaded');\n  225 |   const onLoad = () => record('load');\n  226 |   page.on('request', onRequest);\n  227 |   page.on('response', onResponse);\n  228 |   page.on('requestfinished', onFinished);\n  229 |   page.on('requestfailed', onFailed);\n  230 |   page.on('framenavigated', onNavigated);\n  231 |   page.on('domcontentloaded', onDomContentLoaded);\n  232 |   page.on('load', onLoad);\n  233 |   try {\n  234 |     const clear = page.getByRole('link', {\n  235 |       name: 'Clear repository',\n  236 |       exact: true,\n  237 |     });\n  238 |     await expect(clear).toHaveAttribute('href', pathname);\n  239 |\n  240 |     await test.step(`Clear repository on ${destination}: click and navigation`, async () => {\n  241 |       record('click-start');\n  242 |       // Keep Playwright's real click/actionability and default navigation wait.\n  243 |       // Both recorded retries finished this action in <100ms. A finite 15s\n  244 |       // action bound leaves time to attach evidence before the unchanged 90s\n  245 |       // test deadline, without accepting a missing click or bypassing a wait.\n  246 |       await clear.click({ timeout: 15_000 });\n  247 |       record('click-complete');\n  248 |     });\n  249 |\n  250 |     await test.step(`Clear repository on ${destination}: resolved route`, async () => {\n  251 |       await expect(page).toHaveURL(\n  252 |         (url) => url.pathname === pathname && !url.searchParams.has('repo'),\n  253 |       );\n  254 |       record('scope-cleared');\n  255 |       await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(\n  256 |         '',\n  257 |       );\n  258 |       await expect(\n  259 |         page.getByRole('status', { name: 'Loading', exact: true }),\n  260 |       ).toHaveCount(0);\n  261 |       record('selector-resolved');\n  262 |     });\n  263 |   } finally {\n  264 |     page.off('request', onRequest);\n  265 |     page.off('response', onResponse);\n  266 |     page.off('requestfinished', onFinished);\n  267 |     page.off('requestfailed', onFailed);\n  268 |     page.off('framenavigated', onNavigated);\n  269 |     page.off('domcontentloaded', onDomContentLoaded);\n  270 |     page.off('load', onLoad);\n  271 |     await test\n  272 |       .info()\n  273 |       .attach(`repository-clear-${destination.toLowerCase()}-phases`, {\n  274 |         body: JSON.stringify({\n  275 |           retry: test.info().retry,\n  276 |           destination,\n  277 |           pathname,\n  278 |           clickTimeoutMs: 15_000,\n  279 |           phases,\n  280 |         }),\n  281 |         contentType: 'application/json',\n  282 |       });\n  283 |   }\n  284 | }\n  285 |\n  286 | test('repository selection and clearing remain reachable on phones across Bridge, Inbox and Agents', async ({\n  287 |   page,\n  288 | }) => {\n  289 |   await page.setViewportSize({ width: 320, height: 740 });\n  290 |   for (const [route, destination] of [\n  291 |     ['/', 'Inbox'],\n  292 |     ['/inbox', 'Agents'],\n  293 |     ['/agents', 'Bridge'],\n  294 |   ]) {\n  295 |     await page.goto(route);\n  296 |     await page\n  297 |       .getByLabel('Repository', { exact: true })\n  298 |       .selectOption(E2E_FIXTURE_REPOSITORY);\n  299 |     await page\n  300 |       .getByRole('button', { name: 'Apply repository', exact: true })\n  301 |       .click();\n  302 |     await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);\n  303 |     await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(\n  304 |       E2E_FIXTURE_REPOSITORY,\n  305 |     );\n  306 |     await expect(\n  307 |       page.getByRole('link', { name: 'Clear repository', exact: true }),\n  308 |     ).toBeVisible();\n  309 |     expect(\n  310 |       await page.evaluate(\n  311 |         () => document.documentElement.scrollWidth <= innerWidth,\n  312 |       ),\n  313 |     ).toBe(true);\n  314 |     // The phone utility menu must carry scope to the next destination.\n  315 |     await page\n  316 |       .getByRole('button', { name: 'More console options', exact: true })\n  317 |       .click();\n  318 |     await page\n  319 |       .getByRole('menuitem', { name: destination, exact: true })\n  320 |       .click();\n  321 |     await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);\n> 322 |     await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(\n      |                                                                  ^ Error: expect(locator).toHaveValue(expected) failed\n  323 |       E2E_FIXTURE_REPOSITORY,\n  324 |     );\n  325 |     await expect(\n  326 |       page.getByRole('status', { name: 'Loading', exact: true }),\n  327 |     ).toHaveCount(0);\n  328 |     await clearRepository(page, destination);\n  329 |   }\n  330 | });\n  331 |\n  332 | //"
+      }
+    ],
+    "status": "failed",
+    "annotations": [],
+    "attachments": [
+      {
+        "name": "screenshot",
+        "contentType": "image/png",
+        "path": "data/aa4b5b579ce13b8b63cd7a3c28ab1bdc240cfbad.png",
+        "sha256": "8e5d8318403375c42c32b52676b8c525585b52ba0b0bdbf9ebb61af775374a67",
+        "retainedFile": "ca72-first-attempt.png"
+      },
+      {
+        "name": "error-context",
+        "contentType": "text/markdown",
+        "path": "data/479a33bef1b616d580ee635317a57857f188f5d7.md",
+        "sha256": "94187fc0f5532887112d9d3e60371559d1408da3921bd4dfd1c53d9fe172a89a"
+      },
+      {
+        "name": "error-context",
+        "contentType": "text/markdown",
+        "path": "data/479a33bef1b616d580ee635317a57857f188f5d7.md",
+        "sha256": "94187fc0f5532887112d9d3e60371559d1408da3921bd4dfd1c53d9fe172a89a"
+      },
+      {
+        "name": "trace",
+        "contentType": "application/zip",
+        "path": "data/9d052683e1e05a78f3b8a0a3368a88ad37f8b45b.zip",
+        "sha256": "56786325ce2a45a58292bd34e02d287ebcac29338a8b2f8171208ecdfdcc5727"
+      }
+    ],
+    "workerIndex": 1
+  }
+}

@@ -1,7 +1,14 @@
 import { oc } from '@orpc/contract';
-import { openapi } from '@orpc/openapi';
+import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
 
+import {
+  activationContract,
+  capacityClaimResponseSchema,
+  capacityContract,
+  capacityInventoryContract,
+  capacityMetricsContract,
+} from './capacity-contract';
 import { parseCron } from './cron';
 import {
   fallbackPipelinesSchema,
@@ -94,7 +101,7 @@ export const itemRunViewSchema = z.strictObject({
   replyPrincipal: z.string().max(256).optional(),
   queue: z
     .strictObject({
-      state: z.enum(['queued', 'claimed']),
+      state: z.enum(['queued', 'claimed', 'retired']),
       claimedBy: z.string().optional(),
       claimedAt: z.string().optional(),
       firstHeartbeatAt: z.string().optional(),
@@ -873,14 +880,37 @@ export const runBriefSchema = z.union([
  *  other run routes are called by the runner presenting the token
  *  `claim` returned, hence the distinct `runToken` scheme. */
 const runToken = { security: [{ runToken: [] }] };
-const withRunToken = <T extends object>(current: T) => ({
+const withRunToken = (current: OpenAPIV3_2.OperationObject) => ({
   ...current,
   ...runToken,
+  parameters: [
+    ...(current.parameters ?? []),
+    {
+      name: 'x-lcars-worker-identity',
+      in: 'header' as const,
+      required: false,
+      description:
+        'Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.',
+      schema: { type: 'string' as const },
+    },
+    {
+      name: 'x-lcars-worker-generation',
+      in: 'header' as const,
+      required: false,
+      description:
+        'Required for receipt-mode runs: exact generation returned by activation.',
+      schema: { type: 'integer' as const, minimum: 1 },
+    },
+  ],
 });
 
 const runBase = oc.meta(openapi({ tags: ['runs'] }));
 
 export const runsContract = {
+  capacity: capacityContract,
+  capacityInventory: capacityInventoryContract,
+  capacityMetrics: capacityMetricsContract,
+  activate: activationContract,
   claim: runBase
     .meta(
       openapi({
@@ -902,13 +932,19 @@ export const runsContract = {
     // published document list 401 for this route at all.
     .errors({
       UNAUTHORIZED: { message: 'work.executor scope required' },
+      CONFLICT: { message: 'Receipt-aware capacity policy refused' },
     })
     .input(
       z.strictObject({
         runner: z.string().min(1).max(256),
+        capacityVersion: z.number().int().positive().optional(),
+        producerId: z.string().min(1).max(175).optional(),
+        claimRequestId: z.string().min(1).max(175).optional(),
       }),
     )
-    .output(runClaimResponseSchema.optional()),
+    .output(
+      z.union([runClaimResponseSchema, capacityClaimResponseSchema]).optional(),
+    ),
   brief: runBase
     .meta(
       openapi({
@@ -919,7 +955,10 @@ export const runsContract = {
         spec: withRunToken,
       }),
     )
-    .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      CONFLICT: { message: 'Worker generation refused' },
+    })
     .input(z.strictObject({ runId: runIdSchema }))
     .output(runBriefSchema),
   heartbeat: runBase
@@ -932,7 +971,10 @@ export const runsContract = {
         spec: withRunToken,
       }),
     )
-    .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      CONFLICT: { message: 'Worker generation refused' },
+    })
     .input(
       z.strictObject({
         runId: runIdSchema,
@@ -1018,7 +1060,10 @@ export const runsContract = {
         spec: withRunToken,
       }),
     )
-    .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      CONFLICT: { message: 'Worker generation refused' },
+    })
     .input(
       z.strictObject({
         runId: runIdSchema,
@@ -1042,7 +1087,10 @@ export const runsContract = {
         spec: withRunToken,
       }),
     )
-    .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      CONFLICT: { message: 'Worker generation refused' },
+    })
     .input(z.strictObject({ runId: runIdSchema }))
     .output(
       z.strictObject({

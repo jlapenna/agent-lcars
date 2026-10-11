@@ -1,3 +1,5 @@
+export * from './capacity';
+export * from './capacity-model';
 export * from './credential-operation';
 export * from './decide';
 export {

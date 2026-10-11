@@ -1,0 +1,503 @@
+{
+  "source": {
+    "run": 37947986161,
+    "job": 113879140019,
+    "artifact": 11625135471,
+    "head": "16ee77dc15f2256491568e2b89dded358402d44b",
+    "reportFile": "e0d7f4cd6f2f8da6d2f8.json",
+    "reportSha256": "bc76e87581e26834a0c94ff287cd84f768dc080f980d3445a5bcfcfc09dabd66",
+    "jobLogSha256": "bc327828a775116974f97e79b147a59eccbb0bd0892182514526e64ef487b14d",
+    "jobLogDownloadCommand": "gh api --allow-escape-sequences repos/jlapenna/agent-lcars/actions/jobs/113879140019/logs > job-113879140019.log",
+    "jobLogRepresentation": "Raw individual job endpoint output; no decoding, prefixing, ANSI removal or newline transformation."
+  },
+  "title": "repository selection and clearing remain reachable on phones across Bridge, Inbox and Agents",
+  "location": {
+    "file": "work-pagination.spec.ts",
+    "line": 177,
+    "column": 5
+  },
+  "result": {
+    "duration": 90051,
+    "startTime": "2026-10-09T15:03:11.115Z",
+    "retry": 0,
+    "steps": [
+      {
+        "title": "Before Hooks",
+        "startTime": "2026-10-09T15:03:11.116Z",
+        "duration": 334,
+        "steps": [
+          {
+            "title": "beforeEach hook",
+            "startTime": "2026-10-09T15:03:11.116Z",
+            "duration": 31,
+            "steps": [
+              {
+                "title": "Fixture \"context\"",
+                "startTime": "2026-10-09T15:03:11.120Z",
+                "duration": 3,
+                "steps": [
+                  {
+                    "title": "Create context",
+                    "startTime": "2026-10-09T15:03:11.121Z",
+                    "duration": 1,
+                    "steps": [],
+                    "attachments": [],
+                    "count": 1,
+                    "skipped": false
+                  }
+                ],
+                "attachments": [],
+                "count": 1,
+                "skipped": false
+              },
+              {
+                "title": "Fixture \"page\"",
+                "startTime": "2026-10-09T15:03:11.123Z",
+                "duration": 22,
+                "steps": [
+                  {
+                    "title": "Create page",
+                    "startTime": "2026-10-09T15:03:11.124Z",
+                    "duration": 21,
+                    "steps": [],
+                    "attachments": [],
+                    "count": 1,
+                    "skipped": false
+                  }
+                ],
+                "attachments": [],
+                "count": 1,
+                "skipped": false
+              }
+            ],
+            "attachments": [],
+            "location": {
+              "file": "util/e2e-test-utils.ts",
+              "line": 16,
+              "column": 8
+            },
+            "count": 1,
+            "skipped": false,
+            "snippet": " \u001b[90m 15 |\u001b[39m \u001b[36mexport\u001b[39m \u001b[36mfunction\u001b[39m useE2eAdminBeforeEach() {\n \u001b[90m 16 |\u001b[39m   test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ page }) \u001b[33m=>\u001b[39m {\n \u001b[90m    |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 17 |\u001b[39m     \u001b[36mawait\u001b[39m setE2eAdminUser(page)\u001b[33m;\u001b[39m"
+          },
+          {
+            "title": "beforeEach hook",
+            "startTime": "2026-10-09T15:03:11.147Z",
+            "duration": 303,
+            "steps": [
+              {
+                "title": "Fixture \"request\"",
+                "startTime": "2026-10-09T15:03:11.147Z",
+                "duration": 1,
+                "steps": [
+                  {
+                    "title": "Create request context",
+                    "startTime": "2026-10-09T15:03:11.147Z",
+                    "duration": 1,
+                    "steps": [],
+                    "attachments": [],
+                    "count": 1,
+                    "skipped": false
+                  }
+                ],
+                "attachments": [],
+                "count": 1,
+                "skipped": false
+              },
+              {
+                "title": "POST",
+                "subtitle": "/api/e2e/seed",
+                "startTime": "2026-10-09T15:03:11.431Z",
+                "duration": 18,
+                "steps": [],
+                "attachments": [],
+                "location": {
+                  "file": "work-pagination.spec.ts",
+                  "line": 16,
+                  "column": 21
+                },
+                "count": 1,
+                "skipped": false,
+                "snippet": " \u001b[90m  15 |\u001b[39m     (\n \u001b[90m  16 |\u001b[39m       \u001b[36mawait\u001b[39m request\u001b[33m.\u001b[39mpost(\u001b[32m'/api/e2e/seed'\u001b[39m\u001b[33m,\u001b[39m {\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                    ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m  17 |\u001b[39m         data\u001b[33m:\u001b[39m { action\u001b[33m:\u001b[39m \u001b[32m'seed-inbox-only'\u001b[39m }\u001b[33m,\u001b[39m"
+              },
+              {
+                "title": "Expect \"toBe\"",
+                "startTime": "2026-10-09T15:03:11.450Z",
+                "duration": 0,
+                "steps": [],
+                "attachments": [],
+                "location": {
+                  "file": "work-pagination.spec.ts",
+                  "line": 20,
+                  "column": 5
+                },
+                "count": 1,
+                "skipped": false,
+                "snippet": " \u001b[90m  19 |\u001b[39m     )\u001b[33m.\u001b[39mok()\u001b[33m,\u001b[39m\n \u001b[90m  20 |\u001b[39m   )\u001b[33m.\u001b[39mtoBe(\u001b[36mtrue\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m    ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m  21 |\u001b[39m })\u001b[33m;\u001b[39m"
+              }
+            ],
+            "attachments": [],
+            "location": {
+              "file": "work-pagination.spec.ts",
+              "line": 12,
+              "column": 6
+            },
+            "count": 1,
+            "skipped": false,
+            "snippet": " \u001b[90m  11 |\u001b[39m\n \u001b[90m  12 |\u001b[39m test\u001b[33m.\u001b[39mbeforeEach(\u001b[36masync\u001b[39m ({ request }) \u001b[33m=>\u001b[39m {\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m     ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m  13 |\u001b[39m   \u001b[36mawait\u001b[39m resetCliSessions()\u001b[33m;\u001b[39m"
+          }
+        ],
+        "attachments": [],
+        "count": 1,
+        "skipped": false
+      },
+      {
+        "title": "Set viewport size",
+        "startTime": "2026-10-09T15:03:11.450Z",
+        "duration": 1,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 180,
+          "column": 14
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 179 |\u001b[39m }) \u001b[33m=>\u001b[39m {\n \u001b[90m 180 |\u001b[39m   \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39msetViewportSize({ width\u001b[33m:\u001b[39m \u001b[35m320\u001b[39m\u001b[33m,\u001b[39m height\u001b[33m:\u001b[39m \u001b[35m740\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m             ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 181 |\u001b[39m   \u001b[36mfor\u001b[39m (\u001b[36mconst\u001b[39m [route\u001b[33m,\u001b[39m destination] \u001b[36mof\u001b[39m ["
+      },
+      {
+        "title": "Navigate",
+        "subtitle": "/",
+        "startTime": "2026-10-09T15:03:11.452Z",
+        "duration": 140,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 186,
+          "column": 16
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 185 |\u001b[39m   ]) {\n \u001b[90m 186 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(route)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m               ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 187 |\u001b[39m     \u001b[36mawait\u001b[39m page"
+      },
+      {
+        "title": "Select option",
+        "subtitle": "getByLabel('Repository', { exact: true })",
+        "startTime": "2026-10-09T15:03:11.592Z",
+        "duration": 124,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 189,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 188 |\u001b[39m       \u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 189 |\u001b[39m       \u001b[33m.\u001b[39mselectOption(\u001b[33mE2E_FIXTURE_REPOSITORY\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 190 |\u001b[39m     \u001b[36mawait\u001b[39m page"
+      },
+      {
+        "title": "Click",
+        "subtitle": "getByRole('button', { name: 'Apply repository', exact: true })",
+        "startTime": "2026-10-09T15:03:11.717Z",
+        "duration": 80,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 192,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 191 |\u001b[39m       \u001b[33m.\u001b[39mgetByRole(\u001b[32m'button'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[32m'Apply repository'\u001b[39m\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 192 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 193 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m"
+      },
+      {
+        "title": "Expect \"toHaveURL\"",
+        "startTime": "2026-10-09T15:03:11.797Z",
+        "duration": 37,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 193,
+          "column": 24
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 192 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 193 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 194 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue("
+      },
+      {
+        "title": "Expect \"toHaveValue\"",
+        "subtitle": "getByLabel('Repository', { exact: true })",
+        "startTime": "2026-10-09T15:03:11.835Z",
+        "duration": 42,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 194,
+          "column": 66
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 193 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 194 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue(\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                                                                 ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 195 |\u001b[39m       \u001b[33mE2E_FIXTURE_REPOSITORY\u001b[39m\u001b[33m,\u001b[39m"
+      },
+      {
+        "title": "Expect \"toBeVisible\"",
+        "subtitle": "getByRole('link', { name: 'Clear repository', exact: true })",
+        "startTime": "2026-10-09T15:03:11.878Z",
+        "duration": 34,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 199,
+          "column": 7
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 198 |\u001b[39m       page\u001b[33m.\u001b[39mgetByRole(\u001b[32m'link'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[32m'Clear repository'\u001b[39m\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\u001b[33m,\u001b[39m\n \u001b[90m 199 |\u001b[39m     )\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m      ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 200 |\u001b[39m     expect("
+      },
+      {
+        "title": "Evaluate",
+        "startTime": "2026-10-09T15:03:11.913Z",
+        "duration": 4,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 201,
+          "column": 18
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 200 |\u001b[39m     expect(\n \u001b[90m 201 |\u001b[39m       \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mevaluate(\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                 ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 202 |\u001b[39m         () \u001b[33m=>\u001b[39m document\u001b[33m.\u001b[39mdocumentElement\u001b[33m.\u001b[39mscrollWidth \u001b[33m<=\u001b[39m innerWidth\u001b[33m,\u001b[39m"
+      },
+      {
+        "title": "Expect \"toBe\"",
+        "startTime": "2026-10-09T15:03:11.918Z",
+        "duration": 0,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 204,
+          "column": 7
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 203 |\u001b[39m       )\u001b[33m,\u001b[39m\n \u001b[90m 204 |\u001b[39m     )\u001b[33m.\u001b[39mtoBe(\u001b[36mtrue\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m      ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 205 |\u001b[39m     \u001b[90m// The phone utility menu must carry scope to the next destination.\u001b[39m"
+      },
+      {
+        "title": "Click",
+        "subtitle": "getByRole('button', { name: 'More console options', exact: true })",
+        "startTime": "2026-10-09T15:03:11.918Z",
+        "duration": 72,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 208,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 207 |\u001b[39m       \u001b[33m.\u001b[39mgetByRole(\u001b[32m'button'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[32m'More console options'\u001b[39m\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 208 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 209 |\u001b[39m     \u001b[36mawait\u001b[39m page"
+      },
+      {
+        "title": "Click",
+        "subtitle": "getByRole('menuitem', { name: 'Inbox', exact: true })",
+        "startTime": "2026-10-09T15:03:11.991Z",
+        "duration": 38,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 211,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 210 |\u001b[39m       \u001b[33m.\u001b[39mgetByRole(\u001b[32m'menuitem'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m destination\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 211 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 212 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m"
+      },
+      {
+        "title": "Expect \"toHaveURL\"",
+        "startTime": "2026-10-09T15:03:12.030Z",
+        "duration": 2,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 212,
+          "column": 24
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 211 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 212 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 213 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue("
+      },
+      {
+        "title": "Expect \"toHaveValue\"",
+        "subtitle": "getByLabel('Repository', { exact: true })",
+        "startTime": "2026-10-09T15:03:12.032Z",
+        "duration": 2,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 213,
+          "column": 66
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 212 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=supersprinklesracing%2Fsprinkles/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 213 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page\u001b[33m.\u001b[39mgetByLabel(\u001b[32m'Repository'\u001b[39m\u001b[33m,\u001b[39m { exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m }))\u001b[33m.\u001b[39mtoHaveValue(\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m                                                                 ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 214 |\u001b[39m       \u001b[33mE2E_FIXTURE_REPOSITORY\u001b[39m\u001b[33m,\u001b[39m"
+      },
+      {
+        "title": "Expect \"toHaveCount\"",
+        "subtitle": "getByRole('status', { name: 'Loading', exact: true })",
+        "startTime": "2026-10-09T15:03:12.035Z",
+        "duration": 10,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 218,
+          "column": 7
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 217 |\u001b[39m       page\u001b[33m.\u001b[39mgetByRole(\u001b[32m'status'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[32m'Loading'\u001b[39m\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\u001b[33m,\u001b[39m\n \u001b[90m 218 |\u001b[39m     )\u001b[33m.\u001b[39mtoHaveCount(\u001b[35m0\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m      ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 219 |\u001b[39m     \u001b[36mawait\u001b[39m page"
+      },
+      {
+        "title": "Click",
+        "subtitle": "getByRole('link', { name: 'Clear repository', exact: true })",
+        "startTime": "2026-10-09T15:03:12.046Z",
+        "duration": -1,
+        "steps": [],
+        "attachments": [],
+        "location": {
+          "file": "work-pagination.spec.ts",
+          "line": 221,
+          "column": 8
+        },
+        "count": 1,
+        "skipped": false,
+        "snippet": " \u001b[90m 220 |\u001b[39m       \u001b[33m.\u001b[39mgetByRole(\u001b[32m'link'\u001b[39m\u001b[33m,\u001b[39m { name\u001b[33m:\u001b[39m \u001b[32m'Clear repository'\u001b[39m\u001b[33m,\u001b[39m exact\u001b[33m:\u001b[39m \u001b[36mtrue\u001b[39m })\n \u001b[90m 221 |\u001b[39m       \u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m       ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m 222 |\u001b[39m     \u001b[36mawait\u001b[39m expect(page)\u001b[33m.\u001b[39mnot\u001b[33m.\u001b[39mtoHaveURL(\u001b[35m/repo=/\u001b[39m)\u001b[33m;\u001b[39m"
+      },
+      {
+        "title": "After Hooks",
+        "startTime": "2026-10-09T15:04:41.123Z",
+        "duration": 95,
+        "steps": [
+          {
+            "title": "Fixture \"request\"",
+            "startTime": "2026-10-09T15:04:41.140Z",
+            "duration": 1,
+            "steps": [],
+            "attachments": [],
+            "count": 1,
+            "skipped": false
+          },
+          {
+            "title": "Fixture \"page\"",
+            "startTime": "2026-10-09T15:04:41.142Z",
+            "duration": 0,
+            "steps": [],
+            "attachments": [],
+            "count": 1,
+            "skipped": false
+          },
+          {
+            "title": "Fixture \"context\"",
+            "startTime": "2026-10-09T15:04:41.142Z",
+            "duration": 31,
+            "steps": [
+              {
+                "title": "Close context",
+                "startTime": "2026-10-09T15:04:41.171Z",
+                "duration": 2,
+                "steps": [],
+                "attachments": [],
+                "count": 1,
+                "skipped": false
+              }
+            ],
+            "attachments": [],
+            "count": 1,
+            "skipped": false
+          },
+          {
+            "title": "afterAll hook",
+            "startTime": "2026-10-09T15:04:41.180Z",
+            "duration": 37,
+            "steps": [],
+            "attachments": [],
+            "location": {
+              "file": "work-pagination.spec.ts",
+              "line": 23,
+              "column": 6
+            },
+            "count": 1,
+            "skipped": false,
+            "snippet": " \u001b[90m  22 |\u001b[39m\n \u001b[90m  23 |\u001b[39m test\u001b[33m.\u001b[39mafterAll(\u001b[36masync\u001b[39m () \u001b[33m=>\u001b[39m {\n \u001b[90m     |\u001b[39m \u001b[31m\u001b[1m     ^\u001b[22m\u001b[39m\u001b[0m\n \u001b[90m  24 |\u001b[39m   \u001b[36mawait\u001b[39m resetCliSessions()\u001b[33m;\u001b[39m"
+          }
+        ],
+        "attachments": [0],
+        "count": 1,
+        "skipped": false
+      },
+      {
+        "title": "Worker Cleanup",
+        "startTime": "2026-10-09T15:04:41.218Z",
+        "duration": 28,
+        "steps": [
+          {
+            "title": "Fixture \"browser\"",
+            "startTime": "2026-10-09T15:04:41.219Z",
+            "duration": 26,
+            "steps": [],
+            "attachments": [],
+            "count": 1,
+            "skipped": false
+          }
+        ],
+        "attachments": [],
+        "count": 1,
+        "skipped": false
+      }
+    ],
+    "errors": [
+      {
+        "message": "\u001b[31mTest timeout of 90000ms exceeded.\u001b[39m"
+      }
+    ],
+    "status": "timedOut",
+    "annotations": [],
+    "attachments": [
+      {
+        "name": "screenshot",
+        "contentType": "image/png",
+        "path": "data/817c4f1a76edf80ddd1bcb19326cf466ac53b1dd.png",
+        "sha256": "2dde2318d146f557276098352b7b2a3753502b7918e7642dd01b08deeec8eaff",
+        "retainedFile": "16ee-first-attempt.png"
+      },
+      {
+        "name": "error-context",
+        "contentType": "text/markdown",
+        "path": "data/d29291d895eca0bd57483cbc5cee1531b6304e9e.md",
+        "sha256": "614e0a415b4f53faebe47ca4393620d1f9376db6fb6551701b54fb0648d9b70e",
+        "retainedFile": "16ee-first-attempt-context.txt"
+      },
+      {
+        "name": "error-context",
+        "contentType": "text/markdown",
+        "path": "data/d29291d895eca0bd57483cbc5cee1531b6304e9e.md",
+        "sha256": "614e0a415b4f53faebe47ca4393620d1f9376db6fb6551701b54fb0648d9b70e",
+        "retainedFile": "16ee-first-attempt-context.txt"
+      }
+    ],
+    "workerIndex": 0
+  }
+}
