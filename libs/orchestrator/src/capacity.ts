@@ -14,7 +14,7 @@ import {
   retiredKey,
 } from './capacity-model';
 import { runLeaseExpiresAt, runStartDeadlineAt } from './decide';
-import { isLive, type Run, taskKey } from './model';
+import { isLive, type Run, runRecoveryDeadline, taskKey } from './model';
 import {
   isQueueAdmissionCandidate,
   QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
@@ -474,7 +474,7 @@ export class CapacityProtocol {
               (run) =>
                 run.runId === receipt.runId &&
                 isLive(run.state) &&
-                run.leaseExpiresAt > input.now,
+                (runRecoveryDeadline(run) ?? run.leaseExpiresAt) > input.now,
             )
           ) {
             return {
@@ -889,7 +889,7 @@ export class CapacityProtocol {
           receipt.state === 'retiring' ||
           run === undefined ||
           !isLive(run.state) ||
-          run.leaseExpiresAt <= input.now
+          (runRecoveryDeadline(run) ?? run.leaseExpiresAt) <= input.now
         )
           throw new CapacityRefusal('retired');
         if (

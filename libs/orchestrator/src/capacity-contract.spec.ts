@@ -342,6 +342,77 @@ function contract(
       expect((await protocol.read(now)).receipts).toHaveLength(1);
     });
 
+    it('startup deadline refuses late activation and recovery while retaining physical occupancy', async () => {
+      const { store, protocol, a, orchestrator } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a, 'late-activation');
+      await bind(protocol, a, receipt);
+      await protocol.attest(a, fence(receipt), {
+        recoveryNonce,
+        jobUid: 'job-original',
+        podUid: 'pod-original',
+        generation: 1,
+        owned: true,
+        now,
+      });
+      const before = await store.readRun(receipt.runId);
+      await expect(
+        protocol.activate({
+          fence: fence(receipt),
+          jobUid: 'job-original',
+          podUid: 'pod-original',
+          tokenHash,
+          now: runStartDeadlineAt(now),
+        }),
+      ).rejects.toThrow('retired');
+      expect(await store.readRun(receipt.runId)).toEqual(before);
+      expect((await protocol.read(now)).receipts[0]?.worker).toBeUndefined();
+      expect(
+        await protocol.claim(a, {
+          version: 1,
+          runner: 'runner-a',
+          producerId: 'producer-a',
+          claimRequestId: 'late-activation',
+          nonce: 'late-replay-nonce-123456',
+          tokenHash,
+          now: runStartDeadlineAt(now),
+        }),
+      ).toMatchObject({ kind: 'quarantined-unrecoverable-token' });
+      expect((await protocol.read(now)).receipts).toHaveLength(1);
+      expect(await store.readRun(receipt.runId)).toEqual(before);
+    });
+
+    it('timely heartbeat retains activation and recovery eligibility after the startup deadline', async () => {
+      const { protocol, a, orchestrator, store, setNow } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a, 'timely-activation');
+      await activate(protocol, a, receipt);
+      setNow('2026-10-10T04:14:59.000Z');
+      expect(
+        isRefusal(await orchestrator.renew(receipt.runId, tokenHash, true)),
+      ).toBe(false);
+      expect(
+        await protocol.activate({
+          fence: fence(receipt),
+          jobUid: 'job-original',
+          podUid: 'pod-original',
+          tokenHash,
+          now: runStartDeadlineAt(now),
+        }),
+      ).toBe(1);
+      expect(
+        await protocol.claim(a, {
+          version: 1,
+          runner: 'runner-a',
+          producerId: 'producer-a',
+          claimRequestId: 'timely-activation',
+          nonce: 'timely-replay-nonce-123456',
+          tokenHash,
+          now: runStartDeadlineAt(now),
+        }),
+      ).toMatchObject({ kind: 'recover-owned-secret' });
+    });
+
     async function credentialFixture() {
       const f = await fixture();
       await enqueue(f.store, f.orchestrator, 'codex');

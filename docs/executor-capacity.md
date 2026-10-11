@@ -123,6 +123,9 @@ resuming a retired attempt.
    verifies the signature, issuer, audience, namespace and service-account UID,
    derives the immutable Pod UID from the signed `kubernetes.io` claim, and
    matches the inventory attestation in one activation transaction.
+   Activation and claim recovery use the canonical first-heartbeat deadline
+   until a timely heartbeat, then the execution lease. An unstarted expired
+   claim cannot receive a provider permit; its physical receipt remains occupied.
 4. Only one Pod/generation receives a provider-execution permit. Activation is
    idempotent for that exact active worker; another Pod is denied. Heartbeat,
    completion, brief and credential routes require the same bound identity and

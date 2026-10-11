@@ -65,11 +65,12 @@ async function call(
 }
 async function fixture(anchor?: { repo: string; issue: number }) {
   const store = new MemoryStore();
-  const orchestrator = new Orchestrator(store, { now: () => now });
+  let instant = now;
+  const orchestrator = new Orchestrator(store, { now: () => instant });
   const context: RunsContext = {
     store,
     orchestrator,
-    now: () => new Date(now),
+    now: () => new Date(instant),
     principal,
     capacityEnabled: true,
     tokens: { tokenFor: async () => 'unused-token' },
@@ -150,6 +151,9 @@ async function fixture(anchor?: { repo: string; issue: number }) {
     protocol: new CapacityProtocol(store),
     claim: claimed.body,
     request,
+    setNow: (value: string) => {
+      instant = value;
+    },
   };
 }
 async function attested(f: Awaited<ReturnType<typeof fixture>>) {
@@ -190,6 +194,76 @@ async function attested(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('receipt HTTP authority and activation', () => {
+  it('verified worker cannot activate at the first-heartbeat deadline before expiry sweep', async () => {
+    const f = await fixture();
+    await attested(f);
+    f.setNow('2026-10-10T04:15:00.000Z');
+    const worker = {
+      ...f.context,
+      principal: undefined,
+      bearerToken: f.claim.token,
+      workerIdentityToken: 'bound-jwt',
+      verifyWorkerIdentity: async () => ({
+        podUid: 'pod-original',
+        namespace: 'lcars',
+      }),
+    };
+    const before = await f.context.store.readRun(f.claim.runId);
+    expect(
+      (
+        await call(worker, '/runs/activate', {
+          fence: f.claim.receipt,
+          jobUid: 'job-original',
+        })
+      ).status,
+    ).toBe(409);
+    expect(await f.context.store.readRun(f.claim.runId)).toEqual(before);
+    expect((await f.protocol.read(now)).receipts).toHaveLength(1);
+    expect((await f.protocol.read(now)).receipts[0]?.worker).toBeUndefined();
+  });
+
+  it('verified timely heartbeat keeps activation valid beyond the startup deadline', async () => {
+    const f = await fixture();
+    await attested(f);
+    const worker = {
+      ...f.context,
+      principal: undefined,
+      bearerToken: f.claim.token,
+      workerIdentityToken: 'bound-jwt',
+      verifyWorkerIdentity: async () => ({
+        podUid: 'pod-original',
+        namespace: 'lcars',
+      }),
+    };
+    expect(
+      (
+        await call(worker, '/runs/activate', {
+          fence: f.claim.receipt,
+          jobUid: 'job-original',
+        })
+      ).status,
+    ).toBe(200);
+    f.setNow('2026-10-10T04:14:59.000Z');
+    expect(
+      (
+        await call(
+          { ...worker, workerGeneration: 1 },
+          `/runs/${encodeURIComponent(f.claim.runId)}/heartbeat`,
+          {},
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (await f.context.store.readRun(f.claim.runId))?.queue?.firstHeartbeatAt,
+    ).toBe('2026-10-10T04:14:59.000Z');
+    f.setNow('2026-10-10T04:15:00.000Z');
+    expect(
+      await call(worker, '/runs/activate', {
+        fence: f.claim.receipt,
+        jobUid: 'job-original',
+      }),
+    ).toEqual({ status: 200, body: { generation: 1 } });
+  });
   it('returns a bounded conflict for the ninth producer without changing the receipt', async () => {
     const f = await fixture();
     const recovery = { fence: f.claim.receipt, recoveryNonce };
