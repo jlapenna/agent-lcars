@@ -177,9 +177,11 @@
 
 7. After verifying the merge, follow the shared
    [worktree-hygiene workflow](https://github.com/jlapenna/repo-tools/blob/main/plugins/repo-tools/skills/worktree-hygiene/SKILL.md)
-   for task cleanup. From outside the target worktree, audit with
-   `repo-prune-merged-worktrees --repo <primary-path> --base origin/main <worktree-path>`;
+   for task cleanup. Use the repository's installed dependency from the primary
+   checkout (run its normal setup after synchronizing the merge). From outside
+   the target worktree, audit with
+   `pnpm --dir <primary-path> exec repo-prune-merged-worktrees --repo <primary-path> --base origin/main <worktree-path>`;
    add `--delete` only for the completed task. The shared command owns merge,
    PR, cleanliness, lock and process checks and local branch deletion. Keep
-   any refused target and investigate its reason, then synchronize the clean
-   primary checkout as specified in this skill.
+   any refused target and investigate its reason. Synchronize the clean primary
+   checkout as specified in this skill before updating its installed tooling.
