@@ -160,3 +160,6 @@ vitest.config.*.timestamp*
 
 # OpenDesign workspace metadata (design prototyping worktree).
 .open-design/
+
+# The global *.txt rule above would otherwise hide the bundled font license text.
+!docs/design/assets/fonts/OFL.txt

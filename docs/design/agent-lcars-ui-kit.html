@@ -4,10 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent LCARS — Console UI Kit</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  @font-face { font-family: "Antonio"; src: url(assets/fonts/Antonio-500-700.woff2) format("woff2"); font-weight: 500 700; font-display: swap; }
+  @font-face { font-family: "IBM Plex Sans"; src: url(assets/fonts/IBMPlexSans-400-600.woff2) format("woff2"); font-weight: 400 600; font-display: swap; }
+  @font-face { font-family: "IBM Plex Mono"; src: url(assets/fonts/IBMPlexMono-400.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "IBM Plex Mono"; src: url(assets/fonts/IBMPlexMono-500.woff2) format("woff2"); font-weight: 500; font-display: swap; }
   :root{
     --bg:#ffffff;
     --fg:#111111;
@@ -21,7 +22,7 @@
   *{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth}
   body{
-    font-family:Inter,system-ui,-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif;
     background:var(--bg);color:var(--fg);
     font-size:16px;line-height:1.55;
     font-variant-numeric:tabular-nums;
@@ -207,7 +208,7 @@
   </h1>
   <div class="mast-facts">
     <span class="fact">Registered palette · 6 tokens</span>
-    <span class="fact">Inter</span>
+    <span class="fact">IBM Plex Sans · bundled</span>
     <span class="fact">8px grid · 8px radius · 1px borders</span>
     <span class="fact">v1 · 2026-10</span>
   </div>
