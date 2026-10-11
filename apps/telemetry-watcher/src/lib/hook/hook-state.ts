@@ -118,3 +118,24 @@ export function shouldShipEvent(
   const elapsed = Date.parse(now) - Date.parse(state.lastShippedAt);
   return !Number.isFinite(elapsed) || elapsed >= throttleMs;
 }
+
+/** How recently a hook must have reported a session for the polling daemon
+ * to leave it alone (docs/hooks-telemetry-design.md §4.1 step 8). Twice the
+ * console's 5-minute display tolerance, so a hook client that dies hands
+ * the session back to the daemon before the console shows it as ended. */
+export const HOOK_REPORTED_WINDOW_MS = 10 * 60 * 1000;
+
+/** Whether a hook client reported this session within the window. The
+ * daemon uses this to skip sessions the hook path already covers, so the
+ * two writers never race on one doc during the rollout. */
+export function isHookReported(
+  stateDirectory: string,
+  sessionId: string,
+  now: string,
+  windowMs = HOOK_REPORTED_WINDOW_MS,
+): boolean {
+  const state = readHookSessionState(stateDirectory, sessionId);
+  if (!state) return false;
+  const age = Date.parse(now) - Date.parse(state.updatedAt);
+  return Number.isFinite(age) && age >= 0 && age <= windowMs;
+}

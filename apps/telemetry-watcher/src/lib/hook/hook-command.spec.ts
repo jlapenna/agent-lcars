@@ -66,6 +66,7 @@ function deps(
     readTranscriptLines: (filePath) =>
       fs.readFileSync(filePath, 'utf8').split('\n'),
     fileExists: (filePath) => fs.existsSync(filePath),
+    findCodexRollout: () => undefined,
     resolveGitRepo: async () => ({ owner: 'jlapenna', name: 'agent-lcars' }),
     resolveGitBranch: async () => 'feat/hooks',
     fetchImpl,
@@ -286,6 +287,79 @@ describe('lcars hook claude', () => {
       'Bearer secret',
     );
     expect(spooledEvents(home)).toEqual([]);
+  });
+});
+
+describe('lcars hook codex', () => {
+  const CODEX_FIXTURE = path.join(
+    __dirname,
+    '../../../../../libs/telemetry/src/lib/fixtures/codex-session.jsonl',
+  );
+  const CODEX_SESSION = 'codex-session-1';
+
+  function codexPayload(
+    hookEventName: string,
+    overrides: Record<string, unknown> = {},
+  ): string {
+    return JSON.stringify({
+      hook_event_name: hookEventName,
+      session_id: CODEX_SESSION,
+      transcript_path: CODEX_FIXTURE,
+      cwd: '/home/developer/p/members',
+      model: 'gpt-6.1-sol',
+      turn_id: 'turn-1',
+      ...overrides,
+    });
+  }
+
+  it('reduces a Codex rollout with the codex adapter', async () => {
+    const home = tempHome();
+    const d = deps(home, codexPayload('Stop'));
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event).toMatchObject({
+      agent: 'codex',
+      kind: 'stop',
+      runtime: { name: 'codex', hookEvent: 'Stop' },
+    });
+    expect(event.summary).toMatchObject({
+      agent: 'codex',
+      sessionId: CODEX_SESSION,
+      host: 'laforge',
+    });
+    expect(event.summary?.turns).toBeGreaterThan(0);
+  });
+
+  it('falls back to locating the rollout when the payload has no transcript path', async () => {
+    const home = tempHome();
+    const d = deps(
+      home,
+      codexPayload('PostToolUse', { transcript_path: null }),
+      {
+        findCodexRollout: (codexHome, sessionId) =>
+          codexHome === path.join(home, '.codex') && sessionId === CODEX_SESSION
+            ? CODEX_FIXTURE
+            : undefined,
+      },
+    );
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    expect(spooledEvents(home)[0].summary?.turns).toBeGreaterThan(0);
+  });
+
+  it('treats Interrupt as a stop and carries the payload model when nothing else has one', async () => {
+    const home = tempHome();
+    const d = deps(
+      home,
+      codexPayload('Interrupt', { transcript_path: '/nope.jsonl' }),
+    );
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event.kind).toBe('stop');
+    expect(event.summary).toMatchObject({
+      turns: 0,
+      model: 'gpt-6.1-sol',
+      agent: 'codex',
+    });
   });
 });
 

@@ -1,38 +1,50 @@
 import { type SessionEventKind } from '@agent-lcars/telemetry';
 
+/** Runtimes whose hooks the `lcars hook <runtime>` client understands. */
+export const HOOK_RUNTIMES = ['claude', 'codex'] as const;
+export type HookRuntime = (typeof HOOK_RUNTIMES)[number];
+
+export function isHookRuntime(value: unknown): value is HookRuntime {
+  return HOOK_RUNTIMES.includes(value as HookRuntime);
+}
+
 /**
- * The subset of a Claude Code hook's stdin JSON the `lcars hook claude`
- * client acts on (https://code.claude.com/docs/en/hooks, "common input
- * fields"). Verified against Claude Code 2.1.296 in print mode on
- * 2026-10-10: `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`,
- * and `SessionEnd` all fire and all carry `session_id`, `cwd`, and
+ * The subset of a runtime hook's stdin JSON the client acts on. Claude Code
+ * (https://code.claude.com/docs/en/hooks) and Codex
+ * (https://learn.chatgpt.com/docs/hooks) share the field names; both were
+ * verified on 2026-10-10 (Claude Code 2.1.296 in print mode, Codex 0.162.1
+ * under `codex exec`) to fire `SessionStart`, `UserPromptSubmit`,
+ * `PostToolUse`, `Stop`, and `SessionEnd` with `session_id`, `cwd`, and
  * `transcript_path`. `prompt`, `tool_input`, `tool_response`, and
  * `last_assistant_message` are deliberately not read: the client ships
  * summaries only, never bodies.
  */
-export interface ClaudeHookPayload {
+export interface HookPayload {
   readonly hookEventName: string;
   readonly sessionId: string;
+  /** Claude always sets it; Codex documents it as nullable. */
   readonly transcriptPath?: string;
   readonly cwd?: string;
   /** `SessionStart.source`: startup | resume | clear | compact | fork. */
   readonly source?: string;
   /** `SessionEnd.reason`. */
   readonly reason?: string;
+  /** Codex puts the model on every payload; Claude only sometimes. */
+  readonly model?: string;
   /** Present when the hook fired inside a subagent; such payloads are
    * skipped (the parent transcript already carries the sidechain). */
   readonly isSubagent: boolean;
 }
 
-/** Claude hook event name → session event kind. Events not listed here
- * (Notification, PreCompact, ...) are accepted and ignored. */
-export const CLAUDE_HOOK_EVENT_KINDS: Readonly<
-  Record<string, SessionEventKind>
-> = {
+/** Hook event name → session event kind. Events not listed here
+ * (Notification, PreCompact, ...) are accepted and ignored. Codex's
+ * `Interrupt` means the turn stopped, so it maps like `Stop`. */
+export const HOOK_EVENT_KINDS: Readonly<Record<string, SessionEventKind>> = {
   SessionStart: 'start',
   UserPromptSubmit: 'prompt',
   PostToolUse: 'tool',
   Stop: 'stop',
+  Interrupt: 'stop',
   SessionEnd: 'end',
 };
 
@@ -40,9 +52,7 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-export function parseClaudeHookPayload(
-  raw: string,
-): ClaudeHookPayload | undefined {
+export function parseHookPayload(raw: string): HookPayload | undefined {
   if (raw.trim().length === 0) return undefined;
   let parsed: unknown;
   try {
@@ -61,6 +71,7 @@ export function parseClaudeHookPayload(
   const cwd = optionalString(record['cwd']);
   const source = optionalString(record['source']);
   const reason = optionalString(record['reason']);
+  const model = optionalString(record['model']);
   return {
     hookEventName,
     sessionId,
@@ -68,6 +79,7 @@ export function parseClaudeHookPayload(
     ...(cwd && { cwd }),
     ...(source && { source }),
     ...(reason && { reason }),
+    ...(model && { model }),
     isSubagent: optionalString(record['agent_id']) !== undefined,
   };
 }

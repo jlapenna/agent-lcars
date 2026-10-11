@@ -197,17 +197,16 @@ For Codex, the watcher derives its inferred title from the first real user
 input in watched rollout JSONL. Claude's `aiTitle` remains a transcript-derived
 generated title.
 
-## Hook client (`lcars hook`, phase 0)
+## Hook client (`lcars hook`)
 
 The daemon above polls disk. The hook client is the replacement path
 described in [docs/hooks-telemetry-design.md](../../docs/hooks-telemetry-design.md):
-each coding agent's own hooks run `lcars hook <runtime>`, which reads one
-hook payload on stdin, reduces the session's transcript with the same
-summary-only reducer, and hands a `SessionEventV1` to a detached flusher
-that posts it to the console's
-`POST /api/telemetry/v1/sessions/{sessionId}/events` route. Phase 0 covers
-Claude Code only; the route is a `404` until the console runs with
-`AGENT_LCARS_TELEMETRY_INGEST=1`.
+each coding agent's own hooks run `lcars hook <runtime>` (Claude Code and
+Codex today), which reads one hook payload on stdin, reduces the session's
+transcript with the same summary-only reducer, and hands a `SessionEventV1`
+to a detached flusher that posts it to the console's
+`POST /api/telemetry/v1/sessions/{sessionId}/events` route. The route is a
+`404` until the console runs with `AGENT_LCARS_TELEMETRY_INGEST=1`.
 
 The hook process never touches the network, never prints to stdout, and
 always exits 0. Every decision is one line in
@@ -229,71 +228,26 @@ always exits 0. Every decision is one line in
    (`[{"host":"laforge","tokenSha256":"<hex>"}]`). `LCARS_URL` overrides
    the console origin.
 
-3. Claude Code hooks (`~/.claude/settings.json`); the `async` entries never
-   block the agent and `SessionStart` prints nothing:
+3. Install the hook entries and their launcher stubs:
 
-   ```json
-   {
-     "hooks": {
-       "SessionStart": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "lcars hook claude",
-               "timeout": 10
-             }
-           ]
-         }
-       ],
-       "UserPromptSubmit": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "lcars hook claude",
-               "async": true
-             }
-           ]
-         }
-       ],
-       "PostToolUse": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "lcars hook claude",
-               "async": true
-             }
-           ]
-         }
-       ],
-       "Stop": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "lcars hook claude",
-               "async": true
-             }
-           ]
-         }
-       ],
-       "SessionEnd": [
-         {
-           "hooks": [
-             { "type": "command", "command": "lcars hook claude", "timeout": 5 }
-           ]
-         }
-       ]
-     }
-   }
+   ```bash
+   lcars integration install all      # or: claude | codex
+   lcars integration status all
    ```
 
+   This writes `~/.claude/hooks/lcars-hook.sh` and `~/.codex/lcars-hook.sh`
+   (versioned, `# LCARS_INTEGRATION_VERSION=N`) and appends one constant
+   entry per lifecycle event to `~/.claude/settings.json` and
+   `~/.codex/hooks.json`, leaving every other key and hook untouched.
+   Codex hashes the entry, not the script, so it is trusted once per host
+   (`/hooks` in the Codex TUI) and never again. `uninstall` removes exactly
+   what `install` added.
+
 `lcars hook flush` drains the spool by hand (`~/.local/state/agent-lcars/spool/`),
-and `lcars hook claude --inline` posts synchronously for debugging. During
-the rollout the daemon keeps running; `hook-sessions/<sessionId>.json` is
-the marker a later daemon change reads to skip hook-reported sessions.
+and `lcars hook <runtime> --inline` posts synchronously for debugging. While
+the daemon still runs, it skips any session whose
+`~/.local/state/agent-lcars/hook-sessions/<sessionId>.json` marker is
+younger than ten minutes, so the two writers never race on one doc.
 
 ## Configuration
 

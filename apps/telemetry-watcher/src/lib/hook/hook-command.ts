@@ -7,10 +7,13 @@ import * as path from 'node:path';
 import {
   applySessionTitleOverlay,
   claudeCodeAdapter,
+  codexAdapter,
   isSafeIdentifier,
+  type SessionAgent,
   type SessionEventKind,
   type SessionEventV1,
   type SessionSummary,
+  type TranscriptAdapter,
 } from '@agent-lcars/telemetry';
 
 import { resolveGitBranch as defaultResolveGitBranch } from '../git-branch';
@@ -22,12 +25,16 @@ import {
   readSessionTitleOverlay,
 } from '../session-title-annotation-source';
 import { SESSION_STATE_DIRECTORY } from '../session-title-paths';
-import {
-  CLAUDE_HOOK_EVENT_KINDS,
-  parseClaudeHookPayload,
-} from './claude-hook-payload';
+import { findCodexRollout } from './codex-rollout';
 import { type HookClientConfig, loadHookClientConfig } from './hook-config';
 import { appendHookLog } from './hook-log';
+import {
+  HOOK_EVENT_KINDS,
+  type HookPayload,
+  type HookRuntime,
+  isHookRuntime,
+  parseHookPayload,
+} from './hook-payload';
 import {
   readHookSessionState,
   shouldShipEvent,
@@ -38,10 +45,11 @@ import { shipSessionEvent } from './ship';
 import { appendToSpool, drainSpool, spoolPath } from './spool';
 
 /** Bumped when the event the client emits changes shape or semantics. */
-export const HOOK_CLIENT_VERSION = '0.1.0';
+export const HOOK_CLIENT_VERSION = '0.2.0';
 
 export const HOOK_CLI_USAGE =
   'usage: lcars hook claude [--inline]   (reads one Claude Code hook payload on stdin)\n' +
+  '       lcars hook codex  [--inline]   (reads one Codex hook payload on stdin)\n' +
   '       lcars hook flush               (posts spooled events to the console)\n' +
   '       Exits 0 and prints nothing on stdout in every case; decisions go to\n' +
   '       ~/.local/state/agent-lcars/hook.log.';
@@ -69,6 +77,11 @@ export interface HookCommandDependencies {
   readStdin: () => string;
   readTranscriptLines: (filePath: string) => Iterable<string>;
   fileExists: (filePath: string) => boolean;
+  /** Locates a Codex rollout by session id when the payload has no path. */
+  findCodexRollout: (
+    codexHome: string,
+    sessionId: string,
+  ) => string | undefined;
   resolveGitRepo: (
     cwd: string,
   ) => Promise<{ owner: string; name: string } | undefined>;
@@ -104,6 +117,7 @@ export function defaultHookCommandDependencies(
         return false;
       }
     },
+    findCodexRollout,
     resolveGitRepo: defaultResolveGitRepo,
     resolveGitBranch: defaultResolveGitBranch,
     fetchImpl: globalThis.fetch,
@@ -113,11 +127,7 @@ export function defaultHookCommandDependencies(
       const child = spawn(
         process.execPath,
         [process.argv[1], 'hook', 'flush'],
-        {
-          detached: true,
-          stdio: 'ignore',
-          env,
-        },
+        { detached: true, stdio: 'ignore', env },
       );
       child.unref();
     },
@@ -127,19 +137,30 @@ export function defaultHookCommandDependencies(
   };
 }
 
+interface RuntimeProfile {
+  readonly agent: SessionAgent;
+  readonly adapter: TranscriptAdapter;
+}
+
+const RUNTIME_PROFILES: Readonly<Record<HookRuntime, RuntimeProfile>> = {
+  claude: { agent: 'claude-code', adapter: claudeCodeAdapter },
+  codex: { agent: 'codex', adapter: codexAdapter },
+};
+
 function stateDirectoryFor(deps: HookCommandDependencies): string {
   return path.join(deps.homeDirectory, SESSION_STATE_DIRECTORY);
 }
 
 function zeroSummary(
+  agent: SessionAgent,
   sessionId: string,
   now: string,
-  cwd: string | undefined,
+  payload: HookPayload,
 ): SessionSummary {
   return {
     sessionId,
     source: 'cli',
-    agent: 'claude-code',
+    agent,
     startedAt: now,
     lastActivityAt: now,
     turns: 0,
@@ -151,20 +172,34 @@ function zeroSummary(
       cacheReadTokens: 0,
     },
     deliverables: { prNumbers: [], commitShas: [] },
-    ...(cwd && { cwd }),
+    ...(payload.cwd && { cwd: payload.cwd }),
+    ...(payload.model && { model: payload.model }),
   };
 }
 
-function reduceClaudeTranscript(
+function resolveTranscriptPath(
   deps: HookCommandDependencies,
+  runtime: HookRuntime,
+  payload: HookPayload,
+): string | undefined {
+  if (payload.transcriptPath && deps.fileExists(payload.transcriptPath)) {
+    return payload.transcriptPath;
+  }
+  if (runtime !== 'codex') return undefined;
+  const codexHome =
+    deps.env['CODEX_HOME'] ?? path.join(deps.homeDirectory, '.codex');
+  return deps.findCodexRollout(codexHome, payload.sessionId);
+}
+
+function reduceTranscript(
+  deps: HookCommandDependencies,
+  adapter: TranscriptAdapter,
   transcriptPath: string | undefined,
   sessionId: string,
 ): SessionSummary | undefined {
-  if (!transcriptPath || !deps.fileExists(transcriptPath)) return undefined;
+  if (!transcriptPath) return undefined;
   try {
-    const summaries = claudeCodeAdapter.reduce(
-      deps.readTranscriptLines(transcriptPath),
-    );
+    const summaries = adapter.reduce(deps.readTranscriptLines(transcriptPath));
     return (
       summaries.find((summary) => summary.sessionId === sessionId) ??
       summaries[0]
@@ -223,25 +258,27 @@ async function flush(
   return { action: result.locked ? 'flush-locked' : 'flushed', detail };
 }
 
-async function handleClaude(
+async function handleRuntimeHook(
   deps: HookCommandDependencies,
+  runtime: HookRuntime,
   inline: boolean,
 ): Promise<HookCommandResult> {
+  const profile = RUNTIME_PROFILES[runtime];
   const stateDirectory = stateDirectoryFor(deps);
   const now = deps.now().toISOString();
   const log = (action: string, detail = '') =>
     appendHookLog(
       stateDirectory,
-      `${now} claude ${action} ${detail}`.trimEnd(),
+      `${now} ${runtime} ${action} ${detail}`.trimEnd(),
     );
 
-  const payload = parseClaudeHookPayload(deps.readStdin());
+  const payload = parseHookPayload(deps.readStdin());
   if (!payload) {
     log('ignored', 'unparseable payload');
     return { action: 'ignored', detail: 'unparseable payload' };
   }
   const kind: SessionEventKind | undefined =
-    CLAUDE_HOOK_EVENT_KINDS[payload.hookEventName];
+    HOOK_EVENT_KINDS[payload.hookEventName];
   if (!kind) {
     log('ignored', `event=${payload.hookEventName}`);
     return { action: 'ignored', detail: payload.hookEventName };
@@ -290,19 +327,25 @@ async function handleClaude(
     return { action: 'throttled' };
   }
 
-  const reduced = reduceClaudeTranscript(
+  const transcriptPath = resolveTranscriptPath(deps, runtime, payload);
+  const reduced = reduceTranscript(
     deps,
-    payload.transcriptPath,
+    profile.adapter,
+    transcriptPath,
     payload.sessionId,
   );
   let summary: SessionSummary | undefined;
   if (reduced || kind !== 'end') {
-    const base = reduced ?? zeroSummary(payload.sessionId, now, payload.cwd);
+    const base =
+      reduced ?? zeroSummary(profile.agent, payload.sessionId, now, payload);
     const withHost: SessionSummary = {
       ...base,
       sessionId: payload.sessionId,
+      agent: profile.agent,
       host: config.host,
       ...(base.cwd === undefined && payload.cwd && { cwd: payload.cwd }),
+      ...(base.model === undefined &&
+        payload.model && { model: payload.model }),
       repo,
     };
     const withGit = await applyGitContext(
@@ -320,11 +363,11 @@ async function handleClaude(
     seq,
     occurredAt: now,
     host: config.host,
-    agent: 'claude-code',
+    agent: profile.agent,
     sessionId: payload.sessionId,
     kind,
     runtime: {
-      name: 'claude-code',
+      name: profile.agent,
       hookEvent: payload.hookEventName,
       clientVersion: HOOK_CLIENT_VERSION,
     },
@@ -364,8 +407,12 @@ export async function executeHookCommand(
 ): Promise<HookCommandResult> {
   const [subcommand, ...rest] = argv;
   try {
-    if (subcommand === 'claude') {
-      return await handleClaude(deps, rest.includes('--inline'));
+    if (isHookRuntime(subcommand)) {
+      return await handleRuntimeHook(
+        deps,
+        subcommand,
+        rest.includes('--inline'),
+      );
     }
     if (subcommand === 'flush' || subcommand === '--flush') {
       const config = loadHookClientConfig({

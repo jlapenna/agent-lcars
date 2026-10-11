@@ -1,7 +1,10 @@
 # Hooks-based session telemetry (design)
 
 Status: proposal, 2026-10-10, hook surfaces verified empirically the same day
-(section 11). Owner: telemetry. Supersedes nothing yet; the host watcher
+(section 11). Phase 0 (contract, `lcars hook claude`, gated ingest route)
+and the in-repo part of phase 1 (`lcars hook codex`, `lcars integration
+install`, the daemon's hook-marker skip) are implemented; nothing is enabled
+in production yet. Owner: telemetry. Supersedes nothing yet; the host watcher
 daemon (`apps/telemetry-watcher`, issue #2540) keeps running until phase 3
 below.
 
