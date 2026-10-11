@@ -157,3 +157,6 @@ cs_build_full.json
 /.agent-dispatch/
 
 vitest.config.*.timestamp*
+
+# OpenDesign workspace metadata (design prototyping worktree).
+.open-design/

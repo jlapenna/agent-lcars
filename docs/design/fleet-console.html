@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent LCARS — Bridge</title>
+<style>
+@font-face { font-family: "Antonio"; src: url(assets/fonts/Antonio-500-700.woff2) format("woff2"); font-weight: 500 700; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url(assets/fonts/IBMPlexSans-400-600.woff2) format("woff2"); font-weight: 400 600; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url(assets/fonts/IBMPlexMono-400.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url(assets/fonts/IBMPlexMono-500.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+
+/* ---- Tokens: values are theme.ts palette anchors + dark ramp ---- */
+:root {
+  --surface: #060709;          /* the one ground (dark-9) */
+  --surface-raised: #0f121a;   /* menus, row hover only */
+  --hairline: #212736;         /* dark-6 */
+  --ink: #eeeff2;              /* gray-0 */
+  --ink-dim: #a5adc0;          /* dark-2 */
+  --ink-on-accent: #06070a;
+  --ink-on-muted: #f4f4f6;
+  --spark: #505c7c;            /* dark-4: quiet data encoding */
+  --track: #212736;
+
+  --amber: #ff9f45; --blue: #6c8fe0; --periwinkle: #8c8fde;
+  --violet: #b15fc7; --teal: #4fb8c4; --gold: #e0b84b;
+
+  /* status: never a route accent */
+  --ok: #4fae8c; --warn: #b98e19; --warn-ink: #e0b84b; --fail: #d9694f; --fail-ink: #df9786;
+
+  --signal-stops: var(--blue) 0 56%, var(--violet) 56% 76%, var(--gold) 76% 100%;
+  --spine: 6px;
+
+  --rail-w: 152px; --arm-h: 24px; --knee-r: 32px; --outer-r: 72px; --gap: 32px;
+
+  --f-display: "Antonio", "Arial Narrow", sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+[data-accent="amber"] { --accent: var(--amber); }
+[data-accent="blue"] { --accent: var(--blue); }
+[data-accent="periwinkle"] { --accent: var(--periwinkle); }
+[data-accent="violet"] { --accent: var(--violet); }
+[data-accent="teal"] { --accent: var(--teal); }
+[data-accent="gold"] { --accent: var(--gold); }
+[data-accent] {
+  --accent-ink: color-mix(in srgb, var(--accent) 80%, white);
+  --accent-muted: color-mix(in srgb, var(--accent) 52%, var(--surface));
+  --accent-muted-hover: color-mix(in srgb, var(--accent) 40%, var(--surface));
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--surface); color: var(--ink); }
+body { font: 400 14px/1.45 var(--f-body); min-width: 1180px; -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+a { color: var(--accent-ink); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.mono { font-family: var(--f-mono); }
+.dim { color: var(--ink-dim); }
+.eyebrow { font: 600 12px/1 var(--f-display); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-dim); }
+
+/* ---- Page grid: elbow rail | header + body ---- */
+.page { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); grid-template-rows: auto 1fr; column-gap: var(--gap); min-height: 100vh; padding-right: 28px; }
+
+/* ---- The one elbow: rail turns through the knee into the arm ---- */
+.rail-head { position: relative; grid-row: 1; background: var(--accent); border-top-left-radius: var(--outer-r); display: flex; flex-direction: column; justify-content: flex-end; padding: 0 12px 12px; color: var(--ink-on-accent); text-align: right; }
+.rail-head::after { content: ""; position: absolute; left: 100%; top: 0; width: var(--knee-r); height: calc(var(--arm-h) + var(--knee-r)); background: var(--accent);
+  -webkit-mask: radial-gradient(circle at 100% 100%, transparent calc(var(--knee-r) - .5px), #000 var(--knee-r)) 0 var(--arm-h) / var(--knee-r) var(--knee-r) no-repeat, linear-gradient(#000, #000) 0 0 / 100% var(--arm-h) no-repeat;
+          mask: radial-gradient(circle at 100% 100%, transparent calc(var(--knee-r) - .5px), #000 var(--knee-r)) 0 var(--arm-h) / var(--knee-r) var(--knee-r) no-repeat, linear-gradient(#000, #000) 0 0 / 100% var(--arm-h) no-repeat; }
+.rail-brand { font: 700 22px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
+.rail-code { font: 500 11px/1.4 var(--f-mono); margin-top: 6px; }
+.rail-body { grid-row: 2; display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
+.rail-block { background: var(--accent-muted); color: var(--ink-on-muted); padding: 8px 12px; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; text-align: right; }
+.rail-block b { font: 500 18px/1.1 var(--f-mono); }
+.rail-block span { font: 600 11px/1.2 var(--f-display); letter-spacing: .08em; text-transform: uppercase; }
+.rail-block.fill { flex: 1; min-height: 40px; }
+.rail-block.end { background: var(--accent); color: var(--ink-on-accent); height: 44px; }
+
+/* ---- Header ---- */
+.header { grid-row: 1; grid-column: 2; padding-bottom: 18px; }
+.arm { display: flex; gap: 6px; height: var(--arm-h); }
+.arm i { background: var(--accent); display: block; }
+.arm i:first-child { flex: 1; }
+.title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 18px 0 0; }
+h1 { margin: 0; font: 700 46px/.95 var(--f-display); letter-spacing: .04em; text-transform: uppercase; }
+.subtitle { margin-top: 6px; color: var(--ink-dim); font-size: 13px; }
+.utilities { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.sync { font: 400 12px/1.3 var(--f-mono); color: var(--ink-dim); text-align: right; }
+.sync b { color: var(--ok); font-weight: 500; }
+.who { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.who .av { width: 32px; height: 32px; background: var(--hairline); display: grid; place-items: center; font: 600 13px var(--f-display); letter-spacing: .05em; }
+
+.signal { display: flex; gap: 4px; height: 6px; margin: 16px 0 12px; }
+.signal i { display: block; background: linear-gradient(to right, var(--signal-stops)); }
+.signal i:nth-child(1) { flex: 0 0 34%; background: var(--blue); }
+.signal i:nth-child(2) { flex: 0 0 12%; background: var(--violet); }
+.signal i:nth-child(3) { flex: 0 0 7%; background: var(--gold); }
+.signal i:nth-child(4) { flex: 0 0 3%; background: var(--amber); }
+.signal i:nth-child(5) { flex: 1; background: var(--teal); max-width: 14%; }
+
+/* destination rail: square modules, label docked to the trailing edge */
+.nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.nav a { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; height: 44px; padding: 0 12px 7px; min-width: var(--w, 120px);
+  background: var(--accent-muted); color: var(--ink-on-muted); text-decoration: none; font: 600 15px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; transition: background-color .14s; }
+.nav a small { font: 500 11px/1 var(--f-mono); letter-spacing: 0; opacity: .9; align-self: flex-start; padding-top: 7px; }
+.nav a:hover { background: var(--accent-muted-hover); }
+.nav a[aria-current="page"] { background: var(--accent); color: var(--ink-on-accent); }
+.nav a:active { transform: translateY(1px); }
+
+/* ---- Buttons: flat blocks ---- */
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 16px; border: 0; border-radius: 0; cursor: pointer;
+  font: 600 14px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; transition: background-color .14s; }
+.btn-primary { background: var(--accent); color: var(--ink-on-accent); height: 40px; padding: 0 20px; }
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 86%, white); }
+.btn-secondary { background: var(--accent-muted); color: var(--ink-on-muted); }
+.btn-secondary:hover { background: var(--accent-muted-hover); }
+.btn-sm { height: 30px; padding: 0 12px; font-size: 13px; }
+.btn:active { transform: translateY(1px); }
+
+/* ---- Workspace frame ---- */
+.body { grid-row: 2; grid-column: 2; padding: 16px 0 28px; }
+.frame { border: 1px solid var(--hairline); }
+.warnband { display: flex; align-items: center; gap: 14px; padding: 9px 16px; border-left: 4px solid var(--warn); border-bottom: 1px solid var(--hairline); color: var(--warn-ink); font-size: 13px; }
+.warnband .eyebrow { color: var(--warn-ink); }
+.warnband .sep { color: var(--hairline); }
+.warnband a { color: var(--warn-ink); text-decoration: underline; text-underline-offset: 3px; margin-left: auto; white-space: nowrap; }
+.toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--hairline); }
+.field { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 1px solid var(--hairline); background: var(--surface); color: var(--ink); font: 400 13px var(--f-body); }
+.field .eyebrow { font-size: 11px; }
+select.field { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%), linear-gradient(-45deg, transparent 50%, var(--ink-dim) 50%); background-size: 5px 5px; background-position: right 14px center, right 9px center; background-repeat: no-repeat; cursor: pointer; }
+.seg { display: inline-flex; border: 1px solid var(--hairline); }
+.seg button { height: 34px; padding: 0 14px; border: 0; background: transparent; color: var(--ink-dim); font: 500 12px var(--f-mono); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--hairline); }
+.seg button:hover { color: var(--ink); background: var(--surface-raised); }
+.seg button[aria-pressed="true"] { background: var(--accent-muted); color: var(--ink-on-muted); }
+.search { width: 240px; }
+.search input { border: 0; background: transparent; color: var(--ink); font: inherit; width: 100%; outline: none; }
+.search input::placeholder { color: var(--ink-dim); }
+.search:focus-within { outline: 2px solid var(--amber); outline-offset: 2px; }
+.toolbar .push { margin-left: auto; }
+.content { padding: 20px; display: grid; gap: 28px; }
+
+/* ---- Readouts ---- */
+.readouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.readout { padding: 2px 20px; border-left: 1px solid var(--hairline); min-width: 0; }
+.readout:first-child { border-left: 0; padding-left: 4px; }
+.readout .val { font: 500 30px/1.1 var(--f-mono); margin: 10px 0 2px; letter-spacing: -.01em; }
+.readout .val small { font-size: 15px; color: var(--ink-dim); }
+.readout .sub { font-size: 12px; color: var(--ink-dim); min-height: 18px; }
+.spark { display: block; width: 100%; height: 28px; margin-top: 10px; }
+.spark rect { fill: var(--spark); }
+.spark rect.now { fill: var(--accent); }
+.spark rect.warn { fill: var(--warn); }
+
+/* ---- Panels: square spine down the leading edge ---- */
+.cols { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.stack { display: grid; gap: 28px; min-width: 0; }
+.panel { display: grid; grid-template-columns: var(--spine) minmax(0, 1fr); column-gap: 16px; min-width: 0; }
+.panel::before { content: ""; background: var(--accent); }
+.panel.signalled { grid-template-columns: var(--spine) minmax(0, 1fr) var(--spine); }
+.panel.signalled::after { content: ""; background: linear-gradient(to bottom, var(--signal-stops)); }
+.panel-head { display: flex; align-items: baseline; gap: 10px; padding: 2px 0 12px; border-bottom: 1px solid var(--hairline); }
+.panel-head h2 { margin: 0; font: 600 19px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
+.panel-head .count { font: 500 14px var(--f-mono); color: var(--accent-ink); }
+.panel-head .meta { margin-left: auto; font: 400 12px var(--f-mono); color: var(--ink-dim); }
+
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 10px 10px 8px 0; font: 600 11px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); border-bottom: 1px solid var(--hairline); white-space: nowrap; }
+td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--hairline); vertical-align: middle; }
+tbody tr:hover td { background: var(--surface-raised); }
+td.num, th.num { text-align: right; white-space: nowrap; }
+td.num { font-family: var(--f-mono); font-size: 13px; }
+.ref { font: 500 12px var(--f-mono); color: var(--accent-ink); white-space: nowrap; }
+.item-title { display: block; color: var(--ink); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.cell-clip { max-width: 0; width: 40%; }
+.tag { display: inline-block; padding: 3px 6px 2px; border: 1px solid var(--hairline); font: 500 11px/1 var(--f-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--ink-dim); }
+
+/* phase readout: five flat blocks */
+.phase { display: flex; gap: 2px; }
+.phase i { display: block; width: 18px; height: 8px; background: var(--track); }
+.phase i.done { background: var(--accent); }
+.phase i.cur { background: linear-gradient(to right, var(--accent) var(--p), var(--accent-muted) var(--p)); }
+.phase-label { font: 500 11px/1 var(--f-mono); color: var(--ink-dim); margin-top: 6px; text-transform: uppercase; white-space: nowrap; }
+
+.meter { height: 6px; background: var(--track); min-width: 80px; }
+.meter i { display: block; height: 100%; background: var(--spark); width: var(--v); }
+.meter.warn i { background: var(--warn); }
+.meter.fail i { background: var(--fail); }
+.budget { font: 400 12px var(--f-mono); color: var(--ink-dim); margin-top: 6px; white-space: nowrap; }
+.budget b { color: var(--ink); font-weight: 500; }
+.budget.warn b { color: var(--warn-ink); }
+
+.state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 13px; }
+.state::before { content: ""; width: 8px; height: 8px; background: currentColor; }
+.state.ok { color: var(--ok); } .state.fail { color: var(--fail-ink); } .state.warn { color: var(--warn-ink); }
+.state.busy { color: var(--ink); } .state.idle { color: var(--ink-dim); } .state.neutral { color: var(--ink-dim); }
+
+/* decision inbox */
+.inbox { list-style: none; margin: 0; padding: 0; }
+.inbox li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 12px 0; border-bottom: 1px solid var(--hairline); align-items: center; }
+.inbox .kind { font: 600 12px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--accent-ink); }
+.inbox .t { color: var(--ink); margin: 5px 0 4px; }
+.inbox .m { font: 400 12px var(--f-mono); color: var(--ink-dim); display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.inbox .m > span { white-space: nowrap; }
+.inbox .m .late { color: var(--warn-ink); }
+
+/* hosts */
+.host-spec { font: 400 11px/1.4 var(--f-mono); color: var(--ink-dim); display: block; margin-top: 2px; white-space: nowrap; }
+.slots { display: flex; gap: 2px; }
+.slots i { width: 12px; height: 12px; background: var(--track); display: block; }
+.slots i.busy { background: var(--ink-dim); }
+.slots i.drain { background: var(--warn); }
+.slots i.off { background: transparent; border: 1px solid var(--fail); }
+.bars { display: grid; gap: 5px; min-width: 110px; }
+.bars div { display: grid; grid-template-columns: 30px 1fr 30px; gap: 6px; align-items: center; font: 400 11px var(--f-mono); color: var(--ink-dim); }
+.bars span:last-child { text-align: right; }
+.telemetry { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 16px; }
+.telemetry > div { padding: 0 14px; border-left: 1px solid var(--hairline); }
+.telemetry > div:first-child { padding-left: 0; border-left: 0; }
+.telemetry .v { font: 500 18px var(--f-mono); margin-top: 6px; }
+.telemetry .spark { height: 22px; margin-top: 6px; }
+
+.empty-note { color: var(--ink-dim); font-size: 13px; padding: 12px 0; }
+.cost-bar { display: grid; grid-template-columns: 1fr 56px; gap: 10px; align-items: center; }
+
+@media (max-width: 1320px) {
+  .cols { grid-template-columns: minmax(0, 1fr); }
+  .readouts { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 20px; }
+  .readout:nth-child(4) { border-left: 0; padding-left: 4px; }
+}
+</style>
+</head>
+<body data-accent="amber">
+<div class="page" data-od-id="console-page">
+  <!-- elbow: rail head + knee + arm -->
+  <aside class="rail-head" aria-label="Agent LCARS" data-od-id="elbow">
+    <div class="rail-brand">Agent<br>LCARS</div>
+    <div class="rail-code">PROD<br>HOMELAB · K3S</div>
+  </aside>
+  <div class="rail-body" aria-hidden="true">
+    <div class="rail-block" style="height:84px"><b id="rb-fleet">11/12</b><span>Fleet online</span></div>
+    <div class="rail-block" style="height:120px"><b id="rb-queue">09</b><span>Queue depth</span></div>
+    <div class="rail-block" style="height:168px"><b>3.18M</b><span>Tokens today</span></div>
+    <div class="rail-block fill"><b>14</b><span>Merged · 24h</span></div>
+    <div class="rail-block end"><b>2026.284</b></div>
+  </div>
+
+  <header class="header" data-od-id="console-header">
+    <div class="arm" aria-hidden="true"><i></i><i style="width:56px"></i><i style="width:20px"></i></div>
+    <div class="title-row">
+      <div>
+        <h1 id="page-title" data-od-id="page-title">Bridge</h1>
+        <div class="subtitle" id="page-sub">Fleet overview</div>
+      </div>
+      <div class="utilities" data-od-id="header-utilities">
+        <div class="sync"><b>■ LIVE</b> · synced 14:32:08<br>auto-refresh 15 s</div>
+        <button class="btn btn-secondary" data-od-id="refresh-button" type="button">Refresh</button>
+        <div class="who"><div class="av">JL</div><div>jlapenna<div class="dim" style="font-size:12px">work.operator · admin</div></div></div>
+      </div>
+    </div>
+    <div class="signal" aria-hidden="true" data-od-id="signal-bar"><i></i><i></i><i></i><i></i><i></i></div>
+    <nav class="nav" id="nav" aria-label="Destinations" data-od-id="destination-rail"></nav>
+  </header>
+
+  <main class="body">
+    <section class="frame" data-od-id="workspace-frame">
+      <div class="warnband" id="warnband" role="status" data-od-id="warning-band"></div>
+      <div class="toolbar" id="toolbar" data-od-id="toolbar-band"></div>
+      <div class="content" id="content"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+const DEST = [
+  { key: 'deck', label: 'Bridge', accent: 'amber', w: 168, title: 'Bridge', sub: 'Fleet overview · 4 repositories · 12 runners on homelab k3s' },
+  { key: 'inbox', label: 'Inbox', accent: 'blue', w: 132, count: 5, title: 'Decision Inbox', sub: 'Work waiting on a maintainer response' },
+  { key: 'agents', label: 'Agents', accent: 'periwinkle', w: 132, count: 7, title: 'Agents', sub: 'Active runs, claimed work and recent outcomes' },
+  { key: 'shuttlebay', label: 'Shuttlebay', accent: 'blue', w: 156, title: 'Shuttlebay', sub: 'Runner fleet · Actions Runner Controller on k3s' },
+  { key: 'work', label: 'Work', accent: 'violet', w: 112, count: 9, title: 'Work', sub: 'Admitted queue, capacity holds and schedules' },
+  { key: 'sessions', label: 'Sessions', accent: 'teal', w: 140, title: 'Session Archive', sub: 'Durable session records for investigation and audit' },
+  { key: 'costs', label: 'Costs', accent: 'gold', w: 112, title: 'Costs', sub: 'Cost ledger · daily budget $60.00' },
+];
+
+const RUNS = [
+  { agent: 'claude', repo: 'agent-lcars', ref: '#2479', title: 'routing: switch executor when an authorized maintainer changes agent labels', phase: 2, p: 62, note: 'build · 41 files', el: '23m 41s', used: 2.14, cap: 8, tok: '1.42M', runner: 'picard-r1' },
+  { agent: 'codex', repo: 'agent-lcars', ref: '#2478', title: 'perf(console): expose the cold Inbox interaction breakdown', phase: 3, p: 40, note: 'verify · e2e 2/5', el: '41m 09s', used: 3.90, cap: 6, tok: '2.07M', runner: 'picard-r2' },
+  { agent: 'claude', repo: 'agent-lcars', ref: '#2473', title: 'feat(telemetry): hooks-based session telemetry, phase 0', phase: 4, p: 30, note: 'review · CI pending', el: '1h 12m', used: 7.10, cap: 8, tok: '4.66M', runner: 'spark-r1' },
+  { agent: 'claude', repo: 'homelab', ref: '#2245', title: 'capacity: declare executor hosts and identity trust roots', phase: 2, p: 35, note: 'build · paused for plan', el: '52m 18s', used: 4.60, cap: 8, tok: '3.02M', runner: 'picard-r3' },
+  { agent: 'codex', repo: 'messages-control', ref: '#118', title: 'image workflow: pin buildx and restore GHCR push', phase: 3, p: 70, note: 'verify · actionlint ok', el: '27m 52s', used: 1.75, cap: 6, tok: '0.98M', runner: 'spark-r2' },
+  { agent: 'opencode', repo: 'sprinkles', ref: '#6041', title: 'members: sync .ss-checker divider tokens from the design system', phase: 2, p: 20, note: 'build · 6 files', el: '18m 03s', used: 0.92, cap: 4, tok: '0.61M', runner: 'laforge-r1' },
+  { agent: 'claude', repo: 'homelab', ref: '#2251', title: 'spark: raise memory alert hysteresis after QueueExecutorStalled storm', phase: 1, p: 55, note: 'plan · reading alerts', el: '6m 12s', used: 0.38, cap: 8, tok: '0.21M', runner: 'data-r1' },
+];
+const PHASES = ['intake', 'plan', 'build', 'verify', 'review'];
+
+const INBOX = [
+  { kind: 'Plan approval', title: 'Plan changes production capacity policy and identity trust roots', repo: 'homelab', ref: '#2245', agent: 'claude', age: '3h 12m', late: true },
+  { kind: 'Takeover requested', title: 'Run paused: needs GHCR packages:write, which its grant cannot request', repo: 'messages-control', ref: '#117', agent: 'codex', age: '2h 20m', late: true },
+  { kind: 'Review requested', title: 'members app: adopt the .ss-* token sync layer', repo: 'sprinkles', ref: 'PR #6036', agent: 'opencode', age: '1h 05m' },
+  { kind: 'Merge blocked', title: 'Required check e2e-console failed twice on retry; flake suspected in claim-release spec', repo: 'agent-lcars', ref: 'PR #2475', agent: 'codex', age: '47m' },
+  { kind: 'Budget extension', title: 'At 89% of its $8.00 cap with review fixes outstanding; asks for +$4.00', repo: 'agent-lcars', ref: '#2473', agent: 'claude', age: '14m' },
+];
+
+const DONE = [
+  { out: 'ok', label: 'Merged', repo: 'agent-lcars', ref: 'PR #2477', title: 'test(capacity): explicitly cover tied issue IDs 99 and 100', agent: 'codex', dur: '34m', cost: 1.82, at: '13:58' },
+  { out: 'ok', label: 'Merged', repo: 'agent-lcars', ref: 'PR #2476', title: 'test(console): cover priority in authoritative and durable Work consumers', agent: 'claude', dur: '1h 08m', cost: 5.12, at: '13:21' },
+  { out: 'ok', label: 'Merged', repo: 'agent-lcars', ref: 'PR #2474', title: 'fix(iam): preserve selected scope for messages-control onboarding', agent: 'claude', dur: '46m', cost: 3.37, at: '12:47' },
+  { out: 'fail', label: 'Failed', repo: 'homelab', ref: '#2249', title: 'alerts: tune ContainerProbeFailing quiet hours — promtool rule test failed', agent: 'opencode', dur: '22m', cost: 0.61, at: '12:10' },
+  { out: 'ok', label: 'Merged', repo: 'agent-lcars', ref: 'PR #2472', title: 'fix(orchestrator): compose priority with the capacity claim owner', agent: 'codex', dur: '51m', cost: 2.94, at: '11:36' },
+  { out: 'neutral', label: 'Closed', repo: 'sprinkles', ref: '#6029', title: 'Duplicate of PR #6036; closed by agent after triage', agent: 'claude', dur: '4m', cost: 0.12, at: '11:02' },
+];
+
+const HOSTS = [
+  { name: 'picard', spec: '16 vCPU · 64 GiB · max job 8c/24G', slots: ['busy', 'busy', 'busy'], cpu: 72, mem: 61 },
+  { name: 'spark', spec: '20 vCPU · 128 GiB · max job 12c/48G', slots: ['busy', 'busy', 'idle'], cpu: 88, mem: 91 },
+  { name: 'laforge', spec: '12 vCPU · 32 GiB · max job 6c/12G', slots: ['busy', 'drain'], cpu: 41, mem: 52 },
+  { name: 'data', spec: '8 vCPU · 32 GiB · max job 4c/12G', slots: ['busy', 'idle', 'idle'], cpu: 29, mem: 38 },
+  { name: 'worf', spec: '8 vCPU · 16 GiB · max job 4c/6G', slots: ['off'], cpu: 0, mem: 0, off: true },
+];
+const RUNNERS = [
+  ['picard-r1', 'busy', 'agent-lcars#2479', '6c/18G', '23m'], ['picard-r2', 'busy', 'agent-lcars#2478', '4c/12G', '41m'], ['picard-r3', 'busy', 'homelab#2245', '4c/12G', '52m'],
+  ['spark-r1', 'busy', 'agent-lcars#2473', '8c/32G', '1h 12m'], ['spark-r2', 'busy', 'messages-control#118', '4c/16G', '27m'], ['spark-r3', 'idle', '—', '—', '9m idle'],
+  ['laforge-r1', 'busy', 'sprinkles#6041', '4c/10G', '18m'], ['laforge-r2', 'drain', 'draining for node upgrade', '—', '4m'],
+  ['data-r1', 'busy', 'homelab#2251', '2c/6G', '6m'], ['data-r2', 'idle', '—', '—', '31m idle'], ['data-r3', 'idle', '—', '—', '2h idle'],
+  ['worf-r1', 'off', 'node NotReady', '—', '12m'],
+];
+const QUEUE = [
+  ['P1', 'agent-lcars', '#2480', 'console: show capacity receipt on the run detail', 'claude', 'Admitted', '2m'],
+  ['P1', 'homelab', '#2252', 'loki: retention for telemetry-watcher streams', 'codex', 'Capacity hold · codex ceiling 1', '18m'],
+  ['P2', 'agent-lcars', '#2481', 'work api: paginate /runs/capacity inventory', 'codex', 'Capacity hold · codex ceiling 1', '16m'],
+  ['P2', 'sprinkles', '#6043', 'members: Strava connect button uses official asset', 'opencode', 'Capacity hold · opencode ceiling 1', '11m'],
+  ['P2', 'agent-lcars', '#2482', 'docs: executor capacity recovery runbook', 'claude', 'Admitted', '9m'],
+  ['P3', 'homelab', '#2253', 'renovate: group k3s system-upgrade bumps', 'claude', 'Admitted', '7m'],
+  ['P3', 'messages-control', '#119', 'ci: cache pnpm store on ARC runners', 'claude', 'Admitted', '5m'],
+  ['P3', 'agent-lcars', '#2483', 'e2e: 1024px header overflow regression spec', 'claude', 'Scheduled · 15:00', '—'],
+  ['P4', 'homelab', '#2254', 'nightly: fleet onboarding audit', 'codex', 'Scheduled · 02:30', '—'],
+];
+const SESSIONS = [
+  ['ses_8f3a21c4', 'agent-lcars#2477', 'codex', 'ok', 'Merged', '34m', '1.11M', '13:24'],
+  ['ses_77d0be19', 'agent-lcars#2476', 'claude', 'ok', 'Merged', '1h 08m', '3.38M', '12:13'],
+  ['ses_61c2a7f0', 'agent-lcars#2474', 'claude', 'ok', 'Merged', '46m', '2.20M', '12:01'],
+  ['ses_5ab94e02', 'homelab#2249', 'opencode', 'fail', 'Failed · verify', '22m', '0.39M', '11:48'],
+  ['ses_4e81d3aa', 'agent-lcars#2472', 'codex', 'ok', 'Merged', '51m', '1.74M', '10:45'],
+  ['ses_3c07f9b6', 'sprinkles#6029', 'claude', 'neutral', 'Closed · duplicate', '4m', '0.08M', '10:58'],
+  ['ses_2b6e10d8', 'agent-lcars#2471', 'claude', 'ok', 'Merged', '58m', '2.91M', '09:12'],
+];
+const COSTS = [
+  ['jlapenna/agent-lcars', 24.18, 161.40, 41], ['jlapenna/homelab', 7.62, 58.90, 17], ['supersprinklesracing/sprinkles', 3.37, 29.75, 9], ['jlapenna/messages-control', 3.25, 12.10, 6],
+];
+
+const $ = (s) => document.querySelector(s);
+const money = (n) => '$' + n.toFixed(2);
+function spark(vals, { warnAbove = Infinity, label = '' } = {}) {
+  const max = Math.max(...vals), n = vals.length, w = 4;
+  const bars = vals.map((v, i) => {
+    const h = Math.max(1.5, (v / max) * 28);
+    const cls = i === n - 1 ? 'now' : v > warnAbove ? 'warn' : '';
+    return `<rect class="${cls}" x="${i * w}" y="${28 - h}" width="${w - 1}" height="${h}"/>`;
+  }).join('');
+  return `<svg class="spark" viewBox="0 0 ${n * w - 1} 28" preserveAspectRatio="none" role="img" aria-label="${label}">${bars}</svg>`;
+}
+const series = (base, amp, n, seed) => Array.from({ length: n }, (_, i) => Math.round(base + amp * Math.sin(i * 0.55 + seed) + amp * 0.6 * Math.sin(i * 1.7 + seed * 2)));
+const meterCls = (pct) => pct >= 100 ? 'fail' : pct >= 80 ? 'warn' : '';
+
+function phaseCell(r) {
+  const blocks = PHASES.map((_, i) => i < r.phase ? '<i class="done"></i>' : i === r.phase ? `<i class="cur" style="--p:${r.p}%"></i>` : '<i></i>').join('');
+  return `<div class="phase" aria-label="Phase ${r.phase + 1} of 5: ${PHASES[r.phase]}">${blocks}</div><div class="phase-label">${r.note}</div>`;
+}
+function budgetCell(r) {
+  const pct = Math.round((r.used / r.cap) * 100), c = meterCls(pct);
+  return `<div class="meter ${c}"><i style="--v:${Math.min(pct, 100)}%"></i></div><div class="budget ${c}"><b>${money(r.used)}</b> / ${money(r.cap)} · ${r.tok} tok</div>`;
+}
+
+function runsPanel(full) {
+  const rows = RUNS.map((r) => `<tr data-od-id="run-${r.repo}-${r.ref.replace('#', '')}">
+    <td><span class="tag">${r.agent}</span></td>
+    <td class="cell-clip"><span class="ref">${r.repo}${r.ref}</span><span class="item-title" title="${r.title}">${r.title}</span></td>
+    <td>${phaseCell(r)}</td>
+    ${full ? `<td class="mono dim" style="font-size:12px">${r.runner}</td>` : ''}
+    <td class="num">${r.el}</td>
+    <td style="width:150px">${budgetCell(r)}</td>
+  </tr>`).join('');
+  return `<section class="panel" data-od-id="panel-active-dispatches"><div>
+    <div class="panel-head"><h2>Active dispatches</h2><span class="count">${RUNS.length}</span><span class="meta">claude 4 · codex 2 · opencode 1 · updated 4 s ago</span></div>
+    <table><thead><tr><th>Agent</th><th>Work item</th><th>Phase</th>${full ? '<th>Runner</th>' : ''}<th class="num">Elapsed</th><th>Budget</th></tr></thead><tbody>${rows}</tbody></table>
+  </div></section>`;
+}
+
+function inboxPanel(full) {
+  const items = INBOX.map((d, i) => `<li data-od-id="decision-${i + 1}">
+    <div><div class="kind">${d.kind}</div><div class="t">${d.title}</div>
+    <div class="m"><span><a href="#" class="ref">${d.repo} ${d.ref}</a></span><span>${d.agent}</span><span class="${d.late ? 'late' : ''}">waiting ${d.age}${d.late ? ' · over SLA' : ''}</span></div></div>
+    <button class="btn btn-secondary btn-sm" type="button" data-od-id="decision-${i + 1}-open">${full ? 'Respond' : 'Open'}</button>
+  </li>`).join('');
+  return `<section class="panel signalled" data-od-id="panel-decision-inbox"><div>
+    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length}</span><span class="meta">2 over SLA · oldest 3h 12m</span></div>
+    <ul class="inbox">${items}</ul>
+  </div></section>`;
+}
+
+function donePanel() {
+  const rows = DONE.map((d) => `<tr>
+    <td><span class="state ${d.out}">${d.label}</span></td>
+    <td class="cell-clip" style="width:52%"><span class="ref">${d.repo} ${d.ref}</span><span class="item-title" title="${d.title}">${d.title}</span></td>
+    <td><span class="tag">${d.agent}</span></td>
+    <td class="num">${d.dur}</td><td class="num">${money(d.cost)}</td><td class="num dim">${d.at}</td>
+  </tr>`).join('');
+  return `<section class="panel" data-od-id="panel-recent-completions"><div>
+    <div class="panel-head"><h2>Recent completions</h2><span class="count">14 merged · 24h</span><span class="meta">median cycle 52m · 1 failed</span></div>
+    <table><thead><tr><th>Outcome</th><th>Item</th><th>Agent</th><th class="num">Cycle</th><th class="num">Cost</th><th class="num">At</th></tr></thead><tbody>${rows}</tbody></table>
+  </div></section>`;
+}
+
+function fleetPanel() {
+  const slotCls = { busy: 'busy', idle: '', drain: 'drain', off: 'off' };
+  const rows = HOSTS.map((h) => `<tr data-od-id="host-${h.name}">
+    <td><span class="mono" style="font-weight:500">${h.name}</span><span class="host-spec">${h.spec.replace(' · max', '<br>max')}</span></td>
+    <td><div class="slots">${h.slots.map((s) => `<i class="${slotCls[s]}" title="${s}"></i>`).join('')}</div></td>
+    <td>${h.off ? '<span class="state fail">NotReady 12m</span>' : `<div class="bars">
+      <div><span>CPU</span><div class="meter ${meterCls(h.cpu)}"><i style="--v:${h.cpu}%"></i></div><span>${h.cpu}%</span></div>
+      <div><span>MEM</span><div class="meter ${meterCls(h.mem)}"><i style="--v:${h.mem}%"></i></div><span>${h.mem}%</span></div></div>`}</td>
+  </tr>`).join('');
+  return `<section class="panel" data-od-id="panel-runner-fleet"><div>
+    <div class="panel-head"><h2>Runner fleet</h2><span class="count">11/12</span><span class="meta">ARC · k3s</span></div>
+    <table><thead><tr><th>Host</th><th>Slots</th><th>Load</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="telemetry" data-od-id="telemetry-readouts">
+      <div><div class="eyebrow">Tokens / min</div><div class="v">48.2k</div>${spark(series(40, 9, 30, 1), { label: 'Tokens per minute, last 30 minutes' })}</div>
+      <div><div class="eyebrow">CI wait p50</div><div class="v">38 s</div>${spark(series(30, 12, 30, 3), { label: 'CI queue wait, last 30 minutes' })}</div>
+      <div><div class="eyebrow">Work API p95</div><div class="v">212 ms</div>${spark(series(180, 40, 30, 5), { label: 'Work API p95 latency' })}</div>
+    </div>
+  </div></section>`;
+}
+
+function readouts() {
+  const cell = (id, label, val, sub, s) => `<div class="readout" data-od-id="readout-${id}"><div class="eyebrow">${label}</div><div class="val">${val}</div><div class="sub">${sub}</div>${s}</div>`;
+  return `<section class="readouts" data-od-id="fleet-readouts">
+    ${cell('online', 'Runners online', '11<small> / 12</small>', 'worf-r1 NotReady · laforge-r2 draining', spark([12,12,12,12,12,12,12,12,12,12,12,12,11,11,11,12,12,12,12,12,12,12,12,12,11,11,11,11,11,11], { label: 'Runners online, last 30 minutes' }))}
+    ${cell('busy', 'Busy', '7<small> / 11</small>', '64% utilisation · 3 idle', spark(series(6, 2, 30, 2), { label: 'Busy runners, last 30 minutes' }))}
+    ${cell('queue', 'Queue depth', '9', '3 on capacity hold · oldest 18m', spark(series(7, 3, 30, 4), { warnAbove: 10, label: 'Queue depth, last 30 minutes' }))}
+    ${cell('agents', 'Agents running', '7', 'claude 4 · codex 2 · opencode 1', spark(series(5, 2, 30, 6), { label: 'Running agents, last 30 minutes' }))}
+    ${cell('spend', 'Spend today', '$38.42', 'of $60.00 daily budget · 64%', spark([0.6,0.9,1.2,0.4,0.2,0.1,0.1,0.3,1.8,2.6,3.1,2.9,3.4,4.1,3.8,3.6,2.2,2.7,1.9,1.4], { label: 'Spend per hour today' }))}
+  </section>`;
+}
+
+/* ---- Other destinations ---- */
+function queuePanel() {
+  const rows = QUEUE.map((q) => `<tr><td class="mono">${q[0]}</td><td class="cell-clip" style="width:46%"><span class="ref">${q[1]}${q[2]}</span><span class="item-title">${q[3]}</span></td>
+    <td><span class="tag">${q[4]}</span></td><td><span class="state ${q[5].startsWith('Capacity') ? 'warn' : 'idle'}">${q[5]}</span></td><td class="num">${q[6]}</td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-work-queue"><div><div class="panel-head"><h2>Admitted queue</h2><span class="count">9</span><span class="meta">FIFO within priority · codex & opencode ceiling 1</span></div>
+    <table><thead><tr><th>Pri</th><th>Item</th><th>Agent</th><th>State</th><th class="num">Waiting</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+function runnersPanel() {
+  const cls = { busy: 'busy', idle: 'idle', drain: 'warn', off: 'fail' }, lab = { busy: 'Busy', idle: 'Idle', drain: 'Draining', off: 'Offline' };
+  const rows = RUNNERS.map((r) => `<tr><td class="mono">${r[0]}</td><td><span class="state ${cls[r[1]]}">${lab[r[1]]}</span></td><td class="mono" style="font-size:12px">${r[2]}</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-runners"><div><div class="panel-head"><h2>Runners</h2><span class="count">11/12 online</span><span class="meta">every job fits one runner after reserves</span></div>
+    <table><thead><tr><th>Runner</th><th>State</th><th>Job</th><th class="num">Request</th><th class="num">For</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+function sessionsPanel() {
+  const rows = SESSIONS.map((s) => `<tr><td class="mono" style="font-size:12px">${s[0]}</td><td class="ref">${s[1]}</td><td><span class="tag">${s[2]}</span></td><td><span class="state ${s[3]}">${s[4]}</span></td><td class="num">${s[5]}</td><td class="num">${s[6]}</td><td class="num dim">${s[7]}</td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · today</h2><span class="count">31</span><span class="meta">grouped by issue · retained 400 days</span></div>
+    <table><thead><tr><th>Session</th><th>Issue</th><th>Agent</th><th>Outcome</th><th class="num">Duration</th><th class="num">Tokens</th><th class="num">Started</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+function costsPanel() {
+  const max = Math.max(...COSTS.map((c) => c[2]));
+  const rows = COSTS.map((c) => `<tr><td class="mono" style="font-size:13px">${c[0]}</td><td class="num">${money(c[1])}</td>
+    <td style="width:38%"><div class="cost-bar"><div class="meter"><i style="--v:${(c[2] / max) * 100}%"></i></div><span class="mono dim" style="font-size:12px;text-align:right">${money(c[2])}</span></div></td><td class="num">${c[3]}</td><td class="num">${money(c[2] / c[3])}</td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-costs"><div><div class="panel-head"><h2>Spend by repository</h2><span class="count">$38.42 today</span><span class="meta">7-day total $262.15</span></div>
+    <table><thead><tr><th>Repository</th><th class="num">Today</th><th>7 days</th><th class="num">Runs · 7d</th><th class="num">Per run</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+
+const VIEWS = {
+  deck: { primary: 'Review 5 decisions', warn: true,
+    body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}</div></div>` },
+  inbox: { primary: 'Respond to oldest', warn: false, body: () => inboxPanel(true) },
+  agents: { primary: null, warn: false, body: () => `${runsPanel(true)}${donePanel()}` },
+  shuttlebay: { primary: null, warn: true, body: () => `<div class="cols"><div class="stack">${runnersPanel()}</div><div class="stack">${fleetPanel()}</div></div>` },
+  work: { primary: 'New work', warn: false, body: () => queuePanel() },
+  sessions: { primary: null, warn: false, body: () => sessionsPanel() },
+  costs: { primary: 'Export ledger', warn: false, body: () => `${readouts()}${costsPanel()}` },
+};
+
+function render(key) {
+  const d = DEST.find((x) => x.key === key) || DEST[0], v = VIEWS[d.key];
+  document.body.dataset.accent = d.accent;
+  document.title = `Agent LCARS — ${d.title}`;
+  $('#page-title').textContent = d.title;
+  $('#page-sub').textContent = d.sub;
+  $('#nav').innerHTML = DEST.map((x, i) => `<a href="#${x.key}" data-accent="${x.accent}" data-key="${x.key}" style="--w:${x.w}px" ${x.key === d.key ? 'aria-current="page"' : ''} data-od-id="nav-${x.key}"><small>0${i + 1}${x.count ? ' · ' + x.count : ''}</small>${x.label}</a>`).join('');
+  $('#warnband').innerHTML = v.warn
+    ? `<span class="eyebrow">2 data warnings</span><span>GitHubActionsMainWorkflowFailing ×2 on jlapenna/messages-control (#2469)</span><span class="sep">|</span><span>worf-r1 NotReady for 12 min · its slot is excluded from admission</span><a href="#">Details</a>`
+    : `<span class="eyebrow">No data warnings</span><span>All sources reporting · telemetry-watcher lag 3 s</span>`;
+  $('#warnband').style.borderLeftColor = v.warn ? '' : 'var(--hairline)';
+  $('#warnband').style.color = v.warn ? '' : 'var(--ink-dim)';
+  $('#warnband').querySelector('.eyebrow').style.color = v.warn ? '' : 'var(--ink-dim)';
+  $('#toolbar').innerHTML = `
+    <select class="field" aria-label="Repository" data-od-id="filter-repo"><option>All repositories (4)</option><option>jlapenna/agent-lcars</option><option>jlapenna/homelab</option><option>supersprinklesracing/sprinkles</option><option>jlapenna/messages-control</option></select>
+    <select class="field" aria-label="Agent" data-od-id="filter-agent"><option>All agents</option><option>agent:claude</option><option>agent:codex</option><option>agent:opencode</option></select>
+    <div class="seg" role="group" aria-label="Window" data-od-id="filter-window">${['1h', '24h', '7d'].map((w) => `<button type="button" aria-pressed="${w === '24h'}">${w}</button>`).join('')}</div>
+    <label class="field search" data-od-id="search"><span class="eyebrow">Find</span><input placeholder="issue, PR, session id" aria-label="Search"></label>
+    ${v.primary ? `<button class="btn btn-primary push" type="button" data-od-id="primary-action">${v.primary}</button>` : ''}`;
+  $('#content').innerHTML = v.body();
+  try { localStorage.setItem('lcars.dest', d.key); } catch (e) {}
+}
+
+document.addEventListener('click', (e) => {
+  const nav = e.target.closest('.nav a');
+  if (nav) { e.preventDefault(); render(nav.dataset.key); window.scrollTo(0, 0); return; }
+  const seg = e.target.closest('.seg button');
+  if (seg) seg.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === seg)));
+  if (e.target.closest('[data-od-id="primary-action"]') && document.body.dataset.accent === 'amber') render('inbox');
+});
+
+let start = 'deck';
+try { start = localStorage.getItem('lcars.dest') || 'deck'; } catch (e) {}
+render(location.hash.slice(1) || start);
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "fleet-console.html",
+  "entry": "fleet-console.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-10-11T18:53:22.678Z",
+  "updatedAt": "2026-10-11T18:53:22.678Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

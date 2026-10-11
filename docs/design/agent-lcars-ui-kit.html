@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent LCARS — Console UI Kit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#ffffff;
+    --fg:#111111;
+    --accent:#1677ff;
+    --surface:#f7f8fa;
+    --muted:#6b7280;
+    --border:#d9dee7;
+    --r:8px;
+    --s1:8px; --s2:16px; --s3:24px; --s4:32px; --s5:48px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:Inter,system-ui,-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    background:var(--bg);color:var(--fg);
+    font-size:16px;line-height:1.55;
+    font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--accent);color:var(--bg)}
+  a{color:var(--fg);text-decoration:underline;text-underline-offset:3px}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  svg{display:block}
+
+  /* ---------- masthead ---------- */
+  .masthead{border-bottom:1px solid var(--border);background:var(--bg);padding:var(--s4) var(--s4) var(--s3)}
+  .lcars-elbow{display:flex;align-items:flex-end;gap:0;margin-bottom:var(--s2)}
+  .elbow-cap{width:224px;height:64px;background:var(--accent);border-bottom-right-radius:56px;display:flex;align-items:center;padding:0 var(--s3) 10px;color:var(--fg);font-weight:700;font-size:13px;letter-spacing:.22em}
+  .elbow-bar{flex:1;height:24px;background:var(--accent);border-top-left-radius:12px;margin-left:8px}
+  .mast-title{font-size:clamp(32px,4.5vw,48px);font-weight:700;letter-spacing:-0.02em;line-height:1.08}
+  .mast-title small{display:block;font-size:16px;font-weight:500;color:var(--muted);letter-spacing:0;margin-top:var(--s1)}
+  .mast-facts{display:flex;flex-wrap:wrap;gap:var(--s1);margin-top:var(--s2)}
+  .fact{border:1px solid var(--border);border-radius:var(--r);padding:4px 12px;font-size:13px;font-weight:600;color:var(--muted)}
+
+  /* ---------- shell ---------- */
+  .shell{display:grid;grid-template-columns:264px minmax(0,1fr);gap:var(--s5);max-width:1240px;margin:0 auto;padding:var(--s5) var(--s4) 96px}
+  .toc{position:sticky;top:var(--s3);align-self:start}
+  .toc nav{display:flex;flex-direction:column;gap:2px}
+  .toc a{display:flex;justify-content:space-between;align-items:center;gap:var(--s1);text-decoration:none;padding:10px 12px;border-radius:var(--r);border:1px solid transparent;font-size:14px;font-weight:600;color:var(--muted);min-height:44px}
+  .toc a:hover{background:var(--surface);color:var(--fg)}
+  .toc a.active{color:var(--fg);border-color:var(--border);box-shadow:inset 3px 0 0 var(--accent)}
+  .toc-num{font-size:11px;letter-spacing:.14em;color:var(--muted)}
+  .toc-title{font-size:11px;font-weight:700;letter-spacing:.22em;color:var(--muted);padding:0 12px 8px}
+
+  /* ---------- sections ---------- */
+  .spec{scroll-margin-top:24px;margin-bottom:88px}
+  .spec-head{margin-bottom:var(--s4)}
+  .kicker{font-size:12px;font-weight:700;letter-spacing:.22em;color:var(--muted)}
+  .spec-head h2{font-size:32px;font-weight:700;letter-spacing:-0.01em;margin-top:4px}
+  .spec-head p{color:var(--muted);max-width:64ch;margin-top:var(--s1)}
+  .sub{font-size:13px;font-weight:700;letter-spacing:.16em;color:var(--muted);margin:var(--s4) 0 var(--s2)}
+  .row{display:flex;flex-wrap:wrap;gap:var(--s2);align-items:center}
+  .grid{display:grid;gap:var(--s2)}
+  .grid.two{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .grid.three{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+
+  /* ---------- swatches / tokens ---------- */
+  .swatch{border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+  .swatch .chip{height:72px;border-bottom:1px solid var(--border)}
+  .swatch .meta{padding:12px var(--s2)}
+  .swatch .name{font-weight:700;font-size:14px}
+  .swatch .hex{font-size:13px;color:var(--muted)}
+  .swatch .role{font-size:12px;color:var(--muted);margin-top:4px}
+
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)}
+  td{padding:12px;border-bottom:1px solid var(--border);vertical-align:top}
+  .spec-card{border:1px solid var(--border);border-radius:var(--r);padding:var(--s3);background:var(--bg)}
+  .inset{background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+
+  .rule-strip{display:flex;height:56px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+  .rule-strip span{flex:1;border-right:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--muted)}
+  .rule-strip span:last-child{border-right:0}
+  .r8-demo{width:72px;height:72px;border:1px solid var(--fg);border-radius:var(--r);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--muted)}
+
+  /* ---------- type specimens ---------- */
+  .t-display{font-size:48px;font-weight:700;letter-spacing:-0.02em;line-height:1.05}
+  .t-h1{font-size:32px;font-weight:700;letter-spacing:-0.01em}
+  .t-h2{font-size:24px;font-weight:600}
+  .t-body{font-size:16px}
+  .t-meta{font-size:13px;color:var(--muted)}
+  .t-label{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+
+  /* ---------- nav specimens ---------- */
+  .console-nav{display:inline-flex;gap:4px;border:1px solid var(--border);border-radius:var(--r);padding:4px;background:var(--bg)}
+  .cn-item{display:flex;align-items:center;gap:var(--s1);min-height:44px;padding:0 var(--s2);border-radius:6px;font-size:14px;font-weight:600;color:var(--muted);text-decoration:none;border:1px solid transparent;background:transparent;cursor:pointer;font-family:inherit}
+  .cn-item:hover{background:var(--surface);color:var(--fg)}
+  .cn-item.active{background:var(--fg);color:var(--bg)}
+  .count{font-size:12px;font-weight:700;border-radius:8px;padding:2px 8px;background:var(--accent);color:var(--fg)}
+  .cn-item.active .count{background:var(--accent);color:var(--fg)}
+  .crumbs{font-size:13px;color:var(--muted);display:flex;gap:8px;align-items:center}
+  .crumbs a{color:var(--muted)}
+  .crumbs strong{color:var(--fg);font-weight:600}
+  .tabs{display:flex;gap:var(--s3);border-bottom:1px solid var(--border)}
+  .tab{appearance:none;background:none;border:0;font-family:inherit;font-size:14px;font-weight:600;color:var(--muted);padding:12px 2px 10px;min-height:44px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tab:hover{color:var(--fg)}
+  .tab.active{color:var(--fg);border-bottom-color:var(--accent)}
+
+  /* ---------- buttons ---------- */
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--s1);min-height:44px;padding:0 var(--s3);border-radius:var(--r);font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;border:1px solid transparent;transition:background-color .15s,transform .15s,filter .15s,border-color .15s;text-decoration:none}
+  .btn:active{transform:translateY(1px)}
+  .btn-primary{background:var(--accent);color:var(--fg)}
+  .btn-primary:hover{filter:brightness(0.92)}
+  .btn-primary:focus-visible{outline-color:var(--fg)}
+  .btn-secondary{background:var(--bg);color:var(--fg);border-color:var(--border)}
+  .btn-secondary:hover{background:var(--surface);border-color:var(--muted)}
+  .btn-ghost{background:transparent;color:var(--fg)}
+  .btn-ghost:hover{background:var(--surface)}
+  .btn-icon{width:44px;height:44px;padding:0}
+  .btn[disabled]{cursor:not-allowed;filter:none;background:var(--surface);color:var(--muted);border-color:var(--border)}
+  .btn-sm{min-height:36px;font-size:13px;padding:0 var(--s2)}
+  .state-grid{display:grid;grid-template-columns:96px repeat(4,minmax(0,auto));gap:var(--s2) var(--s3);align-items:center}
+  .state-grid .lbl{font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--muted)}
+  .forced-hover{filter:brightness(0.92)}
+  .forced-focus{outline:2px solid var(--fg);outline-offset:2px}
+  .forced-press{transform:translateY(1px)}
+  .spinner{width:16px;height:16px;border-radius:50%;border:2px solid var(--fg);border-top-color:transparent;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---------- cards ---------- */
+  .p-card{border:1px solid var(--border);border-radius:var(--r);padding:var(--s3);background:var(--bg);transition:border-color .15s,transform .15s;display:flex;flex-direction:column;gap:12px}
+  .p-card:hover{border-color:var(--fg);transform:translateY(-2px)}
+  .p-card .top{display:flex;justify-content:space-between;align-items:center;gap:var(--s1)}
+  .route{border:1px solid var(--border);border-radius:8px;padding:3px 10px;font-size:12px;font-weight:600;background:var(--surface)}
+  .card-title{font-size:17px;font-weight:600;line-height:1.35}
+  .card-actions{display:flex;gap:var(--s1);flex-wrap:wrap;margin-top:auto}
+  .status{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+  .dot{width:10px;height:10px;border-radius:50%;flex:none}
+  .dot-run{background:var(--accent)}
+  .dot-queued{border:2px solid var(--fg)}
+  .dot-hold{background:repeating-linear-gradient(45deg,var(--fg) 0 2px,transparent 2px 4px)}
+  .dot-done{background:var(--fg);border-radius:0}
+  .bar{height:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--fg)}
+  .sess-row{display:flex;align-items:center;gap:var(--s2);padding:var(--s2);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);transition:background-color .15s,border-color .15s}
+  .sess-row:hover{background:var(--surface);border-color:var(--muted)}
+
+  /* ---------- forms ---------- */
+  .field{display:flex;flex-direction:column;gap:6px;max-width:420px}
+  .field label,.field legend{font-size:13px;font-weight:600}
+  .hint{font-size:13px;color:var(--muted)}
+  .req{font-size:13px;font-weight:600;color:var(--fg)}
+  .req .mark{border-bottom:2px solid var(--fg)}
+  .control{min-height:44px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-family:inherit;font-size:15px;padding:0 var(--s2)}
+  .control::placeholder{color:var(--muted)}
+  .control:hover{border-color:var(--muted)}
+  .control:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--bg)}
+  .control.invalid{border-color:var(--fg);border-width:2px;padding:0 15px}
+  select.control{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--fg) 50%),linear-gradient(-45deg,transparent 50%,var(--fg) 50%);background-position:calc(100% - 20px) 19px,calc(100% - 14px) 19px;background-size:6px 6px;background-repeat:no-repeat;padding-right:var(--s4)}
+  .search{position:relative;max-width:420px}
+  .search .control{width:100%;padding-left:44px}
+  .search svg{position:absolute;left:14px;top:14px;color:var(--muted)}
+  .check{display:flex;align-items:center;gap:12px;min-height:44px;cursor:pointer;font-size:15px}
+  .check input{width:22px;height:22px;accent-color:var(--accent);cursor:pointer}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:var(--r);padding:4px;gap:4px;background:var(--bg)}
+  .seg button{min-height:44px;padding:0 var(--s2);border:1px solid transparent;border-radius:6px;background:transparent;font-family:inherit;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer}
+  .seg button:hover{background:var(--surface);color:var(--fg)}
+  .seg button.active{background:var(--fg);color:var(--bg)}
+  .field.error .req{display:flex;align-items:center;gap:8px}
+
+  /* ---------- data ---------- */
+  .chart{display:flex;align-items:flex-end;gap:var(--s2);height:160px;padding:var(--s2) var(--s2) 0}
+  .chart .b{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:8px;height:100%}
+  .chart .b i{width:100%;max-width:48px;background:var(--fg)}
+  .chart .b.today i{background:var(--accent)}
+  .chart .b span{font-size:11px;font-weight:600;color:var(--muted)}
+  .skeleton{height:14px;border-radius:8px;background:var(--surface);animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{50%{background:var(--border)}}
+  .empty{border:1px dashed var(--muted);border-radius:var(--r);padding:var(--s5) var(--s3);text-align:center;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:var(--s1)}
+
+  footer.spec-foot{border-top:1px solid var(--border);max-width:1240px;margin:0 auto;padding:var(--s4);font-size:14px;color:var(--muted)}
+  footer.spec-foot p{margin-bottom:8px}
+  footer.spec-foot strong{color:var(--fg)}
+
+  @media (max-width:900px){
+    .shell{grid-template-columns:1fr;gap:var(--s3);padding:var(--s3)}
+    .toc{position:static}
+    .toc nav{flex-direction:row;flex-wrap:wrap}
+    .state-grid{grid-template-columns:repeat(2,minmax(0,auto))}
+    .state-grid .lbl{grid-column:1/-1}
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    *,*::before,*::after{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+
+<header class="masthead" data-od-id="kit-masthead">
+  <div class="lcars-elbow" aria-hidden="true">
+    <div class="elbow-cap">A · LCARS</div>
+    <div class="elbow-bar"></div>
+  </div>
+  <h1 class="mast-title" data-od-id="kit-title">Agent LCARS — Console UI Kit
+    <small>Design system for the operations console: decision inbox, agent fleet, session archive.</small>
+  </h1>
+  <div class="mast-facts">
+    <span class="fact">Registered palette · 6 tokens</span>
+    <span class="fact">Inter</span>
+    <span class="fact">8px grid · 8px radius · 1px borders</span>
+    <span class="fact">v1 · 2026-10</span>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="toc" data-od-id="kit-toc">
+    <p class="toc-title">CONTENTS</p>
+    <nav id="toc-nav">
+      <a href="#foundations"><span><span class="toc-num">01 </span>Foundations</span></a>
+      <a href="#navigation"><span><span class="toc-num">02 </span>Navigation</span></a>
+      <a href="#buttons"><span><span class="toc-num">03 </span>Buttons</span></a>
+      <a href="#cards"><span><span class="toc-num">04 </span>Cards</span></a>
+      <a href="#forms"><span><span class="toc-num">05 </span>Forms</span></a>
+      <a href="#data"><span><span class="toc-num">06 </span>Data &amp; state</span></a>
+    </nav>
+  </aside>
+
+  <main>
+
+    <!-- 01 FOUNDATIONS -->
+    <section class="spec" id="foundations" data-od-id="spec-foundations">
+      <div class="spec-head">
+        <p class="kicker">01 · FOUNDATIONS</p>
+        <h2>Tokens, type, rhythm</h2>
+        <p>The console draws from six registered colors only. There are no semantic state colors — status is carried by shape plus a text label, never hue alone.</p>
+      </div>
+
+      <p class="sub">COLOR</p>
+      <div class="grid three" data-od-id="token-swatches">
+        <div class="swatch"><div class="chip" style="background:#ffffff"></div><div class="meta"><p class="name">--bg</p><p class="hex">#ffffff</p><p class="role">Page &amp; card ground</p></div></div>
+        <div class="swatch"><div class="chip" style="background:#111111"></div><div class="meta"><p class="name">--fg</p><p class="hex">#111111</p><p class="role">Text, icons, selected nav · 18.9:1 on bg</p></div></div>
+        <div class="swatch"><div class="chip" style="background:#1677ff"></div><div class="meta"><p class="name">--accent</p><p class="hex">#1677ff</p><p class="role">Primary fills, focus rings, live signal · #111111 label 4.6:1</p></div></div>
+        <div class="swatch"><div class="chip" style="background:#f7f8fa"></div><div class="meta"><p class="name">--surface</p><p class="hex">#f7f8fa</p><p class="role">Hover, inset wells, track fills</p></div></div>
+        <div class="swatch"><div class="chip" style="background:#6b7280"></div><div class="meta"><p class="name">--muted</p><p class="hex">#6b7280</p><p class="role">Secondary text on bg only · 4.8:1</p></div></div>
+        <div class="swatch"><div class="chip" style="background:#d9dee7"></div><div class="meta"><p class="name">--border</p><p class="hex">#d9dee7</p><p class="role">1px structure lines, skeleton peak</p></div></div>
+      </div>
+
+      <p class="sub">TYPOGRAPHY — SINGLE FAMILY, WEIGHT-LED HIERARCHY</p>
+      <div class="spec-card">
+        <p class="t-display" style="margin-bottom:16px">Intake to merge</p>
+        <p class="t-h1" style="margin-bottom:12px">Decision inbox</p>
+        <p class="t-h2" style="margin-bottom:12px">Run 4192 claimed work item #618</p>
+        <p class="t-body" style="margin-bottom:12px;max-width:64ch">Body copy stays at 16px/1.55. Values use tabular figures so issue numbers, durations, and token counts align in columns.</p>
+        <p class="t-meta" style="margin-bottom:12px">Runner spark-07 · QueueExecutor · dispatched 09:14 · duration 6m 22s</p>
+        <p class="t-label" style="margin-bottom:0">Section label · uppercase, letterspaced</p>
+      </div>
+
+      <p class="sub">GRID, SURFACE TREATMENT</p>
+      <div class="row" style="align-items:stretch">
+        <div class="r8-demo">r = 8</div>
+        <div class="rule-strip" style="flex:1;min-width:280px">
+          <span>8</span><span>16</span><span>24</span><span>32</span><span>48</span>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:12px">All interactive components carry an 8px radius and 1px --border. The masthead elbow is the sole decorative geometry. Touch targets are 44px minimum.</p>
+    </section>
+
+    <!-- 02 NAVIGATION -->
+    <section class="spec" id="navigation" data-od-id="spec-navigation">
+      <div class="spec-head">
+        <p class="kicker">02 · NAVIGATION</p>
+        <h2>Console chrome</h2>
+        <p>Three workspaces map to the live routes: Queue <code>/</code>, Agents <code>/agents</code>, Sessions <code>/sessions</code>. Selection reads as an inverted block, not a tinted one.</p>
+      </div>
+
+      <p class="sub">PRIMARY — ROUTE SWITCH</p>
+      <div class="spec-card" data-od-id="nav-primary">
+        <div class="console-nav">
+          <button class="cn-item active" aria-current="page">Queue <span class="count">3</span></button>
+          <button class="cn-item">Agents <span class="count">5</span></button>
+          <button class="cn-item">Sessions</button>
+        </div>
+        <p class="hint" style="margin-top:12px">Count badges use --accent with an ink label; they mark items needing action, so Queue=3 means three maintainer decisions open.</p>
+      </div>
+
+      <p class="sub">BREADCRUMB</p>
+      <div class="spec-card">
+        <p class="crumbs"><a href="#foundations">Queue</a> <span aria-hidden="true">/</span> <a href="#foundations">jlapenna/agent-lcars</a> <span aria-hidden="true">/</span> <strong>Issue #618</strong></p>
+      </div>
+
+      <p class="sub">TABS — VIEW SECTION</p>
+      <div class="spec-card">
+        <div class="tabs">
+          <button class="tab active" aria-selected="true">Active runs</button>
+          <button class="tab" aria-selected="false">Claimed</button>
+          <button class="tab" aria-selected="false">Recent outcomes</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 BUTTONS -->
+    <section class="spec" id="buttons" data-od-id="spec-buttons">
+      <div class="spec-head">
+        <p class="kicker">03 · BUTTONS</p>
+        <h2>One accent fill, two neutrals</h2>
+        <p>Primary is an accent fill with an ink label — the LCARS endcap convention, and the only pairing in this palette that clears AA on the fill (4.6:1). One solid primary per viewport.</p>
+      </div>
+
+      <p class="sub">VARIANTS</p>
+      <div class="spec-card" data-od-id="button-variants">
+        <div class="row">
+          <button class="btn btn-primary">Take over</button>
+          <button class="btn btn-secondary">Open on GitHub</button>
+          <button class="btn btn-ghost">Snooze</button>
+          <button class="btn btn-secondary btn-icon" aria-label="Run details">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 8h10M8 3l5 5-5 5"/></svg>
+          </button>
+          <button class="btn btn-primary" disabled>Dispatching…</button>
+        </div>
+      </div>
+
+      <p class="sub">STATES — PRIMARY</p>
+      <div class="spec-card" data-od-id="button-states">
+        <div class="state-grid">
+          <span class="lbl">STATE</span><span class="lbl">DEFAULT</span><span class="lbl">HOVER</span><span class="lbl">FOCUS</span><span class="lbl">PRESSED</span>
+          <span class="lbl">PRIMARY</span>
+          <button class="btn btn-primary">Take over</button>
+          <button class="btn btn-primary forced-hover">Take over</button>
+          <button class="btn btn-primary forced-focus">Take over</button>
+          <button class="btn btn-primary forced-press">Take over</button>
+        </div>
+        <p class="hint" style="margin-top:16px">Hover shifts the fill darker via brightness, never the label. Focus moves the ring to --fg so it stays visible on the accent. Label stays #111111 in every state.</p>
+      </div>
+
+      <p class="sub">LOADING</p>
+      <div class="spec-card">
+        <div class="row">
+          <button class="btn btn-primary"><span class="spinner" aria-hidden="true"></span>Reconciling</button>
+          <button class="btn btn-secondary"><span class="spinner" aria-hidden="true"></span>Loading sessions</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 CARDS -->
+    <section class="spec" id="cards" data-od-id="spec-cards">
+      <div class="spec-head">
+        <p class="kicker">04 · CARDS</p>
+        <h2>Inbox, fleet, archive</h2>
+        <p>Card roles mirror the console's real objects: a decision-inbox item, a live agent run, and a session-archive row.</p>
+      </div>
+
+      <p class="sub">DECISION INBOX ITEM</p>
+      <div class="grid two" data-od-id="inbox-cards">
+        <article class="p-card" data-od-id="inbox-card-618">
+          <div class="top"><span class="route">agent:claude</span><span class="status"><span class="dot dot-run" aria-hidden="true"></span>Awaiting review</span></div>
+          <p class="card-title">#618 · Rebuild token providers on key rotation</p>
+          <p class="t-meta">jlapenna/agent-lcars · run 4192 · patch +128 −41 · 6m 22s</p>
+          <div class="card-actions">
+            <button class="btn btn-primary btn-sm">Take over</button>
+            <button class="btn btn-secondary btn-sm">Open on GitHub</button>
+            <button class="btn btn-ghost btn-sm">Snooze</button>
+          </div>
+        </article>
+        <article class="p-card" data-od-id="inbox-card-604">
+          <div class="top"><span class="route">agent:codex</span><span class="status"><span class="dot dot-hold" aria-hidden="true"></span>Maintainer follow-up</span></div>
+          <p class="card-title">#604 · Guard DNS rebinding on LAN fixture preview</p>
+          <p class="t-meta">jlapenna/agent-lcars · run 4175 · merged, docs update pending · 2h ago</p>
+          <div class="card-actions">
+            <button class="btn btn-secondary btn-sm">Open on GitHub</button>
+            <button class="btn btn-ghost btn-sm">Snooze</button>
+          </div>
+        </article>
+      </div>
+
+      <p class="sub">AGENT RUN CARD</p>
+      <div class="grid two" data-od-id="run-cards">
+        <article class="p-card" data-od-id="run-card-spark07">
+          <div class="top"><span class="route">agent:opencode</span><span class="status"><span class="dot dot-run" aria-hidden="true"></span>Running</span></div>
+          <p class="card-title">spark-07 · session 8c3f</p>
+          <div class="bar" role="img" aria-label="Dispatch progress 64 percent"><i style="width:64%"></i></div>
+          <p class="t-meta">issue #631 · QueueExecutor · 64% · 4m 05s</p>
+        </article>
+        <article class="p-card" data-od-id="run-card-spark02">
+          <div class="top"><span class="route">agent:codex</span><span class="status"><span class="dot dot-queued" aria-hidden="true"></span>Queued</span></div>
+          <p class="card-title">spark-02 · awaiting runner</p>
+          <div class="bar" role="img" aria-label="Dispatch progress 8 percent"><i style="width:8%"></i></div>
+          <p class="t-meta">issue #627 · autoscaler placing · 8%</p>
+        </article>
+      </div>
+
+      <p class="sub">SESSION ARCHIVE ROW — COMPACT CARD</p>
+      <div class="grid" style="gap:8px" data-od-id="session-rows">
+        <div class="sess-row">
+          <span class="status"><span class="dot dot-done" aria-hidden="true"></span>Done</span>
+          <p style="font-size:14px;font-weight:600">Issue #611 · fleet-tools fixtures reset</p>
+          <p class="t-meta" style="margin-left:auto">12 events · 3m 51s</p>
+        </div>
+        <div class="sess-row">
+          <span class="status"><span class="dot dot-hold" aria-hidden="true"></span>Attention</span>
+          <p style="font-size:14px;font-weight:600">Issue #598 · webhook drain retry at 14:02</p>
+          <p class="t-meta" style="margin-left:auto">41 events · 22m 09s</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 05 FORMS -->
+    <section class="spec" id="forms" data-od-id="spec-forms">
+      <div class="spec-head">
+        <p class="kicker">05 · FORMS</p>
+        <h2>Controls &amp; validation</h2>
+        <p>Every field is labelled above, min-height 44px, help text muted. Errors use a doubled --fg border plus explicit text — the palette has no red, and hue alone would fail colorblind users anyway.</p>
+      </div>
+
+      <div class="grid two">
+        <div class="spec-card field" data-od-id="field-input">
+          <label for="f-repo">Repository</label>
+          <input class="control" id="f-repo" type="text" value="jlapenna/agent-lcars">
+          <p class="hint">Onboarded repositories only.</p>
+        </div>
+        <div class="spec-card field error" data-od-id="field-error">
+          <label for="f-issue" class="req">Issue number <span aria-hidden="true">·</span> <span class="mark">required</span></label>
+          <input class="control invalid" id="f-issue" type="text" aria-invalid="true" aria-describedby="f-issue-msg" placeholder="e.g. 618">
+          <p class="req" id="f-issue-msg">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.6"/><path d="M8 4.8v4M8 11.2v.4"/></svg>
+            Enter the GitHub issue number to dispatch against.
+          </p>
+        </div>
+        <div class="spec-card field" data-od-id="field-select">
+          <label for="f-agent">Route to agent</label>
+          <select class="control" id="f-agent">
+            <option>Claude Code (agent:claude)</option>
+            <option>Codex (agent:codex)</option>
+            <option>OpenCode (agent:opencode)</option>
+          </select>
+          <p class="hint">Exactly one routing label is added to the issue.</p>
+        </div>
+        <div class="spec-card search" data-od-id="field-search">
+          <label for="f-search" class="hint" style="margin-bottom:6px;display:block">Search sessions</label>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>
+          <input class="control" id="f-search" type="search" placeholder="issue, runner, or session id">
+        </div>
+      </div>
+
+      <p class="sub">SEGMENTED — ROUTING LABEL, SINGLE CHOICE</p>
+      <div class="spec-card" data-od-id="seg-routing">
+        <div class="seg" role="group" aria-label="Routing label">
+          <button class="active" aria-pressed="true">agent:claude</button>
+          <button aria-pressed="false">agent:codex</button>
+          <button aria-pressed="false">agent:opencode</button>
+        </div>
+        <p class="hint" style="margin-top:12px">Selected = inverted block. The three options mirror the repository label contract; a dispatch adds exactly one.</p>
+      </div>
+
+      <p class="sub">CHECKBOX</p>
+      <div class="spec-card" data-od-id="form-checks">
+        <label class="check"><input type="checkbox" checked>Attach session transcript to the PR</label>
+        <label class="check"><input type="checkbox">Page me on merge failure</label>
+      </div>
+    </section>
+
+    <!-- 06 DATA -->
+    <section class="spec" id="data" data-od-id="spec-data">
+      <div class="spec-head">
+        <p class="kicker">06 · DATA &amp; STATE</p>
+        <h2>Charts, status, loading</h2>
+        <p>Charts fill, never outline. Status pairs a shape with its word. Loading states keep their footprint so the inbox doesn't jump.</p>
+      </div>
+
+      <p class="sub">DISPATCHED RUNS — LAST 7 DAYS</p>
+      <div class="spec-card" data-od-id="chart-runs">
+        <div class="chart">
+          <div class="b"><i style="height:34%"></i><span>Wed</span></div>
+          <div class="b"><i style="height:52%"></i><span>Thu</span></div>
+          <div class="b"><i style="height:41%"></i><span>Fri</span></div>
+          <div class="b"><i style="height:18%"></i><span>Sat</span></div>
+          <div class="b"><i style="height:27%"></i><span>Sun</span></div>
+          <div class="b"><i style="height:66%"></i><span>Mon</span></div>
+          <div class="b today"><i style="height:84%"></i><span>Today</span></div>
+        </div>
+        <p class="hint" style="margin-top:12px">Today highlights in --accent; all other bars use --fg. Values are labeled in tooltips that repeat the number as text.</p>
+      </div>
+
+      <p class="sub">STATUS PATTERNS — SHAPE + WORD, NEVER HUE ALONE</p>
+      <div class="spec-card" data-od-id="status-patterns">
+        <div class="row" style="gap:var(--s4)">
+          <span class="status"><span class="dot dot-run" aria-hidden="true"></span>Running</span>
+          <span class="status"><span class="dot dot-queued" aria-hidden="true"></span>Queued</span>
+          <span class="status"><span class="dot dot-hold" aria-hidden="true"></span>Attention</span>
+          <span class="status"><span class="dot dot-done" aria-hidden="true"></span>Done</span>
+        </div>
+      </div>
+
+      <p class="sub">LOADING &amp; EMPTY</p>
+      <div class="grid two" data-od-id="loading-empty">
+        <div class="spec-card" style="display:flex;flex-direction:column;gap:12px">
+          <div class="skeleton" style="width:40%"></div>
+          <div class="skeleton" style="width:100%"></div>
+          <div class="skeleton" style="width:72%"></div>
+          <div class="skeleton" style="width:56%"></div>
+        </div>
+        <div class="empty">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M3.5 10h17M9 14.5h6"/></svg>
+          <p style="font-weight:600;color:var(--fg)">No items need a decision</p>
+          <p style="font-size:14px">New runs will surface here when a maintainer action is required.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="spec-foot">
+  <p><strong>Contrast ledger.</strong> #111111 on #ffffff 18.9:1 · #6b7280 on #ffffff 4.8:1 · #111111 on #1677ff 4.6:1 · #ffffff on #111111 18.9:1. --accent is never used for small text on white (4.1:1 would fail AA) — it appears as fills, rings, and large marks only, twice per screen maximum.</p>
+  <p><strong>Focus.</strong> 2px --accent ring, 2px offset, every focusable control; the ring swaps to --fg on accent fills. <strong>Motion.</strong> All transitions respect prefers-reduced-motion. <strong>Geometry.</strong> 8px radius on all components; segments nested inside an 8px container inset to 6px; the masthead elbow is the one decorative exception.</p>
+</footer>
+
+<script>
+  (function(){
+    var seg = document.querySelector('[data-od-id="seg-routing"] .seg');
+    if (seg) {
+      seg.addEventListener('click', function(e){
+        var b = e.target.closest('button'); if(!b) return;
+        seg.querySelectorAll('button').forEach(function(x){
+          x.classList.toggle('active', x===b);
+          x.setAttribute('aria-pressed', x===b ? 'true' : 'false');
+        });
+      });
+    }
+    var links = Array.prototype.slice.call(document.querySelectorAll('#toc-nav a'));
+    var secs = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+    function spy(){
+      var y = window.scrollY + 120, cur = 0;
+      secs.forEach(function(s,i){ if(s && s.offsetTop <= y) cur = i; });
+      links.forEach(function(a,i){ a.classList.toggle('active', i===cur); });
+    }
+    window.addEventListener('scroll', spy, {passive:true});
+    spy();
+  })();
+</script>
+</body>
+</html>
