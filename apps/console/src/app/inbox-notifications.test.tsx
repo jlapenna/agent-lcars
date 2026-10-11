@@ -289,32 +289,137 @@ describe('opt-in Inbox notification delivery', () => {
     await tick();
     expect(showNotification).toHaveBeenCalledTimes(2);
   });
-  it('never sends prior pending native work omitted by the current same-watermark authorization', async () => {
-    const boundary = now;
-    const sourceTimes = {
-      queue: boundary,
-      activity: boundary,
-      native: boundary,
-    };
+  it.each([0, -1_000])(
+    'never sends omitted native work with watermark offset %i',
+    async (offset) => {
+      const sourceTimes = { queue: now, activity: now, native: now };
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          ...emptyNotificationState(),
+          enabled: true,
+          active: [first, second],
+          pending: [second],
+          observedAt: now,
+          sourceTimes,
+        }),
+      );
+      mocks.read.mockImplementation(async () => ({
+        ...sample([first]),
+        sourceTimes: {
+          queue: sourceTimes.queue + offset,
+          activity: sourceTimes.activity + offset,
+          native: sourceTimes.native + offset,
+        },
+      }));
+      render(tree(sample()));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(showNotification).not.toHaveBeenCalled();
+      expect(getRegistration).not.toHaveBeenCalled();
+      expect(
+        parseNotificationState(localStorage.getItem(storageKey)),
+      ).toMatchObject({
+        active: [first, second],
+        pending: [second],
+        sourceTimes,
+        lastSentAt: 0,
+      });
+    },
+  );
+  it.each([0, -1_000])(
+    'sends only currently authorized pending generations with watermark offset %i',
+    async (offset) => {
+      const sourceTimes = { queue: now, activity: now, native: now };
+      const replacement = { ...second, generation: 'work:01ABC/r3' };
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          ...emptyNotificationState(),
+          enabled: true,
+          active: [first, second],
+          pending: [second, first],
+          observedAt: now,
+          sourceTimes,
+        }),
+      );
+      // An eligible replacement generation cannot authorize its predecessor.
+      // Equal/older source clocks retain history independently of permission.
+      mocks.read.mockImplementation(async () => ({
+        ...sample([first, replacement]),
+        sourceTimes: {
+          queue: sourceTimes.queue + offset,
+          activity: sourceTimes.activity + offset,
+          native: sourceTimes.native + offset,
+        },
+      }));
+      render(tree(sample()));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(showNotification).toHaveBeenCalledExactlyOnceWith(
+        'Agent LCARS',
+        expect.objectContaining({
+          data: { href: '/inbox?item=owner%2Frepo%231' },
+        }),
+      );
+      expect(
+        parseNotificationState(localStorage.getItem(storageKey)),
+      ).toMatchObject({
+        active: [first, second],
+        pending: [second],
+        sourceTimes,
+        lastSentAt: now,
+      });
+    },
+  );
+  it.each([
+    'account mismatch',
+    'unavailable source',
+    'stale observation',
+    'stale queue',
+    'stale activity',
+    'stale native',
+    'denied permission',
+  ])('pauses retained pending work on %s', async (failure) => {
+    const sourceTimes = { queue: now, activity: now, native: now };
     localStorage.setItem(
       storageKey,
       JSON.stringify({
         ...emptyNotificationState(),
         enabled: true,
-        active: [first, second],
+        active: [second],
         pending: [second],
-        observedAt: boundary,
+        observedAt: now,
         sourceTimes,
       }),
     );
-    mocks.read.mockImplementation(async () => ({
-      ...sample([first]),
-      observedAt: boundary,
-      sourceTimes,
-    }));
-    render(tree(sample([first, second])));
-    await tick();
+    const fresh = sample([second]);
+    if (failure === 'account mismatch') fresh.principalId = 'other-viewer';
+    if (failure === 'unavailable source') fresh.available = false;
+    if (failure === 'stale observation') fresh.observedAt -= 60_000;
+    for (const source of ['queue', 'activity', 'native'] as const) {
+      if (failure === `stale ${source}`) fresh.sourceTimes[source] -= 60_000;
+    }
+    if (failure === 'denied permission')
+      vi.stubGlobal('Notification', {
+        permission: 'denied',
+        requestPermission,
+      });
+    mocks.read.mockResolvedValue(fresh);
+    render(tree(sample()));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(showNotification).not.toHaveBeenCalled();
+    expect(getRegistration).not.toHaveBeenCalled();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)),
+    ).toMatchObject({
+      pending: [second],
+      lastSentAt: 0,
+    });
   });
   it('does not attribute an old pending enable to a newly signed-in account', async () => {
     let resolveRegistration: ((value: typeof registration) => void) | undefined;
