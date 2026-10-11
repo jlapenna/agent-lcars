@@ -3773,6 +3773,177 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       });
     };
 
+    it.each([false, true])(
+      'capacity retirement retains unknown auth-write recovery with pending completion=%s',
+      async (pendingCompletion) => {
+        const f = await brokerFixture(true, false, true);
+        const delayed = deferred();
+        let held = false;
+        f.fake.delayAndLoseResponse = (attempt) => {
+          if (attempt.name !== codexCentralAuthObject() || held)
+            return undefined;
+          held = true;
+          return delayed.promise;
+        };
+        try {
+          // The real HTTP broker reserves and prepares a write whose client
+          // response is lost while the conditional RPC can still commit.
+          expect((await request(f, 'persist')).status).toBe(500);
+          const reserved = (await f.store.readRun(f.runId))
+            ?.credentialOperation;
+          expect(reserved).toMatchObject({
+            kind: 'persist',
+            claimFingerprint: f.fingerprint,
+            mutationSequence: 1,
+            mutation: {
+              kind: 'auth-write',
+              id: `${reserved?.id}:1`,
+              expectedGeneration: f.payload.generation,
+            },
+          });
+          const completion = pendingCompletion
+            ? await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+                outcome: 'pull-request',
+                outcomeReference: { kind: 'pull-request', number: 99 },
+                message: 'exact result accepted before physical retirement',
+              })
+            : undefined;
+          expect(completion).toEqual(
+            pendingCompletion
+              ? {
+                  status: 200,
+                  json: { runId: f.runId, state: 'completion-pending' },
+                }
+              : undefined,
+          );
+          await retireBroker(f);
+          const before = await f.store.readRun(f.runId);
+          const occupancy = await f.protocol.read(NOW);
+          await expect(releaseBroker(f)).rejects.toThrow('physical');
+          expect(await f.store.readRun(f.runId)).toEqual(before);
+          expect(await f.protocol.read(NOW)).toEqual(occupancy);
+          expect(before?.queue).toMatchObject({
+            state: 'claimed',
+            tokenHash: f.fingerprint,
+          });
+
+          // A failed maintenance fence keeps the same reservation visible;
+          // scheduling time never supplies authority to release capacity.
+          const fence = vi
+            .spyOn(f.codexAuth, 'fenceMutation')
+            .mockRejectedValueOnce(
+              new CodexAuthStoreError('unavailable', 'unknown external IO'),
+            );
+          f.setNow('2026-08-26T10:06:00.000Z');
+          expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+            recovered: [],
+            unresolved: [f.runId],
+          });
+          expect(fence).toHaveBeenCalledExactlyOnceWith({
+            runId: f.runId,
+            operation: reserved,
+            mutation: reserved?.mutation,
+          });
+          const retained = await f.store.readRun(f.runId);
+          expect(retained?.credentialOperation).toEqual({
+            ...reserved,
+            recoverAfter: '2026-08-26T10:11:00.000Z',
+          });
+          expect(retained?.credentialPendingResult).toEqual(
+            before?.credentialPendingResult,
+          );
+          await expect(releaseBroker(f)).rejects.toThrow('physical');
+          expect(await f.protocol.read(NOW)).toEqual(occupancy);
+
+          // The next actual maintenance pass advances the external generation,
+          // acknowledges the exact action and positively retires its lease.
+          // Even during that cleanup CAS, the capacity receipt must remain.
+          let checkedCleanup = false;
+          f.fake.beforeSave = async (attempt) => {
+            if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
+            checkedCleanup = true;
+            await expect(releaseBroker(f)).rejects.toThrow('physical');
+            expect((await f.protocol.read(NOW)).receipts).toEqual(
+              occupancy.receipts,
+            );
+          };
+          f.setNow('2026-08-26T10:12:00.000Z');
+          expect(await recoverCodexCredentialOperations(f.ctx)).toEqual({
+            recovered: [f.runId],
+            unresolved: [],
+          });
+          expect(fence).toHaveBeenCalledTimes(2);
+          expect(checkedCleanup).toBe(true);
+          const settled = await f.store.readRun(f.runId);
+          expect(settled?.credentialOperation).toBeUndefined();
+          expect(settled?.credentialPendingResult).toBeUndefined();
+          expect(settled?.state).toBe(
+            pendingCompletion ? 'finished' : before?.state,
+          );
+          expect(settled?.result).toEqual(
+            pendingCompletion
+              ? before?.credentialPendingResult?.result
+              : before?.result,
+          );
+          expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+            '1970-01-01T00:00:00.000Z',
+          );
+          expect(await releaseBroker(f)).toEqual({
+            released: true,
+            retainBarrier: false,
+          });
+          expect((await f.protocol.read(NOW)).receipts).toEqual([]);
+          expect((await f.store.readRun(f.runId))?.queue?.state).toBe(
+            pendingCompletion ? 'retired' : 'claimed',
+          );
+          const fencedAuth = await f.codexAuth.read();
+          delayed.resolve();
+          expect(await f.fake.delayedResults[0]).toMatchObject({ code: 412 });
+          expect(await f.codexAuth.read()).toEqual(fencedAuth);
+        } finally {
+          delayed.resolve();
+          await Promise.all(f.fake.delayedResults);
+        }
+      },
+    );
+
+    it('capacity release progresses after healthy auth persistence and completed HTTP cleanup', async () => {
+      const f = await brokerFixture(true, false, true);
+      expect(await request(f, 'persist')).toMatchObject({
+        status: 200,
+        json: { status: 'updated' },
+      });
+      expect(
+        (await f.store.readRun(f.runId))?.credentialOperation,
+      ).toBeUndefined();
+      expect(
+        await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+          outcome: 'pull-request',
+          outcomeReference: { kind: 'pull-request', number: 99 },
+          message: 'healthy persistence and completion control',
+        }),
+      ).toEqual({
+        status: 200,
+        json: { runId: f.runId, state: 'finished' },
+      });
+      const completed = await f.store.readRun(f.runId);
+      expect(completed?.credentialOperation).toBeUndefined();
+      expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+        '1970-01-01T00:00:00.000Z',
+      );
+      await retireBroker(f);
+      expect(await releaseBroker(f)).toEqual({
+        released: true,
+        retainBarrier: false,
+      });
+      expect((await f.protocol.read(NOW)).receipts).toEqual([]);
+      expect(await f.store.readRun(f.runId)).toMatchObject({
+        state: 'finished',
+        queue: { state: 'retired', tokenHash: f.fingerprint },
+        result: completed?.result,
+      });
+    });
+
     it('capacity retirement preserves restored HTTP exit until conditional cleanup releases the receipt', async () => {
       const f = await brokerFixture(false, false, true);
       expect((await request(f, 'restore')).status).toBe(200);
