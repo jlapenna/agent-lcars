@@ -444,6 +444,174 @@ describe('opt-in Inbox notification delivery', () => {
     ).toBeNull();
     expect(localStorage.getItem(storageKey)).toBeNull();
   });
+  it.each(['permission', 'snapshot', 'activation', 'lock'] as const)(
+    'abandons pending %s on an account change, even after returning to that account',
+    async (stage) => {
+      let release: (() => void) | undefined;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (stage === 'permission')
+        requestPermission.mockImplementation(async () => {
+          await pending;
+          return 'granted';
+        });
+      if (stage === 'snapshot')
+        mocks.read.mockImplementation(async () => {
+          await pending;
+          return sample();
+        });
+      if (stage === 'activation') {
+        const worker = new EventTarget();
+        Object.assign(worker, { state: 'installing' });
+        register.mockResolvedValue({ active: null, installing: worker });
+        release = () => {
+          Object.assign(worker, { state: 'activated' });
+          worker.dispatchEvent(new Event('statechange'));
+        };
+      }
+      if (stage === 'lock')
+        locks.request.mockImplementationOnce(async (_key, options) => {
+          await pending;
+          return typeof options === 'function' ? options({}) : undefined;
+        });
+      const view = render(tree(sample()));
+      await click('Enable Inbox notifications');
+      view.rerender(tree(sample([first], 'other-viewer')));
+      expect(
+        screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+      ).toBeEnabled();
+      view.rerender(tree(sample()));
+      await act(async () => {
+        release?.();
+      });
+      expect(
+        screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+      ).toBeEnabled();
+      expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+      expect(localStorage.getItem(storageKey)).toBeNull();
+      expect(
+        localStorage.getItem(notificationStorageKey('other-viewer')),
+      ).toBeNull();
+      expect(showNotification).not.toHaveBeenCalled();
+    },
+  );
+  it('abandons pending registration on unmount without persisting consent', async () => {
+    let release: ((value: typeof registration) => void) | undefined;
+    register.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const view = render(tree(sample()));
+    await click('Enable Inbox notifications');
+    view.unmount();
+    await act(async () => {
+      release?.(registration);
+    });
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+  it('does not publish an old observer worker failure into the next account', async () => {
+    let release: ((value: undefined) => void) | undefined;
+    const view = render(tree(sample()));
+    await click('Enable Inbox notifications');
+    mocks.read.mockImplementation(async () => sample([first, second]));
+    getRegistration.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await tick();
+    view.rerender(tree(sample([first], 'other-viewer')));
+    await act(async () => {
+      release?.(undefined);
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+    expect(
+      screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+    ).toBeEnabled();
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(
+      localStorage.getItem(notificationStorageKey('other-viewer')),
+    ).toBeNull();
+  });
+  it('starts observing the next opted-in account while the old source read is pending', async () => {
+    let release: ((value: InboxNotificationSnapshot) => void) | undefined;
+    const view = render(tree(sample()));
+    await click('Enable Inbox notifications');
+    mocks.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await tick();
+    const otherKey = notificationStorageKey('other-viewer');
+    localStorage.setItem(
+      otherKey,
+      JSON.stringify({ ...emptyNotificationState(), enabled: true }),
+    );
+    mocks.read.mockImplementation(async () => sample([first], 'other-viewer'));
+    await act(async () => {
+      view.rerender(tree(sample([first], 'other-viewer')));
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Watching for new human decisions',
+    );
+    expect(
+      parseNotificationState(localStorage.getItem(otherKey)).active,
+    ).toEqual([first]);
+    await act(async () => {
+      release?.(sample());
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Watching for new human decisions',
+    );
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+  it.each(['worker lookup', 'notification lookup'] as const)(
+    'stops unsubscribe cleanup after an account change during %s',
+    async (stage) => {
+      let release: (() => void) | undefined;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const view = render(tree(sample()));
+      await click('Enable Inbox notifications');
+      if (stage === 'worker lookup')
+        getRegistration.mockImplementation(async () => {
+          await pending;
+          return registration;
+        });
+      else
+        registration.getNotifications.mockImplementation(async () => {
+          await pending;
+          return [{ close }];
+        });
+      await click('Disable Inbox notifications');
+      view.rerender(tree(sample([first], 'other-viewer')));
+      await act(async () => {
+        release?.();
+      });
+      expect(close).not.toHaveBeenCalled();
+      expect(registration.getNotifications).toHaveBeenCalledTimes(
+        stage === 'worker lookup' ? 0 : 1,
+      );
+      expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+      expect(
+        screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+      ).toBeEnabled();
+      expect(
+        parseNotificationState(localStorage.getItem(storageKey)).enabled,
+      ).toBe(false);
+      expect(
+        localStorage.getItem(notificationStorageKey('other-viewer')),
+      ).toBeNull();
+    },
+  );
   it('deduplicates the same observed handoff across two Inbox tabs', async () => {
     localStorage.setItem(
       storageKey,
