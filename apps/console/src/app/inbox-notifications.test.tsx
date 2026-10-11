@@ -666,6 +666,75 @@ describe('opt-in Inbox notification delivery', () => {
       'notifications paused',
     );
   });
+  it('preserves pending history when a snapshot expires while acquiring the observation lock', async () => {
+    const sampledAt = now - 59_000;
+    const stored = {
+      ...emptyNotificationState(),
+      enabled: true,
+      active: [first],
+      pending: [first],
+      observedAt: sampledAt,
+      lastSentAt: sampledAt,
+      sourceTimes: { queue: sampledAt, activity: sampledAt, native: sampledAt },
+    };
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    mocks.read.mockResolvedValue({
+      ...sample(),
+      observedAt: sampledAt,
+      sourceTimes: stored.sourceTimes,
+    });
+    locks.request.mockImplementationOnce(async (_key, _options, callback) => {
+      now += 2_000;
+      vi.setSystemTime(now);
+      return callback?.({});
+    });
+    render(tree(sample()));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(parseNotificationState(localStorage.getItem(storageKey))).toEqual(
+      stored,
+    );
+    expect(getRegistration).not.toHaveBeenCalled();
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'notifications paused',
+    );
+
+    // A valid observation establishes the quiet baseline; later arrivals
+    // still deliver using the preserved rate accounting.
+    mocks.read.mockImplementation(async () => sample());
+    await tick();
+    expect(showNotification).not.toHaveBeenCalled();
+    mocks.read.mockImplementation(async () => sample([first, second]));
+    await tick();
+    expect(showNotification).toHaveBeenCalledExactlyOnceWith(
+      'Agent LCARS',
+      expect.objectContaining({ data: { href: '/inbox?item=work%3A01ABC' } }),
+    );
+  });
+  it('refuses a baseline that expires while acquiring the activation lock', async () => {
+    const sampledAt = now - 59_000;
+    mocks.read.mockResolvedValue({
+      ...sample(),
+      observedAt: sampledAt,
+      sourceTimes: { queue: sampledAt, activity: sampledAt, native: sampledAt },
+    });
+    locks.request.mockImplementationOnce(async (_key, options) => {
+      now += 2_000;
+      vi.setSystemTime(now);
+      if (typeof options === 'function') return options({});
+    });
+    render(tree(sample()));
+    await click('Enable Inbox notifications');
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'activation unavailable',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+    ).toBeEnabled();
+  });
   it('refuses a baseline that expires while registration completes', async () => {
     const sampledAt = now - 59_000;
     mocks.read.mockImplementation(async () => ({
