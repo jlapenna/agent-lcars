@@ -6,6 +6,7 @@ import {
   changeCredentialOperation,
   type CredentialMutation,
   FirestoreStore,
+  isRefusal,
   MemoryStore,
   Orchestrator,
   type OrchestratorStore,
@@ -3944,48 +3945,91 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       });
     });
 
-    it('capacity retirement preserves restored HTTP exit until conditional cleanup releases the receipt', async () => {
-      const f = await brokerFixture(false, false, true);
-      expect((await request(f, 'restore')).status).toBe(200);
-      expect(
-        (await f.store.readRun(f.runId))?.credentialRestoredClaimFingerprint,
-      ).toBe(f.fingerprint);
-      await retireBroker(f);
-      await expect(releaseBroker(f)).rejects.toThrow('physical');
-      let checked = false;
-      f.fake.beforeSave = async (attempt) => {
-        if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
-        checked = true;
+    it.each(['healthy', 'before-exit', 'after-settlement'] as const)(
+      'restored HTTP exit retains cleanup authority with retirement=%s',
+      async (retirement) => {
+        const f = await brokerFixture(false, false, true);
+        expect((await request(f, 'restore')).status).toBe(200);
         expect(
-          (await f.store.readRun(f.runId))?.credentialOperation?.kind,
-        ).toBe('cleanup');
-        await expect(releaseBroker(f)).rejects.toThrow('physical');
-      };
-      expect(
-        (
-          await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
-            runner: 'same-runner',
-            claimFingerprint: f.fingerprint,
-          })
-        ).status,
-      ).toBe(200);
-      expect(checked).toBe(true);
-      expect((await f.codexAuth.readLease())?.expiresAt).toBe(
-        '1970-01-01T00:00:00.000Z',
-      );
-      expect(await releaseBroker(f)).toEqual({
-        released: true,
-        retainBarrier: false,
-      });
-      expect(
-        (
-          await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
-            runner: 'same-runner',
-            claimFingerprint: f.fingerprint,
-          })
-        ).status,
-      ).toBe(200);
-    });
+          (await f.store.readRun(f.runId))?.credentialRestoredClaimFingerprint,
+        ).toBe(f.fingerprint);
+        const assertReleaseHeld = async () => {
+          await expect(releaseBroker(f)).rejects.toThrow('physical');
+        };
+        if (retirement === 'before-exit') {
+          await retireBroker(f);
+          await assertReleaseHeld();
+        }
+        const exit = f.orchestrator.executorExited.bind(f.orchestrator);
+        f.orchestrator.executorExited = async (...args) => {
+          const settled = await exit(...args);
+          expect(isRefusal(settled)).toBe(false);
+          if (isRefusal(settled)) throw new Error(settled.reason);
+          expect(settled.run).toMatchObject({
+            state: 'lost',
+            credentialOperation: {
+              kind: 'cleanup',
+              claimFingerprint: f.fingerprint,
+            },
+          });
+          expect(
+            settled.outbox.filter((entry) => entry.kind === 'report-outcome'),
+          ).toHaveLength(1);
+          if (retirement === 'after-settlement') {
+            // Exact issue #2395 boundary: settlement committed, but the HTTP
+            // handler has not started server-owned conditional lease cleanup.
+            await retireBroker(f);
+            await assertReleaseHeld();
+          }
+          expect((await f.protocol.read(NOW)).receipts).toHaveLength(1);
+          expect(await f.store.readRun(f.runId)).toEqual(settled.run);
+          return settled;
+        };
+        let checked = false;
+        f.fake.beforeSave = async (attempt) => {
+          if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
+          checked = true;
+          expect(
+            (await f.store.readRun(f.runId))?.credentialOperation?.kind,
+          ).toBe('cleanup');
+          if (retirement !== 'healthy') await assertReleaseHeld();
+        };
+        expect(
+          (
+            await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
+              runner: 'same-runner',
+              claimFingerprint: f.fingerprint,
+            })
+          ).status,
+        ).toBe(200);
+        expect(checked).toBe(true);
+        expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+          '1970-01-01T00:00:00.000Z',
+        );
+        const terminal = await f.store.readRun(f.runId);
+        expect(terminal?.state).toBe('lost');
+        expect(terminal?.credentialOperation).toBeUndefined();
+        expect(
+          terminal?.events.filter((event) => event.to === 'lost'),
+        ).toHaveLength(1);
+        if (retirement === 'healthy') await retireBroker(f);
+        expect(await releaseBroker(f)).toEqual({
+          released: true,
+          retainBarrier: false,
+        });
+        f.orchestrator.executorExited = exit;
+        const released = await f.store.readRun(f.runId);
+        expect(
+          (
+            await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
+              runner: 'same-runner',
+              claimFingerprint: f.fingerprint,
+            })
+          ).status,
+        ).toBe(200);
+        expect(await f.store.readRun(f.runId)).toEqual(released);
+      },
+    );
 
     it('capacity direct fallback report reserves cleanup before physical release and successor admission', async () => {
       const f = await brokerFixture(true, true, true);
