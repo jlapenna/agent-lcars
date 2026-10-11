@@ -161,7 +161,7 @@ export async function measure(options) {
       longTasks:
         'PerformanceObserver longtask entries (>=50ms), navigation through confirmation observation, capped at 200; overlapping resource and task durations must not be added.',
       mainThread:
-        'CDP Performance task/script/layout/style durations in milliseconds, delta across the timed journey and its Cancel cleanup; includes scheduling through the metrics read, not a CPU profile or hydration-only measure.',
+        'CDP Performance task/script/layout/style durations in milliseconds, timeTicks wall-time deltas across the timed journey and its Cancel cleanup; includes scheduling through the metrics read, not a CPU profile or hydration-only measure.',
     },
     samples: [],
   };
@@ -243,7 +243,7 @@ export async function measure(options) {
           });
           const cdp = await context.newCDPSession(page);
           await cdp.send('Network.enable');
-          await cdp.send('Performance.enable');
+          await cdp.send('Performance.enable', { timeDomain: 'timeTicks' });
           await cdp.send('Emulation.setCPUThrottlingRate', {
             rate: PROFILE.cpuSlowdown,
           });
@@ -270,6 +270,8 @@ export async function measure(options) {
               .filter(({ name }) =>
                 [
                   'TaskDuration',
+                  'V8CompileDuration',
+                  'DevToolsCommandDuration',
                   'ScriptDuration',
                   'LayoutDuration',
                   'RecalcStyleDuration',
