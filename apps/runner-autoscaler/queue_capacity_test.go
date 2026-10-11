@@ -577,96 +577,108 @@ func TestReceiptClosedIncarnationAfterReceiptGone(t *testing.T) {
 // Required Verify's Go suite consumes this composition regression: a retained
 // physical barrier must not strand exact logical exit and credential cleanup.
 func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
-	q, r, _ := receiptFixture(t)
-	r.State = "retiring"
-	r.Producers = []capacityProducer{{ProducerID: "original-producer", Subject: "original-subject", Stopped: true}}
-	j, err := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
-	if err != nil {
-		t.Fatal(err)
-	}
-	j.UID = "original-job-uid"
-	j.ResourceVersion = "1"
-	j.Generation = 2
-	j.Spec.Suspend = ptr(false)
-	j.Status.Conditions = []batch.JobCondition{{Type: batch.JobComplete, Status: core.ConditionTrue}}
-	r.JobUID = string(j.UID)
-	r.Worker = &capacityWorker{Generation: 1, JobUID: r.JobUID, PodUID: "original-pod-uid", Active: true}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "original-pod", Namespace: q.config.Namespace, UID: "original-pod-uid", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: j.Name, UID: j.UID, Controller: ptr(true)}}}, Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: "direct-runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 0}}}}}}
-	k := q.client.(*fake.Clientset)
-	if err = k.Tracker().Add(j); err != nil {
-		t.Fatal(err)
-	}
-	if err = k.Tracker().Add(pod); err != nil {
-		t.Fatal(err)
-	}
-	var mu sync.Mutex
-	exits, releases := 0, 0
-	released, cleaned := false, false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		if req.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(map[string]any{"policy": map[string]any{"poolId": "pool", "cluster": "cluster", "namespace": q.config.Namespace, "version": 1, "maxConcurrent": 2, "enforced": true, "inventoryKnown": true}, "receipts": []capacityReceipt{*r}})
-			return
-		}
-		var x map[string]any
-		if err := json.NewDecoder(req.Body).Decode(&x); err != nil {
-			t.Error(err)
-			w.WriteHeader(400)
-			return
-		}
-		if strings.HasSuffix(req.URL.Path, "/exit") {
-			exits++
-			if r.Worker.Active || x["runner"] != r.Runner || x["claimFingerprint"] != queueClaimFingerprint("original-token") {
-				t.Error("exit changed original claim or preceded worker retirement")
+	for _, kind := range []string{"release-refused", "release-accepted"} {
+		t.Run(kind, func(t *testing.T) {
+			q, r, _ := receiptFixture(t)
+			r.State = "retiring"
+			r.Producers = []capacityProducer{{ProducerID: "original-producer", Subject: "original-subject", Stopped: true}}
+			j, err := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
+			if err != nil {
+				t.Fatal(err)
 			}
-			if exits == 1 {
-				w.WriteHeader(503)
-				return
+			j.UID = "original-job-uid"
+			j.ResourceVersion = "1"
+			j.Generation = 2
+			j.Spec.Suspend = ptr(false)
+			j.Status.Conditions = []batch.JobCondition{{Type: batch.JobComplete, Status: core.ConditionTrue}}
+			r.JobUID = string(j.UID)
+			r.Worker = &capacityWorker{Generation: 1, JobUID: r.JobUID, PodUID: "original-pod-uid", Active: true}
+			pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "original-pod", Namespace: q.config.Namespace, UID: "original-pod-uid", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: j.Name, UID: j.UID, Controller: ptr(true)}}}, Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: "direct-runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 0}}}}}}
+			k := q.client.(*fake.Clientset)
+			if err = k.Tracker().Add(j); err != nil {
+				t.Fatal(err)
 			}
-			cleaned = true
-			fmt.Fprint(w, `{"state":"lost"}`)
-			return
-		}
-		switch x["action"] {
-		case "worker-retired":
-			r.Worker.Active = false
-		case "release":
-			releases++
-			if !cleaned || releases == 1 {
-				w.WriteHeader(409)
-				return
+			if err = k.Tracker().Add(pod); err != nil {
+				t.Fatal(err)
 			}
-			released = true
-		}
-		fmt.Fprint(w, `{"ok":true}`)
-	}))
-	defer server.Close()
-	q.capacity.consoleURL = server.URL
-	q.exits = testExitReporter(server.URL)
-	if err = q.reconcileReceipts(context.Background()); err == nil {
-		t.Fatal("expected initial release refusal")
-	}
-	q.exits.wg.Wait()
-	barrier, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), j.Name, meta.GetOptions{})
-	if err != nil || barrier.Annotations[queueBarrierAnnotation] != r.Nonce || barrier.UID != j.UID {
-		t.Fatal("release refusal discarded original barrier", err)
-	}
-	for i := 0; i < 3; i++ {
-		_ = q.reconcileReceipts(context.Background())
-		q.exits.wg.Wait()
-		mu.Lock()
-		done := released
-		mu.Unlock()
-		if done {
-			break
-		}
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if !released || !cleaned || exits != 2 || releases < 2 {
-		t.Fatalf("retained barrier stranded cleanup: released=%v cleaned=%v exits=%d releases=%d", released, cleaned, exits, releases)
+			var mu sync.Mutex
+			exits, releases := 0, 0
+			released, cleaned := false, false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				if req.Method == http.MethodGet {
+					receipts := []capacityReceipt{*r}
+					if released {
+						receipts = []capacityReceipt{}
+					}
+					json.NewEncoder(w).Encode(map[string]any{"policy": map[string]any{"poolId": "pool", "cluster": "cluster", "namespace": q.config.Namespace, "version": 1, "maxConcurrent": 2, "enforced": true, "inventoryKnown": true}, "receipts": receipts})
+					return
+				}
+				var x map[string]any
+				if err := json.NewDecoder(req.Body).Decode(&x); err != nil {
+					t.Error(err)
+					w.WriteHeader(400)
+					return
+				}
+				if strings.HasSuffix(req.URL.Path, "/exit") {
+					exits++
+					if r.Worker.Active || x["runner"] != r.Runner || x["claimFingerprint"] != queueClaimFingerprint("original-token") {
+						t.Error("exit changed original claim or preceded worker retirement")
+					}
+					if exits == 1 {
+						w.WriteHeader(503)
+						return
+					}
+					cleaned = true
+					fmt.Fprint(w, `{"state":"lost"}`)
+					return
+				}
+				switch x["action"] {
+				case "inspect-retired":
+					json.NewEncoder(w).Encode(map[string]any{"ok": true, "retirement": map[string]any{"runId": r.RunID, "nonce": r.Nonce, "jobName": r.JobName, "released": released, "barrier": map[string]string{"uid": r.JobUID, "resourceVersion": "1"}}})
+					return
+				case "worker-retired":
+					r.Worker.Active = false
+				case "release":
+					releases++
+					if kind == "release-refused" && (!cleaned || releases == 1) {
+						w.WriteHeader(409)
+						return
+					}
+					released = true
+				}
+				fmt.Fprint(w, `{"ok":true}`)
+			}))
+			defer server.Close()
+			q.capacity.consoleURL = server.URL
+			q.exits = testExitReporter(server.URL)
+			err = q.reconcileReceipts(context.Background())
+			if (err != nil) != (kind == "release-refused") {
+				t.Fatal("initial release schedule not exercised", err)
+			}
+			q.exits.wg.Wait()
+			barrier, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), j.Name, meta.GetOptions{})
+			if err != nil || barrier.Annotations[queueBarrierAnnotation] != r.Nonce || barrier.UID != j.UID {
+				t.Fatal("release refusal discarded original barrier", err)
+			}
+			for i := 0; i < 3; i++ {
+				_ = q.reconcileReceipts(context.Background())
+				q.exits.wg.Wait()
+				mu.Lock()
+				done := released
+				mu.Unlock()
+				if done {
+					break
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !released || !cleaned || exits != 2 || releases < 1 || (kind == "release-refused" && releases < 2) {
+				t.Fatalf("retained barrier stranded cleanup: released=%v cleaned=%v exits=%d releases=%d", released, cleaned, exits, releases)
+			}
+		})
 	}
 }
 
@@ -823,6 +835,69 @@ func TestReceiptProducerRotationPreservesConcurrentUsefulWork(t *testing.T) {
 			}
 			if kind == "started-awaiting-attestation" && attestations != 1 {
 				t.Fatal("already-started original Pod lost attestation")
+			}
+		})
+	}
+}
+
+func TestReceiptAbsentJobClosesOnlyDefinitivelyDrainedClaim(t *testing.T) {
+	for _, kind := range []string{"drained", "ambiguous-write", "unresolved-claim"} {
+		t.Run(kind, func(t *testing.T) {
+			q, r, _ := receiptFixture(t)
+			q.capacity.registered = true
+			original := q.capacity.producerID
+			r.Producers = []capacityProducer{{ProducerID: original, Subject: "subject"}}
+			if kind == "ambiguous-write" {
+				r.Producers[0].PendingWrites = []string{"unknown-create"}
+			}
+			if kind == "unresolved-claim" {
+				q.capacity.requestID = "original-claim-request"
+			}
+			var mu sync.Mutex
+			stopped, released := false, false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				if req.Method == http.MethodGet {
+					json.NewEncoder(w).Encode(map[string]any{"policy": map[string]any{"poolId": "pool", "cluster": "cluster", "namespace": q.config.Namespace, "version": 1, "maxConcurrent": 2, "enforced": true, "inventoryKnown": true}, "receipts": []capacityReceipt{*r}})
+					return
+				}
+				var x map[string]any
+				json.NewDecoder(req.Body).Decode(&x)
+				switch x["action"] {
+				case "stop-producer":
+					stopped = true
+					r.Producers[0].Stopped = true
+				case "retire":
+					r.State = "retiring"
+				case "release":
+					released = true
+				}
+				fmt.Fprint(w, `{"ok":true}`)
+			}))
+			defer server.Close()
+			q.capacity.consoleURL = server.URL
+			err := q.reconcileReceipts(context.Background())
+			mu.Lock()
+			defer mu.Unlock()
+			if kind != "drained" {
+				if stopped || released || err == nil || q.capacity.producerID != original {
+					t.Fatal("unknown claim/write was falsely drained", err)
+				}
+				if kind == "unresolved-claim" && q.capacity.requestID != "original-claim-request" {
+					t.Fatal("claim request identity discarded")
+				}
+				if _, getErr := q.client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), r.JobName, meta.GetOptions{}); !apierrors.IsNotFound(getErr) {
+					t.Fatal("unknown claim/write installed an unproved barrier", getErr)
+				}
+				return
+			}
+			if err != nil || !stopped || !released || q.capacity.producerID == original {
+				t.Fatal("definitively drained pre-Job claim stranded admission", err)
+			}
+			barrier, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), r.JobName, meta.GetOptions{})
+			if err != nil || barrier.Spec.Suspend == nil || !*barrier.Spec.Suspend || barrier.Annotations[queueBarrierAnnotation] != r.Nonce || barrier.Spec.Template.Spec.Containers[0].Command[0] != "/bin/false" {
+				t.Fatal("absence retired without inert deterministic barrier", err)
 			}
 		})
 	}

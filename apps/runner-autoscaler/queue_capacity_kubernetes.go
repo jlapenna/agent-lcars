@@ -212,19 +212,25 @@ func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) (err error) {
 		for _, r := range inv.Receipts {
 			j := byName[r.JobName]
 			if j == nil {
-				continue
-			}
-			ended, never := physicalReceiptWorkersEnded(j, pods.Items)
-			if never {
-				_, secretErr := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{})
-				// Preserve a recoverable original Secret. Only a definitive
-				// missing-Secret shell, or a terminal Job, enters rotation.
-				if !apierrors.IsNotFound(secretErr) {
+				// Absence alone is not quiescence. Only an unbound claim
+				// with this producer's positively drained ledger below may
+				// close; unknown writes and claim replies retain their fence.
+				if r.JobUID != "" || r.Worker != nil {
 					continue
 				}
-			}
-			if !ended {
-				continue
+			} else {
+				ended, never := physicalReceiptWorkersEnded(j, pods.Items)
+				if never {
+					_, secretErr := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{})
+					// Preserve a recoverable original Secret. Only a definitive
+					// missing-Secret shell, or a terminal Job, enters rotation.
+					if !apierrors.IsNotFound(secretErr) {
+						continue
+					}
+				}
+				if !ended {
+					continue
+				}
 			}
 			mine := false
 			for _, p := range r.Producers {
@@ -403,6 +409,11 @@ func (q *kubernetesQueue) verifyRetiredBarrier(ctx context.Context, j *batch.Job
 	r := x.Retirement
 	if r == nil || !r.Released || r.RunID != f.RunID || r.Nonce != f.Nonce || r.JobName != j.Name || r.Barrier == nil || r.Barrier.UID != string(j.UID) {
 		return fmt.Errorf("unverified queue retirement barrier")
+	}
+	// Release removes the active receipt, not the original exit obligation.
+	// The authenticated permanent barrier remains its observation source.
+	if fingerprint := j.Annotations[queueClaimAnnotation]; fingerprint != "" && j.Annotations[queueRunnerAnnotation] != "" {
+		q.exits.observeTerminated(f.RunID, j.Annotations[queueRunnerAnnotation], fingerprint)
 	}
 	return nil
 }
