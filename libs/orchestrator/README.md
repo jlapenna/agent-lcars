@@ -54,8 +54,11 @@ values decode as `normal`; new runs validate and persist the selected value.
 The per-task mutex, provider cooldowns, and server-owned Codex/OpenCode live
 claim ceilings apply to every priority.
 
-Claim selection first chooses the provider with the least live claimed
+Legacy claim selection first chooses the provider with the least live claimed
 occupancy, then its oldest eligible queue head (regardless of priority).
+Capacity claims retain their physical domain occupancy, pool limits, inventory
+proof and task exclusion before choosing the provider; logical completion
+alone does not free that capacity.
 Inside that provider, successful atomic claim reservations follow the durable
 cycle `urgent, urgent, normal, urgent, urgent, normal, background`. Empty
 classes are skipped, and each class remains FIFO by creation time and run ID.
@@ -70,8 +73,10 @@ provider cooldowns, deferred lifecycle checks, and previously claimed work
 can delay service. A reservation later released by a lifecycle check still
 consumes its turn; the bound measures reservations, not worker launches.
 
-Firestore commits the selected Run claim and the provider's
-`<prefix>priority-positions` cursor together. Missing cursor documents start
+Both legacy and capacity claims share the provider's durable turn. Firestore
+commits the selected Run claim, capacity receipt when applicable, and the
+`<prefix>priority-positions` cursor together. Receipt recovery/replay, capacity
+waits and queue waits do not consume another turn. Missing cursor documents start
 at the first turn; malformed cursors fail closed. Empty or cooling polls
 do not advance it. The cursor survives process restart and does not reset
 when work completes. No index, historical backfill, or operator data write is
