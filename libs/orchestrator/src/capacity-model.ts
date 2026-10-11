@@ -203,6 +203,41 @@ export interface CapacityFence {
   nonce: string;
 }
 
+export interface CapacityPlacementClaim {
+  runId: string;
+  poolId?: string;
+  subject: string;
+  runner: string;
+  tokenHash: string;
+  jobUid: string;
+}
+
+/** Placement cannot renew a retired receipt or substitute another Job. This
+ * guard shares the Task/Run transaction with expiry and the receipt guard with
+ * retirement. Legacy claims must have neither receipt nor retirement history. */
+export function assertCapacityPlacementClaim(
+  state: CapacityState,
+  retired: CapacityRecord | undefined,
+  claim: CapacityPlacementClaim,
+) {
+  const receipt = state.receipts.find((value) => value.runId === claim.runId);
+  if (retired !== undefined) throw new CapacityRefusal('retired');
+  if (receipt === undefined) {
+    if (claim.poolId !== undefined) throw new CapacityRefusal('stale');
+    return;
+  }
+  if (receipt.state === 'retiring' || receipt.state === 'quarantined')
+    throw new CapacityRefusal('retired');
+  if (
+    receipt.poolId !== claim.poolId ||
+    receipt.subject !== claim.subject ||
+    receipt.runner !== claim.runner ||
+    receipt.tokenHash !== claim.tokenHash ||
+    receipt.jobUid !== claim.jobUid
+  )
+    throw new CapacityRefusal('authority');
+}
+
 export interface CapacityWorkerPermit {
   poolId: string;
   runId: string;

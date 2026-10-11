@@ -31,6 +31,7 @@ import (
 
 const queueJobLabel = "agent-lcars.queue-job"
 const queueRunAnnotation = "agent-lcars.run-id"
+const queuePlacementAnnotation = "agent-lcars.placement-aware"
 const queueClaimAnnotation = "agent-lcars.claim-fingerprint"
 
 // queueRunnerAnnotation records the runner name the run was claimed under,
@@ -177,8 +178,9 @@ type kubernetesQueue struct {
 	placementCursor         queueSweepCursor
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
-	verifyRun    func(context.Context, string, string) error
-	claimSettled func(context.Context, string, string, string) (bool, error)
+	verifyRun              func(context.Context, string, string) error
+	claimSettled           func(context.Context, string, string, string) (bool, error)
+	reportStartupPlacement func(context.Context, placementObservation) error
 	// exits receives every terminated queue Job this executor's inventory
 	// reads observe (nil disables reporting). See runExitReporter.
 	exits *runExitReporter
@@ -530,6 +532,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
 	}
 	annotations := map[string]string{queueRunAnnotation: l.runID}
+	if l.placementAware {
+		annotations[queuePlacementAnnotation] = "true"
+	}
 	if l.runToken != "" {
 		annotations[queueClaimAnnotation] = queueClaimFingerprint(l.runToken)
 	}
@@ -573,6 +578,12 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 				},
 			},
 		},
+	}
+	if l.placementAware {
+		// Pod runtime starts on the assigned kubelet; Job runtime also counts
+		// unassigned Pending time. Keep the same execution limit after placement.
+		job.Spec.ActiveDeadlineSeconds = nil
+		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
 	}
 	if l.receipt != nil {
 		q.configureReceiptJob(job, l)
@@ -727,6 +738,9 @@ func (q *kubernetesQueue) recover(ctx context.Context) error {
 		}
 		if retired {
 			continue
+		}
+		if err := q.observeJobStartupPlacement(ctx, &j, nil); err != nil {
+			errs = append(errs, err)
 		}
 		if time.Since(j.CreationTimestamp.Time) > 2*time.Hour {
 			continue

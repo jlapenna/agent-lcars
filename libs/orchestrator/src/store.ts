@@ -1,4 +1,5 @@
 import type {
+  CapacityPlacementClaim,
   CapacityRecord,
   CapacityState,
   CapacityWorkerPermit,
@@ -213,6 +214,7 @@ export interface OrchestratorStore {
    */
   transactRun(input: {
     runId: string;
+    placementClaim?: CapacityPlacementClaim;
     workerPermit?: CapacityWorkerPermit;
     queueEligibilityPipelines?: readonly string[];
     /** Evaluated from the consistent local snapshot before global reads. */
@@ -412,6 +414,7 @@ export interface OrchestratorStore {
      *  it can never be settled through an executor exit report. */
     claimedBySubject?: string;
     tokenHash: string;
+    placementAware?: boolean;
   }): Promise<Run | undefined>;
 
   /** Returns a still-live claim to the queue only when the exact claimant

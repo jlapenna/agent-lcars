@@ -1186,4 +1186,47 @@ describe('startup deadline sweep race', () => {
       task: { activeRunId: run.runId, consecutiveLost: 0 },
     });
   });
+  it('does not settle a Pending claim from an expiry snapshot taken before a timely placement observation', async () => {
+    const { store, orchestrator, clock } = fixture();
+    const { run } = await started(orchestrator);
+    await store.enqueueRun({ runId: run.runId, now: T0 });
+    await orchestrator.confirmDispatch(run.runId);
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: T0,
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.com',
+      tokenHash: 'a'.repeat(64),
+      placementAware: true,
+    });
+    clock.advanceMinutes(15);
+    const listExpired = store.listExpiredRuns.bind(store);
+    vi.spyOn(store, 'listExpiredRuns').mockImplementationOnce(async (now) => {
+      const snapshot = await listExpired(now);
+      expect(snapshot.map((run) => run.runId)).toContain(run.runId);
+      clock.set('2026-08-15T12:14:59.000Z');
+      expect(
+        isRefusal(
+          await orchestrator.observeStartupPlacement(
+            run.runId,
+            {
+              runner: 'executor',
+              subject: 'executor@example.com',
+              claimFingerprint: 'a'.repeat(64),
+            },
+            { jobUid: 'original-job', observedAt: clock.now(), placed: false },
+          ),
+        ),
+      ).toBe(false);
+      clock.set(now);
+      return snapshot;
+    });
+    expect(await orchestrator.sweepExpired()).toEqual({
+      lost: [],
+      retried: [],
+    });
+    expect(await store.readTask(TASK)).toMatchObject({
+      task: { activeRunId: run.runId, consecutiveLost: 0, runCount: 1 },
+    });
+  });
 });
