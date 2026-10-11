@@ -41,6 +41,64 @@ describe('itemsContract', () => {
   });
 });
 
+describe('itemsContract.maintenanceTick output', () => {
+  const shape = itemsContract.maintenanceTick['~orpc'].outputSchemas?.at(-1) as
+    z.ZodTypeAny | undefined;
+  const body = {
+    lost: [],
+    retried: [],
+    rerouted: [],
+    dispatched: [],
+    reported: [],
+    outboxProcessed: 0,
+    outboxContinuationNeeded: false,
+  };
+
+  it('uses the actual pinned SDK output schema for strict optional recovery results', () => {
+    if (shape === undefined)
+      throw new Error('Expected maintenance outputSchemas entry');
+    expect(shape.parse(body)).toEqual(body);
+    for (const credentialRecovery of [
+      { recovered: [], unresolved: [] },
+      { recovered: ['completed'], unresolved: ['still-in-flight'] },
+    ]) {
+      expect(shape.parse({ ...body, credentialRecovery })).toEqual({
+        ...body,
+        credentialRecovery,
+      });
+    }
+  });
+
+  it.each([
+    { name: 'unknown top-level output', extra: { unexpected: true } },
+    {
+      name: 'missing recovery array',
+      extra: { credentialRecovery: { recovered: [] } },
+    },
+    {
+      name: 'nonarray recovery',
+      extra: { credentialRecovery: { recovered: 'invalid', unresolved: [] } },
+    },
+    {
+      name: 'nonstrings in recovery',
+      extra: { credentialRecovery: { recovered: [], unresolved: [7] } },
+    },
+    {
+      name: 'unknown nested recovery output',
+      extra: {
+        credentialRecovery: { recovered: [], unresolved: [], unexpected: true },
+      },
+    },
+  ])(
+    'rejects $name without weakening strict response validation',
+    ({ extra }) => {
+      if (shape === undefined)
+        throw new Error('Expected maintenance outputSchemas entry');
+      expect(shape.safeParse({ ...body, ...extra }).success).toBe(false);
+    },
+  );
+});
+
 describe('dispatchesContract.github', () => {
   it('requires an explicit GitHub anchor, spec, mode, and request id while accepting every valid GitHub body', () => {
     expect(Object.keys(dispatchesContract).sort()).toEqual([

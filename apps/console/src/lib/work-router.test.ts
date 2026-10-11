@@ -241,9 +241,139 @@ describe('items routes', () => {
       outboxContinuationNeeded: false,
     });
     expect(drain).toHaveBeenCalledWith(30);
+    expect(drain).toHaveBeenCalledTimes(1);
+    expect(response.json).not.toHaveProperty('credentialRecovery');
     expect(
       (await call(context(), 'POST', '/maintenance/tick', {})).status,
     ).toBe(401);
+  });
+
+  it.each([
+    { name: 'empty', result: { recovered: [], unresolved: [] } },
+    {
+      name: 'nonempty',
+      result: {
+        recovered: ['codex-operation-completed'],
+        unresolved: ['codex-operation-still-in-flight'],
+      },
+    },
+  ])(
+    'returns $name credential recovery through the actual maintenance HTTP adapter and executes each effect once',
+    async ({ result }) => {
+      const store = new MemoryStore();
+      let now = '2026-08-26T10:00:00.000Z';
+      const orchestrator = new Orchestrator(store, { now: () => now });
+      await orchestrator.request({
+        taskId: { workId: ID },
+        requestId: 'maintenance-expiry-proof',
+        pipeline: 'claude',
+        work: {
+          spec,
+          origin: { principal: operator.principal, channel: 'console' },
+        },
+      });
+      const original = await store.readActiveRun({ workId: ID });
+      if (original === undefined)
+        throw new Error('Expected seeded maintenance run');
+      now = '2026-08-26T12:01:00.000Z';
+      const recoverCredentialOperations = vi.fn().mockResolvedValue(result);
+      const sweep = vi.spyOn(orchestrator, 'sweepExpired');
+      const reroute = vi.spyOn(orchestrator, 'rerouteQueued');
+      const drain = vi
+        .fn()
+        .mockResolvedValue({ dispatched: [], reported: [], failed: [] });
+      const ctx = context({
+        principal: cronTick,
+        runtime: { store, orchestrator, drain, recoverCredentialOperations },
+      });
+      const response = await call(ctx, 'POST', '/maintenance/tick', {});
+      expect(response.status).toBe(200);
+      const retry = await store.readActiveRun({ workId: ID });
+      if (retry === undefined)
+        throw new Error('Expected durable maintenance retry');
+      expect(response.json).toEqual({
+        credentialRecovery: result,
+        lost: [original.runId],
+        retried: [{ lostRunId: original.runId, newRunId: retry.runId }],
+        rerouted: [],
+        dispatched: [],
+        reported: [],
+        outboxProcessed: 0,
+        outboxContinuationNeeded: false,
+      });
+      expect((await store.readRun(original.runId))?.state).toBe('lost');
+      expect(retry.runId).not.toBe(original.runId);
+      expect(await store.listRuns({ workId: ID })).toHaveLength(2);
+      for (const effect of [recoverCredentialOperations, sweep, reroute, drain])
+        expect(effect).toHaveBeenCalledTimes(1);
+      expect(drain).toHaveBeenCalledWith(30);
+      expect(
+        recoverCredentialOperations.mock.invocationCallOrder[0],
+      ).toBeLessThan(sweep.mock.invocationCallOrder[0]!);
+      expect(sweep.mock.invocationCallOrder[0]).toBeLessThan(
+        reroute.mock.invocationCallOrder[0]!,
+      );
+      expect(reroute.mock.invocationCallOrder[0]).toBeLessThan(
+        drain.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
+
+  it.each([
+    { name: 'missing unresolved array', result: { recovered: [] } },
+    {
+      name: 'nonarray recovered',
+      result: { recovered: 'invalid', unresolved: [] },
+    },
+    {
+      name: 'nonstring unresolved member',
+      result: { recovered: [], unresolved: [7] },
+    },
+    {
+      name: 'unknown recovery output key',
+      result: { recovered: [], unresolved: [], unexpected: true },
+    },
+  ])(
+    'refuses $name at the actual maintenance HTTP output boundary',
+    async ({ result }) => {
+      const base = context();
+      const recoverCredentialOperations = vi.fn().mockResolvedValue(result);
+      const drain = vi
+        .fn()
+        .mockResolvedValue({ dispatched: [], reported: [], failed: [] });
+      const ctx = context({
+        principal: cronTick,
+        runtime: { ...base.runtime, drain, recoverCredentialOperations },
+      });
+      const response = await call(ctx, 'POST', '/maintenance/tick', {});
+      expect(response.status).toBe(500);
+      expect(recoverCredentialOperations).toHaveBeenCalledTimes(1);
+      expect(drain).toHaveBeenCalledTimes(1);
+      expect(response.json).not.toHaveProperty('credentialRecovery');
+    },
+  );
+
+  it('keeps recovery and maintenance effects behind current work.cron authority', async () => {
+    const base = context();
+    const recoverCredentialOperations = vi
+      .fn()
+      .mockResolvedValue({ recovered: [], unresolved: [] });
+    const sweep = vi.spyOn(base.runtime.orchestrator, 'sweepExpired');
+    const reroute = vi.spyOn(base.runtime.orchestrator, 'rerouteQueued');
+    const drain = vi
+      .fn()
+      .mockResolvedValue({ dispatched: [], reported: [], failed: [] });
+    for (const principal of [undefined, operator, executorOnly, reaperOnly]) {
+      const ctx = context({
+        principal,
+        runtime: { ...base.runtime, drain, recoverCredentialOperations },
+      });
+      expect((await call(ctx, 'POST', '/maintenance/tick', {})).status).toBe(
+        401,
+      );
+    }
+    for (const effect of [recoverCredentialOperations, sweep, reroute, drain])
+      expect(effect).not.toHaveBeenCalled();
   });
 
   it('refuses every items route for a work.executor-only principal, which carries no work.operator scope', async () => {

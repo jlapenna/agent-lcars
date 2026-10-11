@@ -151,6 +151,33 @@ const withBearer = <T extends object>(current: T) => ({
 
 const base = oc.meta(openapi({ tags: ['items'], spec: withBearer }));
 
+export const maintenanceTickOutputSchema = z.strictObject({
+  credentialRecovery: z
+    .strictObject({
+      recovered: z.array(z.string()),
+      unresolved: z.array(z.string()),
+    })
+    .optional(),
+  lost: z.array(z.string()),
+  retried: z.array(
+    z.strictObject({ lostRunId: z.string(), newRunId: z.string() }),
+  ),
+  rerouted: z
+    .array(z.strictObject({ fromRunId: z.string(), newRunId: z.string() }))
+    .optional(),
+  dispatched: z.array(z.string()),
+  reported: z.array(z.string()),
+  outboxProcessed: z.number().int().nonnegative(),
+  outboxContinuationNeeded: z.boolean(),
+  outboxDrainFailed: z
+    .array(z.strictObject({ entryId: z.string(), error: z.string() }))
+    .optional(),
+});
+
+export type MaintenanceTickOutput = z.output<
+  typeof maintenanceTickOutputSchema
+>;
+
 export const itemsContract = {
   lifecycleMetrics: base
     .meta(
@@ -182,26 +209,7 @@ export const itemsContract = {
       }),
     )
     .input(z.strictObject({}))
-    .output(
-      z.strictObject({
-        lost: z.array(z.string()),
-        retried: z.array(
-          z.strictObject({ lostRunId: z.string(), newRunId: z.string() }),
-        ),
-        rerouted: z
-          .array(
-            z.strictObject({ fromRunId: z.string(), newRunId: z.string() }),
-          )
-          .optional(),
-        dispatched: z.array(z.string()),
-        reported: z.array(z.string()),
-        outboxProcessed: z.number().int().nonnegative(),
-        outboxContinuationNeeded: z.boolean(),
-        outboxDrainFailed: z
-          .array(z.strictObject({ entryId: z.string(), error: z.string() }))
-          .optional(),
-      }),
-    ),
+    .output(maintenanceTickOutputSchema),
   create: base
     .meta(
       openapi({
