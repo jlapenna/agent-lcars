@@ -73,14 +73,14 @@ while it lasts, so a gap cannot quietly become permanent.
   collector reads it there in place, so both Apps are now asserted
   (jlapenna/homelab#768).
 
-## A decided change the model is waiting on
+## Installation scope and repository onboarding
 
 The autoscaler App holds `administration: write`, so an installation's scope is
-authority over every repository it covers. That scope is asymmetric today:
+authority over every repository it covers. Its modelled contract is asymmetric:
 
 | Installation | Account              | Selection  | Repos           |
 | ------------ | -------------------- | ---------- | --------------- |
-| `154210710`  | jlapenna             | `selected` | 5               |
+| `154210710`  | jlapenna             | `selected` | 6               |
 | `154210731`  | supersprinklesracing | `all`      | 7 (4 non-fleet) |
 
 The jlapenna installation was narrowed from `all` (23 repositories) once this
@@ -89,11 +89,23 @@ check measured it. #1381 is the execution record for narrowing the other one to
 `design`, `ghost-theme-supersprinkles`, `pos` or `preem-machine` holds a self-hosted
 runner, and no workflow in any of them targets a fleet runner label.
 
-The model records **today's** live values, so the check is green now rather
-than red against an intention. When the UI change lands, installation
-`154210731` takes one edit — `repositorySelection` to `selected` and three
-repositories — and until then the drift the check would report is the change
-itself, which is the system working.
+The existing organization-side `154210731` baseline remains unchanged here.
+When its separately owned narrowing lands, update `repositorySelection` to
+`selected` and retain the three required repositories, together with the
+credential documentation and genuine consumer verification.
+
+Onboarding `jlapenna/messages-control` (#2436) adds one explicit membership to
+fleet App `150568943` and autoscaler App `154210710`, not an `all` selection.
+The latter also serves the Homelab Actions exporter. Fleet App `150568991`
+continues to require selected access to `girosf`, `sprinkles` and `www`.
+Preserve the other modelled repository grants and leave the separate
+`jlaorg` installation unchanged.
+
+A merged model is not evidence of live installation scope. An unexpected
+`all` selection remains drift until the genuine collector observes the exact
+contract and required consumers still work. Membership here does not widen
+the Terraform-owned WIF `fleetRepositories` list or its provider condition;
+that is a separate authorization boundary.
 
 `jlapenna/homegit` is covered by `154210710` but has no `registrations:` entry
 in homelab's `orchestrator.yml`: covered-but-unregistered, modelled as such

@@ -30,11 +30,12 @@
             "jlapenna/agent-lcars",
             "jlapenna/homegit",
             "jlapenna/homelab",
+            "jlapenna/messages-control",
             "jlapenna/nx-cache-server",
             "jlapenna/repo-tools",
             "jlapenna/sync-padd"
           ],
-          "_note": "jlapenna/homegit is not a fleet agent repo; it is installed so the App can read/write the dotfiles repo. jlapenna/repo-tools is likewise not a fleet agent repo; it is the public source of the repo-* worktree/PR tooling the fleet's skills invoke, installed so the App can maintain it. Both are listed here so their presence is documented rather than surprising."
+          "_note": "jlapenna/messages-control was admitted to the Console and repository contracts by #2436; its explicit App membership is required without changing selected scope to all. jlapenna/homegit is not a fleet agent repo; it is installed so the App can read/write the dotfiles repo. jlapenna/repo-tools is likewise not a fleet agent repo; it is the public source of the repo-* worktree/PR tooling the fleet's skills invoke, installed so the App can maintain it. Both are listed here so their presence is documented rather than surprising."
         },
         {
           "id": 150568991,
@@ -87,10 +88,11 @@
             "jlapenna/agent-lcars",
             "jlapenna/homegit",
             "jlapenna/homelab",
+            "jlapenna/messages-control",
             "jlapenna/nx-cache-server",
             "jlapenna/sync-padd"
           ],
-          "_note": "Narrowed from 'all' (23 repos) to these five on 2026-08-17 (#1381). jlapenna/homegit is covered but has NO registrations: entry in github-runner-autoscaler/orchestrator.yml - covered-but-unregistered, not drift. Its only self-hosted runner is 'homelab-runner', registered with a manual short-lived RUNNER_TOKEN by the github-runner service in homelab's ansible/docker-compose.yml, not by this App, and no homegit workflow targets a self-hosted runner."
+          "_note": "Narrowed from 'all' (23 repos) to five on 2026-08-17 (#1381). The selected contract also includes messages-control for the Homelab Actions exporter after #2436 onboarding. The existing homegit grant is retained; installation membership alone does not establish a current ARC registration or active runner."
         },
         {
           "id": 154210731,
@@ -114,7 +116,7 @@
         "metadata": "read"
       },
       "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. It also carries actions:read (App settings UI, 2026-09-20) for the github-actions-exporter deployed on homelab: since jlapenna/agent-lcars#2024 the exporter authenticates as this App with a copy of the same key and reads /repos/{owner}/{repo}/actions/runs, which needs Actions read. Prose: docs/fleet-credentials.md ('Autoscaler App key').",
-      "_scopeNote": "This App holds administration:write, so an installation's scope is authority over every repository it covers. Scope is asymmetric today: jlapenna is 'selected' (5), supersprinklesracing is still 'all' (7; design joined automatically when it was created on 2026-10-06). Recorded as observed, not endorsed - #1381 is the execution record for narrowing both to the fleet repos. The full repository lists are modelled deliberately even though an 'all' installation's list churns: for an administration:write App, a new repository silently gaining an admin-capable installation is exactly the change worth being told about."
+      "_scopeNote": "This App holds administration:write, so an installation's scope is authority over every repository it covers. The contract is asymmetric: jlapenna must be 'selected' (6, including messages-control), while supersprinklesracing remains modelled 'all' (7; design joined automatically when it was created on 2026-10-06). #1381 records the separate organization-side narrowing decision; this onboarding does not change that installation. These are contract values, not proof of live convergence: an unexpected 'all' selection must remain drift. The full repository lists are modelled deliberately because silently gaining admin-capable access to a new repository must be reported."
     }
   ],
   "fleetCoverageExceptions": [],
