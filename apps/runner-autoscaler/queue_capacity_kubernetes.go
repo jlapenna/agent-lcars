@@ -175,6 +175,22 @@ func (q *kubernetesQueue) resumeReceipt(ctx context.Context, r capacityReceipt, 
 		return e
 	})
 }
+
+// Reuse the bounded Job sweep's identity ordering for receipt inventories,
+// including receipts whose Job has not been created yet.
+func orderedCapacityReceipts(cursor *queueSweepCursor, receipts []capacityReceipt) []capacityReceipt {
+	jobs := make([]batch.Job, 0, len(receipts))
+	byName := make(map[string]capacityReceipt, len(receipts))
+	for _, r := range receipts {
+		jobs = append(jobs, batch.Job{ObjectMeta: meta.ObjectMeta{Name: r.JobName}})
+		byName[r.JobName] = r
+	}
+	ordered := make([]capacityReceipt, 0, len(receipts))
+	for _, j := range cursor.ordered(jobs) {
+		ordered = append(ordered, byName[j.Name])
+	}
+	return ordered
+}
 func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) (err error) {
 	q.capacity.pollMu.Lock()
 	defer q.capacity.pollMu.Unlock()
@@ -209,7 +225,17 @@ func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) (err error) {
 	// No claim/launch or recovery RPC can race this poll/receipt fence. Workers
 	// keep their immutable activation permit and original exit claimant.
 	if q.capacity.requestID == "" {
-		for _, r := range inv.Receipts {
+		// Probe one closure candidate per sweep so closure scans cannot
+		// consume the entire reconciliation deadline before activation.
+		candidates := orderedCapacityReceipts(&q.receiptClosureCursor, inv.Receipts)
+		if len(candidates) > 1 {
+			candidates = candidates[:1]
+		}
+		for _, r := range candidates {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			q.receiptClosureCursor.visit(r.JobName)
 			j := byName[r.JobName]
 			if j == nil {
 				// Absence alone is not quiescence. Only an unbound claim
@@ -278,10 +304,11 @@ func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) (err error) {
 		}
 	}
 	var errs []error
-	for _, r := range inv.Receipts {
+	for _, r := range orderedCapacityReceipts(&q.receiptCursor, inv.Receipts) {
 		if ctx.Err() != nil {
 			return errors.Join(append(errs, ctx.Err())...)
 		}
+		q.receiptCursor.visit(r.JobName)
 		n, e := q.capacity.recovery(ctx, r, "retire")
 		if e != nil {
 			errs = append(errs, e)

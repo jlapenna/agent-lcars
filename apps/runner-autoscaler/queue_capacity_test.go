@@ -958,3 +958,51 @@ func TestReceiptUnknownTerminationCannotRetireWorker(t *testing.T) {
 		})
 	}
 }
+
+func TestReceiptDeadlineResumesAfterAttemptedReceipt(t *testing.T) {
+	q, r, _ := receiptFixture(t)
+	first := *r
+	first.JobName = queueJobName(first.RunID)
+	second := *r
+	second.Slot = 1
+	second.RunID = "work:second/r1"
+	second.JobName = queueJobName(second.RunID)
+	if first.JobName > second.JobName {
+		first, second = second, first
+	}
+	q.capacity.registered = true
+	q.capacity.requestID = "unresolved-claim" // closure is separately fenced
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var attempts []string
+	var attemptsMu sync.Mutex
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			json.NewEncoder(w).Encode(map[string]any{"policy": map[string]any{"poolId": "pool", "cluster": "cluster", "namespace": q.config.Namespace, "version": 1, "maxConcurrent": 2, "enforced": true, "inventoryKnown": true}, "receipts": []capacityReceipt{first, second}})
+			return
+		}
+		var op struct {
+			Action string        `json:"action"`
+			Fence  capacityFence `json:"fence"`
+		}
+		json.NewDecoder(req.Body).Decode(&op)
+		if op.Action == "recover" {
+			attemptsMu.Lock()
+			attempts = append(attempts, op.Fence.RunID)
+			if len(attempts) == 1 {
+				cancel()
+			}
+			attemptsMu.Unlock()
+		}
+		fmt.Fprint(w, `{ "ok":true }`)
+	}))
+	defer s.Close()
+	q.capacity.consoleURL = s.URL
+	_ = q.reconcileReceipts(ctx)
+	_ = q.reconcileReceipts(context.Background())
+	attemptsMu.Lock()
+	defer attemptsMu.Unlock()
+	if len(attempts) < 2 || attempts[0] != first.RunID || attempts[1] != second.RunID {
+		t.Fatalf("deadline starved later receipt: %v", attempts)
+	}
+}
