@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "agent-lcars-ui-kit.html",
+  "entry": "agent-lcars-ui-kit.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": ["html", "pdf", "zip"],
+  "createdAt": "2026-10-11T18:47:23.823Z",
+  "updatedAt": "2026-10-11T18:47:23.823Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}
