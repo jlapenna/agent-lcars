@@ -39,6 +39,7 @@ later runs retrieve one answer.
 - `.github/actions` and reusable workflows: fleet-consumed CI capabilities.
 - `infra`: repository-owned GitHub and GCP policy declarations.
 - `tools`: executable repository policy, contract checks, and operator helpers.
+- `design`: canonical console design prototypes, brand spec, and bundled design assets.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for ownership and dependency
 boundaries and [`docs/README.md`](docs/README.md) for the documentation index.
