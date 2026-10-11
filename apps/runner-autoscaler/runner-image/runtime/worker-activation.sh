@@ -52,6 +52,8 @@ CURLCFG
       generation="$(jq -er '.generation | select(type=="number" and floor==. and .>0 and .<=9007199254740991)' <<<"${response%$'\n'*}")" || { rm -f "$body_file"; return 1; }
       if [ -n "$WORKER_GENERATION" ] && [ "$generation" != "$WORKER_GENERATION" ]; then rm -f "$body_file"; return 1; fi
       WORKER_GENERATION="$generation"
+      export LCARS_WORKER_GENERATION="$generation"
+      export LCARS_WORKER_IDENTITY_FILE="$WORKER_IDENTITY_FILE"
       rm -f "$body_file"
       return 0
     fi

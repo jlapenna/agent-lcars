@@ -305,11 +305,23 @@ func TestReceiptServerRetirementRequiredToExemptBarrier(t *testing.T) {
 	if err = q.verifyRetiredBarrier(context.Background(), j); err != nil {
 		t.Fatal("exact server-retired barrier remains unavailable", err)
 	}
+	var checks sync.WaitGroup
+	failures := make(chan error, 100)
 	for i := 0; i < 100; i++ {
-		if err = q.verifyRetiredBarrier(context.Background(), j); err != nil {
-			t.Fatal(err)
-		}
+		checks.Add(1)
+		go func() {
+			defer checks.Done()
+			if e := q.verifyRetiredBarrier(context.Background(), j); e != nil {
+				failures <- e
+			}
+		}()
 	}
+	checks.Wait()
+	close(failures)
+	for e := range failures {
+		t.Fatal(e)
+	}
+
 	if verifications != 1 {
 		t.Fatalf("unchanged barriers repeated remote verification: %d", verifications)
 	}

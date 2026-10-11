@@ -425,6 +425,8 @@ func (q *kubernetesQueue) installAbsentBarrier(ctx context.Context, r capacityRe
 	return existing, nil
 }
 func (q *kubernetesQueue) verifyRetiredBarrier(ctx context.Context, j *batch.Job) error {
+	q.receiptBarrierMu.Lock()
+	defer q.receiptBarrierMu.Unlock()
 	var f capacityFence
 	if json.Unmarshal([]byte(j.Annotations[queueReceiptAnnotation]), &f) != nil || !f.valid(q.capacity.config.PoolID, j.Annotations[queueRunAnnotation]) || j.Name != queueJobName(f.RunID) || j.UID == "" || j.ResourceVersion == "" || j.DeletionTimestamp != nil || j.Spec.Suspend == nil || !*j.Spec.Suspend || j.Spec.TTLSecondsAfterFinished != nil || j.Annotations[queueBarrierAnnotation] != f.Nonce {
 		return fmt.Errorf("unrecognized queue Job inventory")
@@ -493,11 +495,13 @@ func (q *kubernetesQueue) receiptPhysicalInventory(ctx context.Context, inv capa
 		}
 	}
 	// Cache only exact observed object versions and discard vanished objects.
+	q.receiptBarrierMu.Lock()
 	for name := range q.verifiedReceiptBarriers {
 		if byName[name] == nil {
 			delete(q.verifiedReceiptBarriers, name)
 		}
 	}
+	q.receiptBarrierMu.Unlock()
 	for _, r := range inv.Receipts {
 		j := byName[r.JobName]
 		if r.JobUID != "" && !receiptJobMatches(j, r) {
