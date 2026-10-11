@@ -79,6 +79,19 @@ describe('per-run execution phase', () => {
     expect(
       executionPhase(
         {
+          state: 'lost',
+          queue: {
+            ...queue,
+            state: 'retired',
+            providerProcessStartedAt: observedAt,
+          },
+        },
+        now,
+      ),
+    ).toBeUndefined();
+    expect(
+      executionPhase(
+        {
           state: 'running',
           queue: {
             ...queue,

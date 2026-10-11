@@ -30,7 +30,7 @@ export type ExecutionPhase =
 export interface ExecutionRun {
   state: string;
   queue?: {
-    state: 'queued' | 'claimed';
+    state: 'queued' | 'claimed' | 'retired';
     claimedAt?: string;
     startDeadlineAt?: string;
     firstHeartbeatAt?: string;
