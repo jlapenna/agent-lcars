@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,12 +32,12 @@ const runExitReportedRetention = 2 * queueJobRetentionAge
 // is answered unchanged, so a restart re-reporting the retained Jobs is
 // harmless. A failed report is retried on the next observation.
 type runExitReporter struct {
-	consoleURL string
-	runnerName string
-	httpClient *http.Client
-	idToken    func() (string, error)
-	logger     *slog.Logger
-	now        func() time.Time
+	consoleURL   string
+	runnerName   string
+	httpClient   *http.Client
+	acquireToken func(context.Context) (string, error)
+	logger       *slog.Logger
+	now          func() time.Time
 
 	mu       sync.Mutex
 	reported map[string]time.Time
@@ -51,12 +52,12 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 		runnerName: runnerName,
 		// The route drains the outbox after settling a lost run; leave room
 		// for that so a slow drain is not misread as a failed report.
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		idToken:    idToken,
-		logger:     logger,
-		now:        time.Now,
-		reported:   map[string]time.Time{},
-		inflight:   map[string]struct{}{},
+		httpClient:   &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		acquireToken: queueClaimTokenAcquisition(idToken),
+		logger:       logger,
+		now:          time.Now,
+		reported:     map[string]time.Time{},
+		inflight:     map[string]struct{}{},
 	}
 }
 
@@ -127,7 +128,11 @@ const stateNotClaimant = "not-claimant"
 // so both count as delivered; a pipeline-grant 403 is retried. A different
 // same-run claim has a separate delivery key.
 func (r *runExitReporter) post(runID, runner, fingerprint string) (string, error) {
-	token, err := r.idToken()
+	return r.postContext(context.Background(), runID, runner, fingerprint)
+}
+
+func (r *runExitReporter) postContext(ctx context.Context, runID, runner, fingerprint string) (string, error) {
+	token, err := r.acquireToken(ctx)
 	if err != nil {
 		return "", fmt.Errorf("minting exit report id token: %w", err)
 	}
@@ -139,8 +144,8 @@ func (r *runExitReporter) post(runID, runner, fingerprint string) (string, error
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequest(
-		http.MethodPost,
+	req, err := http.NewRequestWithContext(
+		ctx, http.MethodPost,
 		strings.TrimRight(r.consoleURL, "/")+"/api/work/v1/runs/"+url.PathEscape(runID)+"/exit",
 		bytes.NewReader(body),
 	)
@@ -192,3 +197,23 @@ func (r *runExitReporter) post(runID, runner, fingerprint string) (string, error
 
 // A refused old Job cannot suppress an exit from a later same-run claim.
 func exitClaimKey(runID, fingerprint string) string { return runID + "\x00" + fingerprint }
+
+// Retirement needs an actual logical settlement attempt inside its recovery
+// deadline. It cannot use the asynchronous observation's delivery cache: an
+// accepted terminal result may still have cleanup debt, and a claimant refusal
+// is not evidence that this receipt may release.
+func (r *runExitReporter) settleTerminated(ctx context.Context, runID, runner, fingerprint string) error {
+	if r == nil || runID == "" || runner == "" || fingerprint == "" {
+		return fmt.Errorf("receipt exit authority unavailable")
+	}
+	state, err := r.postContext(ctx, runID, runner, fingerprint)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case "finished", "canceled", "lost":
+		return nil
+	default:
+		return fmt.Errorf("receipt logical settlement unproven")
+	}
+}

@@ -377,10 +377,11 @@ func TestReceiptStopReplyLossCannotStrandIncarnation(t *testing.T) {
 	for _, kind := range []string{"healthy", "lost-reply", "lost-reply-receipt-already-released"} {
 		t.Run(kind, func(t *testing.T) {
 			q, r, _ := receiptFixture(t)
+			q.claimSettled = func(context.Context, string, string, string) (bool, error) { return true, nil }
 			old := q.capacity.producerID
 			q.capacity.registered = true
 			r.Producers = []capacityProducer{{ProducerID: old, Subject: "subject", PendingWrites: []string{}}}
-			j, _ := q.job(directRunnerLaunch{runID: r.RunID, pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
+			j, _ := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
 			j.UID = "original-job"
 			j.ResourceVersion = "1"
 			j.Generation = 1
@@ -607,7 +608,7 @@ func TestReceiptClosedIncarnationAfterReceiptGone(t *testing.T) {
 // Required Verify's Go suite consumes this composition regression: a retained
 // physical barrier must not strand exact logical exit and credential cleanup.
 func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
-	for _, kind := range []string{"release-refused", "release-accepted"} {
+	for _, kind := range []string{"logical-conflict", "logical-transport", "release-refused"} {
 		t.Run(kind, func(t *testing.T) {
 			q, r, _ := receiptFixture(t)
 			r.State = "retiring"
@@ -629,6 +630,11 @@ func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err = k.Tracker().Add(pod); err != nil {
+				t.Fatal(err)
+			}
+			secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: j.Name, Namespace: q.config.Namespace, UID: "original-secret", OwnerReferences: pod.OwnerReferences}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte("original-token")}}
+			r.SecretUID = string(secret.UID)
+			if err := k.Tracker().Add(secret); err != nil {
 				t.Fatal(err)
 			}
 			var mu sync.Mutex
@@ -657,8 +663,13 @@ func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
 					if r.Worker.Active || x["runner"] != r.Runner || x["claimFingerprint"] != queueClaimFingerprint("original-token") {
 						t.Error("exit changed original claim or preceded worker retirement")
 					}
-					if exits == 1 {
-						w.WriteHeader(503)
+					if exits == 1 && kind != "release-refused" {
+						if kind == "logical-transport" {
+							conn, _, _ := w.(http.Hijacker).Hijack()
+							conn.Close()
+						} else {
+							w.WriteHeader(409)
+						}
 						return
 					}
 					cleaned = true
@@ -673,7 +684,10 @@ func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
 					r.Worker.Active = false
 				case "release":
 					releases++
-					if kind == "release-refused" && (!cleaned || releases == 1) {
+					if !cleaned {
+						t.Error("physical release preceded logical settlement")
+					}
+					if kind == "release-refused" && releases == 1 {
 						w.WriteHeader(409)
 						return
 					}
@@ -685,8 +699,11 @@ func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
 			q.capacity.consoleURL = server.URL
 			q.exits = testExitReporter(server.URL)
 			err = q.reconcileReceipts(context.Background())
-			if (err != nil) != (kind == "release-refused") {
-				t.Fatal("initial release schedule not exercised", err)
+			if err == nil {
+				t.Fatal("initial refusal schedule not exercised")
+			}
+			if kind != "release-refused" && releases != 0 {
+				t.Fatal("logical refusal attempted final release")
 			}
 			q.exits.wg.Wait()
 			barrier, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), j.Name, meta.GetOptions{})
@@ -705,7 +722,7 @@ func TestReceiptRetainedBarrierRetriesOriginalClaimExit(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if !released || !cleaned || exits != 2 || releases < 1 || (kind == "release-refused" && releases < 2) {
+			if !released || !cleaned || exits < 2 || releases < 1 || (kind == "release-refused" && releases < 2) {
 				t.Fatalf("retained barrier stranded cleanup: released=%v cleaned=%v exits=%d releases=%d", released, cleaned, exits, releases)
 			}
 		})
@@ -764,6 +781,12 @@ func TestReceiptProducerRotationPreservesConcurrentUsefulWork(t *testing.T) {
 	for _, kind := range []string{"suspended-owned-secret", "started-awaiting-attestation"} {
 		t.Run(kind, func(t *testing.T) {
 			q, finished, _ := receiptFixture(t)
+			q.claimSettled = func(_ context.Context, runID, runner, fingerprint string) (bool, error) {
+				if runID != finished.RunID || runner != finished.Runner || fingerprint != queueClaimFingerprint("finished-token") {
+					t.Error("retirement proof changed finished claim")
+				}
+				return true, nil
+			}
 			originalProducer := q.capacity.producerID
 			q.capacity.registered = true
 			finished.Producers = []capacityProducer{{ProducerID: originalProducer, Subject: "subject"}}
@@ -772,7 +795,7 @@ func TestReceiptProducerRotationPreservesConcurrentUsefulWork(t *testing.T) {
 			target.Slot = 1
 			target.Nonce = "target-receipt-nonce-123456"
 			target.JobName = queueJobName(target.RunID)
-			finishedJob, err := q.job(directRunnerLaunch{runID: finished.RunID, pipeline: finished.Pipeline, runner: finished.Runner, receipt: &finished.capacityFence})
+			finishedJob, err := q.job(directRunnerLaunch{runID: finished.RunID, runToken: "finished-token", pipeline: finished.Pipeline, runner: finished.Runner, receipt: &finished.capacityFence})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -939,6 +962,7 @@ func TestReceiptUnknownTerminationCannotRetireWorker(t *testing.T) {
 	for _, kind := range []string{"healthy", "runtime-unknown", "missing-finish", "missing-init-status", "running-ephemeral", "node-lost"} {
 		t.Run(kind, func(t *testing.T) {
 			q, r, ops := receiptFixture(t)
+			q.claimSettled = func(context.Context, string, string, string) (bool, error) { return true, nil }
 			r.Producers = []capacityProducer{{ProducerID: "original", Subject: "subject", Stopped: true}}
 			j, err := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
 			if err != nil {
