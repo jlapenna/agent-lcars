@@ -3949,7 +3949,8 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       'healthy',
       'before-exit',
       'after-settlement',
-      'concurrent-release',
+      'concurrent-release-first',
+      'concurrent-exit-first',
     ] as const)(
       'restored HTTP exit retains cleanup authority with retirement=%s',
       async (retirement) => {
@@ -3963,13 +3964,27 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         };
         if (
           retirement === 'before-exit' ||
-          retirement === 'concurrent-release'
+          retirement.startsWith('concurrent-')
         ) {
           await retireBroker(f);
           await assertReleaseHeld();
         }
+        const liveBeforeExit = await f.store.readRun(f.runId);
+        const releaseEntered = Promise.withResolvers<void>();
+        const allowRelease = Promise.withResolvers<void>();
+        let concurrentRelease: Promise<void> | undefined;
         const exit = f.orchestrator.executorExited.bind(f.orchestrator);
         f.orchestrator.executorExited = async (...args) => {
+          if (retirement.startsWith('concurrent-')) {
+            await releaseEntered.promise;
+            if (retirement === 'concurrent-release-first') {
+              allowRelease.resolve();
+              await concurrentRelease;
+            }
+          }
+          expect((await f.store.readRun(f.runId))?.state).toBe(
+            liveBeforeExit?.state,
+          );
           const settled = await exit(...args);
           expect(isRefusal(settled)).toBe(false);
           if (isRefusal(settled)) throw new Error(settled.reason);
@@ -3989,11 +4004,14 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
             await retireBroker(f);
             await assertReleaseHeld();
           }
+          if (retirement === 'concurrent-exit-first') {
+            allowRelease.resolve();
+            await concurrentRelease;
+          }
           expect((await f.protocol.read(NOW)).receipts).toHaveLength(1);
           expect(await f.store.readRun(f.runId)).toEqual(settled.run);
           return settled;
         };
-        let concurrentRelease: Promise<void> | undefined;
         let checked = false;
         f.fake.beforeSave = async (attempt) => {
           if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
@@ -4006,8 +4024,16 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           ).toBe('cleanup');
           if (retirement !== 'healthy') await assertReleaseHeld();
         };
-        if (retirement === 'concurrent-release')
+        if (retirement.startsWith('concurrent-')) {
+          const transactCapacity = f.store.transactCapacity.bind(f.store);
+          f.store.transactCapacity = async (input) => {
+            f.store.transactCapacity = transactCapacity;
+            releaseEntered.resolve();
+            await allowRelease.promise;
+            return transactCapacity(input);
+          };
           concurrentRelease = assertReleaseHeld();
+        }
         const exitResponse = call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
           runner: 'same-runner',
           claimFingerprint: f.fingerprint,
