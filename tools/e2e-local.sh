@@ -244,16 +244,6 @@ if [ -n "$CALLER_HOME" ]; then
   )
 fi
 
-# Playwright-base sandbox images (the lcars-e2e pool's runner, tools/e2e's
-# container) preinstall browsers at an image-level PLAYWRIGHT_BROWSERS_PATH
-# (/ms-playwright). It is a browser-cache location of the same class as the
-# corepack/firebase carve-outs above -- not a credential -- and without it an
-# isolated HOME makes Playwright resolve an empty per-HOME cache and fail to
-# launch. Forward it only when the ambient environment set it.
-if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
-  SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH")
-fi
-
 # E2E_GREP is the supported way to scope a host run because the public Nx
 # target cannot forward CLI arguments.
 if [ -n "${E2E_GREP:-}" ]; then
@@ -304,6 +294,12 @@ fi
 env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
   "$NODE_BIN" "$VALIDATOR" --require-hermetic \
   --next-root "$ROOT/apps/console" "$CI_ENV"
+
+# Discover browser and shared-library drift before any build, port cleanup or
+# emulator startup. Use the exact hermetic environment and browser selection
+# the suite receives; this never downloads or repairs runtime prerequisites.
+env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
+  "$NODE_BIN" "$ROOT/tools/e2e/check-browser.mjs"
 
 # Run the child in its own subshell so it does not inherit our lock descriptor:
 # this parent keeps the lock until it has observed child exit, including after a
