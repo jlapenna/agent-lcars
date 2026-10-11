@@ -43,7 +43,7 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 | Repository onboarding            | [`onboarding-repo.md`](onboarding-repo.md)                                   |
 | Console and telemetry onboarding | [`onboarding-console-and-telemetry.md`](onboarding-console-and-telemetry.md) |
 | Console visual system            | [`console-design-system.md`](console-design-system.md)                       |
-| Console design prototypes        | [`design/README.md`](design/README.md)                                       |
+| Console design prototypes        | [`../design/README.md`](../design/README.md)                                 |
 | Inbox phone interaction budget   | [`inbox-phone-budget.md`](inbox-phone-budget.md)                             |
 | Fleet testing policy             | [`testing-policy.md`](testing-policy.md)                                     |
 | E2E reliability and triage       | [`e2e-reliability.md`](e2e-reliability.md)                                   |

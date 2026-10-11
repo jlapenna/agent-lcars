@@ -162,4 +162,4 @@ vitest.config.*.timestamp*
 .open-design/
 
 # The global *.txt rule above would otherwise hide the bundled font license text.
-!docs/design/assets/fonts/OFL.txt
+!design/assets/fonts/OFL.txt
