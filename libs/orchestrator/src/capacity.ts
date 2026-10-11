@@ -13,7 +13,7 @@ import {
   requestKey,
   retiredKey,
 } from './capacity-model';
-import { runLeaseExpiresAt } from './decide';
+import { runLeaseExpiresAt, runStartDeadlineAt } from './decide';
 import { isLive, type Run, taskKey } from './model';
 import {
   isQueueAdmissionCandidate,
@@ -653,6 +653,7 @@ export class CapacityProtocol {
           queue: {
             state: 'claimed',
             claimedAt: input.now,
+            startDeadlineAt: runStartDeadlineAt(input.now),
             claimedBy: input.runner,
             claimedBySubject: authority.subject,
             tokenHash: input.tokenHash,

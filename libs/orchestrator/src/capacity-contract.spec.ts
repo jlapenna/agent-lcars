@@ -4,8 +4,13 @@ import { type CapacityAuthority, CapacityProtocol } from './capacity';
 import {
   type CapacityPoolPolicy,
   type CapacityReceipt,
+  CapacityRefusal,
 } from './capacity-model';
-import { decidedRun, isRefusal } from './decide';
+import {
+  changeCredentialOperation,
+  reserveCredentialOperation,
+} from './credential-operation';
+import { decidedRun, isRefusal, runStartDeadlineAt } from './decide';
 import { FirestoreStore } from './firestore-store';
 import { MemoryStore } from './memory-store';
 import { Orchestrator } from './orchestrator';
@@ -128,8 +133,17 @@ function contract(
       await protocol.configure(a, policy(a.poolId, maxConcurrent), now);
       await known(protocol, a);
       await protocol.register(a, 'producer-a', now);
-      const orchestrator = new Orchestrator(store, { now: () => now });
-      return { store, protocol, a, orchestrator };
+      let instant = now;
+      const orchestrator = new Orchestrator(store, { now: () => instant });
+      return {
+        store,
+        protocol,
+        a,
+        orchestrator,
+        setNow: (value: string) => {
+          instant = value;
+        },
+      };
     }
     async function known(protocol: CapacityProtocol, a: CapacityAuthority) {
       const input = {
@@ -252,6 +266,340 @@ function contract(
       neverStarted: true,
       originalJobUid: receipt.jobUid,
       now,
+    });
+
+    it('capacity startup deadline survives response loss and expires with one retained physical receipt', async () => {
+      const { store, protocol, a, orchestrator, setNow } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt, run } = await claimed(protocol, a, 'startup-replay');
+      expect(run.queue?.startDeadlineAt).toBe(runStartDeadlineAt(now));
+      await bind(protocol, a, receipt);
+      const before = await store.readRun(receipt.runId);
+      expect(
+        await protocol.claim(a, {
+          version: 1,
+          runner: 'runner-a',
+          producerId: 'producer-a',
+          claimRequestId: 'startup-replay',
+          nonce: 'changed-replay-nonce-123456',
+          tokenHash,
+          now: '2026-10-10T04:00:30.000Z',
+        }),
+      ).toMatchObject({ kind: 'recover-owned-secret' });
+      expect(await store.readRun(receipt.runId)).toEqual(before);
+      setNow(runStartDeadlineAt(now));
+      expect(
+        await orchestrator.renew(receipt.runId, tokenHash, true),
+      ).toMatchObject({ reason: 'stale-lease' });
+      expect(
+        await orchestrator.report(receipt.runId, { ok: true }, tokenHash),
+      ).toMatchObject({ reason: 'stale-lease' });
+      const sweeps = await Promise.all([
+        orchestrator.sweepExpired(),
+        orchestrator.sweepExpired(),
+      ]);
+      expect(
+        sweeps.flatMap((value) => value.lost).map((value) => value.runId),
+      ).toEqual([receipt.runId]);
+      const retries = sweeps.flatMap((value) => value.retried);
+      expect(retries).toHaveLength(1);
+      expect(retries[0]?.newRunId).toBe(receipt.runId.replace(/\/r1$/u, '/r2'));
+      expect((await store.readRun(receipt.runId))?.state).toBe('lost');
+      expect((await protocol.read(now)).receipts).toHaveLength(1);
+      expect(await orchestrator.sweepExpired()).toEqual({
+        lost: [],
+        retried: [],
+      });
+      expect(await claim(protocol, a)).toMatchObject({
+        kind: 'wait',
+        reason: 'capacity',
+      });
+    });
+
+    it('timely capacity first heartbeat permits callbacks past the original startup deadline', async () => {
+      const { store, protocol, a, orchestrator, setNow } = await fixture();
+      await enqueue(store, orchestrator);
+      const { receipt } = await claimed(protocol, a);
+      setNow('2026-10-10T04:14:59.000Z');
+      expect(
+        isRefusal(await orchestrator.renew(receipt.runId, tokenHash, true)),
+      ).toBe(false);
+      expect((await store.readRun(receipt.runId))?.queue).toMatchObject({
+        startDeadlineAt: runStartDeadlineAt(now),
+        firstHeartbeatAt: '2026-10-10T04:14:59.000Z',
+        providerProcessStartedAt: '2026-10-10T04:14:59.000Z',
+      });
+      setNow('2026-10-10T04:16:00.000Z');
+      expect(await orchestrator.sweepExpired()).toEqual({
+        lost: [],
+        retried: [],
+      });
+      expect(
+        isRefusal(
+          await orchestrator.report(receipt.runId, { ok: true }, tokenHash),
+        ),
+      ).toBe(false);
+      expect((await protocol.read(now)).receipts).toHaveLength(1);
+    });
+
+    async function credentialFixture() {
+      const f = await fixture();
+      await enqueue(f.store, f.orchestrator, 'codex');
+      const { receipt } = await claimed(f.protocol, f.a);
+      await activate(f.protocol, f.a, receipt);
+      const permit = {
+        poolId: f.a.poolId,
+        runId: receipt.runId,
+        podUid: 'pod-original',
+        generation: 1,
+        tokenHash,
+      };
+      const change = (
+        action: Parameters<typeof changeCredentialOperation>[0]['change'],
+        id = 'operation',
+        fingerprint = tokenHash,
+      ) =>
+        f.store.transactRun({
+          runId: receipt.runId,
+          decide: ({ task, run }) => {
+            if (task === undefined || run === undefined)
+              throw new Error('missing credential claim');
+            return changeCredentialOperation({
+              now,
+              task: task.task,
+              run,
+              id,
+              claimFingerprint: fingerprint,
+              change: action,
+            });
+          },
+        });
+      const reserve = () =>
+        f.store.transactRun({
+          runId: receipt.runId,
+          workerPermit: permit,
+          decide: ({ task, run }) => {
+            if (task === undefined || run === undefined)
+              throw new Error('missing credential claim');
+            return reserveCredentialOperation({
+              now,
+              task: task.task,
+              run,
+              id: 'operation',
+              kind: 'persist',
+              claimFingerprint: tokenHash,
+            });
+          },
+        });
+      const retire = async () => {
+        await f.protocol.retire(f.a, fence(receipt), { recoveryNonce, now });
+        await f.protocol.workerRetired(f.a, fence(receipt), {
+          recoveryNonce,
+          generation: 1,
+          podUid: 'pod-original',
+          evidence: 'exact-owned-worker-physically-ended',
+          now,
+        });
+        await f.protocol.stopProducer(f.a, fence(receipt), {
+          producerId: 'producer-a',
+          producerSubject: f.a.subject,
+          fenced: false,
+          evidence: 'all-rpcs-definitively-resolved',
+          now,
+        });
+      };
+      const release = () =>
+        f.protocol.release(f.a, fence(receipt), {
+          ...releaseInput(receipt),
+          neverStarted: false,
+          originalJobUid: 'job-original',
+        });
+      return { ...f, receipt, permit, change, reserve, retire, release };
+    }
+
+    function fulfilled<T>(outcome: PromiseSettledResult<T> | undefined): T {
+      if (outcome?.status !== 'fulfilled')
+        throw new Error('expected fulfilled transaction');
+      return outcome.value;
+    }
+    async function resolvedRelease<T>(
+      outcome: PromiseSettledResult<T> | undefined,
+      retry: () => Promise<T>,
+    ): Promise<T> {
+      if (outcome === undefined) throw new Error('missing release outcome');
+      if (outcome.status === 'fulfilled') return outcome.value;
+      if (
+        !(outcome.reason instanceof CapacityRefusal) ||
+        outcome.reason.reason !== 'physical'
+      )
+        throw outcome.reason;
+      return retry();
+    }
+    it('credential reservation versus final release: reservation-first', async () => {
+      const f = await credentialFixture();
+      expect(isRefusal(await f.reserve())).toBe(false);
+      const before = await f.store.readRun(f.receipt.runId);
+      await f.retire();
+      await expect(f.release()).rejects.toThrow('physical');
+      expect(await f.store.readRun(f.receipt.runId)).toEqual(before);
+      expect((await f.protocol.read(now)).receipts).toHaveLength(1);
+    });
+    it('credential reservation versus final release: release-first', async () => {
+      const f = await credentialFixture();
+      await f.retire();
+      expect(await f.release()).toMatchObject({ released: true });
+      const before = await f.store.readRun(f.receipt.runId);
+      await expect(f.reserve()).rejects.toThrow('worker');
+      expect(await f.store.readRun(f.receipt.runId)).toEqual(before);
+    });
+
+    it('unknown prepared CAS and pending completion retain occupancy until exact checked recovery', async () => {
+      const f = await credentialFixture();
+      await f.reserve();
+      const mutation = {
+        kind: 'auth-write' as const,
+        id: 'operation:1',
+        expectedGeneration: '7',
+        sha256: 'b'.repeat(64),
+      };
+      expect(isRefusal(await f.change({ kind: 'prepare', mutation }))).toBe(
+        false,
+      );
+      expect(
+        isRefusal(
+          await f.orchestrator.report(f.receipt.runId, { ok: true }, tokenHash),
+        ),
+      ).toBe(false);
+      await f.retire();
+      const before = await f.store.readRun(f.receipt.runId);
+      expect(before?.credentialPendingResult?.result).toEqual({ ok: true });
+      expect(
+        await f.change({ kind: 'retry-recovery' }, 'wrong-operation'),
+      ).toMatchObject({ reason: 'not-claimant' });
+      expect(
+        await f.change(
+          { kind: 'acknowledge', mutationId: mutation.id },
+          'operation',
+          'c'.repeat(64),
+        ),
+      ).toMatchObject({ reason: 'not-claimant' });
+      expect(
+        await f.change({ kind: 'finish', leaseRetiredAtSequence: 1 }),
+      ).toMatchObject({ reason: 'credential-operation-pending' });
+      await expect(f.release()).rejects.toThrow('physical');
+      expect(await f.store.readRun(f.receipt.runId)).toEqual(before);
+      expect(isRefusal(await f.change({ kind: 'retry-recovery' }))).toBe(false);
+      expect(
+        isRefusal(
+          await f.change({ kind: 'acknowledge', mutationId: mutation.id }),
+        ),
+      ).toBe(false);
+      expect(
+        await f.change({ kind: 'finish', leaseRetiredAtSequence: 0 }),
+      ).toMatchObject({ reason: 'credential-operation-pending' });
+      const races = await Promise.allSettled([
+        f.change({ kind: 'finish', leaseRetiredAtSequence: 1 }),
+        f.release(),
+      ]);
+      expect(isRefusal(fulfilled(races[0]))).toBe(false);
+      expect((await f.store.readRun(f.receipt.runId))?.state).toBe('finished');
+      expect(await resolvedRelease(races[1], f.release)).toMatchObject({
+        released: true,
+      });
+      expect((await f.protocol.read(now)).receipts).toHaveLength(0);
+      expect(await f.change({ kind: 'prepare', mutation })).toMatchObject({
+        reason: 'not-claimant',
+      });
+    });
+
+    it('cleanup preparation invalidates captured proof and survives competing release until checked finish', async () => {
+      const f = await credentialFixture();
+      expect(
+        isRefusal(
+          await f.orchestrator.report(f.receipt.runId, { ok: true }, tokenHash),
+        ),
+      ).toBe(false);
+      const operation = (await f.store.readRun(f.receipt.runId))
+        ?.credentialOperation;
+      if (operation === undefined) throw new Error('missing terminal cleanup');
+      const mutation = {
+        kind: 'lease-write' as const,
+        id: `${operation.id}:1`,
+        expectedGeneration: '7',
+        repository: 'example/capacity',
+        expiresAt: now,
+      };
+      await f.change({ kind: 'prepare', mutation }, operation.id);
+      await f.retire();
+      const before = await f.store.readRun(f.receipt.runId);
+      expect(
+        await f.change(
+          { kind: 'finish', leaseRetiredAtSequence: 0 },
+          operation.id,
+        ),
+      ).toMatchObject({ reason: 'credential-operation-pending' });
+      await expect(f.release()).rejects.toThrow('physical');
+      expect(await f.store.readRun(f.receipt.runId)).toEqual(before);
+      await f.change(
+        { kind: 'acknowledge', mutationId: mutation.id },
+        operation.id,
+      );
+      expect(
+        await f.change(
+          { kind: 'finish', leaseRetiredAtSequence: 0 },
+          operation.id,
+        ),
+      ).toMatchObject({ reason: 'credential-operation-pending' });
+      const races = await Promise.allSettled([
+        f.release(),
+        f.change({ kind: 'finish', leaseRetiredAtSequence: 1 }, operation.id),
+      ]);
+      expect(isRefusal(fulfilled(races[1]))).toBe(false);
+      expect(await resolvedRelease(races[0], f.release)).toMatchObject({
+        released: true,
+      });
+      expect((await f.protocol.read(now)).receipts).toHaveLength(0);
+      expect(
+        await f.change({ kind: 'retry-recovery' }, operation.id),
+      ).toMatchObject({ reason: 'not-claimant' });
+    });
+
+    it('retried terminal callback keeps one cleanup identity and the current callback clock', async () => {
+      const f = await credentialFixture();
+      const transact = f.store.transactRun.bind(f.store);
+      const ids: (string | undefined)[] = [];
+      f.store.transactRun = (input) =>
+        transact({
+          ...input,
+          decide: (snapshot) => {
+            const discarded = input.decide(snapshot);
+            if (isRefusal(discarded)) throw new Error(discarded.reason);
+            ids.push(discarded.run?.credentialOperation?.id);
+            f.setNow('2026-10-10T04:00:01.000Z');
+            const committed = input.decide(snapshot);
+            if (isRefusal(committed)) throw new Error(committed.reason);
+            ids.push(committed.run?.credentialOperation?.id);
+            return committed;
+          },
+        });
+      const result = await f.orchestrator.report(
+        f.receipt.runId,
+        { ok: true },
+        tokenHash,
+      );
+      expect(isRefusal(result)).toBe(false);
+      expect(ids.length).toBeGreaterThanOrEqual(2);
+      expect(ids[0]).toBeDefined();
+      expect(new Set(ids).size).toBe(1);
+      expect(
+        (await f.store.readRun(f.receipt.runId))?.credentialOperation
+          ?.startedAt,
+      ).toBe('2026-10-10T04:00:01.000Z');
+      if (isRefusal(result)) throw new Error(result.reason);
+      expect(result.run?.updatedAt).toBe('2026-10-10T04:00:01.000Z');
+      expect(
+        result.outbox.filter((entry) => entry.kind === 'report-outcome'),
+      ).toHaveLength(1);
     });
 
     it('physical release retains exact claimant exit for a live non-Codex run', async () => {
