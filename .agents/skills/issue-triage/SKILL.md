@@ -96,6 +96,29 @@ unmet acceptance criterion, blocker owner, and the event or timestamp that
 should trigger another pass. Continue independent authorized issues instead
 of spending turns only polling or repeating the blocker.
 
+### Interactive delegate handoffs
+
+When the interactive workflow permits delegation, check the existing delegate's
+actual task state before assigning follow-on work. For an idle or completed
+delegate, use the client's available operation that starts a new task turn.
+In clients exposing the collaboration tools, `collaboration.followup_task`
+triggers that turn; `collaboration.send_message` only delivers coordination
+and does not start work on an idle delegate. Use `send_message` to coordinate
+with an already running delegate. Follow the available client's tool contract
+rather than requiring a tool it does not provide.
+
+After the handoff, read back the delegate's actual task state (for example,
+with `collaboration.list_agents`) before describing the work as active or
+waiting for its result. A queued message alone is not execution evidence.
+If no turn started, reconcile and restart the existing delegate through the
+supported task operation before creating a duplicate agent or job. If the
+client cannot confirm execution, report the handoff as unconfirmed.
+
+This check governs interactive collaboration only. Repairing that handoff
+does not authorize native LCARS fleet claims, cancellations, provider
+handoffs, or infrastructure controls. Headless dispatches retain the shared
+agent-protocol's synchronous-work and ownership requirements.
+
 ## Dependency dashboard checks
 
 Treat a dashboard checkbox as an operational request, not proof that every
