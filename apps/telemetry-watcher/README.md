@@ -197,6 +197,104 @@ For Codex, the watcher derives its inferred title from the first real user
 input in watched rollout JSONL. Claude's `aiTitle` remains a transcript-derived
 generated title.
 
+## Hook client (`lcars hook`, phase 0)
+
+The daemon above polls disk. The hook client is the replacement path
+described in [docs/hooks-telemetry-design.md](../../docs/hooks-telemetry-design.md):
+each coding agent's own hooks run `lcars hook <runtime>`, which reads one
+hook payload on stdin, reduces the session's transcript with the same
+summary-only reducer, and hands a `SessionEventV1` to a detached flusher
+that posts it to the console's
+`POST /api/telemetry/v1/sessions/{sessionId}/events` route. Phase 0 covers
+Claude Code only; the route is a `404` until the console runs with
+`AGENT_LCARS_TELEMETRY_INGEST=1`.
+
+The hook process never touches the network, never prints to stdout, and
+always exits 0. Every decision is one line in
+`~/.local/state/agent-lcars/hook.log`.
+
+### Workstation setup
+
+1. `~/.config/agent-lcars/config.json` names the repositories whose
+   sessions may be reported; anything else is skipped before the transcript
+   is read (the privacy boundary):
+
+   ```json
+   { "repos": ["jlapenna/*", "supersprinklesracing/*"] }
+   ```
+
+2. `~/.config/agent-lcars/telemetry.env` (mode 0600) carries the host's
+   bearer token, `LCARS_TELEMETRY_TOKEN=...`. The console holds only its
+   SHA-256, bound to the host label, in `AGENT_LCARS_TELEMETRY_HOST_TOKENS`
+   (`[{"host":"laforge","tokenSha256":"<hex>"}]`). `LCARS_URL` overrides
+   the console origin.
+
+3. Claude Code hooks (`~/.claude/settings.json`); the `async` entries never
+   block the agent and `SessionStart` prints nothing:
+
+   ```json
+   {
+     "hooks": {
+       "SessionStart": [
+         {
+           "hooks": [
+             {
+               "type": "command",
+               "command": "lcars hook claude",
+               "timeout": 10
+             }
+           ]
+         }
+       ],
+       "UserPromptSubmit": [
+         {
+           "hooks": [
+             {
+               "type": "command",
+               "command": "lcars hook claude",
+               "async": true
+             }
+           ]
+         }
+       ],
+       "PostToolUse": [
+         {
+           "hooks": [
+             {
+               "type": "command",
+               "command": "lcars hook claude",
+               "async": true
+             }
+           ]
+         }
+       ],
+       "Stop": [
+         {
+           "hooks": [
+             {
+               "type": "command",
+               "command": "lcars hook claude",
+               "async": true
+             }
+           ]
+         }
+       ],
+       "SessionEnd": [
+         {
+           "hooks": [
+             { "type": "command", "command": "lcars hook claude", "timeout": 5 }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+`lcars hook flush` drains the spool by hand (`~/.local/state/agent-lcars/spool/`),
+and `lcars hook claude --inline` posts synchronously for debugging. During
+the rollout the daemon keeps running; `hook-sessions/<sessionId>.json` is
+the marker a later daemon change reads to skip hook-reported sessions.
+
 ## Configuration
 
 All via environment variables (see `src/lib/config.ts`):

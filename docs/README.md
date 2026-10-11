@@ -49,6 +49,7 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 | Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)           |
 | Worker qualification and rollout | [`worker-policy-rollout.md`](worker-policy-rollout.md)                       |
 | OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                     |
+| Hooks-based session telemetry    | [`hooks-telemetry-design.md`](hooks-telemetry-design.md) (proposal, phase 0) |
 
 ## Product specification
 

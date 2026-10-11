@@ -11,7 +11,8 @@ export type WorkScope =
   | 'work.reaper'
   | 'work.capacity.recover'
   | 'work.capacity.fence'
-  | 'work.capacity.operator';
+  | 'work.capacity.operator'
+  | 'telemetry.writer';
 
 export interface WorkPrincipal {
   principal: string;

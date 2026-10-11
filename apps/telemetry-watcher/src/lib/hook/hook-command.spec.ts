@@ -1,0 +1,334 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import { type SessionEventV1 } from '@agent-lcars/telemetry';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  executeHookCommand,
+  type HookCommandDependencies,
+} from './hook-command';
+import { readHookSessionState } from './hook-state';
+import { spoolPath } from './spool';
+
+const FIXTURE = path.join(
+  __dirname,
+  '../../../../../libs/telemetry/src/lib/fixtures/normal-session.jsonl',
+);
+const SESSION_ID = 'session-normal-1';
+const STATE_DIR = '.local/state/agent-lcars';
+
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+function tempHome(): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-hook-'));
+  homes.push(home);
+  fs.mkdirSync(path.join(home, '.config/agent-lcars'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.config/agent-lcars/config.json'),
+    JSON.stringify({ repos: ['jlapenna/*'] }),
+  );
+  return home;
+}
+
+function payload(
+  hookEventName: string,
+  overrides: Record<string, unknown> = {},
+): string {
+  return JSON.stringify({
+    hook_event_name: hookEventName,
+    session_id: SESSION_ID,
+    transcript_path: FIXTURE,
+    cwd: '/home/dev/project',
+    permission_mode: 'bypassPermissions',
+    prompt: 'never read',
+    ...overrides,
+  });
+}
+
+function deps(
+  home: string,
+  stdin: string,
+  overrides: Partial<HookCommandDependencies> = {},
+): HookCommandDependencies {
+  const fetchImpl = vi.fn(async () => new Response(null, { status: 202 }));
+  return {
+    env: { LCARS_TELEMETRY_TOKEN: 'secret', LCARS_URL: 'https://lcars.test' },
+    homeDirectory: home,
+    now: () => new Date('2026-10-10T12:00:00.000Z'),
+    readStdin: () => stdin,
+    readTranscriptLines: (filePath) =>
+      fs.readFileSync(filePath, 'utf8').split('\n'),
+    fileExists: (filePath) => fs.existsSync(filePath),
+    resolveGitRepo: async () => ({ owner: 'jlapenna', name: 'agent-lcars' }),
+    resolveGitBranch: async () => 'feat/hooks',
+    fetchImpl,
+    spawnFlusher: vi.fn(),
+    randomId: () => 'evt-fixed',
+    hostname: () => 'laforge.lan',
+    stderr: vi.fn(),
+    ...overrides,
+  };
+}
+
+function spooledEvents(home: string): SessionEventV1[] {
+  const file = spoolPath(path.join(home, STATE_DIR));
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as SessionEventV1);
+}
+
+describe('lcars hook claude', () => {
+  it('reduces the transcript, enriches it, and spools a summary-only event', async () => {
+    const home = tempHome();
+    const d = deps(home, payload('PostToolUse'));
+    const result = await executeHookCommand(['claude'], d);
+    expect(result.action).toBe('spooled');
+    expect(d.spawnFlusher).toHaveBeenCalledOnce();
+    const [event] = spooledEvents(home);
+    expect(event).toMatchObject({
+      version: 1,
+      seq: 1,
+      host: 'laforge',
+      agent: 'claude-code',
+      sessionId: SESSION_ID,
+      kind: 'tool',
+      runtime: { name: 'claude-code', hookEvent: 'PostToolUse' },
+    });
+    expect(event.summary).toMatchObject({
+      turns: 3,
+      toolCallCounts: { Bash: 2, Edit: 1 },
+      branch: 'feat/hooks',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      host: 'laforge',
+      deliverables: { prNumbers: [42] },
+    });
+    expect(JSON.stringify(event)).not.toContain('never read');
+    expect(JSON.stringify(event)).not.toContain('flaky login test and open');
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), SESSION_ID),
+    ).toMatchObject({
+      seq: 1,
+      lastKind: 'tool',
+    });
+  });
+
+  it('skips sessions whose repository is not allowlisted, without touching state', async () => {
+    const home = tempHome();
+    const d = deps(home, payload('PostToolUse'), {
+      resolveGitRepo: async () => ({ owner: 'someone', name: 'private' }),
+    });
+    expect((await executeHookCommand(['claude'], d)).action).toBe(
+      'skipped-unlisted',
+    );
+    expect(spooledEvents(home)).toEqual([]);
+    expect(fs.existsSync(path.join(home, STATE_DIR, 'hook-sessions'))).toBe(
+      false,
+    );
+    expect(d.spawnFlusher).not.toHaveBeenCalled();
+  });
+
+  it('skips subagent payloads and unknown events', async () => {
+    const home = tempHome();
+    expect(
+      (
+        await executeHookCommand(
+          ['claude'],
+          deps(home, payload('PostToolUse', { agent_id: 'sub-1' })),
+        )
+      ).action,
+    ).toBe('skipped-subagent');
+    expect(
+      (await executeHookCommand(['claude'], deps(home, payload('PreCompact'))))
+        .action,
+    ).toBe('ignored');
+    expect(
+      (await executeHookCommand(['claude'], deps(home, 'not json'))).action,
+    ).toBe('ignored');
+    expect(spooledEvents(home)).toEqual([]);
+  });
+
+  it('throttles tool events but always ships lifecycle events, with increasing seq', async () => {
+    const home = tempHome();
+    await executeHookCommand(['claude'], deps(home, payload('PostToolUse')));
+    expect(
+      (await executeHookCommand(['claude'], deps(home, payload('PostToolUse'))))
+        .action,
+    ).toBe('throttled');
+    expect(
+      (await executeHookCommand(['claude'], deps(home, payload('Stop'))))
+        .action,
+    ).toBe('spooled');
+    const later = deps(home, payload('PostToolUse'), {
+      now: () => new Date('2026-10-10T12:00:20.000Z'),
+    });
+    expect((await executeHookCommand(['claude'], later)).action).toBe(
+      'spooled',
+    );
+    expect(spooledEvents(home).map((e) => [e.kind, e.seq])).toEqual([
+      ['tool', 1],
+      ['stop', 2],
+      ['tool', 3],
+    ]);
+  });
+
+  it('ships a start event with a zero summary when the transcript does not exist yet', async () => {
+    const home = tempHome();
+    const d = deps(
+      home,
+      payload('SessionStart', {
+        transcript_path: '/nope.jsonl',
+        source: 'startup',
+      }),
+    );
+    expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event.kind).toBe('start');
+    expect(event.summary).toMatchObject({
+      turns: 0,
+      cwd: '/home/dev/project',
+      host: 'laforge',
+    });
+  });
+
+  it('ships an end event without a summary when the transcript is gone', async () => {
+    const home = tempHome();
+    const d = deps(
+      home,
+      payload('SessionEnd', {
+        transcript_path: '/nope.jsonl',
+        reason: 'other',
+      }),
+    );
+    expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event.kind).toBe('end');
+    expect(event.summary).toBeUndefined();
+  });
+
+  it('joins declared title and status overlays', async () => {
+    const home = tempHome();
+    const stateDir = path.join(home, STATE_DIR);
+    fs.mkdirSync(path.join(stateDir, 'session-metadata'), { recursive: true });
+    fs.mkdirSync(path.join(stateDir, 'session-status'), { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, 'session-metadata', `${SESSION_ID}.json`),
+      JSON.stringify({
+        version: 1,
+        sessionId: SESSION_ID,
+        updatedAt: '2026-10-10T11:00:00.000Z',
+        title: 'Declared title',
+      }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, 'session-status', `${SESSION_ID}.json`),
+      JSON.stringify({
+        version: 1,
+        sessionId: SESSION_ID,
+        updatedAt: '2026-10-10T11:30:00.000Z',
+        status: 'waiting on CI',
+      }),
+    );
+    await executeHookCommand(['claude'], deps(home, payload('Stop')));
+    const [event] = spooledEvents(home);
+    expect(event.summary).toMatchObject({
+      title: 'Declared title',
+      status: 'waiting on CI',
+      statusUpdatedAt: '2026-10-10T11:30:00.000Z',
+    });
+  });
+
+  it('bypasses the allowlist and attaches runner context on a QueueExecutor runner', async () => {
+    const home = tempHome();
+    const d = deps(home, payload('PostToolUse'), {
+      env: {
+        LCARS_RUN_ID: 'run-9',
+        INTENT_ID: 'intent-9',
+        NUM: '77',
+        LCARS_REPO: 'supersprinklesracing/www',
+      },
+      resolveGitRepo: async () => undefined,
+    });
+    expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
+    expect(spooledEvents(home)[0].runner).toEqual({
+      runId: 'run-9',
+      intentId: 'intent-9',
+      issueNumber: 77,
+      repo: { owner: 'supersprinklesracing', name: 'www' },
+    });
+  });
+
+  it('--inline posts the spooled event to the console with the bearer token', async () => {
+    const home = tempHome();
+    const d = deps(home, payload('Stop'));
+    expect((await executeHookCommand(['claude', '--inline'], d)).action).toBe(
+      'spooled',
+    );
+    expect(d.spawnFlusher).not.toHaveBeenCalled();
+    expect(d.fetchImpl).toHaveBeenCalledOnce();
+    const [url, init] = vi.mocked(d.fetchImpl).mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(
+      `https://lcars.test/api/telemetry/v1/sessions/${SESSION_ID}/events`,
+    );
+    expect((init.headers as Record<string, string>)['authorization']).toBe(
+      'Bearer secret',
+    );
+    expect(spooledEvents(home)).toEqual([]);
+  });
+});
+
+describe('lcars hook flush', () => {
+  it('keeps events when the console is unreachable and drops ones it rejects', async () => {
+    const home = tempHome();
+    await executeHookCommand(['claude'], deps(home, payload('PostToolUse')));
+    await executeHookCommand(['claude'], deps(home, payload('Stop')));
+    const failing = deps(home, '', {
+      fetchImpl: vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    });
+    expect(await executeHookCommand(['flush'], failing)).toMatchObject({
+      action: 'flushed',
+      detail: 'sent=0 dropped=0 remaining=2',
+    });
+    const rejecting = deps(home, '', {
+      fetchImpl: vi
+        .fn()
+        .mockResolvedValueOnce(new Response('bad', { status: 400 }))
+        .mockResolvedValueOnce(new Response(null, { status: 202 })),
+    });
+    expect(await executeHookCommand(['flush'], rejecting)).toMatchObject({
+      action: 'flushed',
+      detail: 'sent=1 dropped=1 remaining=0',
+    });
+  });
+
+  it('leaves the spool alone without a token', async () => {
+    const home = tempHome();
+    await executeHookCommand(['claude'], deps(home, payload('Stop')));
+    const noToken = deps(home, '', { env: {} });
+    expect((await executeHookCommand(['flush'], noToken)).action).toBe(
+      'flush-no-token',
+    );
+    expect(spooledEvents(home)).toHaveLength(1);
+  });
+
+  it('prints usage for anything else, to stderr only', async () => {
+    const home = tempHome();
+    const d = deps(home, '');
+    expect((await executeHookCommand(['bogus'], d)).action).toBe('usage');
+    expect(d.stderr).toHaveBeenCalledOnce();
+  });
+});
