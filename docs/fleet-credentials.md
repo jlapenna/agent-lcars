@@ -42,10 +42,14 @@ Two GitHub Apps exist and are easy to confuse:
   Installations `154210710` (jlapenna) / `154210731` (supersprinklesracing).
 
 The fleet App's two fleet installations must use "Only select repositories" — a new
-repo must be added to the right installation(s) in the GitHub UI (the REST
-endpoint for this only accepts a GitHub-App _user_ token, so `gh` cannot do
-it). It has a third, non-fleet installation on the `jlaorg` org, and that one
-is "All repositories".
+repo must be explicitly added to the right installation(s). Use the GitHub UI
+or the [repository-membership REST endpoints](https://docs.github.com/en/rest/apps/installations?apiVersion=2026-03-10)
+with a supported credential and the required access. Those endpoints support
+GitHub App user tokens, installation tokens and fine-grained PATs with
+"GitHub App installation repository access" write permission. Editing membership
+does not establish a way to switch an installation from "All repositories" to
+"Only select repositories"; removal requires an already-selected installation.
+The third, non-fleet installation on the `jlaorg` org remains "All repositories".
 
 `messages-control` (#2436) requires explicit membership in both jlapenna
 installations: fleet App `150568943` and autoscaler App `154210710` (the
@@ -58,8 +62,9 @@ These lists declare the required contract, not a receipt of a settings change.
 After saving installation scope, verify the genuine Homelab IAM collector,
 ARC/listener and exporter consumers, and the normal deployment health gate.
 If the shared browser redirects to sign-in, live scope remains unverified;
-`gh`'s ordinary token and an App installation token do not replace that
-administrative browser session.
+Do not assume `gh`'s current credential or an App installation token can change
+the selection mode: membership access and an authenticated administrative
+settings session are different capabilities.
 
 > Everything above is prose, and prose rots — this file documented the
 > private-key lineage two contradictory ways until a live JWT mint settled it.
