@@ -894,9 +894,17 @@ export class CapacityProtocol {
           throw new CapacityRefusal('retired');
         if (
           input.tokenHash !== receipt.tokenHash ||
-          receipt.attestedPod?.podUid !== input.podUid ||
-          receipt.attestedPod.jobUid !== input.jobUid ||
           receipt.jobUid !== input.jobUid
+        )
+          throw new CapacityRefusal('authority');
+        // A verified newly started Pod can race the controller's first
+        // inventory sweep. Pending attestation grants no permit, but is a
+        // retryable conflict rather than invalid credentials.
+        if (receipt.attestedPod === undefined)
+          throw new CapacityRefusal('worker');
+        if (
+          receipt.attestedPod.podUid !== input.podUid ||
+          receipt.attestedPod.jobUid !== input.jobUid
         )
           throw new CapacityRefusal('authority');
         if (
@@ -1051,6 +1059,69 @@ export class CapacityProtocol {
           value: { closed: true },
           state: commit(snapshot),
           records: mutations([[key, record]]),
+        };
+      },
+    });
+  }
+
+  /** The authenticated principal may inspect only its own permanent incarnation.
+   * Absence is unknown, never evidence that an ambiguous stop committed. */
+  async inspectProducer(
+    authority: CapacityAuthority,
+    producerId: string,
+    now: string,
+  ) {
+    requireCapability(authority, 'recover');
+    const key = producerKey(authority.poolId, authority.subject, producerId);
+    return this.store.transactCapacity({
+      now,
+      recordKeys: [key],
+      decide: (snapshot) => {
+        policyFor(snapshot, authority);
+        const record = snapshot.records.get(key);
+        if (
+          record?.kind !== 'producer' ||
+          record.poolId !== authority.poolId ||
+          record.subject !== authority.subject ||
+          record.producerId !== producerId
+        )
+          return { value: null };
+        return {
+          value: {
+            poolId: record.poolId,
+            producerId: record.producerId,
+            subject: record.subject,
+            closed: record.closed,
+          },
+        };
+      },
+    });
+  }
+
+  async inspectRetired(
+    authority: CapacityAuthority,
+    runId: string,
+    now: string,
+  ) {
+    requireCapability(authority, 'recover');
+    const key = retiredKey(runId);
+    return this.store.transactCapacity({
+      now,
+      recordKeys: [key],
+      decide: (snapshot) => {
+        policyFor(snapshot, authority);
+        const record = snapshot.records.get(key);
+        if (record?.kind !== 'retired' || record.poolId !== authority.poolId)
+          return { value: null };
+        return {
+          value: {
+            runId: record.runId,
+            nonce: record.nonce,
+            jobName: record.jobName,
+            released: record.released,
+            barrier: record.barrier,
+            retainBarrier: record.pendingWrites.length !== 0,
+          },
         };
       },
     });

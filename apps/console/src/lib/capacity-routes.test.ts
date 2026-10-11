@@ -156,7 +156,7 @@ async function fixture(anchor?: { repo: string; issue: number }) {
     },
   };
 }
-async function attested(f: Awaited<ReturnType<typeof fixture>>) {
+async function bound(f: Awaited<ReturnType<typeof fixture>>) {
   const { context, claim } = f;
   const recovery = { fence: claim.receipt, recoveryNonce };
   expect(
@@ -179,6 +179,11 @@ async function attested(f: Awaited<ReturnType<typeof fixture>>) {
       })
     ).status,
   ).toBe(200);
+}
+async function attested(f: Awaited<ReturnType<typeof fixture>>) {
+  await bound(f);
+  const { context, claim } = f;
+  const recovery = { fence: claim.receipt, recoveryNonce };
   expect(
     (
       await call(context, '/runs/capacity', {
@@ -194,6 +199,50 @@ async function attested(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('receipt HTTP authority and activation', () => {
+  it('verified pending attestation is retryable without granting a permit; invalid credentials remain fatal', async () => {
+    const f = await fixture();
+    await bound(f);
+    const worker = {
+      ...f.context,
+      principal: undefined,
+      bearerToken: f.claim.token,
+      workerIdentityToken: 'bound-jwt',
+      verifyWorkerIdentity: async () => ({
+        podUid: 'pod-original',
+        namespace: 'lcars',
+      }),
+    };
+    const input = { fence: f.claim.receipt, jobUid: 'job-original' };
+    const before = await f.protocol.read(now);
+    expect((await call(worker, '/runs/activate', input)).status).toBe(409);
+    expect(await f.protocol.read(now)).toEqual(before);
+    expect(before.receipts[0]?.worker).toBeUndefined();
+    expect(
+      (
+        await call(worker, '/runs/activate', {
+          ...input,
+          jobUid: 'foreign-job',
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(
+          { ...worker, bearerToken: 'invalid-token' },
+          '/runs/activate',
+          input,
+        )
+      ).status,
+    ).toBe(401);
+    await attested(f);
+    expect((await call(worker, '/runs/activate', input)).status).toBe(200);
+    expect((await f.protocol.read(now)).receipts[0]?.worker).toMatchObject({
+      podUid: 'pod-original',
+      generation: 1,
+      active: true,
+    });
+  });
+
   it('verified worker cannot activate at the first-heartbeat deadline before expiry sweep', async () => {
     const f = await fixture();
     await attested(f);
@@ -742,5 +791,130 @@ describe('real signed Pod-bound Kubernetes JWT verification', () => {
     await expect(
       verifyCapacityWorkerIdentity(forged, 'pool-a', jwks),
     ).rejects.toThrow();
+  });
+});
+
+describe('permanent retirement inspection for executor barriers', () => {
+  it('active inventory empties after release while authenticated exact retirement remains observable', async () => {
+    const { context, claim } = await fixture();
+    const recovery = { fence: claim.receipt, recoveryNonce };
+    for (const command of [
+      { action: 'recover', ...recovery, purpose: 'retire' },
+      {
+        action: 'stop-producer',
+        fence: claim.receipt,
+        producerId: 'producer-a',
+        producerSubject: principal.subject,
+        fenced: false,
+        evidence: 'serialized-operation-group-drained',
+      },
+      { action: 'retire', ...recovery },
+      {
+        action: 'release',
+        ...recovery,
+        barrierUid: 'retained-inert-job',
+        barrierRunId: claim.runId,
+        barrierNonce: claim.receipt.nonce,
+        resourceVersion: 'barrier-rv',
+        jobName: claim.jobName,
+        evidence: 'never-started-shell-and-zero-owned-pods',
+        inert: true,
+        physicalWorkersEnded: true,
+        neverStarted: true,
+      },
+    ])
+      expect((await call(context, '/runs/capacity', command)).status).toBe(200);
+    expect(
+      (await call(context, '/runs/capacity', undefined, 'GET')).body.receipts,
+    ).toEqual([]);
+    expect(
+      await call(context, '/runs/capacity', {
+        action: 'inspect-producer',
+        producerId: 'producer-a',
+      }),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        producer: {
+          poolId: 'pool-a',
+          subject: principal.subject,
+          producerId: 'producer-a',
+          closed: true,
+        },
+      },
+    });
+    expect(
+      (
+        await call(
+          {
+            ...context,
+            principal: { ...principal, subject: 'foreign-subject' },
+          },
+          '/runs/capacity',
+          { action: 'inspect-producer', producerId: 'producer-a' },
+        )
+      ).body.producer,
+    ).toBeNull();
+    expect(
+      (
+        await call(context, '/runs/capacity', {
+          action: 'inspect-producer',
+          producerId: 'unknown',
+        })
+      ).body.producer,
+    ).toBeNull();
+    expect(
+      (
+        await call(
+          {
+            ...context,
+            principal: { ...principal, scopes: new Set(['work.executor']) },
+          },
+          '/runs/capacity',
+          { action: 'inspect-producer', producerId: 'producer-a' },
+        )
+      ).status,
+    ).toBe(401);
+
+    expect(
+      await call(context, '/runs/capacity', {
+        action: 'inspect-retired',
+        runId: claim.runId,
+      }),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        retirement: {
+          runId: claim.runId,
+          nonce: claim.receipt.nonce,
+          jobName: claim.jobName,
+          released: true,
+          retainBarrier: false,
+          barrier: { uid: 'retained-inert-job', resourceVersion: 'barrier-rv' },
+        },
+      },
+    });
+    expect(
+      (
+        await call(
+          {
+            ...context,
+            principal: { ...principal, scopes: new Set(['work.executor']) },
+          },
+          '/runs/capacity',
+          { action: 'inspect-retired', runId: claim.runId },
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(context, '/runs/capacity', {
+          action: 'inspect-retired',
+          runId: 'work:unknown/r1',
+        })
+      ).body.retirement,
+    ).toBeNull();
   });
 });
