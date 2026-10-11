@@ -2137,7 +2137,12 @@ run_scenario codex-auth-busy-then-success codex
 [ "$rc" = 0 ] || fail "codex-auth-busy-then-success: exit $rc ($(cat "$scenario_log"))"
 [ "$(cat "$CODEX_AUTH_REQUEST_LOG")" = 2 ] || fail 'busy credential was not retried once'
 [ -s "$CODEX_ARGS_LOG" ] || fail 'Codex never started after credential release'
-[ -s "$HEARTBEAT_LOG" ] || fail 'run heartbeat stopped while waiting for credentials'
+python3 - "$API_SEQUENCE_LOG" <<'PYWAIT'
+import sys
+calls = open(sys.argv[1]).read().splitlines()
+restores = [i for i, call in enumerate(calls) if call == "codex-auth"]
+assert len(restores) >= 2 and "heartbeat" in calls[restores[0] + 1:restores[1]], calls
+PYWAIT
 ! grep -q 'private-body-must-not-be-logged' "$scenario_log" || fail 'broker error body leaked'
 echo 'scenario codex-auth-busy-then-success: OK'
 
