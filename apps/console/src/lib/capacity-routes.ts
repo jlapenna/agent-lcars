@@ -85,6 +85,20 @@ export async function applyCapacityCommand(
     };
   };
   switch (input.action) {
+    case 'inspect-producer':
+      return {
+        ok: true,
+        producer: await protocol.inspectProducer(
+          authority,
+          input.producerId,
+          now,
+        ),
+      };
+    case 'inspect-retired':
+      return {
+        ok: true,
+        retirement: await protocol.inspectRetired(authority, input.runId, now),
+      };
     case 'register':
       await protocol.register(authority, input.producerId, now);
       return { ok: true };
