@@ -73,6 +73,8 @@ export interface ItemRunView {
     claimedAt?: string;
     firstHeartbeatAt?: string;
     providerProcessStartedAt?: string;
+    startDeadlineAt?: string;
+    placement?: NonNullable<Run['queue']>['placement'];
   };
   /** The human turn that opened this round, for a `mode: reply` run.
    *  Round 1's human turn is `spec.description`, not a reply. */
@@ -170,6 +172,12 @@ export function toItemView(input: {
         : {
             queue: {
               state: r.queue.state,
+              ...(r.queue.startDeadlineAt === undefined
+                ? {}
+                : { startDeadlineAt: r.queue.startDeadlineAt }),
+              ...(r.queue.placement === undefined
+                ? {}
+                : { placement: r.queue.placement }),
               ...(r.queue.claimedAt === undefined
                 ? {}
                 : { claimedAt: r.queue.claimedAt }),
@@ -247,6 +255,12 @@ export function toWorkSummary(input: {
         : {
             queue: {
               state: r.queue.state,
+              ...(r.queue.startDeadlineAt === undefined
+                ? {}
+                : { startDeadlineAt: r.queue.startDeadlineAt }),
+              ...(r.queue.placement === undefined
+                ? {}
+                : { placement: r.queue.placement }),
               ...(r.queue.claimedAt === undefined
                 ? {}
                 : { claimedAt: r.queue.claimedAt }),

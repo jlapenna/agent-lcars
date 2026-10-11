@@ -693,7 +693,7 @@ test.describe('Inbox authorized action journeys', () => {
       card.getByText('authoritative state rev 2', { exact: true }),
     ).toBeVisible();
     await expect(card.getByTestId('runs-section')).toContainText('Runs (3)');
-    const completed = card.getByTestId(`run-${REPOSITORY}#9008/r0`);
+    const completed = card.getByTestId(`audit-run-${REPOSITORY}#9008/r0`);
     await expect(completed.getByTestId('run-state')).toHaveText('finished');
     await expect(
       completed.getByTestId(`run-events-${REPOSITORY}#9008/r0`),
@@ -706,10 +706,14 @@ test.describe('Inbox authorized action journeys', () => {
       `https://github.com/${REPOSITORY}/pull/9420`,
     );
     await expect(
-      card.getByTestId(`run-${REPOSITORY}#9008/r1`).getByTestId('run-state'),
+      card
+        .getByTestId(`audit-run-${REPOSITORY}#9008/r1`)
+        .getByTestId('run-state'),
     ).toHaveText('running');
     await expect(
-      card.getByTestId(`run-${REPOSITORY}#9008/r2`).getByTestId('run-state'),
+      card
+        .getByTestId(`audit-run-${REPOSITORY}#9008/r2`)
+        .getByTestId('run-state'),
     ).toHaveText('pending');
   });
 });

@@ -343,7 +343,7 @@ describe('getTaskDetail', () => {
       revision: 7,
     });
     expect(result.work.runs).toEqual([]);
-    expect(result.work.state).toBe('active');
+    expect(result.work.state).toBe('dispatching');
   });
 
   it('reads liveness off the run states, not activeRunId, so it agrees with /agents', async () => {
@@ -359,7 +359,7 @@ describe('getTaskDetail', () => {
     );
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
-    expect(result.work.state).toBe('active');
+    expect(result.work.state).toBe('dispatching');
   });
 
   it('reads a pending run as dispatching even when activeRunId names nothing', async () => {

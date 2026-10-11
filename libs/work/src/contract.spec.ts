@@ -157,6 +157,7 @@ describe('runsContract', () => {
         'capacityMetrics',
         'capacityInventory',
         'activate',
+        'placement',
         'brief',
         'heartbeat',
         'exit',
@@ -409,6 +410,7 @@ describe('generateWorkOpenApi', () => {
         '/runs/{runId}/brief',
         '/runs/{runId}/claim-status',
         '/runs/{runId}/heartbeat',
+        '/runs/{runId}/placement',
         '/runs/{runId}/exit',
         '/runs/{runId}/complete',
         '/runs/{runId}/checkout-token',
@@ -436,7 +438,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(8);
+    expect(operations).toHaveLength(9);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -540,6 +542,7 @@ describe('generateWorkOpenApi', () => {
       'GET /runs/{runId}/brief': ['200', '401', '409'],
       'POST /runs/{runId}/heartbeat': ['200', '401', '409'],
       'GET /runs/{runId}/claim-status': ['200', '401', '403', '404'],
+      'POST /runs/{runId}/placement': ['200', '401', '403', '404'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],
       'POST /runs/{runId}/complete': ['200', '401', '409'],
       'GET /runs/{runId}/checkout-token': ['200', '401', '409'],

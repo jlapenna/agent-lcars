@@ -1,6 +1,9 @@
 import {
   FirestoreScheduleStore,
   FirestoreStore,
+  Orchestrator,
+  type Run,
+  type Task,
 } from '@agent-lcars/orchestrator';
 import { Firestore } from '@google-cloud/firestore';
 
@@ -102,4 +105,97 @@ export async function seedDetailNavigationEvidence(githubIssue?: number) {
     await firestore.terminate();
   }
   return { ref, sessionId };
+}
+
+/** Placement regression fixtures stay in the guarded hermetic store. */
+export async function seedNativeExecutionPhase(
+  phase:
+    | 'waiting-for-placement'
+    | 'bootstrapping'
+    | 'provider-execution'
+    | 'unavailable'
+    | 'stale'
+    | 'lost',
+  githubIssue?: number,
+) {
+  const store = new FirestoreStore(emulatorOptions());
+  const anchor =
+    githubIssue === undefined
+      ? { workId: NATIVE_WORK_ID }
+      : { repo: 'supersprinklesracing/sprinkles', issue: githubIssue };
+  const runId =
+    githubIssue === undefined
+      ? `work:${NATIVE_WORK_ID}/r1`
+      : `supersprinklesracing/sprinkles#${githubIssue}/r1`;
+  const [task, oldRun] = await Promise.all([
+    store.readTask(anchor),
+    store.readRun(runId),
+  ]);
+  if (!task || !oldRun) throw new Error('Missing native placement fixture');
+  const now = new Date().toISOString();
+  const run: Run = {
+    ...oldRun,
+    state: phase === 'lost' ? ('lost' as const) : ('running' as const),
+    queue: {
+      state: 'claimed' as const,
+      claimedAt: now,
+      startDeadlineAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+      placement: {
+        phase:
+          phase === 'bootstrapping'
+            ? ('bootstrapping' as const)
+            : phase === 'unavailable'
+              ? ('unavailable' as const)
+              : ('waiting-for-placement' as const),
+        reason:
+          phase === 'bootstrapping'
+            ? ('scheduled' as const)
+            : phase === 'unavailable'
+              ? ('inventory-unavailable' as const)
+              : ('unschedulable' as const),
+        observedAt:
+          phase === 'stale'
+            ? new Date(Date.now() - 181_000).toISOString()
+            : now,
+        jobCreatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      },
+      ...(phase === 'provider-execution'
+        ? { firstHeartbeatAt: now, providerProcessStartedAt: now }
+        : {}),
+    },
+  };
+  if (phase === 'lost') run.queue = oldRun.queue;
+  delete run.result;
+  const updatedTask: Task = { ...task.task, activeRunId: runId };
+  if (phase === 'lost') delete updatedTask.activeRunId;
+  await store.apply({
+    expectedRevision: task.revision,
+    decision: {
+      task: updatedTask,
+      run,
+      outbox: [],
+    },
+  });
+  return runId;
+}
+
+/** Mint the successor through the same admission owner, after the old fixture
+ * is settled, to prove its execution observations are not inherited. */
+export async function seedNativePlacementRetry() {
+  await seedNativeExecutionPhase('lost');
+  const store = new FirestoreStore(emulatorOptions());
+  const taskId = { workId: NATIVE_WORK_ID };
+  const task = await store.readTask(taskId);
+  if (!task) throw new Error('Missing retry fixture');
+  const outcome = await new Orchestrator(store, {
+    now: () => new Date().toISOString(),
+  }).request({
+    taskId,
+    requestId: 'placement-retry-evidence',
+    pipeline: 'claude',
+    work: task.task.work,
+  });
+  if ('refused' in outcome || !outcome.run)
+    throw new Error('Retry fixture was not admitted');
+  return outcome.run.runId;
 }

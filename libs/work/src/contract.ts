@@ -1,3 +1,4 @@
+import { runPlacementSchema } from '@agent-lcars/dispatch-contracts';
 import { oc } from '@orpc/contract';
 import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
@@ -106,6 +107,8 @@ export const itemRunViewSchema = z.strictObject({
       claimedAt: z.string().optional(),
       firstHeartbeatAt: z.string().optional(),
       providerProcessStartedAt: z.string().optional(),
+      startDeadlineAt: z.string().optional(),
+      placement: runPlacementSchema.optional(),
     })
     .optional(),
 });
@@ -984,6 +987,30 @@ export const runsContract = {
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
+  placement: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/placement',
+        operationId: 'observeRunPlacement',
+        summary: 'Report exact-claim scheduler placement',
+        spec: withBearer,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'work.executor scope required' },
+      FORBIDDEN: { message: 'executor may not observe this claim' },
+      NOT_FOUND: { message: 'unknown run' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string().min(1).max(256),
+        claimFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+        placement: runPlacementSchema,
+      }),
+    )
+    .output(z.strictObject({ runId: runIdSchema })),
   claimStatus: runBase
     .meta(
       openapi({

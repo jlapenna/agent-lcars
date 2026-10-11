@@ -174,6 +174,7 @@ type kubernetesQueue struct {
 	receiptClosureCursor    queueSweepCursor
 	verifiedReceiptBarriers map[string]string
 	receiptBarrierMu        sync.Mutex
+	placementCursor         queueSweepCursor
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
 	verifyRun    func(context.Context, string, string) error
