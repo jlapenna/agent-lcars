@@ -159,8 +159,9 @@ labeled local time zone. Local display never changes cron evaluation.
 
 Schedule admission freezes an occurrence's spec and creator before creating
 its deterministic Work item. It does not reserve physical executor capacity.
-The resulting Run must still pass the capacity claim and worker activation
-protocol before execution. A settled schedule watermark records successful
+With receipt enforcement enabled, the resulting Run must still pass the
+capacity claim and worker activation protocol before execution. A settled
+schedule watermark records successful
 item minting; it does not prove worker activation, completion or retirement.
 
 Editing, disabling or deleting a schedule preserves an already admitted
