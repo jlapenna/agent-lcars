@@ -717,3 +717,113 @@ func TestReceiptRecoveryReplaysActiveLeaseAfterLostReplyAndRestart(t *testing.T)
 		t.Fatal("restart discarded durable recovery identity", err)
 	}
 }
+
+func TestReceiptProducerRotationPreservesConcurrentUsefulWork(t *testing.T) {
+	for _, kind := range []string{"suspended-owned-secret", "started-awaiting-attestation"} {
+		t.Run(kind, func(t *testing.T) {
+			q, finished, _ := receiptFixture(t)
+			originalProducer := q.capacity.producerID
+			q.capacity.registered = true
+			finished.Producers = []capacityProducer{{ProducerID: originalProducer, Subject: "subject"}}
+			target := *finished
+			target.RunID = "work:concurrent/r1"
+			target.Slot = 1
+			target.Nonce = "target-receipt-nonce-123456"
+			target.JobName = queueJobName(target.RunID)
+			finishedJob, err := q.job(directRunnerLaunch{runID: finished.RunID, pipeline: finished.Pipeline, runner: finished.Runner, receipt: &finished.capacityFence})
+			if err != nil {
+				t.Fatal(err)
+			}
+			finishedJob.UID = "finished-job"
+			finishedJob.ResourceVersion = "1"
+			finishedJob.Generation = 2
+			finishedJob.Spec.Suspend = ptr(false)
+			finishedJob.Status.Conditions = []batch.JobCondition{{Type: batch.JobComplete, Status: core.ConditionTrue}}
+			finished.JobUID = string(finishedJob.UID)
+			targetJob, err := q.job(directRunnerLaunch{runID: target.RunID, runToken: "target-token", pipeline: target.Pipeline, runner: target.Runner, receipt: &target.capacityFence})
+			if err != nil {
+				t.Fatal(err)
+			}
+			targetJob.UID = "target-job"
+			targetJob.ResourceVersion = "1"
+			targetJob.Generation = 1
+			target.JobUID = string(targetJob.UID)
+			terminalPod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "finished-pod", Namespace: q.config.Namespace, UID: "finished-pod", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: finishedJob.Name, UID: finishedJob.UID, Controller: ptr(true)}}}, Status: core.PodStatus{Phase: core.PodSucceeded, ContainerStatuses: []core.ContainerStatus{{Name: "direct-runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{}}}}}}
+			secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: target.JobName, Namespace: q.config.Namespace, UID: "target-secret", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: targetJob.Name, UID: targetJob.UID, Controller: ptr(true)}}}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte("target-token")}}
+			k := q.client.(*fake.Clientset)
+			if kind == "started-awaiting-attestation" {
+				targetJob.Generation = 2
+				targetJob.Spec.Suspend = ptr(false)
+				runningPod := terminalPod.DeepCopy()
+				runningPod.Name = "target-pod"
+				runningPod.UID = "target-pod"
+				runningPod.OwnerReferences[0].Name = targetJob.Name
+				runningPod.OwnerReferences[0].UID = targetJob.UID
+				runningPod.Spec.NodeName = "node"
+				runningPod.Status.Phase = core.PodRunning
+				runningPod.Status.ContainerStatuses[0].State = core.ContainerState{Running: &core.ContainerStateRunning{}}
+				if err = k.Tracker().Add(runningPod); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, obj := range []runtime.Object{finishedJob, targetJob, terminalPod, secret} {
+				if err = k.Tracker().Add(obj); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var mu sync.Mutex
+			stops, attestations, authorizations, targetRetirements := 0, 0, 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				if req.Method == http.MethodGet {
+					json.NewEncoder(w).Encode(map[string]any{"policy": map[string]any{"poolId": "pool", "cluster": "cluster", "namespace": q.config.Namespace, "version": 1, "maxConcurrent": 2, "enforced": true, "inventoryKnown": true}, "receipts": []capacityReceipt{*finished, target}})
+					return
+				}
+				var x map[string]any
+				json.NewDecoder(req.Body).Decode(&x)
+				f, _ := x["fence"].(map[string]any)
+				switch x["action"] {
+				case "stop-producer":
+					stops++
+					finished.Producers[0].Stopped = true
+					// stopProducer closes its incarnation across every receipt.
+					target.Producers = []capacityProducer{{ProducerID: originalProducer, Subject: "subject", Stopped: true}}
+				case "attest":
+					if f["runId"] == target.RunID && x["podUid"] == "target-pod" {
+						attestations++
+					}
+				case "authorize-producer":
+					if f["runId"] == target.RunID && x["producerId"] != originalProducer {
+						authorizations++
+					}
+				case "retire", "release":
+					if f["runId"] == target.RunID {
+						targetRetirements++
+					}
+				}
+				fmt.Fprint(w, `{"ok":true}`)
+			}))
+			defer server.Close()
+			q.capacity.consoleURL = server.URL
+			if err = q.reconcileReceipts(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			got, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), target.JobName, meta.GetOptions{})
+			if err != nil || got.UID != targetJob.UID || got.Spec.Suspend == nil || *got.Spec.Suspend || got.Annotations[queueBarrierAnnotation] != "" {
+				t.Fatal("concurrent useful work was retired or stranded", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if stops != 1 || targetRetirements != 0 {
+				t.Fatalf("rotation stops=%d target retirements=%d", stops, targetRetirements)
+			}
+			if kind == "suspended-owned-secret" && authorizations != 1 {
+				t.Fatal("original suspended work was not adopted by new producer")
+			}
+			if kind == "started-awaiting-attestation" && attestations != 1 {
+				t.Fatal("already-started original Pod lost attestation")
+			}
+		})
+	}
+}

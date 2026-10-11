@@ -300,7 +300,19 @@ func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) (err error) {
 			errs = append(errs, fmt.Errorf("receipt physical inventory unavailable"))
 			continue
 		}
-		if r.State == "retiring" || allCapacityProducersStopped(r) {
+		retire := r.State == "retiring"
+		if !retire && allCapacityProducersStopped(r) {
+			ended, never := physicalReceiptWorkersEnded(j, pods.Items)
+			retire = ended && !never
+			if never {
+				// Closing a producer fences its writes across ALL receipts.
+				// It does not cancel another receipt's recoverable original
+				// Secret or prevent attestation of its already-started Pod.
+				_, secretErr := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{})
+				retire = apierrors.IsNotFound(secretErr)
+			}
+		}
+		if retire {
 			if e = q.retireReceipt(ctx, r, n, j, pods.Items); e != nil {
 				errs = append(errs, e)
 			}
