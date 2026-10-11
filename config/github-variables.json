@@ -113,7 +113,8 @@
         "supersprinklesracing/www",
         "supersprinklesracing/girosf",
         "jlapenna/nx-cache-server",
-        "jlapenna/sync-padd"
+        "jlapenna/sync-padd",
+        "jlapenna/messages-control"
       ],
       "variables": {
         "AGENT_FLEET_LOGIN": {
