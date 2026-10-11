@@ -234,10 +234,25 @@ export class FirestoreStore implements OrchestratorStore {
           tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
         ),
       );
+      const prioritySnapshots = await Promise.all(
+        pipelines.map((pipeline) =>
+          tx.get(this.#priorityPositions.doc(encodeURIComponent(pipeline))),
+        ),
+      );
+      const priorityPositions = new Map(
+        pipelines.map((pipeline, index) => [
+          pipeline,
+          prioritySnapshots[index]?.exists
+            ? queuePriorityCursorSchema.parse(prioritySnapshots[index].data())
+                .position
+            : 0,
+        ]),
+      );
       const result = input.decide({
         state,
         records,
         runs,
+        priorityPositions,
         coolingPipelines: new Set(
           pipelines.filter(
             (_, index) =>
@@ -261,6 +276,13 @@ export class FirestoreStore implements OrchestratorStore {
         );
       if (result.run !== undefined)
         tx.set(this.#runRef(result.run.runId), result.run);
+      if (result.priorityTurn !== undefined)
+        tx.set(
+          this.#priorityPositions.doc(
+            encodeURIComponent(result.priorityTurn.pipeline),
+          ),
+          { position: result.priorityTurn.position },
+        );
       return result.value;
     });
   }

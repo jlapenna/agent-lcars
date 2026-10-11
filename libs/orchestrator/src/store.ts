@@ -167,7 +167,18 @@ export function selectFairQueuedRun(
     })[0];
   if (provider === undefined) return undefined;
   const providerRuns = candidates.get(provider.pipeline) ?? [];
-  const position = priorityPositions.get(provider.pipeline) ?? 0;
+  return selectPriorityQueuedRun(
+    providerRuns,
+    priorityPositions.get(provider.pipeline) ?? 0,
+  );
+}
+
+/** Select within an already admitted provider; capacity owners retain their
+ * own physical/domain eligibility and provider-fairness decisions. */
+export function selectPriorityQueuedRun(
+  providerRuns: readonly Run[],
+  position: number,
+): Run | undefined {
   for (let step = 0; step < QUEUE_PRIORITY_TURNS.length; step++) {
     const priority =
       QUEUE_PRIORITY_TURNS[(position + step) % QUEUE_PRIORITY_TURNS.length];
@@ -499,12 +510,15 @@ export interface CapacityTransactionSnapshot {
   records: Map<string, CapacityRecord>;
   runs: Run[];
   coolingPipelines: ReadonlySet<string>;
+  priorityPositions: ReadonlyMap<string, number>;
 }
 export interface CapacityTransactionResult<T> {
   value: T;
   state?: CapacityState;
   records?: Map<string, CapacityRecord>;
   run?: Run;
+  /** Committed atomically with a successful capacity claim, never a replay. */
+  priorityTurn?: { pipeline: string; position: number };
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and

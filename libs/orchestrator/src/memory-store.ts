@@ -115,6 +115,7 @@ export class MemoryStore implements OrchestratorStore {
       state: structuredClone(this.#capacity),
       records,
       runs: structuredClone(runs),
+      priorityPositions: new Map(this.#priorityPositions),
       coolingPipelines: new Set(
         [...this.#providerCooldowns.entries()]
           .filter(([, value]) => providerIsCoolingDown(value, input.now))
@@ -133,6 +134,11 @@ export class MemoryStore implements OrchestratorStore {
       this.#capacityRecords.set(key, structuredClone(record));
     if (result.run !== undefined)
       this.#runs.set(result.run.runId, structuredClone(result.run));
+    if (result.priorityTurn !== undefined)
+      this.#priorityPositions.set(
+        result.priorityTurn.pipeline,
+        result.priorityTurn.position,
+      );
     return structuredClone(result.value);
   }
 
