@@ -2280,7 +2280,7 @@ for receipt_provider in claude codex opencode; do
   echo "scenario receipt-activation-$receipt_provider: OK"
 done
 unset FAKE_RECEIPT_MODE FAKE_GH_NO_MATCH
-echo "direct-runner.sh: OK"
 bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
 
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/provider-process.test.mjs"
+echo "direct-runner.sh: OK"
