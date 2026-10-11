@@ -46,11 +46,11 @@ Non-goals:
 
 ## 3. Runtime hook surfaces (verified 2026-10-10, see section 11)
 
-| Runtime             | Config location                                                                  | Events used                                                                                                         | Notes                                                                                                                                                                                                                                                                                                       |
-| ------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code 2.1.296 | `~/.claude/settings.json` (user), `--settings <file>` (runner), project settings | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `Notification`, `StopFailure`, `SessionEnd`              | stdin JSON: `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`; `SessionStart` adds `source`, `model`, `session_title`. `async: true` supported. `SessionEnd` budget 1.5 s, raised by per-hook `timeout` up to 60 s.                                                              |
-| Codex 0.162.1       | `~/.codex/hooks.json`, `<repo>/.codex/hooks.json`, `requirements.toml` (managed) | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, `Interrupt`                                | Same field names plus `model`, `turn_id`; under `codex exec` `transcript_path` was a real rollout file (verified). Hooks are synchronous; no background flag confirmed on 0.162.1. Non-managed hooks need trust against their hash; `--dangerously-bypass-hook-trust` for automation. `SessionEnd` max 3 s. |
-| OpenCode 1.18.35    | plugin in `~/.config/opencode/plugins/` or `opencode.json` `plugin: [...]`       | `event`: `session.created/updated/status/idle/error`, `message.updated`, `message.part.updated`, `permission.asked` | In-process JS. `AssistantMessage` carries `tokens.{input,output,reasoning,cache.read,cache.write}`, `cost`, `modelID`; no transcript parse needed. Already ships `agents/opencode/lcars-session.js`.                                                                                                        |
+| Runtime             | Config location                                                                  | Events used                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code 2.1.296 | `~/.claude/settings.json` (user), `--settings <file>` (runner), project settings | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `Notification`, `StopFailure`, `SessionEnd`              | stdin JSON: `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`; `SessionStart` adds `source`, `model`, `session_title`. `async: true` supported. `SessionEnd` budget 1.5 s, raised by per-hook `timeout` up to 60 s.                                                                                     |
+| Codex 0.162.1       | `~/.codex/hooks.json`, `<repo>/.codex/hooks.json`, `requirements.toml` (managed) | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, `Interrupt`                                | Same field names plus `model`, `turn_id`; under `codex exec` `transcript_path` was a real rollout file (verified). Command hooks accept `"async": true` (docs; up to eight background hooks per session). Non-managed hooks need trust against their hash; `--dangerously-bypass-hook-trust` for automation. `SessionEnd` max 3 s. |
+| OpenCode 1.18.35    | plugin in `~/.config/opencode/plugins/` or `opencode.json` `plugin: [...]`       | `event`: `session.created/updated/status/idle/error`, `message.updated`, `message.part.updated`, `permission.asked` | In-process JS. `AssistantMessage` carries `tokens.{input,output,reasoning,cache.read,cache.write}`, `cost`, `modelID`; no transcript parse needed. Already ships `agents/opencode/lcars-session.js`.                                                                                                                               |
 
 Rejected: Claude Code `type: "http"` hooks posting straight to LCARS. They
 would send `prompt`/`tool_input` bodies off-host, cannot compute tokens
@@ -245,10 +245,15 @@ In-Flight UI latency improves from a 10 s tick to the hook (seconds).
   persists `[hooks.state."<hooks.json path>:<event_snake_case>:<group>:<hook>"]
 trusted_hash = "..."` in `~/.codex/config.toml`, and homegit's
   `homegit-codex-config` helper already overlays `config.desired.toml`
-  leaves onto the live file while keeping unknown content. Pre-trusting
-  therefore needs only the hash algorithm (open question 4); until it is
-  known, `/hooks` trust once per host per change, surfaced by the homegit
-  reconcile report.
+  leaves onto the live file while keeping unknown content. The value is
+  `sha256:<64 hex>`, but it is not a plain SHA-256 of the hook command, the
+  hook object, or the group in any common JSON serialization (17 candidates
+  tested against this host's four trusted entries). Two things make this a
+  non-problem: the hook entry is a constant launcher stub (section 4.7), so
+  it is trusted once per host and never changes; and fleet hosts can carry
+  it as a managed hook, since Codex trusts hooks from `requirements.toml`
+  `[hooks]` by policy and `allow_managed_hooks_only = true` can refuse
+  everything else.
 - `~/.config/opencode/plugins/lcars-telemetry.js` installed by homegit.
 - `lcars` binary: stop relying on the manual
   `deploy/install-session-title-cli.sh`. `packages/fleet-tools`
@@ -269,6 +274,46 @@ trusted_hash = "..."` in `~/.codex/config.toml`, and homegit's
 - Config: `~/.config/agent-lcars/config.json` `{ "repos": ["jlapenna/*"] }`
   derived from the same source the deploy's `AGENT_TELEMETRY_CHECKOUT_ROOTS`
   comes from today.
+
+### 4.7 Patterns borrowed from herdr
+
+Herdr already integrates with the same three runtimes through hooks on
+this fleet (`~/.claude/hooks/herdr-agent-state.sh`,
+`~/.codex/herdr-agent-state.sh`, `herdr integration install <runtime>`).
+Its choices were made under the same constraints and this design adopts
+them:
+
+- **Self-installing integration.** `lcars integration install claude|codex|opencode`
+  writes the hook entries and the launcher script itself, idempotently,
+  with `# LCARS_INTEGRATION_ID` / `# LCARS_INTEGRATION_VERSION` headers so
+  `lcars integration status` (and `--doctor`) can report an outdated or
+  hand-edited install. homegit then owns one `run_onchange_` line per host
+  instead of hook JSON inside `modify_settings.json` and `modify_hooks.json`.
+  `uninstall` removes exactly what `install` added and nothing else.
+- **Constant hook entry, versioned script.** The settings entry is
+  `[ -x "$HOME/.claude/hooks/lcars-hook.sh" ] && sh "$HOME/.claude/hooks/lcars-hook.sh" || true`
+  (same for `~/.codex/lcars-hook.sh`). The script execs the `lcars` bundle.
+  Behavior lives in the bundle, so Codex trust is granted once and the
+  Claude and Codex entries never drift between hosts.
+- **Stdin to a temp file first.** The launcher copies stdin to `mktemp`
+  before doing anything else and deletes it on exit, so a slow or failing
+  client never leaves the runtime blocked on a pipe.
+- **Skip what is not a session.** Payloads with `agent_id` (subagents) are
+  ignored; the parent transcript already carries their sidechains. Payloads
+  from wrapped runtimes (herdr checks `CURSOR_VERSION`) are ignored the same
+  way when a wrapper is detected.
+- **Identity from the hook, state derived elsewhere.** Herdr's hook reports
+  only `session_id`, `transcript_path`, and `source` on `SessionStart` over a
+  local socket with a 0.5 s timeout, and the server derives `idle`,
+  `working`, `blocked`, `done` itself. LCARS keeps the hook small for the
+  same reason, but derives state on the console from the event stream
+  rather than from a per-host server, because a per-host server is the
+  daemon this design removes.
+- **Pane identity when present.** If `HERDR_ENV=1`, the client adds
+  `herdr: { paneId: HERDR_PANE_ID }` to the event. The console can then
+  deep-link a live session to its pane via `herdr pane get`, and a later
+  phase can join herdr's `blocked` recognition, which sees approval UIs no
+  hook reports.
 
 ## 5. Hook configuration
 
@@ -344,42 +389,66 @@ never waits on telemetry.
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "lcars hook codex", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "sh $HOME/.codex/lcars-hook.sh",
+            "timeout": 10
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "lcars hook codex", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "sh $HOME/.codex/lcars-hook.sh",
+            "async": true
+          }
         ]
       }
     ],
     "PostToolUse": [
       {
         "hooks": [
-          { "type": "command", "command": "lcars hook codex", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "sh $HOME/.codex/lcars-hook.sh",
+            "async": true
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "lcars hook codex", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "sh $HOME/.codex/lcars-hook.sh",
+            "async": true
+          }
         ]
       }
     ],
     "Interrupt": [
       {
         "hooks": [
-          { "type": "command", "command": "lcars hook codex", "timeout": 1 }
+          {
+            "type": "command",
+            "command": "sh $HOME/.codex/lcars-hook.sh",
+            "timeout": 1
+          }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "lcars hook codex", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "sh $HOME/.codex/lcars-hook.sh",
+            "timeout": 3
+          }
         ]
       }
     ]
@@ -387,10 +456,16 @@ never waits on telemetry.
 }
 ```
 
-Codex documents background hooks (up to eight per session) but 0.162.1
-exposes no confirmed config field for them, so the design does not depend
-on one: every Codex hook returns after the local reduce and hands the
-network to the detached flusher (section 4.1 step 6).
+Codex's `async: true` runs a command hook in the background (up to eight
+per session). The client still hands the network to the detached flusher
+(section 4.1 step 6), so `SessionStart`, `SessionEnd`, and `Interrupt`, which
+stay synchronous, cost only the local reduce.
+
+The `command` is a constant launcher stub, the shape herdr uses for
+`herdr-agent-state.sh`: `~/.codex/lcars-hook.sh` execs the `lcars` bundle
+with the runtime name. Codex hashes the hook entry, not the script it
+launches, so behavior changes never re-trigger trust (section 4.7). The
+Claude entries in 5.1 use the same stub at `~/.claude/hooks/lcars-hook.sh`.
 
 ### 5.3 OpenCode (`agents/opencode/lcars-telemetry.js`)
 
@@ -471,11 +546,11 @@ writing untouched docs until phase 3.
 2. **Codex hooks under `codex exec`.** Resolved: all five events fire, with
    `model`, `turn_id`, and an existing rollout `transcript_path`. No
    background flag was found, handled by the detached flusher.
-3. **Codex trust churn.** Partly resolved. The trust state format is known
-   (section 4.6); the hash algorithm is not, and `requirements.toml` hook
-   management could not be confirmed in the 0.162.1 binary. Runner mode is
-   unaffected (`--dangerously-bypass-hook-trust`). Workstations accept one
-   `/hooks` trust per change until open question 4 closes.
+3. **Codex trust churn.** Resolved. The hook entry is a constant launcher
+   stub (section 4.7), trusted once per host; behavior changes ship in the
+   bundle. Fleet hosts may additionally carry it as a managed hook in
+   `requirements.toml`. Runner mode is unaffected
+   (`--dangerously-bypass-hook-trust`).
 4. **Privacy gate correctness.** Hook invocations happen for every project
    on the workstation. The gate runs before any read of `transcript_path`,
    and the test suite includes a non-allowlisted cwd fixture asserting zero
@@ -486,12 +561,13 @@ writing untouched docs until phase 3.
 6. **Missed `SessionEnd`.** Tolerated by `displayLiveness` ageing (4.3);
    the only visible effect is `idle` instead of `ended` for up to 10 min.
 
-## 9. Decisions and remaining open question
+## 9. Decisions
 
 1. Antigravity: **drop at phase 3.** The poller is enabled on every watcher
-   host by `deploy/docker-compose.yml`, but the summary DB on this
-   workstation was last written 2026-07-20, nearly three months ago. Confirm
-   on pike and janeway with `stat` of the same DB before the phase 3 PR.
+   host by `deploy/docker-compose.yml`, but no host has used it recently:
+   this workstation's summary DB was last written 2026-07-20, laforge's on
+   2026-09-10, and janeway has none for either account. pike was unreachable
+   from this workstation; check it when the phase 3 PR is cut.
 2. `lcars session title/status`: **post `annotation` events directly from
    phase 1**, and keep writing the overlay file until phase 3 so the daemon
    still sees it.
@@ -499,9 +575,12 @@ writing untouched docs until phase 3.
    **rejected.** `--settings` and project settings do merge additively
    (verified), but worktrees outside the repo and Codex trust prompts make
    it noisier than one homegit-managed allowlist.
-4. Open: what hashes into Codex `trusted_hash`? Needed only to pre-trust
-   hooks from homegit. Determine by diffing `config.toml` before and after
-   trusting a known hook body in a temp `CODEX_HOME`.
+4. Codex hook trust from homegit: **constant launcher stub plus managed
+   hooks** (section 4.7), not pre-computed `trusted_hash` entries. The hash
+   input is undocumented and did not match any simple serialization.
+5. Hook distribution: **`lcars integration install`** owns the hook entries
+   and launcher scripts (section 4.7); homegit calls it rather than
+   templating hook JSON.
 
 ## 10. Code map (what changes where)
 
@@ -534,4 +613,7 @@ user configuration was modified and no transcript content was read.
 | homegit merge scripts                                                              | `dot_claude/modify_settings.json` replaces managed top-level keys (so the whole `hooks` object is managed; user-only hooks there would be dropped, same as today). `dot_codex/modify_hooks.json` appends per-event groups and keeps user groups.                                                                                                             |
 | Secret delivery pattern                                                            | `run_onchange_after_30-homegit-opencode-env.sh.tmpl`: `secrets-get NAME` into a 0600 `.env` file.                                                                                                                                                                                                                                                            |
 | `packages/fleet-tools`                                                             | `@agent-lcars/agent-tools`, three committed bins, no dependencies, packed with `--ignore-scripts` from a sparse clone. Not a home for a built bundle.                                                                                                                                                                                                        |
-| Antigravity                                                                        | `~/.gemini/antigravity-cli/conversation_summaries.db` last modified 2026-07-20.                                                                                                                                                                                                                                                                              |
+| Codex `trusted_hash`                                                               | Format `sha256:<64 hex>` keyed `<hooks.json path>:<event_snake>:<group>:<hook>`. 17 SHA-256 candidates (command, hook/group JSON in compact, sorted, pretty forms, with and without optional keys) matched none of this host's four entries.                                                                                                                 |
+| Codex docs (learn.chatgpt.com/docs/hooks)                                          | `"async": true` on a command handler runs it in the background, eight concurrent per session. Managed hooks from system, MDM, cloud, or `requirements.toml` are trusted by policy; `allow_managed_hooks_only = true` exists.                                                                                                                                 |
+| herdr integration (installed)                                                      | `herdr integration install <runtime>` writes a versioned script (`HERDR_INTEGRATION_VERSION=10` for Claude, `8` for Codex) and a constant settings entry that launches it; the script copies stdin to `mktemp`, exits unless `HERDR_ENV=1`, skips subagents, and reports `SessionStart` identity over a Unix socket with a 0.5 s timeout.                    |
+| Antigravity                                                                        | Summary DB last modified: this workstation 2026-07-20, laforge (jlapenna) 2026-09-10, janeway none for `homelab` or `jlapenna`, pike unreachable. `agent-lcars-telemetry-watcher` was up and healthy on laforge and janeway.                                                                                                                                 |
