@@ -587,6 +587,9 @@ func physicalReceiptWorkersEnded(j *batch.Job, pods []core.Pod) (bool, bool) {
 	return never || (queueJobTerminal(*j) && observed > 0), never
 }
 func (q *kubernetesQueue) retireReceipt(ctx context.Context, r capacityReceipt, n string, j *batch.Job, pods []core.Pod) error {
+	if !receiptJobMatches(j, r) || j.DeletionTimestamp != nil {
+		return fmt.Errorf("receipt original Job identity unavailable")
+	}
 	if !allCapacityProducersStopped(r) {
 		return fmt.Errorf("receipt producers not positively stopped")
 	}
@@ -613,13 +616,6 @@ func (q *kubernetesQueue) retireReceipt(ctx context.Context, r capacityReceipt, 
 			return err
 		}
 	}
-	// Logical exit/checked credential cleanup must progress even when final
-	// physical release is refused. Repeat this observation on a retained
-	// barrier; the reporter preserves the original claimant and retries
-	// failed/lost replies independently of the release RPC.
-	if receiptJobMatches(j, r) {
-		q.exits.observeTerminated(r.RunID, j.Annotations[queueRunnerAnnotation], j.Annotations[queueClaimAnnotation])
-	}
 	current, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{})
 	if err != nil {
 		return err
@@ -640,6 +636,12 @@ func (q *kubernetesQueue) retireReceipt(ctx context.Context, r capacityReceipt, 
 	}
 	if check.UID != barrier.UID || check.ResourceVersion != barrier.ResourceVersion || check.Spec.Suspend == nil || !*check.Spec.Suspend || check.Annotations[queueBarrierAnnotation] != r.Nonce {
 		return fmt.Errorf("receipt barrier readback mismatch")
+	}
+	// Keep the exact inert UID/resourceVersion barrier before attempting
+	// logical exit. A refusal or lost reply retains physical occupancy and
+	// retries on the next complete recovery observation.
+	if err := q.settleReceiptClaim(ctx, r, check, never); err != nil {
+		return err
 	}
 	release := map[string]any{"action": "release", "fence": r.capacityFence, "recoveryNonce": n, "barrierUid": string(check.UID), "barrierRunId": r.RunID, "barrierNonce": r.Nonce, "resourceVersion": check.ResourceVersion, "jobName": check.Name, "evidence": "uid-rv-inert-job-and-owned-pods", "inert": true, "physicalWorkersEnded": true, "neverStarted": never, "originalJobUid": r.JobUID}
 	if r.JobUID == "" {
@@ -667,4 +669,38 @@ func (q *kubernetesQueue) quiesceReceipts(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// The immutable original Secret is the authority source, not a mutable Job
+// annotation. When that Secret is unavailable or quarantined, only the
+// authenticated exact-claim projection can prove the original claim live or
+// already settled. Transport failure and foreign/replaced identities fail closed.
+func (q *kubernetesQueue) settleReceiptClaim(ctx context.Context, r capacityReceipt, j *batch.Job, never bool) error {
+	fingerprint := j.Annotations[queueClaimAnnotation]
+	// A credential-free absence barrier cannot have launched a worker.
+	if never && r.JobUID == "" && r.SecretUID == "" && r.Worker == nil && fingerprint == "" {
+		return nil
+	}
+	secret, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{})
+	if err == nil && receiptSecretMatches(secret, j, r) {
+		original := queueClaimFingerprint(string(secret.Data["run-token"]))
+		if fingerprint != "" && fingerprint != original {
+			return fmt.Errorf("receipt original claim fingerprint conflict")
+		}
+		return q.exits.settleTerminated(ctx, r.RunID, r.Runner, original)
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	if q.claimSettled == nil || fingerprint == "" {
+		return fmt.Errorf("receipt original claim authority unavailable")
+	}
+	settled, err := q.claimSettled(ctx, r.RunID, r.Runner, fingerprint)
+	if err != nil {
+		return err
+	}
+	if settled {
+		return nil // Final release still checks unresolved backend cleanup debt.
+	}
+	return q.exits.settleTerminated(ctx, r.RunID, r.Runner, fingerprint)
 }
