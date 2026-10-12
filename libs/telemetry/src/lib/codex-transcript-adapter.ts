@@ -1,4 +1,10 @@
 import {
+  codeModeInvocation,
+  codeModePublication,
+  codeModePublishedPR,
+  codeModeResult,
+} from './codex-publication';
+import {
   findDeliverables,
   findQualifiedPRs,
   isPRPublicationCommand,
@@ -127,6 +133,12 @@ export const codexAdapter: TranscriptAdapter = {
     const prNumbers = new Set<number>();
     const qualifiedPRs = new Map<string, QualifiedSessionPR>();
     const creatingCalls = new Set<string>();
+    const seenCalls = new Set<string>();
+    type Publication = { identityReads?: number; sessionId?: number };
+    const codeCalls = new Map<string, Publication>();
+    const pendingExecs = new Map<number, Publication>();
+    const seenExecs = new Set<number>();
+    const invalidExecs = new Set<number>();
     const commitShas = new Set<string>();
 
     for (const line of lines) {
@@ -209,6 +221,10 @@ export const codexAdapter: TranscriptAdapter = {
         }
       }
 
+      const deliverables = findDeliverables(raw);
+      for (const number of deliverables.prNumbers) prNumbers.add(number);
+      for (const sha of deliverables.commitShas) commitShas.add(sha);
+
       // Keep historical display hints, but financial attribution requires a
       // qualified URL from the correlated result of a creating command.
       if (lineType === 'response_item') {
@@ -219,23 +235,94 @@ export const codexAdapter: TranscriptAdapter = {
             payloadType === 'custom_tool_call')
         ) {
           const input = payload['arguments'] ?? payload['input'];
-          const command = publicationCommand(input);
           const toolName = asString(payload['name']);
+          // Call identities are single use, including non-creating calls.
+          if (seenCalls.has(callId)) continue;
+          seenCalls.add(callId);
+          const invocation =
+            toolName === 'exec' || toolName === 'functions.exec'
+              ? codeModeInvocation(input)
+              : undefined;
+          if (invocation?.tool === 'exec_command') {
+            codeCalls.set(callId, {
+              identityReads: codeModePublication(invocation.args['cmd']),
+            });
+          } else if (invocation?.tool === 'write_stdin') {
+            const session = invocation.args['session_id'];
+            if (
+              typeof session === 'number' &&
+              (invocation.args['chars'] === undefined ||
+                invocation.args['chars'] === '')
+            ) {
+              const owned = pendingExecs.get(session);
+              // Reserve the session until this poll returns. Overlapping polls
+              // or an already consumed session have no unambiguous ownership.
+              pendingExecs.delete(session);
+              if (owned && !invalidExecs.has(session))
+                codeCalls.set(callId, owned);
+              else if (seenExecs.has(session)) invalidExecs.add(session);
+            }
+          } else {
+            const command = publicationCommand(input);
+            if (
+              toolName &&
+              [
+                'exec_command',
+                'functions.exec_command',
+                'shell',
+                'Bash',
+                'bash',
+                // Preserve direct JSON shell arguments on historical exec calls.
+                'exec',
+                'functions.exec',
+              ].includes(toolName) &&
+              command &&
+              isPRPublicationCommand(command)
+            )
+              creatingCalls.add(callId);
+          }
+        } else if (
+          callId &&
+          codeCalls.has(callId) &&
+          (payloadType === 'function_call_output' ||
+            payloadType === 'custom_tool_call_output')
+        ) {
+          const owned = codeCalls.get(callId);
+          if (!owned) continue;
+          codeCalls.delete(callId);
+          const result = codeModeResult(payload['output']);
           if (
-            toolName &&
-            [
-              'exec',
-              'exec_command',
-              'functions.exec',
-              'functions.exec_command',
-              'shell',
-              'Bash',
-              'bash',
-            ].includes(toolName) &&
-            command &&
-            isPRPublicationCommand(command)
+            !result ||
+            (owned.sessionId !== undefined &&
+              (invalidExecs.has(owned.sessionId) ||
+                (result.sessionId !== undefined &&
+                  result.sessionId !== owned.sessionId)))
           )
-            creatingCalls.add(callId);
+            continue;
+          if (result.exitCode !== undefined) {
+            if (owned.sessionId !== undefined)
+              pendingExecs.delete(owned.sessionId);
+            if (result.exitCode === 0 && owned.identityReads !== undefined) {
+              const pr = codeModePublishedPR(
+                result.output,
+                owned.identityReads,
+              );
+              if (pr)
+                qualifiedPRs.set(
+                  `${pr.repo.owner.toLowerCase()}/${pr.repo.name.toLowerCase()}#${pr.number}`,
+                  pr,
+                );
+            }
+          } else if (result.sessionId !== undefined) {
+            const session = result.sessionId;
+            if (owned.sessionId === undefined && seenExecs.has(session)) {
+              pendingExecs.delete(session);
+              invalidExecs.add(session);
+            } else if (!invalidExecs.has(session)) {
+              seenExecs.add(session);
+              pendingExecs.set(session, { ...owned, sessionId: session });
+            }
+          }
         } else if (
           callId &&
           creatingCalls.has(callId) &&
@@ -252,9 +339,6 @@ export const codexAdapter: TranscriptAdapter = {
             );
         }
       }
-      const deliverables = findDeliverables(raw);
-      for (const number of deliverables.prNumbers) prNumbers.add(number);
-      for (const sha of deliverables.commitShas) commitShas.add(sha);
     }
 
     if (!sessionId || !isSafeIdentifier(sessionId)) return [];
