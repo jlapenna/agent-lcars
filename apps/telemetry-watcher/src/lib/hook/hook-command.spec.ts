@@ -366,6 +366,55 @@ describe('lcars hook codex', () => {
   });
 });
 
+describe('lcars hook opencode', () => {
+  const OPENCODE_FIXTURE = path.join(
+    __dirname,
+    '../../../../../libs/telemetry/src/lib/fixtures/opencode-export.json',
+  );
+  const OPENCODE_SESSION = 'ses_opencode_1';
+
+  function opencodePayload(
+    hookEventName: string,
+    overrides: Record<string, unknown> = {},
+  ): string {
+    return JSON.stringify({
+      hook_event_name: hookEventName,
+      session_id: OPENCODE_SESSION,
+      transcript_path: OPENCODE_FIXTURE,
+      cwd: '/home/runner/_work/agent-lcars/agent-lcars',
+      ...overrides,
+    });
+  }
+
+  it('reduces the plugin snapshot with the opencode adapter', async () => {
+    const home = tempHome();
+    const d = deps(home, opencodePayload('Stop'));
+    expect((await executeHookCommand(['opencode'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event).toMatchObject({
+      agent: 'opencode',
+      sessionId: OPENCODE_SESSION,
+      kind: 'stop',
+      runtime: { name: 'opencode', hookEvent: 'Stop' },
+    });
+    expect(event.summary).toMatchObject({
+      agent: 'opencode',
+      sessionId: OPENCODE_SESSION,
+      host: 'laforge',
+    });
+    expect(event.summary?.turns).toBeGreaterThan(0);
+  });
+
+  it('skips child sessions the plugin reports with a parent id', async () => {
+    const home = tempHome();
+    const d = deps(home, opencodePayload('Stop', { agent_id: 'ses_parent' }));
+    expect((await executeHookCommand(['opencode'], d)).action).not.toBe(
+      'spooled',
+    );
+    expect(spooledEvents(home)).toEqual([]);
+  });
+});
+
 describe('lcars hook flush', () => {
   it('runs the flusher bundle for the flush subcommand', async () => {
     const home = tempHome();

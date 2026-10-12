@@ -54,7 +54,7 @@ grep -Fq "Commit and push at the first working slice" "$orders" ||
 # LCARS_SESSION_ID contract used by the annotation CLI.
 session_plugin="$repo_root/agents/opencode/lcars-session.js"
 test -f "$session_plugin" || fail "agents/opencode/lcars-session.js is missing"
-jq -e '.plugin == ["./lcars-session.js", "./context-lifecycle.js"]' "$config" >/dev/null ||
+jq -e '.plugin == ["./lcars-session.js", "./context-lifecycle.js", "./lcars-telemetry.js"]' "$config" >/dev/null ||
   fail "opencode.json must load the native LCARS session environment plugin"
 plugin_url="data:text/javascript;base64,$(base64 -w0 "$session_plugin")"
 node --input-type=module - "$plugin_url" <<'NODE'
@@ -127,6 +127,18 @@ grep -Fq '/repo/agents/opencode/lcars-session.js' "$runner_dockerfile" ||
   fail "runner image no longer installs the OpenCode LCARS session plugin"
 grep -Fq '/home/runner/.config/opencode/lcars-session.js' "$runner_dockerfile" ||
   fail "runner image does not preserve opencode.json's relative session plugin path"
+grep -Fq '/home/runner/.config/opencode/lcars-telemetry.js' "$runner_dockerfile" ||
+  fail "runner image does not install the OpenCode hook telemetry plugin beside opencode.json"
+# The telemetry plugin must stay inert on a dispatched runner that did not
+# select hook telemetry (no LCARS_TELEMETRY_CREDENTIALS_FILE).
+telemetry_plugin="$repo_root/agents/opencode/lcars-telemetry.js"
+LCARS_RUN_ID=run-fixture LCARS_TELEMETRY_CREDENTIALS_FILE= node --input-type=module - \
+  "data:text/javascript;base64,$(base64 -w0 "$telemetry_plugin")" <<'NODE' ||
+import assert from 'node:assert/strict';
+const module = await import(process.argv[2]);
+assert.deepEqual(await module.default({ client: {}, directory: '/' }), {});
+NODE
+  fail "lcars-telemetry.js must be inert on a runner without hook telemetry"
 grep -Fq 'https://github.com/jlapenna/repo-tools.git' "$runner_dockerfile" ||
   fail "runner image no longer clones repo-tools for OpenCode"
 grep -Fq 'git init /opt/repo-tools' "$runner_dockerfile" ||

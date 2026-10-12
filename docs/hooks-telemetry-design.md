@@ -27,11 +27,24 @@ describe the ingest route, host tokens, or the `telemetry.writer` scope are
 superseded by this paragraph.
 
 **Runner status (phase 2):** `LCARS_HOOK_TELEMETRY_PROVIDERS` on the queue
-executor selects Claude and Codex pipelines whose workers install the hooks
-and skip the polling sidecar (`runtime/hook-telemetry-bootstrap.sh`); the
-flusher uses the runner's telemetry-writer credentials file through
-`LCARS_TELEMETRY_CREDENTIALS_FILE`. Empty by default; enabling it is an
-executor environment change.
+executor selects Claude, Codex, and OpenCode pipelines whose workers report
+through hooks and skip the polling sidecar
+(`runtime/hook-telemetry-bootstrap.sh`); the flusher uses the runner's
+telemetry-writer credentials file through `LCARS_TELEMETRY_CREDENTIALS_FILE`.
+Empty by default; enabling it is an executor environment change.
+
+**OpenCode client:** OpenCode has no command hooks, so
+`agents/opencode/lcars-telemetry.js` is a plugin. On `session.created`, a new
+user message, a completed tool part (throttled to one report per 15 s),
+`session.idle`, and `session.deleted` it reads the session through the SDK
+client, writes an export-shaped `{info, messages}` snapshot to a private temp
+file, and runs `lcars hook opencode` with that file as `transcript_path`, so
+the same reducer that reads `opencode export` output produces the summary.
+Child sessions pass their `parentID` as `agent_id` and are skipped. `lcars
+integration install opencode` copies the plugin into
+`${XDG_CONFIG_HOME:-~/.config}/opencode/plugins/`; the runner image ships it
+in its OpenCode config instead, where it stays inert unless the bootstrap
+exported `LCARS_TELEMETRY_CREDENTIALS_FILE`.
 
 ## 1. Problem
 
@@ -311,7 +324,7 @@ this fleet (`~/.claude/hooks/herdr-agent-state.sh`,
 Its choices were made under the same constraints and this design adopts
 them:
 
-- **Self-installing integration.** `lcars integration install claude|codex|all`
+- **Self-installing integration.** `lcars integration install claude|codex|opencode|all`
   writes the launcher script, idempotently, with `# LCARS_INTEGRATION_ID` /
   `# LCARS_INTEGRATION_VERSION` headers so `lcars integration status` can
   report an outdated or hand-edited install, and appends the hook entries on

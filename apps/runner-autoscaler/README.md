@@ -207,11 +207,12 @@ their launch configuration. See
 subset of `claude,codex,opencode`, validated at startup, snapshotted, and
 forwarded to every Job, empty included). For a selected Claude or Codex
 pipeline the worker installs `lcars` hook entries after its own config
-exists and reports the session through provider hooks
-([design](../../docs/hooks-telemetry-design.md)) instead of starting the
-polling telemetry sidecar; it drains the hook flusher before `runner
-finalize`. A missing credentials file or failed install falls back to the
-sidecar, and OpenCode always keeps the sidecar. Unset is disabled.
+exists; for OpenCode the image's `lcars-telemetry.js` plugin activates once
+the writer credentials path is exported. Either way the session reports
+through provider hooks ([design](../../docs/hooks-telemetry-design.md))
+instead of the polling telemetry sidecar, and the worker drains the hook
+flusher before `runner finalize`. A missing credentials file or failed
+install falls back to the sidecar. Unset is disabled.
 
 The poller starts only after the Kubernetes preflight below passes, then sends
 a claim body containing only its runner identity. The server derives

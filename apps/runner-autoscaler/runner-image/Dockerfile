@@ -624,6 +624,9 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/lcars-session.js \
     /home/runner/.config/opencode/lcars-session.js
 COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/agents/opencode/lcars-telemetry.js \
+    /home/runner/.config/opencode/lcars-telemetry.js
+COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/context-lifecycle.js \
     /home/runner/.config/opencode/context-lifecycle.js
 COPY --from=telemetry-watcher-build \

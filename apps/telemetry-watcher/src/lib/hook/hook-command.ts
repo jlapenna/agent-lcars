@@ -8,6 +8,7 @@ import {
   applySessionTitleOverlay,
   claudeCodeAdapter,
   codexAdapter,
+  opencodeAdapter,
   isSafeIdentifier,
   type SessionAgent,
   type SessionEventKind,
@@ -52,6 +53,7 @@ export const HOOK_CLIENT_VERSION = '0.3.0';
 export const HOOK_CLI_USAGE =
   'usage: lcars hook claude [--inline]   (reads one Claude Code hook payload on stdin)\n' +
   '       lcars hook codex  [--inline]   (reads one Codex hook payload on stdin)\n' +
+  '       lcars hook opencode [--inline] (reads one payload from the OpenCode lcars-telemetry plugin on stdin)\n' +
   '       lcars hook flush               (writes spooled events to the telemetry store, via lcars-hook-flush.cjs)\n' +
   '       Exits 0 and prints nothing on stdout in every case; decisions go to\n' +
   '       ~/.local/state/agent-lcars/hook.log.';
@@ -155,6 +157,10 @@ interface RuntimeProfile {
 const RUNTIME_PROFILES: Readonly<Record<HookRuntime, RuntimeProfile>> = {
   claude: { agent: 'claude-code', adapter: claudeCodeAdapter },
   codex: { agent: 'codex', adapter: codexAdapter },
+  // The OpenCode plugin (agents/opencode/lcars-telemetry.js) supplies an
+  // export-shaped snapshot as transcript_path; the same reducer that reads
+  // `opencode export` output summarizes it.
+  opencode: { agent: 'opencode', adapter: opencodeAdapter },
 };
 
 /** `lcars-hook-flush.cjs` beside the running bundle (`process.argv[1]`). */
