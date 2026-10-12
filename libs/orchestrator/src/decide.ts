@@ -173,6 +173,10 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     // or the auto-retry itself -- must not accidentally clear the budget
     // `expireLease` just spent computing.
     consecutiveLost: input.task?.consecutiveLost ?? 0,
+    // Carried over for the same reason: the disruption bound has to survive
+    // a later operator request, or the pre-startup recovery path would be
+    // unbounded for anyone willing to re-request.
+    schedulerDisruptions: input.task?.schedulerDisruptions ?? 0,
     // Written once: only the request that creates the task may set `work`.
     work,
     updatedAt: now,
