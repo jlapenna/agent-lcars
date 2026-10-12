@@ -28,6 +28,15 @@ const run = promisify(execFile);
 const bash = '/bin/bash';
 const envProgram = '/usr/bin/env';
 const systemdRun = '/usr/bin/systemd-run';
+const packageManager: unknown = JSON.parse(
+  fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+).packageManager;
+const pnpmPin =
+  typeof packageManager === 'string'
+    ? /^pnpm@([^+]+)(?:\+.*)?$/.exec(packageManager)
+    : null;
+if (!pnpmPin) throw new Error('Repository packageManager must pin pnpm');
+const pinnedPnpmVersion = pnpmPin[1];
 
 // The phase body mirrors what a real supervised phase must do first: report the
 // toolchain the child itself resolved, then start dependent work. The tool
@@ -145,9 +154,6 @@ async function fixture(): Promise<Phase> {
     .find((candidate) => fs.existsSync(candidate));
   if (!expectedPnpmPath)
     throw new Error('Qualified pnpm executable is unavailable');
-  const version = await launch(expectedPnpmPath, ['--version'], process.cwd());
-  if (version.exit !== 0)
-    throw new Error(`Qualified pnpm failed: ${version.stderr}`);
   await mkdir(emptyBin);
   await writeFile(script, phaseScript, { mode: 0o700 });
   return {
@@ -158,7 +164,7 @@ async function fixture(): Promise<Phase> {
     nodeOnlyPath: nodeOnlyBin,
     expectedNodePath,
     expectedPnpmPath,
-    pnpmVersion: version.stdout.trim(),
+    pnpmVersion: pinnedPnpmVersion,
     unqualifiedPath: emptyBin,
   };
 }
