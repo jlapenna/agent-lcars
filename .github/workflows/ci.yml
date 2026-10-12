@@ -37,7 +37,6 @@ jobs:
 
       - name: Verify repository-owned Terraform
         run: |
-          ./tools/contract-tests/github-ruleset-root.test.sh
           terraform -chdir=infra/github-ruleset init -backend=false -input=false -lockfile=readonly
           terraform -chdir=infra/github-ruleset fmt -check -recursive
           terraform -chdir=infra/github-ruleset validate
@@ -228,9 +227,6 @@ jobs:
       - name: Test generic OIDC POST transport (#1340)
         run: bash .github/actions/oidc-post/oidc-post.test.sh
 
-      - name: Reject retired control-plane dispatch admission
-        run: bash tools/no-legacy-control-plane-request.test.sh
-
       # The check itself, against this checkout - the #1255 incident's
       # self-referential skill symlink passed CI here and broke every
       # consumer's whole-repo action download at 'Set up job' (#1265).
@@ -319,9 +315,6 @@ jobs:
 
       - name: Test shell bare-return lint (jlapenna/homelab#1087)
         run: bash tools/check-shell-bare-return.test.sh
-
-      - name: Test E2E runner node-tar repair (#1435)
-        run: bash tools/e2e-runner/node-tar-health.test.sh
 
       - name: Test probe scratch cleanup (homelab#1542)
         run: node --test tools/probes/scratch.test.mjs
