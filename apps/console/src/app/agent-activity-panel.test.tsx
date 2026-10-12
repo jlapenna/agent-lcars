@@ -1171,10 +1171,14 @@ describe('Agents title navigation', () => {
       '/task/supersprinklesracing/sprinkles/42',
     );
     expect(title).not.toHaveAttribute('target');
-    for (const link of screen.getAllByRole('link')) {
-      if (link.getAttribute('href')?.startsWith('https://github.com/')) {
-        expect(link).toHaveTextContent('GitHub');
-      }
+    const githubLinks = screen
+      .getAllByRole('link')
+      .filter((link) =>
+        link.getAttribute('href')?.startsWith('https://github.com/'),
+      );
+    expect(githubLinks).toHaveLength(1);
+    for (const link of githubLinks) {
+      expect(link).toHaveTextContent('GitHub');
     }
   });
 });
