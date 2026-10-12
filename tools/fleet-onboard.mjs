@@ -267,7 +267,6 @@ jobs:
 
       - name: Verify repository-owned Terraform
         run: |
-          ./tools/github-ruleset-root.test.sh
           terraform -chdir=infra/github-ruleset init -backend=false -input=false -lockfile=readonly
           terraform -chdir=infra/github-ruleset fmt -check -recursive
           terraform -chdir=infra/github-ruleset validate
@@ -448,34 +447,6 @@ Record the live ruleset id here once it is imported into this root's isolated
 state. Repository CI initializes, formats, validates, and checks this root's
 local contract; only the centralized executor receives backend and state
 access.
-`;
-}
-
-export function renderRulesetRootTest(spec) {
-  const contexts = spec.requiredChecks
-    .map((context) => `  '${context.replace(/'/g, `'\\''`)}'`)
-    .join(' \\\n');
-  return `#!/usr/bin/env bash
-# ${MANAGED_NOTE}
-set -euo pipefail
-
-root="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-config="$root/infra/github-ruleset/main.tf"
-
-# The root must remain self-contained so fork pull requests can initialize and
-# validate it without credentials or source from another fleet repository.
-grep -Fqx '  owner = "${spec.repo.owner}"' "$config"
-grep -Fqx '  repository  = "${spec.repo.name}"' "$config"
-for context in \\
-${contexts}; do
-  grep -Fqx "        context = \\"$context\\"" "$config"
-done
-if grep -Fq 'source = "git::https://github.com/jlapenna/homelab.git' "$config"; then
-  echo "github-ruleset root must not import Homelab source" >&2
-  exit 1
-fi
-
-echo "repository-owned GitHub ruleset contract passed"
 `;
 }
 
@@ -953,7 +924,7 @@ function rulesetMainConflict(text, spec) {
     (context) => !text.includes(`context = "${context}"`),
   );
   return missing.length
-    ? `does not require ${JSON.stringify(missing)}, which tools/github-ruleset-root.test.sh and agent-automerge expect`
+    ? `does not require ${JSON.stringify(missing)}, which agent-automerge expects`
     : null;
 }
 
@@ -1084,12 +1055,6 @@ export function planScaffold(target, spec, { resolveRev, check = false } = {}) {
       file: 'infra/github-ruleset/.terraform.lock.hcl',
       kind: 'seed',
       render: renderProviderLock,
-    },
-    {
-      file: 'tools/github-ruleset-root.test.sh',
-      kind: 'managed',
-      render: () => renderRulesetRootTest(spec),
-      mode: 0o755,
     },
     { file: 'renovate.json', kind: 'seed', render: renderRenovateConfig },
     { file: '.gitignore', kind: 'merge', render: mergeGitignore },

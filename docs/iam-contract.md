@@ -80,7 +80,7 @@ authority over every repository it covers. Its modelled contract is asymmetric:
 
 | Installation | Account              | Selection  | Repos           |
 | ------------ | -------------------- | ---------- | --------------- |
-| `154210710`  | jlapenna             | `selected` | 6               |
+| `154210710`  | jlapenna             | `selected` | 7               |
 | `154210731`  | supersprinklesracing | `all`      | 7 (4 non-fleet) |
 
 The jlapenna installation was narrowed from `all` (23 repositories) once this
@@ -100,6 +100,10 @@ The latter also serves the Homelab Actions exporter. Fleet App `150568991`
 continues to require selected access to `girosf`, `sprinkles` and `www`.
 Preserve the other modelled repository grants and leave the separate
 `jlaorg` installation unchanged.
+
+`jlapenna/labels` likewise requires selected membership in `150568943` and
+`154210710`, retaining every existing grant. Its source onboarding uses
+GitHub-hosted CI and adds no ARC lane.
 
 A merged model is not evidence of live installation scope. An unexpected
 `all` selection remains drift until the genuine collector observes the exact

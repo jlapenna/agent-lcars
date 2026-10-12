@@ -161,7 +161,6 @@ than restating it.
   `validate / repository validation`, `repository-owned Terraform`) plus any
   `--ci-checks`; `infra/github-ruleset/README.md` and
   `.terraform.lock.hcl` are seeded once.
-- `tools/github-ruleset-root.test.sh`: the root's contract test.
 - `repo-require-worktree` wiring: a `.pre-commit-config.yaml` block
   pinned to `--repo-tools-rev` (resolved from `jlapenna/repo-tools` `main`
   when omitted), or seeded `.husky/pre-commit` and `.husky/pre-push` hooks

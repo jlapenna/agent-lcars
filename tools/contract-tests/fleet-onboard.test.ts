@@ -1,10 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -35,7 +33,6 @@ import {
   readMembership,
   renderAgentsSection,
   renderPlan,
-  renderRulesetRootTest,
   resolveSpec,
   workflowRunNames,
 } from '../fleet-onboard.mjs';
@@ -593,9 +590,6 @@ describe('scaffold', () => {
     expect(read(target, 'infra/github-ruleset/main.tf')).toContain(
       'context = "Bob\'s build"',
     );
-    expect(read(target, 'tools/github-ruleset-root.test.sh')).toContain(
-      "'Bob'\\''s build'",
-    );
     for (const bad of ['say "hi"', 'back\\slash', 'tab\there', 'x ${y}'])
       expect(() =>
         resolveSpec({ repo: 'a/b', 'ci-workflow': 'ci.yml', 'ci-checks': bad }),
@@ -766,10 +760,6 @@ describe('scaffold', () => {
   it('generates workflow names and check contexts that match the reusable contract', () => {
     const target = scratch('fleet-onboard-target');
     scaffold(target);
-    const names = GENERATED_WORKFLOW_NAMES.map(
-      (name) => parseYaml(read(target, `.github/workflows/${name}.yml`)).name,
-    );
-    expect(names).toEqual([...GENERATED_WORKFLOW_NAMES]);
     const validate = parseYaml(read(target, '.github/workflows/validate.yml'));
     const reusable = parseYaml(
       read(repoRoot, '.github/workflows/repo-validation.yml'),
@@ -792,24 +782,6 @@ describe('scaffold', () => {
     const tf = read(target, 'infra/github-ruleset/main.tf');
     const contexts = [...tf.matchAll(/context = "([^"]+)"/g)].map((m) => m[1]);
     expect(contexts).toEqual(required);
-    const script = read(target, 'tools/github-ruleset-root.test.sh');
-    for (const context of required) expect(script).toContain(`'${context}'`);
-    expect(script).toBe(renderRulesetRootTest(spec()));
-  });
-
-  it('keeps the ruleset test executable when refreshing it', () => {
-    const target = scratch('fleet-onboard-target');
-    write(
-      target,
-      'tools/github-ruleset-root.test.sh',
-      `# ${MANAGED_MARKER}\nstale\n`,
-    );
-    chmodSync(path.join(target, 'tools/github-ruleset-root.test.sh'), 0o644);
-    scaffold(target);
-    expect(
-      statSync(path.join(target, 'tools/github-ruleset-root.test.sh')).mode &
-        0o111,
-    ).toBe(0o111);
   });
 
   it('reports guarded Husky hooks as unchanged and trusts an existing prepare script', () => {

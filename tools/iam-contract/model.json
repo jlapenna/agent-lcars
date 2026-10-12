@@ -30,12 +30,13 @@
             "jlapenna/agent-lcars",
             "jlapenna/homegit",
             "jlapenna/homelab",
+            "jlapenna/labels",
             "jlapenna/messages-control",
             "jlapenna/nx-cache-server",
             "jlapenna/repo-tools",
             "jlapenna/sync-padd"
           ],
-          "_note": "jlapenna/messages-control was admitted to the Console and repository contracts by #2436; its explicit App membership is required without changing selected scope to all. jlapenna/homegit is not a fleet agent repo; it is installed so the App can read/write the dotfiles repo. jlapenna/repo-tools is likewise not a fleet agent repo; it is the public source of the repo-* worktree/PR tooling the fleet's skills invoke, installed so the App can maintain it. Both are listed here so their presence is documented rather than surprising."
+          "_note": "jlapenna/messages-control was admitted to the Console and repository contracts by #2436; its explicit App membership is required without changing selected scope to all. jlapenna/homegit is not a fleet agent repo; it is installed so the App can read/write the dotfiles repo. jlapenna/repo-tools is likewise not a fleet agent repo; it is the public source of the repo-* worktree/PR tooling the fleet's skills invoke, installed so the App can maintain it. Both are listed here so their presence is documented rather than surprising. labels onboarding requires explicit selected access; this declaration is not evidence of the live installation change."
         },
         {
           "id": 150568991,
@@ -88,11 +89,12 @@
             "jlapenna/agent-lcars",
             "jlapenna/homegit",
             "jlapenna/homelab",
+            "jlapenna/labels",
             "jlapenna/messages-control",
             "jlapenna/nx-cache-server",
             "jlapenna/sync-padd"
           ],
-          "_note": "Narrowed from 'all' (23 repos) to five on 2026-08-17 (#1381). The selected contract also includes messages-control for the Homelab Actions exporter after #2436 onboarding. The existing homegit grant is retained; installation membership alone does not establish a current ARC registration or active runner."
+          "_note": "Narrowed from 'all' (23 repos) to five on 2026-08-17 (#1381). The selected contract also includes messages-control for the Homelab Actions exporter after #2436 onboarding. The existing homegit grant is retained; installation membership alone does not establish a current ARC registration or active runner. labels onboarding requires explicit selected access; this declaration is not evidence of the live installation change."
         },
         {
           "id": 154210731,
