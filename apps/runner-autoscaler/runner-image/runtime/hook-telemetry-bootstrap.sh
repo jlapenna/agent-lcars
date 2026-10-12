@@ -33,6 +33,8 @@ hook_telemetry_bootstrap() {
   if ! "${HOOK_TELEMETRY_NODE:-node}" \
     "${HOOK_TELEMETRY_CLI:-/usr/local/lib/agent-lcars/lcars-session-title.cjs}" \
     integration install "$PIPELINE" > "$RUNNER_TEMP/hook-telemetry-install.log" 2>&1; then
+    # The sidecar takes over; do not leave hook-client context behind.
+    unset LCARS_TELEMETRY_CREDENTIALS_FILE LCARS_REPO LCARS_ISSUE_NUMBER
     return 1
   fi
   if [ "$PIPELINE" = codex ]; then
@@ -46,8 +48,11 @@ hook_telemetry_bootstrap() {
 # it and reopen an ended session.
 hook_telemetry_drain() {
   local flusher="${HOOK_TELEMETRY_FLUSHER:-/usr/local/lib/agent-lcars/lcars-hook-flush.cjs}"
+  # A running flusher holds the spool lock (refreshed per event); wait on the
+  # lock file rather than process listing, which the image may not provide.
+  local lock="${HOME}/.local/state/agent-lcars/spool/events.lock"
   local waited=0
-  while pgrep -f "$flusher" > /dev/null 2>&1 && [ "$waited" -lt 30 ]; do
+  while [ -e "$lock" ] && [ "$waited" -lt 30 ]; do
     sleep 1
     waited=$((waited + 1))
   done

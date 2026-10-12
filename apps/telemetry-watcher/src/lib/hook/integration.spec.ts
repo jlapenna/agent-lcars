@@ -206,6 +206,13 @@ describe('lcars integration', () => {
     expect(fs.existsSync(stub)).toBe(false);
   });
 
+  it('refuses a relocated config dir that cannot be quoted safely', () => {
+    const home = tempHome();
+    expect(() =>
+      installIntegration('codex', home, { CODEX_HOME: `${home}/a"b` }),
+    ).toThrow(/shell-unsafe/);
+  });
+
   it('reports an outdated stub as not installed', () => {
     const home = tempHome();
     installIntegration('claude', home);

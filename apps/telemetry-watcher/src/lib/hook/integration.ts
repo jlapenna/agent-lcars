@@ -86,6 +86,10 @@ export function resolveTarget(
 ): ResolvedTarget {
   const target = INTEGRATION_TARGETS[runtime];
   const relocated = env[target.configDirEnv]?.trim();
+  if (relocated && /["`$\\]/u.test(relocated)) {
+    // The path is embedded in a double-quoted shell command.
+    throw new Error(`${target.configDirEnv} contains a shell-unsafe character`);
+  }
   const configDir =
     relocated || path.join(homeDirectory, target.defaultConfigDir);
   return {
