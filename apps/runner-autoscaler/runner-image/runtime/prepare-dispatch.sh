@@ -160,7 +160,10 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
           # a URL must be a github.com URL, everything else is short and
           # enum-checked. An adopt/continue-own whose branch fails the check
           # degrades to stand-down rather than acting on unvalidated input.
-          existing_claim_json="$(jq -c '
+          # Projection failures (version skew, odd shapes) must not abort the
+          # dispatch under set -e: keep existing_claim null instead.
+          if ! claim_projection="$(jq -c '
+            def arr: if type == "array" then . else [] end;
             def safe_branch: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$") and (test("\\.\\.|//|\\.lock$|/$") | not) then . else null end;
             def safe_url: if type == "string" and test("^https://github\\.com/[A-Za-z0-9._/#?=&-]{1,200}$") then . else null end;
             def safe_login: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$") then . else null end;
@@ -174,8 +177,8 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
                 status: (if (.status | IN("free", "live", "stale", "closed")) then .status else "live" end),
                 next: ({action: $action}
                   + (if $action | IN("adopt", "continue-own") then {branch: $branch} else {} end)
-                  + (if $action == "stand-down" then {live_claims: [($n.liveClaims // [])[0:10][] | safe_url | select(. != null)]} else {} end)),
-                evidence: [(.evidence // [])[0:10][] | {
+                  + (if $action == "stand-down" then {live_claims: [($n.liveClaims | arr)[0:10][] | safe_url | select(. != null)]} else {} end)),
+                evidence: [(.evidence | arr)[0:10][] | select(type == "object") | {
                   kind: (if (.kind | IN("pull-request", "heartbeat", "legacy-comment")) then .kind else "unknown" end),
                   live: (.live == true),
                   author: (.author | safe_login),
@@ -183,7 +186,10 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
                   branch: (.branch | safe_branch),
                   last_active: (.lastActive | safe_time)
                 }]
-              }' <<<"$claim_out")"
+              }' <<<"$claim_out" 2>/dev/null)"; then
+            claim_projection=null
+          fi
+          existing_claim_json="${claim_projection:-null}"
         fi
         ;;
     esac
