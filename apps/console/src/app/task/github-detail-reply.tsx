@@ -87,6 +87,7 @@ export function GithubDetailReply({ item }: { item: ActionItem }) {
           repo={item.repo}
           number={item.number}
           retry={retry}
+          onDispatched={() => setFeedback(undefined)}
         />
       )}
       {feedback && (

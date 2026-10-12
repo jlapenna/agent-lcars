@@ -94,6 +94,9 @@ describe('GitHub detail reply boundary', () => {
     );
     expect(retryReplyToItem).toHaveBeenCalledWith(item.repo, 42, 123, 'codex');
     expect(replyToItem).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByText('Reply posted, but dispatch failed.'),
+    ).not.toBeInTheDocument();
   });
 
   it('retains a refused reply and displays the admission error', async () => {

@@ -13,10 +13,12 @@ export function RetryReplyDispatch({
   repo,
   number,
   retry,
+  onDispatched,
 }: {
   repo: WatchedRepo;
   number: number;
   retry: Retry;
+  onDispatched?: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -43,7 +45,10 @@ export function RetryReplyDispatch({
                   ? (result.note ?? 'Agent dispatched')
                   : result.message,
               });
-              if (result.ok) router.refresh();
+              if (result.ok) {
+                onDispatched?.();
+                router.refresh();
+              }
             })
           }
         >
