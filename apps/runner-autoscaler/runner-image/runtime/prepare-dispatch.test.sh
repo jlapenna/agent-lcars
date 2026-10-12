@@ -85,4 +85,60 @@ jq -e '(.truncated // []) | index("reply") == null' "$context_path" >/dev/null |
 
 echo "scenario native-reply-long: OK"
 
+# --- GitHub issue anchor: existing claims reach the brief (#2502) -----------
+# A dispatched worker must see a live or stale claim by another executor
+# (draft PR or work-claim heartbeat) before it starts parallel work. The
+# check is best-effort: a missing or failing repo-claim-status leaves
+# existing_claim null and never fails the dispatch.
+stubs="$tmp/stubs"
+mkdir -p "$stubs"
+cat >"$stubs/gh" <<'GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"/comments"*) echo '[]' ;;
+  *"issues/7"*) echo '{"number":7,"title":"t","body":"b","state":"open","html_url":"https://github.com/octo/example/issues/7","labels":[],"assignees":[]}' ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+GH
+cat >"$stubs/repo-claim-status" <<'RCS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$CLAIM_ARGS_FILE"
+case "${CLAIM_STUB_MODE:-live}" in
+  live) echo '{"status":"live","evidence":[{"kind":"pull-request","live":true,"author":"jlapenna","url":"https://github.com/octo/example/pull/9","branch":"work/7","lastActive":"2026-10-11T15:35:00Z","detail":"x"}],"next":{"action":"stand-down","liveClaims":["https://github.com/octo/example/pull/9"]}}'; exit 10 ;;
+  broken) echo 'not json'; exit 10 ;;
+  error) echo 'gh failed' >&2; exit 1 ;;
+esac
+RCS
+chmod +x "$stubs/gh" "$stubs/repo-claim-status"
+saved_path="$PATH"
+export PATH="$stubs:$saved_path"
+export CLAIM_ARGS_FILE="$tmp/claim-args"
+export WORK='{"id":"01PREPAREDISPATCHTESTFIX2","spec":{"title":"t","description":"d","pipeline":"claude","target":{"repo":"octo/example"}}}'
+export ISSUE='7' MODE='implement' REPLY='' RUNBOOK='' CONTEXT=''
+
+export CLAIM_STUB_MODE=live
+run_prepare_dispatch issue-claim-live
+jq -e '.existing_claim.status == "live" and .existing_claim.next.action == "stand-down"' "$context_path" >/dev/null ||
+  fail "issue claim: live claim missing from brief ($(jq -c .existing_claim "$context_path"))"
+jq -e '.existing_claim.evidence[0] | .url == "https://github.com/octo/example/pull/9" and .branch == "work/7" and .last_active == "2026-10-11T15:35:00Z" and (has("detail") | not)' "$context_path" >/dev/null ||
+  fail "issue claim: evidence not projected ($(jq -c .existing_claim "$context_path"))"
+grep -q -- '--trust-bot agent-lcars' "$CLAIM_ARGS_FILE" && grep -q -- '--self agent-lcars-bot' "$CLAIM_ARGS_FILE" ||
+  fail "issue claim: fleet identity not passed ($(cat "$CLAIM_ARGS_FILE"))"
+echo "scenario issue-claim-live: OK"
+
+for mode in broken error; do
+  export CLAIM_STUB_MODE="$mode"
+  run_prepare_dispatch "issue-claim-$mode"
+  jq -e '.existing_claim == null' "$context_path" >/dev/null ||
+    fail "issue claim ($mode): expected null existing_claim ($(jq -c .existing_claim "$context_path"))"
+  echo "scenario issue-claim-$mode: OK"
+done
+
+rm "$stubs/repo-claim-status"
+run_prepare_dispatch issue-claim-missing-tool
+jq -e '.existing_claim == null' "$context_path" >/dev/null ||
+  fail "issue claim: missing tool must leave existing_claim null"
+echo "scenario issue-claim-missing-tool: OK"
+export PATH="$saved_path"
+
 echo "prepare-dispatch.test.sh: all scenarios passed"

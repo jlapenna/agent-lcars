@@ -133,6 +133,23 @@ issue for the fleet the moment your dispatch is confirmed (before your turn
 starts, via `orchestrator-dispatch.ts`'s `claimGithubAnchor`), and derives
 the takeover affordance from your session doc.
 
+Then read the brief's `existing_claim`. Interactive and cloud sessions claim
+issues with a draft PR or a `work-claim:v1` heartbeat, which the Console's
+claim does not see; this field is `repo-claim-status` run for you at dispatch
+time (#2502). Act on `existing_claim.next.action`:
+
+- `proceed` or field `null`: no one else is on it; work normally.
+- `continue-own`: the live claim is a prior fleet attempt; continue on
+  `next.branch` and its PR instead of opening another.
+- `adopt`: a stale claim left `next.branch`; check it out, continue there,
+  and keep its PR as your deliverable. Do not start a parallel branch.
+- `stand-down`: someone else is live (`next.liveClaims`). Do not implement.
+  PARK (§4) naming those URLs; resume trigger: the claim goes stale or the
+  maintainer redispatches.
+
+Re-check with `repo-claim-status <repo>#<n> --self agent-lcars --self
+agent-lcars-bot --trust-bot agent-lcars` before opening a PR on a long run.
+
 ## 2. Eyes reaction and assignee claim
 
 Skip — already done for you (see §1).

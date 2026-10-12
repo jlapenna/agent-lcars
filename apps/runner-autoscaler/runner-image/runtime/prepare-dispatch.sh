@@ -24,6 +24,7 @@ MAX_REPLY_CHARACTERS=16384
 MAX_CONTEXT_CHARACTERS=2000
 MAX_RESULT_BODY_CHARACTERS=2000
 MAX_ACCEPTANCE_CRITERIA=40
+existing_claim_json=null
 # A label redispatch carries only the previous run timestamp through the
 # existing `context` workflow input. Keep the newly-visible thread delta
 # beneath the normal prompt budget: five comments at 1,000 characters each
@@ -137,6 +138,30 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
   # "pull-request" type instead of being hardcoded to "issue".
   anchor_json="$(jq -cn --argjson w "$work_json" --argjson i "$issue_json" \
     '$i + { title: $w.spec.title, body: $w.spec.description }')"
+  # Who else is working this issue (agent-lcars#2502). Interactive and cloud
+  # sessions claim issues by draft PR or a work-claim heartbeat; without this
+  # a dispatched worker cannot see them and forks parallel work.
+  # repo-claim-status reads only GitHub and returns the worker's next action:
+  # proceed, continue-own (the fleet's own prior attempt), adopt (a stale
+  # claim's branch), or stand-down (someone else is live). Best-effort: a
+  # missing tool or a GitHub error leaves existing_claim null, never fails the
+  # dispatch. Pull-request anchors are review/reply targets, not claims.
+  if [ "$(jq -r 'has("pull_request")' <<<"$issue_json")" = false ] && command -v repo-claim-status >/dev/null; then
+    fleet_login="${AGENT_LCARS_FLEET_GITHUB_LOGIN:-agent-lcars-bot}"
+    claim_rc=0
+    claim_out="$(repo-claim-status "$REPOSITORY#$ISSUE" --json \
+      --trust-bot agent-lcars --self agent-lcars --self "$fleet_login" 2>/dev/null)" || claim_rc=$?
+    case "$claim_rc" in
+      0|10|11)
+        if jq -e 'type == "object" and (.status | type == "string") and (.next | type == "object")' <<<"$claim_out" >/dev/null 2>&1; then
+          existing_claim_json="$(jq -c '{
+            status, next,
+            evidence: [(.evidence // [])[0:10][] | {kind, live, author, url, branch, last_active: .lastActive}]
+          }' <<<"$claim_out")"
+        fi
+        ;;
+    esac
+  fi
 else
   echo "::error::WORK is required for every dispatch" >&2
   exit 1
@@ -177,6 +202,7 @@ jq -n \
   --argjson anchor "$anchor_json" \
   --argjson comments "$comments_json" \
   --argjson prior_terminal_state "${PRIOR_TERMINAL_STATE:-null}" \
+  --argjson existing_claim "$existing_claim_json" \
   --arg started_at "$started_at" \
   --arg deadline "$deadline" \
   --arg takeover_by "$takeover_by" \
@@ -271,6 +297,9 @@ jq -n \
     runbook: $runbook,
     context: ($context | clamp($max_context; "Read the full router context in the dispatching workflow run.")),
     prior_terminal_state: $prior_terminal_state,
+    # null when the claim check could not run (native work, PR anchor,
+    # missing tool, or GitHub error); otherwise status, next action, evidence.
+    existing_claim: $existing_claim,
     latest_agent_result: (
       if $result == null then null
       else $result | .body = ($result.body | clamp($max_result_body; "Read the full comment at \($result.html_url).")) end
