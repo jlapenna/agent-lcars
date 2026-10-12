@@ -10,6 +10,7 @@ import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
+  MAX_LIST_LIMIT,
 } from '@agent-lcars/telemetry/server';
 
 import type { WatchedRepo } from './watched-repo';
@@ -18,6 +19,10 @@ import type { WatchedRepo } from './watched-repo';
  * telemetry collection keeps one doc per session forever, and the dashboard
  * is a "what's happening" surface, not a session archive. */
 const ACTIVE_WINDOW_HOURS = 24;
+
+/** The anchor-owner query's wider window (see `getCliSessions`'s
+ * `exhaustive`). Exported so its contract can name the bound. */
+export const OWNER_WINDOW_HOURS = 72;
 
 /** Hard cap on rendered sessions even within the window - a busy fleet day
  * produces 40+ session docs in 24h, and rows past this many are archive
@@ -124,17 +129,39 @@ export interface CliSessionsResult {
  *
  * A store-level failure (e.g. no telemetry infra reachable) degrades to an
  * empty list rather than crashing the dashboard.
+ *
+ * `exhaustive` is for the anchor-owner query (`anchor-owner.ts`), where a
+ * session missing from the list reads as "nobody is working this". It reads
+ * only `source: 'cli'` docs (so fleet sessions cannot crowd them out of the
+ * store's page), over a wider {@link OWNER_WINDOW_HOURS} window (a session
+ * can stay `live`/`idle` long after its last turn while it waits on CI or
+ * review), at the store's maximum page, with no render cap -- and reports a
+ * full page as a warning, because it may have been truncated.
  */
-export async function getCliSessions(): Promise<CliSessionsResult> {
+export async function getCliSessions({
+  exhaustive = false,
+}: { exhaustive?: boolean } = {}): Promise<CliSessionsResult> {
   const now = new Date();
+  const windowHours = exhaustive ? OWNER_WINDOW_HOURS : ACTIVE_WINDOW_HOURS;
   const activeSince = new Date(
-    now.getTime() - ACTIVE_WINDOW_HOURS * 60 * 60 * 1000,
+    now.getTime() - windowHours * 60 * 60 * 1000,
   ).toISOString();
 
   let docs: CliSessionDoc[];
+  const warnings: string[] = [];
   try {
     const firestore = await getAgentTelemetryReaderFirestore();
-    const recentDocs = await listSessionDocs(firestore, { activeSince });
+    const recentDocs = await listSessionDocs(
+      firestore,
+      exhaustive
+        ? { activeSince, source: 'cli', limit: MAX_LIST_LIMIT }
+        : { activeSince },
+    );
+    if (exhaustive && recentDocs.length >= MAX_LIST_LIMIT) {
+      warnings.push(
+        `CLI session listing hit the ${MAX_LIST_LIMIT}-session page limit and may be incomplete.`,
+      );
+    }
     docs = recentDocs.filter(
       (doc): doc is CliSessionDoc => doc.source === 'cli',
     );
@@ -155,7 +182,7 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   const capped = [
     ...sessionsByDoc.filter(([, session]) => isActive(session.liveness)),
     ...sessionsByDoc.filter(([, session]) => !isActive(session.liveness)),
-  ].slice(0, MAX_SESSIONS);
+  ].slice(0, exhaustive ? undefined : MAX_SESSIONS);
 
   const sessions = capped.map(([doc, session]) => {
     const pr = prFromDeliverables(doc);
@@ -163,5 +190,5 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   });
 
   sessions.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
-  return { sessions, warnings: [] };
+  return { sessions, warnings };
 }

@@ -67,6 +67,9 @@ function taggedReplyContext(runtime: OrchestratorRouteDeps): WorkContext {
     sessionsFor: sessionsForRuns,
     getSessionDoc: sessionForResume,
     sessionDocsForRuns,
+    cliSessions: async () => {
+      throw new Error('tagged-reply: cliSessions is not available here');
+    },
     scheduleStore: unreachableScheduleStore,
     grants: () => [],
     now: () => new Date(),

@@ -2,6 +2,7 @@ import 'server-only';
 
 import { auth } from '@/auth';
 import { capacityMetricsHttpResponse } from '@/lib/capacity-metrics';
+import { getCliSessions } from '@/lib/cli-sessions';
 import { codexAuthStore } from '@/lib/codex-auth-store';
 import {
   controlPlaneRepositories,
@@ -158,6 +159,8 @@ async function handle(request: Request): Promise<Response> {
       sessionsFor: sessionsForRuns,
       getSessionDoc: sessionForResume,
       sessionDocsForRuns,
+      // Exhaustive: the anchor-owner query must see every recent session.
+      cliSessions: () => getCliSessions({ exhaustive: true }),
       scheduleStore: createScheduleStore(),
       grants: workGrants,
       now: () => new Date(),

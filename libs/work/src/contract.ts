@@ -179,7 +179,105 @@ export type MaintenanceTickOutput = z.output<
   typeof maintenanceTickOutputSchema
 >;
 
+/** A GitHub issue or pull request is one durable orchestrator task anchor.
+ * Pull requests use GitHub's issue number, so no separate `type` selector is
+ * needed at the Work API boundary. */
+export const githubDispatchAnchorSchema = z.strictObject({
+  repo: z
+    .string()
+    .max(140)
+    .regex(/^[\w.-]+\/[\w.-]+$/u),
+  issue: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+
+/**
+ * Who Console says is working one GitHub anchor (#2502). Read-only: it is a
+ * projection of state Console already holds -- the orchestrator task and its
+ * runs, plus recent CLI session telemetry matched to the anchor the same way
+ * the Agents page matches it -- never a second claim record.
+ *
+ * - `fleet-run`: the orchestrator task holds a live run (its mutex).
+ * - `interactive-session`: no live run, but a live or idle CLI session's
+ *   repository and branch or recorded PR reference this anchor.
+ * - `none`: neither, among CLI sessions active in the last 72 hours. When
+ *   `complete` is false the telemetry read failed or may have been
+ *   truncated, so `none` is not proof that nobody is working the anchor.
+ */
+export const anchorOwnerVerdictSchema = z.enum([
+  'fleet-run',
+  'interactive-session',
+  'none',
+]);
+
+export const anchorOwnerCliSessionSchema = z.strictObject({
+  sessionId: z.string(),
+  agent: z.string(),
+  liveness: z.enum(['live', 'idle', 'ended', 'stale']),
+  host: z.string().optional(),
+  branch: z.string().optional(),
+  pr: z.strictObject({ number: z.number().int(), url: z.string() }).optional(),
+  title: z.string().optional(),
+  status: z.string().optional(),
+  startedAt: z.string(),
+  lastActivityAt: z.string(),
+});
+
+export const anchorOwnerSchema = z.strictObject({
+  anchor: githubDispatchAnchorSchema,
+  observedAt: z.iso.datetime(),
+  verdict: anchorOwnerVerdictSchema,
+  /** False when CLI session telemetry could not be read in full. */
+  complete: z.boolean(),
+  warnings: z.array(z.string()),
+  /** Absent when the orchestrator has no task document for the anchor. */
+  task: z
+    .strictObject({
+      state: itemStateSchema,
+      pipeline: z.string(),
+      /** Runs ever started; the live run's attempt number. */
+      runCount: z.number().int().nonnegative(),
+      activeRunId: z.string().optional(),
+      updatedAt: z.string(),
+      /** The live run when there is one, otherwise the newest run. */
+      run: itemRunViewSchema.optional(),
+      /** Fleet worker sessions recorded for `run`. */
+      runSessions: z.array(itemSessionViewSchema),
+    })
+    .optional(),
+  /** Recent CLI sessions that reference the anchor, newest first. Only
+   *  `live`/`idle` ones count toward `interactive-session`. */
+  cliSessions: z.array(anchorOwnerCliSessionSchema),
+});
+export type AnchorOwner = z.output<typeof anchorOwnerSchema>;
+
 export const itemsContract = {
+  anchorOwner: base
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/anchors/github/owner',
+        operationId: 'getGithubAnchorOwner',
+        summary: 'Who Console says is working a GitHub issue or pull request',
+        description:
+          'Read-only. Answers from the orchestrator task and runs for the ' +
+          'anchor and from recent CLI session telemetry; it records no claim. ' +
+          'Call it before starting work on an issue. Requires work.operator; ' +
+          'the repository must be a control-plane repository, and a GitHub ' +
+          'Actions principal may read only its own repository.',
+      }),
+    )
+    .errors({
+      FORBIDDEN: {
+        message: 'Principal may not read this repository',
+      },
+    })
+    .input(
+      z.strictObject({
+        repo: githubDispatchAnchorSchema.shape.repo,
+        issue: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      }),
+    )
+    .output(anchorOwnerSchema),
   lifecycleMetrics: base
     .meta(
       openapi({
@@ -432,17 +530,6 @@ export const itemsContract = {
     ),
 };
 export type ItemsContract = typeof itemsContract;
-
-/** A GitHub issue or pull request is one durable orchestrator task anchor.
- * Pull requests use GitHub's issue number, so no separate `type` selector is
- * needed at the Work API boundary. */
-export const githubDispatchAnchorSchema = z.strictObject({
-  repo: z
-    .string()
-    .max(140)
-    .regex(/^[\w.-]+\/[\w.-]+$/u),
-  issue: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-});
 
 const githubDispatchModeSchema = z.enum(['implement', 'review']);
 

@@ -13,6 +13,7 @@ const {
   sessionsForRuns,
   sessionForResume,
   sessionDocsForRuns,
+  getCliSessions,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   authenticateWorkRequest: vi.fn(),
@@ -21,10 +22,17 @@ const {
   sessionsForRuns: vi.fn(async () => []),
   sessionForResume: vi.fn(async () => undefined),
   sessionDocsForRuns: vi.fn(async () => []),
+  getCliSessions: vi.fn(async (_options?: { exhaustive?: boolean }) => ({
+    sessions: [],
+    warnings: [],
+  })),
 }));
 
 vi.mock('@/auth', () => ({ auth }));
-vi.mock('@/lib/deployment', () => ({ controlPlaneRepository }));
+vi.mock('@/lib/deployment', () => ({
+  controlPlaneRepository,
+  controlPlaneRepositories: () => ['jlapenna/agent-lcars'],
+}));
 vi.mock('@/lib/github-actions-oidc', () => ({ verifySessionExpiryOidcToken }));
 vi.mock('@/lib/work-auth', () => ({
   authenticateWorkRequest,
@@ -34,6 +42,7 @@ vi.mock('@/lib/work-auth', () => ({
   }),
   rawBearerToken: () => undefined,
 }));
+vi.mock('@/lib/cli-sessions', () => ({ getCliSessions }));
 vi.mock('@/lib/work-sessions', () => ({
   sessionsForRuns,
   sessionForResume,
@@ -100,6 +109,25 @@ describe('GET /api/work/v1/items', () => {
     // Matches every `api/control-plane/*` route's own header: per-caller
     // data, never safe for a shared cache to reuse across callers.
     expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+});
+
+describe('GET /api/work/v1/anchors/github/owner', () => {
+  it('answers from exhaustive CLI session telemetry, uncached', async () => {
+    const response = await GET(
+      new Request(
+        'https://lcars.test/api/work/v1/anchors/github/owner?repo=jlapenna/agent-lcars&issue=2502',
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(await response.json()).toMatchObject({
+      anchor: { repo: 'jlapenna/agent-lcars', issue: 2502 },
+      verdict: 'none',
+      complete: true,
+      cliSessions: [],
+    });
+    expect(getCliSessions).toHaveBeenCalledWith({ exhaustive: true });
   });
 });
 
