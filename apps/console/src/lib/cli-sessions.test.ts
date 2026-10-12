@@ -187,7 +187,7 @@ describe('getCliSessions', () => {
     expect(sessions.map((session) => session.sessionId)).toContain('live-tail');
   });
 
-  it('reads only CLI docs over the wider window, uncapped, in exhaustive mode', async () => {
+  it('reads the wider window at the store maximum, uncapped, without a source filter, in exhaustive mode', async () => {
     (listSessionDocs as Mock).mockResolvedValue(
       Array.from({ length: MAX_SESSIONS + 5 }, (_, index) =>
         makeCliDoc({ sessionId: `live-${index}` }),
@@ -199,7 +199,9 @@ describe('getCliSessions', () => {
     expect(sessions).toHaveLength(MAX_SESSIONS + 5);
     expect(warnings).toEqual([]);
     const options = (listSessionDocs as Mock).mock.calls[0][1];
-    expect(options).toMatchObject({ source: 'cli', limit: MAX_LIST_LIMIT });
+    expect(options).toMatchObject({ limit: MAX_LIST_LIMIT });
+    // source + lastActivityAt range needs a composite index production lacks.
+    expect(options).not.toHaveProperty('source');
     const windowHours =
       (Date.now() - new Date(options.activeSince).getTime()) / 3_600_000;
     expect(windowHours).toBeCloseTo(OWNER_WINDOW_HOURS, 1);
