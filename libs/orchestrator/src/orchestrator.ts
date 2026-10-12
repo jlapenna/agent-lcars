@@ -1,3 +1,4 @@
+import { decideLabelProviderRequest } from './provider-routing';
 import type { CapacityWorkerPermit } from './capacity-model';
 import {
   changeCredentialOperation,
@@ -101,6 +102,12 @@ export interface RequestInput {
   /** Replace only this exact unclaimed queue attempt when changing provider.
    * Cancellation and admission share the request transaction and its claim fence. */
   replaceQueuedRunId?: string;
+  /** Server-authorized label intent, never a raw Work API field. */
+  labelProviderRequest?: { requestedAt: string; actor: string };
+  /** GitHub replies/retries follow execution history rather than historical Work. */
+  useEffectivePipeline?: boolean;
+  expectedEffectivePipeline?: string;
+  isPipelineAuthorized?: (pipeline: string) => boolean;
   /**
    * Called with an already-admitted Task's immutable Work while the request
    * transaction still owns its consistent snapshot. Returning false refuses
@@ -134,7 +141,17 @@ export class Orchestrator {
       ...(input.requestBinding === undefined
         ? {}
         : { requestBinding: input.requestBinding }),
-      decide: ({ task, activeRun, previousRun, requestId }) => {
+      readProviderRouting:
+        input.labelProviderRequest !== undefined ||
+        input.useEffectivePipeline === true,
+      decide: ({
+        task,
+        activeRun,
+        previousRun,
+        requestId,
+        latestRun,
+        retainedClaims,
+      }) => {
         // This belongs inside transactRequest, not in a route-level pre-read:
         // two first admissions may otherwise both observe an absent Task, and
         // the loser can mint its pipeline after the winner persists different
@@ -147,6 +164,19 @@ export class Orchestrator {
         ) {
           return refused('work-spec-mismatch');
         }
+        const pipeline = input.useEffectivePipeline
+          ? (activeRun?.pipeline ?? latestRun?.pipeline ?? input.pipeline)
+          : input.pipeline;
+        if (
+          input.expectedEffectivePipeline !== undefined &&
+          input.expectedEffectivePipeline !== pipeline
+        )
+          return refused('work-spec-mismatch');
+        if (
+          input.isPipelineAuthorized !== undefined &&
+          !input.isPipelineAuthorized(previousRun?.pipeline ?? pipeline)
+        )
+          return refused('pipeline-forbidden');
         // The historical check precedes the live mutex. A retry remains a
         // duplicate even after its original run settled and a newer request
         // took the task lock; transactRequest keeps this check and minting
@@ -159,7 +189,7 @@ export class Orchestrator {
           taskId: input.taskId,
           requestId,
           requestSource,
-          pipeline: input.pipeline,
+          pipeline,
           priority:
             input.priority ??
             (input.replaceQueuedRunId ? activeRun?.priority : undefined),
@@ -169,6 +199,16 @@ export class Orchestrator {
             ? {}
             : { providerFallback: input.providerFallback }),
         };
+        if (input.labelProviderRequest !== undefined) {
+          return decideLabelProviderRequest({
+            ...requestArgs,
+            task: task?.task,
+            activeRun,
+            latestRun,
+            retainedClaims,
+            label: input.labelProviderRequest,
+          });
+        }
         if (input.replaceQueuedRunId !== undefined) {
           if (
             task === undefined ||

@@ -287,6 +287,16 @@ export async function handleWebhookDelivery(
         : { requestBinding: interpreted.requestBinding }),
     });
 
+    if (outcome.kind === 'handoff') {
+      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      return {
+        status: 200,
+        body: {
+          refused: outcome.routing.reason,
+          providerRouting: outcome.routing,
+        },
+      };
+    }
     if (outcome.kind === 'busy') {
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
       return { status: 200, body: { refused: 'task-busy' } };
@@ -310,7 +320,12 @@ export async function handleWebhookDelivery(
                 labels: outcome.labels,
                 message: outcome.message,
               }
-            : { refused: 'work-spec-mismatch' },
+            : {
+                refused:
+                  outcome.message === 'stale-provider-request'
+                    ? outcome.message
+                    : 'work-spec-mismatch',
+              },
       };
     }
     if (outcome.kind === 'invalid' || outcome.kind === 'forbidden') {

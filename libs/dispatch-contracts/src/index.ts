@@ -39,3 +39,5 @@ export {
   quickTaskDigest,
   quickTaskMarkerMatcher,
 } from './quick-task';
+
+export { providerRoutingSchema } from './provider-routing';

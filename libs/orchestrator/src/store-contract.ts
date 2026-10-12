@@ -429,6 +429,125 @@ export function runOrchestratorStoreContract(
         });
       });
 
+      it('atomically orders label handoffs, preserves Work and prevents the old provider claim', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator);
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        clock.advanceMinutes(1);
+        const switchProvider = () =>
+          orchestrator.request({
+            taskId: TASK,
+            requestId: 'label-switch',
+            pipeline: 'opencode',
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+            },
+          });
+        const outcomes = await Promise.all([
+          switchProvider(),
+          switchProvider(),
+        ]);
+        expect(outcomes.filter(isRefusal)).toEqual([
+          expect.objectContaining({ reason: 'duplicate-request' }),
+        ]);
+        expect(await store.readTask(TASK)).toMatchObject({
+          task: {
+            work: TASK_WORK,
+            runCount: 2,
+            providerRouting: {
+              effectivePipeline: 'opencode',
+              status: 'accepted',
+              fromRunId: run.runId,
+            },
+          },
+        });
+        expect(await store.readRun(run.runId)).toMatchObject({
+          pipeline: 'claude',
+          state: 'canceled',
+        });
+        expect(
+          await store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+          }),
+        ).toBeUndefined();
+        expect(
+          await orchestrator.request({
+            taskId: TASK,
+            requestId: 'older-label',
+            pipeline: 'claude',
+            labelProviderRequest: { requestedAt: T0, actor: 'maintainer' },
+          }),
+        ).toMatchObject({ reason: 'stale-provider-request' });
+        expect(await store.listRuns(TASK)).toHaveLength(2);
+      });
+
+      it('serializes a label handoff against claim and retains refusal after terminal settlement', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator);
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        clock.advanceMinutes(1);
+        const [claim, handoff] = await Promise.all([
+          store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+          }),
+          orchestrator.request({
+            taskId: TASK,
+            requestId: 'racing-label',
+            pipeline: 'opencode',
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+            },
+          }),
+        ]);
+        if (isRefusal(handoff)) throw new Error(handoff.reason);
+        if (handoff.run === undefined) {
+          expect(claim?.runId).toBe(run.runId);
+          expect(handoff.task.providerRouting).toMatchObject({
+            status: 'refused',
+            reason: 'run-already-claimed',
+          });
+          await orchestrator.report(run.runId, { ok: true, summary: 'park' });
+          clock.advanceMinutes(1);
+          expect(
+            await orchestrator.request({
+              taskId: TASK,
+              requestId: 'retained-label',
+              pipeline: 'opencode',
+              labelProviderRequest: {
+                requestedAt: clock.now(),
+                actor: 'maintainer',
+              },
+            }),
+          ).toMatchObject({
+            task: {
+              providerRouting: {
+                status: 'refused',
+                reason: 'physical-retirement-required',
+              },
+            },
+            outbox: [],
+          });
+          expect(await store.listRuns(TASK)).toHaveLength(1);
+        } else {
+          expect(claim).toBeUndefined();
+          expect(handoff.run.pipeline).toBe('opencode');
+          expect(await store.readRun(run.runId)).toMatchObject({
+            state: 'canceled',
+          });
+          expect(await store.listRuns(TASK)).toHaveLength(2);
+        }
+      });
+
       it('serializes provider replacement against an executor claim', async () => {
         const { store, orchestrator } = await fixture();
         const { run } = await started(orchestrator);

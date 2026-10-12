@@ -274,6 +274,7 @@ export interface OrchestratorStore {
      * own identities. The store resolves it inside this same transaction as
      * history lookup and any new Run. */
     requestBinding?: RequestBinding;
+    readProviderRouting?: boolean;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
 
@@ -546,6 +547,9 @@ export interface VersionedTask {
 
 /** The single consistent snapshot supplied to a request transaction. */
 export interface RequestTransactionState {
+  /** Read only for source-ordered label handoffs, inside the claim transaction. */
+  readonly latestRun?: Run;
+  readonly retainedClaims?: readonly Run[];
   readonly task: VersionedTask | undefined;
   readonly activeRun: Run | undefined;
   /** The request identity resolved by the store's optional binding. */

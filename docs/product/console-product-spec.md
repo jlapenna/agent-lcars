@@ -351,6 +351,11 @@ the work that has stopped, and the work in flight.
   render explicit unavailable states rather than implying zero capacity.
 - **FE-SB-3 [Shipped]** The data is live over SSE, and a staleness banner
   appears after 180s.
+- **FE-SB-3a [Implemented; runtime qualification pending]** Task history shows
+  requested and effective execution providers and the latest label handoff
+  outcome. A refused handoff names the owner/retirement gate and asks the
+  administrator to reapply after it clears. Original admitted Work remains
+  historical intent; each run shows its own provider.
 - **FE-SB-4 [Proposed]** Show claim throughput and provider cooldowns:
   pipeline X is cooling down until T after a `provider-limit` failure.
   Include the authoritative provider queue, deferred and live-claim counts,

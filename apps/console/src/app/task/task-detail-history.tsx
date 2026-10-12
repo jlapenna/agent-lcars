@@ -1,5 +1,5 @@
 import type { TaskId } from '@agent-lcars/orchestrator';
-import type { ItemView } from '@agent-lcars/work/derive';
+import { latestRun, type ItemView } from '@agent-lcars/work/derive';
 import {
   Anchor,
   Badge,
@@ -83,7 +83,7 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
               </TableTd>
               <TableTd>
                 <Stack gap={0}>
-                  <Text size="xs">Queue executor</Text>
+                  <Text size="xs">Queue executor · {run.pipeline}</Text>
                   {run.queue?.state === 'claimed' && run.queue.claimedBy && (
                     <Text size="xs" c="dimmed">
                       claimed by {run.queue.claimedBy}
@@ -197,7 +197,8 @@ export function TaskDetailHistory({
           {item.state}
         </Badge>
         <Text size="sm" c="dimmed">
-          {item.spec.target.repo} · {item.spec.pipeline}
+          {item.spec.target.repo} · effective provider{' '}
+          {latestRun(item.runs)?.pipeline ?? item.spec.pipeline}
         </Text>
         <Text size="xs" c="dimmed">
           {native ? 'Native work' : `GitHub · ${anchor.repo}#${anchor.issue}`} ·{' '}
@@ -210,6 +211,20 @@ export function TaskDetailHistory({
           >{`authoritative state rev ${revision}`}</Text>
         )}
       </Group>
+      {item.providerRouting !== undefined && (
+        <Text size="sm" role="status">
+          Requested provider {item.providerRouting.requestedPipeline} ·
+          effective provider{' '}
+          {latestRun(item.runs)?.pipeline ??
+            item.providerRouting.effectivePipeline}{' '}
+          · handoff {item.providerRouting.status}
+          {item.providerRouting.reason
+            ? ` (${item.providerRouting.reason})`
+            : ''}
+          {item.providerRouting.status === 'refused' &&
+            ' · Reapply the intended label after ownership settles and physical retirement completes.'}
+        </Text>
+      )}
       <Stack gap="xs">
         <Title order={2} size="h4">
           Conversation

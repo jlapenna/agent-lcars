@@ -112,3 +112,31 @@ it('shows both exact artifacts in deliverables and run history', () => {
       .filter((link) => link.getAttribute('href') === blocker),
   ).toHaveLength(3);
 });
+
+it('shows requested versus effective provider and refused handoff without implying success', () => {
+  render(
+    <MantineProvider>
+      <TaskDetailHistory
+        anchor={{ repo: 'jlapenna/agent-lcars', issue: 42 }}
+        item={{
+          ...item,
+          providerRouting: {
+            requestId: 'switch',
+            requestedAt: '2026-10-09T01:00:00Z',
+            actor: 'jlapenna',
+            requestedPipeline: 'opencode',
+            effectivePipeline: 'codex',
+            status: 'refused',
+            reason: 'physical-retirement-required',
+          },
+        }}
+      />
+    </MantineProvider>,
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Requested provider opencode · effective provider codex · handoff refused (physical-retirement-required)',
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Reapply the intended label',
+  );
+});

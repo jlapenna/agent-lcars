@@ -7,6 +7,7 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import { workPayloadSchema } from '@agent-lcars/work';
+import { latestRun } from '@agent-lcars/work/derive';
 
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
@@ -303,17 +304,16 @@ async function dispatchPostedReply(
       // webhook remains responsible for first Work admission.
       if (existingTask !== undefined) {
         const work = workPayloadSchema.parse(existingTask.task.work);
-        // Assignment labels are an explicit present-tense handoff, whereas
-        // Work's pipeline is immutable. A rejected label-change webhook can
-        // therefore leave a new label beside older Work. Do not revive that
-        // older Work on a reply: all three sources must agree before a run can
-        // begin or the human handoff can be cleared.
-        if (work.spec.pipeline !== assignedPipeline) {
-          return { dispatched: false };
-        }
+        // A label is requested intent. Dispatch a reply only when it agrees
+        // with the actual provider; historical Work can name the predecessor.
+        const effective =
+          latestRun(await runtime.store.listRuns(taskId))?.pipeline ??
+          work.spec.pipeline;
+        if (effective !== assignedPipeline) return { dispatched: false };
         const outcome = await admitGithubWork(runtime, {
           anchor: taskId,
           requestId: `console-reply:${randomUUID()}`,
+          expectedEffectivePipeline: assignedPipeline,
           params: {
             mode: 'reply',
             reply: body,

@@ -912,6 +912,101 @@ describe('handleWebhookDelivery', () => {
     });
   });
 
+  it('hands an authorized sole provider label to a fresh queued attempt', async () => {
+    const { deps, store, clock } = fixture();
+    const first = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'first-label',
+      payload: labeledIssuePayload({
+        issue: { ...labeledIssuePayload().issue, updated_at: T0 },
+      }),
+    });
+    clock.advanceMinutes(1);
+    const changed = labeledIssuePayload({
+      label: { name: 'agent:opencode' },
+      issue: {
+        ...labeledIssuePayload().issue,
+        updated_at: clock.now(),
+        labels: [{ name: 'agent:opencode' }, { name: 'type:feature' }],
+      },
+    });
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'switch-label',
+      payload: changed,
+    });
+    expect(result).toMatchObject({ status: 200, body: { dispatched: true } });
+    expect(await store.readRun(first.body['runId'] as string)).toMatchObject({
+      pipeline: 'claude',
+      state: 'canceled',
+    });
+    expect(await store.readRun(result.body['runId'] as string)).toMatchObject({
+      pipeline: 'opencode',
+      queue: { state: 'queued' },
+      params: { mode: 'implement' },
+    });
+    expect((await store.readTask(ISSUE))?.task).toMatchObject({
+      work: { spec: { pipeline: 'claude' } },
+      providerRouting: {
+        requestedPipeline: 'opencode',
+        effectivePipeline: 'opencode',
+        status: 'accepted',
+      },
+    });
+    expect(
+      await handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'switch-label',
+        payload: changed,
+      }),
+    ).toMatchObject({ body: { duplicate: true } });
+    expect(
+      await handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'stale-label',
+        payload: labeledIssuePayload({
+          issue: { ...labeledIssuePayload().issue, updated_at: T0 },
+        }),
+      }),
+    ).toMatchObject({ body: { refused: 'stale-provider-request' } });
+    expect(await store.listRuns(ISSUE)).toHaveLength(2);
+    expect(
+      await store.claimQueuedRun({
+        pipelines: ['claude', 'opencode'],
+        now: clock.now(),
+        claimedBy: 'executor',
+        tokenHash: 'a'.repeat(64),
+      }),
+    ).toMatchObject({ runId: result.body['runId'], pipeline: 'opencode' });
+  });
+
+  it('an unauthorized label change cannot bypass immutable admission', async () => {
+    const { deps, store, clock } = fixture();
+    await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'first-label',
+      payload: labeledIssuePayload(),
+    });
+    clock.advanceMinutes(1);
+    expect(
+      await handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'untrusted-switch',
+        payload: labeledIssuePayload({
+          label: { name: 'agent:opencode' },
+          sender: { login: 'outsider' },
+          issue: {
+            ...labeledIssuePayload().issue,
+            updated_at: clock.now(),
+            labels: [{ name: 'agent:opencode' }],
+          },
+        }),
+      }),
+    ).toMatchObject({ body: { refused: 'work-spec-mismatch' } });
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
+    expect((await store.readTask(ISSUE))?.task.providerRouting).toBeUndefined();
+  });
+
   it('does not add a comment window to an initial label dispatch or a reply command', async () => {
     const { deps } = fixture();
     const requestSpy = vi.spyOn(deps.orchestrator, 'request');

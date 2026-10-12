@@ -6,6 +6,9 @@ export interface GithubLabelRouting {
   mode: 'implement' | 'review';
   trigger: string;
   labels: readonly { name: string }[] | undefined;
+  /** Source clock and actor from the signed delivery; required for handoff. */
+  requestedAt?: string;
+  actor?: string;
 }
 
 export interface RoutingLabelConflict {
@@ -29,8 +32,8 @@ export function checkGithubLabelRouting(
     .sort();
   const resolution =
     'A maintainer must explicitly leave one routing choice in this namespace ' +
-    'and reapply it to request work. Existing Work keeps its admitted pipeline; ' +
-    'changing labels cannot reassign it. Labels and assignees were not changed.';
+    'and reapply it to request work. Provider handoff requires authorization and ' +
+    'settled physical ownership. Labels and assignees were not changed.';
   if (routing.labels === undefined) {
     return {
       kind: 'conflict',

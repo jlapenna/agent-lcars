@@ -11,6 +11,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import { type WorkPayload, workPayloadSchema } from '@agent-lcars/work';
 
+import { isAdminGithubLogin } from './deployment';
 import {
   checkGithubLabelRouting,
   type GithubLabelRouting,
@@ -38,6 +39,8 @@ export interface GithubWorkAdmissionInput {
   /** Present only for label-triggered requests; validate again at the one
    * admission boundary before any durable request or executor dispatch. */
   labelRouting?: GithubLabelRouting;
+  /** Console reply guard: this is an expectation, never a provider switch. */
+  expectedEffectivePipeline?: string;
   /** Work API callers are additionally constrained by their signed GitHub
    * Actions repository and their ordinary Work grant. Webhook and console
    * callers have already established their own admission identity. */
@@ -60,6 +63,12 @@ export interface GithubWorkRedispatchInput {
 
 export type GithubWorkAdmissionOutcome =
   | { kind: 'accepted'; runId: string; dispatched: boolean }
+  | {
+      kind: 'handoff';
+      routing: NonNullable<
+        import('@agent-lcars/orchestrator').Task['providerRouting']
+      >;
+    }
   | { kind: 'busy'; runId: string }
   | { kind: 'duplicate'; runId: string }
   | { kind: 'conflict'; message: string }
@@ -112,7 +121,10 @@ export async function admitGithubWork(
       message: 'GitHub Actions principal may only dispatch its own repository',
     };
   }
-  if (input.authorization?.grantsPrincipal !== undefined) {
+  if (
+    input.labelRouting !== undefined &&
+    input.authorization?.grantsPrincipal !== undefined
+  ) {
     const forbidden = forbiddenReason(
       input.authorization.grantsPrincipal,
       work.spec,
@@ -146,12 +158,33 @@ export async function admitGithubWork(
     }
   }
 
+  const labelProviderRequest =
+    input.labelRouting?.mode === 'implement' &&
+    input.labelRouting.requestedAt !== undefined &&
+    isAdminGithubLogin(input.labelRouting.actor)
+      ? {
+          requestedAt: input.labelRouting.requestedAt,
+          actor: input.labelRouting.actor!,
+        }
+      : undefined;
+
   const outcome = await runtime.orchestrator.request({
     taskId: anchor,
     requestId: input.requestId,
     ...(input.requestBinding === undefined
       ? {}
       : { requestBinding: input.requestBinding }),
+    labelProviderRequest,
+    useEffectivePipeline: input.labelRouting === undefined,
+    expectedEffectivePipeline: input.expectedEffectivePipeline,
+    isPipelineAuthorized:
+      input.authorization?.grantsPrincipal === undefined
+        ? undefined
+        : (pipeline) =>
+            forbiddenReason(input.authorization!.grantsPrincipal!, {
+              ...work.spec,
+              pipeline: pipeline as WorkPayload['spec']['pipeline'],
+            }) === undefined,
     pipeline: work.spec.pipeline,
     priority: work.spec.priority,
     providerFallback:
@@ -170,10 +203,33 @@ export async function admitGithubWork(
     // This comparison must execute in the store transaction. A standalone
     // read can race another first admission: its Work wins the Task write,
     // but this request would otherwise mint a Run for a different pipeline.
-    isStoredWorkCompatible: (stored) =>
-      sameSpec(workPayloadSchema.parse(stored).spec, work.spec),
+    isStoredWorkCompatible: (stored, task) => {
+      if (
+        input.labelRouting?.mode === 'implement' &&
+        task.providerRouting !== undefined &&
+        labelProviderRequest === undefined
+      )
+        return false;
+      const spec = workPayloadSchema.parse(stored).spec;
+      // Authorization changes only execution intent, never the admitted payload.
+      return sameSpec(
+        spec,
+        labelProviderRequest === undefined
+          ? work.spec
+          : { ...work.spec, pipeline: spec.pipeline },
+      );
+    },
   });
   if (isRefusal(outcome)) {
+    if (outcome.reason === 'pipeline-forbidden') {
+      return {
+        kind: 'forbidden',
+        message: 'Current authority does not grant the effective provider',
+      };
+    }
+    if (outcome.reason === 'stale-provider-request') {
+      return { kind: 'conflict', message: 'stale-provider-request' };
+    }
     if (outcome.reason === 'work-spec-mismatch') {
       return {
         kind: 'conflict',
@@ -197,6 +253,9 @@ export async function admitGithubWork(
     };
   }
 
+  if (outcome.run === undefined && outcome.task.providerRouting !== undefined) {
+    return { kind: 'handoff', routing: outcome.task.providerRouting };
+  }
   const { runId } = decidedRun(outcome);
   const drained = await runtime.drain();
   return {
@@ -239,17 +298,15 @@ export async function redispatchGithubWork(
       message: 'Stored GitHub Work target does not match its anchor repository',
     };
   }
-  const forbidden = forbiddenReason(
-    input.authorization.grantsPrincipal,
-    work.spec,
-  );
-  if (forbidden !== undefined) {
-    return { kind: 'forbidden', message: forbidden };
-  }
-
   const outcome = await runtime.orchestrator.request({
     taskId: anchor,
     requestId: input.requestId,
+    useEffectivePipeline: true,
+    isPipelineAuthorized: (pipeline) =>
+      forbiddenReason(input.authorization.grantsPrincipal, {
+        ...work.spec,
+        pipeline: pipeline as WorkPayload['spec']['pipeline'],
+      }) === undefined,
     pipeline: work.spec.pipeline,
     priority: work.spec.priority,
     providerFallback: authorizeProviderFallback(
@@ -263,6 +320,11 @@ export async function redispatchGithubWork(
     params: input.params,
   });
   if (isRefusal(outcome)) {
+    if (outcome.reason === 'pipeline-forbidden')
+      return {
+        kind: 'forbidden',
+        message: 'Current authority does not grant the effective provider',
+      };
     const runId = outcome.existingRun?.runId;
     if (outcome.reason === 'duplicate-request' && runId !== undefined) {
       return { kind: 'duplicate', runId };

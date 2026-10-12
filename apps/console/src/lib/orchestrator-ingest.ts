@@ -95,6 +95,7 @@ const issueBodySchema = z.object({
 // Label routing requires lifecycle evidence. Tagged-comment follow-ups have
 // their own resume policy and deliberately keep the comment schema below.
 const labelAnchorSchema = issueBodySchema.extend({
+  updated_at: z.iso.datetime({ offset: false }).optional(),
   state: z.enum(['open', 'closed']),
   // Missing full-set evidence must not become a fabricated empty snapshot.
   labels: z.array(labelSchema).optional(),
@@ -236,6 +237,8 @@ function interpretIssuesEvent(
     mode: 'implement',
     trigger: label.name,
     labels: issue.labels,
+    requestedAt: issue.updated_at,
+    actor: sender.login,
   };
   const conflict = checkGithubLabelRouting(labelRouting);
   if (conflict) return conflict;
@@ -290,6 +293,8 @@ function interpretPullRequestEvent(
       mode: 'implement',
       trigger: labelName,
       labels: pullRequest.labels,
+      requestedAt: pullRequest.updated_at,
+      actor: sender.login,
     };
     const conflict = checkGithubLabelRouting(labelRouting);
     if (conflict) return conflict;
@@ -318,6 +323,8 @@ function interpretPullRequestEvent(
       mode: 'review',
       trigger: labelName,
       labels: pullRequest.labels,
+      requestedAt: pullRequest.updated_at,
+      actor: sender.login,
     };
     const conflict = checkGithubLabelRouting(labelRouting);
     if (conflict) return conflict;

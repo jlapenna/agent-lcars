@@ -351,6 +351,7 @@ export class FirestoreStore implements OrchestratorStore {
     requestId: string;
     requestSource: RequestSource;
     requestBinding?: RequestBinding;
+    readProviderRouting?: boolean;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     const taskRef = this.#taskRef(input.taskId);
@@ -416,7 +417,30 @@ export class FirestoreStore implements OrchestratorStore {
       const previousRun = runsSnapshot.docs
         .map((doc) => runSchema.parse(doc.data()))
         .find((run) => run.requestSource === input.requestSource);
+      const routing =
+        input.readProviderRouting && task !== undefined
+          ? await Promise.all([
+              tx.get(
+                this.#runRef(`${taskKey(input.taskId)}/r${task.task.runCount}`),
+              ),
+              tx.get(
+                this.#runsForTask(input.taskId)
+                  .where('queue.state', '==', 'claimed')
+                  .limit(1),
+              ),
+            ])
+          : undefined;
       const outcome = input.decide({
+        ...(routing === undefined
+          ? {}
+          : {
+              latestRun: routing[0].exists
+                ? runSchema.parse(routing[0].data())
+                : undefined,
+              retainedClaims: routing[1].docs.map((doc) =>
+                runSchema.parse(doc.data()),
+              ),
+            }),
         task,
         activeRun,
         requestId,

@@ -49,6 +49,8 @@ export interface Refusal {
     | 'run-already-claimed' // guarded cancellation cannot stop active work
     | 'run-newer-than-cutoff' // stale lifecycle event cannot stop newer work
     | 'run-not-live' // report/cancel/renew against a settled run
+    | 'pipeline-forbidden' // current authority does not grant the effective provider
+    | 'stale-provider-request' // out-of-order or equal-clock label intent
     | 'stale-lease' // renew/report from a run that already lost the lock
     | 'task-closed' // closeTask set closedAt; no further runs
     | 'missing-work' // strict Task documents always carry the Work payload
@@ -179,6 +181,9 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     schedulerDisruptions: input.task?.schedulerDisruptions ?? 0,
     // Written once: only the request that creates the task may set `work`.
     work,
+    ...(input.task?.providerRouting === undefined
+      ? {}
+      : { providerRouting: input.task.providerRouting }),
     updatedAt: now,
   };
   return mintRun({
