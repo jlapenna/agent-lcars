@@ -33,7 +33,12 @@ import {
   selectedReplyPipeline,
   supportedAgentPipelines,
 } from '../lib/watched-repo';
-import { approveAndRebase, mergePr, replyToItem } from './actions';
+import {
+  approveAndRebase,
+  mergePr,
+  type ReplyResult,
+  replyToItem,
+} from './actions';
 import { ConsoleMarkdown } from './console-markdown';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
@@ -46,6 +51,7 @@ import {
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { RetriggerButton } from './retrigger-button';
+import { RetryReplyDispatch } from './retry-reply-dispatch';
 import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
 
@@ -220,6 +226,8 @@ export function ActionItemCard({
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [labelsExpanded, setLabelsExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
+  const [replyRetry, setReplyRetry] =
+    useState<Extract<ReplyResult, { ok: true }>['retry']>();
   // The reply input renders already open when replying IS the task; on
   // other cards it stays behind a "Reply…" toggle.
   const [replyOpen, setReplyOpen] = useState(primaryAction?.kind === 'reply');
@@ -306,6 +314,7 @@ export function ActionItemCard({
         setError(result.message);
         return;
       }
+      setReplyRetry(result.retry);
       setReplyBody('');
       setChosenReplyTarget(undefined);
       notifications.show({
@@ -653,6 +662,14 @@ export function ActionItemCard({
           />
         )}
 
+        {replyRetry && (
+          <RetryReplyDispatch
+            key={replyRetry.commentId}
+            repo={item.repo}
+            number={item.number}
+            retry={replyRetry}
+          />
+        )}
         {replyOpen && (
           <Stack
             gap={6}

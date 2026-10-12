@@ -9,7 +9,9 @@ import {
 import { z } from 'zod';
 
 import {
+  assertCapacityPlacementClaim,
   assertCapacityWorkerPermit,
+  type CapacityPlacementClaim,
   capacityRecordForStorage,
   capacityRecordSchema,
   CapacityRefusal,
@@ -456,6 +458,7 @@ export class FirestoreStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
+    placementClaim?: CapacityPlacementClaim;
     workerPermit?: CapacityWorkerPermit;
     queueEligibilityPipelines?: readonly string[];
     shouldReadQueueEligibility?: (
@@ -484,6 +487,28 @@ export class FirestoreStore implements OrchestratorStore {
             ? capacityRecordSchema.parse(retired.data())
             : undefined,
           input.workerPermit,
+        );
+      }
+
+      if (input.placementClaim !== undefined) {
+        if (input.placementClaim.runId !== input.runId)
+          throw new CapacityRefusal('authority');
+        const [capacity, retired] = await Promise.all([
+          tx.get(this.#capacity.doc('active')),
+          tx.get(
+            this.#capacityRecords.doc(
+              encodeURIComponent(retiredKey(input.runId)),
+            ),
+          ),
+        ]);
+        assertCapacityPlacementClaim(
+          capacity.exists
+            ? capacityStateSchema.parse(capacity.data())
+            : emptyCapacityState(),
+          retired.exists
+            ? capacityRecordSchema.parse(retired.data())
+            : undefined,
+          input.placementClaim,
         );
       }
 
@@ -973,6 +998,7 @@ export class FirestoreStore implements OrchestratorStore {
     claimedBy: string;
     claimedBySubject?: string;
     tokenHash: string;
+    placementAware?: boolean;
   }): Promise<Run | undefined> {
     return this.#firestore.runTransaction(async (tx) => {
       const capacity = await tx.get(this.#capacity.doc('active'));
@@ -1050,6 +1076,14 @@ export class FirestoreStore implements OrchestratorStore {
           state: 'claimed',
           claimedAt: input.now,
           startDeadlineAt: runStartDeadlineAt(input.now),
+          ...(input.placementAware === true
+            ? {
+                startupPlacement: {
+                  state: 'waiting' as const,
+                  observedAt: input.now,
+                },
+              }
+            : {}),
           claimedBy: input.claimedBy,
           ...(input.claimedBySubject === undefined
             ? {}

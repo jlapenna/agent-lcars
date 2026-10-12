@@ -167,7 +167,11 @@ export function LogicalWorkCard({
                 ? work.provenance.revision
                 : undefined
             }
-            audit={runs.length > 0 ? <RunsSection runs={runs} /> : undefined}
+            audit={
+              runs.length > 0 ? (
+                <RunsSection runs={runs} anchorPrefix="audit-run" />
+              ) : undefined
+            }
           />
         ) : runs.length > 0 ? (
           <RunsSection runs={runs} />

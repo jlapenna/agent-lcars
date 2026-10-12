@@ -11,7 +11,7 @@ permissions:
 jobs:
   audit:
     name: Audit ${{ matrix.full_name }}
-    runs-on: ['lcars-default']
+    runs-on: ['lcars-ci']
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -41,6 +41,9 @@ jobs:
           - full_name: jlapenna/sync-padd
             owner: jlapenna
             repository: sync-padd
+          - full_name: jlapenna/labels
+            owner: jlapenna
+            repository: labels
 
     steps:
       - uses: actions/checkout@v7

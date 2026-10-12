@@ -70,6 +70,40 @@ supported size; wait or split/resize actual work while retaining required
 reserves and truthful requests. Never understate demand, rely on overcommit,
 change host controls or stop another owner's workload to make the phase fit.
 
+### Requalify colocated worker turnover
+
+Ordinary replacement of a colocated ARC Pod or process requires fresh
+qualification, not a new authorization for an unchanged planned phase. Save
+the changed raw inventory rows and recheck placement, ownership classification,
+scheduler-feasible request combinations, full-envelope overlap with reserves,
+and storage and accelerator/device fit before starting. When every check passes
+and the authorized phase's bindings remain unchanged, continue under its
+existing authorization; a changed Pod UID or process identity alone does not
+revoke it. Earlier receipts cannot qualify the replacement.
+
+This rule covers colocated runners, not replacement of the issue's own author
+or native worker. Hold for an author/native-worker replacement or task ownership
+collision until ownership and the phase's bindings are reconciled. Also hold
+for changed reviewed source, issue/PR body, base, setup or required hooks;
+unknown ownership or placement; unclassified independent jobs; unsafe
+full-envelope overlap or device fit; or unavailable/insufficient required
+storage guards. Requalifying turnover cannot authorize source substitution,
+hidden jobs, unsupported resource requests, or counting a reserve and its
+covered nested workload twice.
+
+The positive case recorded in [#2429](https://github.com/jlapenna/agent-lcars/issues/2429)
+was same-envelope default Pod replacement: fresh qualification retained four
+default workers at 6 CPU / 7 GiB, one E2E worker at 6 CPU / 12 GiB and one LCARS
+default worker at 4 CPU / 6 GiB. Of 63 worker subsets, six were
+scheduler-feasible and none had unsafe full-envelope overlap; the phase's
+source, author worktree, native ownership and hooks were unchanged. That
+turnover permitted continuation after qualification. In contrast, the
+default + ci-light combination recorded in
+[Homelab #1770](https://github.com/jlapenna/homelab/issues/1770) exceeded supported
+CPU capacity at full envelope before adding any local job. Request-feasible
+placement cannot make that overlap safe: hold the local phase. These are
+recorded cases, not reusable capacity receipts for a future launch.
+
 Ordinary fast checks retain the commands in [CI delegation](#ci-delegation);
 this repository does not ship a general resource-accounting supervisor.
 For a phase explicitly requiring resource guards, identify an available

@@ -10,6 +10,7 @@ import {
   decidedRun,
   isRefusal,
   requestRun,
+  runStartDeadlineAt,
 } from './decide';
 import { lifecycleMetricSnapshot } from './lifecycle-metrics';
 import {
@@ -1302,6 +1303,206 @@ export function runOrchestratorStoreContract(
         expect(claim?.queue?.startDeadlineAt).toBe('2026-08-15T12:15:00.000Z');
         return { ...f, run };
       }
+
+      async function placementFixture() {
+        const f = await fixture();
+        const { run } = await started(f.orchestrator);
+        await f.store.enqueueRun({ runId: run.runId, now: f.clock.now() });
+        await f.orchestrator.confirmDispatch(run.runId);
+        const claim = await f.store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: f.clock.now(),
+          claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
+          tokenHash: 'a'.repeat(64),
+          placementAware: true,
+        });
+        expect(claim?.queue?.startupPlacement).toEqual({
+          state: 'waiting',
+          observedAt: f.clock.now(),
+        });
+        const claimant = {
+          runner: 'executor',
+          subject: 'executor@example.com',
+          claimFingerprint: 'a'.repeat(64),
+        };
+        return { ...f, run, claimant };
+      }
+
+      it('preserves the exact Pending claim and retry budget beyond startup and execution leases, then bounds bootstrap', async () => {
+        const f = await placementFixture();
+        for (let minute = 10; minute <= 150; minute += 10) {
+          f.clock.advanceMinutes(10);
+          const result = await f.orchestrator.observeStartupPlacement(
+            f.run.runId,
+            f.claimant,
+            {
+              jobUid: 'original-job',
+              observedAt: f.clock.now(),
+              placed: false,
+            },
+          );
+          expect(isRefusal(result)).toBe(false);
+          expect(await f.orchestrator.sweepExpired()).toEqual({
+            lost: [],
+            retried: [],
+          });
+        }
+        expect(await f.store.readTask(TASK)).toMatchObject({
+          task: { activeRunId: f.run.runId, consecutiveLost: 0, runCount: 1 },
+        });
+        expect((await f.store.readRun(f.run.runId))?.queue).not.toHaveProperty(
+          'firstHeartbeatAt',
+        );
+        expect((await f.store.readRun(f.run.runId))?.queue).not.toHaveProperty(
+          'providerProcessStartedAt',
+        );
+        f.clock.advanceMinutes(1);
+        await f.orchestrator.observeStartupPlacement(f.run.runId, f.claimant, {
+          jobUid: 'original-job',
+          observedAt: f.clock.now(),
+          placed: true,
+        });
+        const placedDeadline = (await f.store.readRun(f.run.runId))?.queue
+          ?.startDeadlineAt;
+        f.clock.advanceMinutes(14);
+        await f.orchestrator.observeStartupPlacement(f.run.runId, f.claimant, {
+          jobUid: 'original-job',
+          observedAt: f.clock.now(),
+          placed: false,
+        });
+        expect(
+          (await f.store.readRun(f.run.runId))?.queue?.startDeadlineAt,
+        ).toBe(placedDeadline);
+        f.clock.advanceMinutes(1);
+        const sweep = await f.orchestrator.sweepExpired();
+        expect(sweep.lost.map((run) => run.runId)).toEqual([f.run.runId]);
+        expect(sweep.retried).toHaveLength(1);
+      });
+
+      it('refuses stale, replayed, wrong-owner and replacement-Job observations without reviving expired claims', async () => {
+        const f = await placementFixture();
+        f.clock.advanceMinutes(1);
+        const observation = {
+          jobUid: 'original-job',
+          observedAt: f.clock.now(),
+          placed: false,
+        };
+        expect(
+          isRefusal(
+            await f.orchestrator.observeStartupPlacement(
+              f.run.runId,
+              f.claimant,
+              observation,
+            ),
+          ),
+        ).toBe(false);
+        const before = await f.store.readRun(f.run.runId);
+        expect(
+          await f.orchestrator.observeStartupPlacement(
+            f.run.runId,
+            f.claimant,
+            observation,
+          ),
+        ).toMatchObject({ reason: 'stale-lease' });
+        f.clock.advanceMinutes(1);
+        for (const claimant of [
+          { ...f.claimant, runner: 'other' },
+          { ...f.claimant, subject: 'other' },
+          { ...f.claimant, claimFingerprint: 'b'.repeat(64) },
+        ]) {
+          expect(
+            await f.orchestrator.observeStartupPlacement(
+              f.run.runId,
+              claimant,
+              {
+                ...observation,
+                observedAt: f.clock.now(),
+              },
+            ),
+          ).toMatchObject({ reason: 'not-claimant' });
+        }
+        expect(
+          await f.orchestrator.observeStartupPlacement(
+            f.run.runId,
+            f.claimant,
+            {
+              ...observation,
+              jobUid: 'replacement',
+              observedAt: f.clock.now(),
+            },
+          ),
+        ).toMatchObject({ reason: 'not-claimant' });
+        expect(
+          await f.orchestrator.observeStartupPlacement(
+            f.run.runId,
+            f.claimant,
+            {
+              ...observation,
+              observedAt: '2099-01-01T00:00:00.000Z',
+            },
+          ),
+        ).toMatchObject({ reason: 'stale-lease' });
+        expect(await f.store.readRun(f.run.runId)).toEqual(before);
+        f.clock.advanceMinutes(14);
+        expect(
+          await f.orchestrator.observeStartupPlacement(
+            f.run.runId,
+            f.claimant,
+            {
+              ...observation,
+              observedAt: f.clock.now(),
+            },
+          ),
+        ).toMatchObject({ reason: 'stale-lease' });
+        await f.orchestrator.sweepExpired();
+        expect(
+          await f.orchestrator.observeStartupPlacement(
+            f.run.runId,
+            f.claimant,
+            {
+              ...observation,
+              observedAt: f.clock.now(),
+            },
+          ),
+        ).toMatchObject({ reason: 'run-not-live' });
+      });
+
+      it('tolerates bounded executor clock skew while deadlines remain server-owned', async () => {
+        const f = await placementFixture();
+        f.clock.advanceMinutes(1);
+        const skewed = new Date(Date.parse(f.clock.now()) + 1000).toISOString();
+        expect(
+          isRefusal(
+            await f.orchestrator.observeStartupPlacement(
+              f.run.runId,
+              f.claimant,
+              {
+                jobUid: 'job',
+                observedAt: skewed,
+                placed: false,
+              },
+            ),
+          ),
+        ).toBe(false);
+        expect(
+          (await f.store.readRun(f.run.runId))?.queue?.startDeadlineAt,
+        ).toBe(runStartDeadlineAt(f.clock.now()));
+      });
+
+      it('never manufactures a worker heartbeat or extends a worker lease through placement reports', async () => {
+        const f = await placementFixture();
+        f.clock.advanceMinutes(1);
+        await f.orchestrator.renew(f.run.runId, f.claimant.claimFingerprint);
+        const before = await f.store.readRun(f.run.runId);
+        f.clock.advanceMinutes(1);
+        await f.orchestrator.observeStartupPlacement(f.run.runId, f.claimant, {
+          jobUid: 'original-job',
+          observedAt: f.clock.now(),
+          placed: true,
+        });
+        expect(await f.store.readRun(f.run.runId)).toEqual(before);
+      });
 
       it('preserves first provider spawn across duplicate reports, settlement and retry', async () => {
         const f = await claimedFixture();

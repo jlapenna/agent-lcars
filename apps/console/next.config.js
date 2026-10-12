@@ -3,6 +3,8 @@
 const { composePlugins, withNx } = require('@nx/next');
 // eslint-disable-next-line no-restricted-syntax
 const path = require('node:path');
+// eslint-disable-next-line no-restricted-syntax
+const { resolveConsoleBuildWorkers } = require('./build-workers.cjs');
 
 // Resolve through the workspace dependency symlink so the trace follows the
 // one physical pnpm package selected by this install. A virtual-store glob
@@ -51,6 +53,11 @@ const swcHelpersEsmInclude = path
   )
   .split(path.sep)
   .join('/');
+
+// Resolve the page-data worker pool once, at config load: an explicit
+// validated budget, the CI cap, or the cgroup CPU quota this phase actually
+// holds. See build-workers.cjs for the order and the rejection rules (#2493).
+const buildWorkers = resolveConsoleBuildWorkers();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -101,13 +108,18 @@ const nextConfig = {
   // device. `serve-lan`/`pnpm dev:lan` supply a validated FQDN while the
   // emulator-only development stack stays on loopback by default.
   allowedDevOrigins: process.env.FQDN ? [process.env.FQDN] : undefined,
-  // `next build` sizes its static-generation worker pool from the runner's
-  // CPU count, and a GitHub-hosted/self-hosted CI runner's kernel OOM-kills
-  // it under memory pressure -- NODE_OPTIONS' --max-old-space-size is NOT
-  // the operative ceiling there (fleet finding, sprinkles#4474). Cap it in
-  // CI/E2E only; local dev builds keep full parallelism.
+  // `next build` sizes its static-generation worker pool from the CPU count
+  // the build process can see, and each page-data worker carries its own heap,
+  // so an unbounded pool is OOM-killed under memory pressure -- NODE_OPTIONS'
+  // --max-old-space-size is NOT the operative ceiling there (fleet finding,
+  // sprinkles#4474). Visible host CPUs are also not the CPUs a bounded phase
+  // was granted: a truthful 2 CPU / 3 GiB local push started 11 workers and
+  // died before the branch could be published (#2493). build-workers.cjs
+  // honors a validated explicit budget, the CI cap, or the cgroup CPU quota
+  // actually granted, and leaves Next's host default alone for an ordinary
+  // unbounded developer build.
   experimental: {
-    ...(process.env.CI ? { cpus: 2 } : {}),
+    ...(buildWorkers.cpus === null ? {} : { cpus: buildWorkers.cpus }),
     // Screenshot evidence accepts a 10 MiB file. Server Actions default to
     // 1 MiB; leave room for the multipart envelope and validated JSON intent.
     serverActions: { bodySizeLimit: '11mb' },

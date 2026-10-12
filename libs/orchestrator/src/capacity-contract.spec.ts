@@ -268,6 +268,66 @@ function contract(
       now,
     });
 
+    it('fences placement observations against the original receipt Job and committed retirement', async () => {
+      const { store, protocol, a, orchestrator, setNow } = await fixture();
+      await enqueue(store, orchestrator);
+      const result = await protocol.claim(a, {
+        version: 1,
+        runner: 'runner-a',
+        producerId: 'producer-a',
+        claimRequestId: 'placement-aware',
+        nonce: 'placement-nonce-1234567890',
+        tokenHash,
+        now,
+        placementAware: true,
+      });
+      if (result.kind !== 'claim') throw new Error('expected claim');
+      const { receipt } = result;
+      await bind(protocol, a, receipt);
+      setNow('2026-10-10T04:00:30.000Z');
+      const claimant = {
+        runner: 'runner-a',
+        subject: a.subject,
+        claimFingerprint: tokenHash,
+      };
+      const observation = {
+        jobUid: 'job-original',
+        observedAt: '2026-10-10T04:00:30.000Z',
+        placed: false,
+        poolId: a.poolId,
+      };
+      const before = await store.readRun(receipt.runId);
+      await expect(
+        orchestrator.observeStartupPlacement(receipt.runId, claimant, {
+          ...observation,
+          jobUid: 'replacement-job',
+        }),
+      ).rejects.toThrow('authority');
+      expect(await store.readRun(receipt.runId)).toEqual(before);
+      expect(
+        isRefusal(
+          await orchestrator.observeStartupPlacement(
+            receipt.runId,
+            claimant,
+            observation,
+          ),
+        ),
+      ).toBe(false);
+      const updated = await store.readRun(receipt.runId);
+      await protocol.retire(a, fence(receipt), {
+        recoveryNonce,
+        now: observation.observedAt,
+      });
+      setNow('2026-10-10T04:00:40.000Z');
+      await expect(
+        orchestrator.observeStartupPlacement(receipt.runId, claimant, {
+          ...observation,
+          observedAt: '2026-10-10T04:00:40.000Z',
+        }),
+      ).rejects.toThrow('retired');
+      expect(await store.readRun(receipt.runId)).toEqual(updated);
+    });
+
     it('capacity startup deadline survives response loss and expires with one retained physical receipt', async () => {
       const { store, protocol, a, orchestrator, setNow } = await fixture();
       await enqueue(store, orchestrator);

@@ -9,7 +9,11 @@ import {
   LIFECYCLE_METRICS_WINDOW_SECONDS,
   lifecycleMetricSnapshot,
 } from '@agent-lcars/orchestrator';
-import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
+import {
+  itemsContract,
+  type MaintenanceTickOutput,
+  workPayloadSchema,
+} from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
@@ -114,15 +118,7 @@ export const workRouter = os.router({
         message: 'maintenance tick failed',
       });
     }
-    return result.body as {
-      lost: string[];
-      retried: { lostRunId: string; newRunId: string }[];
-      dispatched: string[];
-      reported: string[];
-      outboxProcessed: number;
-      outboxContinuationNeeded: boolean;
-      outboxDrainFailed?: { entryId: string; error: string }[];
-    };
+    return result.body as MaintenanceTickOutput;
   }),
   create: operator.create.handler(async ({ input, context, errors }) => {
     const { principal } = context;

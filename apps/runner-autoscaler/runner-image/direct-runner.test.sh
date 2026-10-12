@@ -149,6 +149,7 @@ export WORKER_COMPLETION_HELPER="$baked/runtime/worker-completion.sh"
 export WORKER_ACTIVATION_HELPER="$baked/runtime/worker-activation.sh"
 sed -i 's|^WORKER_IDENTITY_FILE=.*|WORKER_IDENTITY_FILE="${FIXTURE_WORKER_IDENTITY_FILE:-/run/agent-lcars-identity/token}"|' "$WORKER_ACTIVATION_HELPER"
 export WORKER_POLICY_BOOTSTRAP_HELPER="$baked/runtime/worker-policy-bootstrap.sh"
+export HOOK_TELEMETRY_HELPER="$baked/runtime/hook-telemetry-bootstrap.sh"
 export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
 export WORKER_POLICY_NODE="$real_node"
 # sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
@@ -1306,6 +1307,51 @@ if find "$LCARS_CODEX_VOLATILE_DIR" -mindepth 1 -print -quit | grep -q .; then
 fi
 
 echo "scenario codex-happy: OK"
+
+# Hook telemetry (docs/hooks-telemetry-design.md, phase 2): a selected
+# pipeline installs its provider hooks after its own config exists, never
+# starts the polling sidecar, drains the flusher before finalize, and still
+# finalizes. The credentials file is named for the hook client only, never
+# exported as the agent's ambient Google credentials.
+export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/hook-telemetry-writer.json"
+printf '%s\n' '{"type":"fixture"}' > "$HOOK_TELEMETRY_CREDENTIALS_FILE"
+export HOOK_TELEMETRY_CLI=/fake/lcars-session-title.cjs
+export HOOK_TELEMETRY_FLUSHER=/fake/lcars-hook-flush.cjs
+for hook_pipeline in claude codex; do
+  export LCARS_HOOK_TELEMETRY_PROVIDERS="$hook_pipeline"
+  run_scenario "hook-telemetry-$hook_pipeline" "$hook_pipeline"
+  [ "$rc" -eq 0 ] || fail "hook telemetry $hook_pipeline: expected exit 0, got $rc"
+  grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+    fail "hook telemetry $hook_pipeline: run did not complete with its deliverable"
+  grep -qx "/fake/lcars-session-title.cjs integration install $hook_pipeline" "$NODE_ARGS_LOG" ||
+    fail "hook telemetry $hook_pipeline: hook entries were not installed ($(cat "$NODE_ARGS_LOG"))"
+  if grep -q -- 'runner sidecar' "$NODE_ARGS_LOG"; then
+    fail "hook telemetry $hook_pipeline: the polling sidecar still started"
+  fi
+  drain_line="$(grep -nx '/fake/lcars-hook-flush.cjs' "$NODE_ARGS_LOG" | head -1 | cut -d: -f1)"
+  finalize_line="$(grep -n -- 'runner finalize' "$NODE_ARGS_LOG" | head -1 | cut -d: -f1)"
+  [ -n "$drain_line" ] && [ -n "$finalize_line" ] && [ "$drain_line" -lt "$finalize_line" ] ||
+    fail "hook telemetry $hook_pipeline: the flusher did not drain before finalize ($(cat "$NODE_ARGS_LOG"))"
+  [ -e "$HOME/.local/state/agent-lcars/hook-fence" ] ||
+    fail "hook telemetry $hook_pipeline: the drain did not fence late hook events before finalize"
+  echo "scenario hook-telemetry-$hook_pipeline: OK"
+done
+grep -q -- '--dangerously-bypass-hook-trust' "$CODEX_ARGS_LOG" ||
+  fail "hook telemetry codex: codex exec did not enable the installed hooks ($(cat "$CODEX_ARGS_LOG"))"
+
+# A missing credentials file falls back to the sidecar instead of running
+# blind, and OpenCode always keeps the sidecar.
+export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/missing-hook-telemetry-writer.json"
+export LCARS_HOOK_TELEMETRY_PROVIDERS=claude
+run_scenario hook-telemetry-fallback claude
+[ "$rc" -eq 0 ] || fail "hook telemetry fallback: expected exit 0, got $rc"
+grep -q -- 'runner sidecar' "$NODE_ARGS_LOG" ||
+  fail "hook telemetry fallback: the sidecar did not start after hooks could not install"
+if grep -q 'integration install' "$NODE_ARGS_LOG"; then
+  fail "hook telemetry fallback: installed hooks without a readable credentials file"
+fi
+echo "scenario hook-telemetry-fallback: OK"
+unset LCARS_HOOK_TELEMETRY_PROVIDERS HOOK_TELEMETRY_CREDENTIALS_FILE HOOK_TELEMETRY_CLI HOOK_TELEMETRY_FLUSHER
 
 # --- Scenario 1a-i: no resume in the brief keeps the fresh codex path -------
 # Regression pin: a brief with no `resume` field must leave Codex's dispatch

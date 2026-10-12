@@ -1,5 +1,7 @@
 import {
+  assertCapacityPlacementClaim,
   assertCapacityWorkerPermit,
+  type CapacityPlacementClaim,
   type CapacityRecord,
   capacityRecordForStorage,
   CapacityRefusal,
@@ -232,6 +234,7 @@ export class MemoryStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
+    placementClaim?: CapacityPlacementClaim;
     workerPermit?: CapacityWorkerPermit;
     queueEligibilityPipelines?: readonly string[];
     shouldReadQueueEligibility?: (
@@ -248,6 +251,15 @@ export class MemoryStore implements OrchestratorStore {
         this.#capacity,
         this.#capacityRecords.get(retiredKey(input.runId)),
         input.workerPermit,
+      );
+    }
+    if (input.placementClaim !== undefined) {
+      if (input.placementClaim.runId !== input.runId)
+        throw new CapacityRefusal('authority');
+      assertCapacityPlacementClaim(
+        this.#capacity,
+        this.#capacityRecords.get(retiredKey(input.runId)),
+        input.placementClaim,
       );
     }
     const run = structuredClone(this.#runs.get(input.runId));
@@ -709,6 +721,7 @@ export class MemoryStore implements OrchestratorStore {
     claimedBy: string;
     claimedBySubject?: string;
     tokenHash: string;
+    placementAware?: boolean;
   }): Promise<Run | undefined> {
     if (
       this.#capacity.policies.some(
@@ -738,6 +751,14 @@ export class MemoryStore implements OrchestratorStore {
         state: 'claimed',
         claimedAt: input.now,
         startDeadlineAt: runStartDeadlineAt(input.now),
+        ...(input.placementAware === true
+          ? {
+              startupPlacement: {
+                state: 'waiting' as const,
+                observedAt: input.now,
+              },
+            }
+          : {}),
         claimedBy: input.claimedBy,
         ...(input.claimedBySubject === undefined
           ? {}

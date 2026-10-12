@@ -1,3 +1,4 @@
+import { runPlacementSchema } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 /**
@@ -242,13 +243,24 @@ export type RunResult = z.infer<typeof runResultSchema>;
  *  token; `apps/console/src/lib/run-token.ts` mints/hashes it. */
 export const runQueueSchema = z.strictObject({
   state: z.enum(['queued', 'claimed', 'retired']),
+  placement: runPlacementSchema.optional(),
   /** A lifecycle lookup could not verify this run. Claims skip it until this
    * instant so one broken GitHub anchor cannot block its whole pipeline. */
   deferredUntil: isoUtc.optional(),
   claimedAt: isoUtc.optional(),
-  /** Claim-time bootstrap budget, independent of the renewable execution
-   * lease. Absent on older claims, which retain lease-only recovery. */
+  /** Finite observer/bootstrap budget, independent of worker heartbeats.
+   * Negotiated Pending observations renew it until placement; legacy claims
+   * start bootstrap at claim. Absent oldest claims retain lease-only recovery. */
   startDeadlineAt: isoUtc.optional(),
+  /** Negotiated executor observations keep placement wait separate from the
+   * worker's bootstrap clock. Never evidence of worker/provider liveness. */
+  startupPlacement: z
+    .strictObject({
+      state: z.enum(['waiting', 'placed']),
+      observedAt: isoUtc,
+      jobUid: z.string().min(1).max(256).optional(),
+    })
+    .optional(),
   /** First accepted worker heartbeat; dispatch/claim alone is not liveness. */
   firstHeartbeatAt: isoUtc.optional(),
   /** First accepted run-token report that the provider executable was spawned.

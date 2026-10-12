@@ -197,9 +197,29 @@ export interface ComputeLivenessInput {
   heartbeatReceived: boolean;
 }
 
+/**
+ * Who last wrote this doc and from what evidence (docs/hooks-telemetry-design.md
+ * §4.4). `hook` docs carry the writing host's per-session `seq` so the
+ * ingest route can refuse an out-of-order event from the same host; the
+ * polling daemon never sets this field, which is what lets the two writers
+ * coexist during the rollout.
+ */
+export interface SessionObserver {
+  kind: 'hook';
+  /** Which runtime's hook produced the last event (`claude-code`, ...). */
+  runtime: SessionAgent;
+  host: string;
+  seq: number;
+  eventId: string;
+  /** The event's own `occurredAt`, not the write time. */
+  occurredAt: string;
+  clientVersion?: string;
+}
+
 interface BaseSessionDoc {
   sessionId: string;
   liveness: SessionLiveness;
+  observer?: SessionObserver;
   /** Most recent time a host watcher directly observed this CLI session.
    * Quantized by the watcher to avoid a Firestore write every tick. */
   observedAt?: string;

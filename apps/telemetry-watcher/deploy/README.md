@@ -158,26 +158,19 @@ readability or persistence is required.
 
 ## Session titles (issue #1212)
 
-Two tiers of session titles reach the watcher through
+Declared session titles reach the watcher through
 `~/.local/state/agent-lcars` (`AGENT_TELEMETRY_SESSION_STATE_DIR`), mounted
 read-only into the container at that same absolute path — see the compose
 file's comment on that mount for why it's a dedicated root and why Codex's
 own state DB is deliberately not mounted:
 
-- **`declared`** — `session-metadata/<sessionId>.json`. An agent (or a
-  human) sets one by running `lcars session title "..."` from inside a
-  Claude Code, Codex, or OpenCode session. The CLI resolves the session id
-  itself, in order: `LCARS_SESSION_ID` → `CLAUDE_CODE_SESSION_ID` →
-  `CODEX_THREAD_ID`. OpenCode's runner plugin maps the native session id from
-  its `shell.env` hook to `LCARS_SESSION_ID` for each tool call.
-  The first one present _and_ passing `isSafeIdentifier` wins — a
-  present-but-unsafe value is a hard failure, not a fall-through to the next
-  candidate, so a malformed id can never silently retarget another
-  runtime's session. This directory is written by the CLI running as the
-  plain watcher-host user; `deploy.sh` only has to make sure it exists
-  before Docker would otherwise create it root-owned. Codex prompt-derived
-  titles are read directly from its watched rollout JSONL; no state database
-  or host-side importer is involved.
+- **`declared`** — `session-metadata/<sessionId>.json`. The
+  [session-title CLI contract](../README.md#session-titles-issue-1212) owns
+  the title commands, provider session-ID resolution and invalid-ID handling.
+  This directory is written by the CLI running as the plain watcher-host
+  user; `deploy.sh` makes sure it exists before Docker would otherwise
+  create it root-owned. Codex prompt-derived titles are read directly from
+  watched rollout JSONL; no state database or host-side importer is involved.
 
 The declared-title file uses `{version: 1, sessionId, updatedAt, title}`.
 

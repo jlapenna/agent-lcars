@@ -157,3 +157,9 @@ cs_build_full.json
 /.agent-dispatch/
 
 vitest.config.*.timestamp*
+
+# OpenDesign workspace metadata (design prototyping worktree).
+.open-design/
+
+# The global *.txt rule above would otherwise hide the bundled font license text.
+!design/assets/fonts/OFL.txt

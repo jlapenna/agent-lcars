@@ -184,13 +184,18 @@ async function expectResolvedMergeRefusal(
       // app and effect journal still execute exactly one authorized action.
       await page.route('**/inbox?**', delayResponse);
     }
-    const completed = page.waitForEvent('requestfinished', {
-      predicate: (request) => request === intendedRequest,
-      timeout: actionTimeout,
-    });
+    // ServerAction streams can end with requestfailed/ERR_ABORTED after the
+    // response has already resolved the UI. Require the intended response,
+    // then the pending/refusal assertions below, rather than transport EOF.
+    const completed = page.waitForResponse(
+      (response) => response.request() === intendedRequest,
+      { timeout: actionTimeout },
+    );
     record('confirmation-start');
-    await Promise.all([completed, click()]);
-    record('action-complete');
+    const [response] = await Promise.all([completed, click()]);
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toContain('text/x-component');
+    record('action-response-accepted');
     if (controlledDelayMs) expect(delayApplied).toBe(true);
     await Promise.all([
       expect(
@@ -693,7 +698,7 @@ test.describe('Inbox authorized action journeys', () => {
       card.getByText('authoritative state rev 2', { exact: true }),
     ).toBeVisible();
     await expect(card.getByTestId('runs-section')).toContainText('Runs (3)');
-    const completed = card.getByTestId(`run-${REPOSITORY}#9008/r0`);
+    const completed = card.getByTestId(`audit-run-${REPOSITORY}#9008/r0`);
     await expect(completed.getByTestId('run-state')).toHaveText('finished');
     await expect(
       completed.getByTestId(`run-events-${REPOSITORY}#9008/r0`),
@@ -706,10 +711,14 @@ test.describe('Inbox authorized action journeys', () => {
       `https://github.com/${REPOSITORY}/pull/9420`,
     );
     await expect(
-      card.getByTestId(`run-${REPOSITORY}#9008/r1`).getByTestId('run-state'),
+      card
+        .getByTestId(`audit-run-${REPOSITORY}#9008/r1`)
+        .getByTestId('run-state'),
     ).toHaveText('running');
     await expect(
-      card.getByTestId(`run-${REPOSITORY}#9008/r2`).getByTestId('run-state'),
+      card
+        .getByTestId(`audit-run-${REPOSITORY}#9008/r2`)
+        .getByTestId('run-state'),
     ).toHaveText('pending');
   });
 });

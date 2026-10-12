@@ -22,6 +22,13 @@ export {
   REPLY_COMMANDS,
   REVIEW_LABELS,
 } from './pipelines';
+export type { ExecutionPhase, ExecutionRun, RunPlacement } from './placement';
+export {
+  EXECUTION_PHASE_LABELS,
+  executionPhase,
+  PLACEMENT_STALENESS_MS,
+  runPlacementSchema,
+} from './placement';
 export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,

@@ -120,6 +120,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					queue.exits = newRunExitReporter(consoleURL, runnerName, func() (string, error) {
 						return idTokenFromSource(tokenSource)
 					}, logger.With("component", "run-exit-reporter"))
+					queue.reportStartupPlacement = queueStartupPlacementReporter(consoleURL, func() (string, error) { return idTokenFromSource(tokenSource) })
 					queue.claimSettled = queueClaimStatus(consoleURL, func() (string, error) {
 						return idTokenFromSource(tokenSource)
 					})
@@ -151,12 +152,16 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					} else {
 						queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
 					}
+					queue.draining = queueDraining.Load
+					go queue.runPlacementObserver(ctx, queuePlacementReporter(consoleURL, func() (string, error) {
+						return idTokenFromSource(tokenSource)
+					}))
 					setQueueExecutorStartupState(queueExecutorStateReady)
 					queueStatus.ready.Store(queue.capacity == nil)
 					go func() {
 						defer close(pollDone)
 						runQueueExecutorPoller(ctx, queueExecutorConfig{
-							consoleURL: consoleURL, runnerName: runnerName,
+							consoleURL: consoleURL, runnerName: runnerName, placementAware: true,
 							idToken:  func() (string, error) { return idTokenFromSource(tokenSource) },
 							reserve:  func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
 							capacity: queue.capacity, recover: queue.recover, cleanup: queue.cleanup, draining: queueDraining.Load,

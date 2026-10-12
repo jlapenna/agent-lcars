@@ -430,6 +430,7 @@ export class CapacityProtocol {
       producerId: string;
       claimRequestId: string;
       tokenHash: string;
+      placementAware?: boolean;
       nonce: string;
       now: string;
     },
@@ -654,6 +655,14 @@ export class CapacityProtocol {
             state: 'claimed',
             claimedAt: input.now,
             startDeadlineAt: runStartDeadlineAt(input.now),
+            ...(input.placementAware === true
+              ? {
+                  startupPlacement: {
+                    state: 'waiting' as const,
+                    observedAt: input.now,
+                  },
+                }
+              : {}),
             claimedBy: input.runner,
             claimedBySubject: authority.subject,
             tokenHash: input.tokenHash,

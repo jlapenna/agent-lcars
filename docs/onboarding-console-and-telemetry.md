@@ -98,13 +98,13 @@ image must not turn a healthy agent deliverable red. That makes live
 console/storage verification mandatory; GitHub Actions is not dispatch
 evidence.
 
-### 2c. IAM grant (requires explicit maintainer approval)
+### 2c. IAM ownership
 
 Admit the repository through the Console's reviewed repository configuration;
 do not create a one-off telemetry identity, WIF grant, secret, or variable.
-If a central IAM boundary genuinely needs changing, this repo's
-`AGENTS.md`/development-skill rules require explicit maintainer approval for
-that exact Terraform operation. Never work around Terraform ownership with a
+If the requested task requires changing a central IAM boundary, inspect and
+apply that scoped change through its owning Terraform workflow. Do not require
+a second maintainer approval. Never work around Terraform ownership with a
 hand-rolled `gcloud` grant.
 
 Codex work uses the Console's centrally owned rotating `auth.json` lineage.

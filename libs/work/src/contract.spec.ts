@@ -41,6 +41,64 @@ describe('itemsContract', () => {
   });
 });
 
+describe('itemsContract.maintenanceTick output', () => {
+  const shape = itemsContract.maintenanceTick['~orpc'].outputSchemas?.at(-1) as
+    z.ZodTypeAny | undefined;
+  const body = {
+    lost: [],
+    retried: [],
+    rerouted: [],
+    dispatched: [],
+    reported: [],
+    outboxProcessed: 0,
+    outboxContinuationNeeded: false,
+  };
+
+  it('uses the actual pinned SDK output schema for strict optional recovery results', () => {
+    if (shape === undefined)
+      throw new Error('Expected maintenance outputSchemas entry');
+    expect(shape.parse(body)).toEqual(body);
+    for (const credentialRecovery of [
+      { recovered: [], unresolved: [] },
+      { recovered: ['completed'], unresolved: ['still-in-flight'] },
+    ]) {
+      expect(shape.parse({ ...body, credentialRecovery })).toEqual({
+        ...body,
+        credentialRecovery,
+      });
+    }
+  });
+
+  it.each([
+    { name: 'unknown top-level output', extra: { unexpected: true } },
+    {
+      name: 'missing recovery array',
+      extra: { credentialRecovery: { recovered: [] } },
+    },
+    {
+      name: 'nonarray recovery',
+      extra: { credentialRecovery: { recovered: 'invalid', unresolved: [] } },
+    },
+    {
+      name: 'nonstrings in recovery',
+      extra: { credentialRecovery: { recovered: [], unresolved: [7] } },
+    },
+    {
+      name: 'unknown nested recovery output',
+      extra: {
+        credentialRecovery: { recovered: [], unresolved: [], unexpected: true },
+      },
+    },
+  ])(
+    'rejects $name without weakening strict response validation',
+    ({ extra }) => {
+      if (shape === undefined)
+        throw new Error('Expected maintenance outputSchemas entry');
+      expect(shape.safeParse({ ...body, ...extra }).success).toBe(false);
+    },
+  );
+});
+
 describe('dispatchesContract.github', () => {
   it('requires an explicit GitHub anchor, spec, mode, and request id while accepting every valid GitHub body', () => {
     expect(Object.keys(dispatchesContract).sort()).toEqual([
@@ -153,10 +211,12 @@ describe('runsContract', () => {
       [
         'claim',
         'claimStatus',
+        'startupPlacement',
         'capacity',
         'capacityMetrics',
         'capacityInventory',
         'activate',
+        'placement',
         'brief',
         'heartbeat',
         'exit',
@@ -172,6 +232,13 @@ describe('runsContract', () => {
     const [rawShape] = runsContract.claim['~orpc'].inputSchemas ?? [];
     const shape = rawShape as z.ZodTypeAny | undefined;
 
+    expect(
+      shape?.parse({ runner: 'autoscaler-1', placementAware: true }),
+    ).toEqual({ runner: 'autoscaler-1', placementAware: true });
+    expect(
+      shape?.safeParse({ runner: 'autoscaler-1', placementAware: false })
+        .success,
+    ).toBe(false);
     expect(shape?.parse({ runner: 'autoscaler-1' })).toEqual({
       runner: 'autoscaler-1',
     });
@@ -408,7 +475,9 @@ describe('generateWorkOpenApi', () => {
         '/runs/activate',
         '/runs/{runId}/brief',
         '/runs/{runId}/claim-status',
+        '/runs/{runId}/startup-placement',
         '/runs/{runId}/heartbeat',
+        '/runs/{runId}/placement',
         '/runs/{runId}/exit',
         '/runs/{runId}/complete',
         '/runs/{runId}/checkout-token',
@@ -436,7 +505,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(8);
+    expect(operations).toHaveLength(10);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -539,7 +608,15 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/activate': ['200', '401', '409'],
       'GET /runs/{runId}/brief': ['200', '401', '409'],
       'POST /runs/{runId}/heartbeat': ['200', '401', '409'],
+      'POST /runs/{runId}/startup-placement': [
+        '200',
+        '401',
+        '403',
+        '404',
+        '409',
+      ],
       'GET /runs/{runId}/claim-status': ['200', '401', '403', '404'],
+      'POST /runs/{runId}/placement': ['200', '401', '403', '404'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],
       'POST /runs/{runId}/complete': ['200', '401', '409'],
       'GET /runs/{runId}/checkout-token': ['200', '401', '409'],

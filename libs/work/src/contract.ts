@@ -1,3 +1,4 @@
+import { runPlacementSchema } from '@agent-lcars/dispatch-contracts';
 import { oc } from '@orpc/contract';
 import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
@@ -106,6 +107,8 @@ export const itemRunViewSchema = z.strictObject({
       claimedAt: z.string().optional(),
       firstHeartbeatAt: z.string().optional(),
       providerProcessStartedAt: z.string().optional(),
+      startDeadlineAt: z.string().optional(),
+      placement: runPlacementSchema.optional(),
     })
     .optional(),
 });
@@ -148,6 +151,33 @@ const withBearer = <T extends object>(current: T) => ({
 
 const base = oc.meta(openapi({ tags: ['items'], spec: withBearer }));
 
+export const maintenanceTickOutputSchema = z.strictObject({
+  credentialRecovery: z
+    .strictObject({
+      recovered: z.array(z.string()),
+      unresolved: z.array(z.string()),
+    })
+    .optional(),
+  lost: z.array(z.string()),
+  retried: z.array(
+    z.strictObject({ lostRunId: z.string(), newRunId: z.string() }),
+  ),
+  rerouted: z
+    .array(z.strictObject({ fromRunId: z.string(), newRunId: z.string() }))
+    .optional(),
+  dispatched: z.array(z.string()),
+  reported: z.array(z.string()),
+  outboxProcessed: z.number().int().nonnegative(),
+  outboxContinuationNeeded: z.boolean(),
+  outboxDrainFailed: z
+    .array(z.strictObject({ entryId: z.string(), error: z.string() }))
+    .optional(),
+});
+
+export type MaintenanceTickOutput = z.output<
+  typeof maintenanceTickOutputSchema
+>;
+
 export const itemsContract = {
   lifecycleMetrics: base
     .meta(
@@ -179,26 +209,7 @@ export const itemsContract = {
       }),
     )
     .input(z.strictObject({}))
-    .output(
-      z.strictObject({
-        lost: z.array(z.string()),
-        retried: z.array(
-          z.strictObject({ lostRunId: z.string(), newRunId: z.string() }),
-        ),
-        rerouted: z
-          .array(
-            z.strictObject({ fromRunId: z.string(), newRunId: z.string() }),
-          )
-          .optional(),
-        dispatched: z.array(z.string()),
-        reported: z.array(z.string()),
-        outboxProcessed: z.number().int().nonnegative(),
-        outboxContinuationNeeded: z.boolean(),
-        outboxDrainFailed: z
-          .array(z.strictObject({ entryId: z.string(), error: z.string() }))
-          .optional(),
-      }),
-    ),
+    .output(maintenanceTickOutputSchema),
   create: base
     .meta(
       openapi({
@@ -801,6 +812,7 @@ export const schedulesContract = {
 const runIdSchema = z.string().min(1).max(175);
 
 export const runClaimResponseSchema = z.strictObject({
+  placementAware: z.literal(true).optional(),
   runId: runIdSchema,
   /** Present for native Work anchors only. */
   workId: workIdSchema.optional(),
@@ -937,6 +949,7 @@ export const runsContract = {
     .input(
       z.strictObject({
         runner: z.string().min(1).max(256),
+        placementAware: z.literal(true).optional(),
         capacityVersion: z.number().int().positive().optional(),
         producerId: z.string().min(1).max(175).optional(),
         claimRequestId: z.string().min(1).max(175).optional(),
@@ -984,6 +997,65 @@ export const runsContract = {
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
+  placement: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/placement',
+        operationId: 'observeRunPlacement',
+        summary: 'Report exact-claim scheduler placement',
+        spec: withBearer,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'work.executor scope required' },
+      FORBIDDEN: { message: 'executor may not observe this claim' },
+      NOT_FOUND: { message: 'unknown run' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string().min(1).max(256),
+        claimFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+        placement: runPlacementSchema,
+      }),
+    )
+    .output(z.strictObject({ runId: runIdSchema })),
+  startupPlacement: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/startup-placement',
+        operationId: 'observeRunStartupPlacement',
+        summary: 'Report exact executor-owned worker placement',
+        spec: withBearer,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'work.executor scope required' },
+      FORBIDDEN: {
+        message: 'executor does not own this placement-aware claim',
+      },
+      CONFLICT: { message: 'Placement observation refused' },
+      NOT_FOUND: { message: 'unknown run' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string().min(1).max(256),
+        claimFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+        jobUid: z.string().min(1).max(256),
+        observedAt: z.iso.datetime(),
+        placed: z.boolean(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        runId: runIdSchema,
+        jobUid: z.string(),
+        expiresAt: z.string(),
+      }),
+    ),
   claimStatus: runBase
     .meta(
       openapi({

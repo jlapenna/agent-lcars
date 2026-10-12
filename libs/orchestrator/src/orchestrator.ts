@@ -13,6 +13,8 @@ import {
   type ExitClaimant,
   expireLeaseAndRetry,
   isRefusal,
+  observePlacement,
+  observeStartupPlacement,
   type Refusal,
   refused,
   renewLease,
@@ -207,6 +209,42 @@ export class Orchestrator {
     );
   }
 
+  async observeStartupPlacement(
+    runId: string,
+    claimant: ExitClaimant,
+    observation: {
+      jobUid: string;
+      observedAt: string;
+      placed: boolean;
+      poolId?: string;
+    },
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(
+      runId,
+      (task, run) =>
+        observeStartupPlacement({
+          now: this.clock.now(),
+          task,
+          run,
+          claimant,
+          ...observation,
+        }),
+      undefined,
+      {
+        placementClaim: {
+          runId,
+          subject: claimant.subject,
+          runner: claimant.runner,
+          tokenHash: claimant.claimFingerprint ?? '',
+          jobUid: observation.jobUid,
+          ...(observation.poolId === undefined
+            ? {}
+            : { poolId: observation.poolId }),
+        },
+      },
+    );
+  }
+
   async renew(
     runId: string,
     claimFingerprint?: string,
@@ -226,6 +264,22 @@ export class Orchestrator {
       undefined,
       undefined,
       workerPermit,
+    );
+  }
+
+  async observePlacement(
+    runId: string,
+    claimant: ExitClaimant,
+    placement: NonNullable<NonNullable<Run['queue']>['placement']>,
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(runId, (task, run) =>
+      observePlacement({
+        now: this.clock.now(),
+        task,
+        run,
+        claimant,
+        placement,
+      }),
     );
   }
 
@@ -623,7 +677,9 @@ export class Orchestrator {
     credentialCleanupId: string = crypto.randomUUID(),
     queueEligibilityOptions?: Pick<
       Parameters<OrchestratorStore['transactRun']>[0],
-      'queueEligibilityPipelines' | 'shouldReadQueueEligibility'
+      | 'queueEligibilityPipelines'
+      | 'shouldReadQueueEligibility'
+      | 'placementClaim'
     >,
     workerPermit?: CapacityWorkerPermit,
   ): Promise<Decision | Refusal> {

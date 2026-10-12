@@ -75,6 +75,32 @@ once in `runner-capture.ts` (`runnerWatchRoots`, `RUNNER_CAPTURE_AGENTS`,
 runner-mode entry points (`runner.ts`'s `startSidecar` and `finalize.ts`'s
 `finalizeSidecar`) rather than hand-copied.
 
+## Codex publication qualification
+
+Repository-qualified PR evidence is separate from legacy display hints. The
+Codex adapter accepts a single literal code-mode
+`text(await tools.exec_command({cmd: "gh pr create ..."}))` invocation,
+including the observed prefix of up to two `git config user.name/email` or
+`git var GIT_AUTHOR_IDENT/GIT_COMMITTER_IDENT` reads. It parses JavaScript
+with Acorn without executing source. Dynamic arguments, extra orchestration
+statements and arbitrary compound shell output remain unqualified.
+
+One JSON exec envelope owns its result, including the observed transport
+header and envelope split across separate `input_text` blocks. A running exec's session ID can be continued only by a correlated
+literal `text(await tools.write_stdin({session_id: ..., chars: ""}))` poll.
+Call IDs are single-use; overlapping polls, reused exec session IDs, failed
+results and ambiguous aggregate output cannot qualify a publication. Intervening
+stdin or unsupported orchestration invalidates pending publication ownership. The
+successful terminal stdout must end in one standalone repository-qualified
+PR URL; quoted fixture URLs and edit/view/help/dry-run output remain display
+hints. Existing direct shell-call compatibility is preserved.
+
+Unsupported shapes retain token/cost data and historical PR-number hints;
+they do not invent qualified attribution. Adapter and retained-session/spend
+regressions exercise a sanitized version of #2461's delayed transport shape.
+Normal installed-producer adoption and stored real publication evidence are
+separate runtime acceptance gates; source tests do not satisfy them.
+
 ## CLI
 
 ```bash

@@ -15,6 +15,7 @@ import {
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
+  retryPostedComment,
   updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
@@ -85,7 +86,13 @@ function revalidateDashboard() {
  * comment on an item nobody owns (#1869).
  */
 export type ReplyResult =
-  | { ok: true; dispatched: boolean; note: string; warning?: true }
+  | {
+      ok: true;
+      dispatched: boolean;
+      note: string;
+      warning?: true;
+      retry?: { commentId: number; pipeline: Pipeline };
+    }
   | { ok: false; message: string };
 
 export async function replyToItem(
@@ -99,7 +106,7 @@ export async function replyToItem(
     if (!session.user.login) {
       throw new ActionError('Authenticated GitHub login is required', 401);
     }
-    const { dispatched, dispatchWarning } = await postComment(
+    const { dispatched, dispatchWarning, retryCommentId } = await postComment(
       resolveWatchedRepo(repo),
       number,
       body,
@@ -114,16 +121,60 @@ export async function replyToItem(
       ok: true,
       dispatched,
       ...(dispatchWarning === undefined ? {} : { warning: true as const }),
+      ...(retryCommentId !== undefined && assignedPipeline !== undefined
+        ? { retry: { commentId: retryCommentId, pipeline: assignedPipeline } }
+        : {}),
       note:
         dispatchWarning === 'assignment-update-failed' && dispatched
           ? 'Reply posted and agent dispatched, but updating the GitHub assignment failed.'
           : dispatchWarning === 'projection-refresh-failed'
             ? 'Reply posted and agent dispatched, but the queue may take a moment to refresh.'
             : dispatchWarning === 'dispatch-failed'
-              ? 'Reply posted, but dispatch failed. Refresh the item and retry assignment without reposting your reply.'
+              ? 'Reply posted, but dispatch failed. Use Retry dispatch to send the posted reply without posting it again.'
               : dispatched
                 ? `Dispatched ${assignedPipeline ?? 'agent'}`
                 : 'No agent assigned - posted as a comment only',
+    };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+
+export async function retryReplyToItem(
+  repo: WatchedRepo,
+  number: number,
+  commentId: number,
+  pipeline: Pipeline,
+): Promise<ActionResult> {
+  const session = await requireAdmin();
+  try {
+    if (!session.user.login)
+      throw new ActionError('Authenticated GitHub login is required', 401);
+    const result = await retryPostedComment(
+      resolveWatchedRepo(repo),
+      number,
+      commentId,
+      session.user.login,
+      pipeline,
+    );
+    revalidateDashboard();
+    if (!result.dispatched) {
+      return {
+        ok: false,
+        message:
+          result.dispatchWarning === 'dispatch-failed'
+            ? 'Dispatch failed. You can retry without reposting your reply.'
+            : 'The current assignment no longer permits this reply dispatch. Refresh the item to check its assignment.',
+      };
+    }
+    return {
+      ok: true,
+      note:
+        result.dispatchWarning === 'assignment-update-failed'
+          ? 'Agent dispatched, but updating the GitHub assignment failed.'
+          : result.dispatchWarning
+            ? 'Agent dispatched, but the queue may take a moment to refresh.'
+            : `Dispatched ${pipeline}`,
     };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };

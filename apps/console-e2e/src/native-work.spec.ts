@@ -98,8 +98,8 @@ test.describe('native Work mutation journeys', () => {
         page
           .getByRole('row')
           .filter({ hasText: `work:${ID}/r2` })
-          .getByRole('cell', { name: 'running', exact: true }),
-      ).toBeVisible();
+          .getByTestId('execution-status'),
+      ).toHaveText('Queued');
       const confirmation = page.getByTestId('work-reply-confirmation');
       await expect(confirmation).toContainText(TITLE);
       await expect(confirmation.getByRole('status')).toHaveText(
@@ -119,8 +119,11 @@ test.describe('native Work mutation journeys', () => {
         }),
       ).toBeVisible();
       await expect(
-        page.getByRole('row').filter({ hasText: `work:${ID}/r2` }),
-      ).toContainText('running');
+        page
+          .getByRole('row')
+          .filter({ hasText: `work:${ID}/r2` })
+          .getByTestId('execution-status'),
+      ).toHaveText('Queued');
       await expect(
         page.getByRole('button', { name: 'Reply', exact: true }),
       ).toHaveCount(0);
@@ -180,12 +183,15 @@ test.describe('native Work mutation journeys', () => {
       page
         .getByRole('row')
         .filter({ hasText: `work:${ID}/r2` })
-        .getByRole('cell', { name: 'running', exact: true }),
-    ).toBeVisible();
+        .getByTestId('execution-status'),
+    ).toHaveText('Queued');
     await page.reload();
     await expect(
-      page.getByRole('row').filter({ hasText: `work:${ID}/r2` }),
-    ).toContainText('running');
+      page
+        .getByRole('row')
+        .filter({ hasText: `work:${ID}/r2` })
+        .getByTestId('execution-status'),
+    ).toHaveText('Queued');
     await expect(
       page.getByRole('button', { name: 'Edit', exact: true }),
     ).toHaveCount(0);

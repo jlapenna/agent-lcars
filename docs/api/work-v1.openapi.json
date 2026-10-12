@@ -246,6 +246,25 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "credentialRecovery": {
+                      "type": "object",
+                      "properties": {
+                        "recovered": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "unresolved": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": ["recovered", "unresolved"],
+                      "additionalProperties": false
+                    },
                     "lost": {
                       "type": "array",
                       "items": {
@@ -651,6 +670,46 @@
                               },
                               "providerProcessStartedAt": {
                                 "type": "string"
+                              },
+                              "startDeadlineAt": {
+                                "type": "string"
+                              },
+                              "placement": {
+                                "type": "object",
+                                "properties": {
+                                  "phase": {
+                                    "type": "string",
+                                    "enum": [
+                                      "waiting-for-placement",
+                                      "bootstrapping",
+                                      "unavailable"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "unschedulable",
+                                      "scheduled",
+                                      "inventory-unavailable",
+                                      "launch-pending"
+                                    ]
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  "jobCreatedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["phase", "reason", "observedAt"],
+                                "additionalProperties": false
                               }
                             },
                             "required": ["state"],
@@ -1011,6 +1070,46 @@
                               },
                               "providerProcessStartedAt": {
                                 "type": "string"
+                              },
+                              "startDeadlineAt": {
+                                "type": "string"
+                              },
+                              "placement": {
+                                "type": "object",
+                                "properties": {
+                                  "phase": {
+                                    "type": "string",
+                                    "enum": [
+                                      "waiting-for-placement",
+                                      "bootstrapping",
+                                      "unavailable"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "unschedulable",
+                                      "scheduled",
+                                      "inventory-unavailable",
+                                      "launch-pending"
+                                    ]
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  "jobCreatedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["phase", "reason", "observedAt"],
+                                "additionalProperties": false
                               }
                             },
                             "required": ["state"],
@@ -1377,6 +1476,46 @@
                               },
                               "providerProcessStartedAt": {
                                 "type": "string"
+                              },
+                              "startDeadlineAt": {
+                                "type": "string"
+                              },
+                              "placement": {
+                                "type": "object",
+                                "properties": {
+                                  "phase": {
+                                    "type": "string",
+                                    "enum": [
+                                      "waiting-for-placement",
+                                      "bootstrapping",
+                                      "unavailable"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "unschedulable",
+                                      "scheduled",
+                                      "inventory-unavailable",
+                                      "launch-pending"
+                                    ]
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  "jobCreatedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["phase", "reason", "observedAt"],
+                                "additionalProperties": false
                               }
                             },
                             "required": ["state"],
@@ -1794,6 +1933,50 @@
                                     },
                                     "providerProcessStartedAt": {
                                       "type": "string"
+                                    },
+                                    "startDeadlineAt": {
+                                      "type": "string"
+                                    },
+                                    "placement": {
+                                      "type": "object",
+                                      "properties": {
+                                        "phase": {
+                                          "type": "string",
+                                          "enum": [
+                                            "waiting-for-placement",
+                                            "bootstrapping",
+                                            "unavailable"
+                                          ]
+                                        },
+                                        "reason": {
+                                          "type": "string",
+                                          "enum": [
+                                            "pending",
+                                            "unschedulable",
+                                            "scheduled",
+                                            "inventory-unavailable",
+                                            "launch-pending"
+                                          ]
+                                        },
+                                        "observedAt": {
+                                          "type": "string",
+                                          "maxLength": 32,
+                                          "format": "date-time",
+                                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                        },
+                                        "jobCreatedAt": {
+                                          "type": "string",
+                                          "maxLength": 32,
+                                          "format": "date-time",
+                                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                        }
+                                      },
+                                      "required": [
+                                        "phase",
+                                        "reason",
+                                        "observedAt"
+                                      ],
+                                      "additionalProperties": false
                                     }
                                   },
                                   "required": ["state"],
@@ -2141,6 +2324,46 @@
                               },
                               "providerProcessStartedAt": {
                                 "type": "string"
+                              },
+                              "startDeadlineAt": {
+                                "type": "string"
+                              },
+                              "placement": {
+                                "type": "object",
+                                "properties": {
+                                  "phase": {
+                                    "type": "string",
+                                    "enum": [
+                                      "waiting-for-placement",
+                                      "bootstrapping",
+                                      "unavailable"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "unschedulable",
+                                      "scheduled",
+                                      "inventory-unavailable",
+                                      "launch-pending"
+                                    ]
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  "jobCreatedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["phase", "reason", "observedAt"],
+                                "additionalProperties": false
                               }
                             },
                             "required": ["state"],
@@ -2527,6 +2750,46 @@
                               },
                               "providerProcessStartedAt": {
                                 "type": "string"
+                              },
+                              "startDeadlineAt": {
+                                "type": "string"
+                              },
+                              "placement": {
+                                "type": "object",
+                                "properties": {
+                                  "phase": {
+                                    "type": "string",
+                                    "enum": [
+                                      "waiting-for-placement",
+                                      "bootstrapping",
+                                      "unavailable"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "unschedulable",
+                                      "scheduled",
+                                      "inventory-unavailable",
+                                      "launch-pending"
+                                    ]
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  "jobCreatedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["phase", "reason", "observedAt"],
+                                "additionalProperties": false
                               }
                             },
                             "required": ["state"],
@@ -2961,6 +3224,46 @@
                               },
                               "providerProcessStartedAt": {
                                 "type": "string"
+                              },
+                              "startDeadlineAt": {
+                                "type": "string"
+                              },
+                              "placement": {
+                                "type": "object",
+                                "properties": {
+                                  "phase": {
+                                    "type": "string",
+                                    "enum": [
+                                      "waiting-for-placement",
+                                      "bootstrapping",
+                                      "unavailable"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "unschedulable",
+                                      "scheduled",
+                                      "inventory-unavailable",
+                                      "launch-pending"
+                                    ]
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  "jobCreatedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["phase", "reason", "observedAt"],
+                                "additionalProperties": false
                               }
                             },
                             "required": ["state"],
@@ -6849,6 +7152,10 @@
                     "minLength": 1,
                     "maxLength": 256
                   },
+                  "placementAware": {
+                    "type": "boolean",
+                    "const": true
+                  },
                   "capacityVersion": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -6881,6 +7188,10 @@
                     {
                       "type": "object",
                       "properties": {
+                        "placementAware": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "runId": {
                           "type": "string",
                           "minLength": 1,
@@ -6911,6 +7222,10 @@
                             "kind": {
                               "type": "string",
                               "const": "claim"
+                            },
+                            "placementAware": {
+                              "type": "boolean",
+                              "const": true
                             },
                             "receipt": {
                               "type": "object",
@@ -7677,6 +7992,321 @@
         "security": [
           {
             "runToken": []
+          }
+        ]
+      }
+    },
+    "/runs/{runId}/placement": {
+      "post": {
+        "operationId": "observeRunPlacement",
+        "summary": "Report exact-claim scheduler placement",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "runner": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "claimFingerprint": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "placement": {
+                    "type": "object",
+                    "properties": {
+                      "phase": {
+                        "type": "string",
+                        "enum": [
+                          "waiting-for-placement",
+                          "bootstrapping",
+                          "unavailable"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "unschedulable",
+                          "scheduled",
+                          "inventory-unavailable",
+                          "launch-pending"
+                        ]
+                      },
+                      "observedAt": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                      },
+                      "jobCreatedAt": {
+                        "type": "string",
+                        "maxLength": 32,
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                      }
+                    },
+                    "required": ["phase", "reason", "observedAt"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["runner", "claimFingerprint", "placement"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 175
+                    }
+                  },
+                  "required": ["runId"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "work.executor scope required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "executor may not observe this claim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/runs/{runId}/startup-placement": {
+      "post": {
+        "operationId": "observeRunStartupPlacement",
+        "summary": "Report exact executor-owned worker placement",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "runner": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "claimFingerprint": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "jobUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "observedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  "placed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "runner",
+                  "claimFingerprint",
+                  "jobUid",
+                  "observedAt",
+                  "placed"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 175
+                    },
+                    "jobUid": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["runId", "jobUid", "expiresAt"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "work.executor scope required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "executor does not own this placement-aware claim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Placement observation refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
           }
         ]
       }

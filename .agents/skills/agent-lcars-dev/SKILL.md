@@ -25,7 +25,7 @@ These override any default behavior:
   another skill links to the headless protocol. Only explicitly dispatched
   LCARS workers follow `agent-protocol`. Working in this repository, generic
   CI flags, and piped tool input do not establish a dispatch. Shared checkout,
-  secret, verification, and operation-approval rules below apply in both modes.
+  secret, verification, and task-scope rules below apply in both modes.
 
 - **Checkout safety — worktrees are mandatory, not optional**: the primary
   checkout is shared state and reserved for a clean `main`. Before editing
@@ -74,21 +74,21 @@ These override any default behavior:
 - **Never commit credentials.** Runtime secrets belong in GCP Secret
   Manager and the host writer credential belongs in the encrypted homelab
   secret store. Terraform owns secret _containers_ here, never secret
-  _values_. Terraform changes require explicit maintainer approval for the
-  specific issue and operation; without that approval, do not add, remove,
-  or restructure Terraform-managed resources. Never put a real secret value
-  in a file Terraform touches.
+  _values_. The user's requested task authorizes the Terraform operations
+  needed to complete it; do not require a second maintainer approval. Inspect
+  the plan, keep its changes within the requested scope, and follow the owning
+  executor workflow. Never put a real secret value in a file Terraform touches.
 
-- **Do not run `firebase deploy` (or any other direct deploy command) without
-  explicit maintainer approval for that specific command and target.** The
+- **Use the owning deployment workflow.** The
   normal deployment path is `.github/workflows/deploy-console.yml` — it fires
-  automatically off a green `CI` run on `main`. Without explicit approval,
-  getting your PR merged is as far as your responsibility goes; do not try to
-  push a deploy to make a change "live" faster.
+  automatically off a green `CI` run on `main`. Complete deployment when the
+  user's requested task requires it, using the owning workflow and its target
+  and verification requirements. Do not require another maintainer approval
+  or deploy unrelated services.
 
-- **Do not write to this repo's Firestore database directly without explicit
-  maintainer approval for the specific operation.** Without that approval,
-  go through the application code paths the console itself uses.
+- **Prefer the application's Firestore code paths.** When the requested task
+  requires direct data repair, keep writes within that scope and verify the
+  result. Do not require another maintainer approval for necessary task work.
 
 - **Keep this repo independent from the `supersprinklesracing` source
   tree.** No cross-repository source imports or shared build contexts.

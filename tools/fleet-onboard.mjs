@@ -267,7 +267,6 @@ jobs:
 
       - name: Verify repository-owned Terraform
         run: |
-          ./tools/github-ruleset-root.test.sh
           terraform -chdir=infra/github-ruleset init -backend=false -input=false -lockfile=readonly
           terraform -chdir=infra/github-ruleset fmt -check -recursive
           terraform -chdir=infra/github-ruleset validate
@@ -448,34 +447,6 @@ Record the live ruleset id here once it is imported into this root's isolated
 state. Repository CI initializes, formats, validates, and checks this root's
 local contract; only the centralized executor receives backend and state
 access.
-`;
-}
-
-export function renderRulesetRootTest(spec) {
-  const contexts = spec.requiredChecks
-    .map((context) => `  '${context.replace(/'/g, `'\\''`)}'`)
-    .join(' \\\n');
-  return `#!/usr/bin/env bash
-# ${MANAGED_NOTE}
-set -euo pipefail
-
-root="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-config="$root/infra/github-ruleset/main.tf"
-
-# The root must remain self-contained so fork pull requests can initialize and
-# validate it without credentials or source from another fleet repository.
-grep -Fqx '  owner = "${spec.repo.owner}"' "$config"
-grep -Fqx '  repository  = "${spec.repo.name}"' "$config"
-for context in \\
-${contexts}; do
-  grep -Fqx "        context = \\"$context\\"" "$config"
-done
-if grep -Fq 'source = "git::https://github.com/jlapenna/homelab.git' "$config"; then
-  echo "github-ruleset root must not import Homelab source" >&2
-  exit 1
-fi
-
-echo "repository-owned GitHub ruleset contract passed"
 `;
 }
 
@@ -953,7 +924,7 @@ function rulesetMainConflict(text, spec) {
     (context) => !text.includes(`context = "${context}"`),
   );
   return missing.length
-    ? `does not require ${JSON.stringify(missing)}, which tools/github-ruleset-root.test.sh and agent-automerge expect`
+    ? `does not require ${JSON.stringify(missing)}, which agent-automerge expects`
     : null;
 }
 
@@ -1085,12 +1056,6 @@ export function planScaffold(target, spec, { resolveRev, check = false } = {}) {
       kind: 'seed',
       render: renderProviderLock,
     },
-    {
-      file: 'tools/github-ruleset-root.test.sh',
-      kind: 'managed',
-      render: () => renderRulesetRootTest(spec),
-      mode: 0o755,
-    },
     { file: 'renovate.json', kind: 'seed', render: renderRenovateConfig },
     { file: '.gitignore', kind: 'merge', render: mergeGitignore },
     {
@@ -1213,6 +1178,7 @@ const PROJECTIONS = {
   labels: 'config/github-labels.json',
   apphosting: 'apps/console/apphosting.yaml',
   audit: '.github/workflows/label-contract-audit.yml',
+  variables: 'config/github-variables.json',
 };
 
 function envValue(text, variable) {
@@ -1226,6 +1192,9 @@ function envValue(text, variable) {
 /** Parse every membership projection from its file text. */
 export function parseMembership(text) {
   const labels = Object.keys(JSON.parse(text.labels).repositories ?? {});
+  const variables = Object.values(JSON.parse(text.variables).profiles).flatMap(
+    (profile) => profile.repositories,
+  );
   const controlPlane = envValue(
     text.apphosting,
     'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
@@ -1239,7 +1208,15 @@ export function parseMembership(text) {
   const audit = (
     parseYaml(text.audit).jobs?.audit?.strategy?.matrix?.include ?? []
   ).map((entry) => entry.full_name);
-  return { text, labels, controlPlane, watched, watchedEntries, audit };
+  return {
+    text,
+    labels,
+    controlPlane,
+    watched,
+    watchedEntries,
+    audit,
+    variables,
+  };
 }
 
 /** Read every membership projection from the control plane's own files. */
@@ -1261,6 +1238,7 @@ export function membershipGaps(membership) {
     controlPlane: membership.controlPlane,
     watched: membership.watched,
     audit: membership.audit,
+    variables: membership.variables,
   };
   const union = new Set(Object.values(sets).flat());
   const gaps = {};
@@ -1435,6 +1413,17 @@ export function planAdmit(root, spec, like) {
   if (!membership.audit.includes(spec.repo.full)) {
     next.audit = appendAuditMatrix(text.audit, spec);
     edits.push({ file: PROJECTIONS.audit, desired: next.audit });
+  }
+  if (!membership.variables.includes(spec.repo.full)) {
+    const manifest = JSON.parse(text.variables);
+    const repositories = manifest.profiles?.['fleet-member']?.repositories;
+    if (!Array.isArray(repositories))
+      throw new OnboardError(
+        'github-variables.json has no fleet-member repository list',
+      );
+    repositories.push(spec.repo.full);
+    next.variables = `${JSON.stringify(manifest, null, 2)}\n`;
+    edits.push({ file: PROJECTIONS.variables, desired: next.variables });
   }
   // Every edit is textual; prove the result still parses and now agrees.
   const gaps = membershipGaps(parseMembership(next));

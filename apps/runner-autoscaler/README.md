@@ -203,6 +203,16 @@ restarting the executor and affect newly created Jobs; existing attempts retain
 their launch configuration. See
 [worker policy rollout](../../docs/worker-policy-rollout.md) for gates and rollback.
 
+`LCARS_HOOK_TELEMETRY_PROVIDERS` follows the same contract (comma-separated
+subset of `claude,codex,opencode`, validated at startup, snapshotted, and
+forwarded to every Job, empty included). For a selected Claude or Codex
+pipeline the worker installs `lcars` hook entries after its own config
+exists and reports the session through provider hooks
+([design](../../docs/hooks-telemetry-design.md)) instead of starting the
+polling telemetry sidecar; it drains the hook flusher before `runner
+finalize`. A missing credentials file or failed install falls back to the
+sidecar, and OpenCode always keeps the sidecar. Unset is disabled.
+
 The poller starts only after the Kubernetes preflight below passes, then sends
 a claim body containing only its runner identity. The server derives
 claimable pipelines from the authenticated `work.executor` grant; no
@@ -445,9 +455,11 @@ adoption, real owned-Pod drainage, and useful successor execution require
 separate live evidence.
 
 **`SIGUSR1` pauses the queue poller from claiming.** The signal toggles an
-in-process flag the poller checks before every claim call and before starting
-a recovery sweep: the first `SIGUSR1` pauses both, a second resumes them.
-An already running bounded sweep may finish. This is a separate, in-memory
+in-process flag checked before every claim call and before resuming an
+ordinary suspended Job: the first `SIGUSR1` pauses those actions, a second
+resumes them. Bounded maintenance sweeps continue observing placement and
+retiring settled claims for accepted workers. An already admitted startup
+resume or running bounded sweep may finish. This is a separate, in-memory
 switch from the `queue.state` machine above: it does not cancel running Jobs
 or settle or un-claim existing runs. Nothing else in this repo touches it. A claim minted moments
 before this instance is replaced would just be another launch failure to
