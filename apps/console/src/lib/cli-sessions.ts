@@ -132,11 +132,14 @@ export interface CliSessionsResult {
  *
  * `exhaustive` is for the anchor-owner query (`anchor-owner.ts`), where a
  * session missing from the list reads as "nobody is working this". It reads
- * only `source: 'cli'` docs (so fleet sessions cannot crowd them out of the
- * store's page), over a wider {@link OWNER_WINDOW_HOURS} window (a session
- * can stay `live`/`idle` long after its last turn while it waits on CI or
- * review), at the store's maximum page, with no render cap -- and reports a
- * full page as a warning, because it may have been truncated.
+ * a wider {@link OWNER_WINDOW_HOURS} window (a session can stay `live`/`idle`
+ * long after its last turn while it waits on CI or review) at the store's
+ * maximum page, with no render cap, and reports a full page as a warning
+ * because it may have been truncated. It deliberately does not pass `source`:
+ * `source` plus the `lastActivityAt` range needs a composite index the
+ * telemetry database does not have (FAILED_PRECONDITION in production, #2502),
+ * so it uses the same single-field range query as the dashboard and filters
+ * to CLI docs here.
  */
 export async function getCliSessions({
   exhaustive = false,
@@ -153,9 +156,7 @@ export async function getCliSessions({
     const firestore = await getAgentTelemetryReaderFirestore();
     const recentDocs = await listSessionDocs(
       firestore,
-      exhaustive
-        ? { activeSince, source: 'cli', limit: MAX_LIST_LIMIT }
-        : { activeSince },
+      exhaustive ? { activeSince, limit: MAX_LIST_LIMIT } : { activeSince },
     );
     if (exhaustive && recentDocs.length >= MAX_LIST_LIMIT) {
       warnings.push(
