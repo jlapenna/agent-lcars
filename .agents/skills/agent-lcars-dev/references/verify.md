@@ -178,11 +178,21 @@ of ordinary `PATH` through the supervisor's explicit environment control —
 `Environment=PATH=` in a declared unit — as a literal value, and keep the
 qualified directory ahead of the inherited remainder. Do not rely on the
 launching shell's lookup, on a transient service inheriting that shell's
-environment (it does not), or on `$PATH` expansion inside the value, which
-resolves against the manager's environment rather than the caller's. Keep
+environment (it does not), or on `$PATH` expansion inside an environment assignment: `Environment=`
+and `--setenv` preserve a literal `$PATH`. If the caller uses a double-quoted
+shell argument, that shell expands `$PATH` before invoking `systemd-run`;
+this is separate from systemd's command-line expansion in `ExecStart=`.
+Construct and qualify the complete PATH value explicitly. See systemd's
+[Environment= semantics](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml). Keep
 source, tool identity, hooks, isolation and cache behavior unchanged: do not
 install a second toolchain, re-resolve a version-manager shim, or weaken
 isolation to make a lookup succeed.
+
+Set the supervisor's working directory to the qualified source checkout
+(`systemd-run --working-directory=<checkout>` or `WorkingDirectory=`).
+Corepack may select a different pnpm version from the manager's default
+directory even when PATH resolves the same shim. Qualify the directory and
+project-pinned package-manager identity together.
 
 Have the unit report the `node` and `pnpm` paths and versions it actually
 resolved before any setup or dependent work, and record that report with the
@@ -191,12 +201,13 @@ in-child preflight so no setup, install, test, commit or push phase starts, and
 the phase keeps the true nonzero exit and resource receipt. The supervisor's
 default status after unit collection is not workload success. Prove this at the
 real supervisor/environment boundary: under the supported supervisor, a child
-environment without the qualified toolchain starts no setup witness, and a
-qualified one starts the harmless witness and reports both versions. Guidance
+environment without Node, or with Node available but pnpm absent, starts no
+setup witness. A qualified one starts the harmless witness and reports both
+resolved paths and exact versions. Guidance
 text, a login-shell lookup, or a fixture that only re-reads this section proves
 the document, never the boundary.
 [`tools/contract-tests/supervised-child-env-qualification.test.ts`](../../../../tools/contract-tests/supervised-child-env-qualification.test.ts)
-covers that pair through a real transient user unit where a manager is
+covers those cases through a real transient user unit where a manager is
 reachable, and through a child environment with no inherited PATH everywhere
 else.
 
