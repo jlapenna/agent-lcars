@@ -95,6 +95,10 @@ export interface RequestInput {
   work?: WorkPayload;
   /** Constructed by the authenticated admission adapter, not a raw API field. */
   providerFallback?: ProviderFallbackRequest;
+  /** Authorized alternatives are filtered against the provider chosen in this transaction. */
+  providerFallbackForPipeline?: (
+    pipeline: string,
+  ) => ProviderFallbackRequest | undefined;
   /** Optional opaque atomic request binding. Its owner supplies the key and
    * canonical identity; the store records the first source request with the
    * request transaction rather than leaving a pre-request race to a caller. */
@@ -188,6 +192,10 @@ export class Orchestrator {
         if (previousRun !== undefined) {
           return refused('duplicate-request', previousRun);
         }
+        const providerFallback =
+          input.providerFallbackForPipeline === undefined
+            ? input.providerFallback
+            : input.providerFallbackForPipeline(pipeline);
         const requestArgs = {
           now,
           taskId: input.taskId,
@@ -199,9 +207,7 @@ export class Orchestrator {
             (input.replaceQueuedRunId ? activeRun?.priority : undefined),
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
-          ...(input.providerFallback === undefined
-            ? {}
-            : { providerFallback: input.providerFallback }),
+          ...(providerFallback === undefined ? {} : { providerFallback }),
         };
         if (input.labelProviderRequest !== undefined) {
           return decideLabelProviderRequest({

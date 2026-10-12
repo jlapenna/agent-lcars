@@ -196,6 +196,68 @@ describe('source-ordered label provider handoff', () => {
     expect(await store.listRuns(taskId)).toHaveLength(2);
   });
 
+  it('a refusal retains the accepted generation source clock when delivery was delayed', async () => {
+    const store = new MemoryStore();
+    const controller = new Orchestrator(store, {
+      now: () => '2026-08-15T12:10:00.000Z',
+    });
+    const first = await controller.request({
+      taskId,
+      requestId: 'delayed-first',
+      pipeline: 'codex',
+      work,
+      labelProviderRequest: {
+        requestedAt: T0,
+        actor: 'maintainer',
+        allowProviderChange: true,
+      },
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    const original = decidedRun(first);
+    await store.enqueueRun({
+      runId: original.runId,
+      now: '2026-08-15T12:10:00.000Z',
+    });
+    expect(
+      await controller.request({
+        taskId,
+        requestId: 'busy-label',
+        pipeline: 'codex',
+        labelProviderRequest: {
+          requestedAt: T1,
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
+      }),
+    ).toMatchObject({
+      task: {
+        providerRouting: {
+          status: 'refused',
+          acceptedGeneration: { runId: original.runId, requestedAt: T0 },
+        },
+      },
+    });
+    expect(
+      await controller.request({
+        taskId,
+        requestId: 'later-label',
+        pipeline: 'opencode',
+        labelProviderRequest: {
+          requestedAt: '2026-08-15T12:02:00.000Z',
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
+      }),
+    ).toMatchObject({
+      run: { pipeline: 'opencode' },
+      task: { providerRouting: { status: 'accepted' } },
+    });
+    expect(await store.readRun(original.runId)).toMatchObject({
+      state: 'canceled',
+      pipeline: 'codex',
+    });
+  });
+
   it('a delayed label cannot replace a newer non-label generation', async () => {
     const { store, orchestrator, run } = await fixture();
     await orchestrator.report(run.runId, { ok: true });

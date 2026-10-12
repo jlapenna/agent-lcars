@@ -11,5 +11,12 @@ export const providerRoutingSchema = z.strictObject({
   status: z.enum(['accepted', 'refused']),
   reason: z.string().min(1).max(128).optional(),
   fromRunId: z.string().min(1).max(1_024).optional(),
+  /** Last accepted label generation, retained across later refusals. */
+  acceptedGeneration: z
+    .strictObject({
+      runId: z.string().min(1).max(1_024),
+      requestedAt: z.iso.datetime({ offset: false }),
+    })
+    .optional(),
   successorRunId: z.string().min(1).max(1_024).optional(),
 });

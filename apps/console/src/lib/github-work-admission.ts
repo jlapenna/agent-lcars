@@ -190,7 +190,7 @@ export async function admitGithubWork(
             }) === undefined,
     pipeline: work.spec.pipeline,
     priority: work.spec.priority,
-    providerFallback:
+    providerFallbackForPipeline: (pipeline) =>
       input.authorization?.grantsPrincipal === undefined
         ? undefined
         : authorizeProviderFallback(
@@ -198,7 +198,7 @@ export async function admitGithubWork(
               ...input.authorization.grantsPrincipal,
               sourceRepository: input.authorization.sourceRepository,
             },
-            work.spec.pipeline,
+            pipeline,
             work.spec.fallbackPipelines,
           ),
     params: input.params,
@@ -316,14 +316,15 @@ export async function redispatchGithubWork(
       }) === undefined,
     pipeline: work.spec.pipeline,
     priority: work.spec.priority,
-    providerFallback: authorizeProviderFallback(
-      {
-        ...input.authorization.grantsPrincipal,
-        sourceRepository: input.authorization.sourceRepository,
-      },
-      work.spec.pipeline,
-      input.fallbackPipelines ?? work.spec.fallbackPipelines,
-    ),
+    providerFallbackForPipeline: (pipeline) =>
+      authorizeProviderFallback(
+        {
+          ...input.authorization.grantsPrincipal,
+          sourceRepository: input.authorization.sourceRepository,
+        },
+        pipeline,
+        input.fallbackPipelines ?? work.spec.fallbackPipelines,
+      ),
     params: input.params,
   });
   if (isRefusal(outcome)) {

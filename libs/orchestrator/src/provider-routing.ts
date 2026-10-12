@@ -23,6 +23,11 @@ export function decideLabelProviderRequest(
   if (isWorkAnchor(input.taskId)) return refused('not-native');
   const { task, activeRun, latestRun, label, pipeline, now } = input;
   const previous = task?.providerRouting;
+  const acceptedGeneration =
+    previous?.acceptedGeneration ??
+    (previous?.successorRunId === undefined
+      ? undefined
+      : { runId: previous.successorRunId, requestedAt: previous.requestedAt });
   const effective = activeRun?.pipeline ?? latestRun?.pipeline ?? pipeline;
   const request = providerRoutingSchema.parse({
     requestId: input.requestId,
@@ -31,6 +36,7 @@ export function decideLabelProviderRequest(
     requestedPipeline: pipeline,
     effectivePipeline: effective,
     status: 'refused',
+    ...(acceptedGeneration === undefined ? {} : { acceptedGeneration }),
     ...(latestRun === undefined ? {} : { fromRunId: latestRun.runId }),
   });
   if (task !== undefined && previous?.requestId === input.requestId)
@@ -64,7 +70,7 @@ export function decideLabelProviderRequest(
   // of server admission time, so delivery delay alone does not break handoff.
   if (
     latestRun !== undefined &&
-    latestRun.runId !== previous?.successorRunId &&
+    latestRun.runId !== acceptedGeneration?.runId &&
     Date.parse(label.requestedAt) <= Date.parse(latestRun.createdAt)
   )
     return reject('run-newer-than-label');
@@ -134,6 +140,10 @@ export function decideLabelProviderRequest(
         effectivePipeline: successor.pipeline,
         status: 'accepted',
         successorRunId: successor.runId,
+        acceptedGeneration: {
+          runId: successor.runId,
+          requestedAt: label.requestedAt,
+        },
       },
     },
   };
