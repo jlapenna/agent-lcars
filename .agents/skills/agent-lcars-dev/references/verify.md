@@ -214,13 +214,14 @@ else.
 ### Qualify the workload shape a CPU bound covers
 
 A CPU bound qualified for one workload shape does not qualify a different one.
-A sub-core ceiling is adequate for phases whose work is throughput work —
-formatting, lint, typecheck, syntax and static-hook checks — whose duration is
-CPU spread over any wall-clock window. It cannot qualify a phase whose
-assertions wait on wall-clock deadlines: an asynchronous DOM wait, a lazy
-dynamic import, or a component exit transition must make progress inside that
-wait's own timeout, and a throttled event loop spends the deadline in
-runnable-but-not-scheduled time. Recorded case: phase
+Every supervised phase has a finite wall-clock bound, including formatting,
+lint, typecheck and static-hook checks. Qualify the actual workload and its
+deadlines under the selected envelope. Deadline-sensitive DOM waits, lazy
+imports and component transitions also depend on event-loop progress within
+their assertion timeouts; throttling is one possible source of delay. A
+sub-core ceiling is neither automatically adequate for static work nor
+categorically inadequate for DOM work: its measured result qualifies only
+the workload and conditions tested. Recorded case: phase
 `lcars-root-priority-2189-verify-publish-01a11f2d` (invocation
 `2fdcca9e911542e59cb64db2ee98fe41`) was supervised at `CPUQuota=10%` (100m),
 exited 1 after 325.509 s wall with 32.156 CPU seconds and 630.1 MiB/no swap,
@@ -251,21 +252,23 @@ qualify deadline-sensitive DOM diagnostics as their own shape:
   zero-commit/zero-push state that followed, and do not rerun the same
   unqualified envelope to turn it green, raise a timeout, disable a transition,
   mock away lazy loading or relax an assertion.
-- Close causation only on the actual exact-head supported-runner result for the
-  same source and assertions, recorded where the failure was. Record the run and
-  job identifiers, the executed file, case count and duration, and what that run
-  did not prove; a partial failure tracked elsewhere stays open under its own
-  anchor. Until that result exists, both the throttling and the defect
-  hypotheses stay open and neither may be reported as the conclusion.
+- Record the actual exact-head supported-runner result for the same source and
+  assertions where the failure was: run/job identifiers, executed file, case
+  count, duration and limits of the evidence. Passing under a different runner
+  or envelope qualifies that context and narrows hypotheses; it does not isolate
+  CPU throttling as the cause of the earlier failure. Causal attribution needs
+  a controlled comparison or direct evidence that distinguishes competing
+  causes. A separate failure remains under its own anchor.
 
-The recorded case closed on supported-runner CI run `38218317094` (Full
+The same-source UI checks passed on supported-runner CI run `38218317094` (Full
 verification job `114708282485`), which executed that file at the priority head
 with source, assertions and timeouts unchanged: 8/8 cases passed in 6999 ms and
 the required browser lane passed. The same full run separately failed the
 connected-Firestore fixture tracked under
 [#2536](https://github.com/jlapenna/agent-lcars/issues/2536), so it is exact-file
 evidence for those UI waits, not an overall green claim; the 100m receipt above
-stays as recorded and was not rerun.
+stays as recorded and was not rerun. This supported-context pass does not
+isolate the cause of the earlier 100m failure.
 
 ### Return the admission verdict a launch gates on
 
