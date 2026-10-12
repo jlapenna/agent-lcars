@@ -38,10 +38,13 @@ Empty by default; enabling it is an executor environment change.
 user message, a completed tool part (throttled to one report per 15 s),
 `session.idle`, and `session.deleted` it reads the session through the SDK
 client, writes an export-shaped `{info, messages}` snapshot to a private temp
-file, and runs `lcars hook opencode` with that file as `transcript_path`, so
-the same reducer that reads `opencode export` output produces the summary.
-Child sessions pass their `parentID` as `agent_id` and are skipped. `lcars
-integration install opencode` copies the plugin into
+file, and hands it to a detached `lcars hook opencode` as `transcript_path`,
+so the same reducer that reads `opencode export` output produces the summary.
+The client deletes the snapshot after reading it, which lets the final report
+survive `opencode run` exiting on its last idle. Reports for one session never
+overlap; events arriving mid-report coalesce to the most important one.
+Subagent sessions (`parentID` set) are never snapshotted. `lcars integration
+install opencode` copies the plugin into
 `${XDG_CONFIG_HOME:-~/.config}/opencode/plugins/`; the runner image ships it
 in its OpenCode config instead, where it stays inert unless the bootstrap
 exported `LCARS_TELEMETRY_CREDENTIALS_FILE`.

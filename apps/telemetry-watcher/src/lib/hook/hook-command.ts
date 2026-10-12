@@ -249,6 +249,52 @@ function applyAnnotationOverlays(
     : overlaid;
 }
 
+/** The private directory the OpenCode plugin wrote this payload's snapshot
+ *  into (`<tmpdir>/lcars-opencode-XXXXXX/export.json`), or undefined. Only that
+ *  exact shape is ever deleted. */
+export function opencodeSnapshotDirectory(
+  rawPayload: string,
+  tempRoot = os.tmpdir(),
+): string | undefined {
+  let transcriptPath: unknown;
+  try {
+    transcriptPath = (JSON.parse(rawPayload) as Record<string, unknown>)[
+      'transcript_path'
+    ];
+  } catch {
+    return undefined;
+  }
+  if (typeof transcriptPath !== 'string') return undefined;
+  const resolved = path.resolve(transcriptPath);
+  const directory = path.dirname(resolved);
+  return path.basename(resolved) === 'export.json' &&
+    path.dirname(directory) === path.resolve(tempRoot) &&
+    /^lcars-opencode-[A-Za-z0-9]{6}$/u.test(path.basename(directory))
+    ? directory
+    : undefined;
+}
+
+/** The plugin hands its snapshot to this detached process, which deletes it
+ *  whatever the outcome; the snapshot holds message bodies. */
+async function handleOpencodeHook(
+  deps: HookCommandDependencies,
+  inline: boolean,
+): Promise<HookCommandResult> {
+  let snapshotDirectory: string | undefined;
+  const readStdin = () => {
+    const raw = deps.readStdin();
+    snapshotDirectory = opencodeSnapshotDirectory(raw);
+    return raw;
+  };
+  try {
+    return await handleRuntimeHook({ ...deps, readStdin }, 'opencode', inline);
+  } finally {
+    if (snapshotDirectory) {
+      fs.rmSync(snapshotDirectory, { recursive: true, force: true });
+    }
+  }
+}
+
 async function handleRuntimeHook(
   deps: HookCommandDependencies,
   runtime: HookRuntime,
@@ -416,11 +462,10 @@ export async function executeHookCommand(
   const [subcommand, ...rest] = argv;
   try {
     if (isHookRuntime(subcommand)) {
-      return await handleRuntimeHook(
-        deps,
-        subcommand,
-        rest.includes('--inline'),
-      );
+      const inline = rest.includes('--inline');
+      return subcommand === 'opencode'
+        ? await handleOpencodeHook(deps, inline)
+        : await handleRuntimeHook(deps, subcommand, inline);
     }
     if (subcommand === 'flush' || subcommand === '--flush') {
       await deps.runFlusher();
