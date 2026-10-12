@@ -94,12 +94,16 @@ test.describe('native Work mutation journeys', () => {
         .getByPlaceholder('Reply to the agent...')
         .fill('Use Firestore and retain the audit trail.');
       await reply.click();
+      const queuedRound = page
+        .getByRole('row')
+        .filter({ hasText: `work:${ID}/r2` });
+      // Admission is durable running state; this fixture has no provider start.
       await expect(
-        page
-          .getByRole('row')
-          .filter({ hasText: `work:${ID}/r2` })
-          .getByTestId('execution-status'),
-      ).toHaveText('Queued');
+        queuedRound.getByRole('cell', { name: /^running\b/ }),
+      ).toBeVisible();
+      await expect(queuedRound.getByTestId('execution-status')).toHaveText(
+        'Queued',
+      );
       const confirmation = page.getByTestId('work-reply-confirmation');
       await expect(confirmation).toContainText(TITLE);
       await expect(confirmation.getByRole('status')).toHaveText(
@@ -179,12 +183,16 @@ test.describe('native Work mutation journeys', () => {
     } finally {
       release();
     }
+    const queuedRound = page
+      .getByRole('row')
+      .filter({ hasText: `work:${ID}/r2` });
+    // Admission is durable running state; this fixture has no provider start.
     await expect(
-      page
-        .getByRole('row')
-        .filter({ hasText: `work:${ID}/r2` })
-        .getByTestId('execution-status'),
-    ).toHaveText('Queued');
+      queuedRound.getByRole('cell', { name: /^running\b/ }),
+    ).toBeVisible();
+    await expect(queuedRound.getByTestId('execution-status')).toHaveText(
+      'Queued',
+    );
     await page.reload();
     await expect(
       page
