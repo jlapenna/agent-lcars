@@ -1,0 +1,269 @@
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { reconcileCauses } from '../../.agents/skills/issue-triage/scripts/reconcile-causes.mjs';
+
+const script = path.resolve(
+  '.agents/skills/issue-triage/scripts/reconcile-causes.mjs',
+);
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0))
+    rmSync(directory, { recursive: true, force: true });
+});
+
+// Synthetic structural regression for #2465, not the unavailable private
+// snapshot/body files. Owning references for the four aliases come from #2465;
+// every filename below is deliberately a fixture identity.
+function fixture() {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'cause-report-'));
+  directories.push(directory);
+  const ids = Array.from({ length: 182 }, (_, i) => `B${i + 1}`);
+  const issueNumbers: Record<string, number> = {
+    B67: 2299,
+    B68: 2301,
+    B69: 2302,
+    B70: 2303,
+  };
+  const rows = ids.map((id) => ({
+    id,
+    issue: `jlapenna/agent-lcars#${issueNumbers[id] ?? 10000 + Number(id.slice(1))}`,
+    evidence: [`fixture/retained-${id}.md`],
+    failures: [{ receipt: `fixture/failed-${id}.log`, outcome: 'failed' }],
+    remainingGates: ['runtime qualification'],
+    queuedIntent: { outcome: 'cancelled-already-satisfied' },
+  }));
+  const root = rows.filter((_, i) => i < 66 || i >= 166);
+  const ledger = Object.fromEntries(
+    rows
+      .slice(66, 166)
+      .map((row, i) => [i < 4 ? `descriptive-${i}` : row.id, row]),
+  );
+  const aliases = rows.slice(66, 70).map((row, i) => ({
+    source: 'ledger',
+    key: `descriptive-${i}`,
+    id: row.id,
+    issue: row.issue,
+    bodyFile: row.evidence[0],
+    basis: 'fixture/consolidation-receipt.json',
+  }));
+  const manifest = {
+    expectedIds: ids,
+    sources: [
+      { name: 'root', path: 'root.json' },
+      {
+        name: 'ledger',
+        path: 'ledger.json',
+        collection: '/causes',
+        fields: { id: '$key', issue: '/issue', evidence: '/evidence' },
+      },
+    ],
+    aliases,
+  };
+  const save = () => {
+    writeFileSync(path.join(directory, 'root.json'), JSON.stringify(root));
+    writeFileSync(
+      path.join(directory, 'ledger.json'),
+      JSON.stringify({ causes: ledger }),
+    );
+    writeFileSync(
+      path.join(directory, 'manifest.json'),
+      JSON.stringify(manifest),
+    );
+  };
+  save();
+  return { directory, rows, root, ledger, manifest, save };
+}
+
+describe('complete interactive workstream report assembly', () => {
+  it('assembles the reported 82+100 shape through the actual CLI and retains failures/gates', () => {
+    const f = fixture();
+    const before = ['root.json', 'ledger.json'].map((file) =>
+      readFileSync(path.join(f.directory, file), 'utf8'),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [script, path.join(f.directory, 'manifest.json')],
+      { encoding: 'utf8' },
+    );
+    expect({ status: result.status, stderr: result.stderr }).toEqual({
+      status: 0,
+      stderr: '',
+    });
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({
+      complete: true,
+      totals: { causes: 182, owningIssues: 182 },
+    });
+    expect(report.sources.map((source: any) => source.recordsRead)).toEqual([
+      82, 100,
+    ]);
+    expect(report.causes.map((cause: any) => cause.id)).toEqual(
+      f.manifest.expectedIds,
+    );
+    for (const alias of f.manifest.aliases) {
+      const cause = report.causes.find((cause: any) => cause.id === alias.id);
+      expect(cause.issue).toBe(alias.issue);
+      expect(cause.records[0].alias.bodyFile).toBe(alias.bodyFile);
+    }
+    expect(report.causes[0].records[0].record).toEqual(f.rows[0]);
+    expect(
+      ['root.json', 'ledger.json'].map((file) =>
+        readFileSync(path.join(f.directory, file), 'utf8'),
+      ),
+    ).toEqual(before);
+  });
+
+  it('does not inflate totals for replayed causes, duplicate aliases or shared owning issues', () => {
+    const f = fixture();
+    f.root.push(...f.rows.slice(66, 70));
+    f.manifest.aliases.push(...f.manifest.aliases);
+    f.rows[1].issue = f.rows[0].issue;
+    f.save();
+    const first = reconcileCauses(f.manifest, f.directory);
+    const second = reconcileCauses(f.manifest, f.directory);
+    expect(first.totals).toEqual({ causes: 182, owningIssues: 181 });
+    expect(
+      first.causes.find((cause: any) => cause.id === 'B67').records,
+    ).toHaveLength(2);
+    expect(second).toEqual(first);
+  });
+
+  it('refuses the old standalone 82 count when the declared workstream has 182 causes', () => {
+    const f = fixture();
+    f.manifest.sources.splice(1);
+    f.manifest.aliases = [];
+    const report = reconcileCauses(f.manifest, f.directory);
+    expect(report).toMatchObject({
+      complete: false,
+      totals: null,
+      observed: { identifiedCauses: 82 },
+    });
+    expect(report.missingIds).toEqual(f.manifest.expectedIds.slice(66, 166));
+  });
+
+  it.each([
+    'unknown',
+    'missing-evidence',
+    'owner-conflict',
+    'alias-file',
+    'alias-owner',
+    'alias-id',
+    'alias-unused',
+    'alias-conflict',
+    'unexpected',
+  ])('withholds totals and retains diagnostics for %s', (failure) => {
+    const f = fixture();
+    if (failure === 'unknown') f.manifest.aliases.splice(0, 1);
+    if (failure === 'missing-evidence') f.root[0].evidence = [];
+    if (failure === 'owner-conflict')
+      f.root.push({ ...f.rows[0], issue: 'other/repository#1' });
+    if (failure === 'alias-file')
+      f.manifest.aliases[0].bodyFile = 'fixture/not-retained.md';
+    if (failure === 'alias-owner')
+      f.manifest.aliases[0].issue = 'other/repository#1';
+    if (failure === 'alias-id') {
+      f.manifest.sources[1].fields.id = '/id';
+      f.manifest.aliases[0].id = 'B1';
+    }
+    if (failure === 'alias-unused') f.manifest.aliases[0].key = 'absent';
+    if (failure === 'alias-conflict')
+      f.manifest.aliases.push({ ...f.manifest.aliases[0], id: 'B68' });
+    if (failure === 'unexpected') f.root.push({ ...f.rows[0], id: 'B183' });
+    f.save();
+    const result = spawnSync(
+      process.execPath,
+      [script, path.join(f.directory, 'manifest.json')],
+      { encoding: 'utf8' },
+    );
+    expect(result.status).toBe(1);
+    const report = JSON.parse(result.stdout);
+    expect(report.complete).toBe(false);
+    expect(report.totals).toBeNull();
+    expect(
+      report.unresolved.length +
+        report.aliasErrors.length +
+        report.unexpectedIds.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'absent-source',
+    'changed-snapshot',
+    'invalid-json',
+    'missing-collection',
+    'malformed-id',
+    'bad-issue',
+  ])(
+    'fails closed on %s rather than reporting a partial source set',
+    (failure) => {
+      const f = fixture();
+      if (failure === 'malformed-id') f.root[0].id = 'B01';
+      if (failure === 'bad-issue') f.root[0].issue = '#1';
+      f.save();
+      if (failure === 'absent-source')
+        rmSync(path.join(f.directory, 'ledger.json'));
+      if (failure === 'invalid-json')
+        writeFileSync(path.join(f.directory, 'ledger.json'), '{');
+      if (failure === 'missing-collection')
+        f.manifest.sources[1].collection = '/missing';
+      if (failure === 'changed-snapshot')
+        Object.assign(f.manifest.sources[0], { sha256: '0'.repeat(64) });
+      writeFileSync(
+        path.join(f.directory, 'manifest.json'),
+        JSON.stringify(f.manifest),
+      );
+      const result = spawnSync(
+        process.execPath,
+        [script, path.join(f.directory, 'manifest.json')],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        complete: false,
+        totals: null,
+      });
+    },
+  );
+
+  it('binds a complete report to pinned source bytes and supports explicit legacy field pointers', () => {
+    const f = fixture();
+    const legacy = {
+      'cause/id': 'B1',
+      owner: { issue: f.rows[0].issue },
+      'evidence~path': f.rows[0].evidence[0],
+      original: f.rows[0],
+    };
+    writeFileSync(
+      path.join(f.directory, 'legacy.json'),
+      JSON.stringify({ rows: [legacy] }),
+    );
+    const bytes = readFileSync(path.join(f.directory, 'legacy.json'));
+    const report = reconcileCauses(
+      {
+        expectedIds: ['B1'],
+        sources: [
+          {
+            name: 'legacy',
+            path: 'legacy.json',
+            collection: '/rows',
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+            fields: {
+              id: '/cause~1id',
+              issue: '/owner/issue',
+              evidence: '/evidence~0path',
+            },
+          },
+        ],
+      },
+      f.directory,
+    );
+    expect(report.totals).toEqual({ causes: 1, owningIssues: 1 });
+    expect(report.causes[0].records[0].record).toEqual(legacy);
+  });
+});

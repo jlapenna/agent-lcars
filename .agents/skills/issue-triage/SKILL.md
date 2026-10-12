@@ -58,6 +58,30 @@ longitudinal evidence are distinct claims. Cite the exact revision, run,
 artifact, query window, role, or page interaction that supports each claim.
 Do not use a successful build or HTTP response as rendered-browser proof.
 
+### Reconcile the complete workstream before reporting counts
+
+Root and delegated causes belong to one workstream inventory. Before every
+blocker total, reconcile **all** retained root inventories and authoritative
+issue/delegate ledgers using the read-only
+[cause report workflow](references/cause-report.md) and its
+[assembler](scripts/reconcile-causes.mjs). A standalone `blockers.json` count
+is insufficient when a ledger retains delegated causes. Register newly
+returned delegate records before the next report, even when their issues
+already have source fixes or are closed.
+
+Report a complete total only from an exit-0 report with `complete: true` and
+non-null `totals`. Otherwise name the unresolved identities, missing evidence,
+conflicts and scope gaps; label observed subtotals incomplete. Preserve source
+snapshots, original records, historical failures, remaining gates and owning
+issue references. Resolve descriptive aliases from retained evidence explicitly;
+never guess a cause ID from issue order, title or filename.
+
+Keep cause totals, unique owning issues, live closed-issue counts, source and
+runtime qualification, and confirmed provider execution as separate claims.
+Cancellation of an already-satisfied queued intent proves settlement, not
+provider execution. Reconciliation changes reporting only; it authorizes no
+LCARS runtime state, fleet-control or production-data mutation.
+
 ## Advance the remaining work
 
 Implement concrete missing work when authorized. For a verification gate,
