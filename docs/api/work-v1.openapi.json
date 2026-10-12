@@ -246,6 +246,25 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "credentialRecovery": {
+                      "type": "object",
+                      "properties": {
+                        "recovered": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "unresolved": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": ["recovered", "unresolved"],
+                      "additionalProperties": false
+                    },
                     "lost": {
                       "type": "array",
                       "items": {
