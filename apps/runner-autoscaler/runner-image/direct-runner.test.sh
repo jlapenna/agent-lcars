@@ -1332,6 +1332,8 @@ for hook_pipeline in claude codex; do
   finalize_line="$(grep -n -- 'runner finalize' "$NODE_ARGS_LOG" | head -1 | cut -d: -f1)"
   [ -n "$drain_line" ] && [ -n "$finalize_line" ] && [ "$drain_line" -lt "$finalize_line" ] ||
     fail "hook telemetry $hook_pipeline: the flusher did not drain before finalize ($(cat "$NODE_ARGS_LOG"))"
+  [ -e "$HOME/.local/state/agent-lcars/hook-fence" ] ||
+    fail "hook telemetry $hook_pipeline: the drain did not fence late hook events before finalize"
   echo "scenario hook-telemetry-$hook_pipeline: OK"
 done
 grep -q -- '--dangerously-bypass-hook-trust' "$CODEX_ARGS_LOG" ||

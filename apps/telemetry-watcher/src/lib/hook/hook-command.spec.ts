@@ -247,6 +247,20 @@ describe('lcars hook claude', () => {
     });
   });
 
+  it('records nothing once the runner has fenced hooks before finalize', async () => {
+    const home = tempHome();
+    const stateDir = path.join(home, STATE_DIR);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'hook-fence'), '');
+    const d = deps(home, payload('Stop'));
+    expect(await executeHookCommand(['claude'], d)).toEqual({
+      action: 'ignored',
+      detail: 'fenced',
+    });
+    expect(spooledEvents(home)).toEqual([]);
+    expect(d.spawnFlusher).not.toHaveBeenCalled();
+  });
+
   it('bypasses the allowlist and attaches runner context on a QueueExecutor runner', async () => {
     const home = tempHome();
     const d = deps(home, payload('PostToolUse'), {

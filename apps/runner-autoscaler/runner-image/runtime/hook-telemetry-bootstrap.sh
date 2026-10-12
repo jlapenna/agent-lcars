@@ -43,16 +43,26 @@ hook_telemetry_bootstrap() {
   fi
 }
 
-# Before finalize writes the authoritative final doc: let detached flushers
-# finish, then drain whatever is left, so no late hook event can land after
-# it and reopen an ended session.
+# Before finalize writes the authoritative final doc: fence new hook events,
+# let hooks already holding a session lock finish appending, let a running
+# flusher finish, then drain what is left. A hook that reaches its session
+# lock after the fence records nothing (hook-command.ts), so no late event can
+# land after finalize and reopen an ended session.
 hook_telemetry_drain() {
   local flusher="${HOOK_TELEMETRY_FLUSHER:-/usr/local/lib/agent-lcars/lcars-hook-flush.cjs}"
+  local state="${HOME}/.local/state/agent-lcars"
+  mkdir -p "$state"
+  : > "$state/hook-fence"
+  local waited=0
+  # In-flight producers hold hook-sessions/<id>.lock while they append.
+  while compgen -G "$state/hook-sessions/*.lock" > /dev/null && [ "$waited" -lt 30 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
   # A running flusher holds the spool lock (refreshed per event); wait on the
   # lock file rather than process listing, which the image may not provide.
-  local lock="${HOME}/.local/state/agent-lcars/spool/events.lock"
-  local waited=0
-  while [ -e "$lock" ] && [ "$waited" -lt 30 ]; do
+  waited=0
+  while [ -e "$state/spool/events.lock" ] && [ "$waited" -lt 30 ]; do
     sleep 1
     waited=$((waited + 1))
   done
