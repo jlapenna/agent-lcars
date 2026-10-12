@@ -78,7 +78,7 @@ describe('LedgerTables', () => {
     expect(links).toHaveLength(2);
     for (const link of links) {
       expect(link.getAttribute('href')).toBe(
-        'https://github.com/supersprinklesracing/sprinkles/issues/42',
+        '/task/supersprinklesracing/sprinkles/42',
       );
     }
     expect(screen.getAllByText('no issue')).toHaveLength(2);

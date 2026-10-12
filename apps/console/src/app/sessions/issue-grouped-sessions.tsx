@@ -37,7 +37,7 @@ function GroupHeading({ group }: { group: IssueSessionGroup }) {
             underline="hover"
             c="inherit"
           >
-            #{group.issueNumber}
+            GitHub #{group.issueNumber}
           </Anchor>
         ) : (
           `#${group.issueNumber}`

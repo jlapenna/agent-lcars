@@ -26,6 +26,34 @@ useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
 test.describe('populated dashboard', () => {
+  for (const width of [390, 1280]) {
+    test(`keeps Agents task titles onsite at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      for (const testId of ['live-run-issue-link', 'recent-run-issue-link']) {
+        await page.goto('/agents');
+        const workspace = page.getByRole('region', {
+          name: 'Agent operations',
+        });
+        const title = workspace.getByTestId(testId).first();
+        await expect(title).toBeVisible();
+        await expect(title).toHaveAttribute(
+          'href',
+          /^\/task\/[^/]+\/[^/]+\/\d+$/,
+        );
+        await expect(title).not.toHaveAttribute('target', '_blank');
+        for (const link of await workspace
+          .locator('a[href^="https://github.com/"]')
+          .all()) {
+          await expect(link).toContainText('GitHub');
+        }
+        const href = await title.getAttribute('href');
+        await title.click();
+        await expect(page).toHaveURL(new RegExp(`${href}$`));
+        await expect(page.getByTestId('logical-work-card')).toBeVisible();
+      }
+    });
+  }
+
   for (const path of ['/', '/agents']) {
     test(`expires projected fleet capacity locally on ${path} while dashboard streaming is denied`, async ({
       page,

@@ -25,7 +25,6 @@ import {
   duplicateLivePipelineGroups,
   findStalledQueuedRun,
   groupLiveRunsByIssue,
-  issueUrlForRun,
   MAX_TURNS_BUDGET,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
@@ -162,6 +161,13 @@ function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
  */
 function workHrefForRun(run: AgentRun): string | undefined {
   return run.workId ? `/work/${run.workId}` : undefined;
+}
+
+/** Unattributed legacy runs still keep title navigation inside the console. */
+function internalRunHref(run: AgentRun): string {
+  return run.url.startsWith('/') && !run.url.startsWith('//')
+    ? run.url
+    : '/agents';
 }
 
 function operationsRunTitle(run: AgentRun): string {
@@ -348,7 +354,7 @@ export function LiveRunRow({
 
   if (variant === 'operations') {
     const taskHref = taskHrefForRun(run, item);
-    const actionHref = taskHref ?? run.url;
+    const actionHref = taskHref ?? internalRunHref(run);
     return (
       <div className="operations-row" data-testid="current-run-row">
         <Stack gap={5} style={{ minWidth: 0 }}>
@@ -402,14 +408,11 @@ export function LiveRunRow({
           <BridgePaneLink
             mobileHref={actionHref}
             paneHref={selectHref ?? actionHref}
-            target={taskHref ? undefined : '_blank'}
-            rel={taskHref ? undefined : 'noreferrer'}
             size="sm"
             className="operations-primary-action"
             data-testid="current-run-primary-action"
           >
             {taskHref ? 'Open task' : 'Inspect run'}
-            {!taskHref && ' ↗'}
           </BridgePaneLink>
         </Group>
       </div>
@@ -419,11 +422,7 @@ export function LiveRunRow({
   return (
     <Stack gap={4} data-testid="current-run-row">
       <Anchor
-        href={
-          item?.url ?? issueUrlForRun(run) ?? workHrefForRun(run) ?? run.url
-        }
-        target="_blank"
-        rel="noreferrer"
+        href={taskHrefForRun(run, item) ?? internalRunHref(run)}
         size="sm"
         fw={600}
         c="inherit"
@@ -477,7 +476,9 @@ export function LiveRunRow({
             size="xs"
             c="dimmed"
           >
-            View run ↗
+            {run.url.startsWith('https://github.com/')
+              ? 'View run on GitHub ↗'
+              : 'View run'}
           </Anchor>
           {session && (
             <Anchor
@@ -655,11 +656,10 @@ export function FinishedRunRow({
   selectHref?: string;
 }) {
   const classification = classifyAgentRun(run, session);
-  const issueUrl = issueUrlForRun(run);
 
   if (variant === 'operations') {
     const taskHref = taskHrefForRun(run);
-    const actionHref = taskHref ?? issueUrl ?? run.url;
+    const actionHref = taskHref ?? internalRunHref(run);
     const successful = classification.status === 'succeeded';
     return (
       <div
@@ -694,14 +694,11 @@ export function FinishedRunRow({
         <BridgePaneLink
           mobileHref={actionHref}
           paneHref={selectHref ?? actionHref}
-          target={taskHref ? undefined : '_blank'}
-          rel={taskHref ? undefined : 'noreferrer'}
           size="sm"
           className="operations-primary-action"
           data-testid="outcome-primary-action"
         >
           {successful ? 'View result' : 'Investigate'}
-          {!taskHref && ' ↗'}
         </BridgePaneLink>
       </div>
     );
@@ -710,9 +707,7 @@ export function FinishedRunRow({
   return (
     <Stack gap={2} data-testid="finished-run-row">
       <Anchor
-        href={issueUrl ?? workHrefForRun(run) ?? run.url}
-        target="_blank"
-        rel="noreferrer"
+        href={taskHrefForRun(run) ?? internalRunHref(run)}
         size="sm"
         fw={600}
         c="inherit"
@@ -753,7 +748,9 @@ export function FinishedRunRow({
             size="xs"
             c="dimmed"
           >
-            View run ↗
+            {run.url.startsWith('https://github.com/')
+              ? 'View run on GitHub ↗'
+              : 'View run'}
           </Anchor>
           {session && (
             <Anchor
@@ -897,7 +894,7 @@ export function CliSessionRow({
             size="xs"
             style={{ marginLeft: 'auto', flexShrink: 0 }}
           >
-            PR #{session.pr.number} ↗
+            GitHub PR #{session.pr.number} ↗
           </Anchor>
         )}
       </Group>

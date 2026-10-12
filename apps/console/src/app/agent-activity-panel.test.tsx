@@ -475,7 +475,7 @@ describe('AgentActivityPanel recent runs', () => {
       'cancelled',
     );
     expect(screen.getByTestId('outcome-primary-action').textContent).toBe(
-      'Investigate ↗',
+      'Investigate',
     );
   });
 
@@ -1148,5 +1148,33 @@ describe('SourceBadge', () => {
     expect(
       container.querySelector('.mantine-Badge-root')?.getAttribute('style'),
     ).toContain('--mantine-color-violet');
+  });
+});
+
+describe('Agents title navigation', () => {
+  it.each([
+    ['live', LiveRunRow, 'live-run-issue-link'],
+    ['finished', FinishedRunRow, 'recent-run-issue-link'],
+  ] as const)('keeps %s GitHub task titles onsite', (_name, Row, testId) => {
+    const run = makeAgentRun({
+      issueNumber: 42,
+      url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
+    });
+    render(
+      <MantineProvider>
+        <Row run={run} />
+      </MantineProvider>,
+    );
+    const title = screen.getByTestId(testId);
+    expect(title).toHaveAttribute(
+      'href',
+      '/task/supersprinklesracing/sprinkles/42',
+    );
+    expect(title).not.toHaveAttribute('target');
+    for (const link of screen.getAllByRole('link')) {
+      if (link.getAttribute('href')?.startsWith('https://github.com/')) {
+        expect(link).toHaveTextContent('GitHub');
+      }
+    }
   });
 });
