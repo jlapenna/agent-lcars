@@ -105,7 +105,8 @@ OAuth login path itself.
 
 ## Capture
 
-From the repository root:
+Apply the [local browser phase preflight](#local-browser-phase-preflight)
+before capture as well. From the repository root:
 
 ```bash
 # Private state on this workstation (default)
@@ -141,7 +142,8 @@ revoked, `3` wrong role, and `4` expiring or unknown expiry. The request has a
 does not rotate or refresh a credential and never saves response cookies.
 `verify-session --minimum-valid-days 14` uses the same expiry classifier before
 page navigation. A readiness pass proves authentication and the rotation
-window; use the browser verifier below for rendered-page acceptance.
+window; it does not qualify host capacity or resource guards. Use the browser
+verifier below for rendered-page acceptance after the local phase preflight.
 
 For a daily operator-owned check, configure the following command in the
 existing private monitoring environment, with its saved-state read identity
@@ -163,8 +165,30 @@ with this exact scoped command (read-only workers must not run it):
   --secret-name AGENT_LCARS_ADMIN_STORAGE_STATE --auth-secret-name AUTH_SECRET
 ```
 
-After rotation, run `check-session` above, then prove the admin session and
-the intended page with the supported browser verifier:
+### Local browser phase preflight
+
+Before launching any local browser phase, read and apply
+[Bounded local verification](../agent-lcars-dev/references/verify.md#bounded-local-verification).
+That section owns capacity qualification, including queued-work eligibility,
+credible overlap and complete host workload/reserve accounting. Apply it before
+browser-cache installation too; read-only credential readiness above remains a
+separate check. Unknown fit or required setup holds the phase before launch.
+
+Keep the phase receipt's declared CPU, memory, storage, accelerator and time
+bounds separate from the actual supervisor's supported properties. Record live
+property readback while the owned unit exists; post-exit defaults from an
+unloaded transient unit do not verify its bounds. Identify and validate any
+required accounting setup and monitor readiness before starting the workload,
+as required by the owning contract. Distinguish sampled storage maxima, final
+footprint and shared free-space observations from an enforced storage ceiling.
+
+Preserve a failed preflight or guard receipt alongside any valid functional
+evidence; do not rerun a completed browser operation to erase the failure.
+Structural validation of this route proves the handoff exists, not that a
+future agent applied it or that resource enforcement succeeded.
+
+After rotation, run `check-session` above, qualify the local phase, then prove
+the admin session and the intended page with the supported browser verifier:
 
 ```bash
 ./tools/nx run @agent-lcars/console:verify-session -- \
