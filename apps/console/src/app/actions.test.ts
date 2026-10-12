@@ -327,6 +327,19 @@ describe('agent-lcars Server Actions', () => {
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
+    it('preserves the assignment failure warning after retry admission succeeds', async () => {
+      (retryPostedComment as Mock).mockResolvedValue({
+        dispatched: true,
+        dispatchWarning: 'assignment-update-failed',
+      });
+      await expect(
+        retryReplyToItem(DEFAULT_REPO, 42, 123, 'codex'),
+      ).resolves.toEqual({
+        ok: true,
+        note: 'Agent dispatched, but updating the GitHub assignment failed.',
+      });
+    });
+
     it('reports admitted dispatch when only GitHub assignment labeling fails', async () => {
       (postComment as Mock).mockResolvedValue({
         url: 'https://x',

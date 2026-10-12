@@ -169,9 +169,12 @@ export async function retryReplyToItem(
     }
     return {
       ok: true,
-      note: result.dispatchWarning
-        ? 'Agent dispatched, but the queue may take a moment to refresh.'
-        : `Dispatched ${pipeline}`,
+      note:
+        result.dispatchWarning === 'assignment-update-failed'
+          ? 'Agent dispatched, but updating the GitHub assignment failed.'
+          : result.dispatchWarning
+            ? 'Agent dispatched, but the queue may take a moment to refresh.'
+            : `Dispatched ${pipeline}`,
     };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
