@@ -106,7 +106,8 @@ jobs:
     # longer needs the ubuntu-latest carve-out it had between #408 and #410.
     #
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-ci' }}
-    timeout-minutes: 30
+    # Include cold dependency setup and the final bundle checks in the deadline.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v7
