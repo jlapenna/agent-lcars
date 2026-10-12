@@ -42,14 +42,6 @@ export function decideLabelProviderRequest(
     Date.parse(label.requestedAt) <= Date.parse(previous.requestedAt)
   )
     return refused('stale-provider-request', latestRun);
-  if (
-    task !== undefined &&
-    previous === undefined &&
-    latestRun !== undefined &&
-    Date.parse(label.requestedAt) <= Date.parse(latestRun.createdAt)
-  )
-    return refused('stale-provider-request', latestRun);
-
   const requestInput = {
     ...input,
     priority: activeRun?.priority ?? latestRun?.priority ?? input.priority,
@@ -66,6 +58,16 @@ export function decideLabelProviderRequest(
           },
           outbox: [],
         };
+
+  // A delayed label cannot retire a newer non-label request or automatic
+  // generation. An accepted label successor uses its source clock instead
+  // of server admission time, so delivery delay alone does not break handoff.
+  if (
+    latestRun !== undefined &&
+    latestRun.runId !== previous?.successorRunId &&
+    Date.parse(label.requestedAt) <= Date.parse(latestRun.createdAt)
+  )
+    return reject('run-newer-than-label');
 
   if (
     task !== undefined &&

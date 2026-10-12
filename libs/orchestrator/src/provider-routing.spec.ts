@@ -196,6 +196,57 @@ describe('source-ordered label provider handoff', () => {
     expect(await store.listRuns(taskId)).toHaveLength(2);
   });
 
+  it('a delayed label cannot replace a newer non-label generation', async () => {
+    const { store, orchestrator, run } = await fixture();
+    await orchestrator.report(run.runId, { ok: true });
+    const controller = new Orchestrator(store, {
+      now: () => '2026-08-15T12:03:00.000Z',
+    });
+    const newer = await controller.request({
+      taskId,
+      requestId: 'newer-reply',
+      pipeline: 'codex',
+    });
+    if (isRefusal(newer)) throw new Error(newer.reason);
+    const next = decidedRun(newer);
+    await store.enqueueRun({
+      runId: next.runId,
+      now: '2026-08-15T12:03:00.000Z',
+    });
+    expect(
+      await controller.request({
+        taskId,
+        requestId: 'delayed-switch',
+        pipeline: 'opencode',
+        labelProviderRequest: {
+          requestedAt: T1,
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
+      }),
+    ).toMatchObject({
+      task: {
+        activeRunId: next.runId,
+        providerRouting: {
+          status: 'refused',
+          reason: 'run-newer-than-label',
+          requestedPipeline: 'opencode',
+          effectivePipeline: 'codex',
+        },
+      },
+      outbox: [],
+    });
+    expect(
+      await store.claimQueuedRun({
+        pipelines: ['codex', 'opencode'],
+        now: '2026-08-15T12:03:00.000Z',
+        claimedBy: 'executor',
+        tokenHash: 'a'.repeat(64),
+      }),
+    ).toMatchObject({ runId: next.runId, pipeline: 'codex' });
+    expect(await store.listRuns(taskId)).toHaveLength(2);
+  });
+
   it('refuses a settled attempt until the physical claim is retired', async () => {
     const { store, orchestrator, run, switchProvider } = await fixture();
     await store.claimQueuedRun({

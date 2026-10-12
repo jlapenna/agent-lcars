@@ -107,6 +107,8 @@ provider and history remain intact; the successor uses the requested provider.
 Claimed/running attempts and terminal attempts retaining physical claims refuse
 handoff until settlement, credential cleanup and physical retirement complete.
 Parked/terminal tasks with no retained owner may start a fresh provider attempt.
+A delayed label cannot replace a newer reply, retry or other non-label generation;
+it records `run-newer-than-label` and requires a new label application.
 Refused requests are recorded, never silently deferred: reapply the intended
 label after the gates pass. Task history shows requested/effective providers
 and refusal. No outcome removes unrelated labels or monotonic bot assignment.

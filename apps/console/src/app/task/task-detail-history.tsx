@@ -222,7 +222,11 @@ export function TaskDetailHistory({
             ? ` (${item.providerRouting.reason})`
             : ''}
           {item.providerRouting.status === 'refused' &&
-            ' · Reapply the intended label after ownership settles and physical retirement completes.'}
+            (item.providerRouting.reason === 'run-newer-than-label'
+              ? ' · Reapply the intended label to confirm this change for the current work.'
+              : item.providerRouting.reason === 'unauthorized-provider-switch'
+                ? ' · An administrator must request this provider change.'
+                : ' · Reapply the intended label after ownership settles and physical retirement completes.')}
         </Text>
       )}
       <Stack gap="xs">
