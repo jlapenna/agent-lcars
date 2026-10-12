@@ -36,11 +36,18 @@
    a ready-PR auto-merge backstop can arm delivery. Once the check and required
    review pass, mark the draft ready and arm through the existing path below.
    After publishing the body, run the shared read-only check against the exact
-   reviewed/pushed head, immediately before marking ready or arming:
+   reviewed/pushed head, immediately before marking ready or arming, and chain
+   every dependent mutation to it with `&&` so a rejection makes the mutation
+   structurally unrunnable. Never retype the guard and a mutation as separate
+   statements or join them with `;`: on #2324 publication a semicolon-joined
+   sequence without `errexit` ran `gh pr ready` after the check had already
+   exited 1, and only GitHub's own rejection back to draft stopped it
+   (issue #2534).
 
    ```bash
    node agents/shared/skills/agent-protocol/scripts/check-pr-closing-references.mjs \
-     jlapenna/agent-lcars "$pr_number" "$reviewed_head" none
+     jlapenna/agent-lcars "$pr_number" "$reviewed_head" none \
+     && gh pr ready "$pr_number" -R jlapenna/agent-lcars
    # For fully accepted intentional closure, replace none with e.g.
    # jlapenna/agent-lcars#1234 (comma-separated for multiple completed issues).
    ```
@@ -95,7 +102,9 @@
    gh pr view "$pr_number" -R jlapenna/agent-lcars \
      --json id,state,isDraft,headRefOid,autoMergeRequest
    pr_node="$(gh pr view "$pr_number" -R jlapenna/agent-lcars --json id --jq .id)"
-   gh api graphql \
+   node agents/shared/skills/agent-protocol/scripts/check-pr-closing-references.mjs \
+     jlapenna/agent-lcars "$pr_number" "$reviewed_head" <declared-scope> \
+     && gh api graphql \
      -f query='mutation($id: ID!, $head: GitObjectID!) {
        enablePullRequestAutoMerge(input: {
          pullRequestId: $id, expectedHeadOid: $head, mergeMethod: SQUASH
@@ -109,7 +118,10 @@
    ```
 
    Require an open, ready PR at `reviewed_head` before the mutation and a
-   non-null SQUASH `autoMergeRequest` at that same head afterward. This arms
+   non-null SQUASH `autoMergeRequest` at that same head afterward. Execute the
+   closing-scope guard and the arming mutation only as the `&&`-chained
+   sequence above — a rejected, incomplete or changed-scope read must stop the
+   chain, not merely precede it. This arms
    delivery; it does not declare checks passed. If queueing fails, re-read the
    exact PR/head and diagnose the error. Do not fall back to a direct/admin
    merge, relax checks or treat an unarmed PR as delivered. If the PR merged
