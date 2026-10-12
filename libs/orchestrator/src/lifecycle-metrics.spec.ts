@@ -121,6 +121,73 @@ describe('durable lifecycle metric accounting', () => {
       'lcars_product_settled_window{pipeline="claude",state="lost"} 1\n',
     );
   });
+  it('uses retained server spawn clocks, keeping bootstrap and invalid clocks unknown', () => {
+    const claim = '2026-10-10T11:42:00.000Z';
+    const spawn = '2026-10-10T11:42:08.000Z';
+    const queues: Run['queue'][] = [
+      { state: 'claimed', claimedAt: claim, providerProcessStartedAt: spawn },
+      {
+        state: 'claimed',
+        claimedAt: '2026-10-10T10:59:00.000Z',
+        providerProcessStartedAt: '2026-10-10T11:00:05.000Z',
+      },
+      { state: 'claimed', claimedAt: claim },
+      { state: 'claimed', claimedAt: claim, firstHeartbeatAt: spawn },
+      {
+        state: 'claimed',
+        claimedAt: claim,
+        providerProcessStartedAt: '2026-10-10T11:41:59.000Z',
+      },
+      {
+        state: 'claimed',
+        claimedAt: claim,
+        providerProcessStartedAt: '2026-10-10T12:00:00.001Z',
+      },
+      { state: 'claimed', providerProcessStartedAt: spawn },
+      {
+        state: 'claimed',
+        claimedAt: '2026-10-10T11:39:00.000Z',
+        providerProcessStartedAt: '2026-10-10T11:39:30.000Z',
+      },
+    ];
+    const runs = queues.map((queue, i) =>
+      run({
+        runId: `spawn-${i}`,
+        queue,
+        ...(i === 1
+          ? {
+              createdAt: '2026-10-10T10:50:00.000Z',
+              events: [
+                {
+                  at: '2026-10-10T10:50:30.000Z',
+                  to: 'running',
+                  by: 'dispatch',
+                },
+              ],
+            }
+          : {}),
+      }),
+    );
+    const text = snapshot([...runs, runs[0]]);
+    expect(text).toContain(
+      'lcars_product_provider_starts_window{pipeline="claude"} 2\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_observations{pipeline="claude",stage="claim_to_provider_start"} 2\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_duration_seconds{pipeline="claude",stage="claim_to_provider_start"} 73\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_unknown{pipeline="claude",stage="claim_to_provider_start"} 6\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="provider_start"} 6\n',
+    );
+    expect(snapshot(runs, { complete: false })).not.toContain(
+      'lcars_product_provider_starts_window',
+    );
+  });
   it('counts park/no-op/provider-limit separately from reported artifacts and leaves evidence unknown', () => {
     const runs = [
       'park',
