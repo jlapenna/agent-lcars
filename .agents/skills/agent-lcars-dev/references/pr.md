@@ -131,7 +131,34 @@
    For API errors, lost responses or Git publication stalls, follow
    [delivery-recovery.md](delivery-recovery.md) before retrying. It owns bounded
    sanitized diagnostics and exact-ref/state recovery; this workflow still
-   owns the reviewed-head, queue-only and protection requirements.
+   owns the reviewed-head, queue-only and protection requirements. A
+   deterministic state refusal is not one of those transport failures — see
+   below before treating it as a retryable queueing error.
+
+   **Preserve a valid queue across unchanged-head infrastructure retries.**
+   When an already-armed PR at its independently reviewed `reviewed_head` fails
+   only because the runner infrastructure behind a required check was preempted,
+   cancelled or otherwise never evaluated — and source, closing scope,
+   review/approval state and intended delivery are all unchanged — leave the
+   existing `autoMergeRequest` in place. Retry that failed check at the same
+   revision and let the required checks stay the merge gate; GitHub delivers the
+   queued squash when that exact head goes green. Withdrawing a valid queue
+   request to "start clean" is the sequencing mistake: it strands an
+   already-green PR, and re-arming the unchanged head then refuses with
+   `UNPROCESSABLE` (`Pull request ... is in clean status`) while the PR still
+   reads OPEN/ready with all required checks green. Record that refusal as a
+   state change, not transport loss: it repeats
+   identically, so re-issuing it is a blind retry. Recover by qualifying the
+   actual source composition at a fresh revision — merge current `main` into the
+   branch so checks and queueing evaluate a head that can be queued — and by
+   re-arming that new reviewed head through the sequence above. Never answer it
+   with a direct/admin merge, relaxed or fabricated checks/statuses, a policy
+   edit, or a new wrapper, credential or helper introduced merely to arm.
+   Disarm only when the source, closing scope, review/approval state or
+   intended delivery actually changes; recorded case
+   [#2558](https://github.com/jlapenna/agent-lcars/issues/2558) on PR #2551
+   after the infrastructure preemption in
+   [Homelab #2369](https://github.com/jlapenna/homelab/issues/2369).
 
    Draft CI can short-circuit without exercising full verification. After a
    draft becomes ready, an old green summary is not full-gate evidence: use
