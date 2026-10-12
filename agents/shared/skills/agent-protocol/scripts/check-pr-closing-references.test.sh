@@ -35,7 +35,13 @@ cat > "$fake_bin/gh" <<'FAKE_GH'
 #!/usr/bin/env bash
 printf '%s\n' stubbed > "$FAKE_GH_CALLS"
 case "$1 $2" in
-  'api graphql') cat "$FAKE_RESPONSE" ;;
+  'api graphql')
+    if [[ "$*" == *enablePullRequestAutoMerge* ]]; then
+      printf ran > "$MUTATION_WITNESS"
+    else
+      cat "$FAKE_RESPONSE"
+    fi
+    ;;
   'pr merge') printf ran > "$MUTATION_WITNESS" ;;
   'pr view')
     printf ran > "$READBACK_WITNESS"
@@ -62,7 +68,7 @@ pr_response() {
 # Reproduces the shipped fail-fast sequence: the actual read-only guard && a
 # harmless owned mutation AND already-armed status readback witnesses.
 run_chained() {
-  local response=$1 declared=$2 at_head=$3
+  local response=$1 declared=$2 at_head=$3 mode=${4:-shared}
   export FAKE_GH_CALLS="$temp_dir/gh-calls.$RANDOM$$"
   export FAKE_RESPONSE="$temp_dir/response.json"
   printf '%s' "$response" > "$FAKE_RESPONSE"
@@ -72,11 +78,15 @@ run_chained() {
   local chained_out status=0
   chained_out="$(
     bash -c '
+      mutation=(gh pr merge 2324 --repo jlapenna/agent-lcars --auto --squash)
+      if [[ "$4" == interactive ]]; then
+        mutation=(gh api graphql -f "query=mutation { enablePullRequestAutoMerge(input: { pullRequestId: \"owned-test-node\", expectedHeadOid: \"$3\", mergeMethod: SQUASH }) { pullRequest { state } } }" -f id=owned-test-node -f head="$3")
+      fi
       node "$1" jlapenna/agent-lcars 2324 "$3" "$2" \
-        && gh pr merge 2324 --repo jlapenna/agent-lcars --auto --squash \
+        && "${mutation[@]}" \
         && gh pr view 2324 --repo jlapenna/agent-lcars --json state,autoMergeRequest \
           --jq "if .state == \"MERGED\" or .autoMergeRequest != null then . else error(\"auto-merge is not armed\") end"
-    ' _ "$checker" "$declared" "$at_head" 2>&1
+    ' _ "$checker" "$declared" "$at_head" "$mode" 2>&1
   )" || status=$?
   CHAINED_STATUS=$status
   CHAINED_OUT=$chained_out
@@ -100,10 +110,13 @@ readback_exists() { [[ -e "$temp_dir/readback" ]]; }
 readback_absent() { [[ ! -e "$temp_dir/readback" ]]; }
 gh_was_read() { [[ -e "$FAKE_GH_CALLS" ]]; }
 
+for mode in shared interactive; do
+  echo "arming path: $mode"
+
 # --- negative branch: the incident shape, reproduced hermetically ------------
 # GitHub still returns jlapenna/agent-lcars#2407 while the operator declares
 # scope none; the published guard rejects and the chained witness never runs.
-run_chained "$(pr_response 2407 "$head_sha")" none "$head_sha"
+run_chained "$(pr_response 2407 "$head_sha")" none "$head_sha" "$mode"
 check 'wrong scope: the actual checker exits nonzero' test "$CHAINED_STATUS" -ne 0
 check 'wrong scope: the rejection names the unintended reference' \
   grep -q 'Closing scope mismatch: unintended \[jlapenna/agent-lcars#2407\]' <<<"$CHAINED_OUT"
@@ -113,7 +126,7 @@ check 'wrong scope: already-armed readback was NOT invoked' readback_absent
 printf 'negative-branch diagnosis: %s\n' "$CHAINED_OUT"
 
 # --- positive branch: the valid declared scope lets the SAME witness run ----
-run_chained "$(pr_response 2407 "$head_sha")" jlapenna/agent-lcars#2407 "$head_sha"
+run_chained "$(pr_response 2407 "$head_sha")" jlapenna/agent-lcars#2407 "$head_sha" "$mode"
 check 'valid scope: the actual checker exits zero' test "$CHAINED_STATUS" -eq 0
 check 'valid scope: the checker readback carries the accepted scope' \
   grep -q '"closingIssuesReferences":\["jlapenna/agent-lcars#2407"\]' <<<"$CHAINED_OUT"
@@ -122,12 +135,14 @@ check 'valid scope: already-armed readback DID run' readback_exists
 rm -f "$temp_dir/witness"
 
 # --- a changed head is an incomplete read: the chain still refuses ----------
-run_chained "$(pr_response 0 b)" none "$head_sha"
+run_chained "$(pr_response 0 b)" none "$head_sha" "$mode"
 check 'changed head: the actual checker exits nonzero' test "$CHAINED_STATUS" -ne 0
 check 'changed head: the rejection names the expected head' \
   grep -q 'expected head' <<<"$CHAINED_OUT"
 check 'changed head: the next-step witness was NOT invoked' witness_absent
 check 'changed head: already-armed readback was NOT invoked' readback_absent
+
+done
 
 if ((failures > 0)); then
   echo "closing-scope gate contract test: $failures failure(s)" >&2

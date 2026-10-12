@@ -112,8 +112,8 @@
          pullRequest { id state headRefOid autoMergeRequest { enabledAt mergeMethod } }
        }
      }' \
-     -f id="$pr_node" -f head="$reviewed_head"
-   gh pr view "$pr_number" -R jlapenna/agent-lcars \
+     -f id="$pr_node" -f head="$reviewed_head" \
+     && gh pr view "$pr_number" -R jlapenna/agent-lcars \
      --json state,isDraft,headRefOid,autoMergeRequest
    ```
 
