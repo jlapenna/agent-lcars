@@ -98,8 +98,13 @@ Observation checkpoints include Playwright scheduling and are upper bounds.
 The click event proves dispatch; it does not identify the exact hydration instant.
 
 Long-task entries cover tasks of at least 50 ms from navigation to confirmation,
-with a 200-entry cap. CDP task/script/compile/layout/style/DevTools counter deltas cover the timed
-journey **and Cancel cleanup**, through the final metrics read. They use the explicit CDP `timeTicks` wall-time domain, not CPU
+with a 200-entry cap. CDP task/script/compile/layout/style/DevTools collection starts after the untimed
+warmup. Schema 3 reports the timed renderer's current counters in milliseconds,
+including **Cancel cleanup** through the final metrics read. A renderer-agent
+restoration can reset counters during navigation; they are not cross-renderer
+totals, and subtracting an older document's warmup counters produces invalid
+negative durations. Preserve this scope when comparing artifacts. They use the
+explicit CDP `timeTicks` wall-time domain, not CPU
 utilization or a hydration profile. Script/layout/style durations are subsets
 of task duration. Tasks can overlap resource transfers: do not add them to a
 waterfall or subtract their sum from total readiness to invent a causal split.

@@ -135,7 +135,7 @@ async function milestone(page, origin) {
 
 export async function measure(options) {
   const report = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     measuredAt: new Date().toISOString(),
     environment: {
       host: os.hostname(),
@@ -166,7 +166,7 @@ export async function measure(options) {
       longTasks:
         'PerformanceObserver longtask entries (>=50ms), navigation through confirmation observation, capped at 200; overlapping resource and task durations must not be added.',
       mainThread:
-        'CDP Performance task/script/layout/style durations in milliseconds, timeTicks wall-time deltas across the timed journey and its Cancel cleanup; includes scheduling through the metrics read, not a CPU profile or hydration-only measure.',
+        'CDP Performance task/script/layout/style durations in milliseconds from collection enabled after warmup, or its restoration in the timed renderer. Current-renderer timeTicks counters include Cancel cleanup and metric-read scheduling; they exclude earlier warmup, are not cross-renderer totals, and are not a CPU profile or hydration-only measure.',
     },
     samples: [],
   };
@@ -248,7 +248,6 @@ export async function measure(options) {
           });
           const cdp = await context.newCDPSession(page);
           await cdp.send('Network.enable');
-          await cdp.send('Performance.enable', { timeDomain: 'timeTicks' });
           await cdp.send('Emulation.setCPUThrottlingRate', {
             rate: PROFILE.cpuSlowdown,
           });
@@ -264,12 +263,12 @@ export async function measure(options) {
           } else {
             await milestone(page, options.origin);
           }
-          const beforeMetrics = await cdp.send('Performance.getMetrics');
+          // Start collection after the untimed warmup. Renderer restoration can
+          // reset duration counters across navigation; never subtract an older
+          // document's accumulated work from the timed renderer's counters.
+          await cdp.send('Performance.enable', { timeDomain: 'timeTicks' });
           const sample = await milestone(page, options.origin);
           const afterMetrics = await cdp.send('Performance.getMetrics');
-          const counters = new Map(
-            beforeMetrics.metrics.map(({ name, value }) => [name, value]),
-          );
           sample.mainThreadMs = Object.fromEntries(
             afterMetrics.metrics
               .filter(({ name }) =>
@@ -282,10 +281,7 @@ export async function measure(options) {
                   'RecalcStyleDuration',
                 ].includes(name),
               )
-              .map(({ name, value }) => [
-                name,
-                (value - (counters.get(name) ?? 0)) * 1_000,
-              ]),
+              .map(({ name, value }) => [name, value * 1_000]),
           );
           if (errors.length)
             throw new Error(`Browser errors: ${errors.join('; ')}`);
