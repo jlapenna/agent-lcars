@@ -24,7 +24,6 @@ MAX_REPLY_CHARACTERS=16384
 MAX_CONTEXT_CHARACTERS=2000
 MAX_RESULT_BODY_CHARACTERS=2000
 MAX_ACCEPTANCE_CRITERIA=40
-existing_claim_json=null
 # A label redispatch carries only the previous run timestamp through the
 # existing `context` workflow input. Keep the newly-visible thread delta
 # beneath the normal prompt budget: five comments at 1,000 characters each
@@ -138,62 +137,6 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
   # "pull-request" type instead of being hardcoded to "issue".
   anchor_json="$(jq -cn --argjson w "$work_json" --argjson i "$issue_json" \
     '$i + { title: $w.spec.title, body: $w.spec.description }')"
-  # Who else is working this issue (agent-lcars#2502). Interactive and cloud
-  # sessions claim issues by draft PR or a work-claim heartbeat; without this
-  # a dispatched worker cannot see them and forks parallel work.
-  # repo-claim-status reads only GitHub and returns the worker's next action:
-  # proceed, continue-own (the fleet's own prior attempt), adopt (a stale
-  # claim's branch), or stand-down (someone else is live). Best-effort: a
-  # missing tool or a GitHub error leaves existing_claim null, never fails the
-  # dispatch. Pull-request anchors are review/reply targets, not claims.
-  if [ "$(jq -r 'has("pull_request")' <<<"$issue_json")" = false ] && command -v repo-claim-status >/dev/null; then
-    fleet_login="${AGENT_LCARS_FLEET_GITHUB_LOGIN:-agent-lcars-bot}"
-    claim_rc=0
-    claim_out="$(repo-claim-status "$REPOSITORY#$ISSUE" --json \
-      --trust-bot agent-lcars --self agent-lcars --self "$fleet_login" 2>/dev/null)" || claim_rc=$?
-    case "$claim_rc" in
-      0|10|11)
-        if jq -e 'type == "object" and (.status | type == "string") and (.next | type == "object")' <<<"$claim_out" >/dev/null 2>&1; then
-          # Every string below originates in GitHub (PR branch names, logins,
-          # URLs), so it is reduced to a strict shape before it reaches the
-          # agent: a branch the worker may check out must be a plain ref name,
-          # a URL must be a github.com URL, everything else is short and
-          # enum-checked. An adopt/continue-own whose branch fails the check
-          # degrades to stand-down rather than acting on unvalidated input.
-          # Projection failures (version skew, odd shapes) must not abort the
-          # dispatch under set -e: keep existing_claim null instead.
-          if ! claim_projection="$(jq -c '
-            def arr: if type == "array" then . else [] end;
-            def safe_branch: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$") and (test("\\.\\.|//|\\.lock$|/$") | not) then . else null end;
-            def safe_url: if type == "string" and test("^https://github\\.com/[A-Za-z0-9._/#?=&-]{1,200}$") then . else null end;
-            def safe_login: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$") then . else null end;
-            def safe_time: if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$") then . else null end;
-            (.next // {}) as $n
-            | ($n.branch | safe_branch) as $branch
-            | (if ($n.action | IN("adopt", "continue-own")) and $branch == null then "stand-down"
-               elif ($n.action | IN("proceed", "adopt", "continue-own", "stand-down", "none")) then $n.action
-               else "stand-down" end) as $action
-            | {
-                status: (if (.status | IN("free", "live", "stale", "closed")) then .status else "live" end),
-                next: ({action: $action}
-                  + (if $action | IN("adopt", "continue-own") then {branch: $branch} else {} end)
-                  + (if $action == "stand-down" then {live_claims: [($n.liveClaims | arr)[0:10][] | safe_url | select(. != null)]} else {} end)),
-                evidence: [(.evidence | arr)[0:10][] | select(type == "object") | {
-                  kind: (if (.kind | IN("pull-request", "heartbeat", "legacy-comment")) then .kind else "unknown" end),
-                  live: (.live == true),
-                  author: (.author | safe_login),
-                  url: (.url | safe_url),
-                  branch: (.branch | safe_branch),
-                  last_active: (.lastActive | safe_time)
-                }]
-              }' <<<"$claim_out" 2>/dev/null)"; then
-            claim_projection=null
-          fi
-          existing_claim_json="${claim_projection:-null}"
-        fi
-        ;;
-    esac
-  fi
 else
   echo "::error::WORK is required for every dispatch" >&2
   exit 1
@@ -234,7 +177,6 @@ jq -n \
   --argjson anchor "$anchor_json" \
   --argjson comments "$comments_json" \
   --argjson prior_terminal_state "${PRIOR_TERMINAL_STATE:-null}" \
-  --argjson existing_claim "$existing_claim_json" \
   --arg started_at "$started_at" \
   --arg deadline "$deadline" \
   --arg takeover_by "$takeover_by" \
@@ -329,9 +271,6 @@ jq -n \
     runbook: $runbook,
     context: ($context | clamp($max_context; "Read the full router context in the dispatching workflow run.")),
     prior_terminal_state: $prior_terminal_state,
-    # null when the claim check could not run (native work, PR anchor,
-    # missing tool, or GitHub error); otherwise status, next action, evidence.
-    existing_claim: $existing_claim,
     latest_agent_result: (
       if $result == null then null
       else $result | .body = ($result.body | clamp($max_result_body; "Read the full comment at \($result.html_url).")) end
