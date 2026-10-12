@@ -65,13 +65,17 @@ All names below have prefix `lcars_product_`.
 
 `measurement_unknown_window` deliberately describes the unsupported facts:
 
-- `provider_start`: denominator retained claims in the hour. Neither a claim,
-  Kubernetes Job creation, a bootstrap heartbeat, nor `running` proves the
-  provider began. The [provider-process contract](provider-process-measurement.md)
-  now retains `Run.queue.providerProcessStartedAt`, a server observation of
-  successful OS spawn bound to the run/claim identity. This snapshot does not
-  yet consume that clock; its `provider_start` series remains unknown. OS spawn
-  is not authentication, model execution, or independently verified usefulness.
+- `provider_start`: observations without a valid retained server spawn clock.
+  Candidates are spawn clocks in the hour, plus retained claims in the hour
+  whose spawn is unobserved or invalid. Missing/reversed claim clocks and future
+  spawn clocks stay unknown. Neither a claim, Kubernetes Job, heartbeat nor
+  `running` supplies a start. `provider_starts_window` counts valid retained
+  `Run.queue.providerProcessStartedAt` observations in the hour, including
+  starts whose claim predates that window; `claim_to_provider_start` measures
+  their claim-to-observed-spawn delay. These are authenticated, identity-bound
+  server observations of successful OS spawn, not authentication, model
+  execution or independently verified usefulness. Release/reclaim can replace
+  the retained claim; these gauges are not a complete historical event journal.
 - `verified_evidence`: denominator finished runs in the hour. The ledger has
   a reported outcome but not the artifact verifier result/version/exact
   attempt marker and its durable verification time. Parks and no-ops require
