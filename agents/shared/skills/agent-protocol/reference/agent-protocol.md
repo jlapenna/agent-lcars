@@ -367,13 +367,13 @@ use `Tracks #N`, never a negated closing-keyword phrase. GitHub interpreted
 “intentionally does not close #2209” as a closing link on PR #2447.
 Run the shared read-only checker (relative to this protocol's directory) and
 every dependent lifecycle mutation as ONE fail-fast sequence: chain each step
-with `&&` exactly as shipped, because an rejected read, incomplete read or
+with `&&` exactly as shipped, because a rejected read, incomplete read or
 changed head must make the dependent step structurally unrunnable. Never
 retype the guard and a mutation as separate statements or join them with `;`
 — on #2324 publication a semicolon-joined sequence without `errexit` ran
 `gh pr ready` after the checker had already exited 1 (issue #2534); the PR
-bounced back to draft and no merge occurred, but nothing about that outcome
-was structural:
+was explicitly returned to draft by the operator before delivery; the
+manual correction did not make that command sequence fail-fast:
 
 ```bash
 node "$(dirname "$AGENT_PROTOCOL_PATH")/../scripts/check-pr-closing-references.mjs" \

@@ -41,8 +41,8 @@
    structurally unrunnable. Never retype the guard and a mutation as separate
    statements or join them with `;`: on #2324 publication a semicolon-joined
    sequence without `errexit` ran `gh pr ready` after the check had already
-   exited 1, and only GitHub's own rejection back to draft stopped it
-   (issue #2534).
+   exited 1; the operator explicitly returned the PR to draft before
+   delivery (issue #2534). That manual correction was not a GitHub scope gate.
 
    ```bash
    node agents/shared/skills/agent-protocol/scripts/check-pr-closing-references.mjs \
