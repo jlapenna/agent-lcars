@@ -583,7 +583,8 @@ consumed by every dispatched run in every member repository.
 - **FL-FM-4 [Shipped] Authority separation.** These authorities are
   deliberately distinct:
   - Work grants (`AGENT_LCARS_WORK_GRANTS`, with scopes `work.operator`,
-    `work.executor`, and `work.cron`). `work.reaper` is not a grantable
+    `work.reader` (the issue-owner query only), `work.executor`, `work.cron`,
+    and the `work.capacity.*` scopes). `work.reaper` is not a grantable
     scope. It is fixed to the `session:expiry` identity.
   - The worker's App token.
   - The telemetry writer.

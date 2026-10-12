@@ -261,7 +261,8 @@ export const itemsContract = {
         description:
           'Read-only. Answers from the orchestrator task and runs for the ' +
           'anchor and from recent CLI session telemetry; it records no claim. ' +
-          'Call it before starting work on an issue. Requires work.operator; ' +
+          'Call it before starting work on an issue. Requires work.operator or ' +
+          'work.reader; ' +
           'the repository must be a control-plane repository, and a GitHub ' +
           'Actions principal may read only its own repository.',
       }),
