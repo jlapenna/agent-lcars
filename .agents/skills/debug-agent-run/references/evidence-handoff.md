@@ -26,7 +26,7 @@ reply; this is a procedure, not a new Work API, credential grant or probe broker
    provision that access. Broader access design belongs to its owning reviewed
    path (for example Homelab #2140), outside this handoff.
 4. Publish the request as the single PARK deliverable required by the
-   [shared protocol](../../agent-protocol/reference/agent-protocol.md#4-parking--blocked-on-a-human).
+   [shared protocol](../../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md#4-parking--blocked-on-a-human).
    Use its exact attempt/result markers and session status rules. For an issue,
    put the request in the marker-bound comment; for native Work, put it in the
    terminal message and write the native outcome file exactly as that protocol
