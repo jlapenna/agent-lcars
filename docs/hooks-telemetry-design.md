@@ -1,9 +1,30 @@
 # Hooks-based session telemetry (design)
 
 Status: proposal, 2026-10-10, hook surfaces verified empirically the same day
-(section 11). Owner: telemetry. Supersedes nothing yet; the host watcher
+(section 11). Phase 0 (contract, `lcars hook claude`, gated ingest route)
+and the in-repo part of phase 1 (`lcars hook codex`, `lcars integration
+install`, the daemon's hook-marker skip) are implemented; nothing is enabled
+in production yet. Owner: telemetry. Supersedes nothing yet; the host watcher
 daemon (`apps/telemetry-watcher`, issue #2540) keeps running until phase 3
 below.
+
+## Revision 2026-10-12: hosts write directly
+
+Phase 0 shipped a console ingest route (`/api/telemetry/v1/`) authenticated
+by per-host tokens. Enabling it needed the console's App Hosting account to
+gain write access to the telemetry database, which it holds read-only by
+design, and impersonating `telemetry-writer` from the console would have
+granted the same capability. The route was removed before it was ever
+enabled. Instead `lcars hook flush` writes each spooled event itself as the
+`telemetry-writer` service account (the identity the watcher daemon and
+runner sidecars already use), inside a Firestore transaction that re-reads
+the stored doc and refuses an event whose `seq` is not newer than the stored
+hook observer from the same host. Each enrolled host holds the writer key
+at `~/.config/agent-lcars/writer-key.json`, delivered by homegit; this gives
+up the original "no Firestore credential on workstations" goal in exchange
+for leaving the console's permissions untouched. Sections below that
+describe the ingest route, host tokens, or the `telemetry.writer` scope are
+superseded by this paragraph.
 
 ## 1. Problem
 
@@ -283,12 +304,17 @@ this fleet (`~/.claude/hooks/herdr-agent-state.sh`,
 Its choices were made under the same constraints and this design adopts
 them:
 
-- **Self-installing integration.** `lcars integration install claude|codex|opencode`
-  writes the hook entries and the launcher script itself, idempotently,
-  with `# LCARS_INTEGRATION_ID` / `# LCARS_INTEGRATION_VERSION` headers so
-  `lcars integration status` (and `--doctor`) can report an outdated or
-  hand-edited install. homegit then owns one `run_onchange_` line per host
-  instead of hook JSON inside `modify_settings.json` and `modify_hooks.json`.
+- **Self-installing integration.** `lcars integration install claude|codex|all`
+  writes the launcher script, idempotently, with `# LCARS_INTEGRATION_ID` /
+  `# LCARS_INTEGRATION_VERSION` headers so `lcars integration status` can
+  report an outdated or hand-edited install, and appends the hook entries on
+  hosts nobody else manages. On homegit-managed hosts the entries live in
+  homegit's managed hook JSON instead, because `modify_settings.json`
+  replaces the whole `hooks` key on every apply and would erase anything the
+  installer added; the entries are constant strings, so both owners agree
+  byte for byte. homegit's `run_onchange_after_35-homegit-lcars-telemetry`
+  runs the installer for the stub and writes `config.json`/`telemetry.env`
+  only once the host's `AGENT_LCARS_TELEMETRY_TOKEN_<HOST>` secret exists.
   `uninstall` removes exactly what `install` added and nothing else.
 - **Constant hook entry, versioned script.** The settings entry is
   `[ -x "$HOME/.claude/hooks/lcars-hook.sh" ] && sh "$HOME/.claude/hooks/lcars-hook.sh" || true`

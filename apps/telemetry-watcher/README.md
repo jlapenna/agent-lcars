@@ -197,23 +197,23 @@ For Codex, the watcher derives its inferred title from the first real user
 input in watched rollout JSONL. Claude's `aiTitle` remains a transcript-derived
 generated title.
 
-## Hook client (`lcars hook`, phase 0)
+## Hook client (`lcars hook`)
 
 The daemon above polls disk. The hook client is the replacement path
 described in [docs/hooks-telemetry-design.md](../../docs/hooks-telemetry-design.md):
-each coding agent's own hooks run `lcars hook <runtime>`, which reads one
-hook payload on stdin, reduces the session's transcript with the same
-summary-only reducer, and hands a `SessionEventV1` to a detached flusher
-that posts it to the console's
-`POST /api/telemetry/v1/sessions/{sessionId}/events` route. Phase 0 covers
-Claude Code only; the route is a `404` until the console runs with
-`AGENT_LCARS_TELEMETRY_INGEST=1`.
+each coding agent's own hooks run `lcars hook <runtime>` (Claude Code and
+Codex today), which reads one hook payload on stdin, reduces the session's
+transcript with the same summary-only reducer, and appends a
+`SessionEventV1` to a local spool. A detached `lcars hook flush` then writes
+each event to the `sessions` collection as the `telemetry-writer` service
+account, the same identity this daemon uses, in one Firestore transaction
+that refuses an event older than what is stored.
 
 The hook process never touches the network, never prints to stdout, and
 always exits 0. Every decision is one line in
 `~/.local/state/agent-lcars/hook.log`.
 
-### Workstation setup
+### Host setup
 
 1. `~/.config/agent-lcars/config.json` names the repositories whose
    sessions may be reported; anything else is skipped before the transcript
@@ -223,77 +223,32 @@ always exits 0. Every decision is one line in
    { "repos": ["jlapenna/*", "supersprinklesracing/*"] }
    ```
 
-2. `~/.config/agent-lcars/telemetry.env` (mode 0600) carries the host's
-   bearer token, `LCARS_TELEMETRY_TOKEN=...`. The console holds only its
-   SHA-256, bound to the host label, in `AGENT_LCARS_TELEMETRY_HOST_TOKENS`
-   (`[{"host":"laforge","tokenSha256":"<hex>"}]`). `LCARS_URL` overrides
-   the console origin.
+2. `~/.config/agent-lcars/writer-key.json` (mode 0600) holds the
+   `telemetry-writer` key, the value of `AGENT_TELEMETRY_WRITER_KEY_JSON`.
+   The environment variable of that name overrides the file; on a runner,
+   `GOOGLE_APPLICATION_CREDENTIALS` is used. Without credentials events stay
+   in the spool (capped at 5 MB) until one appears.
 
-3. Claude Code hooks (`~/.claude/settings.json`); the `async` entries never
-   block the agent and `SessionStart` prints nothing:
+3. Install the hook entries and their launcher stubs:
 
-   ```json
-   {
-     "hooks": {
-       "SessionStart": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "lcars hook claude",
-               "timeout": 10
-             }
-           ]
-         }
-       ],
-       "UserPromptSubmit": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "lcars hook claude",
-               "async": true
-             }
-           ]
-         }
-       ],
-       "PostToolUse": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "lcars hook claude",
-               "async": true
-             }
-           ]
-         }
-       ],
-       "Stop": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "lcars hook claude",
-               "async": true
-             }
-           ]
-         }
-       ],
-       "SessionEnd": [
-         {
-           "hooks": [
-             { "type": "command", "command": "lcars hook claude", "timeout": 5 }
-           ]
-         }
-       ]
-     }
-   }
+   ```bash
+   lcars integration install all      # or: claude | codex
+   lcars integration status all
    ```
 
+   This writes `~/.claude/hooks/lcars-hook.sh` and `~/.codex/lcars-hook.sh`
+   (versioned, `# LCARS_INTEGRATION_VERSION=N`) and appends one constant
+   entry per lifecycle event to `~/.claude/settings.json` and
+   `~/.codex/hooks.json`, leaving every other key and hook untouched.
+   Codex hashes the entry, not the script, so it is trusted once per host
+   (`/hooks` in the Codex TUI) and never again. `uninstall` removes exactly
+   what `install` added.
+
 `lcars hook flush` drains the spool by hand (`~/.local/state/agent-lcars/spool/`),
-and `lcars hook claude --inline` posts synchronously for debugging. During
-the rollout the daemon keeps running; `hook-sessions/<sessionId>.json` is
-the marker a later daemon change reads to skip hook-reported sessions.
+and `lcars hook <runtime> --inline` posts synchronously for debugging. While
+the daemon still runs, it skips any session whose
+`~/.local/state/agent-lcars/hook-sessions/<sessionId>.json` marker is
+younger than ten minutes, so the two writers never race on one doc.
 
 ## Configuration
 
