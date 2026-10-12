@@ -63,15 +63,15 @@ export interface GithubWorkRedispatchInput {
 
 export type GithubWorkAdmissionOutcome =
   | { kind: 'accepted'; runId: string; dispatched: boolean }
+  | { kind: 'busy'; runId: string }
+  | { kind: 'duplicate'; runId: string }
   | {
-      kind: 'handoff';
-      routing: NonNullable<
+      kind: 'conflict';
+      message: string;
+      providerRouting?: NonNullable<
         import('@agent-lcars/orchestrator').Task['providerRouting']
       >;
     }
-  | { kind: 'busy'; runId: string }
-  | { kind: 'duplicate'; runId: string }
-  | { kind: 'conflict'; message: string }
   | RoutingLabelConflict
   | { kind: 'invalid'; message: string }
   | { kind: 'forbidden'; message: string };
@@ -254,7 +254,11 @@ export async function admitGithubWork(
   }
 
   if (outcome.run === undefined && outcome.task.providerRouting !== undefined) {
-    return { kind: 'handoff', routing: outcome.task.providerRouting };
+    return {
+      kind: 'conflict',
+      message: 'Provider handoff refused',
+      providerRouting: outcome.task.providerRouting,
+    };
   }
   const { runId } = decidedRun(outcome);
   const drained = await runtime.drain();

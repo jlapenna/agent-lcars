@@ -980,6 +980,51 @@ describe('handleWebhookDelivery', () => {
     ).toMatchObject({ runId: result.body['runId'], pipeline: 'opencode' });
   });
 
+  it('acknowledges a live-owner handoff refusal and cannot replay it after settlement', async () => {
+    const { deps, store, clock } = fixture();
+    const first = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'owned-first',
+      payload: labeledIssuePayload({
+        issue: { ...labeledIssuePayload().issue, updated_at: T0 },
+      }),
+    });
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: clock.now(),
+      claimedBy: 'executor',
+      tokenHash: 'a'.repeat(64),
+    });
+    clock.advanceMinutes(1);
+    const request = {
+      event: 'issues',
+      deliveryId: 'owned-switch',
+      payload: labeledIssuePayload({
+        label: { name: 'agent:opencode' },
+        issue: {
+          ...labeledIssuePayload().issue,
+          labels: [{ name: 'agent:opencode' }],
+          updated_at: clock.now(),
+        },
+      }),
+    };
+    const refusal = await handleWebhookDelivery(deps, request);
+    expect(refusal).toMatchObject({
+      status: 200,
+      body: {
+        refused: 'run-already-claimed',
+        providerRouting: {
+          requestedPipeline: 'opencode',
+          effectivePipeline: 'claude',
+          status: 'refused',
+        },
+      },
+    });
+    await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
+    expect(await handleWebhookDelivery(deps, request)).toEqual(refusal);
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
+  });
+
   it('an unauthorized label change cannot bypass immutable admission', async () => {
     const { deps, store, clock } = fixture();
     await handleWebhookDelivery(deps, {

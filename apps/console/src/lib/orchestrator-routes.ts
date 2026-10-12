@@ -287,16 +287,6 @@ export async function handleWebhookDelivery(
         : { requestBinding: interpreted.requestBinding }),
     });
 
-    if (outcome.kind === 'handoff') {
-      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-      return {
-        status: 200,
-        body: {
-          refused: outcome.routing.reason,
-          providerRouting: outcome.routing,
-        },
-      };
-    }
     if (outcome.kind === 'busy') {
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
       return { status: 200, body: { refused: 'task-busy' } };
@@ -309,6 +299,19 @@ export async function handleWebhookDelivery(
       };
     }
     if (outcome.kind === 'conflict') {
+      if (
+        'providerRouting' in outcome &&
+        outcome.providerRouting !== undefined
+      ) {
+        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+        return {
+          status: 200,
+          body: {
+            refused: outcome.providerRouting.reason,
+            providerRouting: outcome.providerRouting,
+          },
+        };
+      }
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
       return {
         status: 200,
