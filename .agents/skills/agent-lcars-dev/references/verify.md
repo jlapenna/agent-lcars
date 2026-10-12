@@ -26,14 +26,37 @@ ambiguous-response failures before retrying. A transport error does not waive
 any verification gate below.
 
 Don't run the full gate above locally before every push — see "Push early"
-in [SKILL.md](../SKILL.md#hard-guardrails). The pre-push hook only runs the
-fast slice (`format:check`, affected `lint`/`typecheck`); `test` and
-`build` — the two steps that scan/compile the whole affected set and take
-the longest — are deliberately left out, because CI's `Verify` job re-runs
-them anyway the moment you push, on its own runner rather than your
+in [SKILL.md](../SKILL.md#hard-guardrails). The pre-push hook runs the fast
+slice (`format:check`, affected `lint`/`typecheck`); the whole-tree `test`
+and `build` targets — the two steps that scan/compile the whole affected set
+and take the longest — are deliberately left out, because CI's `Verify` job
+re-runs them anyway the moment you push, on its own runner rather than your
 workstation. The gate still runs exactly once as far as the merge
 requirement is concerned; running it a second time locally first only adds
 a serialized wait in front of a check that was going to happen regardless.
+
+That fast slice is the entire local gate **only when `apps/console` is not
+affected.** The hook's last step is `tools/console-build-smoke.sh`, which
+builds and probes the deployable Console bundle whenever `apps/console` is
+in the affected set: the real production `@nx/next:build` through
+`@agent-lcars/console:bundle`, then `tools/console-standalone-smoke.sh`
+booting a copy of the standalone bundle from outside the repository, loading
+every external its server chunks traced, and expecting HTTP 401 from the
+webhook route. That is a deliberate, Console-scoped exception to the no
+local build rule — not a local copy of CI's whole-tree `build` target, and
+not a substitute for CI's required `Verify` or `E2E` checks. Describe the
+hook as the affected lint/typecheck slice plus this Console build exception;
+calling it "no local build" is wrong for a Console-affected push.
+
+Plan the publication envelope for the hook path that actually runs. A
+Console-affected publication includes a real `next build`, so qualify its
+CPU, memory and time bounds for that build and give it the supported worker
+control `LCARS_CONSOLE_BUILD_CPUS`
+([apps/console/build-workers.cjs](../../../../apps/console/build-workers.cjs))
+or a qualified cgroup CPU quota, so the page-data worker pool follows the
+phase's own bound instead of the host's visible CPU count. Planning a
+Console-affected publication as "no local build" omits work the normal hook
+will start anyway.
 
 Run the full local gate only when you have a specific reason not to trust
 CI's answer for it — e.g. iterating on a change to the Nx config or task
@@ -48,6 +71,31 @@ record the selected CPU, memory, storage, accelerator and time bounds before
 starting it.
 Use supported supervisors and accounting capabilities; repository verification
 does not authorize changing host delegation or understating requests to fit a run.
+
+Size the publication phase for the hook path the push actually executes, not a
+shorter one you assumed. `.husky/pre-push` adds the affected-Console production
+build and standalone smoke (`tools/console-build-smoke.sh`,
+`tools/console-standalone-smoke.sh`) to every `apps/console`-affected
+publication, so that build's CPU, memory and time belong in the envelope; use
+its supported worker control `LCARS_CONSOLE_BUILD_CPUS` rather than a smaller
+plan that omits the build. "No local build" is a correct plan only when
+`apps/console` is unaffected.
+
+Recorded case: source `bfbd72e8` passed 23 normal lint/typecheck tasks inside a
+publication plan that omitted the affected Console build; the normal hook then
+entered that real production build and the supervisor stopped only its own unit
+`lcars-root-2200-provider-clock-publish-01a11f2d` after 164.612 s wall with
+162.557 CPU seconds and 1.4 GiB peak / no swap, main terminating on SIGTERM 15.
+Systemd's requested-stop result `success` was not publication success and the
+exact remote branch was absent; no OOM kill and no failed application assertion
+was observed. The same change later published through the complete hook — one
+supported build worker, the real production build and the isolated
+seven-externals and HTTP 401 smoke — passing in 138.254 s wall with 133.640 CPU
+seconds and 1.9 GiB peak / no swap. Keep the two receipts distinct: the first
+is an interrupted partial phase, the second the successful complete-hook
+publication ([#2550](https://github.com/jlapenna/agent-lcars/issues/2550)). No
+document-literal test mirrors this guidance; the hook and the two smoke scripts
+stay the executable owners.
 
 Before each local phase, record fresh, read-only host and cluster occupancy for
 that selected host: supported capacity and reserves, systemd/cgroup, container
@@ -454,10 +502,16 @@ shared no-op fixture so plain Node/Vite unit tests can import server modules;
 the production Next build does not use that alias and still fails if a marked
 module enters the client graph.
 
-An `apps/console`-affected push also gets a fast production `next build`
-smoke in the pre-push hook (`tools/console-build-smoke.sh`), which catches
-class 1 and prerenderable cases of class 3 in well under a minute. It is
-not a substitute for CI's E2E gate: a build can't see anything that only
+An `apps/console`-affected push also gets a production `next build` smoke in
+the pre-push hook: `tools/console-build-smoke.sh` runs the real
+`@agent-lcars/console:bundle` build, then `tools/console-standalone-smoke.sh`
+boots an isolated copy of the standalone bundle, loads every external its
+server chunks traced, and probes the webhook route for HTTP 401. It catches
+class 1 and prerenderable cases of class 3 before you push, and the isolated
+boot additionally catches a dependency the build traced but did not execute.
+Budget it as the real build it is — see [CI delegation](#ci-delegation) for
+the affected-hook path and the `LCARS_CONSOLE_BUILD_CPUS` worker control. It
+is not a substitute for CI's E2E gate: a build can't see anything that only
 breaks at request time on a non-prerendered route or in a real browser
 (class 4 stays browser-e2e-only). Local E2E remains
 available for focused diagnosis, but is not required to deliver the change.
