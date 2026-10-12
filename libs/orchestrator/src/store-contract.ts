@@ -2143,12 +2143,16 @@ export function runOrchestratorStoreContract(
 
       it('commits priority service turns with concurrent claims, preserving the background bound', async () => {
         const { store, orchestrator, clock } = await fixture();
-        for (let index = 0; index < 6; index++) {
-          for (const [offset, priority] of [
-            [100, 'urgent'],
-            [200, 'normal'],
-            [300, 'background'],
+        // Keep every class eligible throughout all seven reservations without
+        // spending emulator time on surplus requests: 4:2:1 service leaves
+        // one queued item in each class after this 5:3:2 initial backlog.
+        for (let index = 0; index < 5; index++) {
+          for (const [offset, priority, count] of [
+            [100, 'urgent', 5],
+            [200, 'normal', 3],
+            [300, 'background', 2],
           ] as const) {
+            if (index >= count) continue;
             const run = await queuedRun(
               orchestrator,
               `q${offset + index}`,
@@ -2193,6 +2197,9 @@ export function runOrchestratorStoreContract(
             .map((run) => run?.priority)
             .filter((priority) => priority === 'background'),
         ).toHaveLength(1);
+        expect(
+          (await store.listQueuedRuns()).map((run) => run.priority).sort(),
+        ).toEqual(['background', 'normal', 'urgent']);
       });
 
       it('enqueueRun is idempotent and listQueuedRuns finds it', async () => {
