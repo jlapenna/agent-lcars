@@ -33,7 +33,9 @@ export interface TelemetryIngestDependencies {
     bearer: string,
   ) => Promise<TelemetryWriterPrincipal | undefined>;
   readSessionDoc: (sessionId: string) => Promise<SessionDoc | undefined>;
-  writeSession: (write: SessionWrite) => Promise<void>;
+  /** Applies the write unless a same-host hook event with an equal or
+   *  later `seq` is already stored, atomically; resolves whether it applied. */
+  writeSession: (write: SessionWrite) => Promise<boolean>;
   now: () => string;
 }
 
@@ -232,7 +234,11 @@ export async function handleSessionEventRequest(
       422,
     );
   }
-  await deps.writeSession(write);
+  if (!(await deps.writeSession(write))) {
+    // Lost the race to a newer event that landed after our read.
+    const stale: IngestOutcome = { accepted: false, reason: 'stale' };
+    return json(stale, 200);
+  }
   const outcome: IngestOutcome = {
     accepted: true,
     liveness: write.doc.liveness,

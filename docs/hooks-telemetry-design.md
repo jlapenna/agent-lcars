@@ -528,6 +528,25 @@ shared module bundled into both artifacts.
 Each phase is reversible by removing the hook entries; the daemon keeps
 writing untouched docs until phase 3.
 
+### 6.1 Enablement prerequisite: console write access
+
+The console's App Hosting service account holds only `roles/datastore.viewer`
+on the telemetry database (`infra/terraform/main.tf`,
+`apphosting_firestore`), by explicit design: "the console reads telemetry
+only". The ingest route writes through that account, so phase 0 cannot be
+switched on until a maintainer approves and applies one of:
+
+- Widen `apphosting_firestore` to `roles/datastore.user` on the telemetry
+  database (smallest change; reverses the read-only boundary).
+- Grant the App Hosting account `roles/iam.serviceAccountTokenCreator` on
+  `telemetry-writer` and have the route impersonate it (keeps the console's
+  own identity read-only; one more hop per write).
+
+Until then `AGENT_LCARS_TELEMETRY_INGEST` stays unset, the route is a 404,
+and enrolled hosts' flushers keep their events (404 is retryable) inside the
+5 MB spool cap. Host token hashes are already configured, so enabling is
+the IAM change plus setting that one variable.
+
 ## 7. Operations after phase 3
 
 - **Health.** `/agents` gets a hosts strip from `telemetry-hosts/*`: host,

@@ -67,6 +67,7 @@ function deps(overrides: Partial<TelemetryIngestDependencies> = {}) {
     readSessionDoc: vi.fn(async () => undefined),
     writeSession: vi.fn(async (write: SessionWrite) => {
       writes.push(write);
+      return true;
     }),
     now: () => NOW,
     writes,
@@ -205,6 +206,17 @@ describe('handleSessionEventRequest', () => {
       d,
     );
     expect(fresh.status).toBe(202);
+  });
+
+  it('reports stale when the atomic write loses a race to a newer event', async () => {
+    const d = deps({ writeSession: vi.fn(async () => false) });
+    const response = await handleSessionEventRequest(
+      request(event()),
+      SESSION_ID,
+      d,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ accepted: false, reason: 'stale' });
   });
 
   it('applies a lifecycle-only event on top of the stored doc', async () => {

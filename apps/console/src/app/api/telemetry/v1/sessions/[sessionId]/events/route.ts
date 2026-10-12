@@ -3,7 +3,7 @@ import 'server-only';
 import {
   getAgentTelemetryReaderFirestore,
   getSessionDoc,
-  upsertSession,
+  upsertSessionIfNewer,
 } from '@agent-lcars/telemetry/server';
 
 import { auth } from '@/auth';
@@ -80,7 +80,7 @@ export async function POST(
     authenticate,
     readSessionDoc: async (id) =>
       getSessionDoc(await getAgentTelemetryReaderFirestore(), id),
-    writeSession: upsertSession,
+    writeSession: (write) => upsertSessionIfNewer(write),
     now: () => new Date().toISOString(),
   });
 }

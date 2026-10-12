@@ -126,12 +126,11 @@ env:
     availability:
       - RUNTIME
 
-  # Hook telemetry ingest (docs/hooks-telemetry-design.md, phase 0 spike):
-  # `1` serves POST /api/telemetry/v1/sessions/{id}/events. Not sensitive.
-  - variable: AGENT_LCARS_TELEMETRY_INGEST
-    value: '1'
-    availability:
-      - RUNTIME
+  # Hook telemetry ingest stays off (AGENT_LCARS_TELEMETRY_INGEST unset, so
+  # /api/telemetry/v1/ is a 404) until this App Hosting account can write the
+  # telemetry database. infra/terraform/main.tf grants it datastore.viewer
+  # only; enabling needs a maintainer-approved datastore.user grant there
+  # (docs/hooks-telemetry-design.md §6).
 
   # Not sensitive - SHA-256 of each enrolled host's bearer token, bound to
   # the host label the `lcars hook` client stamps on every event. The raw

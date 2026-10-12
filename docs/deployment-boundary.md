@@ -105,7 +105,7 @@ Sprinkles-specific branch nor a provider-routing selector.
 | -------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | grants                     | `AGENT_LCARS_WORK_GRANTS`           | operators, allowed `github-actions:<owner/repo>` automation, and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
 | Google ID token audience   | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                                                                        |
-| hook telemetry ingest      | `AGENT_LCARS_TELEMETRY_INGEST`      | `1` serves `/api/telemetry/v1/`; unset is a 404 (docs/hooks-telemetry-design.md)                                                          |
+| hook telemetry ingest      | `AGENT_LCARS_TELEMETRY_INGEST`      | unset (404) until the App Hosting account gets telemetry write access; see docs/hooks-telemetry-design.md §6.1                            |
 | hook telemetry host tokens | `AGENT_LCARS_TELEMETRY_HOST_TOKENS` | `[{ host, tokenSha256 }]`; the raw token is the host's `AGENT_LCARS_TELEMETRY_TOKEN_<HOST>` homegit secret                                |
 
 Authorized native Work creation, redispatch, replies, and due schedule slots
