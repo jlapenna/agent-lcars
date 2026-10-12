@@ -46,6 +46,8 @@ source "${WORKER_ACTIVATION_HELPER:-$RUNTIME_HELPERS_DIR/worker-activation.sh}"
 # shellcheck source=runtime/worker-policy-bootstrap.sh
 source "${WORKER_POLICY_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/worker-policy-bootstrap.sh}"
 CODEX_HOOK_ARGS=()
+# shellcheck source=runtime/hook-telemetry-bootstrap.sh
+source "${HOOK_TELEMETRY_HELPER:-$RUNTIME_HELPERS_DIR/hook-telemetry-bootstrap.sh}"
 # This supervisor observes successful OS spawn, not a bootstrap heartbeat.
 PROVIDER_PROCESS_NODE="${PROVIDER_PROCESS_NODE:-/usr/bin/node}"
 PROVIDER_PROCESS_HELPER="${PROVIDER_PROCESS_HELPER:-$RUNTIME_HELPERS_DIR/provider-process.mjs}"
@@ -686,11 +688,37 @@ if [ "$PIPELINE" = "codex" ]; then
   worker_policy_bootstrap "$CODEX_HOME/hooks.json"
 fi
 
-WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
-  RUN_ID="$LCARS_RUN_ID" \
-  INTENT_ID="$INTENT_ID" \
-  CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
-  "$SIDECAR_LIFECYCLE" start
+start_telemetry_sidecar() {
+  WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
+    RUN_ID="$LCARS_RUN_ID" \
+    INTENT_ID="$INTENT_ID" \
+    CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
+    "$SIDECAR_LIFECYCLE" start
+}
+
+# Selected pipelines report through provider hooks instead of the polling
+# sidecar. The hooks install after the provider's own config (worker policy
+# included) exists; any failure there starts the sidecar instead.
+HOOK_TELEMETRY_STATE=off
+if hook_telemetry_selected; then
+  HOOK_TELEMETRY_STATE=pending
+else
+  start_telemetry_sidecar
+fi
+
+activate_hook_telemetry() {
+  [ "$HOOK_TELEMETRY_STATE" = pending ] || return 0
+  if hook_telemetry_bootstrap; then
+    HOOK_TELEMETRY_STATE=on
+  else
+    echo "::warning::hook telemetry install failed; falling back to the telemetry sidecar"
+    HOOK_TELEMETRY_STATE=off
+    start_telemetry_sidecar
+  fi
+}
+if [ "$PIPELINE" = codex ]; then
+  activate_hook_telemetry
+fi
 
 # Best-effort lease renewal for the duration of the agent's own run. A
 # claimed run's lease is minted for a fixed window (2h -- see
@@ -735,6 +763,7 @@ if [ "$PIPELINE" = "claude" ]; then
   fi
   export LCARS_WORKER_SESSION_ID="$CLAUDE_WORKER_SESSION"
   worker_policy_bootstrap "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  activate_hook_telemetry
   # The Claude CLI reads its long-lived subscription credential straight
   # from its own process environment. The autoscaler bind-mounts the value
   # as a file only for Claude runs, keeping it out of docker inspect.
@@ -1184,6 +1213,10 @@ else
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
+
+if [ "$HOOK_TELEMETRY_STATE" = on ]; then
+  hook_telemetry_drain
+fi
 
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \

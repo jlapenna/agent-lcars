@@ -24,10 +24,14 @@ interface HookEntrySpec {
 }
 
 interface IntegrationTarget {
-  /** Settings file holding `hooks`, relative to `$HOME`. */
-  readonly settingsPath: string;
-  /** Launcher stub path, relative to `$HOME`. */
-  readonly stubPath: string;
+  /** Environment variable that relocates the runtime's config directory. */
+  readonly configDirEnv: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME';
+  /** Config directory relative to `$HOME` when that variable is unset. */
+  readonly defaultConfigDir: string;
+  /** Settings file holding `hooks`, relative to the config directory. */
+  readonly settingsFile: string;
+  /** Launcher stub, relative to the config directory. */
+  readonly stubFile: string;
   readonly entries: readonly HookEntrySpec[];
 }
 
@@ -35,8 +39,10 @@ export const INTEGRATION_TARGETS: Readonly<
   Record<HookRuntime, IntegrationTarget>
 > = {
   claude: {
-    settingsPath: path.join('.claude', 'settings.json'),
-    stubPath: path.join('.claude', 'hooks', 'lcars-hook.sh'),
+    configDirEnv: 'CLAUDE_CONFIG_DIR',
+    defaultConfigDir: '.claude',
+    settingsFile: 'settings.json',
+    stubFile: path.join('hooks', 'lcars-hook.sh'),
     entries: [
       // SessionStart cannot be async and its stdout is injected into
       // the agent's context; the stub prints nothing.
@@ -49,8 +55,10 @@ export const INTEGRATION_TARGETS: Readonly<
     ],
   },
   codex: {
-    settingsPath: path.join('.codex', 'hooks.json'),
-    stubPath: path.join('.codex', 'lcars-hook.sh'),
+    configDirEnv: 'CODEX_HOME',
+    defaultConfigDir: '.codex',
+    settingsFile: 'hooks.json',
+    stubFile: 'lcars-hook.sh',
     entries: [
       { event: 'SessionStart', timeout: 10 },
       { event: 'UserPromptSubmit', async: true },
@@ -62,10 +70,43 @@ export const INTEGRATION_TARGETS: Readonly<
   },
 };
 
-export function stubCommand(runtime: HookRuntime): string {
-  const stub = `$HOME/${INTEGRATION_TARGETS[runtime].stubPath}`;
-  return `[ -x "${stub}" ] && sh "${stub}" ${runtime} || true`;
+interface ResolvedTarget {
+  readonly settingsPath: string;
+  readonly stubPath: string;
+  /** How the hook entry names the stub: `$HOME/...` for the default config
+   *  directory (one constant string across hosts, so Codex trusts it once),
+   *  otherwise the absolute path. */
+  readonly stubRef: string;
 }
+
+export function resolveTarget(
+  runtime: HookRuntime,
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedTarget {
+  const target = INTEGRATION_TARGETS[runtime];
+  const relocated = env[target.configDirEnv]?.trim();
+  const configDir =
+    relocated || path.join(homeDirectory, target.defaultConfigDir);
+  return {
+    settingsPath: path.join(configDir, target.settingsFile),
+    stubPath: path.join(configDir, target.stubFile),
+    stubRef: relocated
+      ? path.join(relocated, target.stubFile)
+      : `$HOME/${path.join(target.defaultConfigDir, target.stubFile)}`,
+  };
+}
+
+export function stubCommand(
+  runtime: HookRuntime,
+  stubRef = `$HOME/${path.join(INTEGRATION_TARGETS[runtime].defaultConfigDir, INTEGRATION_TARGETS[runtime].stubFile)}`,
+): string {
+  return `[ -x "${stubRef}" ] && sh "${stubRef}" ${runtime} || true`;
+}
+
+/** Exactly the command shape this installer generates, at any stub path. */
+const OUR_COMMAND_RE =
+  /^\[ -x "([^"]+\/lcars-hook\.sh)" \] && sh "\1" (claude|codex) \|\| true$/u;
 
 export function stubScript(runtime: HookRuntime): string {
   return [
@@ -96,6 +137,7 @@ export function stubScript(runtime: HookRuntime): string {
 
 export interface IntegrationDependencies {
   homeDirectory?: string;
+  env?: NodeJS.ProcessEnv;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
 }
@@ -172,17 +214,11 @@ function writeAtomically(target: string, body: string, mode: number): void {
   }
 }
 
-/** Exactly the commands this installer generates, so an unrelated hook that
- *  merely mentions the stub's file name is never touched. */
-const OUR_COMMANDS: ReadonlySet<string> = new Set(
-  HOOK_RUNTIMES.map((runtime) => stubCommand(runtime)),
-);
-
 function hookIsOurs(hook: unknown): boolean {
   return (
     isRecord(hook) &&
     typeof hook['command'] === 'string' &&
-    OUR_COMMANDS.has(hook['command'])
+    OUR_COMMAND_RE.test(hook['command'])
   );
 }
 
@@ -194,12 +230,16 @@ function groupIsOurs(group: unknown): boolean {
   );
 }
 
-function ourGroup(runtime: HookRuntime, spec: HookEntrySpec): JsonRecord {
+function ourGroup(
+  runtime: HookRuntime,
+  spec: HookEntrySpec,
+  stubRef: string,
+): JsonRecord {
   return {
     hooks: [
       {
         type: 'command',
-        command: stubCommand(runtime),
+        command: stubCommand(runtime, stubRef),
         ...(spec.async && { async: true }),
         ...(spec.timeout !== undefined && { timeout: spec.timeout }),
       },
@@ -274,11 +314,13 @@ function stubVersionOf(script: string | undefined): number | undefined {
 export function integrationStatus(
   runtime: HookRuntime,
   homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): IntegrationStatus {
   const target = INTEGRATION_TARGETS[runtime];
+  const resolved = resolveTarget(runtime, homeDirectory, env);
   let script: string | undefined;
   try {
-    script = fs.readFileSync(path.join(homeDirectory, target.stubPath), 'utf8');
+    script = fs.readFileSync(resolved.stubPath, 'utf8');
   } catch {
     script = undefined;
   }
@@ -286,9 +328,7 @@ export function integrationStatus(
   const stubCurrent = script === stubScript(runtime);
   let entriesPresent = 0;
   try {
-    const settings = readSettings(
-      path.join(homeDirectory, target.settingsPath),
-    );
+    const settings = readSettings(resolved.settingsPath);
     const hooks = isRecord(settings['hooks']) ? settings['hooks'] : {};
     for (const spec of target.entries) {
       const groups = hooks[spec.event];
@@ -311,18 +351,16 @@ export function integrationStatus(
 export function installIntegration(
   runtime: HookRuntime,
   homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): IntegrationStatus {
   const target = INTEGRATION_TARGETS[runtime];
-  writeAtomically(
-    path.join(homeDirectory, target.stubPath),
-    stubScript(runtime),
-    0o700,
-  );
-  const settingsPath = path.join(homeDirectory, target.settingsPath);
+  const resolved = resolveTarget(runtime, homeDirectory, env);
+  writeAtomically(resolved.stubPath, stubScript(runtime), 0o700);
+  const settingsPath = resolved.settingsPath;
   const settings = readSettings(settingsPath);
   const hooks = isRecord(settings['hooks']) ? settings['hooks'] : {};
   for (const spec of target.entries) {
-    placeOurGroup(hooks, spec.event, ourGroup(runtime, spec));
+    placeOurGroup(hooks, spec.event, ourGroup(runtime, spec, resolved.stubRef));
   }
   // Events we no longer install into (or stray copies) lose only our entries.
   for (const [event, groups] of Object.entries(hooks)) {
@@ -341,15 +379,16 @@ export function installIntegration(
     `${JSON.stringify(settings, null, 2)}\n`,
     settingsMode(settingsPath),
   );
-  return integrationStatus(runtime, homeDirectory);
+  return integrationStatus(runtime, homeDirectory, env);
 }
 
 export function uninstallIntegration(
   runtime: HookRuntime,
   homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): IntegrationStatus {
-  const target = INTEGRATION_TARGETS[runtime];
-  const settingsPath = path.join(homeDirectory, target.settingsPath);
+  const resolved = resolveTarget(runtime, homeDirectory, env);
+  const settingsPath = resolved.settingsPath;
   let settings: JsonRecord | undefined;
   try {
     settings = readSettings(settingsPath);
@@ -368,11 +407,11 @@ export function uninstallIntegration(
     }
   }
   try {
-    fs.unlinkSync(path.join(homeDirectory, target.stubPath));
+    fs.unlinkSync(resolved.stubPath);
   } catch {
     // Already absent.
   }
-  return integrationStatus(runtime, homeDirectory);
+  return integrationStatus(runtime, homeDirectory, env);
 }
 
 function formatStatus(status: IntegrationStatus): string {
@@ -389,6 +428,7 @@ export function executeIntegrationCommand(
   dependencies: IntegrationDependencies = {},
 ): number {
   const home = dependencies.homeDirectory ?? os.homedir();
+  const env = dependencies.env ?? process.env;
   const stdout =
     dependencies.stdout ?? ((line) => process.stdout.write(`${line}\n`));
   const stderr =
@@ -411,10 +451,10 @@ export function executeIntegrationCommand(
     try {
       const status =
         action === 'install'
-          ? installIntegration(runtime, home)
+          ? installIntegration(runtime, home, env)
           : action === 'uninstall'
-            ? uninstallIntegration(runtime, home)
-            : integrationStatus(runtime, home);
+            ? uninstallIntegration(runtime, home, env)
+            : integrationStatus(runtime, home, env);
       stdout(formatStatus(status));
       if (action === 'status' && !status.installed) exitCode = 1;
     } catch (error) {
