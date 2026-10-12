@@ -76,6 +76,7 @@ telemetry_hooks_codex() {
       | add("UserPromptSubmit"; {async: true})
       | add("PostToolUse"; {async: true})
       | add("Stop"; {async: true})
+      | add("Interrupt"; {timeout: 1})
       | add("SessionEnd"; {timeout: 3})' \
       < <(if [ -s "$hooks_file" ]; then cat "$hooks_file"; else echo '{}'; fi) \
       > "$staged" 2>/dev/null; then
@@ -86,16 +87,24 @@ telemetry_hooks_codex() {
 
 # Drains the hook spool before `runner finalize`, so a late hook write can
 # never land after the authoritative final doc, and nothing is lost when
-# the container is destroyed. Bounded; another flusher holding the spool
-# lock just means one more pass.
+# the container is destroyed. A detached flusher moves the live spool to
+# events.pending.ndjson and holds events.lock while its write is in flight,
+# so "drained" means all three are gone, not just the live file; each flush
+# also sends at most a batch, so it loops. Bounded either way.
 telemetry_hooks_drain() {
   [ "$TELEMETRY_HOOKS_ENABLED" = 1 ] || return 0
-  local spool="$HOME/.local/state/agent-lcars/spool/events.ndjson"
+  local spool_dir="$HOME/.local/state/agent-lcars/spool"
   local deadline=$((SECONDS + ${TELEMETRY_HOOK_DRAIN_SECONDS:-30}))
-  while [ -s "$spool" ] && [ "$SECONDS" -lt "$deadline" ]; do
+  while [ -s "$spool_dir/events.ndjson" ] ||
+    [ -s "$spool_dir/events.pending.ndjson" ] ||
+    [ -e "$spool_dir/events.lock" ]; do
     timeout --kill-after=5s 20s "$LCARS_BIN" hook flush >/dev/null 2>&1 || true
-    [ -s "$spool" ] || break
-    sleep 1
+    [ "$SECONDS" -lt "$deadline" ] || break
+    if [ -s "$spool_dir/events.ndjson" ] ||
+      [ -s "$spool_dir/events.pending.ndjson" ] ||
+      [ -e "$spool_dir/events.lock" ]; then
+      sleep 1
+    fi
   done
   return 0
 }

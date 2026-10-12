@@ -261,7 +261,8 @@ client into a dispatched run without replacing anything yet:
   one event, and a missing or broken one leaves the sidecar reporting as
   before.
 - **Drain before finalize.** `telemetry_hooks_drain` runs `lcars hook flush`
-  until the spool is empty (bounded at 30 s) before `runner finalize`, so a
+  until the live spool, the in-flight `events.pending.ndjson` batch, and the
+  flusher lock are all gone (bounded at 30 s) before `runner finalize`, so a
   late hook write can never land after the authoritative final doc, and no
   event is lost when the container is destroyed. `finalize` and `resume`
   are unchanged.

@@ -852,7 +852,10 @@ run_scenario() {
   mkdir -p "$scenario_runner_temp" "$HOME" "$LCARS_CODEX_VOLATILE_DIR"
   if [ -n "${FAKE_PRESEED_HOOK_SPOOL:-}" ]; then
     mkdir -p "$HOME/.local/state/agent-lcars/spool"
-    echo '{"version":1}' > "$HOME/.local/state/agent-lcars/spool/events.ndjson"
+    # A detached flusher's batch is mid-write: the live spool is empty, its
+    # events sit in the pending file, and it holds the lock.
+    echo '{"version":1}' > "$HOME/.local/state/agent-lcars/spool/events.pending.ndjson"
+    echo 1 > "$HOME/.local/state/agent-lcars/spool/events.lock"
   fi
   mkdir -p "$HOME/.config/opencode"
   cp -R "$repo_root/agents/opencode/." "$HOME/.config/opencode/"
@@ -2312,7 +2315,15 @@ if [ "${1:-}" = hook ] && [ "${2:-}" = flush ]; then
   if grep -q 'runner finalize' "$NODE_ARGS_LOG" 2>/dev/null; then
     echo flush-after-finalize >> "$LCARS_CALLS_LOG"
   fi
-  : > "$HOME/.local/state/agent-lcars/spool/events.ndjson"
+  spool="$HOME/.local/state/agent-lcars/spool"
+  # Mirrors a real drain: the first pass finds another flusher's in-flight
+  # batch (pending file plus lock) and can only finish once it is released.
+  if [ -e "$spool/events.lock" ]; then
+    rm -f "$spool/events.lock"
+  else
+    : > "$spool/events.ndjson"
+    : > "$spool/events.pending.ndjson"
+  fi
 fi
 exit 0
 FAKE
@@ -2332,8 +2343,11 @@ for hooks_provider in claude codex; do
   [ "$rc" -eq 0 ] || fail "telemetry hooks $hooks_provider: expected exit 0, got $rc"
   grep -q -- 'runner sidecar' "$NODE_ARGS_LOG" ||
     fail "telemetry hooks $hooks_provider: the sidecar fallback did not start ($(cat "$NODE_ARGS_LOG"))"
-  grep -qx 'hook flush' "$LCARS_CALLS_LOG" ||
-    fail "telemetry hooks $hooks_provider: spool was not drained ($(cat "$LCARS_CALLS_LOG" 2>/dev/null))"
+  [ "$(grep -cx 'hook flush' "$LCARS_CALLS_LOG" 2>/dev/null)" -ge 2 ] ||
+    fail "telemetry hooks $hooks_provider: drain did not wait out an in-flight flusher ($(cat "$LCARS_CALLS_LOG" 2>/dev/null))"
+  spool_dir="$HOME/.local/state/agent-lcars/spool"
+  [ ! -s "$spool_dir/events.pending.ndjson" ] && [ ! -e "$spool_dir/events.lock" ] ||
+    fail "telemetry hooks $hooks_provider: finalize ran with hook events still in flight"
   ! grep -q flush-after-finalize "$LCARS_CALLS_LOG" ||
     fail "telemetry hooks $hooks_provider: spool drained after runner finalize"
   if [ "$hooks_provider" = claude ]; then
@@ -2350,12 +2364,26 @@ for hooks_provider in claude codex; do
       fail "telemetry hooks claude: provider env is wrong ($(cat "$TELEMETRY_ENV_LOG"))"
   else
     jq -e --arg cmd "$LCARS_BIN hook codex" '
-      [.hooks.SessionStart, .hooks.UserPromptSubmit, .hooks.PostToolUse, .hooks.Stop, .hooks.SessionEnd]
+      [.hooks.SessionStart, .hooks.UserPromptSubmit, .hooks.PostToolUse, .hooks.Stop, .hooks.Interrupt, .hooks.SessionEnd]
       | all(any(.[]; .hooks[0].command == $cmd))' "$CODEX_HOOKS_SNAPSHOT" >/dev/null ||
       fail "telemetry hooks codex: hooks.json lacks telemetry entries ($(cat "$CODEX_HOOKS_SNAPSHOT" 2>/dev/null))"
     if grep -q -- '--dangerously-bypass-hook-trust' "$CODEX_ARGS_LOG"; then
       fail "telemetry hooks codex: telemetry must not enable a hook trust bypass by itself"
     fi
+    # With the worker-policy rollout selected, its PreToolUse control and the
+    # telemetry entries must coexist and the policy's own flags must stand.
+    export LCARS_WORKER_POLICY_PROVIDERS=codex FAKE_PRESEED_HOOK_SPOOL=1
+    run_scenario telemetry-hooks-codex-worker-policy codex
+    unset LCARS_WORKER_POLICY_PROVIDERS
+    [ "$rc" -eq 0 ] || fail "telemetry hooks codex+policy: expected exit 0, got $rc"
+    grep -q -- '--enable hooks --dangerously-bypass-hook-trust' "$CODEX_ARGS_LOG" ||
+      fail "telemetry hooks codex+policy: worker-policy hook flags were lost ($(cat "$CODEX_ARGS_LOG"))"
+    jq -e --arg cmd "$LCARS_BIN hook codex" '
+      (.hooks.PreToolUse | length) >= 1
+      and ([.hooks.PreToolUse[].hooks[].command] | all(. != $cmd))
+      and ([.hooks.PostToolUse[].hooks[].command] | index($cmd) != null)' \
+      "$CODEX_HOOKS_SNAPSHOT" >/dev/null ||
+      fail "telemetry hooks codex+policy: hooks.json did not keep both ($(cat "$CODEX_HOOKS_SNAPSHOT" 2>/dev/null))"
   fi
   echo "scenario telemetry-hooks-$hooks_provider: OK"
 done
