@@ -2,8 +2,6 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { type HookWriterCredentials } from './hook-store';
-
 /**
  * Where the `lcars hook` client finds its own configuration on a host. Both
  * files are written by homegit (docs/hooks-telemetry-design.md §4.6);
@@ -14,6 +12,14 @@ export const HOOK_CONFIG_FILE = 'config.json';
 /** The `telemetry-writer` service-account key, mode 0600. */
 export const HOOK_WRITER_KEY_FILE = 'writer-key.json';
 export const DEFAULT_TELEMETRY_PROJECT_ID = 'agent-lcars';
+
+/** How the flusher authenticates to the telemetry store. */
+export interface HookWriterCredentials {
+  readonly projectId: string;
+  /** Service-account key; absent means Application Default Credentials. */
+  readonly credentials?: { client_email: string; private_key: string };
+  readonly emulatorHost?: string;
+}
 
 export interface HookClientConfig {
   /** `owner/name` allowlist patterns, see `matchesRepoAllowlist`. */

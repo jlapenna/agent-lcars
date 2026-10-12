@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -27,7 +27,7 @@ import {
 import { SESSION_STATE_DIRECTORY } from '../session-title-paths';
 import { findCodexRollout } from './codex-rollout';
 import { acquireFileLock, releaseFileLock } from './file-lock';
-import { type HookClientConfig, loadHookClientConfig } from './hook-config';
+import { loadHookClientConfig } from './hook-config';
 import { appendHookLog } from './hook-log';
 import {
   HOOK_EVENT_KINDS,
@@ -38,18 +38,12 @@ import {
 } from './hook-payload';
 import {
   hookSessionLockPath,
-  markHookSessionDelivered,
   readHookSessionState,
   shouldShipEvent,
   writeHookSessionState,
 } from './hook-state';
-import {
-  createHookEventWriter,
-  type HookEventWriter,
-  type HookWriterCredentials,
-} from './hook-store';
 import { matchesRepoAllowlist } from './repo-allowlist';
-import { appendToSpool, drainSpool, spoolPath } from './spool';
+import { appendToSpool, spoolPath } from './spool';
 
 /** Bumped when the event the client emits changes shape or semantics. */
 export const HOOK_CLIENT_VERSION = '0.3.0';
@@ -57,7 +51,7 @@ export const HOOK_CLIENT_VERSION = '0.3.0';
 export const HOOK_CLI_USAGE =
   'usage: lcars hook claude [--inline]   (reads one Claude Code hook payload on stdin)\n' +
   '       lcars hook codex  [--inline]   (reads one Codex hook payload on stdin)\n' +
-  '       lcars hook flush               (writes spooled events to the telemetry store)\n' +
+  '       lcars hook flush               (writes spooled events to the telemetry store, via lcars-hook-flush.cjs)\n' +
   '       Exits 0 and prints nothing on stdout in every case; decisions go to\n' +
   '       ~/.local/state/agent-lcars/hook.log.';
 
@@ -68,9 +62,7 @@ export type HookCommandAction =
   | 'skipped-unlisted'
   | 'throttled'
   | 'spooled'
-  | 'flushed'
-  | 'flush-locked'
-  | 'flush-no-credentials';
+  | 'flushed';
 
 export interface HookCommandResult {
   readonly action: HookCommandAction;
@@ -93,10 +85,10 @@ export interface HookCommandDependencies {
     cwd: string,
   ) => Promise<{ owner: string; name: string } | undefined>;
   resolveGitBranch: (cwd: string) => Promise<string | undefined>;
-  /** Builds the Firestore writer for the configured credentials. */
-  createWriter: (credentials: HookWriterCredentials) => HookEventWriter;
-  /** Starts `lcars hook flush` detached from the hook process. */
+  /** Starts the flusher detached from the hook process. */
   spawnFlusher: () => void;
+  /** Runs the flusher to completion (`lcars hook flush`, `--inline`). */
+  runFlusher: () => Promise<void>;
   randomId: () => string;
   hostname: () => string;
   stderr: (line: string) => void;
@@ -128,18 +120,25 @@ export function defaultHookCommandDependencies(
     findCodexRollout,
     resolveGitRepo: defaultResolveGitRepo,
     resolveGitBranch: defaultResolveGitBranch,
-    createWriter: (credentials) => createHookEventWriter(credentials),
+    // The flusher is its own bundle (lcars-hook-flush.cjs, installed next to
+    // this one) so hook invocations never load the Firestore client: with it
+    // bundled in, every hook paid ~600 ms of startup.
     spawnFlusher: () => {
-      // process.argv[1] is the bundle (or the dev entry) that is running
-      // this very command, so the flusher is always the same client version.
-      const child = spawn(
-        process.execPath,
-        [process.argv[1], 'hook', 'flush'],
-        { detached: true, stdio: 'ignore', env },
-      );
+      const child = spawn(process.execPath, [flusherBundlePath()], {
+        detached: true,
+        stdio: 'ignore',
+        env,
+      });
       // An async spawn failure would otherwise be an uncaught exception.
       child.on('error', () => undefined);
       child.unref();
+    },
+    runFlusher: async () => {
+      spawnSync(process.execPath, [flusherBundlePath()], {
+        stdio: 'ignore',
+        env,
+        timeout: 120_000,
+      });
     },
     randomId: () => crypto.randomUUID(),
     hostname: () => os.hostname(),
@@ -156,6 +155,13 @@ const RUNTIME_PROFILES: Readonly<Record<HookRuntime, RuntimeProfile>> = {
   claude: { agent: 'claude-code', adapter: claudeCodeAdapter },
   codex: { agent: 'codex', adapter: codexAdapter },
 };
+
+/** `lcars-hook-flush.cjs` beside the running bundle (`process.argv[1]`). */
+export function flusherBundlePath(entry = process.argv[1] ?? ''): string {
+  return path.join(path.dirname(entry), FLUSHER_BUNDLE);
+}
+
+export const FLUSHER_BUNDLE = 'lcars-hook-flush.cjs';
 
 function stateDirectoryFor(deps: HookCommandDependencies): string {
   return path.join(deps.homeDirectory, SESSION_STATE_DIRECTORY);
@@ -234,52 +240,6 @@ function applyAnnotationOverlays(
   return status
     ? { ...overlaid, status: status.status, statusUpdatedAt: status.updatedAt }
     : overlaid;
-}
-
-async function flush(
-  deps: HookCommandDependencies,
-  config: HookClientConfig,
-): Promise<HookCommandResult> {
-  const stateDirectory = stateDirectoryFor(deps);
-  if (!config.writer) {
-    appendHookLog(
-      stateDirectory,
-      `${deps.now().toISOString()} flush no-credentials`,
-    );
-    return { action: 'flush-no-credentials' };
-  }
-  const writer = deps.createWriter(config.writer);
-  const result = await drainSpool(spoolPath(stateDirectory), async (event) => {
-    const sessionEvent = event as SessionEventV1;
-    let outcome: Awaited<ReturnType<HookEventWriter['apply']>>;
-    try {
-      outcome = await writer.apply(sessionEvent, deps.now().toISOString());
-    } catch (error) {
-      // Network, auth, or contention: keep the event for the next flusher.
-      appendHookLog(
-        stateDirectory,
-        `${deps.now().toISOString()} flush retry ${(error as Error).name ?? 'error'}`,
-      );
-      return 'retry';
-    }
-    if (outcome === 'invalid') return 'drop';
-    try {
-      markHookSessionDelivered(
-        stateDirectory,
-        sessionEvent.sessionId,
-        deps.now().toISOString(),
-      );
-    } catch {
-      // State is advisory for the daemon; the write already happened.
-    }
-    return 'sent';
-  });
-  const detail = `sent=${result.sent} dropped=${result.dropped} remaining=${result.remaining}`;
-  appendHookLog(
-    stateDirectory,
-    `${deps.now().toISOString()} flush ${result.locked ? 'locked' : 'done'} ${detail}`,
-  );
-  return { action: result.locked ? 'flush-locked' : 'flushed', detail };
 }
 
 async function handleRuntimeHook(
@@ -419,7 +379,7 @@ async function handleRuntimeHook(
     });
     log('spooled', `session=${sessionTag} kind=${kind} seq=${seq}`);
     if (inline) {
-      await flush(deps, config);
+      await deps.runFlusher();
     } else {
       try {
         deps.spawnFlusher();
@@ -452,12 +412,8 @@ export async function executeHookCommand(
       );
     }
     if (subcommand === 'flush' || subcommand === '--flush') {
-      const config = loadHookClientConfig({
-        homeDirectory: deps.homeDirectory,
-        env: deps.env,
-        hostname: deps.hostname,
-      });
-      return await flush(deps, config);
+      await deps.runFlusher();
+      return { action: 'flushed' };
     }
     deps.stderr(HOOK_CLI_USAGE);
     return { action: 'usage' };

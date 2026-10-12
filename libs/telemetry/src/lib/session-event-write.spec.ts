@@ -128,6 +128,37 @@ describe('sessionWriteForEvent', () => {
   });
 });
 
+describe('sessionWriteForEvent archive preservation', () => {
+  it('keeps the daemon-recorded transcript archive on a hook write', () => {
+    const stored = {
+      sessionId: 'sess-1',
+      source: 'cli',
+      agent: 'claude-code',
+      liveness: 'live',
+      startedAt: summary.startedAt,
+      lastActivityAt: summary.lastActivityAt,
+      turns: 2,
+      toolCallCounts: {},
+      tokens: summary.tokens,
+      deliverables: summary.deliverables,
+      cliTranscriptArchive: {
+        status: 'available',
+        expiresAt: '2026-11-11T00:00:00.000Z',
+      },
+      transcriptGcsUri: 'gs://bucket/sess-1.jsonl',
+      renderable: true,
+    } as unknown as SessionDoc;
+    const write = sessionWriteForEvent(event(), stored, NOW);
+    expect(write?.doc).toMatchObject({
+      cliTranscriptArchive: { status: 'available' },
+      transcriptGcsUri: 'gs://bucket/sess-1.jsonl',
+      renderable: true,
+    });
+    expect(write?.clearFields).not.toContain('transcriptGcsUri');
+    expect(write?.clearFields).not.toContain('cliTranscriptArchive');
+  });
+});
+
 describe('isNewerHookWrite', () => {
   it('refuses an equal or older seq from the same host', () => {
     expect(isNewerHookWrite({ ...observer, seq: 5 }, observer)).toBe(false);

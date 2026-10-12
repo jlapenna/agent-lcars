@@ -10,7 +10,6 @@ import {
   type HookCommandDependencies,
 } from './hook-command';
 import { readHookSessionState } from './hook-state';
-import { type HookEventWriter } from './hook-store';
 import { spoolPath } from './spool';
 
 const FIXTURE = path.join(
@@ -19,11 +18,6 @@ const FIXTURE = path.join(
 );
 const SESSION_ID = 'session-normal-1';
 const STATE_DIR = '.local/state/agent-lcars';
-const FAKE_KEY = JSON.stringify({
-  project_id: 'agent-lcars',
-  client_email: 'telemetry-writer@agent-lcars.iam.gserviceaccount.com',
-  private_key: 'not-a-real-key',
-});
 
 const homes: string[] = [];
 afterEach(() => {
@@ -62,16 +56,9 @@ function deps(
   home: string,
   stdin: string,
   overrides: Partial<HookCommandDependencies> = {},
-): HookCommandDependencies & { applied: SessionEventV1[] } {
-  const applied: SessionEventV1[] = [];
-  const writer: HookEventWriter = {
-    apply: vi.fn(async (event: SessionEventV1) => {
-      applied.push(event);
-      return 'applied' as const;
-    }),
-  };
+): HookCommandDependencies {
   return {
-    env: { AGENT_TELEMETRY_WRITER_KEY_JSON: FAKE_KEY },
+    env: {},
     homeDirectory: home,
     now: () => new Date('2026-10-10T12:00:00.000Z'),
     readStdin: () => stdin,
@@ -81,13 +68,12 @@ function deps(
     findCodexRollout: () => undefined,
     resolveGitRepo: async () => ({ owner: 'jlapenna', name: 'agent-lcars' }),
     resolveGitBranch: async () => 'feat/hooks',
-    createWriter: vi.fn(() => writer),
+    runFlusher: vi.fn(async () => undefined),
     spawnFlusher: vi.fn(),
     randomId: () => 'evt-fixed',
     hostname: () => 'laforge.lan',
     stderr: vi.fn(),
     ...overrides,
-    applied,
   };
 }
 
@@ -281,25 +267,15 @@ describe('lcars hook claude', () => {
     });
   });
 
-  it('--inline writes the spooled event with the writer key and records delivery', async () => {
+  it('--inline runs the flusher in the foreground instead of spawning it', async () => {
     const home = tempHome();
     const d = deps(home, payload('Stop'));
     expect((await executeHookCommand(['claude', '--inline'], d)).action).toBe(
       'spooled',
     );
     expect(d.spawnFlusher).not.toHaveBeenCalled();
-    expect(d.createWriter).toHaveBeenCalledWith({
-      projectId: 'agent-lcars',
-      credentials: {
-        client_email: 'telemetry-writer@agent-lcars.iam.gserviceaccount.com',
-        private_key: 'not-a-real-key',
-      },
-    });
-    expect(d.applied.map((e) => e.kind)).toEqual(['stop']);
-    expect(spooledEvents(home)).toEqual([]);
-    expect(
-      readHookSessionState(path.join(home, STATE_DIR), SESSION_ID),
-    ).toMatchObject({ lastDeliveredAt: '2026-10-10T12:00:00.000Z' });
+    expect(d.runFlusher).toHaveBeenCalledOnce();
+    expect(spooledEvents(home).map((e) => e.kind)).toEqual(['stop']);
   });
 });
 
@@ -377,40 +353,11 @@ describe('lcars hook codex', () => {
 });
 
 describe('lcars hook flush', () => {
-  it('keeps events when the store is unreachable and drops ones it cannot apply', async () => {
+  it('runs the flusher bundle for the flush subcommand', async () => {
     const home = tempHome();
-    await executeHookCommand(['claude'], deps(home, payload('PostToolUse')));
-    await executeHookCommand(['claude'], deps(home, payload('Stop')));
-    const failing = deps(home, '', {
-      createWriter: () => ({
-        apply: vi.fn(async () => {
-          throw new Error('UNAVAILABLE');
-        }),
-      }),
-    });
-    expect(await executeHookCommand(['flush'], failing)).toMatchObject({
-      action: 'flushed',
-      detail: 'sent=0 dropped=0 remaining=2',
-    });
-    const outcomes = ['invalid', 'stale'] as const;
-    let call = 0;
-    const mixed = deps(home, '', {
-      createWriter: () => ({ apply: vi.fn(async () => outcomes[call++]) }),
-    });
-    expect(await executeHookCommand(['flush'], mixed)).toMatchObject({
-      action: 'flushed',
-      detail: 'sent=1 dropped=1 remaining=0',
-    });
-  });
-
-  it('leaves the spool alone without writer credentials', async () => {
-    const home = tempHome();
-    await executeHookCommand(['claude'], deps(home, payload('Stop')));
-    const noKey = deps(home, '', { env: {} });
-    expect((await executeHookCommand(['flush'], noKey)).action).toBe(
-      'flush-no-credentials',
-    );
-    expect(spooledEvents(home)).toHaveLength(1);
+    const d = deps(home, '');
+    expect((await executeHookCommand(['flush'], d)).action).toBe('flushed');
+    expect(d.runFlusher).toHaveBeenCalledOnce();
   });
 
   it('prints usage for anything else, to stderr only', async () => {

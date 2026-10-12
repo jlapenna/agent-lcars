@@ -8,6 +8,8 @@ import {
 } from '@agent-lcars/telemetry';
 import { FieldValue, Firestore, Timestamp } from '@google-cloud/firestore';
 
+import { type HookWriterCredentials } from './hook-config';
+
 /**
  * Applies hook events straight to the `sessions` collection as the
  * `telemetry-writer` service account (docs/hooks-telemetry-design.md §4.4),
@@ -21,14 +23,18 @@ export interface HookEventWriter {
   apply(event: SessionEventV1, now: string): Promise<HookEventOutcome>;
 }
 
-export interface HookWriterCredentials {
-  readonly projectId: string;
-  /** Service-account key; absent means Application Default Credentials. */
-  readonly credentials?: { client_email: string; private_key: string };
-  readonly emulatorHost?: string;
-}
-
 const SESSIONS_COLLECTION = 'sessions';
+
+/** gRPC status codes worth retrying: network, contention, quota, and auth
+ *  (a rotated key is fixed by replacing the file, not by dropping events). */
+const TRANSIENT_CODES = new Set([2, 4, 8, 10, 14, 16]);
+
+/** Whether a Firestore failure may succeed later. Anything without a gRPC
+ *  code (a network-level error) is treated as transient. */
+export function isTransientFirestoreError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code !== 'number' || TRANSIENT_CODES.has(code);
+}
 
 function payloadFor(write: SessionWrite): Record<string, unknown> {
   const { doc, clearFields } = write;
@@ -73,18 +79,31 @@ export function createHookEventWriter(
       const ref = firestore
         .collection(SESSIONS_COLLECTION)
         .doc(event.sessionId);
-      return firestore.runTransaction(async (transaction) => {
-        const snapshot = await transaction.get(ref);
-        const stored = snapshot.exists ? snapshot.data() : undefined;
-        const existing = parseStored(stored);
-        const write = sessionWriteForEvent(event, existing, now);
-        if (!write) return 'invalid';
-        if (!isNewerHookWrite(stored?.['observer'], write.doc.observer)) {
-          return 'stale';
-        }
-        transaction.set(ref, payloadFor(write), { merge: true });
-        return 'applied';
-      });
+      return firestore
+        .runTransaction(async (transaction) => {
+          const snapshot = await transaction.get(ref);
+          const stored = snapshot.exists ? snapshot.data() : undefined;
+          let payload: Record<string, unknown>;
+          let observer: SessionWrite['doc']['observer'];
+          try {
+            const write = sessionWriteForEvent(event, parseStored(stored), now);
+            if (!write) return 'invalid' as const;
+            observer = write.doc.observer;
+            payload = payloadFor(write);
+          } catch {
+            // Deterministic: retrying this event can never succeed.
+            return 'invalid' as const;
+          }
+          if (!isNewerHookWrite(stored?.['observer'], observer)) {
+            return 'stale' as const;
+          }
+          transaction.set(ref, payload, { merge: true });
+          return 'applied' as const;
+        })
+        .catch((error: unknown) => {
+          if (isTransientFirestoreError(error)) throw error;
+          return 'invalid' as const;
+        });
     },
   };
 }

@@ -83,8 +83,22 @@ export function sessionWriteForEvent(
     event.summary ?? (existing ? summaryFromSessionDoc(existing) : undefined);
   if (!summary) return undefined;
   const liveness = livenessForSessionEvent(event.kind);
+  // The daemon archives CLI transcripts and records the pointer on the doc.
+  // A hook write must carry it forward, or buildSessionWrite would clear it.
+  const archive =
+    !event.runner && existing?.source === 'cli'
+      ? {
+          ...(existing.cliTranscriptArchive && {
+            cliTranscriptArchive: existing.cliTranscriptArchive,
+          }),
+          ...(existing.transcriptGcsUri && {
+            transcriptGcsUri: existing.transcriptGcsUri,
+          }),
+        }
+      : {};
   const write = buildSessionWrite({ ...summary, host: event.host }, liveness, {
     observedAt: now,
+    ...archive,
     // Runner context, not the summary's own `source`, decides the source.
     forceSource: event.runner ? 'issue-agent' : 'cli',
     ...(event.runner && {

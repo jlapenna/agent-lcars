@@ -33,11 +33,19 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 LIB_DIR="${AGENT_LCARS_SESSION_TITLE_CLI_LIB_DIR:-$HOME/.local/lib/agent-lcars}"
 BIN_DIR="${AGENT_LCARS_SESSION_TITLE_CLI_BIN_DIR:-$HOME/.local/bin}"
 BUNDLE_NAME=lcars-session-title.cjs
+# The hook flusher is its own bundle so `lcars hook` never loads Firestore;
+# it must sit beside the CLI bundle, which spawns it from there.
+FLUSHER_NAME=lcars-hook-flush.cjs
+BUILT_FLUSHER="$REPO_ROOT/dist/apps/telemetry-watcher-hook-flush/$FLUSHER_NAME"
 BUILT_BUNDLE="$REPO_ROOT/dist/apps/telemetry-watcher-session-title-cli/$BUNDLE_NAME"
 
 cd "$REPO_ROOT"
-./tools/nx run @agent-lcars/telemetry-watcher:session-title-cli
+./tools/nx run-many -t session-title-cli hook-flush-cli -p @agent-lcars/telemetry-watcher
 
+if [ ! -f "$BUILT_FLUSHER" ]; then
+  echo "$BUILT_FLUSHER was not produced by the hook-flush-cli build." >&2
+  exit 1
+fi
 if [ ! -f "$BUILT_BUNDLE" ]; then
   echo "$BUILT_BUNDLE was not produced by the session-title-cli build -- check apps/telemetry-watcher/project.json's outputPath/outputFileName for that target." >&2
   exit 1
@@ -45,6 +53,7 @@ fi
 
 mkdir -p "$LIB_DIR" "$BIN_DIR"
 install -m 0644 "$BUILT_BUNDLE" "$LIB_DIR/$BUNDLE_NAME"
+install -m 0644 "$BUILT_FLUSHER" "$LIB_DIR/$FLUSHER_NAME"
 
 # The launcher is named `lcars`, not `lcars-session-title`: the command
 # parser (session-title-annotation-command.ts) only ever inspects
