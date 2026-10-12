@@ -1046,6 +1046,59 @@ function contract(
         result.run.runId,
       );
     });
+    it('settles the explicit tied issue IDs 99 and 100 by run-ID order', async () => {
+      const { store, protocol, a, orchestrator } = await fixture();
+      const b = authority('pool-b', 'executor-b');
+      await protocol.configure(b, policy('pool-b'), now);
+      await known(protocol, b);
+      await protocol.register(b, 'producer-b', now);
+      const enqueueIssue = async (issue: number) => {
+        const result = await orchestrator.request({
+          taskId: { repo: 'example/capacity', issue },
+          requestId: `tied-boundary-${issue}`,
+          pipeline: 'codex',
+          work: { spec: { title: 'Tied numeric boundary contract' } },
+        });
+        if (isRefusal(result)) throw new Error(result.reason);
+        const run = decidedRun(result);
+        await store.enqueueRun({ runId: run.runId, now });
+        return run;
+      };
+      // #99 is requested first on purpose: insertion order and numeric order
+      // both name it, so only the run-ID tie-break can settle #100. These
+      // issues are literal, so the shared counter cannot move the boundary.
+      const insertedFirst = await enqueueIssue(99);
+      const insertedSecond = await enqueueIssue(100);
+      expect(insertedFirst.createdAt).toBe(insertedSecond.createdAt);
+      expect(insertedFirst.runId).toBe('example/capacity#99/r1');
+      expect(insertedSecond.runId).toBe('example/capacity#100/r1');
+      const settled = await claimed(protocol, a);
+      expect(settled.run.runId).toBe(insertedSecond.runId);
+      // Negative control: the retired insertion-order assumption settles #99,
+      // which is the lexically larger run ID at a tied timestamp, so it cannot
+      // pass this boundary by coincidence with the run-ID tie-break.
+      expect(
+        [insertedFirst.runId, insertedSecond.runId].sort((left, right) =>
+          left.localeCompare(right),
+        ),
+      ).toEqual([insertedSecond.runId, insertedFirst.runId]);
+      expect(settled.run.runId).not.toBe(insertedFirst.runId);
+      await orchestrator.report(settled.run.runId, { ok: true });
+      expect((await store.readRun(settled.run.runId))?.state).toBe('finished');
+      expect(await claim(protocol, b, undefined, 'producer-b')).toMatchObject({
+        kind: 'wait',
+        reason: 'queue',
+      });
+      const receipts = (await protocol.read(now)).receipts;
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        runId: settled.run.runId,
+        domainId: 'codex-global',
+      });
+      expect((await store.readRun(insertedFirst.runId))?.queue?.state).toBe(
+        'queued',
+      );
+    });
     it('response-loss replay cannot mint another token/run and missing Secret is explicit', async () => {
       const { store, protocol, a, orchestrator } = await fixture(2);
       await enqueue(store, orchestrator);
