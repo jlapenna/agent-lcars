@@ -59,6 +59,9 @@ importers:
       '@tabler/icons-react':
         specifier: ^3.41.1
         version: 3.49.0(react@19.3.0)
+      acorn:
+        specifier: 8.18.0
+        version: 8.18.0
       chokidar:
         specifier: ^5.0.0
         version: 5.0.0

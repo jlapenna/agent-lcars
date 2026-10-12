@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 import {
   buildSessionDoc,
@@ -269,5 +272,108 @@ describe('Codex publication stdout normalization (#2302)', () => {
         ).mergedPRs,
       ).toBe(0);
     }
+  });
+});
+
+// Sanitized incident shape, never the private archive or its message bodies.
+const delayedRows = readFileSync(
+  resolve(
+    __dirname,
+    '../../../../libs/telemetry/src/lib/fixtures/codex-delayed-publication.jsonl',
+  ),
+  'utf8',
+)
+  .trim()
+  .split('\n')
+  .map((line) => JSON.parse(line));
+
+describe('delayed Codex code-mode → retained session → spend (#2461)', () => {
+  it.each(['published', 'failed', 'quoted', 'foreign', 'unknown'] as const)(
+    'retains publication identity, cost, tokens and honest coverage for %s',
+    (outcome) => {
+      const rows = structuredClone(delayedRows);
+      const publication = 'https://github.com/jlapenna/agent-lcars/pull/2460';
+      const poll = rows[5].payload;
+      poll.output[poll.output.length - 1].text = JSON.stringify({
+        exit_code: outcome === 'failed' ? 1 : 0,
+        output:
+          outcome === 'foreign'
+            ? 'https://github.com/acme/other/pull/2460'
+            : outcome === 'quoted'
+              ? `fixture: "${publication}"`
+              : publication,
+      });
+      const summary = codexAdapter.reduce(
+        rows.map((row) => JSON.stringify(row)),
+      )[0];
+      const doc = parseSessionDoc(
+        buildSessionDoc({ ...summary, totalCostUsd: 5 }, 'ended', { repo }),
+      );
+      const spend = aggregateSessionSpend(
+        [doc],
+        new Map(
+          outcome === 'unknown'
+            ? []
+            : [
+                [
+                  'jlapenna/agent-lcars#2460',
+                  {
+                    ...local,
+                    anchor: { repo: 'jlapenna/agent-lcars', issue: 2460 },
+                    url: publication,
+                  },
+                ],
+              ],
+        ),
+      );
+      expect(doc.tokens).toEqual({
+        inputTokens: 80,
+        outputTokens: 30,
+        cacheReadTokens: 40,
+        cacheCreationTokens: 0,
+      });
+      expect(doc.deliverables.prNumbers).toContain(2460);
+      expect(spend.totals).toMatchObject({
+        costUsd: 5,
+        reportedCostUsd: 5,
+        tokens: 114,
+      });
+      const qualified = outcome !== 'failed' && outcome !== 'quoted';
+      expect(doc.deliverables.qualifiedPRs).toEqual(
+        qualified
+          ? [
+              {
+                repo:
+                  outcome === 'foreign'
+                    ? { owner: 'acme', name: 'other' }
+                    : repo,
+                number: 2460,
+              },
+            ]
+          : undefined,
+      );
+      expect(spend.mergedPRs).toBe(outcome === 'published' ? 1 : 0);
+      expect(spend.unknownPRs).toBe(
+        outcome === 'foreign' || outcome === 'unknown' ? 1 : 0,
+      );
+      expect(spend.deliverables).toHaveLength(qualified ? 1 : 0);
+      expect(spend.deliverables[0]?.reportedCostUsd).toBe(
+        qualified ? 5 : undefined,
+      );
+      expect(spend.totals.unqualifiedPRReferences).toBe(qualified ? 0 : 1);
+      expect(spend.withoutPR.costUsd ?? 0).toBe(qualified ? 0 : 5);
+      expect(spend.coverageLimited).toBe(false);
+    },
+  );
+  it('does not invent prices for delayed publications with unpriced sessions', () => {
+    const summary = codexAdapter.reduce(
+      delayedRows.map((row) => JSON.stringify(row)),
+    )[0];
+    const doc = parseSessionDoc(buildSessionDoc(summary, 'ended', { repo }));
+    const spend = aggregateSessionSpend([doc], new Map());
+    expect(spend.totals.unpricedSessions).toBe(1);
+    expect(spend.totals.tokens).toBe(114);
+    expect(spend.unknownPRs).toBe(1);
+    expect(spend.coverageLimited).toBe(false);
   });
 });
