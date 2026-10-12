@@ -1019,6 +1019,19 @@ CURLCFG
     AGENT_EXIT=1
   fi
 
+  # #2537: a provider that stops on structured stream events never writes its
+  # --output-last-message file, so the completion classifier below would read
+  # an empty message and report a generic agent failure for what is really a
+  # provider-availability stop. Retain a bounded copy of the provider's own
+  # failure events, outside $CODEX_RUNTIME_DIR for the same reason
+  # CODEX_LAST_MESSAGE_FILE is (cleanup_codex_material runs first). An
+  # credential fence already owns this round's diagnosis, so it is not
+  # re-reported as a capacity stop.
+  if [ -z "$CODEX_AUTH_FAILURE" ] && [ -s "$CODEX_FAILURE_MESSAGES" ]; then
+    PROVIDER_FAILURE_FILE="$RUNNER_TEMP/provider-failures.txt"
+    tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
+  fi
+
   if [ ! -s "$CODEX_AUTH_FILE" ]; then
     echo "FATAL: Codex auth.json is missing or empty after the run; refusing to persist" >&2
     AGENT_EXIT=1
@@ -1283,11 +1296,29 @@ payload_file="$RUNNER_TEMP/complete-payload.json"
 # pipeline today; no message captured) is not an error -- the round still
 # has a real outcome, it just renders without a turn.
 AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || true)"
+# The provider's own structured failure events, when it emitted any. These are
+# the only honest provider cause for a round that stopped before its final
+# message (#2537); they are never task or tool output, so quoted text in a
+# transcript cannot forge them.
+PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
 # Capacity exhaustion is a provider failure, never a request for a human
 # task decision. Keep this narrow and only classify unsuccessful outcomes.
-if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]] &&
-  [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]]; then
-  OUTCOME=provider-limit
+# A published deliverable has already settled the outcome above, so work the
+# agent finished and pushed is never reclassified.
+if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]]; then
+  if [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]] ||
+    [[ "$PROVIDER_FAILURES" == *"You've hit your weekly limit"* ]]; then
+    OUTCOME=provider-limit
+  elif [[ "$PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
+    # Distinct from the weekly quota window: the control plane holds this
+    # provider for one bounded probe instead of a reported reset, and only an
+    # already-authorized fallback policy may create a cross-provider successor.
+    OUTCOME=provider-capacity
+    if [[ "$AGENT_MESSAGE" != *'model is at capacity'* ]]; then
+      AGENT_MESSAGE="Selected model is at capacity. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
+    fi
+    AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
+  fi
 fi
 if worker_control_failed; then
   case "$OUTCOME" in
