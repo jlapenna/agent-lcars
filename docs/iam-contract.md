@@ -62,11 +62,14 @@ bin/emit-iam-contract-metrics.py --dump
   (#2502). The model and its offline Terraform agreement test land first; the
   homelab collector does not yet compare that section with
   `gcloud iam service-accounts get-iam-policy`. Until it does, a hand-added
-  impersonation member on `work-reader` is not reported as drift.
+  impersonation member on `work-reader` is not reported as drift, and the
+  collector publishes no `node_homelab_iam_contract_unasserted` series for
+  this section either. This gap stays open until the collector gains that
+  assertion.
 
 Earlier gaps were closed the day they were found, and the check is what closed
-them — each is published as a `node_homelab_iam_contract_unasserted` series
-while it lasts, so a gap cannot quietly become permanent.
+them. Each was published as a `node_homelab_iam_contract_unasserted` series
+while it lasted, so it could not quietly become permanent.
 
 - **`supersprinklesracing/www` was not covered by the fleet App installation**
   (#1380). The shared `github` WIF pool trusted it and Terraform provisioned

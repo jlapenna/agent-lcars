@@ -167,9 +167,18 @@ describe('IAM contract model', () => {
         bindings: { [attribute('role') ?? '']: [attribute('member')] },
       },
     ]);
-    // Nothing else in Terraform grants on this account.
+    // Nothing else in any Terraform file refers to this account: no second
+    // impersonation binding (by .name, .id or .email), no project role for
+    // it (.member/.email), and no hard-coded address.
+    const terraformDir = path.join(repoRoot, 'infra/terraform');
+    const everyFile = fs
+      .readdirSync(terraformDir)
+      .filter((file) => file.endsWith('.tf'))
+      .map((file) => fs.readFileSync(path.join(terraformDir, file), 'utf8'))
+      .join('\n');
     expect(
-      main.match(/google_service_account\.work_reader\.(name|email)/g) ?? [],
+      everyFile.match(/google_service_account\.work_reader\.\w+/g) ?? [],
     ).toEqual(['google_service_account.work_reader.name']);
+    expect(everyFile).not.toMatch(/work-reader@/);
   });
 });
