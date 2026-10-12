@@ -78,7 +78,7 @@ run_chained() {
   local chained_out status=0
   chained_out="$(
     bash -c '
-      mutation=(gh pr merge 2324 --repo jlapenna/agent-lcars --auto --squash)
+      mutation=(gh pr merge 2324 --repo jlapenna/agent-lcars --auto --squash --match-head-commit "$3")
       if [[ "$4" == interactive ]]; then
         mutation=(gh api graphql -f "query=mutation { enablePullRequestAutoMerge(input: { pullRequestId: \"owned-test-node\", expectedHeadOid: \"$3\", mergeMethod: SQUASH }) { pullRequest { state } } }" -f id=owned-test-node -f head="$3")
       fi
