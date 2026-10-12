@@ -154,6 +154,7 @@ export const capacityCommandSchema = z.discriminatedUnion('action', [
 export const capacityClaimResponseSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('claim'),
+    placementAware: z.literal(true).optional(),
     receipt: capacityFenceSchema,
     runId: id,
     pipeline: id,

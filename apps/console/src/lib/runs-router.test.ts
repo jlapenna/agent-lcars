@@ -317,6 +317,124 @@ const context = {
   },
 };
 
+describe('placement observations', () => {
+  it('negotiates durable waiting, authenticates the executor and keeps Pending past startup expiry', async () => {
+    const f = fixture();
+    await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('placement'),
+      now: NOW,
+    });
+    const executorContext = {
+      ...f,
+      ...context,
+      principal: executorPrincipal(),
+    };
+    const claimed = await call(executorContext, 'POST', '/runs/claim', {
+      runner: 'executor',
+      placementAware: true,
+    });
+    expect(claimed.status).toBe(200);
+    expect(claimed.json).toMatchObject({ placementAware: true });
+    const { runId, token } = claimed.json as { runId: string; token: string };
+    expect((await f.store.readRun(runId))?.queue?.startupPlacement?.state).toBe(
+      'waiting',
+    );
+    f.setNow('2026-08-26T10:10:00.000Z');
+    const observation = {
+      runner: 'executor',
+      claimFingerprint: hashRunToken(token),
+      jobUid: 'job-uid',
+      observedAt: f.now().toISOString(),
+      placed: false,
+    };
+    const path = `/runs/${encodeURIComponent(runId)}/startup-placement`;
+    expect(
+      (
+        await call(
+          { ...executorContext, principal: undefined, bearerToken: token },
+          'POST',
+          path,
+          observation,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call(
+          { ...executorContext, principal: executorPrincipal(['codex']) },
+          'POST',
+          path,
+          observation,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await call(executorContext, 'POST', path, {
+          ...observation,
+          runner: 'other',
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await call(executorContext, 'POST', path, observation)).status,
+    ).toBe(200);
+    expect(
+      (await call(executorContext, 'POST', path, observation)).status,
+    ).toBe(409);
+    // Read-only phase telemetry and negotiated deadline authority coexist.
+    const beforeDisplay = await f.store.readRun(runId);
+    const placement = {
+      phase: 'waiting-for-placement',
+      reason: 'unschedulable',
+      observedAt: f.now().toISOString(),
+    };
+    expect(
+      (
+        await call(
+          executorContext,
+          'POST',
+          `/runs/${encodeURIComponent(runId)}/placement`,
+          {
+            runner: observation.runner,
+            claimFingerprint: observation.claimFingerprint,
+            placement,
+          },
+        )
+      ).status,
+    ).toBe(200);
+    const afterDisplay = await f.store.readRun(runId);
+    expect(afterDisplay?.queue?.placement).toEqual(placement);
+    expect(afterDisplay?.queue?.startupPlacement).toEqual(
+      beforeDisplay?.queue?.startupPlacement,
+    );
+    expect(afterDisplay?.queue?.startDeadlineAt).toBe(
+      beforeDisplay?.queue?.startDeadlineAt,
+    );
+    expect(afterDisplay?.leaseExpiresAt).toBe(beforeDisplay?.leaseExpiresAt);
+    f.setNow('2026-08-26T10:16:00.000Z');
+    expect(await f.orchestrator.sweepExpired()).toEqual({
+      lost: [],
+      retried: [],
+    });
+    expect(
+      (await f.store.readRun(runId))?.queue?.firstHeartbeatAt,
+    ).toBeUndefined();
+    expect(
+      (
+        await call(executorContext, 'POST', path, {
+          ...observation,
+          observedAt: f.now().toISOString(),
+          placed: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await f.store.readRun(runId))?.queue?.placement).toEqual(placement);
+    f.setNow('2026-08-26T10:31:00.000Z');
+    expect((await f.orchestrator.sweepExpired()).lost).toHaveLength(1);
+  });
+});
+
 describe('claim', () => {
   it('starts the execution lease atomically after a long queue wait', async () => {
     const { store, orchestrator, now, setNow } = fixture();

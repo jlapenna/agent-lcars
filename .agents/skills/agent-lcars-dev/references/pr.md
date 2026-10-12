@@ -21,8 +21,43 @@
    reviewer:
 
    ```bash
-   gh pr create --reviewer jlapenna
+   gh pr create --draft --reviewer jlapenna
    ```
+
+   **Reconcile GitHub's actual closing scope before ready/arming**, in both
+   interactive and dispatched publication. Declare exactly which issues this
+   revision fully completes after reviewing their required acceptance and latest
+   comments; an unfinished runtime/deployment gate excludes that issue. Use
+   `Tracks #N` for source-only or diagnostic work. Avoid negated closing phrases:
+   PR #2447's “intentionally does not close #2209” still selected #2209 in
+   GitHub's interpreted `closingIssuesReferences`.
+
+   Publish new PRs as drafts, so the returned references can be checked before
+   a ready-PR auto-merge backstop can arm delivery. Once the check and required
+   review pass, mark the draft ready and arm through the existing path below.
+   After publishing the body, run the shared read-only check against the exact
+   reviewed/pushed head, immediately before marking ready or arming:
+
+   ```bash
+   node agents/shared/skills/agent-protocol/scripts/check-pr-closing-references.mjs \
+     jlapenna/agent-lcars "$pr_number" "$reviewed_head" none
+   # For fully accepted intentional closure, replace none with e.g.
+   # jlapenna/agent-lcars#1234 (comma-separated for multiple completed issues).
+   ```
+
+   The check paginates actual returned references and requires exact agreement
+   with the declared completion scope. A mismatch, unreadable/incomplete response,
+   or changed head blocks ready/arming. Correct the body or other closing metadata
+   and re-read; changing English prose alone is not proof that GitHub removed the
+   link. Preserve legitimate closing references only after full scoped acceptance.
+   If an already-armed PR has an unintended reference, disarm it while correcting
+   the metadata; refresh feedback and this check before re-arming. Re-run after
+   any head/body/closing-metadata or acceptance change. Retain the JSON readback
+   in the handoff. This is closure-scope evidence, separate from review, required
+   checks and protected merge evidence. For partial work, verify the tracking issue
+   remains open after source landing; close it only when remaining acceptance is
+   proven. The readback cannot lock concurrent body edits: re-read any observed
+   metadata change before proceeding.
 
    Headless dispatched workers instead follow the shared
    [agent protocol](../../agent-protocol/SKILL.md): they do not request human

@@ -812,6 +812,7 @@ export const schedulesContract = {
 const runIdSchema = z.string().min(1).max(175);
 
 export const runClaimResponseSchema = z.strictObject({
+  placementAware: z.literal(true).optional(),
   runId: runIdSchema,
   /** Present for native Work anchors only. */
   workId: workIdSchema.optional(),
@@ -948,6 +949,7 @@ export const runsContract = {
     .input(
       z.strictObject({
         runner: z.string().min(1).max(256),
+        placementAware: z.literal(true).optional(),
         capacityVersion: z.number().int().positive().optional(),
         producerId: z.string().min(1).max(175).optional(),
         claimRequestId: z.string().min(1).max(175).optional(),
@@ -1019,6 +1021,41 @@ export const runsContract = {
       }),
     )
     .output(z.strictObject({ runId: runIdSchema })),
+  startupPlacement: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/startup-placement',
+        operationId: 'observeRunStartupPlacement',
+        summary: 'Report exact executor-owned worker placement',
+        spec: withBearer,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'work.executor scope required' },
+      FORBIDDEN: {
+        message: 'executor does not own this placement-aware claim',
+      },
+      CONFLICT: { message: 'Placement observation refused' },
+      NOT_FOUND: { message: 'unknown run' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        runner: z.string().min(1).max(256),
+        claimFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+        jobUid: z.string().min(1).max(256),
+        observedAt: z.iso.datetime(),
+        placed: z.boolean(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        runId: runIdSchema,
+        jobUid: z.string(),
+        expiresAt: z.string(),
+      }),
+    ),
   claimStatus: runBase
     .meta(
       openapi({

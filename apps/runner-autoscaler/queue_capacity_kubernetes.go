@@ -351,6 +351,9 @@ func (q *kubernetesQueue) reconcileReceipts(ctx context.Context) (err error) {
 			}
 			continue
 		}
+		if e = q.observeJobStartupPlacement(ctx, j, pods); e != nil {
+			errs = append(errs, e)
+		}
 		s, e := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{})
 		if e != nil || !receiptSecretMatches(s, j, r) {
 			errs = append(errs, fmt.Errorf("receipt original credential unavailable"))

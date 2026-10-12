@@ -76,36 +76,33 @@ while it lasts, so a gap cannot quietly become permanent.
 ## Installation scope and repository onboarding
 
 The autoscaler App holds `administration: write`, so an installation's scope is
-authority over every repository it covers. Its modelled contract is asymmetric:
+authority over every repository it covers. The maintainer confirmed
+"All repositories" for both jlapenna Apps during labels onboarding on
+2026-10-12. Each App's own installation token observed the current scope and
+complete repository list; both temporary tokens were revoked.
 
-| Installation | Account              | Selection  | Repos           |
-| ------------ | -------------------- | ---------- | --------------- |
-| `154210710`  | jlapenna             | `selected` | 6               |
-| `154210731`  | supersprinklesracing | `all`      | 7 (4 non-fleet) |
+| App                      | Installation | Account              | Selection | Observed repositories |
+| ------------------------ | ------------ | -------------------- | --------- | --------------------- |
+| `agent-lcars`            | `150568943`  | jlapenna             | `all`     | 35                    |
+| `agent-lcars-autoscaler` | `154210710`  | jlapenna             | `all`     | 35                    |
+| `agent-lcars-autoscaler` | `154210731`  | supersprinklesracing | `all`     | Existing baseline     |
 
-The jlapenna installation was narrowed from `all` (23 repositories) once this
-check measured it. #1381 is the execution record for narrowing the other one to
-`sprinkles`, `www` and `girosf` — the evidence is there too: none of
-`design`, `ghost-theme-supersprinkles`, `pos` or `preem-machine` holds a self-hosted
-runner, and no workflow in any of them targets a fleet runner label.
+The jlapenna autoscaler installation was previously narrowed under #1381.
+The maintainer's current confirmed scope supersedes that account's selected
+contract. The organization-side `154210731` baseline and its separately owned
+narrowing decision remain unchanged. When that narrowing occurs, update the
+model, credential documentation and genuine consumer verification together.
 
-The existing organization-side `154210731` baseline remains unchanged here.
-When its separately owned narrowing lands, update `repositorySelection` to
-`selected` and retain the three required repositories, together with the
-credential documentation and genuine consumer verification.
+`agent-lcars` installation `150568991` retains selected access to `girosf`,
+`sprinkles` and `www`. Its separate `jlaorg` installation remains unchanged.
+`jlapenna/labels` is covered by both jlapenna installations; its source
+onboarding uses GitHub-hosted CI and adds no ARC lane.
 
-Onboarding `jlapenna/messages-control` (#2436) adds one explicit membership to
-fleet App `150568943` and autoscaler App `154210710`, not an `all` selection.
-The latter also serves the Homelab Actions exporter. Fleet App `150568991`
-continues to require selected access to `girosf`, `sprinkles` and `www`.
-Preserve the other modelled repository grants and leave the separate
-`jlaorg` installation unchanged.
-
-A merged model is not evidence of live installation scope. An unexpected
-`all` selection remains drift until the genuine collector observes the exact
-contract and required consumers still work. Membership here does not widen
-the Terraform-owned WIF `fleetRepositories` list or its provider condition;
-that is a separate authorization boundary.
+The complete observed repository lists remain modelled deliberately: new
+repository access still produces drift for the Homelab IAM monitoring owner
+to reconcile. A model merge alone does not prove live convergence. GitHub App
+membership does not widen the Terraform-owned WIF `fleetRepositories` list
+or its provider condition; that remains a separate authorization boundary.
 
 `jlapenna/homegit` is covered by `154210710` but has no `registrations:` entry
 in homelab's `orchestrator.yml`: covered-but-unregistered, modelled as such

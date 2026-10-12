@@ -120,15 +120,16 @@ type capacityReply struct {
 	RetainBarrier bool                    `json:"retainBarrier"`
 }
 type capacityClaimReply struct {
-	Kind      string         `json:"kind"`
-	Reason    string         `json:"reason"`
-	Receipt   *capacityFence `json:"receipt"`
-	RunID     string         `json:"runId"`
-	JobName   string         `json:"jobName"`
-	JobUID    string         `json:"jobUid"`
-	SecretUID string         `json:"secretUid"`
-	Pipeline  string         `json:"pipeline"`
-	Token     string         `json:"token"`
+	PlacementAware bool           `json:"placementAware"`
+	Kind           string         `json:"kind"`
+	Reason         string         `json:"reason"`
+	Receipt        *capacityFence `json:"receipt"`
+	RunID          string         `json:"runId"`
+	JobName        string         `json:"jobName"`
+	JobUID         string         `json:"jobUid"`
+	SecretUID      string         `json:"secretUid"`
+	Pipeline       string         `json:"pipeline"`
+	Token          string         `json:"token"`
 }
 
 // An unresolved request ID survives every transport/decode/HTTP failure in this
@@ -332,7 +333,7 @@ func (c *queueCapacityClient) ensureRegistered(ctx context.Context) error {
 	c.registered = true
 	return nil
 }
-func (c *queueCapacityClient) claim(ctx context.Context, runner string) (capacityClaimReply, error) {
+func (c *queueCapacityClient) claim(ctx context.Context, runner string, placementAware ...bool) (capacityClaimReply, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var x capacityClaimReply
@@ -352,7 +353,11 @@ func (c *queueCapacityClient) claim(ctx context.Context, runner string) (capacit
 	if c.requestID == "" {
 		c.requestID = newCapacityIdentity()
 	}
-	if err := c.call(ctx, http.MethodPost, "/claim", map[string]any{"runner": runner, "capacityVersion": c.config.Version, "producerId": c.producerID, "claimRequestId": c.requestID}, &x); err != nil {
+	body := map[string]any{"runner": runner, "capacityVersion": c.config.Version, "producerId": c.producerID, "claimRequestId": c.requestID}
+	if len(placementAware) != 0 && placementAware[0] {
+		body["placementAware"] = true
+	}
+	if err := c.call(ctx, http.MethodPost, "/claim", body, &x); err != nil {
 		return x, err
 	}
 	switch x.Kind {

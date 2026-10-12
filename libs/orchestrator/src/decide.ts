@@ -77,9 +77,10 @@ export function decidedRun(decision: Decision): Run {
   return decision.run;
 }
 
-/** Fifteen minutes includes placement, image pull, bootstrap, and the
- * worker's five-minute initial heartbeat interval. Maintenance runs every
- * five minutes, so an unstarted claim normally settles within twenty. */
+/** Fifteen-minute observer/bootstrap budget. Negotiated placement observations
+ * renew only while waiting; placement starts the finite worker bootstrap clock.
+ * Legacy claims include scheduling in this budget. Maintenance runs every five
+ * minutes, so an unobserved/unstarted claim normally settles within twenty. */
 export const RUN_START_TIMEOUT_MS = 15 * 60_000;
 
 export function runStartDeadlineAt(now: string): string {
@@ -239,6 +240,70 @@ export function confirmDispatch(input: {
       state: 'running',
       leaseExpiresAt: runLeaseExpiresAt(now),
       events: [...run.events, { at: now, to: 'running', by: 'dispatch' }],
+      updatedAt: now,
+    },
+    outbox: [],
+  };
+}
+
+/** Only the authenticated claiming executor can report physical placement.
+ * A fresh Pending observation renews the finite observer deadline; once placed,
+ * repeated observations cannot extend bootstrap. Neither is a worker heartbeat. */
+export function observeStartupPlacement(input: {
+  now: string;
+  task: Task;
+  run: Run;
+  claimant: ExitClaimant;
+  jobUid: string;
+  observedAt: string;
+  placed: boolean;
+}): Decision | Refusal {
+  const { now, task, run, claimant, jobUid, observedAt, placed } = input;
+  const queue = run.queue;
+  if (
+    queue?.state !== 'claimed' ||
+    queue.startupPlacement === undefined ||
+    queue.claimedBy !== claimant.runner ||
+    queue.claimedBySubject !== claimant.subject ||
+    queue.tokenHash !== claimant.claimFingerprint ||
+    (queue.startupPlacement.jobUid !== undefined &&
+      queue.startupPlacement.jobUid !== jobUid)
+  )
+    return refused('not-claimant');
+  if (!isLive(run.state)) return refused('run-not-live');
+  if (
+    task.activeRunId !== run.runId ||
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+      Date.parse(now)
+  )
+    return refused('stale-lease');
+  // Reject delayed/replayed observations before extending any clock. The
+  // executor's clock is not deadline authority: deadlines use server time.
+  if (
+    Date.parse(observedAt) > Date.parse(now) + 5_000 ||
+    Date.parse(now) - Date.parse(observedAt) > 60_000 ||
+    Date.parse(observedAt) <= Date.parse(queue.startupPlacement.observedAt)
+  )
+    return refused('stale-lease');
+  if (
+    queue.firstHeartbeatAt !== undefined ||
+    queue.startupPlacement.state === 'placed'
+  )
+    return { task, run, outbox: [] };
+  return {
+    task,
+    run: {
+      ...run,
+      queue: {
+        ...queue,
+        startupPlacement: {
+          state: placed ? 'placed' : 'waiting',
+          jobUid,
+          observedAt,
+        },
+        startDeadlineAt: runStartDeadlineAt(now),
+      },
+      leaseExpiresAt: runLeaseExpiresAt(now),
       updatedAt: now,
     },
     outbox: [],
@@ -559,7 +624,12 @@ function settleLost(
         to: 'lost',
         by,
         ...(by === 'expiry' && startDeadlineElapsed(run, now)
-          ? { note: 'first heartbeat deadline exceeded' }
+          ? {
+              note:
+                run.queue?.startupPlacement?.state === 'waiting'
+                  ? 'placement observation deadline exceeded'
+                  : 'first heartbeat deadline exceeded',
+            }
           : {}),
       },
     ],
