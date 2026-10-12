@@ -334,9 +334,10 @@ final turn, shown in the console Conversation.
   5. Verify the outcome.
   6. Call `/complete`.
 
-  Hook telemetry replaces the polling telemetry sidecar for Claude, Codex,
-  and OpenCode only when `LCARS_HOOK_TELEMETRY_PROVIDERS` names the pipeline; it is empty by
-  default.
+  Every pipeline (Claude, Codex, OpenCode) reports live telemetry through
+  provider hooks, with no selector. A failed hook install warns and continues
+  without live telemetry; `runner finalize` still writes the final session
+  doc.
 
   If the agent exits 0 with no deliverable, it gets one completion-correction
   round.
@@ -503,17 +504,18 @@ consumed by every dispatched run in every member repository.
   - A run-status classifier: `running`, `timeout`, `cancelled`, `failed`,
     `silent-error`, or `succeeded`.
   - Cost from the provider's `costUSD`, or estimated from `MODEL_RATES`.
-- **FL-OB-2 [Shipped]** `apps/telemetry-watcher` runs in two places:
-  - As a host daemon for interactive sessions, with an allowlist privacy
-    boundary.
-  - As a runner sidecar with `sidecar`, `finalize`, and `resume` modes. The
-    `finalize` mode uploads transcripts to
-    `gs://…/runs/<runId>/<agent>/<session>.jsonl`.
-  - Through provider hooks: `lcars hook claude|codex|opencode|flush` writes sessions
-    directly to Firestore as the telemetry writer, installed with
+- **FL-OB-2 [Shipped]** `apps/telemetry-watcher` reports sessions in two ways:
+  - Through provider hooks, on workstations and dispatched workers alike:
+    `lcars hook claude|codex|opencode|flush` writes sessions directly to
+    Firestore as the telemetry writer, installed with
     `lcars integration install`
-    ([hooks telemetry](../hooks-telemetry-design.md)). Dispatched workers use
-    hooks only when selected (FL-EX-5).
+    ([hooks telemetry](../hooks-telemetry-design.md)). Dispatched workers
+    always use hooks (FL-EX-5).
+  - As a runner bundle with `finalize` and `resume` modes. The `finalize`
+    mode writes the authoritative ended doc and uploads transcripts to
+    `gs://…/runs/<runId>/<agent>/<session>.jsonl`.
+  - The polling host daemon and the runner's live polling sidecar are
+    retired (hooks telemetry phase 3).
 - **FL-OB-3 [Shipped]** `apps/github-actions-exporter` exports Prometheus
   metrics for workflow runs, jobs, durations, queue time, oldest queued job,
   and consecutive failures. Label cardinality is bounded.
