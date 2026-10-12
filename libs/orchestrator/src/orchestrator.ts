@@ -14,6 +14,7 @@ import {
   expireLeaseAndRetry,
   isRefusal,
   observePlacement,
+  observeStartupPlacement,
   type Refusal,
   refused,
   renewLease,
@@ -205,6 +206,42 @@ export class Orchestrator {
   async confirmDispatch(runId: string): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
       confirmDispatch({ now: this.clock.now(), task, run }),
+    );
+  }
+
+  async observeStartupPlacement(
+    runId: string,
+    claimant: ExitClaimant,
+    observation: {
+      jobUid: string;
+      observedAt: string;
+      placed: boolean;
+      poolId?: string;
+    },
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(
+      runId,
+      (task, run) =>
+        observeStartupPlacement({
+          now: this.clock.now(),
+          task,
+          run,
+          claimant,
+          ...observation,
+        }),
+      undefined,
+      {
+        placementClaim: {
+          runId,
+          subject: claimant.subject,
+          runner: claimant.runner,
+          tokenHash: claimant.claimFingerprint ?? '',
+          jobUid: observation.jobUid,
+          ...(observation.poolId === undefined
+            ? {}
+            : { poolId: observation.poolId }),
+        },
+      },
     );
   }
 
@@ -640,7 +677,9 @@ export class Orchestrator {
     credentialCleanupId: string = crypto.randomUUID(),
     queueEligibilityOptions?: Pick<
       Parameters<OrchestratorStore['transactRun']>[0],
-      'queueEligibilityPipelines' | 'shouldReadQueueEligibility'
+      | 'queueEligibilityPipelines'
+      | 'shouldReadQueueEligibility'
+      | 'placementClaim'
     >,
     workerPermit?: CapacityWorkerPermit,
   ): Promise<Decision | Refusal> {

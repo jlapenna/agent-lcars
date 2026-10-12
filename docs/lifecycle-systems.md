@@ -204,13 +204,14 @@ previous observation to expire after three minutes. Node availability is
 never guessed from GitHub or an unavailable inventory. Rotating the sweep
 cursor prevents a slow report from starving later claims.
 
-The existing startup bound from #2188 remains fifteen minutes from claim to
-first heartbeat, including placement and bootstrap. Observation traffic cannot
-extend it. The five-minute maintenance cadence normally settles an expired
+Legacy claims retain the fifteen-minute bound from #2188, including placement
+and bootstrap. Display observation traffic cannot extend it. Negotiated
+placement-aware claims use the separately fenced startup operation below. The five-minute maintenance cadence normally settles an expired
 startup within twenty minutes; it records startup loss, not a model failure.
 A normal temporary capacity wait remains placement until that bound. Accepted
 worker heartbeats then use the renewable run lease. Kubernetes' unchanged
-7200-second active deadline is an independent Job backstop, not permission to
+7200-second execution limit is an independent backstop (a Job deadline for
+legacy claims, a Pod runtime deadline for negotiated claims), not permission to
 run after control-plane settlement. Exact-claim foreground retirement and Pod
 drain still precede admission of a successor. The one-Pending gate, provider
 serialization, requests, selectors, taints and `max_concurrent` are unchanged.
@@ -221,3 +222,27 @@ clock with a refresh time. Legacy claimed runs without observations show
 placement unavailable. Admission alone is no longer coarsened to active
 provider work. Runtime qualification requires the normally deployed executor
 and console; fixture/browser evidence does not claim live placement capacity.
+
+### Queue placement and startup clocks
+
+Executors negotiate `placementAware: true` on claim; the Console echoes it
+only when the durable claim carries startupPlacement state. Old callers retain their
+claim-time 15-minute first-heartbeat deadline. New callers fail closed if the
+claim response does not acknowledge the contract.
+
+A fresh executor-authenticated `/runs/{runId}/startup-placement` report for the exact
+claim fingerprint and bound Job UID renews the finite 15-minute observation
+window while its single owned live Pod remains unassigned and Pending. The
+controller reports only negotiated, unsuspended Jobs; absent/ambiguous Pods,
+terminal or deleting objects, and API failures do not renew the claim. Once
+assigned, placement starts the 15-minute bootstrap deadline once. Further
+placement reports cannot renew bootstrap or an accepted worker heartbeat.
+A stopped observer therefore still expires; placement never records worker
+heartbeat or provider startup.
+
+Negotiated Jobs retain the two-hour runtime limit on the Pod, whose kubelet
+clock starts after assignment, rather than on the Job's scheduling clock.
+Resources, bounded Pending admission, exact retirement authority and receipt
+fences remain unchanged. Live qualification requires compatible Console and
+controller delivery and a real admitted work item; source tests alone do not
+prove deployed behavior.

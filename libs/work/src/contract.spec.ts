@@ -153,6 +153,7 @@ describe('runsContract', () => {
       [
         'claim',
         'claimStatus',
+        'startupPlacement',
         'capacity',
         'capacityMetrics',
         'capacityInventory',
@@ -173,6 +174,13 @@ describe('runsContract', () => {
     const [rawShape] = runsContract.claim['~orpc'].inputSchemas ?? [];
     const shape = rawShape as z.ZodTypeAny | undefined;
 
+    expect(
+      shape?.parse({ runner: 'autoscaler-1', placementAware: true }),
+    ).toEqual({ runner: 'autoscaler-1', placementAware: true });
+    expect(
+      shape?.safeParse({ runner: 'autoscaler-1', placementAware: false })
+        .success,
+    ).toBe(false);
     expect(shape?.parse({ runner: 'autoscaler-1' })).toEqual({
       runner: 'autoscaler-1',
     });
@@ -409,6 +417,7 @@ describe('generateWorkOpenApi', () => {
         '/runs/activate',
         '/runs/{runId}/brief',
         '/runs/{runId}/claim-status',
+        '/runs/{runId}/startup-placement',
         '/runs/{runId}/heartbeat',
         '/runs/{runId}/placement',
         '/runs/{runId}/exit',
@@ -438,7 +447,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(9);
+    expect(operations).toHaveLength(10);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -541,6 +550,13 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/activate': ['200', '401', '409'],
       'GET /runs/{runId}/brief': ['200', '401', '409'],
       'POST /runs/{runId}/heartbeat': ['200', '401', '409'],
+      'POST /runs/{runId}/startup-placement': [
+        '200',
+        '401',
+        '403',
+        '404',
+        '409',
+      ],
       'GET /runs/{runId}/claim-status': ['200', '401', '403', '404'],
       'POST /runs/{runId}/placement': ['200', '401', '403', '404'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],

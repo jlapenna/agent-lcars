@@ -21,10 +21,11 @@ import (
 // callback once a claim succeeds -- what a direct-mode worker needs, nothing
 // more. It is never logged whole (runToken is a live credential).
 type directRunnerLaunch struct {
-	runID      string
-	runToken   string
-	pipeline   string
-	consoleURL string
+	placementAware bool
+	runID          string
+	runToken       string
+	pipeline       string
+	consoleURL     string
 	// runner is the name this executor claimed the run under. The Work API
 	// accepts the run's exit report only under that same name, so the
 	// Kubernetes queue records it on the Job: a restarted executor (whose
@@ -37,12 +38,14 @@ type directRunnerLaunch struct {
 // small and injectable so pollOnce is testable without a real GCP
 // credential or Kubernetes API (see queue_executor_test.go).
 type queueExecutorConfig struct {
-	consoleURL string
-	runnerName string
-	httpClient *http.Client
-	capacity   *queueCapacityClient
-	// recover resumes eligible never-started Jobs at startup and during normal
-	// polling. A bounded, non-overlapping sweep never holds the claim path.
+	placementAware bool
+	consoleURL     string
+	runnerName     string
+	httpClient     *http.Client
+	capacity       *queueCapacityClient
+	// recover maintains claimed workers, including placement observations during
+	// drain. The backend suppresses startup resume while draining. A bounded,
+	// non-overlapping sweep never holds the claim path.
 	recover func(context.Context) error
 	// idToken mints a Google ID token for the console's work audience.
 	// Production wires this to idTokenFromSource; tests inject a stub.
@@ -73,11 +76,12 @@ type queueExecutorConfig struct {
 }
 
 type claimResponse struct {
-	RunID     string `json:"runId"`
-	WorkID    string `json:"workId"`
-	Pipeline  string `json:"pipeline"`
-	Token     string `json:"token"`
-	ExpiresAt string `json:"expiresAt"`
+	PlacementAware bool   `json:"placementAware"`
+	RunID          string `json:"runId"`
+	WorkID         string `json:"workId"`
+	Pipeline       string `json:"pipeline"`
+	Token          string `json:"token"`
+	ExpiresAt      string `json:"expiresAt"`
 }
 
 type directRunnerReservation struct {
@@ -140,7 +144,7 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		defer cfg.capacity.pollMu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		x, err := cfg.capacity.claim(ctx, cfg.runnerName)
+		x, err := cfg.capacity.claim(ctx, cfg.runnerName, cfg.placementAware)
 		if err != nil {
 			return queuePollOutcomePollError, err
 		}
@@ -157,8 +161,11 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 			// A replay is never counted as a newly claimed or launched attempt.
 			return queuePollOutcomeCapacityWait, nil
 		case "claim":
+			if cfg.placementAware && !x.PlacementAware {
+				return queuePollOutcomePollError, fmt.Errorf("placement-aware claim not acknowledged")
+			}
 			queueExecutorClaimsTotal.WithLabelValues(x.Pipeline).Inc()
-			if err := reservation.launch(directRunnerLaunch{runID: x.RunID, runToken: x.Token, pipeline: x.Pipeline, consoleURL: cfg.consoleURL, runner: cfg.runnerName, receipt: x.Receipt}); err != nil {
+			if err := reservation.launch(directRunnerLaunch{runID: x.RunID, runToken: x.Token, pipeline: x.Pipeline, consoleURL: cfg.consoleURL, runner: cfg.runnerName, receipt: x.Receipt, placementAware: x.PlacementAware}); err != nil {
 				return queuePollOutcomeLaunchErr, err
 			}
 			return queuePollOutcomeClaimed, nil
@@ -173,7 +180,11 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 	if err != nil {
 		return queuePollOutcomePollError, fmt.Errorf("minting claim id token: %w", err)
 	}
-	body, err := json.Marshal(map[string]string{"runner": cfg.runnerName})
+	requestBody := map[string]any{"runner": cfg.runnerName}
+	if cfg.placementAware {
+		requestBody["placementAware"] = true
+	}
+	body, err := json.Marshal(requestBody)
 	if err != nil {
 		return queuePollOutcomePollError, err
 	}
@@ -218,13 +229,17 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		// container with a missing run id or token.
 		return queuePollOutcomeIdleEmpty, nil
 	}
+	if cfg.placementAware && !claimed.PlacementAware {
+		return queuePollOutcomePollError, fmt.Errorf("placement-aware claim not acknowledged")
+	}
 	queueExecutorClaimsTotal.WithLabelValues(claimed.Pipeline).Inc()
 	err = reservation.launch(directRunnerLaunch{
-		runID:      claimed.RunID,
-		runToken:   claimed.Token,
-		pipeline:   claimed.Pipeline,
-		consoleURL: cfg.consoleURL,
-		runner:     cfg.runnerName,
+		runID:          claimed.RunID,
+		runToken:       claimed.Token,
+		pipeline:       claimed.Pipeline,
+		consoleURL:     cfg.consoleURL,
+		runner:         cfg.runnerName,
+		placementAware: claimed.PlacementAware,
 	})
 	if err != nil {
 		return queuePollOutcomeLaunchErr, err
@@ -290,7 +305,7 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 	defer background.Wait()
 	recoveryRunning := make(chan struct{}, 1)
 	recoverStartup := func() {
-		if cfg.recover == nil || (cfg.capacity == nil && cfg.draining != nil && cfg.draining()) {
+		if cfg.recover == nil {
 			return
 		}
 		select {
