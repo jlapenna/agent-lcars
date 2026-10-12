@@ -648,6 +648,7 @@ echo "$@" >> "$OPENCODE_ARGS_LOG"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
+printf '%s\n' "${LCARS_TELEMETRY_CREDENTIALS_FILE:-}|${LCARS_REPO:-}" > "$OPENCODE_ENV_LOG.hook"
 echo run >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
 run_count=1
 if [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ]; then
@@ -1329,14 +1330,24 @@ export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/hook-telemetry-writer.json"
 printf '%s\n' '{"type":"fixture"}' > "$HOOK_TELEMETRY_CREDENTIALS_FILE"
 export HOOK_TELEMETRY_CLI=/fake/lcars-session-title.cjs
 export HOOK_TELEMETRY_FLUSHER=/fake/lcars-hook-flush.cjs
-for hook_pipeline in claude codex; do
+for hook_pipeline in claude codex opencode; do
   export LCARS_HOOK_TELEMETRY_PROVIDERS="$hook_pipeline"
   run_scenario "hook-telemetry-$hook_pipeline" "$hook_pipeline"
   [ "$rc" -eq 0 ] || fail "hook telemetry $hook_pipeline: expected exit 0, got $rc"
   grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
     fail "hook telemetry $hook_pipeline: run did not complete with its deliverable"
-  grep -qx "/fake/lcars-session-title.cjs integration install $hook_pipeline" "$NODE_ARGS_LOG" ||
-    fail "hook telemetry $hook_pipeline: hook entries were not installed ($(cat "$NODE_ARGS_LOG"))"
+  if [ "$hook_pipeline" = opencode ]; then
+    # The plugin ships in the image's OpenCode config; activation is the
+    # exported writer-credentials path, never an installer run.
+    if grep -q 'integration install' "$NODE_ARGS_LOG"; then
+      fail "hook telemetry opencode: ran the settings installer for a plugin runtime"
+    fi
+    grep -qx "$HOOK_TELEMETRY_CREDENTIALS_FILE|[^|][^|]*/[^|][^|]*" "$OPENCODE_ENV_LOG.hook" ||
+      fail "hook telemetry opencode: opencode did not see the hook client context ($(cat "$OPENCODE_ENV_LOG.hook"))"
+  else
+    grep -qx "/fake/lcars-session-title.cjs integration install $hook_pipeline" "$NODE_ARGS_LOG" ||
+      fail "hook telemetry $hook_pipeline: hook entries were not installed ($(cat "$NODE_ARGS_LOG"))"
+  fi
   if grep -q -- 'runner sidecar' "$NODE_ARGS_LOG"; then
     fail "hook telemetry $hook_pipeline: the polling sidecar still started"
   fi
@@ -1346,13 +1357,15 @@ for hook_pipeline in claude codex; do
     fail "hook telemetry $hook_pipeline: the flusher did not drain before finalize ($(cat "$NODE_ARGS_LOG"))"
   [ -e "$HOME/.local/state/agent-lcars/hook-fence" ] ||
     fail "hook telemetry $hook_pipeline: the drain did not fence late hook events before finalize"
+  if [ "$hook_pipeline" = codex ]; then
+    grep -q -- '--dangerously-bypass-hook-trust' "$CODEX_ARGS_LOG" ||
+      fail "hook telemetry codex: codex exec did not enable the installed hooks ($(cat "$CODEX_ARGS_LOG"))"
+  fi
   echo "scenario hook-telemetry-$hook_pipeline: OK"
 done
-grep -q -- '--dangerously-bypass-hook-trust' "$CODEX_ARGS_LOG" ||
-  fail "hook telemetry codex: codex exec did not enable the installed hooks ($(cat "$CODEX_ARGS_LOG"))"
 
 # A missing credentials file falls back to the sidecar instead of running
-# blind, and OpenCode always keeps the sidecar.
+# blind.
 export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/missing-hook-telemetry-writer.json"
 export LCARS_HOOK_TELEMETRY_PROVIDERS=claude
 run_scenario hook-telemetry-fallback claude

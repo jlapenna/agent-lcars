@@ -9,6 +9,7 @@ import {
   claudeCodeAdapter,
   codexAdapter,
   isSafeIdentifier,
+  opencodeAdapter,
   type SessionAgent,
   type SessionEventKind,
   type SessionEventV1,
@@ -52,6 +53,7 @@ export const HOOK_CLIENT_VERSION = '0.3.0';
 export const HOOK_CLI_USAGE =
   'usage: lcars hook claude [--inline]   (reads one Claude Code hook payload on stdin)\n' +
   '       lcars hook codex  [--inline]   (reads one Codex hook payload on stdin)\n' +
+  '       lcars hook opencode [--inline] (reads one payload from the OpenCode lcars-telemetry plugin on stdin)\n' +
   '       lcars hook flush               (writes spooled events to the telemetry store, via lcars-hook-flush.cjs)\n' +
   '       Exits 0 and prints nothing on stdout in every case; decisions go to\n' +
   '       ~/.local/state/agent-lcars/hook.log.';
@@ -155,6 +157,10 @@ interface RuntimeProfile {
 const RUNTIME_PROFILES: Readonly<Record<HookRuntime, RuntimeProfile>> = {
   claude: { agent: 'claude-code', adapter: claudeCodeAdapter },
   codex: { agent: 'codex', adapter: codexAdapter },
+  // The OpenCode plugin (agents/opencode/lcars-telemetry.js) supplies an
+  // export-shaped snapshot as transcript_path; the same reducer that reads
+  // `opencode export` output summarizes it.
+  opencode: { agent: 'opencode', adapter: opencodeAdapter },
 };
 
 /** `lcars-hook-flush.cjs` beside the running bundle (`process.argv[1]`). */
@@ -241,6 +247,52 @@ function applyAnnotationOverlays(
   return status
     ? { ...overlaid, status: status.status, statusUpdatedAt: status.updatedAt }
     : overlaid;
+}
+
+/** The private directory the OpenCode plugin wrote this payload's snapshot
+ *  into (`<tmpdir>/lcars-opencode-XXXXXX/export.json`), or undefined. Only that
+ *  exact shape is ever deleted. */
+export function opencodeSnapshotDirectory(
+  rawPayload: string,
+  tempRoot = os.tmpdir(),
+): string | undefined {
+  let transcriptPath: unknown;
+  try {
+    transcriptPath = (JSON.parse(rawPayload) as Record<string, unknown>)[
+      'transcript_path'
+    ];
+  } catch {
+    return undefined;
+  }
+  if (typeof transcriptPath !== 'string') return undefined;
+  const resolved = path.resolve(transcriptPath);
+  const directory = path.dirname(resolved);
+  return path.basename(resolved) === 'export.json' &&
+    path.dirname(directory) === path.resolve(tempRoot) &&
+    /^lcars-opencode-[A-Za-z0-9]{6}$/u.test(path.basename(directory))
+    ? directory
+    : undefined;
+}
+
+/** The plugin hands its snapshot to this detached process, which deletes it
+ *  whatever the outcome; the snapshot holds message bodies. */
+async function handleOpencodeHook(
+  deps: HookCommandDependencies,
+  inline: boolean,
+): Promise<HookCommandResult> {
+  let snapshotDirectory: string | undefined;
+  const readStdin = () => {
+    const raw = deps.readStdin();
+    snapshotDirectory = opencodeSnapshotDirectory(raw);
+    return raw;
+  };
+  try {
+    return await handleRuntimeHook({ ...deps, readStdin }, 'opencode', inline);
+  } finally {
+    if (snapshotDirectory) {
+      fs.rmSync(snapshotDirectory, { recursive: true, force: true });
+    }
+  }
 }
 
 async function handleRuntimeHook(
@@ -410,11 +462,10 @@ export async function executeHookCommand(
   const [subcommand, ...rest] = argv;
   try {
     if (isHookRuntime(subcommand)) {
-      return await handleRuntimeHook(
-        deps,
-        subcommand,
-        rest.includes('--inline'),
-      );
+      const inline = rest.includes('--inline');
+      return subcommand === 'opencode'
+        ? await handleOpencodeHook(deps, inline)
+        : await handleRuntimeHook(deps, subcommand, inline);
     }
     if (subcommand === 'flush' || subcommand === '--flush') {
       await deps.runFlusher();

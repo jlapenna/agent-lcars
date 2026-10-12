@@ -9,9 +9,11 @@ import {
   installIntegration,
   INTEGRATION_VERSION,
   integrationStatus,
+  opencodePluginPath,
   stubCommand,
   uninstallIntegration,
 } from './integration';
+import { OPENCODE_TELEMETRY_PLUGIN } from './opencode-plugin-source';
 
 const homes: string[] = [];
 afterEach(() => {
@@ -235,6 +237,7 @@ describe('lcars integration', () => {
     expect(
       executeIntegrationCommand(['status', 'claude'], {
         homeDirectory: home,
+        env: {},
         stdout,
         stderr,
       }),
@@ -242,6 +245,7 @@ describe('lcars integration', () => {
     expect(
       executeIntegrationCommand(['install', 'all'], {
         homeDirectory: home,
+        env: {},
         stdout,
         stderr,
       }),
@@ -249,20 +253,74 @@ describe('lcars integration', () => {
     expect(
       executeIntegrationCommand(['status', 'all'], {
         homeDirectory: home,
+        env: {},
         stdout,
         stderr,
       }),
     ).toBe(0);
-    expect(stdout).toHaveBeenLastCalledWith(
+    expect(stdout).toHaveBeenCalledWith(
       expect.stringContaining('codex: installed'),
     );
+    expect(stdout).toHaveBeenLastCalledWith('opencode: installed (plugin v1)');
     expect(
       executeIntegrationCommand(['bogus', 'claude'], {
         homeDirectory: home,
+        env: {},
         stdout,
         stderr,
       }),
     ).toBe(1);
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining('usage:'));
+  });
+
+  it('installs the OpenCode plugin under XDG_CONFIG_HOME and removes it', () => {
+    const home = tempHome();
+    const env = { XDG_CONFIG_HOME: path.join(home, 'xdg') };
+    const pluginPath = opencodePluginPath(home, env);
+    expect(pluginPath).toBe(
+      path.join(home, 'xdg/opencode/plugins/lcars-telemetry.js'),
+    );
+    expect(integrationStatus('opencode', home, env).installed).toBe(false);
+
+    expect(installIntegration('opencode', home, env)).toMatchObject({
+      runtime: 'opencode',
+      stubInstalled: true,
+      stubVersion: 1,
+      installed: true,
+    });
+    expect(fs.readFileSync(pluginPath, 'utf8')).toBe(OPENCODE_TELEMETRY_PLUGIN);
+    expect(fs.statSync(pluginPath).mode & 0o777).toBe(0o600);
+
+    fs.writeFileSync(pluginPath, '// LCARS_INTEGRATION_VERSION=0\n');
+    expect(integrationStatus('opencode', home, env)).toMatchObject({
+      stubVersion: 0,
+      stubCurrent: false,
+      installed: false,
+    });
+
+    expect(uninstallIntegration('opencode', home, env).stubInstalled).toBe(
+      false,
+    );
+    expect(fs.existsSync(pluginPath)).toBe(false);
+    // Uninstalling twice is a no-op.
+    expect(uninstallIntegration('opencode', home, env).installed).toBe(false);
+  });
+
+  it('defaults the OpenCode plugin directory to ~/.config', () => {
+    const home = tempHome();
+    expect(opencodePluginPath(home, {})).toBe(
+      path.join(home, '.config/opencode/plugins/lcars-telemetry.js'),
+    );
+  });
+
+  it('embeds the repository OpenCode plugin byte for byte', () => {
+    const source = fs.readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../../agents/opencode/lcars-telemetry.js',
+      ),
+      'utf8',
+    );
+    expect(OPENCODE_TELEMETRY_PLUGIN).toBe(source);
   });
 });

@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { HOOK_RUNTIMES, type HookRuntime, isHookRuntime } from './hook-payload';
+import { OPENCODE_TELEMETRY_PLUGIN } from './opencode-plugin-source';
 
 /**
  * `lcars integration install|uninstall|status <runtime>`: the self-installing
@@ -35,8 +36,13 @@ interface IntegrationTarget {
   readonly entries: readonly HookEntrySpec[];
 }
 
+/** Runtimes that register hooks as entries in a settings file. OpenCode
+ *  instead loads plugin files from a directory; see the opencode functions
+ *  below. */
+type SettingsRuntime = Exclude<HookRuntime, 'opencode'>;
+
 export const INTEGRATION_TARGETS: Readonly<
-  Record<HookRuntime, IntegrationTarget>
+  Record<SettingsRuntime, IntegrationTarget>
 > = {
   claude: {
     configDirEnv: 'CLAUDE_CONFIG_DIR',
@@ -80,7 +86,7 @@ interface ResolvedTarget {
 }
 
 export function resolveTarget(
-  runtime: HookRuntime,
+  runtime: SettingsRuntime,
   homeDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedTarget {
@@ -102,7 +108,7 @@ export function resolveTarget(
 }
 
 export function stubCommand(
-  runtime: HookRuntime,
+  runtime: SettingsRuntime,
   stubRef = `$HOME/${path.join(INTEGRATION_TARGETS[runtime].defaultConfigDir, INTEGRATION_TARGETS[runtime].stubFile)}`,
 ): string {
   return `[ -x "${stubRef}" ] && sh "${stubRef}" ${runtime} || true`;
@@ -112,7 +118,7 @@ export function stubCommand(
 const OUR_COMMAND_RE =
   /^\[ -x "([^"]+\/lcars-hook\.sh)" \] && sh "\1" (claude|codex) \|\| true$/u;
 
-export function stubScript(runtime: HookRuntime): string {
+export function stubScript(runtime: SettingsRuntime): string {
   return [
     '#!/bin/sh',
     '# installed by lcars',
@@ -157,7 +163,7 @@ export interface IntegrationStatus {
   readonly installed: boolean;
 }
 
-export const INTEGRATION_CLI_USAGE = `usage: lcars integration (install|uninstall|status) (${HOOK_RUNTIMES.join('|')})`;
+export const INTEGRATION_CLI_USAGE = `usage: lcars integration (install|uninstall|status) (${HOOK_RUNTIMES.join('|')}|all)`;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -235,7 +241,7 @@ function groupIsOurs(group: unknown): boolean {
 }
 
 function ourGroup(
-  runtime: HookRuntime,
+  runtime: SettingsRuntime,
   spec: HookEntrySpec,
   stubRef: string,
 ): JsonRecord {
@@ -315,8 +321,8 @@ function stubVersionOf(script: string | undefined): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
-export function integrationStatus(
-  runtime: HookRuntime,
+function settingsIntegrationStatus(
+  runtime: SettingsRuntime,
   homeDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
 ): IntegrationStatus {
@@ -352,8 +358,8 @@ export function integrationStatus(
   };
 }
 
-export function installIntegration(
-  runtime: HookRuntime,
+function settingsInstallIntegration(
+  runtime: SettingsRuntime,
   homeDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
 ): IntegrationStatus {
@@ -383,11 +389,11 @@ export function installIntegration(
     `${JSON.stringify(settings, null, 2)}\n`,
     settingsMode(settingsPath),
   );
-  return integrationStatus(runtime, homeDirectory, env);
+  return settingsIntegrationStatus(runtime, homeDirectory, env);
 }
 
-export function uninstallIntegration(
-  runtime: HookRuntime,
+function settingsUninstallIntegration(
+  runtime: SettingsRuntime,
   homeDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
 ): IntegrationStatus {
@@ -415,10 +421,92 @@ export function uninstallIntegration(
   } catch {
     // Already absent.
   }
-  return integrationStatus(runtime, homeDirectory, env);
+  return settingsIntegrationStatus(runtime, homeDirectory, env);
+}
+
+/** OpenCode's global plugin directory, honoring XDG_CONFIG_HOME. */
+export function opencodePluginPath(
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configHome =
+    env['XDG_CONFIG_HOME']?.trim() || path.join(homeDirectory, '.config');
+  return path.join(configHome, 'opencode', 'plugins', 'lcars-telemetry.js');
+}
+
+function opencodeStatus(
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv,
+): IntegrationStatus {
+  let plugin: string | undefined;
+  try {
+    plugin = fs.readFileSync(opencodePluginPath(homeDirectory, env), 'utf8');
+  } catch {
+    plugin = undefined;
+  }
+  const match = plugin?.match(/LCARS_INTEGRATION_VERSION=(\d+)/u);
+  const current = plugin === OPENCODE_TELEMETRY_PLUGIN;
+  return {
+    runtime: 'opencode',
+    stubInstalled: plugin !== undefined,
+    ...(match && { stubVersion: Number(match[1]) }),
+    stubCurrent: current,
+    entriesPresent: current ? 1 : 0,
+    entriesExpected: 1,
+    installed: current,
+  };
+}
+
+export function integrationStatus(
+  runtime: HookRuntime,
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): IntegrationStatus {
+  return runtime === 'opencode'
+    ? opencodeStatus(homeDirectory, env)
+    : settingsIntegrationStatus(runtime, homeDirectory, env);
+}
+
+export function installIntegration(
+  runtime: HookRuntime,
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): IntegrationStatus {
+  if (runtime !== 'opencode') {
+    return settingsInstallIntegration(runtime, homeDirectory, env);
+  }
+  // OpenCode loads every file in its global plugin directory at startup.
+  writeAtomically(
+    opencodePluginPath(homeDirectory, env),
+    OPENCODE_TELEMETRY_PLUGIN,
+    0o600,
+  );
+  return opencodeStatus(homeDirectory, env);
+}
+
+export function uninstallIntegration(
+  runtime: HookRuntime,
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): IntegrationStatus {
+  if (runtime !== 'opencode') {
+    return settingsUninstallIntegration(runtime, homeDirectory, env);
+  }
+  try {
+    fs.unlinkSync(opencodePluginPath(homeDirectory, env));
+  } catch {
+    // Already absent.
+  }
+  return opencodeStatus(homeDirectory, env);
 }
 
 function formatStatus(status: IntegrationStatus): string {
+  if (status.runtime === 'opencode') {
+    const plugin = status.stubInstalled
+      ? `plugin v${status.stubVersion ?? '?'}${status.stubCurrent ? '' : ' (outdated)'}`
+      : 'plugin missing';
+    return `opencode: ${status.installed ? 'installed' : 'not installed'} (${plugin})`;
+  }
   const stub = status.stubInstalled
     ? `stub v${status.stubVersion ?? '?'}${status.stubCurrent ? '' : ' (outdated)'}`
     : 'stub missing';

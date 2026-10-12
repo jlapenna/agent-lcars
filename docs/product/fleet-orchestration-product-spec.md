@@ -334,8 +334,8 @@ final turn, shown in the console Conversation.
   5. Verify the outcome.
   6. Call `/complete`.
 
-  Hook telemetry replaces the polling telemetry sidecar for Claude and Codex
-  only when `LCARS_HOOK_TELEMETRY_PROVIDERS` names the pipeline; it is empty by
+  Hook telemetry replaces the polling telemetry sidecar for Claude, Codex,
+  and OpenCode only when `LCARS_HOOK_TELEMETRY_PROVIDERS` names the pipeline; it is empty by
   default.
 
   If the agent exits 0 with no deliverable, it gets one completion-correction
@@ -509,7 +509,7 @@ consumed by every dispatched run in every member repository.
   - As a runner sidecar with `sidecar`, `finalize`, and `resume` modes. The
     `finalize` mode uploads transcripts to
     `gs://…/runs/<runId>/<agent>/<session>.jsonl`.
-  - Through provider hooks: `lcars hook claude|codex|flush` writes sessions
+  - Through provider hooks: `lcars hook claude|codex|opencode|flush` writes sessions
     directly to Firestore as the telemetry writer, installed with
     `lcars integration install`
     ([hooks telemetry](../hooks-telemetry-design.md)). Dispatched workers use
