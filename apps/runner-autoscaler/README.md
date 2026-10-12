@@ -445,9 +445,11 @@ adoption, real owned-Pod drainage, and useful successor execution require
 separate live evidence.
 
 **`SIGUSR1` pauses the queue poller from claiming.** The signal toggles an
-in-process flag the poller checks before every claim call and before starting
-a recovery sweep: the first `SIGUSR1` pauses both, a second resumes them.
-An already running bounded sweep may finish. This is a separate, in-memory
+in-process flag checked before every claim call and before resuming an
+ordinary suspended Job: the first `SIGUSR1` pauses those actions, a second
+resumes them. Bounded maintenance sweeps continue observing placement and
+retiring settled claims for accepted workers. An already admitted startup
+resume or running bounded sweep may finish. This is a separate, in-memory
 switch from the `queue.state` machine above: it does not cancel running Jobs
 or settle or un-claim existing runs. Nothing else in this repo touches it. A claim minted moments
 before this instance is replaced would just be another launch failure to

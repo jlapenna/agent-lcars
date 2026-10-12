@@ -43,8 +43,9 @@ type queueExecutorConfig struct {
 	runnerName     string
 	httpClient     *http.Client
 	capacity       *queueCapacityClient
-	// recover resumes eligible never-started Jobs at startup and during normal
-	// polling. A bounded, non-overlapping sweep never holds the claim path.
+	// recover maintains claimed workers, including placement observations during
+	// drain. The backend suppresses startup resume while draining. A bounded,
+	// non-overlapping sweep never holds the claim path.
 	recover func(context.Context) error
 	// idToken mints a Google ID token for the console's work audience.
 	// Production wires this to idTokenFromSource; tests inject a stub.
@@ -304,7 +305,7 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 	defer background.Wait()
 	recoveryRunning := make(chan struct{}, 1)
 	recoverStartup := func() {
-		if cfg.recover == nil || (cfg.capacity == nil && cfg.draining != nil && cfg.draining()) {
+		if cfg.recover == nil {
 			return
 		}
 		select {

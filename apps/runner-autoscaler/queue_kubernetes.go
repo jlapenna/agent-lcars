@@ -178,8 +178,11 @@ type kubernetesQueue struct {
 	placementCursor         queueSweepCursor
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
-	verifyRun              func(context.Context, string, string) error
-	claimSettled           func(context.Context, string, string, string) (bool, error)
+	verifyRun    func(context.Context, string, string) error
+	claimSettled func(context.Context, string, string, string) (bool, error)
+	// draining suppresses ordinary suspended-Job resume while maintenance and
+	// placement observations continue for already accepted workers.
+	draining               func() bool
 	reportStartupPlacement func(context.Context, placementObservation) error
 	// exits receives every terminated queue Job this executor's inventory
 	// reads observe (nil disables reporting). See runExitReporter.
@@ -746,6 +749,9 @@ func (q *kubernetesQueue) recover(ctx context.Context) error {
 			continue
 		}
 		if queueJobTerminal(j) || j.Spec.Suspend == nil || !*j.Spec.Suspend {
+			continue
+		}
+		if q.draining != nil && q.draining() {
 			continue
 		}
 		if err := q.resume(ctx, &j); err != nil {

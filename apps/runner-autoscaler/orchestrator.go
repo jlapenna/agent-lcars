@@ -152,6 +152,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					} else {
 						queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
 					}
+					queue.draining = queueDraining.Load
 					go queue.runPlacementObserver(ctx, queuePlacementReporter(consoleURL, func() (string, error) {
 						return idTokenFromSource(tokenSource)
 					}))
