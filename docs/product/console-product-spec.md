@@ -510,7 +510,21 @@ counterpart of the Work destination.
 - `lcars work status <id> [--watch]`, `list [--state] [--repo]`,
   `cancel <id>`, and `redispatch <id>`
 - `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]`
+- `lcars work owner <owner/repo>#<n> [--json]`
 - `lcars session title "<text>" | --clear` and `lcars session status "<text>" | --clear`
+
+- **FE-CLI-1 [Shipped]** `work owner` answers who Console says is working a
+  GitHub issue or pull request, so every executor can check before it starts.
+  It calls the read-only `GET /api/work/v1/anchors/github/owner` (`work.operator`
+  or `work.reaper`). The answer comes only from state Console already holds and
+  records no claim. The verdict is `fleet-run` when the orchestrator task holds a
+  live run, `interactive-session` when a `live` or `idle` CLI session's
+  repository plus branch or recorded PR references the anchor (the Agents page's
+  Claimed but Idle matcher), and `none` otherwise. The evidence lists the task
+  state, pipeline and run count, the live or newest run with its claimant and
+  worker sessions, and every matching CLI session from the last 24 hours. `owner`
+  exits 0 for any verdict. It exits 1 when CLI session telemetry was unreadable,
+  because `none` is then unproven.
 
 `status --watch` polls every 15 seconds while the item is `running`, including
 lost runs awaiting automatic retry. It stops on `done`, `parked`, `failed`, or

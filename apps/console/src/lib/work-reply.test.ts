@@ -170,6 +170,7 @@ function fixture(over: Partial<WorkContext> = {}) {
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
     sessionDocsForRuns: async () => [],
+    cliSessions: async () => ({ sessions: [], warnings: [] }),
     scheduleStore: new MemoryScheduleStore(),
     grants: () => [],
     now: () => new Date(NOW),

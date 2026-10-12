@@ -18,6 +18,7 @@ import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
+import { readAnchorOwner } from './anchor-owner';
 import { githubDispatchRouter } from './github-dispatch-router';
 import { handleReconcile } from './orchestrator-routes';
 import { scheduleRouter } from './schedule-router';
@@ -147,6 +148,13 @@ export const workRouter = os.router({
     }
     return view(context, input.id, result.task);
   }),
+
+  /** Read-only (#2502): who Console says is working a GitHub anchor. Same
+   *  `reader` gate as `get`/`list` -- it reveals no more than they do plus
+   *  the CLI session telemetry the Agents page already shows operators. */
+  anchorOwner: reader.anchorOwner.handler(async ({ input, context }) =>
+    readAnchorOwner(context, { repo: input.repo, issue: input.issue }),
+  ),
 
   get: reader.get.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });

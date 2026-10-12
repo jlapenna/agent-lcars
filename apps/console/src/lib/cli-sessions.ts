@@ -124,8 +124,15 @@ export interface CliSessionsResult {
  *
  * A store-level failure (e.g. no telemetry infra reachable) degrades to an
  * empty list rather than crashing the dashboard.
+ *
+ * `limit` defaults to the dashboard's {@link MAX_SESSIONS} render cap. The
+ * anchor-owner query (`anchor-owner.ts`) passes `Infinity`: it must see every
+ * session in the window, because a session dropped by a display cap would
+ * read as "nobody is working this".
  */
-export async function getCliSessions(): Promise<CliSessionsResult> {
+export async function getCliSessions({
+  limit = MAX_SESSIONS,
+}: { limit?: number } = {}): Promise<CliSessionsResult> {
   const now = new Date();
   const activeSince = new Date(
     now.getTime() - ACTIVE_WINDOW_HOURS * 60 * 60 * 1000,
@@ -155,7 +162,7 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   const capped = [
     ...sessionsByDoc.filter(([, session]) => isActive(session.liveness)),
     ...sessionsByDoc.filter(([, session]) => !isActive(session.liveness)),
-  ].slice(0, MAX_SESSIONS);
+  ].slice(0, limit);
 
   const sessions = capped.map(([doc, session]) => {
     const pr = prFromDeliverables(doc);

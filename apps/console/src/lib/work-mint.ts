@@ -18,6 +18,7 @@ import {
   toItemView,
 } from '@agent-lcars/work/derive';
 
+import type { CliSessionsResult } from './cli-sessions';
 import { isControlPlaneRepository } from './deployment';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal } from './work-auth';
@@ -41,6 +42,10 @@ export interface WorkContext {
    *  drops `source`/`agent`/`intentId` -- exactly the fields resume
    *  ownership and pipeline matching need. */
   sessionDocsForRuns: (runIds: string[]) => Promise<SessionDoc[]>;
+  /** Recent CLI session telemetry, uncapped, for the read-only anchor-owner
+   *  query (`anchor-owner.ts`). Degrades to an empty list plus a warning,
+   *  as `getCliSessions` does. */
+  cliSessions: () => Promise<CliSessionsResult>;
   /** Schedule storage -- separate from `OrchestratorRouteDeps` on purpose:
    *  a schedule is not a `Task` (see `schedule-store.ts`). */
   scheduleStore: ScheduleStore;

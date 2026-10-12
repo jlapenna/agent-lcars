@@ -180,6 +180,18 @@ describe('getCliSessions', () => {
     expect(sessions.map((session) => session.sessionId)).toContain('live-tail');
   });
 
+  it('returns every session in the window when the caller lifts the cap', async () => {
+    (listSessionDocs as Mock).mockResolvedValue(
+      Array.from({ length: MAX_SESSIONS + 5 }, (_, index) =>
+        makeCliDoc({ sessionId: `live-${index}` }),
+      ),
+    );
+
+    const { sessions } = await getCliSessions({ limit: Infinity });
+
+    expect(sessions).toHaveLength(MAX_SESSIONS + 5);
+  });
+
   it('passes through status, artifacts, and cost-weighted tokens', async () => {
     const statusUpdatedAt = minutesAgo(40);
     (listSessionDocs as Mock).mockResolvedValue([

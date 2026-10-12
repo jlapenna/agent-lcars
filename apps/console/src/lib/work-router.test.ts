@@ -1,4 +1,6 @@
 import {
+  decidedRun,
+  isRefusal,
   MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
@@ -16,6 +18,7 @@ import type { RouterContractClient } from '@orpc/contract';
 import { OpenAPILink } from '@orpc/openapi/fetch';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { CliSession } from './cli-sessions';
 import { controlPlaneRepository } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createWorkHandler, type WorkContext } from './work-router';
@@ -80,6 +83,7 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
     sessionDocsForRuns: async () => [],
+    cliSessions: async () => ({ sessions: [], warnings: [] }),
     scheduleStore: new MemoryScheduleStore(),
     grants: () => [],
     now: () => new Date('2026-08-26T10:00:00.000Z'),
@@ -1967,4 +1971,178 @@ describe('GitHub-anchor dispatch route', () => {
       });
     },
   );
+});
+
+describe('GET /anchors/github/owner', () => {
+  const REPO = 'jlapenna/agent-lcars';
+  const anchor = { repo: REPO, issue: 2502 };
+  const path = `/anchors/github/owner?repo=${REPO}&issue=2502`;
+
+  function cliSession(over: Partial<CliSession> = {}): CliSession {
+    return {
+      sessionId: 'cli-1',
+      liveness: 'live',
+      agent: 'claude-code',
+      host: 'laforge',
+      branch: 'feat/issue-owner-query-2502',
+      turns: 4,
+      totalTokens: 10,
+      startedAt: '2026-08-26T09:00:00.000Z',
+      lastActivityAt: '2026-08-26T09:58:00.000Z',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      ...over,
+    };
+  }
+
+  async function admit(ctx: WorkContext) {
+    const outcome = await ctx.runtime.orchestrator.request({
+      taskId: anchor,
+      requestId: 'first',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: { ...spec, target: { repo: REPO } },
+      },
+    });
+    if (isRefusal(outcome)) throw new Error('unexpected refusal in fixture');
+    return decidedRun(outcome).runId;
+  }
+
+  it('is gated like get/list: operator or reaper only', async () => {
+    for (const principal of [undefined, executorOnly, cronTick])
+      expect((await call(context({ principal }), 'GET', path)).status).toBe(
+        401,
+      );
+    for (const principal of [operator, reaperOnly])
+      expect((await call(context({ principal }), 'GET', path)).status).toBe(
+        200,
+      );
+  });
+
+  it('rejects a malformed anchor before reading anything', async () => {
+    const cliSessions = vi.fn(async () => ({ sessions: [], warnings: [] }));
+    const ctx = context({ cliSessions });
+    for (const bad of [
+      '/anchors/github/owner?repo=not-a-repo&issue=1',
+      `/anchors/github/owner?repo=${REPO}&issue=0`,
+      `/anchors/github/owner?repo=${REPO}`,
+    ])
+      expect((await call(ctx, 'GET', bad)).status).toBe(400);
+    expect(cliSessions).not.toHaveBeenCalled();
+  });
+
+  it('answers none when Console has no task and no session for the anchor', async () => {
+    const result = await call(
+      context({
+        cliSessions: async () => ({
+          sessions: [
+            // Same number, other repo; and same repo, other number.
+            cliSession({ repo: { owner: 'octo', name: 'example' } }),
+            cliSession({ sessionId: 'cli-2', branch: 'feat/thing-25020' }),
+          ],
+          warnings: [],
+        }),
+      }),
+      'GET',
+      path,
+    );
+    expect(result.status).toBe(200);
+    expect(result.json).toEqual({
+      anchor,
+      observedAt: '2026-08-26T10:00:00.000Z',
+      verdict: 'none',
+      complete: true,
+      warnings: [],
+      cliSessions: [],
+    });
+  });
+
+  it('reports a live fleet run as the owner, with run and session evidence', async () => {
+    const sessionsFor = vi.fn(async (runIds: string[]) =>
+      runIds.map((runId) => ({
+        sessionId: 'worker-1',
+        runId,
+        startedAt: '2026-08-26T10:00:00.000Z',
+        lastActivityAt: '2026-08-26T10:00:00.000Z',
+      })),
+    );
+    const ctx = context({
+      sessionsFor,
+      cliSessions: async () => ({ sessions: [cliSession()], warnings: [] }),
+    });
+    const runId = await admit(ctx);
+
+    const result = await call(ctx, 'GET', path);
+
+    expect(result.status).toBe(200);
+    expect(result.json).toMatchObject({
+      verdict: 'fleet-run',
+      task: {
+        state: 'running',
+        pipeline: 'claude',
+        runCount: 1,
+        activeRunId: runId,
+        run: { runId, pipeline: 'claude' },
+        runSessions: [{ sessionId: 'worker-1', runId }],
+      },
+      // The interactive session is still evidence, even though the run
+      // holds the task's mutex and so owns the verdict.
+      cliSessions: [{ sessionId: 'cli-1', liveness: 'live' }],
+    });
+    expect(sessionsFor).toHaveBeenCalledWith([runId]);
+  });
+
+  it('reports a live CLI session when the task has no live run', async () => {
+    const ctx = context({
+      cliSessions: async () => ({
+        sessions: [
+          cliSession({ sessionId: 'old', liveness: 'ended' }),
+          cliSession({
+            sessionId: 'by-pr',
+            liveness: 'idle',
+            branch: 'main',
+            pr: { number: 2502, url: 'https://github.com/x/pull/2502' },
+          }),
+        ],
+        warnings: [],
+      }),
+    });
+    const runId = await admit(ctx);
+    await ctx.runtime.orchestrator.report(runId, { ok: true, summary: 'park' });
+
+    const result = await call(ctx, 'GET', path);
+
+    expect(result.json).toMatchObject({
+      verdict: 'interactive-session',
+      task: { state: 'parked', run: { runId, state: 'finished' } },
+    });
+    expect(result.json.task.activeRunId).toBeUndefined();
+    // Active sessions first; an ended one is evidence, not ownership.
+    expect(
+      result.json.cliSessions.map(
+        (session: { sessionId: string }) => session.sessionId,
+      ),
+    ).toEqual(['by-pr', 'old']);
+  });
+
+  it('marks the answer incomplete when CLI telemetry degraded', async () => {
+    const result = await call(
+      context({
+        cliSessions: async () => ({
+          sessions: [],
+          warnings: [
+            'CLI sessions unavailable (agent-telemetry store failed).',
+          ],
+        }),
+      }),
+      'GET',
+      path,
+    );
+    expect(result.status).toBe(200);
+    expect(result.json).toMatchObject({
+      verdict: 'none',
+      complete: false,
+      warnings: ['CLI sessions unavailable (agent-telemetry store failed).'],
+    });
+  });
 });
