@@ -406,7 +406,7 @@ test.describe('populated dashboard', () => {
     await expect(header.getByText('Cost', { exact: true })).toBeVisible();
     await expect(
       header.getByRole('link', {
-        name: `#${E2E_ITEM_NUMBERS.silentError}`,
+        name: `GitHub #${E2E_ITEM_NUMBERS.silentError}`,
         exact: true,
       }),
     ).toBeVisible();

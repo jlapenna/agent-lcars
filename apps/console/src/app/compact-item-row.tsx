@@ -45,7 +45,14 @@ export function CompactItemRow({
           {item.author && ` · by ${item.author}`}
           {item.labels.length > 0 && ` · ${item.labels.join(', ')}`}
         </Text>
-        <Anchor href={item.url} target="_blank" rel="noreferrer" size="xs">
+        <Anchor
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          size="xs"
+          miw={44}
+          style={{ flexShrink: 0 }}
+        >
           GitHub ↗
         </Anchor>
         {action}
