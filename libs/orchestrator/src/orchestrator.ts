@@ -25,6 +25,7 @@ import {
 import {
   isLive,
   type ProviderFallbackRequest,
+  type QueuePriority,
   type RequestSource,
   type Run,
   type RunResult,
@@ -87,6 +88,7 @@ export interface RequestInput {
   /** Omitted for arbitrary caller-controlled request IDs. */
   requestSource?: RequestSource;
   pipeline: string;
+  priority?: QueuePriority;
   params?: Record<string, string>;
   work?: WorkPayload;
   /** Constructed by the authenticated admission adapter, not a raw API field. */
@@ -157,6 +159,9 @@ export class Orchestrator {
           requestId,
           requestSource,
           pipeline: input.pipeline,
+          priority:
+            input.priority ??
+            (input.replaceQueuedRunId ? activeRun?.priority : undefined),
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
           ...(input.providerFallback === undefined

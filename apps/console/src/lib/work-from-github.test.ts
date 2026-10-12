@@ -112,6 +112,7 @@ describe('workPayloadFromGithub', () => {
         title: 'Fix the thing',
         description: 'Please fix the thing.',
         pipeline: 'claude',
+        priority: 'normal',
         target: { repo: 'jlapenna/agent-lcars' },
       },
     });

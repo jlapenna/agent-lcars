@@ -56,6 +56,7 @@ export interface ItemRunView {
   runId: string;
   state: Run['state'];
   pipeline: string;
+  priority?: WorkSpec['priority'];
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
@@ -149,6 +150,7 @@ export function toItemView(input: {
       runId: r.runId,
       state: r.state,
       pipeline: r.pipeline,
+      priority: r.priority ?? 'normal',
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
@@ -232,6 +234,7 @@ export function toWorkSummary(input: {
       runId: r.runId,
       state: r.state,
       pipeline: r.pipeline,
+      priority: r.priority ?? 'normal',
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),

@@ -16,6 +16,7 @@ const spec = {
   title: 't',
   description: 'd',
   pipeline: 'claude',
+  priority: 'normal',
   target: { repo: 'jlapenna/agent-lcars' },
 };
 const operator = {
@@ -422,6 +423,48 @@ describe('schedules routes', () => {
 });
 
 describe('tick', () => {
+  it('freezes a background schedule priority into its item and run', async () => {
+    const ctx = context();
+    expect(
+      (
+        await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+          cron: '* * * * *',
+          spec: { ...spec, priority: 'background' },
+        })
+      ).status,
+    ).toBe(201);
+    const result = await call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(result.json.minted).toHaveLength(1);
+    const item = await call(
+      ctx,
+      'GET',
+      `/items/${result.json.minted[0].itemId}`,
+    );
+    expect(item.json.spec.priority).toBe('background');
+    expect(item.json.runs[0].priority).toBe('background');
+  });
+
+  it('replays an omitted legacy normal priority as explicit normal', async () => {
+    const ctx = context();
+    const { priority: _priority, ...legacy } = spec;
+    expect(
+      (
+        await call(ctx, 'PUT', `/schedules/${ID}`, {
+          cron: '* * * * *',
+          spec: legacy,
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (await call(ctx, 'PUT', `/schedules/${ID}`, { cron: '* * * * *', spec }))
+        .status,
+    ).toBe(201);
+  });
   it('leaves a schedule alone once lastSlotAt already covers the latest due slot', async () => {
     const ctx = context();
     await ctx.scheduleStore.writeSchedule({
@@ -986,9 +1029,10 @@ describe('tick', () => {
     'finishes the frozen occurrence admitted before %s, preserving new operator intent',
     async (action) => {
       const ctx = context();
+      const frozenSpec = { ...spec, priority: 'background' };
       await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
         cron: '* * * * *',
-        spec,
+        spec: frozenSpec,
       });
       const request = ctx.runtime.orchestrator.request.bind(
         ctx.runtime.orchestrator,
@@ -1005,7 +1049,7 @@ describe('tick', () => {
               : await call(ctx, 'PATCH', `/schedules/${ID}`, {
                   expectedRevision: 1,
                   cron: '0 * * * *',
-                  spec: { ...spec, title: 'Future edited' },
+                  spec: { ...spec, priority: 'urgent', title: 'Future edited' },
                   enabled: false,
                 });
           expect(changed.status).toBe(200);
@@ -1015,7 +1059,7 @@ describe('tick', () => {
               : {
                   revision: 2,
                   enabled: false,
-                  spec: { title: 'Future edited' },
+                  spec: { title: 'Future edited', priority: 'urgent' },
                 },
           );
           return request(input);
@@ -1033,7 +1077,8 @@ describe('tick', () => {
         'GET',
         `/items/${result.json.minted[0].itemId}`,
       );
-      expect(item.json.spec).toEqual(spec);
+      expect(item.json.spec).toEqual(frozenSpec);
+      expect(item.json.runs[0].priority).toBe('background');
       const after = (await ctx.scheduleStore.readSchedule(ID))!;
       expect(after).toMatchObject({
         revision: 2,
@@ -1045,7 +1090,7 @@ describe('tick', () => {
       expect(after).toMatchObject(
         action === 'delete'
           ? { deletedAt: NOW.toISOString() }
-          : { spec: { title: 'Future edited' } },
+          : { spec: { title: 'Future edited', priority: 'urgent' } },
       );
     },
   );

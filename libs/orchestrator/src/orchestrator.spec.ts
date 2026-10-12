@@ -351,6 +351,27 @@ describe('leases and loss', () => {
 });
 
 describe('auto-retry on loss', () => {
+  it.each(['urgent', 'background'] as const)(
+    'preserves %s priority on automatic retry',
+    async (priority) => {
+      const { clock, store, orchestrator } = fixture();
+      const outcome = await orchestrator.request({
+        taskId: TASK,
+        requestId: 'priority',
+        pipeline: 'claude',
+        priority,
+        work: TASK_WORK,
+      });
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      clock.advanceMinutes(121);
+      const swept = await orchestrator.sweepExpired();
+      expect(swept.retried).toHaveLength(1);
+      expect(await store.readRun(swept.retried[0]!.newRunId)).toMatchObject({
+        priority,
+        runId: 'octo/example#7/r2',
+      });
+    },
+  );
   it('starts a fresh run for the same task, copying pipeline and params verbatim, and increments consecutiveLost', async () => {
     const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator, 'req-1', {

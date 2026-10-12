@@ -6,7 +6,7 @@ import { FirestoreScheduleStore } from './firestore-schedule-store';
 import { FirestoreStore } from './firestore-store';
 import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
-import { outboxEntrySchema, taskSchema } from './model';
+import { outboxEntrySchema, type QueuePriority, taskSchema } from './model';
 import { Orchestrator } from './orchestrator';
 import {
   runOrchestratorStoreContract,
@@ -66,6 +66,66 @@ if (
 
 describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
   let prefixCounter = 0;
+
+  it('persists priority turns across store restart and refuses a corrupt cursor without claiming', async () => {
+    const now = '2026-08-15T12:00:00.000Z';
+    const collectionPrefix = `orchestrator-test-priority-${crypto.randomUUID()}-`;
+    const options = {
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      collectionPrefix,
+      emulatorHost: emulatorHost ?? 'localhost:8080',
+    };
+    const firestore = new Firestore({
+      projectId: options.projectId,
+      databaseId: options.databaseId,
+      host: options.emulatorHost,
+      ssl: false,
+    });
+    try {
+      const store = new FirestoreStore(options);
+      const orchestrator = new Orchestrator(store, { now: () => now });
+      for (const [index, priority] of (
+        [
+          'urgent',
+          'urgent',
+          'urgent',
+          'normal',
+          'background',
+        ] satisfies QueuePriority[]
+      ).entries()) {
+        const result = await orchestrator.request({
+          taskId: { repo: 'octo/example', issue: index + 1001 },
+          requestId: `priority-${index}`,
+          pipeline: 'claude',
+          priority,
+          work: { spec: { title: 'priority restart regression' } },
+        });
+        if (isRefusal(result)) throw new Error('unexpected refusal');
+        await store.enqueueRun({ runId: decidedRun(result).runId, now });
+      }
+      const claim = {
+        pipelines: ['claude'],
+        now,
+        claimedBy: 'priority-test',
+        tokenHash: 'a'.repeat(64),
+      };
+      expect((await store.claimQueuedRun(claim))?.priority).toBe('urgent');
+      expect((await store.claimQueuedRun(claim))?.priority).toBe('urgent');
+      const restarted = new FirestoreStore(options);
+      expect((await restarted.claimQueuedRun(claim))?.priority).toBe('normal');
+      const cursor = firestore
+        .collection(`${collectionPrefix}priority-positions`)
+        .doc('claude');
+      expect((await cursor.get()).data()).toEqual({ position: 3 });
+      const before = await restarted.listQueuedRuns();
+      await cursor.set({ position: 7 });
+      await expect(restarted.claimQueuedRun(claim)).rejects.toThrow();
+      expect(await restarted.listQueuedRuns()).toEqual(before);
+    } finally {
+      await firestore.terminate();
+    }
+  });
 
   it('rejects malformed cooldowns and over-bound admission reads instead of presenting partial zeros', async () => {
     const prefix = `admission-bounds-${Date.now()}-`;

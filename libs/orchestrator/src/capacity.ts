@@ -19,7 +19,12 @@ import {
   isQueueAdmissionCandidate,
   QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
 } from './queue-admission-status';
-import type { CapacityTransactionSnapshot, OrchestratorStore } from './store';
+import {
+  type CapacityTransactionSnapshot,
+  type OrchestratorStore,
+  queuePriorityTurnAfter,
+  selectPriorityQueuedRun,
+} from './store';
 
 /** Only a resolved server grant can construct this authority. Recovery and
  * fencing are separate capabilities, never inferred from claimant exit rights. */
@@ -606,7 +611,12 @@ export class CapacityProtocol {
               left.runId.localeCompare(right.runId)
             );
           });
-        const run = candidates[0];
+        const provider = candidates[0]?.pipeline;
+        const position = snapshot.priorityPositions.get(provider ?? '') ?? 0;
+        const run = selectPriorityQueuedRun(
+          candidates.filter((candidate) => candidate.pipeline === provider),
+          position,
+        );
         if (run === undefined)
           return { value: { kind: 'wait' as const, reason: 'queue' as const } };
         let slot = 0;
@@ -682,6 +692,13 @@ export class CapacityProtocol {
         };
         return {
           value: { kind: 'claim' as const, receipt, run: claimed },
+          priorityTurn: {
+            pipeline: run.pipeline,
+            position: queuePriorityTurnAfter(
+              position,
+              run.priority ?? 'normal',
+            ),
+          },
           state: commit(snapshot),
           run: claimed,
           records: mutations([[request, record]]),

@@ -253,7 +253,7 @@ final turn, shown in the console Conversation.
   claim from its grant.
 - **FL-CL-2 [Shipped] Provider-fair selection.** The server picks the provider
   with the fewest live claimed runs, then the oldest head of queue. Within a
-  provider, order is FIFO. Server-owned ceilings serialize Codex and
+  provider, order is FIFO within each priority class. Server-owned ceilings serialize Codex and
   OpenCode, and pipelines in cooldown are skipped.
 - **FL-CL-3 [Shipped]** Before issuing a run token for an implement run, the
   server reads the anchor's GitHub state, with a 4s deadline:
@@ -264,8 +264,14 @@ final turn, shown in the console Conversation.
   Queued runs never expire. The run token is stored only as a SHA-256 hash,
   and the claimant is recorded both as its self-reported runner name and as
   its authenticated subject.
-- **FL-CL-5 [Partial]** There is no priority field. FIFO within a provider
-  cannot express "urgent". See R4.
+- **FL-CL-5 [Partial]** Request/run contracts support `urgent`, `normal`
+  (including historical defaults), and `background`. Within the selected
+  provider a durable 4:2:1 weighted cycle prevents background starvation;
+  [the orchestrator policy](../../libs/orchestrator/README.md#priority-within-provider-fair-claims)
+  defines the seven-reservation background-head bound, propagation, and
+  mixed-version rollout limitation. API, CLI, New work, and schedule
+  creation expose priority. Production rollout and real-work qualification
+  remain unverified; see R4 and #2189.
 
 ### 6.3 Executor and runtime
 

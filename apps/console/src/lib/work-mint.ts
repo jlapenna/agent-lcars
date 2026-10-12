@@ -165,6 +165,7 @@ export async function mintItem(
     taskId: { workId: input.id },
     requestId: input.id,
     pipeline: input.spec.pipeline,
+    priority: input.spec.priority,
     providerFallback: authorizeProviderFallback(
       input.grantsPrincipal,
       input.spec.pipeline,
