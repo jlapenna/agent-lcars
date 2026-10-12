@@ -365,7 +365,14 @@ final turn, shown in the console Conversation.
 - **FL-RT-3 [Shipped]** A `provider-limit` failure writes a cooldown that lasts
   until Claude's reported reset time (if it is within 7 days), or re-probes
   after 15 minutes. A `provider-capacity` failure always re-probes after 15
-  minutes. Claims do not reroute to another provider; opt-in fallback is R7.
+  minutes. Without a fallback policy, nothing reroutes to another provider.
+  With an opt-in `fallbackPipelines` order, intersected with the principal's
+  pipeline grant, a `provider-limit` or `provider-capacity` failure atomically
+  settles the attempt and mints a successor on an authorized alternative, and
+  maintenance can reroute an unclaimed queued run blocked by a cooldown
+  (`libs/orchestrator/src/provider-fallback.ts`;
+  [lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback)).
+  Real provider-limit qualification is tracked under R7.
 - **FL-RT-4 [Shipped]** Only an explicit `park` result adds
   `status:needs-human`. A later successful non-park run removes it, with
   generation guards so an older run cannot clear a newer park.
