@@ -12,10 +12,10 @@
 # against a stubbed gh so no real pull request is read or toggled:
 #
 #   - intentionally wrong declared scope -> the checker rejects, and the
-#     harmless owned next-step witness is NOT invoked;
-#   - valid declared scope -> the checker passes and the SAME witness runs;
+#     harmless owned mutation and already-armed readback are NOT invoked;
+#   - valid declared scope -> the checker passes and BOTH witnesses run;
 #   - a changed head mid-publication -> the checker rejects and the witness
-#     is NOT invoked.
+#     and readback are NOT invoked.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,14 +27,22 @@ head_sha=$(printf 'a%.0s' {1..40})
 readonly head_sha
 
 # Stub gh: answers the closing-reference GraphQL query with the JSON body in
-# $FAKE_RESPONSE and records that it ran. Only GitHub reads are stubbed; the
-# witness below is the sole mutation stand-in, so no real PR is touched.
+# $FAKE_RESPONSE and records that it ran. GitHub commands are stubbed; the
+# merge and view below are owned witnesses; no real PR is touched.
 fake_bin="$temp_dir/bin"
 mkdir -p "$fake_bin"
 cat > "$fake_bin/gh" <<'FAKE_GH'
 #!/usr/bin/env bash
 printf '%s\n' stubbed > "$FAKE_GH_CALLS"
-cat "$FAKE_RESPONSE"
+case "$1 $2" in
+  'api graphql') cat "$FAKE_RESPONSE" ;;
+  'pr merge') printf ran > "$MUTATION_WITNESS" ;;
+  'pr view')
+    printf ran > "$READBACK_WITNESS"
+    printf '%s\n' '{"state":"OPEN","autoMergeRequest":{"mergeMethod":"SQUASH"}}'
+    ;;
+  *) exit 64 ;;
+esac
 FAKE_GH
 chmod +x "$fake_bin/gh"
 export PATH="$fake_bin:$PATH"
@@ -52,18 +60,23 @@ pr_response() {
 
 # run_chained <response-json> <declared-scope> <head>
 # Reproduces the shipped fail-fast sequence: the actual read-only guard && a
-# harmless owned next-step witness (a file write, never gh pr ready/merge).
+# harmless owned mutation AND already-armed status readback witnesses.
 run_chained() {
   local response=$1 declared=$2 at_head=$3
   export FAKE_GH_CALLS="$temp_dir/gh-calls.$RANDOM$$"
   export FAKE_RESPONSE="$temp_dir/response.json"
   printf '%s' "$response" > "$FAKE_RESPONSE"
+  export MUTATION_WITNESS="$temp_dir/witness"
+  export READBACK_WITNESS="$temp_dir/readback"
+  rm -f "$MUTATION_WITNESS" "$READBACK_WITNESS"
   local chained_out status=0
   chained_out="$(
     bash -c '
       node "$1" jlapenna/agent-lcars 2324 "$3" "$2" \
-        && printf ran > "$4"
-    ' _ "$checker" "$declared" "$at_head" "$temp_dir/witness" 2>&1
+        && gh pr merge 2324 --repo jlapenna/agent-lcars --auto --squash \
+        && gh pr view 2324 --repo jlapenna/agent-lcars --json state,autoMergeRequest \
+          --jq "if .state == \"MERGED\" or .autoMergeRequest != null then . else error(\"auto-merge is not armed\") end"
+    ' _ "$checker" "$declared" "$at_head" 2>&1
   )" || status=$?
   CHAINED_STATUS=$status
   CHAINED_OUT=$chained_out
@@ -83,6 +96,8 @@ check() { # check <description> <condition-command> [args...]
 
 witness_exists() { [[ -e "$temp_dir/witness" ]]; }
 witness_absent() { [[ ! -e "$temp_dir/witness" ]]; }
+readback_exists() { [[ -e "$temp_dir/readback" ]]; }
+readback_absent() { [[ ! -e "$temp_dir/readback" ]]; }
 gh_was_read() { [[ -e "$FAKE_GH_CALLS" ]]; }
 
 # --- negative branch: the incident shape, reproduced hermetically ------------
@@ -94,6 +109,7 @@ check 'wrong scope: the rejection names the unintended reference' \
   grep -q 'Closing scope mismatch: unintended \[jlapenna/agent-lcars#2407\]' <<<"$CHAINED_OUT"
 check 'wrong scope: GitHub was actually read (this is the real guard, not a stub of it)' gh_was_read
 check 'wrong scope: the next-step witness was NOT invoked' witness_absent
+check 'wrong scope: already-armed readback was NOT invoked' readback_absent
 printf 'negative-branch diagnosis: %s\n' "$CHAINED_OUT"
 
 # --- positive branch: the valid declared scope lets the SAME witness run ----
@@ -102,6 +118,7 @@ check 'valid scope: the actual checker exits zero' test "$CHAINED_STATUS" -eq 0
 check 'valid scope: the checker readback carries the accepted scope' \
   grep -q '"closingIssuesReferences":\["jlapenna/agent-lcars#2407"\]' <<<"$CHAINED_OUT"
 check 'valid scope: the same witness DID run' witness_exists
+check 'valid scope: already-armed readback DID run' readback_exists
 rm -f "$temp_dir/witness"
 
 # --- a changed head is an incomplete read: the chain still refuses ----------
@@ -110,6 +127,7 @@ check 'changed head: the actual checker exits nonzero' test "$CHAINED_STATUS" -n
 check 'changed head: the rejection names the expected head' \
   grep -q 'expected head' <<<"$CHAINED_OUT"
 check 'changed head: the next-step witness was NOT invoked' witness_absent
+check 'changed head: already-armed readback was NOT invoked' readback_absent
 
 if ((failures > 0)); then
   echo "closing-scope gate contract test: $failures failure(s)" >&2

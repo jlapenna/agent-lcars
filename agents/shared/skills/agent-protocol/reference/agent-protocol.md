@@ -398,8 +398,8 @@ Immediately arm squash auto-merge yourself after the PR exists and this gate pas
 ```bash
 node "$(dirname "$AGENT_PROTOCOL_PATH")/../scripts/check-pr-closing-references.mjs" \
   <owner/repo> <PR> <exact-reviewed-pushed-head> <declared-scope> \
-  && gh pr merge <N> --repo <owner/repo> --auto --squash
-gh pr view <N> --repo <owner/repo> --json state,autoMergeRequest \
+  && gh pr merge <N> --repo <owner/repo> --auto --squash \
+  && gh pr view <N> --repo <owner/repo> --json state,autoMergeRequest \
   --jq 'if .state == "MERGED" or .autoMergeRequest != null then . else error("auto-merge is not armed") end'
 ```
 
