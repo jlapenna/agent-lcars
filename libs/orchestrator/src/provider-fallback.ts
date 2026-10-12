@@ -65,6 +65,7 @@ function successor(input: {
     requestId: `fallback:${previous.runId}`,
     requestSource: 'provider-fallback',
     pipeline: input.pipeline,
+    priority: previous.priority ?? 'normal',
     ...(params === undefined ? {} : { params }),
     providerFallback: {
       ...policy,

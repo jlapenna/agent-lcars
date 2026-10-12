@@ -4,6 +4,8 @@ import {
   type OutboxEntry,
   type ProviderFallback,
   type ProviderFallbackRequest,
+  type QueuePriority,
+  queuePrioritySchema,
   requestHistoryKey,
   type RequestSource,
   type Run,
@@ -108,6 +110,7 @@ export interface RequestRunInput {
   requestId: string;
   requestSource?: RequestSource;
   pipeline: string;
+  priority?: QueuePriority;
   params?: Record<string, string>;
   work?: WorkPayload;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
@@ -155,6 +158,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     requestId,
     requestSource: input.requestSource,
     pipeline: input.pipeline,
+    priority: input.priority,
     params: input.params,
     providerFallback: input.providerFallback,
   });
@@ -168,6 +172,7 @@ function mintRun(input: {
   requestId: string;
   requestSource?: RequestSource;
   pipeline: string;
+  priority?: QueuePriority;
   params?: Record<string, string>;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
 }): Decision {
@@ -180,6 +185,7 @@ function mintRun(input: {
     task: taskId,
     state: 'pending',
     pipeline,
+    priority: queuePrioritySchema.parse(input.priority ?? 'normal'),
     requestId,
     requestSource: requestSource ?? 'caller',
     ...(params === undefined ? {} : { params }),
@@ -663,6 +669,7 @@ function settleLostAndRetry(
     requestId: `retry:${lostRun.runId}`,
     requestSource: 'auto-retry',
     pipeline: lostRun.pipeline,
+    priority: lostRun.priority ?? 'normal',
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
     ...(lostRun.providerFallback === undefined
       ? {}

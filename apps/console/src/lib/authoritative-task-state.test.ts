@@ -35,7 +35,7 @@ async function seedTask(task: Task) {
 }
 
 describe('readAuthoritativeTaskState', () => {
-  it("surfaces the task doc's work.spec when present", async () => {
+  it("surfaces the task doc's work.spec with historical priority normalized", async () => {
     await seedTask({
       task: { repo: 'jlapenna/agent-lcars', issue: 42 },
       runCount: 0,
@@ -60,6 +60,7 @@ describe('readAuthoritativeTaskState', () => {
       title: 'T',
       description: 'D',
       pipeline: 'claude',
+      priority: 'normal',
       target: { repo: 'jlapenna/agent-lcars' },
     });
   });

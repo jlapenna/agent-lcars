@@ -219,6 +219,40 @@ function sessionDoc(over: Partial<SessionDoc> = {}): SessionDoc {
 }
 
 describe('requestReply', () => {
+  it.each(['urgent', 'background'] as const)(
+    'carries the newest %s run priority into a reply',
+    async (priority) => {
+      const { store, orchestrator, context } = fixture();
+      const outcome = await orchestrator.request({
+        taskId: ANCHOR,
+        requestId: 'priority-first',
+        pipeline: 'claude',
+        priority,
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: { ...spec, priority },
+        },
+      });
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      await orchestrator.report(decidedRun(outcome).runId, {
+        ok: true,
+        summary: 'park',
+      });
+      expect(
+        await requestReply(context, {
+          task: ANCHOR,
+          text: 'Continue',
+          channel: 'github',
+          principal: 'github:jlapenna',
+          ref: 'priority-reply',
+        }),
+      ).toMatchObject({ ok: true });
+      expect(await store.readActiveRun(ANCHOR)).toMatchObject({
+        priority,
+        runId: `${REPO}#42/r2`,
+      });
+    },
+  );
   it('keeps the newest generation provider when history is returned in document order', async () => {
     const { store, orchestrator, context } = fixture({
       principal: { ...operator, pipelines: ['claude', 'opencode'] },

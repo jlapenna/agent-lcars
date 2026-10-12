@@ -10,6 +10,10 @@ import {
 import { parseArgs, promisify } from 'node:util';
 
 import {
+  QUEUE_PRIORITIES,
+  type QueuePriority,
+} from '@agent-lcars/dispatch-contracts';
+import {
   fallbackPipelinesSchema,
   type ItemsContract,
   itemsContract,
@@ -36,7 +40,7 @@ export interface WorkCommandDeps {
 }
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>]\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
@@ -100,7 +104,12 @@ const SETTLED = new Set(['done', 'parked', 'failed', 'canceled']);
 interface ItemSummary {
   id: string;
   state: string;
-  spec: { title: string; pipeline: string; target: { repo: string } };
+  spec: {
+    title: string;
+    pipeline: string;
+    priority?: QueuePriority;
+    target: { repo: string };
+  };
 }
 
 function line(item: ItemSummary): string {
@@ -232,6 +241,13 @@ export async function executeWorkCommand(
         const repo = flag(rest, '--repo');
         const pipeline = flag(rest, '--pipeline');
         const title = flag(rest, '--title');
+        const priority = flag(rest, '--priority');
+        if (
+          rest.includes('--priority') &&
+          !(QUEUE_PRIORITIES as readonly string[]).includes(priority ?? '')
+        ) {
+          return usageFailure(deps);
+        }
         const description = readDescription(rest);
         const fallback = flag(rest, '--fallback-pipelines');
         if (rest.includes('--fallback-pipelines') && fallback === undefined)
@@ -252,6 +268,7 @@ export async function executeWorkCommand(
             title,
             description,
             pipeline: pipeline as 'claude' | 'codex' | 'opencode',
+            priority: (priority ?? 'normal') as QueuePriority,
             ...(fallbackPipelines === undefined ? {} : { fallbackPipelines }),
             target: { repo },
           },
