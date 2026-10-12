@@ -19,6 +19,10 @@ export interface HookSessionState {
   readonly seq: number;
   /** When an event was last appended to the spool, ISO. */
   readonly lastShippedAt?: string;
+  /** When the flusher last got a 2xx for one of this session's events, ISO.
+   * This, not `updatedAt`, is what tells the daemon the hook path is really
+   * delivering for the session. */
+  readonly lastDeliveredAt?: string;
   readonly lastKind?: SessionEventKind;
   readonly updatedAt: string;
 }
@@ -63,6 +67,7 @@ export function readHookSessionState(
       return undefined;
     }
     const lastShippedAt = record['lastShippedAt'];
+    const lastDeliveredAt = record['lastDeliveredAt'];
     const lastKind = record['lastKind'];
     return {
       version: 1,
@@ -70,6 +75,7 @@ export function readHookSessionState(
       seq,
       updatedAt,
       ...(typeof lastShippedAt === 'string' && { lastShippedAt }),
+      ...(typeof lastDeliveredAt === 'string' && { lastDeliveredAt }),
       ...(typeof lastKind === 'string' && {
         lastKind: lastKind as SessionEventKind,
       }),
@@ -135,7 +141,37 @@ export function isHookReported(
   windowMs = HOOK_REPORTED_WINDOW_MS,
 ): boolean {
   const state = readHookSessionState(stateDirectory, sessionId);
-  if (!state) return false;
-  const age = Date.parse(now) - Date.parse(state.updatedAt);
+  if (!state?.lastDeliveredAt) return false;
+  const age = Date.parse(now) - Date.parse(state.lastDeliveredAt);
   return Number.isFinite(age) && age >= 0 && age <= windowMs;
+}
+
+/** Lock file guarding one session's read-modify-write of its state, so two
+ * overlapping async hooks never assign the same `seq`. */
+export function hookSessionLockPath(
+  stateDirectory: string,
+  sessionId: string,
+): string {
+  return path.join(
+    hookSessionStateDirectory(stateDirectory),
+    `${sessionId}.lock`,
+  );
+}
+
+/** Records a successful delivery for the session, keeping every other field. */
+export function markHookSessionDelivered(
+  stateDirectory: string,
+  sessionId: string,
+  now: string,
+): void {
+  const state = readHookSessionState(stateDirectory, sessionId);
+  writeHookSessionState(stateDirectory, {
+    version: 1,
+    sessionId,
+    seq: state?.seq ?? 0,
+    ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
+    ...(state?.lastKind && { lastKind: state.lastKind }),
+    lastDeliveredAt: now,
+    updatedAt: now,
+  });
 }

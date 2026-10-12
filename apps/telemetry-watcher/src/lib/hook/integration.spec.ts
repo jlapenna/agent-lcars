@@ -118,6 +118,47 @@ describe('lcars integration', () => {
     expect(readJson(hooksPath)).toEqual({});
   });
 
+  it('keeps a foreign hook that shares a group with ours, on install and uninstall', () => {
+    const home = tempHome();
+    const settingsPath = path.join(home, '.codex/hooks.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                { type: 'command', command: 'theirs' },
+                { type: 'command', command: stubCommand('codex') },
+              ],
+            },
+          ],
+          Notification: [
+            { hooks: [{ type: 'command', command: 'tmux-bell' }] },
+          ],
+        },
+      }),
+    );
+    installIntegration('codex', home);
+    type Hooks = Record<
+      string,
+      Array<{ hooks: Array<Record<string, unknown>> }>
+    >;
+    let hooks = readJson(settingsPath)['hooks'] as Hooks;
+    expect(hooks['Stop']).toHaveLength(1);
+    expect(hooks['Stop'][0].hooks.map((h) => h['command'])).toEqual([
+      'theirs',
+      stubCommand('codex'),
+    ]);
+    expect(hooks['Notification']).toHaveLength(1);
+    uninstallIntegration('codex', home);
+    hooks = readJson(settingsPath)['hooks'] as Hooks;
+    expect(hooks['Stop'][0].hooks.map((h) => h['command'])).toEqual(['theirs']);
+    expect(hooks['Notification']).toHaveLength(1);
+    expect(hooks['PostToolUse']).toBeUndefined();
+  });
+
   it('reports an outdated stub as not installed', () => {
     const home = tempHome();
     installIntegration('claude', home);

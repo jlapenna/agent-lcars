@@ -464,8 +464,13 @@ export class WatcherDaemon {
             )
           ) {
             // A hook client owns this session for now; drop any copy this
-            // daemon tracked before the hook took over.
+            // daemon tracked before the hook took over, forget the dedupe
+            // entry so a later identical write is not suppressed, and keep
+            // the file marked unread so the daemon picks it back up the
+            // moment the marker lapses even if the transcript never changes.
             this.sessions.delete(summary.sessionId);
+            this.lastWrittenWrites.delete(summary.sessionId);
+            this.fileStats.delete(file);
             continue;
           }
           summaries.push(

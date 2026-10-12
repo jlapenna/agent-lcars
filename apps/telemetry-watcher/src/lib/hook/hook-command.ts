@@ -26,6 +26,7 @@ import {
 } from '../session-title-annotation-source';
 import { SESSION_STATE_DIRECTORY } from '../session-title-paths';
 import { findCodexRollout } from './codex-rollout';
+import { acquireFileLock, releaseFileLock } from './file-lock';
 import { type HookClientConfig, loadHookClientConfig } from './hook-config';
 import { appendHookLog } from './hook-log';
 import {
@@ -36,6 +37,8 @@ import {
   parseHookPayload,
 } from './hook-payload';
 import {
+  hookSessionLockPath,
+  markHookSessionDelivered,
   readHookSessionState,
   shouldShipEvent,
   writeHookSessionState,
@@ -129,6 +132,8 @@ export function defaultHookCommandDependencies(
         [process.argv[1], 'hook', 'flush'],
         { detached: true, stdio: 'ignore', env },
       );
+      // An async spawn failure would otherwise be an uncaught exception.
+      child.on('error', () => undefined);
       child.unref();
     },
     randomId: () => crypto.randomUUID(),
@@ -237,12 +242,23 @@ async function flush(
   }
   const token = config.token;
   const result = await drainSpool(spoolPath(stateDirectory), async (event) => {
-    const shipped = await shipSessionEvent(event as SessionEventV1, {
+    const sessionEvent = event as SessionEventV1;
+    const shipped = await shipSessionEvent(sessionEvent, {
       origin: config.origin,
       token,
       fetchImpl: deps.fetchImpl,
     });
-    if (shipped.outcome !== 'sent') {
+    if (shipped.outcome === 'sent') {
+      try {
+        markHookSessionDelivered(
+          stateDirectory,
+          sessionEvent.sessionId,
+          deps.now().toISOString(),
+        );
+      } catch {
+        // State is advisory for the daemon; delivery already happened.
+      }
+    } else {
       appendHookLog(
         stateDirectory,
         `${deps.now().toISOString()} flush ${shipped.outcome} status=${shipped.status ?? 'network'}`,
@@ -313,87 +329,100 @@ async function handleRuntimeHook(
     }
   }
 
-  const state = readHookSessionState(stateDirectory, payload.sessionId);
-  if (!shouldShipEvent(kind, state, now)) {
+  // Async hooks (PostToolUse, Stop, SessionEnd) can overlap; the per-session
+  // lock makes read-state → append → write-state atomic so no two events
+  // share a `seq` and the spool order matches the sequence order.
+  const lockPath = hookSessionLockPath(stateDirectory, payload.sessionId);
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+  if (!(await acquireFileLock(lockPath, { waitMs: 5_000, staleMs: 30_000 }))) {
+    log('ignored', `session=${sessionTag} lock busy`);
+    return { action: 'ignored', detail: 'lock busy' };
+  }
+  try {
+    const state = readHookSessionState(stateDirectory, payload.sessionId);
+    if (!shouldShipEvent(kind, state, now)) {
+      writeHookSessionState(stateDirectory, {
+        version: 1,
+        sessionId: payload.sessionId,
+        seq: state?.seq ?? 0,
+        ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
+        ...(state?.lastKind && { lastKind: state.lastKind }),
+        updatedAt: now,
+      });
+      log('throttled', `session=${sessionTag}`);
+      return { action: 'throttled' };
+    }
+
+    const transcriptPath = resolveTranscriptPath(deps, runtime, payload);
+    const reduced = reduceTranscript(
+      deps,
+      profile.adapter,
+      transcriptPath,
+      payload.sessionId,
+    );
+    let summary: SessionSummary | undefined;
+    if (reduced || kind !== 'end') {
+      const base =
+        reduced ?? zeroSummary(profile.agent, payload.sessionId, now, payload);
+      const withHost: SessionSummary = {
+        ...base,
+        sessionId: payload.sessionId,
+        agent: profile.agent,
+        host: config.host,
+        ...(base.cwd === undefined && payload.cwd && { cwd: payload.cwd }),
+        ...(base.model === undefined &&
+          payload.model && { model: payload.model }),
+        repo,
+      };
+      const withGit = await applyGitContext(
+        withHost,
+        deps.resolveGitBranch,
+        async () => repo,
+      );
+      summary = applyAnnotationOverlays(stateDirectory, withGit);
+    }
+
+    const seq = (state?.seq ?? 0) + 1;
+    const event: SessionEventV1 = {
+      version: 1,
+      eventId: deps.randomId(),
+      seq,
+      occurredAt: now,
+      host: config.host,
+      agent: profile.agent,
+      sessionId: payload.sessionId,
+      kind,
+      runtime: {
+        name: profile.agent,
+        hookEvent: payload.hookEventName,
+        clientVersion: HOOK_CLIENT_VERSION,
+      },
+      ...(summary && { summary }),
+      ...(config.runner && { runner: config.runner }),
+    };
+    appendToSpool(spoolPath(stateDirectory), event);
     writeHookSessionState(stateDirectory, {
       version: 1,
       sessionId: payload.sessionId,
-      seq: state?.seq ?? 0,
-      ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
-      ...(state?.lastKind && { lastKind: state.lastKind }),
+      seq,
+      lastShippedAt: now,
+      lastKind: kind,
       updatedAt: now,
     });
-    log('throttled', `session=${sessionTag}`);
-    return { action: 'throttled' };
-  }
-
-  const transcriptPath = resolveTranscriptPath(deps, runtime, payload);
-  const reduced = reduceTranscript(
-    deps,
-    profile.adapter,
-    transcriptPath,
-    payload.sessionId,
-  );
-  let summary: SessionSummary | undefined;
-  if (reduced || kind !== 'end') {
-    const base =
-      reduced ?? zeroSummary(profile.agent, payload.sessionId, now, payload);
-    const withHost: SessionSummary = {
-      ...base,
-      sessionId: payload.sessionId,
-      agent: profile.agent,
-      host: config.host,
-      ...(base.cwd === undefined && payload.cwd && { cwd: payload.cwd }),
-      ...(base.model === undefined &&
-        payload.model && { model: payload.model }),
-      repo,
-    };
-    const withGit = await applyGitContext(
-      withHost,
-      deps.resolveGitBranch,
-      async () => repo,
-    );
-    summary = applyAnnotationOverlays(stateDirectory, withGit);
-  }
-
-  const seq = (state?.seq ?? 0) + 1;
-  const event: SessionEventV1 = {
-    version: 1,
-    eventId: deps.randomId(),
-    seq,
-    occurredAt: now,
-    host: config.host,
-    agent: profile.agent,
-    sessionId: payload.sessionId,
-    kind,
-    runtime: {
-      name: profile.agent,
-      hookEvent: payload.hookEventName,
-      clientVersion: HOOK_CLIENT_VERSION,
-    },
-    ...(summary && { summary }),
-    ...(config.runner && { runner: config.runner }),
-  };
-  appendToSpool(spoolPath(stateDirectory), event);
-  writeHookSessionState(stateDirectory, {
-    version: 1,
-    sessionId: payload.sessionId,
-    seq,
-    lastShippedAt: now,
-    lastKind: kind,
-    updatedAt: now,
-  });
-  log('spooled', `session=${sessionTag} kind=${kind} seq=${seq}`);
-  if (inline) {
-    await flush(deps, config);
-  } else {
-    try {
-      deps.spawnFlusher();
-    } catch {
-      log('flusher-spawn-failed');
+    log('spooled', `session=${sessionTag} kind=${kind} seq=${seq}`);
+    if (inline) {
+      await flush(deps, config);
+    } else {
+      try {
+        deps.spawnFlusher();
+      } catch {
+        log('flusher-spawn-failed');
+      }
     }
+    return { action: 'spooled', detail: `${kind} seq=${seq}` };
+  } finally {
+    releaseFileLock(lockPath);
   }
-  return { action: 'spooled', detail: `${kind} seq=${seq}` };
 }
 
 /**

@@ -12,11 +12,12 @@ export interface ShipOptions {
 export const SESSION_EVENTS_PATH = '/api/telemetry/v1/sessions';
 
 /**
- * One POST to the console's ingest route. 2xx and the client-error
- * statuses that a retry can never fix (`400`, `401`, `403`, `404`, `413`,
- * `422`) both resolve the spooled event; everything else, including a
- * network failure or timeout, asks the spool to keep it for the next
- * flusher.
+ * One POST to the console's ingest route. Only a response that says the
+ * event itself is malformed (`400`, `413`, `422`) resolves it as `drop`. A
+ * `401`/`403` (rotated or unknown token), `404` (ingest flag off), any 5xx,
+ * a network failure or a timeout all ask the spool to keep the event: the
+ * spool is size-capped, so waiting for the console to be enabled or the
+ * token to be fixed costs bounded disk and loses nothing silently.
  */
 export async function shipSessionEvent(
   event: SessionEventV1,
@@ -39,7 +40,7 @@ export async function shipSessionEvent(
       signal: controller.signal,
     });
     if (response.ok) return { outcome: 'sent', status: response.status };
-    if ([400, 401, 403, 404, 413, 422].includes(response.status)) {
+    if ([400, 413, 422].includes(response.status)) {
       return { outcome: 'drop', status: response.status };
     }
     return { outcome: 'retry', status: response.status };

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   isHookReported,
+  markHookSessionDelivered,
   readHookSessionState,
   shouldShipEvent,
   writeHookSessionState,
@@ -65,13 +66,20 @@ describe('hook session state', () => {
     );
   });
 
-  it('tells the daemon a session is hook-reported only within the window', () => {
+  it('tells the daemon a session is hook-reported only after a real delivery, within the window', () => {
     const dir = tempState();
     writeHookSessionState(dir, {
       version: 1,
       sessionId: 's1',
       seq: 1,
       updatedAt: '2026-10-10T12:00:00.000Z',
+    });
+    // Spooled but never delivered (no token, console down): the daemon keeps the session.
+    expect(isHookReported(dir, 's1', '2026-10-10T12:05:00.000Z')).toBe(false);
+    markHookSessionDelivered(dir, 's1', '2026-10-10T12:00:00.000Z');
+    expect(readHookSessionState(dir, 's1')).toMatchObject({
+      seq: 1,
+      lastDeliveredAt: '2026-10-10T12:00:00.000Z',
     });
     expect(isHookReported(dir, 's1', '2026-10-10T12:05:00.000Z')).toBe(true);
     expect(isHookReported(dir, 's1', '2026-10-10T12:11:00.000Z')).toBe(false);

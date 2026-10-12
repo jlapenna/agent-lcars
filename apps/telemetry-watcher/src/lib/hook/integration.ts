@@ -144,7 +144,14 @@ function settingsMode(filePath: string): number {
   }
 }
 
-function writeAtomically(filePath: string, body: string, mode: number): void {
+function writeAtomically(target: string, body: string, mode: number): void {
+  // Write through a symlink rather than replacing it with a regular file.
+  let filePath = target;
+  try {
+    filePath = fs.realpathSync(target);
+  } catch {
+    // Not there yet.
+  }
   // Owner-only parent: the stub is executed by the owner's agent, and a
   // directory anyone else could write to would let them replace it.
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
@@ -162,13 +169,19 @@ function writeAtomically(filePath: string, body: string, mode: number): void {
   }
 }
 
+function hookIsOurs(hook: unknown): boolean {
+  return (
+    isRecord(hook) &&
+    typeof hook['command'] === 'string' &&
+    hook['command'].includes(STUB_MARKER)
+  );
+}
+
 function groupIsOurs(group: unknown): boolean {
-  if (!isRecord(group) || !Array.isArray(group['hooks'])) return false;
-  return group['hooks'].some(
-    (hook) =>
-      isRecord(hook) &&
-      typeof hook['command'] === 'string' &&
-      hook['command'].includes(STUB_MARKER),
+  return (
+    isRecord(group) &&
+    Array.isArray(group['hooks']) &&
+    group['hooks'].some(hookIsOurs)
   );
 }
 
@@ -185,17 +198,63 @@ function ourGroup(runtime: HookRuntime, spec: HookEntrySpec): JsonRecord {
   };
 }
 
-/** Removes our groups from every event; returns how many were removed. */
-function stripOurGroups(hooks: JsonRecord): number {
+/** Removes our hook entries from every group of every event, keeping any
+ *  foreign entries that share a group; drops groups and events that end up
+ *  empty. Returns how many of our entries were removed. */
+function stripOurHooks(hooks: JsonRecord): number {
   let removed = 0;
   for (const [event, groups] of Object.entries(hooks)) {
     if (!Array.isArray(groups)) continue;
-    const kept = groups.filter((group) => !groupIsOurs(group));
-    removed += groups.length - kept.length;
+    const kept: unknown[] = [];
+    for (const group of groups) {
+      if (!isRecord(group) || !Array.isArray(group['hooks'])) {
+        kept.push(group);
+        continue;
+      }
+      const foreign = group['hooks'].filter((hook) => !hookIsOurs(hook));
+      removed += group['hooks'].length - foreign.length;
+      if (foreign.length > 0) {
+        kept.push(
+          foreign.length === group['hooks'].length
+            ? group
+            : { ...group, hooks: foreign },
+        );
+      }
+    }
     if (kept.length === 0) delete hooks[event];
     else hooks[event] = kept;
   }
   return removed;
+}
+
+/** Replaces our entry inside the group that already carries one (keeping
+ *  any foreign hooks sharing that group and the group's position, so a
+ *  file another tool also manages is not reordered on every install) or
+ *  appends a fresh group. */
+function placeOurGroup(
+  hooks: JsonRecord,
+  event: string,
+  group: JsonRecord,
+): void {
+  const groups = Array.isArray(hooks[event])
+    ? [...(hooks[event] as unknown[])]
+    : [];
+  const ourHook = (group['hooks'] as unknown[])[0];
+  const index = groups.findIndex(groupIsOurs);
+  if (index === -1) {
+    groups.push(group);
+  } else {
+    const existing = groups[index] as JsonRecord;
+    const entries = existing['hooks'] as unknown[];
+    const first = entries.findIndex(hookIsOurs);
+    groups[index] = {
+      ...existing,
+      hooks: entries
+        .map((hook, i) => (i === first ? ourHook : hook))
+        .filter((hook, i) => i === first || !hookIsOurs(hook)),
+    };
+  }
+  hooks[event] = groups;
 }
 
 function stubVersionOf(script: string | undefined): number | undefined {
@@ -253,10 +312,19 @@ export function installIntegration(
   const settingsPath = path.join(homeDirectory, target.settingsPath);
   const settings = readSettings(settingsPath);
   const hooks = isRecord(settings['hooks']) ? settings['hooks'] : {};
-  stripOurGroups(hooks);
   for (const spec of target.entries) {
-    const groups = Array.isArray(hooks[spec.event]) ? hooks[spec.event] : [];
-    hooks[spec.event] = [...(groups as unknown[]), ourGroup(runtime, spec)];
+    placeOurGroup(hooks, spec.event, ourGroup(runtime, spec));
+  }
+  // Events we no longer install into (or stray copies) lose only our entries.
+  for (const [event, groups] of Object.entries(hooks)) {
+    if (target.entries.some((spec) => spec.event === event)) continue;
+    if (Array.isArray(groups) && groups.some(groupIsOurs)) {
+      stripOurHooks({ [event]: groups } as JsonRecord);
+      hooks[event] = (groups as unknown[]).filter(
+        (group) => !groupIsOurs(group),
+      );
+      if ((hooks[event] as unknown[]).length === 0) delete hooks[event];
+    }
   }
   settings['hooks'] = hooks;
   writeAtomically(
@@ -281,7 +349,7 @@ export function uninstallIntegration(
   }
   if (settings && isRecord(settings['hooks'])) {
     const hooks = settings['hooks'];
-    if (stripOurGroups(hooks) > 0) {
+    if (stripOurHooks(hooks) > 0) {
       if (Object.keys(hooks).length === 0) delete settings['hooks'];
       writeAtomically(
         settingsPath,

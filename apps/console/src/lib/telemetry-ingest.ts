@@ -101,6 +101,13 @@ function ownedByHost(existing: SessionDoc, boundHost: string): boolean {
   return observer === undefined || observer.host === boundHost;
 }
 
+/** A runner event may only touch a doc that is (or will be) that run's
+ *  issue-agent session, never a workstation's CLI doc or another run's. */
+function ownedByRun(existing: SessionDoc, event: SessionEventV1): boolean {
+  if (existing.source !== 'issue-agent') return false;
+  return existing.runId === undefined || existing.runId === event.runner?.runId;
+}
+
 function isStale(
   existing: SessionDoc | undefined,
   event: SessionEventV1,
@@ -175,7 +182,7 @@ export async function handleSessionEventRequest(
     return json({ error: 'event too large' }, 413);
   }
   const text = await request.text();
-  if (text.length > SESSION_EVENT_MAX_BODY_BYTES) {
+  if (Buffer.byteLength(text, 'utf8') > SESSION_EVENT_MAX_BODY_BYTES) {
     return json({ error: 'event too large' }, 413);
   }
   let body: unknown;
@@ -196,6 +203,11 @@ export async function handleSessionEventRequest(
   if (event.runner && !principal.allowRunner) {
     return json({ error: 'runner context not permitted for this token' }, 403);
   }
+  if (principal.boundHost === undefined && !event.runner) {
+    // A service identity reports dispatched runs only; workstation sessions
+    // always arrive through a host-bound token.
+    return json({ error: 'runner context required for this identity' }, 403);
+  }
 
   const existing = await deps.readSessionDoc(sessionId);
   if (
@@ -204,6 +216,9 @@ export async function handleSessionEventRequest(
     !ownedByHost(existing, principal.boundHost)
   ) {
     return json({ error: 'session not owned by this host' }, 403);
+  }
+  if (event.runner && existing !== undefined && !ownedByRun(existing, event)) {
+    return json({ error: 'session not owned by this run' }, 403);
   }
   if (isStale(existing, event)) {
     const outcome: IngestOutcome = { accepted: false, reason: 'stale' };

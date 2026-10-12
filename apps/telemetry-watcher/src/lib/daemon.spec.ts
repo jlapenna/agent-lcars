@@ -165,6 +165,12 @@ describe('WatcherDaemon', () => {
     files['/root/proj/session-a.jsonl'] += '\n';
     await daemon.tick();
     expect(upserts).toHaveLength(1);
+
+    // The marker lapses without the transcript changing: the daemon must
+    // pick the session back up rather than treating the file as already read.
+    hookReported = false;
+    await daemon.tick();
+    expect(upserts).toHaveLength(2);
   });
 
   it('publishes completed-tick and successful active-upsert metrics', async () => {

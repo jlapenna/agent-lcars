@@ -287,6 +287,9 @@ describe('lcars hook claude', () => {
       'Bearer secret',
     );
     expect(spooledEvents(home)).toEqual([]);
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), SESSION_ID),
+    ).toMatchObject({ lastDeliveredAt: '2026-10-10T12:00:00.000Z' });
   });
 });
 
@@ -374,6 +377,13 @@ describe('lcars hook flush', () => {
       }),
     });
     expect(await executeHookCommand(['flush'], failing)).toMatchObject({
+      action: 'flushed',
+      detail: 'sent=0 dropped=0 remaining=2',
+    });
+    const unauthorized = deps(home, '', {
+      fetchImpl: vi.fn(async () => new Response('nope', { status: 401 })),
+    });
+    expect(await executeHookCommand(['flush'], unauthorized)).toMatchObject({
       action: 'flushed',
       detail: 'sent=0 dropped=0 remaining=2',
     });

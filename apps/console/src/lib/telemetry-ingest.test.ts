@@ -337,19 +337,65 @@ describe('handleSessionEventRequest', () => {
     expect(
       (await handleSessionEventRequest(request(event()), SESSION_ID, d)).status,
     ).toBe(202);
-    const svc = deps({
+    const runner = {
+      runId: 'run-7',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+    };
+    // A service identity never writes workstation docs: without runner
+    // context it is refused, and with it a CLI doc is not its to overwrite.
+    const svcNoRunner = deps({
       authenticate: vi.fn(async () => servicePrincipal),
-      readSessionDoc: vi.fn(async () => otherHost),
     });
     expect(
       (
         await handleSessionEventRequest(
           request(event({ host: 'pike' })),
           SESSION_ID,
-          svc,
+          svcNoRunner,
+        )
+      ).status,
+    ).toBe(403);
+    const svcOnCli = deps({
+      authenticate: vi.fn(async () => servicePrincipal),
+      readSessionDoc: vi.fn(async () => otherHost),
+    });
+    expect(
+      (
+        await handleSessionEventRequest(
+          request(event({ host: 'pike', runner })),
+          SESSION_ID,
+          svcOnCli,
+        )
+      ).status,
+    ).toBe(403);
+    const svcOnOwnRun = deps({
+      authenticate: vi.fn(async () => servicePrincipal),
+      readSessionDoc: vi.fn(
+        async () => ({ ...runnerDoc, runId: 'run-7' }) as SessionDoc,
+      ),
+    });
+    expect(
+      (
+        await handleSessionEventRequest(
+          request(event({ host: 'pike', runner })),
+          SESSION_ID,
+          svcOnOwnRun,
         )
       ).status,
     ).toBe(202);
+    const svcOnOtherRun = deps({
+      authenticate: vi.fn(async () => servicePrincipal),
+      readSessionDoc: vi.fn(async () => runnerDoc),
+    });
+    expect(
+      (
+        await handleSessionEventRequest(
+          request(event({ host: 'pike', runner })),
+          SESSION_ID,
+          svcOnOtherRun,
+        )
+      ).status,
+    ).toBe(403);
   });
 
   it('binds host tokens to their host and runner context to service identities', async () => {
