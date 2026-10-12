@@ -234,6 +234,38 @@ files and failed verification have no invented link. Agent final-message
 URLs are never promoted to verified references. `message` is the agent's
 final turn, shown in the console Conversation.
 
+### 5.5 Claims and ownership
+
+"Claim" means three different things in this system. Only Console decides who
+is working an issue.
+
+| Term              | What it is                                                                                                         | Recorded where                                                                                                      | Defined in        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| **Anchor claim**  | The fleet has taken an issue or PR.                                                                                | The orchestrator task for the anchor, projected to GitHub as the `agent-lcars-bot` assignee and an `eyes` reaction. | FL-AD-2           |
+| **Run claim**     | An executor's lease on one queued run. It schedules execution; it does not tell other executors who owns an issue. | The run's lease and claimant.                                                                                       | §6.2              |
+| **Session match** | An interactive or cloud CLI session working the anchor.                                                            | Console's CLI-session telemetry, matched by repository plus branch or recorded PR.                                  | FE-AG-3, FE-CLI-1 |
+
+- **FL-OWN-1 [Shipped]** Console is the single source of truth for who is
+  working an anchor. Ownership is derived only from state Console already
+  holds: the anchor's orchestrator task and its live run, and live or idle CLI
+  sessions matched to the anchor.
+- **FL-OWN-2 [Shipped]** `lcars work owner <owner/repo>#<n>` (FE-CLI-1) is the
+  one query for that answer. Its verdict is `fleet-run`, `interactive-session`,
+  or `none`. An incomplete answer (exit 1) means `none` is unproven, not that
+  the anchor is free.
+- **FL-OWN-3 [Partial]** Every executor asks Console before starting work on an
+  anchor. Dispatched fleet runs are single-flight per task, so admission
+  refuses a second run (FL-AD-1). Interactive and cloud sessions run
+  `lcars work owner` as the read-only `work-reader` identity and do not start
+  when the verdict names someone else. Partial: this is repository guidance,
+  not enforced, and the session read's completeness fix is in flight.
+- **FL-OWN-4 [Shipped]** Nothing outside Console establishes, refreshes, or
+  expires ownership: takeover or "implementing this now" comments, occupied
+  local worktrees, draft pull requests, and elapsed time since assignment are
+  not claims. An executor never overrides a live claim on its own judgment. A
+  maintainer releases one through Console (cancel or redispatch) or by
+  removing the assignment.
+
 ## 6. Admission, queueing, and execution
 
 ### 6.1 Admission and outbox
