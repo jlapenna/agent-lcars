@@ -106,7 +106,9 @@ jobs:
     # longer needs the ubuntu-latest carve-out it had between #408 and #410.
     #
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-ci' }}
-    timeout-minutes: 30
+    # The supported cold runner path can reach Go/race verification at 30m
+    # (#2507). Keep the complete gate bounded without changing its resources.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v7
