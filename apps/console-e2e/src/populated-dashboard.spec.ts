@@ -713,6 +713,36 @@ test.describe('responsive decision inbox', () => {
       await expect(page.getByTestId('latest-outcomes')).toBeVisible();
       await expect(page.getByTestId('finished-run-row')).toHaveCount(5);
 
+      // Repository links retain phone-sized hit targets without stretching
+      // their painted pills beyond the adjacent status badges.
+      const currentRun = page.getByTestId('current-run-row').first();
+      const repoLink = currentRun.getByTestId('repo-badge');
+      const repoPill = repoLink.locator('.mantine-Badge-root');
+      const statusPill = currentRun
+        .getByTestId('execution-status')
+        .locator('.mantine-Badge-root');
+      await expect(repoPill).toBeVisible();
+      await expect(statusPill).toBeVisible();
+      expect((await repoLink.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+      const statusHeight = (await statusPill.boundingBox())!.height;
+      expect((await repoPill.boundingBox())!.height).toBeCloseTo(
+        statusHeight,
+        1,
+      );
+      await repoLink.click();
+      await expect(page).toHaveURL(/\brepo=/);
+      const scopedRepoLink = page
+        .getByTestId('current-run-row')
+        .first()
+        .getByTestId('repo-badge');
+      await expect(scopedRepoLink).toHaveAttribute('data-active', '');
+      expect(
+        (await scopedRepoLink.locator('.mantine-Badge-root').boundingBox())!
+          .height,
+      ).toBeCloseTo(statusHeight, 1);
+      await scopedRepoLink.click();
+      await expect(page).not.toHaveURL(/\brepo=/);
+
       const directActions = page.locator(
         '.deck-inbox-summary__action:visible, .operations-panel a:visible, .operations-panel button:visible',
       );

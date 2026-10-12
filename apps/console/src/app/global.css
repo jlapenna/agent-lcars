@@ -827,6 +827,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   color: var(--lcars-accent-ink);
 }
 
+/* Keep repository pills compact even when a surrounding panel enlarges
+   links for touch. The link owns the hit target; its child owns the paint. */
+.repo-scope-link {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  text-decoration: none;
+}
+
 /* Badges in light mode (#1848).
    Mantine picks a badge's colours from the family's shade 6, which is chosen
    to carry white text on a dark ground. On a light ground the same values
