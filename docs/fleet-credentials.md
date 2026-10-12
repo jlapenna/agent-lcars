@@ -34,7 +34,7 @@ Two GitHub Apps exist and are easy to confuse:
   Actions R/O — that read belongs to the github-actions-exporter, which shares
   this App; see "Autoscaler App key" below). Its
   scope contract is **asymmetric**: the jlapenna installation must use
-  "Only select repositories" (6, including `messages-control`), while the
+  "Only select repositories" (7, including `messages-control` and `labels`), while the
   supersprinklesracing baseline remains "All repositories" (7, four of them
   non-fleet, including `design`, which joined automatically when it was
   created). #1381 records the separate organization-side narrowing decision;
@@ -57,6 +57,11 @@ Actions exporter's identity). Preserve their other modelled repositories.
 Changing either installation to "All repositories" is not an onboarding step.
 The selected contract also applies to fleet App `150568991` on
 supersprinklesracing; do not confuse it with autoscaler `154210731`.
+
+`labels` onboarding requires explicit membership in fleet App `150568943`
+and autoscaler App `154210710`, preserving their existing selected access.
+The autoscaler grant serves the Actions exporter; labels uses GitHub-hosted CI
+and does not request a dedicated ARC lane.
 
 These lists declare the required contract, not a receipt of a settings change.
 After saving installation scope, verify the genuine Homelab IAM collector,
