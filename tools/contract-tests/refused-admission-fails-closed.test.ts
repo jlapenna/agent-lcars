@@ -386,29 +386,29 @@ const phaseCases: PhaseCase[] = [
   },
 ];
 
+async function readFile(target: string): Promise<string> {
+  return fs.promises.readFile(target, 'utf8');
+}
+
 async function assertPhase(
   phase: Phase,
   testCase: PhaseCase,
   outcome: Outcome,
-) {
+): Promise<Record<string, string>> {
   expect(outcome.exit).toBe(testCase.exit);
-  expect(reportedGate(outcome)).toEqual({
+  const gate = reportedGate(outcome);
+  expect(gate).toEqual({
     gate: testCase.gate,
     aggregate: String(testCase.aggregate),
     admissionExit: testCase.admissionExit,
   });
   expect(await exists(phase.witness)).toBe(testCase.witness);
-  expect(await readFile(phase.probeFile, 'utf8')).toContain('probe=observed');
-  expect(await readFile(phase.rowsFile, 'utf8')).toBe(
-    rowsContent(testCase.rows),
-  );
+  expect(await readFile(phase.probeFile)).toContain('probe=observed');
+  expect(await readFile(phase.rowsFile)).toBe(rowsContent(testCase.rows));
   if (testCase.receipt) {
-    expect(await readFile(phase.receipt, 'utf8')).toBe(acceptedReceipt);
+    expect(await readFile(phase.receipt)).toBe(acceptedReceipt);
   }
-}
-
-async function readFile(target: string): Promise<string> {
-  return fs.promises.readFile(target, 'utf8');
+  return gate;
 }
 
 it.runIf(supervisorAvailable).each(phaseCases)(
@@ -416,7 +416,11 @@ it.runIf(supervisorAvailable).each(phaseCases)(
   async (testCase) => {
     const phase = await fixture(testCase, {});
     try {
-      await assertPhase(phase, testCase, await supervised(phase));
+      const outcome = await supervised(phase);
+      expect(await assertPhase(phase, testCase, outcome)).toHaveProperty(
+        'gate',
+        testCase.gate,
+      );
     } finally {
       await rm(phase.directory, { recursive: true, force: true });
     }
@@ -429,7 +433,11 @@ it.each(phaseCases)(
   async (testCase) => {
     const phase = await fixture(testCase, {});
     try {
-      await assertPhase(phase, testCase, await childEnvironment(phase));
+      const outcome = await childEnvironment(phase);
+      expect(await assertPhase(phase, testCase, outcome)).toHaveProperty(
+        'gate',
+        testCase.gate,
+      );
     } finally {
       await rm(phase.directory, { recursive: true, force: true });
     }
