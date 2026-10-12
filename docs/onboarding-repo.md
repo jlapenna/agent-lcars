@@ -299,7 +299,7 @@ node tools/fleet-onboard.mjs admit --repo OWNER/NAME [--alias NAME] [--like OWNE
 node tools/fleet-onboard.mjs check
 ```
 
-`admit` makes all three edits below, copying the standard member label
+`admit` makes all four edits below, copying the standard member label
 profile (`--like` names a different member to copy from). `check`, and the
 `fleet-onboard` contract test on every CI run, fail when any projection of
 fleet membership disagrees with the others; `admit --check` reports the
@@ -315,6 +315,8 @@ projections a repository is missing from without writing.
   lists; repair that by hand first.
 - The matrix in `.github/workflows/label-contract-audit.yml`; a manifest
   entry without this matrix entry will not be reconciled.
+- The `fleet-member` repository list in `config/github-variables.json`, so
+  the onboarding audit recognizes the repository's shared variable contract.
 
 The normal deployment path deploys the console after green CI on `main`.
 Do not run a direct deploy merely to accelerate this step. Do this step only

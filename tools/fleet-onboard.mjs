@@ -1178,6 +1178,7 @@ const PROJECTIONS = {
   labels: 'config/github-labels.json',
   apphosting: 'apps/console/apphosting.yaml',
   audit: '.github/workflows/label-contract-audit.yml',
+  variables: 'config/github-variables.json',
 };
 
 function envValue(text, variable) {
@@ -1191,6 +1192,9 @@ function envValue(text, variable) {
 /** Parse every membership projection from its file text. */
 export function parseMembership(text) {
   const labels = Object.keys(JSON.parse(text.labels).repositories ?? {});
+  const variables = Object.values(JSON.parse(text.variables).profiles).flatMap(
+    (profile) => profile.repositories,
+  );
   const controlPlane = envValue(
     text.apphosting,
     'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
@@ -1204,7 +1208,15 @@ export function parseMembership(text) {
   const audit = (
     parseYaml(text.audit).jobs?.audit?.strategy?.matrix?.include ?? []
   ).map((entry) => entry.full_name);
-  return { text, labels, controlPlane, watched, watchedEntries, audit };
+  return {
+    text,
+    labels,
+    controlPlane,
+    watched,
+    watchedEntries,
+    audit,
+    variables,
+  };
 }
 
 /** Read every membership projection from the control plane's own files. */
@@ -1226,6 +1238,7 @@ export function membershipGaps(membership) {
     controlPlane: membership.controlPlane,
     watched: membership.watched,
     audit: membership.audit,
+    variables: membership.variables,
   };
   const union = new Set(Object.values(sets).flat());
   const gaps = {};
@@ -1400,6 +1413,17 @@ export function planAdmit(root, spec, like) {
   if (!membership.audit.includes(spec.repo.full)) {
     next.audit = appendAuditMatrix(text.audit, spec);
     edits.push({ file: PROJECTIONS.audit, desired: next.audit });
+  }
+  if (!membership.variables.includes(spec.repo.full)) {
+    const manifest = JSON.parse(text.variables);
+    const repositories = manifest.profiles?.['fleet-member']?.repositories;
+    if (!Array.isArray(repositories))
+      throw new OnboardError(
+        'github-variables.json has no fleet-member repository list',
+      );
+    repositories.push(spec.repo.full);
+    next.variables = `${JSON.stringify(manifest, null, 2)}\n`;
+    edits.push({ file: PROJECTIONS.variables, desired: next.variables });
   }
   // Every edit is textual; prove the result still parses and now agrees.
   const gaps = membershipGaps(parseMembership(next));
