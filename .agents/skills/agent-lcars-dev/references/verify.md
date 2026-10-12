@@ -157,6 +157,49 @@ If a required guard failed, preserve that failure and distinguish any valid
 source/test/commit evidence from unproven resource enforcement. Do not rerun a
 completed operation to erase its original receipt.
 
+### Qualify the supervised child environment
+
+Login-shell availability does not qualify a supervised phase. A phase whose
+tools were proven by `command -v` in the launching shell still starts its unit
+in the manager's environment, not that shell's. Recorded case: unit
+`lcars-root-phone-2201-publication-01a11f2d` (invocation
+`bfd6e91e20e946009e4645129bdce868`) exited 127 after 207 ms wall and 29 ms CPU
+with `pnpm: command not found` at
+[`tools/setup-worktree.sh`](../../../../tools/setup-worktree.sh) line 22, having
+completed no dependency, test, commit or push phase; the login shell resolved
+`node` and `pnpm` from version-manager multishell bins a default user unit never
+inherits ([#2525](https://github.com/jlapenna/agent-lcars/issues/2525)). Qualify
+the executable environment the supervisor actually hands the child, then prove
+it from inside that child.
+
+Pass the already-qualified stable Node installation's own `bin` directory ahead
+of ordinary `PATH` through the supervisor's explicit environment control —
+`--setenv=PATH=<qualified-bin>:<rest>` (or `-E`) for `systemd-run`, or
+`Environment=PATH=` in a declared unit — as a literal value, and keep the
+qualified directory ahead of the inherited remainder. Do not rely on the
+launching shell's lookup, on a transient service inheriting that shell's
+environment (it does not), or on `$PATH` expansion inside the value, which
+resolves against the manager's environment rather than the caller's. Keep
+source, tool identity, hooks, isolation and cache behavior unchanged: do not
+install a second toolchain, re-resolve a version-manager shim, or weaken
+isolation to make a lookup succeed.
+
+Have the unit report the `node` and `pnpm` paths and versions it actually
+resolved before any setup or dependent work, and record that report with the
+actual numeric child exit. An absent required toolchain must fail in that
+in-child preflight so no setup, install, test, commit or push phase starts, and
+the phase keeps the true nonzero exit and resource receipt. The supervisor's
+default status after unit collection is not workload success. Prove this at the
+real supervisor/environment boundary: under the supported supervisor, a child
+environment without the qualified toolchain starts no setup witness, and a
+qualified one starts the harmless witness and reports both versions. Guidance
+text, a login-shell lookup, or a fixture that only re-reads this section proves
+the document, never the boundary.
+[`tools/contract-tests/supervised-child-env-qualification.test.ts`](../../../../tools/contract-tests/supervised-child-env-qualification.test.ts)
+covers that pair through a real transient user unit where a manager is
+reachable, and through a child environment with no inherited PATH everywhere
+else.
+
 ## Frozen Console test reviews
 
 Use a separate, normally installed Git worktree at the exact reviewed commit
