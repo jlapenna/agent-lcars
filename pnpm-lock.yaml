@@ -55,7 +55,7 @@ importers:
         version: 2.0.0-beta.35
       '@orpc/zod':
         specifier: 2.0.0-beta.35
-        version: 2.0.0-beta.35(zod@4.6.5)
+        version: 2.0.0-beta.35(zod@4.6.6)
       '@tabler/icons-react':
         specifier: ^3.41.1
         version: 3.49.0(react@19.3.0)
@@ -103,7 +103,7 @@ importers:
         version: 3.0.2
       zod:
         specifier: ^4.4.3
-        version: 4.6.5
+        version: 4.6.6
     devDependencies:
       '@eslint-react/eslint-plugin':
         specifier: 5.26.0
@@ -8982,8 +8982,8 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  zod@4.6.5:
-    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
@@ -10072,7 +10072,7 @@ snapshots:
       '@typescript-eslint/utils': 8.71.1(eslint@10.12.0(jiti@2.7.0)(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
       ts-pattern: 5.9.0
       typescript: 6.0.3
-      zod: 4.6.5
+      zod: 4.6.6
     optionalDependencies:
       eslint: 10.12.0(jiti@2.7.0)(supports-color@8.1.1)
     transitivePeerDependencies:
@@ -10704,7 +10704,7 @@ snapshots:
       '@melkeydev/go-blueprint-win32-arm64': 0.10.11
       '@melkeydev/go-blueprint-win32-x64': 0.10.11
 
-  '@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.6.5)':
+  '@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.6.6)':
     dependencies:
       '@hono/node-server': 2.1.1(hono@4.13.2)
       ajv: 8.20.0
@@ -10721,8 +10721,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.6.5
-      zod-to-json-schema: 3.25.2(zod@4.6.5)
+      zod: 4.6.6
+      zod-to-json-schema: 3.25.2(zod@4.6.6)
     optionalDependencies:
       '@cfworker/json-schema': 4.1.1
     transitivePeerDependencies:
@@ -11443,11 +11443,11 @@ snapshots:
       radash: 12.1.1
       type-fest: 5.8.0
 
-  '@orpc/zod@2.0.0-beta.35(zod@4.6.5)':
+  '@orpc/zod@2.0.0-beta.35(zod@4.6.6)':
     dependencies:
       '@openapi-spec/types': 0.1.0
       '@orpc/json-schema': 2.0.0-beta.35
-      zod: 4.6.5
+      zod: 4.6.6
     transitivePeerDependencies:
       - crossws
       - fastify
@@ -13858,8 +13858,8 @@ snapshots:
       '@babel/parser': 7.29.8
       eslint: 10.12.0(jiti@2.7.0)(supports-color@8.1.1)
       hermes-parser: 0.25.1
-      zod: 4.6.5
-      zod-validation-error: 4.0.2(zod@4.6.5)
+      zod: 4.6.6
+      zod-validation-error: 4.0.2(zod@4.6.6)
     transitivePeerDependencies:
       - supports-color
 
@@ -14406,7 +14406,7 @@ snapshots:
       '@google-cloud/cloud-sql-connector': 1.11.3(supports-color@8.1.1)
       '@google-cloud/pubsub': 5.3.1(supports-color@8.1.1)
       '@inquirer/prompts': 7.10.1(@types/node@24.19.2)
-      '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.6.5)
+      '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.6.6)
       abort-controller: 3.0.0
       ajv: 8.20.0
       ajv-formats: 3.0.1
@@ -14469,7 +14469,7 @@ snapshots:
       winston-transport: 4.9.0
       ws: 8.21.3
       yaml: 2.9.1
-      zod: 4.6.5
+      zod: 4.6.6
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - '@types/node'
@@ -19050,14 +19050,14 @@ snapshots:
       compress-commons: 6.0.2
       readable-stream: 4.7.0
 
-  zod-to-json-schema@3.25.2(zod@4.6.5):
+  zod-to-json-schema@3.25.2(zod@4.6.6):
     dependencies:
-      zod: 4.6.5
+      zod: 4.6.6
 
-  zod-validation-error@4.0.2(zod@4.6.5):
+  zod-validation-error@4.0.2(zod@4.6.6):
     dependencies:
-      zod: 4.6.5
+      zod: 4.6.6
 
-  zod@4.6.5: {}
+  zod@4.6.6: {}
 
   zwitch@2.0.4: {}

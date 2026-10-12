@@ -14,10 +14,11 @@ required`. Work grants are declared in `AGENT_LCARS_WORK_GRANTS` in
 [work-grants.ts](apps/console/src/lib/work-grants.ts), and matched against the
 verified identity by [work-auth.ts](apps/console/src/lib/work-auth.ts).
 
-| Session login                     | Work principal            | Scope           |
-| --------------------------------- | ------------------------- | --------------- |
-| `jlapenna`                        | `user:jlapenna`           | `work.operator` |
-| `agent-lcars-production-verifier` | `svc:production-verifier` | `work.operator` |
+| Identity                                                    | Work principal            | Scope           |
+| ----------------------------------------------------------- | ------------------------- | --------------- |
+| `jlapenna`                                                  | `user:jlapenna`           | `work.operator` |
+| `agent-lcars-production-verifier`                           | `svc:production-verifier` | `work.operator` |
+| Google SA `work-reader@agent-lcars.iam.gserviceaccount.com` | `svc:work-reader`         | `work.reader`   |
 
 The production-verifier grant applies to sessions with that login, including
 existing unexpired sessions. It is an identity grant, not a grant limited to
@@ -26,12 +27,19 @@ redispatch, replies, and schedule management across the configured pipelines.
 The shared verification credential therefore carries operational authority;
 its holders must act only within the requested task.
 
+`work.reader` authorizes only the read-only issue-owner query,
+`GET /anchors/github/owner` (`lcars work owner <owner/repo>#<n>`). It cannot
+list or read items, mutate, or manage schedules. Interactive Claude and Codex
+sessions use it through `LCARS_SERVICE_ACCOUNT=work-reader@agent-lcars.iam.gserviceaccount.com`;
+only the maintainer's Google account may impersonate that identity.
+
 Grant changes go through a PR, required checks, merge, and the normal
 [Deploy console workflow](.github/workflows/deploy-console.yml). The server
 caches grants, so editing source alone does not change live authorization.
 After rollout, verify the session login at `GET /api/auth/session`, then verify
-Work access with `GET /api/work/v1/items?limit=1`. Admin status alone is not
-proof. Removing the grant through the same deployment path revokes Work access
+Work access with `GET /api/work/v1/items?limit=1` (a `work.reader` identity
+instead with the owner query, and expect `items` to be refused). Admin status
+alone is not proof. Removing the grant through the same deployment path revokes Work access
 for that identity without having to wait for its sessions to expire.
 
 ### Authentication options
@@ -46,8 +54,9 @@ for that identity without having to wait for its sessions to expire.
 - For service-account callers, the [Work CLI](libs/work/README.md) accepts
   `LCARS_TOKEN`, or `LCARS_SERVICE_ACCOUNT` plus optional `LCARS_AUDIENCE`
   (default `agent-lcars-work`). Google impersonation requires IAM permission
-  as well as an application Work grant. A locally signed-in Google account
-  does not automatically have permission to impersonate `codex-agent`.
+  as well as an application Work grant. Interactive sessions on the
+  maintainer's hosts use `work-reader` for the owner query; they do not
+  impersonate `codex-agent`, whose grant carries `work.operator`.
 
 A failed bearer token does not fall back to session cookies. Use one valid
 method. If a session expires, follow the saved-session capture or maintainer

@@ -1,4 +1,6 @@
 import {
+  decidedRun,
+  isRefusal,
   MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
@@ -16,6 +18,7 @@ import type { RouterContractClient } from '@orpc/contract';
 import { OpenAPILink } from '@orpc/openapi/fetch';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { CliSession } from './cli-sessions';
 import { controlPlaneRepository } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createWorkHandler, type WorkContext } from './work-router';
@@ -56,6 +59,13 @@ const reaperOnly = {
   pipelines: [],
   via: 'oidc' as const,
 };
+const readerOnly = {
+  principal: 'svc:work-reader',
+  subject: 'work-reader@agent-lcars.iam.gserviceaccount.com',
+  scopes: new Set(['work.reader'] as const),
+  pipelines: ['claude', 'codex', 'opencode'],
+  via: 'google' as const,
+};
 const githubActionsOperator = {
   principal: 'workflow:member-automation',
   subject: 'github-actions:jlapenna/agent-lcars',
@@ -80,6 +90,7 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
     sessionDocsForRuns: async () => [],
+    cliSessions: async () => ({ sessions: [], warnings: [] }),
     scheduleStore: new MemoryScheduleStore(),
     grants: () => [],
     now: () => new Date('2026-08-26T10:00:00.000Z'),
@@ -1967,4 +1978,300 @@ describe('GitHub-anchor dispatch route', () => {
       });
     },
   );
+});
+
+describe('GET /anchors/github/owner', () => {
+  const REPO = 'jlapenna/agent-lcars';
+  const anchor = { repo: REPO, issue: 2502 };
+  const path = `/anchors/github/owner?repo=${REPO}&issue=2502`;
+
+  function cliSession(over: Partial<CliSession> = {}): CliSession {
+    return {
+      sessionId: 'cli-1',
+      liveness: 'live',
+      agent: 'claude-code',
+      host: 'laforge',
+      branch: 'feat/issue-owner-query-2502',
+      turns: 4,
+      totalTokens: 10,
+      startedAt: '2026-08-26T09:00:00.000Z',
+      lastActivityAt: '2026-08-26T09:58:00.000Z',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      ...over,
+    };
+  }
+
+  async function admit(ctx: WorkContext) {
+    const outcome = await ctx.runtime.orchestrator.request({
+      taskId: anchor,
+      requestId: 'first',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: { ...spec, target: { repo: REPO } },
+      },
+    });
+    if (isRefusal(outcome)) throw new Error('unexpected refusal in fixture');
+    return decidedRun(outcome).runId;
+  }
+
+  it('requires work.operator; reaper, executor, cron and anonymous are refused', async () => {
+    for (const principal of [undefined, executorOnly, cronTick, reaperOnly]) {
+      const cliSessions = vi.fn(async () => ({ sessions: [], warnings: [] }));
+      expect(
+        (await call(context({ principal, cliSessions }), 'GET', path)).status,
+      ).toBe(401);
+      expect(cliSessions).not.toHaveBeenCalled();
+    }
+    expect((await call(context(), 'GET', path)).status).toBe(200);
+  });
+
+  it('also answers a work.reader-only principal, within the same repository boundary', async () => {
+    const cliSessions = vi.fn(async () => ({ sessions: [], warnings: [] }));
+    const ctx = context({ principal: readerOnly, cliSessions });
+    expect((await call(ctx, 'GET', path)).status).toBe(200);
+    expect(cliSessions).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        await call(
+          context({ principal: readerOnly, cliSessions }),
+          'GET',
+          '/anchors/github/owner?repo=octo/example&issue=1',
+        )
+      ).status,
+    ).toBe(403);
+    expect(cliSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a work.reader-only principal from every other items, schedules and dispatch route', async () => {
+    const ctx = context();
+    await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    await call(ctx, 'PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec });
+    const readerCtx = { ...ctx, principal: readerOnly };
+    const request = vi.spyOn(ctx.runtime.orchestrator, 'request');
+    for (const [m, p, b] of [
+      ['GET', '/items'],
+      ['GET', `/items/${ID}`],
+      ['PUT', `/items/${ID}`, { spec }],
+      ['PATCH', `/items/${ID}`, { spec }],
+      ['POST', `/items/${ID}/cancel`],
+      ['POST', `/items/${ID}/redispatch`],
+      ['POST', `/items/${ID}/reply`, { text: 'continue' }],
+      ['GET', '/metrics/lifecycle'],
+      ['POST', '/maintenance/tick', {}],
+      ['GET', '/schedules'],
+      ['GET', `/schedules/${ID}`],
+      ['PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec }],
+      [
+        'PATCH',
+        `/schedules/${ID}`,
+        { expectedRevision: 1, cron: '0 * * * *', spec, enabled: false },
+      ],
+      ['DELETE', `/schedules/${ID}`, { expectedRevision: 1 }],
+      ['POST', `/schedules/${ID}/enable`],
+      ['POST', `/schedules/${ID}/disable`],
+      ['POST', '/schedules/tick', {}],
+      [
+        'POST',
+        '/dispatches/github',
+        { anchor: { repo: REPO, issue: 2502 }, pipeline: 'claude' },
+      ],
+      [
+        'POST',
+        '/dispatches/github/redispatch',
+        { anchor: { repo: REPO, issue: 2502 } },
+      ],
+    ] as const) {
+      expect((await call(readerCtx, m, p, b)).status, `${m} ${p}`).toBe(401);
+    }
+    expect(request).not.toHaveBeenCalled();
+    expect(
+      (await ctx.runtime.store.readTask({ workId: ID }))?.task.runCount,
+    ).toBe(1);
+  });
+
+  it('refuses repositories the caller may not read, before reading anything', async () => {
+    const cliSessions = vi.fn(async () => ({ sessions: [], warnings: [] }));
+    // Not a control-plane repository.
+    expect(
+      (
+        await call(
+          context({ cliSessions }),
+          'GET',
+          '/anchors/github/owner?repo=octo/example&issue=1',
+        )
+      ).status,
+    ).toBe(403);
+    // A GitHub Actions principal is bound to its own repository.
+    expect(
+      (
+        await call(
+          context({
+            cliSessions,
+            principal: {
+              ...githubActionsOperator,
+              sourceRepository: 'jlapenna/other',
+            },
+          }),
+          'GET',
+          path,
+        )
+      ).status,
+    ).toBe(403);
+    expect(cliSessions).not.toHaveBeenCalled();
+    expect(
+      (await call(context({ principal: githubActionsOperator }), 'GET', path))
+        .status,
+    ).toBe(200);
+  });
+
+  it('resolves a differently cased repository to the configured anchor', async () => {
+    const ctx = context({
+      cliSessions: async () => ({
+        sessions: [
+          cliSession({ repo: { owner: 'JLapenna', name: 'Agent-LCARS' } }),
+        ],
+        warnings: [],
+      }),
+    });
+    const runId = await admit(ctx);
+    const result = await call(
+      ctx,
+      'GET',
+      '/anchors/github/owner?repo=JLAPENNA/agent-lcars&issue=2502',
+    );
+    expect(result.json).toMatchObject({
+      anchor,
+      verdict: 'fleet-run',
+      task: { activeRunId: runId },
+      cliSessions: [{ sessionId: 'cli-1' }],
+    });
+  });
+
+  it('rejects a malformed anchor before reading anything', async () => {
+    const cliSessions = vi.fn(async () => ({ sessions: [], warnings: [] }));
+    const ctx = context({ cliSessions });
+    for (const bad of [
+      '/anchors/github/owner?repo=not-a-repo&issue=1',
+      `/anchors/github/owner?repo=${REPO}&issue=0`,
+      `/anchors/github/owner?repo=${REPO}`,
+    ])
+      expect((await call(ctx, 'GET', bad)).status).toBe(400);
+    expect(cliSessions).not.toHaveBeenCalled();
+  });
+
+  it('answers none when Console has no task and no session for the anchor', async () => {
+    const result = await call(
+      context({
+        cliSessions: async () => ({
+          sessions: [
+            // Same number, other repo; and same repo, other number.
+            cliSession({ repo: { owner: 'octo', name: 'example' } }),
+            cliSession({ sessionId: 'cli-2', branch: 'feat/thing-25020' }),
+          ],
+          warnings: [],
+        }),
+      }),
+      'GET',
+      path,
+    );
+    expect(result.status).toBe(200);
+    expect(result.json).toEqual({
+      anchor,
+      observedAt: '2026-08-26T10:00:00.000Z',
+      verdict: 'none',
+      complete: true,
+      warnings: [],
+      cliSessions: [],
+    });
+  });
+
+  it('reports a live fleet run as the owner, with run and session evidence', async () => {
+    const sessionsFor = vi.fn(async (runIds: string[]) =>
+      runIds.map((runId) => ({
+        sessionId: 'worker-1',
+        runId,
+        startedAt: '2026-08-26T10:00:00.000Z',
+        lastActivityAt: '2026-08-26T10:00:00.000Z',
+      })),
+    );
+    const ctx = context({
+      sessionsFor,
+      cliSessions: async () => ({ sessions: [cliSession()], warnings: [] }),
+    });
+    const runId = await admit(ctx);
+
+    const result = await call(ctx, 'GET', path);
+
+    expect(result.status).toBe(200);
+    expect(result.json).toMatchObject({
+      verdict: 'fleet-run',
+      task: {
+        state: 'running',
+        pipeline: 'claude',
+        runCount: 1,
+        activeRunId: runId,
+        run: { runId, pipeline: 'claude' },
+        runSessions: [{ sessionId: 'worker-1', runId }],
+      },
+      // The interactive session is still evidence, even though the run
+      // holds the task's mutex and so owns the verdict.
+      cliSessions: [{ sessionId: 'cli-1', liveness: 'live' }],
+    });
+    expect(sessionsFor).toHaveBeenCalledWith([runId]);
+  });
+
+  it('reports a live CLI session when the task has no live run', async () => {
+    const ctx = context({
+      cliSessions: async () => ({
+        sessions: [
+          cliSession({ sessionId: 'old', liveness: 'ended' }),
+          cliSession({
+            sessionId: 'by-pr',
+            liveness: 'idle',
+            branch: 'main',
+            pr: { number: 2502, url: 'https://github.com/x/pull/2502' },
+          }),
+        ],
+        warnings: [],
+      }),
+    });
+    const runId = await admit(ctx);
+    await ctx.runtime.orchestrator.report(runId, { ok: true, summary: 'park' });
+
+    const result = await call(ctx, 'GET', path);
+
+    expect(result.json).toMatchObject({
+      verdict: 'interactive-session',
+      task: { state: 'parked', run: { runId, state: 'finished' } },
+    });
+    expect(result.json.task.activeRunId).toBeUndefined();
+    // Active sessions first; an ended one is evidence, not ownership.
+    expect(
+      result.json.cliSessions.map(
+        (session: { sessionId: string }) => session.sessionId,
+      ),
+    ).toEqual(['by-pr', 'old']);
+  });
+
+  it('marks the answer incomplete when CLI telemetry degraded', async () => {
+    const result = await call(
+      context({
+        cliSessions: async () => ({
+          sessions: [],
+          warnings: [
+            'CLI sessions unavailable (agent-telemetry store failed).',
+          ],
+        }),
+      }),
+      'GET',
+      path,
+    );
+    expect(result.status).toBe(200);
+    expect(result.json).toMatchObject({
+      verdict: 'none',
+      complete: false,
+      warnings: ['CLI sessions unavailable (agent-telemetry store failed).'],
+    });
+  });
 });
