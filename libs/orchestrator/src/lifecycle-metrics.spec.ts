@@ -144,6 +144,11 @@ describe('durable lifecycle metric accounting', () => {
         providerProcessStartedAt: '2026-10-10T12:00:00.001Z',
       },
       { state: 'claimed', providerProcessStartedAt: spawn },
+      {
+        state: 'claimed',
+        claimedAt: '2026-10-10T11:39:00.000Z',
+        providerProcessStartedAt: '2026-10-10T11:39:30.000Z',
+      },
     ];
     const runs = queues.map((queue, i) =>
       run({
@@ -174,10 +179,10 @@ describe('durable lifecycle metric accounting', () => {
       'lcars_product_latency_window_duration_seconds{pipeline="claude",stage="claim_to_provider_start"} 73\n',
     );
     expect(text).toContain(
-      'lcars_product_latency_window_unknown{pipeline="claude",stage="claim_to_provider_start"} 5\n',
+      'lcars_product_latency_window_unknown{pipeline="claude",stage="claim_to_provider_start"} 6\n',
     );
     expect(text).toContain(
-      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="provider_start"} 5\n',
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="provider_start"} 6\n',
     );
     expect(snapshot(runs, { complete: false })).not.toContain(
       'lcars_product_provider_starts_window',

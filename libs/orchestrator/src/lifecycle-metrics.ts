@@ -140,10 +140,13 @@ export function lifecycleMetricSnapshot(
     const providerStarted = (run: Run) => {
       const start = Date.parse(run.queue?.providerProcessStartedAt ?? '');
       const claim = Date.parse(run.queue?.claimedAt ?? '');
+      const admission = Date.parse(run.createdAt);
       return (
         Number.isFinite(start) &&
         Number.isFinite(claim) &&
+        Number.isFinite(admission) &&
         start >= claim &&
+        start >= admission &&
         start <= now
       );
     };
