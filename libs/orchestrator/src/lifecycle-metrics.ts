@@ -48,7 +48,7 @@ const HELP = {
   latency_window_duration_seconds:
     'Sum of known rolling-hour latency durations in seconds; a decreasing gauge.',
   latency_window_unknown:
-    'Rolling-hour latency candidates with missing or reversed clocks.',
+    'Rolling-hour latency candidates with missing, invalid, reversed or future clocks.',
   reported_outcome_window:
     'Finished rolling-hour run identities by worker-reported outcome, not verified usefulness.',
   measurement_unknown_window:
