@@ -149,6 +149,10 @@ export WORKER_COMPLETION_HELPER="$baked/runtime/worker-completion.sh"
 export WORKER_ACTIVATION_HELPER="$baked/runtime/worker-activation.sh"
 sed -i 's|^WORKER_IDENTITY_FILE=.*|WORKER_IDENTITY_FILE="${FIXTURE_WORKER_IDENTITY_FILE:-/run/agent-lcars-identity/token}"|' "$WORKER_ACTIVATION_HELPER"
 export WORKER_POLICY_BOOTSTRAP_HELPER="$baked/runtime/worker-policy-bootstrap.sh"
+export TELEMETRY_HOOKS_HELPER="$baked/runtime/telemetry-hooks.sh"
+# Hooks stay off unless a scenario provides a lcars CLI and credentials; the
+# image paths do not exist on a test host.
+export LCARS_BIN="$tmp/no-lcars-cli" TELEMETRY_HOOK_CREDENTIALS="$tmp/no-telemetry-credentials"
 export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
 export WORKER_POLICY_NODE="$real_node"
 # sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
@@ -534,6 +538,8 @@ if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
     "$FAKE_NATIVE_OUTCOME" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
 fi
 printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
+printf '%s|%s|%s|%s\n' "${LCARS_TELEMETRY_CREDENTIALS:-}" "${LCARS_REPO:-}" "${LCARS_RUN_ID:-}" "${GOOGLE_APPLICATION_CREDENTIALS:-}" \
+  > "${TELEMETRY_ENV_LOG:-/dev/null}"
 if [ -n "${FAKE_CREDENTIAL_USE_AFTER_SLEEP:-}" ]; then
   python3 "$FIXTURE_TIMING_HELPER" workload "$FAKE_CREDENTIAL_USE_AFTER_SLEEP" || exit $?
   git push
@@ -568,6 +574,7 @@ fi
 if [ "${FAKE_WORKER_NO_THREAD:-}" != 1 ]; then echo '{"type":"thread.started","thread_id":"thread-codex-fixture"}'; fi
 if [ "${FAKE_WORKER_ERROR_EVENT:-}" = 1 ]; then echo '{"type":"error","message":"provider execution failed"}'; fi
 printf '%s' "${ACTIONS_RERUN_TOKEN:-}" > "$CODEX_ENV_LOG"
+[ -z "${CODEX_HOOKS_SNAPSHOT:-}" ] || cp "$CODEX_HOME/hooks.json" "$CODEX_HOOKS_SNAPSHOT" 2>/dev/null || true
 # Real codex writes the final message to the file named by
 # --output-last-message, not to stdout -- opt-in, mirroring the fake
 # claude's own FAKE_CLAUDE_STDOUT convention.
@@ -843,6 +850,10 @@ run_scenario() {
   export HOME="$dir/home"
   export LCARS_CODEX_VOLATILE_DIR="$dir/codex-volatile"
   mkdir -p "$scenario_runner_temp" "$HOME" "$LCARS_CODEX_VOLATILE_DIR"
+  if [ -n "${FAKE_PRESEED_HOOK_SPOOL:-}" ]; then
+    mkdir -p "$HOME/.local/state/agent-lcars/spool"
+    echo '{"version":1}' > "$HOME/.local/state/agent-lcars/spool/events.ndjson"
+  fi
   mkdir -p "$HOME/.config/opencode"
   cp -R "$repo_root/agents/opencode/." "$HOME/.config/opencode/"
   export OPENCODE_PROXY_NODE="$real_node"
@@ -2286,6 +2297,70 @@ for receipt_provider in claude codex opencode; do
   echo "scenario receipt-activation-$receipt_provider: OK"
 done
 unset FAKE_RECEIPT_MODE FAKE_GH_NO_MATCH
+# Telemetry hooks (docs/hooks-telemetry-design.md section 4.5). With the
+# lcars CLI and the writer credential present, Claude gets an additive
+# --settings file, Codex's hooks.json gains telemetry entries beside the
+# worker-policy ones, the provider sees a dedicated credentials variable
+# (never GOOGLE_APPLICATION_CREDENTIALS), and the hook spool is drained
+# before `runner finalize` writes the authoritative doc. The sidecar still
+# starts: it defers only to sessions a hook has marked.
+make_fake_lcars() {
+  cat > "$1" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >> "$LCARS_CALLS_LOG"
+if [ "${1:-}" = hook ] && [ "${2:-}" = flush ]; then
+  if grep -q 'runner finalize' "$NODE_ARGS_LOG" 2>/dev/null; then
+    echo flush-after-finalize >> "$LCARS_CALLS_LOG"
+  fi
+  : > "$HOME/.local/state/agent-lcars/spool/events.ndjson"
+fi
+exit 0
+FAKE
+  chmod +x "$1"
+}
+for hooks_provider in claude codex; do
+  hooks_dir="$tmp/telemetry-hooks-$hooks_provider-fixture"
+  mkdir -p "$hooks_dir"
+  make_fake_lcars "$hooks_dir/lcars"
+  printf '{}' > "$hooks_dir/telemetry-writer.json"
+  export LCARS_BIN="$hooks_dir/lcars" TELEMETRY_HOOK_CREDENTIALS="$hooks_dir/telemetry-writer.json"
+  export LCARS_CALLS_LOG="$hooks_dir/lcars-calls.log" TELEMETRY_ENV_LOG="$hooks_dir/telemetry-env.log"
+  export CODEX_HOOKS_SNAPSHOT="$hooks_dir/codex-hooks.json"
+  # A detached flusher could still be holding events when the provider exits.
+  export FAKE_PRESEED_HOOK_SPOOL=1
+  run_scenario "telemetry-hooks-$hooks_provider" "$hooks_provider"
+  [ "$rc" -eq 0 ] || fail "telemetry hooks $hooks_provider: expected exit 0, got $rc"
+  grep -q -- 'runner sidecar' "$NODE_ARGS_LOG" ||
+    fail "telemetry hooks $hooks_provider: the sidecar fallback did not start ($(cat "$NODE_ARGS_LOG"))"
+  grep -qx 'hook flush' "$LCARS_CALLS_LOG" ||
+    fail "telemetry hooks $hooks_provider: spool was not drained ($(cat "$LCARS_CALLS_LOG" 2>/dev/null))"
+  ! grep -q flush-after-finalize "$LCARS_CALLS_LOG" ||
+    fail "telemetry hooks $hooks_provider: spool drained after runner finalize"
+  if [ "$hooks_provider" = claude ]; then
+    settings="$RUNNER_TEMP/claude-telemetry-hooks.json"
+    grep -q -- "--settings $settings" "$CLAUDE_ARGS_LOG" ||
+      fail "telemetry hooks claude: --settings was not passed ($(cat "$CLAUDE_ARGS_LOG"))"
+    jq -e --arg cmd "$LCARS_BIN hook claude" '
+      [.hooks.SessionStart, .hooks.UserPromptSubmit, .hooks.PostToolUse, .hooks.Stop, .hooks.SessionEnd]
+      | all(.[0].hooks[0].command == $cmd)' "$settings" >/dev/null ||
+      fail "telemetry hooks claude: settings file is wrong ($(cat "$settings"))"
+    IFS='|' read -r env_creds env_repo env_run env_adc < "$TELEMETRY_ENV_LOG"
+    [ "$env_creds" = "$TELEMETRY_HOOK_CREDENTIALS" ] && [ "$env_repo" = octo/example ] &&
+      [ "$env_run" = "$LCARS_RUN_ID" ] && [ -z "$env_adc" ] ||
+      fail "telemetry hooks claude: provider env is wrong ($(cat "$TELEMETRY_ENV_LOG"))"
+  else
+    jq -e --arg cmd "$LCARS_BIN hook codex" '
+      [.hooks.SessionStart, .hooks.UserPromptSubmit, .hooks.PostToolUse, .hooks.Stop, .hooks.SessionEnd]
+      | all(any(.[]; .hooks[0].command == $cmd))' "$CODEX_HOOKS_SNAPSHOT" >/dev/null ||
+      fail "telemetry hooks codex: hooks.json lacks telemetry entries ($(cat "$CODEX_HOOKS_SNAPSHOT" 2>/dev/null))"
+    if grep -q -- '--dangerously-bypass-hook-trust' "$CODEX_ARGS_LOG"; then
+      fail "telemetry hooks codex: telemetry must not enable a hook trust bypass by itself"
+    fi
+  fi
+  echo "scenario telemetry-hooks-$hooks_provider: OK"
+done
+export LCARS_BIN="$tmp/no-lcars-cli" TELEMETRY_HOOK_CREDENTIALS="$tmp/no-telemetry-credentials"
+unset LCARS_CALLS_LOG TELEMETRY_ENV_LOG CODEX_HOOKS_SNAPSHOT FAKE_PRESEED_HOOK_SPOOL
 bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
 
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/provider-process.test.mjs"

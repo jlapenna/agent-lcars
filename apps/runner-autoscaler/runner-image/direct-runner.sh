@@ -45,6 +45,8 @@ source "${WORKER_COMPLETION_HELPER:-$RUNTIME_HELPERS_DIR/worker-completion.sh}"
 source "${WORKER_ACTIVATION_HELPER:-$RUNTIME_HELPERS_DIR/worker-activation.sh}"
 # shellcheck source=runtime/worker-policy-bootstrap.sh
 source "${WORKER_POLICY_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/worker-policy-bootstrap.sh}"
+# shellcheck source=runtime/telemetry-hooks.sh
+source "${TELEMETRY_HOOKS_HELPER:-$RUNTIME_HELPERS_DIR/telemetry-hooks.sh}"
 CODEX_HOOK_ARGS=()
 # This supervisor observes successful OS spawn, not a bootstrap heartbeat.
 PROVIDER_PROCESS_NODE="${PROVIDER_PROCESS_NODE:-/usr/bin/node}"
@@ -663,6 +665,10 @@ if [ "$PIPELINE" = "opencode" ]; then
   fi
 fi
 
+# Provider hooks report this run's session; the sidecar below defers to any
+# session a hook has marked and covers the rest (runtime/telemetry-hooks.sh).
+telemetry_hooks_prepare
+
 if [ "$PIPELINE" = "codex" ]; then
   # The sidecar starts before the agent invocation so it can emit live state.
   # Allocate the per-run tmpfs home first, then pass its eventual session root
@@ -684,6 +690,7 @@ if [ "$PIPELINE" = "codex" ]; then
     cp -a "$HOME/.codex/." "$CODEX_HOME/"
   fi
   worker_policy_bootstrap "$CODEX_HOME/hooks.json"
+  telemetry_hooks_codex "$CODEX_HOME/hooks.json"
 fi
 
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
@@ -735,6 +742,7 @@ if [ "$PIPELINE" = "claude" ]; then
   fi
   export LCARS_WORKER_SESSION_ID="$CLAUDE_WORKER_SESSION"
   worker_policy_bootstrap "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  telemetry_hooks_claude
   # The Claude CLI reads its long-lived subscription credential straight
   # from its own process environment. The autoscaler bind-mounts the value
   # as a file only for Claude runs, keeping it out of docker inspect.
@@ -763,7 +771,7 @@ if [ "$PIPELINE" = "claude" ]; then
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" claude --dangerously-skip-permissions \
       --allowedTools "Bash,Edit,Write,MultiEdit" \
       --disallowedTools "ScheduleWakeup,SendMessage,Monitor" \
-      "$@" --print "$prompt" | tee "$LAST_MESSAGE_FILE"
+      "${TELEMETRY_CLAUDE_ARGS[@]}" "$@" --print "$prompt" | tee "$LAST_MESSAGE_FILE"
     return "${PIPESTATUS[0]}"
   }
   set +e
@@ -1184,6 +1192,9 @@ else
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
+
+# Land every spooled hook event before finalize writes the authoritative doc.
+telemetry_hooks_drain
 
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \

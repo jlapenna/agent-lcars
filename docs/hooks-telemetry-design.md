@@ -237,25 +237,38 @@ runtime, clientVersion }` so provenance is visible next to daemon-written
 
 ### 4.5 Runner mode changes
 
-`direct-runner.sh` today: `sidecar-lifecycle.sh start` (daemon) → provider →
-`sidecar-lifecycle.sh finalize`. After this design:
+`direct-runner.sh` sources `runtime/telemetry-hooks.sh`, which wires the hook
+client into a dispatched run without replacing anything yet:
 
-- Claude: add `--settings /usr/local/lib/agent-lcars/claude-telemetry-hooks.json`
-  to the `claude --print` invocation. Hooks merge additively with any
-  repo-level settings, so onboarded repos keep their own hooks.
-- Codex: copy `/usr/local/lib/agent-lcars/codex-telemetry-hooks.json` into
-  `$CODEX_HOME/hooks.json` after the `cp -a "$HOME/.codex/."` step and pass
-  `--dangerously-bypass-hook-trust` to `codex exec` (the image is the vetted
-  hook source; the flag is scoped to that invocation).
-- OpenCode: add `./lcars-telemetry.js` to `agents/opencode/opencode.json`
-  `plugin` next to `lcars-session.js`.
-- Env for the client: `LCARS_RUN_ID`, `INTENT_ID`, `NUM`, `LCARS_REPO`, and
-  `LCARS_TELEMETRY_CREDENTIALS=/run/secrets/telemetry-writer.json`.
-- Delete the `start` mode of `sidecar-lifecycle.sh` and the `telemetry`
-  job-daemon; `finalize` and `resume` stay exactly as they are. The
-  bounded stop-wait before finalize disappears with the daemon.
+- **Gate.** Hooks turn on only when `/usr/local/bin/lcars` and
+  `/run/secrets/telemetry-writer.json` exist. The helper exports
+  `LCARS_RUN_ID`, `LCARS_REPO`, `INTENT_ID`, `NUM` (when the anchor is an
+  issue), and `LCARS_TELEMETRY_CREDENTIALS`. It never exports
+  `GOOGLE_APPLICATION_CREDENTIALS`, which would re-target every Google SDK
+  the agent's work calls; the client opens the credentials file itself
+  (`keyFilename`).
+- **Claude.** An additive `--settings $RUNNER_TEMP/claude-telemetry-hooks.json`.
+  Claude merges hooks from every settings source, so the worker-policy
+  entries in `settings.json` and repository hooks run unchanged.
+- **Codex.** Telemetry entries are merged into the run's
+  `$CODEX_HOME/hooks.json`, keeping every existing group. Telemetry adds no
+  trust decision: Codex runs them only where the worker-policy rollout
+  already passes `--enable hooks --dangerously-bypass-hook-trust`;
+  elsewhere they are inert.
+- **OpenCode.** No hook client yet; the sidecar covers it.
+- **Sidecar stays.** `runner sidecar` still starts and skips any session
+  with a fresh hook marker, so a working hook takes a session over within
+  one event, and a missing or broken one leaves the sidecar reporting as
+  before.
+- **Drain before finalize.** `telemetry_hooks_drain` runs `lcars hook flush`
+  until the spool is empty (bounded at 30 s) before `runner finalize`, so a
+  late hook write can never land after the authoritative final doc, and no
+  event is lost when the container is destroyed. `finalize` and `resume`
+  are unchanged.
 
-In-Flight UI latency improves from a 10 s tick to the hook (seconds).
+Removing `runner sidecar` is a follow-up once dispatched Claude and Codex
+runs show `observer.kind == "hook"` on their issue-agent docs, and once
+OpenCode has a client.
 
 ### 4.6 Workstation distribution (homegit)
 
@@ -536,12 +549,12 @@ shared module bundled into both artifacts.
 
 ## 6. Rollout
 
-| Phase | Scope                                                                                                                                          | Exit criterion                                                                                                           |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| 0     | Ingest route behind `AGENT_LCARS_TELEMETRY_INGEST=1`; `lcars hook claude`; one host (laforge) via a local settings edit                        | Docs written by hook and daemon for the same session match on `turns`, `tokens`, `title`, `deliverables` for 20 sessions |
-| 1     | homegit rollout: Claude + Codex hooks on all three watcher hosts; daemon skips marker-fresh sessions                                           | One week with no `telemetry-hosts` gap > 10 min while sessions ran; no privacy-gate escapes in `hook.log`                |
-| 2     | Runner: `--settings`, `CODEX_HOME` hooks, OpenCode plugin; remove `sidecar start`                                                              | Native work smoke runbook passes on all three pipelines; In-Flight UI updates within 5 s of a tool call                  |
-| 3     | `docker compose down` the watcher on each host; delete `WatcherDaemon` host mode, `process-check.ts`, `/metrics`, `deploy/`; reducer lib stays | README/OPERATIONS/onboarding docs updated; homelab Prometheus alert for the watcher removed in the same change           |
+| Phase | Scope                                                                                                                                                                                                              | Exit criterion                                                                                                                                                            |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Ingest route behind `AGENT_LCARS_TELEMETRY_INGEST=1`; `lcars hook claude`; one host (laforge) via a local settings edit                                                                                            | Docs written by hook and daemon for the same session match on `turns`, `tokens`, `title`, `deliverables` for 20 sessions                                                  |
+| 1     | homegit rollout: Claude + Codex hooks on all three watcher hosts; daemon skips marker-fresh sessions                                                                                                               | One week with no `telemetry-hosts` gap > 10 min while sessions ran; no privacy-gate escapes in `hook.log`                                                                 |
+| 2     | Runner: Claude `--settings`, Codex entries in `CODEX_HOME/hooks.json` (under the worker-policy hook gate), spool drain before finalize; sidecar kept as fallback. Then OpenCode client and `sidecar start` removal | Dispatched Claude and Codex docs carry `observer.kind == "hook"`; native work smoke runbook passes on all three pipelines; In-Flight UI updates within 5 s of a tool call |
+| 3     | `docker compose down` the watcher on each host; delete `WatcherDaemon` host mode, `process-check.ts`, `/metrics`, `deploy/`; reducer lib stays                                                                     | README/OPERATIONS/onboarding docs updated; homelab Prometheus alert for the watcher removed in the same change                                                            |
 
 Each phase is reversible by removing the hook entries; the daemon keeps
 writing untouched docs until phase 3.

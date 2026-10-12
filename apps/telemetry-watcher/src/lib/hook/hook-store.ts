@@ -72,6 +72,7 @@ export function createHookEventWriter(
     projectId: options.projectId,
     databaseId,
     ...(options.credentials && { credentials: options.credentials }),
+    ...(options.keyFilename && { keyFilename: options.keyFilename }),
     ...(options.emulatorHost && { host: options.emulatorHost, ssl: false }),
   });
   return {

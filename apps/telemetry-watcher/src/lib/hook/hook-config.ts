@@ -18,6 +18,12 @@ export interface HookWriterCredentials {
   readonly projectId: string;
   /** Service-account key; absent means Application Default Credentials. */
   readonly credentials?: { client_email: string; private_key: string };
+  /** A credentials file path (any type google-auth-library accepts). Set
+   * on QueueExecutor runners from `LCARS_TELEMETRY_CREDENTIALS`, so the
+   * agent's own environment never has `GOOGLE_APPLICATION_CREDENTIALS`
+   * pointed at the telemetry identity (which would silently re-target any
+   * Google SDK the agent's work happens to call). */
+  readonly keyFilename?: string;
   readonly emulatorHost?: string;
 }
 
@@ -175,6 +181,13 @@ function resolveWriter(
         client_email: key.client_email,
         private_key: key.private_key,
       },
+    };
+  }
+  const runnerKeyFile = env['LCARS_TELEMETRY_CREDENTIALS'];
+  if (isRunner && runnerKeyFile) {
+    return {
+      projectId: configuredProject ?? DEFAULT_TELEMETRY_PROJECT_ID,
+      keyFilename: runnerKeyFile,
     };
   }
   if (isRunner && env['GOOGLE_APPLICATION_CREDENTIALS']) {
