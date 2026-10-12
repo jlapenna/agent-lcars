@@ -95,32 +95,59 @@ export interface CodexExecResult {
   sessionId?: number;
 }
 
-/** The actual transport contains input_text arrays around one JSON envelope.
+/** The actual transport splits its fixed header and one JSON envelope across input_text blocks.
  * Reject aggregate envelopes instead of guessing which nested call printed it. */
 export function codeModeResult(value: unknown): CodexExecResult | undefined {
-  let text = asString(value);
-  if (!text) {
+  const direct = asString(value);
+  const texts: string[] = [];
+  if (direct !== undefined) texts.push(direct);
+  else {
     const blocks = asArray(value);
-    if (!blocks || blocks.length !== 1) return undefined;
-    const block = asRecord(blocks[0]);
-    if (block?.['type'] !== 'input_text' && block?.['type'] !== 'text')
-      return undefined;
-    text = asString(block['text']);
-  }
-  if (!text) return undefined;
-  const candidates = [text, ...text.split('\n')];
-  const results: Record<string, unknown>[] = [];
-  for (const candidate of candidates) {
-    try {
-      const parsed = asRecord(JSON.parse(candidate));
-      if (parsed && 'output' in parsed) {
-        results.push(parsed);
-        if (candidate === text) break;
-      }
-    } catch {
-      /* Non-JSON transport prose is not stdout. */
+    if (!blocks?.length) return undefined;
+    for (const raw of blocks) {
+      const block = asRecord(raw);
+      if (block?.['type'] !== 'input_text' && block?.['type'] !== 'text')
+        return undefined;
+      const text = asString(block['text']);
+      if (text === undefined) return undefined;
+      texts.push(text);
     }
   }
+  const results: Record<string, unknown>[] = [];
+  const prose: string[] = [];
+  for (const text of texts) {
+    let whole: unknown;
+    try {
+      whole = JSON.parse(text);
+    } catch {
+      /* Transport header plus envelope. */
+    }
+    const envelope = asRecord(whole);
+    if (envelope && 'output' in envelope) {
+      results.push(envelope);
+      continue;
+    }
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = asRecord(JSON.parse(line));
+        if (!parsed || !('output' in parsed)) return undefined;
+        results.push(parsed);
+      } catch {
+        prose.push(line.trim());
+      }
+    }
+  }
+  // The producer emits the header and envelope as separate input_text blocks.
+  // One fixed transport header is safe; arbitrary quoted fixture/prose blocks
+  // and multiple JSON envelopes cannot establish single-call ownership.
+  if (
+    prose.length &&
+    !/^Script completed\n(?:Wall time [0-9]+(?:\.[0-9]+)? seconds\n)?Output:$/u.test(
+      prose.join('\n'),
+    )
+  )
+    return undefined;
   if (results.length !== 1) return undefined;
   const result = results[0];
   const output = asString(result['output']);

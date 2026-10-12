@@ -294,7 +294,7 @@ describe('delayed Codex code-mode → retained session → spend (#2461)', () =>
       const rows = structuredClone(delayedRows);
       const publication = 'https://github.com/jlapenna/agent-lcars/pull/2460';
       const poll = rows[5].payload;
-      poll.output[0].text = JSON.stringify({
+      poll.output[poll.output.length - 1].text = JSON.stringify({
         exit_code: outcome === 'failed' ? 1 : 0,
         output:
           outcome === 'foreign'

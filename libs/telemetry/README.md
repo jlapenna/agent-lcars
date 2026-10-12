@@ -85,8 +85,8 @@ including the observed prefix of up to two `git config user.name/email` or
 with Acorn without executing source. Dynamic arguments, extra orchestration
 statements and arbitrary compound shell output remain unqualified.
 
-One JSON exec envelope (optionally inside one `input_text` block) owns its
-result. A running exec's session ID can be continued only by a correlated
+One JSON exec envelope owns its result, including the observed transport
+header and envelope split across separate `input_text` blocks. A running exec's session ID can be continued only by a correlated
 literal `text(await tools.write_stdin({session_id: ..., chars: ""}))` poll.
 Call IDs are single-use; overlapping polls, reused exec session IDs, failed
 results and ambiguous aggregate output cannot qualify a publication. Intervening

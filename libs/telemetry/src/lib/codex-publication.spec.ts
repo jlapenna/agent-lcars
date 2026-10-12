@@ -138,7 +138,7 @@ describe('Codex code-mode publication ownership (#2461)', () => {
       ).toEqual(unqualifiedExpected);
     },
   );
-  it('rejects aggregate envelopes and multi-block outputs', () => {
+  it('rejects multiple envelopes across blocks or lines', () => {
     const result = output('poll', { exit_code: 0, output: url });
     result.payload.output.push({
       type: 'input_text',
@@ -156,6 +156,16 @@ describe('Codex code-mode publication ownership (#2461)', () => {
           JSON.stringify({ exit_code: 0, output: unrelated }),
       },
     ];
+    expect(unqualified([...fixture.slice(0, 5), result])).toEqual(
+      unqualifiedExpected,
+    );
+  });
+  it('rejects arbitrary fixture text outside the single stdout envelope', () => {
+    const result = output('poll', { exit_code: 0, output: url });
+    result.payload.output.unshift({
+      type: 'input_text',
+      text: `fixture: ${unrelated}`,
+    });
     expect(unqualified([...fixture.slice(0, 5), result])).toEqual(
       unqualifiedExpected,
     );
