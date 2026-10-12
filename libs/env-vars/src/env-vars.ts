@@ -48,13 +48,6 @@ export interface EnvVars {
   AGENT_LCARS_WORK_AUDIENCE?: string;
   /** JSON grant list: [{ principal, subjects[], pipelines[], scopes[] }]. */
   AGENT_LCARS_WORK_GRANTS?: string;
-  /** `'1'` serves the hook telemetry ingest route
-   *  (`/api/telemetry/v1/sessions/{id}/events`); anything else is a 404.
-   *  docs/hooks-telemetry-design.md §6, phase 0. */
-  AGENT_LCARS_TELEMETRY_INGEST?: string;
-  /** JSON list of per-host bearer token hashes for that route:
-   *  [{ host, tokenSha256 }]. The raw token lives only on its host. */
-  AGENT_LCARS_TELEMETRY_HOST_TOKENS?: string;
   /** This console deployment's own public base URL, embedded in a native
    *  work item's `brief.anchor.html_url` for a direct-mode agent to read
    *  back (`runs-router.ts`'s `brief` handler), and the default `--origin`

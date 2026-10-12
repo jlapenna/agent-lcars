@@ -13,12 +13,7 @@ import {
 } from 'firebase-admin/firestore';
 
 import { parseSessionDoc } from '../lib/session-doc';
-import {
-  SessionDoc,
-  SessionObserver,
-  SessionSource,
-  SessionWrite,
-} from '../lib/types';
+import { SessionDoc, SessionSource, SessionWrite } from '../lib/types';
 import { AGENT_TELEMETRY_DATABASE_ID } from './firestore-client';
 
 export const SESSIONS_COLLECTION = 'sessions';
@@ -87,69 +82,24 @@ export function getAgentTelemetryWriterFirestore(): AdminFirestore {
  * arguments — see that type's doc comment in `types.ts` for why a caller
  * cannot describe a write this value doesn't already carry.
  */
-function sessionWritePayload(write: SessionWrite): Record<string, unknown> {
-  const { doc, clearFields } = write;
-  return {
-    ...doc,
-    ...(doc.expireAt && {
-      expireAt: AdminTimestamp.fromDate(new Date(doc.expireAt)),
-    }),
-    ...Object.fromEntries(
-      clearFields.map((field) => [field, AdminFieldValue.delete()]),
-    ),
-  };
-}
-
 export async function upsertSession(write: SessionWrite): Promise<void> {
+  const { doc, clearFields } = write;
   const firestore = getAgentTelemetryWriterFirestore();
   await firestore
     .collection(SESSIONS_COLLECTION)
-    .doc(write.doc.sessionId)
-    .set(sessionWritePayload(write), { merge: true });
-}
-
-/**
- * Whether a hook-sourced write may replace what is stored: refused only when
- * the stored doc was last written by a hook on the same host at the same or
- * a later per-session `seq` (docs/hooks-telemetry-design.md §4.4). A write
- * without hook provenance, or a doc a different writer last touched, always
- * applies.
- */
-export function isNewerHookWrite(
-  stored: unknown,
-  observer: SessionObserver | undefined,
-): boolean {
-  if (!observer) return true;
-  if (typeof stored !== 'object' || stored === null) return true;
-  const record = stored as Record<string, unknown>;
-  return !(
-    record['kind'] === 'hook' &&
-    record['host'] === observer.host &&
-    typeof record['seq'] === 'number' &&
-    record['seq'] >= observer.seq
-  );
-}
-
-/**
- * `upsertSession` with the ordering check inside one transaction, so two
- * overlapping events for a session can never apply out of order: the
- * stored `observer` is re-read under the transaction and a stale write is
- * skipped. Returns whether the write was applied.
- */
-export async function upsertSessionIfNewer(
-  write: SessionWrite,
-  firestore: AdminFirestore = getAgentTelemetryWriterFirestore(),
-): Promise<boolean> {
-  const ref = firestore
-    .collection(SESSIONS_COLLECTION)
-    .doc(write.doc.sessionId);
-  return firestore.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(ref);
-    const stored = snapshot.exists ? snapshot.data()?.['observer'] : undefined;
-    if (!isNewerHookWrite(stored, write.doc.observer)) return false;
-    transaction.set(ref, sessionWritePayload(write), { merge: true });
-    return true;
-  });
+    .doc(doc.sessionId)
+    .set(
+      {
+        ...doc,
+        ...(doc.expireAt && {
+          expireAt: AdminTimestamp.fromDate(new Date(doc.expireAt)),
+        }),
+        ...Object.fromEntries(
+          clearFields.map((field) => [field, AdminFieldValue.delete()]),
+        ),
+      },
+      { merge: true },
+    );
 }
 
 /**

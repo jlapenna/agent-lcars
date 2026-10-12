@@ -8,7 +8,6 @@ import {
 } from './deployment';
 import { createDispatchTokenProvider } from './github-app-tokens';
 import { validateOutcomeWebhooks } from './outcome-webhook';
-import { parseTelemetryHostTokens } from './telemetry-host-tokens';
 import { parseWorkGrants } from './work-grants';
 
 /**
@@ -26,7 +25,6 @@ export function validateStartupConfiguration(): void {
   // Also parses AGENT_LCARS_WATCHED_REPOS and requires the two to match.
   controlPlaneRepositories();
   parseWorkGrants(process.env['AGENT_LCARS_WORK_GRANTS']);
-  parseTelemetryHostTokens(process.env['AGENT_LCARS_TELEMETRY_HOST_TOKENS']);
   validateOutcomeWebhooks();
 
   for (const name of [

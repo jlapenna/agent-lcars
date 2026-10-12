@@ -8,6 +8,24 @@ in production yet. Owner: telemetry. Supersedes nothing yet; the host watcher
 daemon (`apps/telemetry-watcher`, issue #2540) keeps running until phase 3
 below.
 
+## Revision 2026-10-12: hosts write directly
+
+Phase 0 shipped a console ingest route (`/api/telemetry/v1/`) authenticated
+by per-host tokens. Enabling it needed the console's App Hosting account to
+gain write access to the telemetry database, which it holds read-only by
+design, and impersonating `telemetry-writer` from the console would have
+granted the same capability. The route was removed before it was ever
+enabled. Instead `lcars hook flush` writes each spooled event itself as the
+`telemetry-writer` service account (the identity the watcher daemon and
+runner sidecars already use), inside a Firestore transaction that re-reads
+the stored doc and refuses an event whose `seq` is not newer than the stored
+hook observer from the same host. Each enrolled host holds the writer key
+at `~/.config/agent-lcars/writer-key.json`, delivered by homegit; this gives
+up the original "no Firestore credential on workstations" goal in exchange
+for leaving the console's permissions untouched. Sections below that
+describe the ingest route, host tokens, or the `telemetry.writer` scope are
+superseded by this paragraph.
+
 ## 1. Problem
 
 Every session LCARS shows today is observed from the outside by a
@@ -527,25 +545,6 @@ shared module bundled into both artifacts.
 
 Each phase is reversible by removing the hook entries; the daemon keeps
 writing untouched docs until phase 3.
-
-### 6.1 Enablement prerequisite: console write access
-
-The console's App Hosting service account holds only `roles/datastore.viewer`
-on the telemetry database (`infra/terraform/main.tf`,
-`apphosting_firestore`), by explicit design: "the console reads telemetry
-only". The ingest route writes through that account, so phase 0 cannot be
-switched on until a maintainer approves and applies one of:
-
-- Widen `apphosting_firestore` to `roles/datastore.user` on the telemetry
-  database (smallest change; reverses the read-only boundary).
-- Grant the App Hosting account `roles/iam.serviceAccountTokenCreator` on
-  `telemetry-writer` and have the route impersonate it (keeps the console's
-  own identity read-only; one more hop per write).
-
-Until then `AGENT_LCARS_TELEMETRY_INGEST` stays unset, the route is a 404,
-and enrolled hosts' flushers keep their events (404 is retryable) inside the
-5 MB spool cap. Host token hashes are already configured, so enabling is
-the IAM change plus setting that one variable.
 
 ## 7. Operations after phase 3
 

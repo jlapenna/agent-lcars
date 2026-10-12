@@ -43,17 +43,21 @@ import {
   shouldShipEvent,
   writeHookSessionState,
 } from './hook-state';
+import {
+  createHookEventWriter,
+  type HookEventWriter,
+  type HookWriterCredentials,
+} from './hook-store';
 import { matchesRepoAllowlist } from './repo-allowlist';
-import { shipSessionEvent } from './ship';
 import { appendToSpool, drainSpool, spoolPath } from './spool';
 
 /** Bumped when the event the client emits changes shape or semantics. */
-export const HOOK_CLIENT_VERSION = '0.2.0';
+export const HOOK_CLIENT_VERSION = '0.3.0';
 
 export const HOOK_CLI_USAGE =
   'usage: lcars hook claude [--inline]   (reads one Claude Code hook payload on stdin)\n' +
   '       lcars hook codex  [--inline]   (reads one Codex hook payload on stdin)\n' +
-  '       lcars hook flush               (posts spooled events to the console)\n' +
+  '       lcars hook flush               (writes spooled events to the telemetry store)\n' +
   '       Exits 0 and prints nothing on stdout in every case; decisions go to\n' +
   '       ~/.local/state/agent-lcars/hook.log.';
 
@@ -66,7 +70,7 @@ export type HookCommandAction =
   | 'spooled'
   | 'flushed'
   | 'flush-locked'
-  | 'flush-no-token';
+  | 'flush-no-credentials';
 
 export interface HookCommandResult {
   readonly action: HookCommandAction;
@@ -89,7 +93,8 @@ export interface HookCommandDependencies {
     cwd: string,
   ) => Promise<{ owner: string; name: string } | undefined>;
   resolveGitBranch: (cwd: string) => Promise<string | undefined>;
-  fetchImpl: typeof fetch;
+  /** Builds the Firestore writer for the configured credentials. */
+  createWriter: (credentials: HookWriterCredentials) => HookEventWriter;
   /** Starts `lcars hook flush` detached from the hook process. */
   spawnFlusher: () => void;
   randomId: () => string;
@@ -123,7 +128,7 @@ export function defaultHookCommandDependencies(
     findCodexRollout,
     resolveGitRepo: defaultResolveGitRepo,
     resolveGitBranch: defaultResolveGitBranch,
-    fetchImpl: globalThis.fetch,
+    createWriter: (credentials) => createHookEventWriter(credentials),
     spawnFlusher: () => {
       // process.argv[1] is the bundle (or the dev entry) that is running
       // this very command, so the flusher is always the same client version.
@@ -236,35 +241,38 @@ async function flush(
   config: HookClientConfig,
 ): Promise<HookCommandResult> {
   const stateDirectory = stateDirectoryFor(deps);
-  if (!config.token) {
-    appendHookLog(stateDirectory, `${deps.now().toISOString()} flush no-token`);
-    return { action: 'flush-no-token' };
+  if (!config.writer) {
+    appendHookLog(
+      stateDirectory,
+      `${deps.now().toISOString()} flush no-credentials`,
+    );
+    return { action: 'flush-no-credentials' };
   }
-  const token = config.token;
+  const writer = deps.createWriter(config.writer);
   const result = await drainSpool(spoolPath(stateDirectory), async (event) => {
     const sessionEvent = event as SessionEventV1;
-    const shipped = await shipSessionEvent(sessionEvent, {
-      origin: config.origin,
-      token,
-      fetchImpl: deps.fetchImpl,
-    });
-    if (shipped.outcome === 'sent') {
-      try {
-        markHookSessionDelivered(
-          stateDirectory,
-          sessionEvent.sessionId,
-          deps.now().toISOString(),
-        );
-      } catch {
-        // State is advisory for the daemon; delivery already happened.
-      }
-    } else {
+    let outcome: Awaited<ReturnType<HookEventWriter['apply']>>;
+    try {
+      outcome = await writer.apply(sessionEvent, deps.now().toISOString());
+    } catch (error) {
+      // Network, auth, or contention: keep the event for the next flusher.
       appendHookLog(
         stateDirectory,
-        `${deps.now().toISOString()} flush ${shipped.outcome} status=${shipped.status ?? 'network'}`,
+        `${deps.now().toISOString()} flush retry ${(error as Error).name ?? 'error'}`,
       );
+      return 'retry';
     }
-    return shipped.outcome;
+    if (outcome === 'invalid') return 'drop';
+    try {
+      markHookSessionDelivered(
+        stateDirectory,
+        sessionEvent.sessionId,
+        deps.now().toISOString(),
+      );
+    } catch {
+      // State is advisory for the daemon; the write already happened.
+    }
+    return 'sent';
   });
   const detail = `sent=${result.sent} dropped=${result.dropped} remaining=${result.remaining}`;
   appendHookLog(

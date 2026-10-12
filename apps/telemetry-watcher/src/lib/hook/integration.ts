@@ -158,6 +158,9 @@ function writeAtomically(target: string, body: string, mode: number): void {
   const temporaryPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
     fs.writeFileSync(temporaryPath, body, { mode });
+    // The process umask would otherwise narrow `mode` (and drift a file
+    // another tool manages); set it exactly.
+    fs.chmodSync(temporaryPath, mode);
     fs.renameSync(temporaryPath, filePath);
   } catch (error) {
     try {

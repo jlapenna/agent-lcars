@@ -96,6 +96,21 @@ describe('lcars integration', () => {
     expect(hooks['SessionEnd'][0].hooks[0]).toMatchObject({ timeout: 5 });
   });
 
+  it('keeps an existing settings mode regardless of the process umask', () => {
+    const home = tempHome();
+    const settingsPath = path.join(home, '.claude/settings.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, '{}');
+    fs.chmodSync(settingsPath, 0o664);
+    const previous = process.umask(0o077);
+    try {
+      installIntegration('claude', home);
+    } finally {
+      process.umask(previous);
+    }
+    expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o664);
+  });
+
   it('is idempotent and uninstall removes exactly what install added', () => {
     const home = tempHome();
     installIntegration('codex', home);
