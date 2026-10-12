@@ -86,3 +86,43 @@ mutation is activated by this measurement tool. Keep FE-NF-7 unqualified until
 the actual target and production acceptance have evidence; preserve dated
 baseline/after observations in the issue and PR rather than treating them as
 live policy.
+
+## Cold-path diagnosis
+
+Schema 2 retains the same journey and adds navigation-relative resource start,
+response-start and response-end timestamps, DOM/load events, document-load
+observation, click request, captured primary click and confirmation observation
+(`readyMs`). Compare the document response, the last required script transfer,
+load event, click dispatch and visible confirmation before selecting an owner.
+Observation checkpoints include Playwright scheduling and are upper bounds.
+The click event proves dispatch; it does not identify the exact hydration instant.
+
+Long-task entries cover tasks of at least 50 ms from navigation to confirmation,
+with a 200-entry cap. CDP task/script/compile/layout/style/DevTools collection starts after the untimed
+warmup. Schema 3 reports the timed renderer's current counters in milliseconds,
+including **Cancel cleanup** through the final metrics read. A renderer-agent
+restoration can reset counters during navigation; they are not cross-renderer
+totals, and subtracting an older document's warmup counters produces invalid
+negative durations. Preserve this scope when comparing artifacts. They use the
+explicit CDP `timeTicks` wall-time domain, not CPU
+utilization or a hydration profile. Script/layout/style durations are subsets
+of task duration. Tasks can overlap resource transfers: do not add them to a
+waterfall or subtract their sum from total readiness to invent a causal split.
+A gap between click request and dispatch can include hydration, Playwright
+visibility/stability checks and scheduling; inspect a browser trace when further
+attribution is needed. Start/end system load averages and free-memory observations accompany CPU model
+and browser version. They are contention diagnostics, not host-capacity proof
+or a guarantee of an uncontended run. The instrumentation itself adds observation overhead;
+compare before/after with the same probe revision.
+
+The selected console E2E suite also executes `inbox-phone-lab.spec.ts` with 30
+interleaved samples per case and no retries, retaining `inbox-phone-lab.json`
+in its normal diagnostics artifact (14-day CI retention). This gives the
+maintainer an owned controlled-CI timing signal and exercises the probe against
+an actual hermetic production bundle. E2E fails on a broken probe or journey;
+it does not fail solely because `targetMet` is false. Runner/browser changes and
+contention mean CI artifacts are a separate lab series from earlier host runs.
+Compare exact revisions on the same runner/profile before claiming improvement.
+Download and preserve the raw artifact before retention expires when using it
+as acceptance evidence. The test has a 16-minute bound around the probe's
+15-minute deadline; the existing serial CI job retains its 30-minute bound.
