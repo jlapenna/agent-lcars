@@ -6,6 +6,7 @@ import { resolvePrincipal, type WorkGrant } from './work-grants';
 
 export type WorkScope =
   | 'work.operator'
+  | 'work.reader'
   | 'work.executor'
   | 'work.cron'
   | 'work.reaper'

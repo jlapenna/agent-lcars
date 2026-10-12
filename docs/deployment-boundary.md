@@ -101,10 +101,10 @@ regardless of how it authenticated. A GitHub Actions caller's signed
 repository maps generically to `github-actions:<owner/repo>`; it is neither a
 Sprinkles-specific branch nor a provider-routing selector.
 
-| Value                    | Env var                     | This deployment                                                                                                                           |
-| ------------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                        |
+| Value                    | Env var                     | This deployment                                                                                                                                                            |
+| ------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, `svc:telemetry-writer` executor/scheduler, and the read-only `svc:work-reader`: `claude`, `codex`, `opencode` |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                                                         |
 
 Authorized native Work creation, redispatch, replies, and due schedule slots
 enter the durable queue even when the fleet is full. QueueExecutor reserves
@@ -152,6 +152,13 @@ its provider canaries cannot fail at API admission. The telemetry-writer
 identity remains a provider-neutral executor and scheduler, distinct from an
 operator. Its executor grant and the direct runner's claim support cover every
 admitted provider; its cron scope only permits the server-owned schedule tick.
+
+`svc:work-reader` (`work-reader@agent-lcars.iam.gserviceaccount.com`) is the
+interactive-session identity for the issue-owner query (#2502). Its grant
+declares only `work.reader`, which `GET /anchors/github/owner` accepts and
+every other `/items` and `/schedules` operation refuses. Only the maintainer's
+Google account may impersonate it; see
+[fleet credentials](fleet-credentials.md#work-reader-interactive-work-owner-query).
 
 #### Queue executor routing
 

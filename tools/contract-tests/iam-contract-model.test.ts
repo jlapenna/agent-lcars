@@ -52,6 +52,12 @@ type Model = {
     secret: string;
     bindings: Record<string, string[]>;
   }[];
+  serviceAccountIamPolicies?: {
+    project: string;
+    serviceAccount: string;
+    rationale: string;
+    bindings: Record<string, string[]>;
+  }[];
 };
 
 const model = JSON.parse(fs.readFileSync(modelPath, 'utf8')) as Model;
@@ -130,5 +136,40 @@ describe('IAM contract model', () => {
         expect(entry.reason).not.toHaveLength(0);
       }
     }
+  });
+
+  it("pins the work-reader's impersonation set to the binding Terraform declares", () => {
+    // The model names who may mint the read-only Work identity's tokens; the
+    // Terraform resource is what makes it true. A second member added to
+    // either side alone is the widening this guards against (#2502).
+    const main = fs.readFileSync(
+      path.join(repoRoot, 'infra/terraform/main.tf'),
+      'utf8',
+    );
+    const block = main.match(
+      /resource "google_service_account_iam_member" "work_reader_token_creator" \{(.*?)\n\}/s,
+    );
+    if (!block) throw new Error('no work_reader_token_creator resource');
+    const attribute = (name: string): string | undefined =>
+      block[1].match(new RegExp(`\\b${name}\\s*=\\s*"([^"]+)"`))?.[1];
+    const accountId = main.match(
+      /resource "google_service_account" "work_reader" \{[^}]*?account_id\s*=\s*"([^"]+)"/s,
+    )?.[1];
+
+    const policies = (model.serviceAccountIamPolicies ?? []).filter((entry) =>
+      entry.serviceAccount.startsWith('work-reader@'),
+    );
+    expect(policies).toEqual([
+      {
+        project: 'agent-lcars',
+        serviceAccount: `${accountId}@agent-lcars.iam.gserviceaccount.com`,
+        rationale: expect.stringMatching(/\S/),
+        bindings: { [attribute('role') ?? '']: [attribute('member')] },
+      },
+    ]);
+    // Nothing else in Terraform grants on this account.
+    expect(
+      main.match(/google_service_account\.work_reader\.(name|email)/g) ?? [],
+    ).toEqual(['google_service_account.work_reader.name']);
   });
 });

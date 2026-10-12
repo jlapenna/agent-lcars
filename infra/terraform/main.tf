@@ -525,6 +525,30 @@ resource "google_service_account_iam_member" "codex_agent_impersonation" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
+# Read-only Work API identity for interactive maintainer sessions (#2502).
+# It holds no project role and no resource grant: its only use is minting a
+# Google ID token whose email the Console resolves to the `svc:work-reader`
+# Work grant, which carries `work.reader` alone -- the issue-owner query and
+# nothing that lists, reads items, or mutates. codex_agent above carries
+# `work.operator`; letting interactive hosts impersonate that would hand every
+# session create/cancel/redispatch authority.
+resource "google_service_account" "work_reader" {
+  account_id   = "work-reader"
+  display_name = "Agent LCARS read-only Work API caller"
+}
+
+# The maintainer's own Google account (what interactive hosts sign in as) may
+# impersonate the reader and nothing else. serviceAccountTokenCreator rather
+# than serviceAccountOpenIdTokenCreator: `gcloud auth print-identity-token
+# --impersonate-service-account`, which the Work CLI shells out to, first
+# refreshes impersonated access-token credentials before asking for the ID
+# token. The access token is inert because the account holds no role.
+resource "google_service_account_iam_member" "work_reader_token_creator" {
+  service_account_id = google_service_account.work_reader.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "user:jlapenna@gmail.com"
+}
+
 resource "google_service_account" "homelab_codex_agent" {
   account_id   = "homelab-codex-agent"
   display_name = "Homelab Codex issue agent"

@@ -35,6 +35,28 @@ not counters or proof that a provider started. Exact clocks, unknown facts
 and the unapplied Homelab monitoring handoff live in
 [`product-lifecycle-metrics.md`](../../docs/product-lifecycle-metrics.md).
 
+## Issue-owner query
+
+`GET /api/work/v1/anchors/github/owner?repo=&issue=` reports who Console says
+is working a GitHub issue or pull request: the anchor's orchestrator task and
+runs, plus recent CLI session telemetry. It is read-only and records no
+claim; Console remains the claim source of truth. It accepts `work.operator`
+or `work.reader` and answers only for control-plane repositories.
+
+Interactive Claude and Codex sessions call it before starting work, through
+the read-only `work-reader` identity:
+
+```bash
+export LCARS_SERVICE_ACCOUNT=work-reader@agent-lcars.iam.gserviceaccount.com
+lcars work owner jlapenna/agent-lcars#2502
+lcars work owner jlapenna/agent-lcars#2502 --json
+```
+
+Its grant carries `work.reader` alone, so the same identity is refused by
+every other operation, including `work list` and `work status`. Only the
+maintainer's Google account may impersonate it; see
+[fleet credentials](../../docs/fleet-credentials.md#work-reader-interactive-work-owner-query).
+
 ## Replying from the CLI
 
 ```bash

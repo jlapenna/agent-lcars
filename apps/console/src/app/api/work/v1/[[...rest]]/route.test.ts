@@ -3,6 +3,9 @@ import {
   MemoryStore,
   Orchestrator,
 } from '@agent-lcars/orchestrator';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -175,4 +178,92 @@ describe('GET /api/work/v1/runs/capacity/metrics', () => {
     expect(response.status).toBe(401);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
+});
+
+describe('a work.reader-only principal (#2502)', () => {
+  const readerPrincipal = {
+    principal: 'svc:work-reader',
+    subject: 'work-reader@agent-lcars.iam.gserviceaccount.com',
+    scopes: new Set(['work.reader'] as const),
+    pipelines: ['claude', 'codex', 'opencode'],
+    via: 'google' as const,
+  };
+  /** The owner query is the one operation `work.reader` exists for. */
+  const readerOperations = new Set(['getGithubAnchorOwner']);
+  /** Well-formed bodies for the operations that validate input before they
+   *  authorize, so the refusal below is authorization, not a 400. */
+  const validBodies: Record<string, unknown> = {
+    changeCapacity: { action: 'register', producerId: 'producer-1' },
+    activateWorker: {
+      fence: {
+        poolId: 'pool-a',
+        slot: 0,
+        revision: 1,
+        runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+        nonce: '0123456789abcdef',
+      },
+      jobUid: 'job-1',
+    },
+    completeRun: { outcome: { ok: true, summary: 'done' } },
+    persistRunCodexAuth: {
+      generation: '1',
+      restoredSha256: '0'.repeat(64),
+      authBase64: 'e30=',
+    },
+  };
+  const operations = Object.entries(
+    (
+      JSON.parse(
+        readFileSync(
+          path.join(
+            import.meta.dirname,
+            '../../../../../../../../docs/api/work-v1.openapi.json',
+          ),
+          'utf8',
+        ),
+      ) as {
+        paths: Record<string, Record<string, { operationId: string }>>;
+      }
+    ).paths,
+  ).flatMap(([template, methods]) =>
+    Object.entries(methods).map(([method, operation]) => ({
+      method: method.toUpperCase(),
+      operationId: operation.operationId,
+      path: template
+        .replace('{id}', '01J5Z3K9QX8F0N2B4V6C8D1E3G')
+        .replace(
+          '{runId}',
+          encodeURIComponent('work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1'),
+        ),
+    })),
+  );
+
+  it('enumerates every published Work operation', () => {
+    expect(operations.length).toBeGreaterThan(30);
+  });
+
+  it.each(operations.filter((op) => !readerOperations.has(op.operationId)))(
+    'is refused by $operationId ($method $path) before anything is read or written',
+    async ({ method, operationId, path: operationPath }) => {
+      authenticateWorkRequest.mockResolvedValue(readerPrincipal);
+      const read = vi.spyOn(orchestratorStore, 'readTask');
+      const request = vi.spyOn(orchestrator, 'request');
+      const response = await GET(
+        new Request(`https://lcars.test/api/work/v1${operationPath}`, {
+          method,
+          ...(method === 'GET' || method === 'DELETE'
+            ? {}
+            : {
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(validBodies[operationId] ?? {}),
+              }),
+        }),
+      );
+      expect([401, 403]).toContain(response.status);
+      expect(read).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+      read.mockRestore();
+      request.mockRestore();
+    },
+  );
 });
