@@ -267,6 +267,50 @@ connected-Firestore fixture tracked under
 evidence for those UI waits, not an overall green claim; the 100m receipt above
 stays as recorded and was not rerun.
 
+### Return the admission verdict a launch gates on
+
+A composed verification command's aggregate exit status is not an admission
+verdict: whichever command runs last carries it. Recorded case: one shell ran
+the envelope assertion and then a read-only occupancy probe. The assertion
+refused the actual envelope — planned 2 CPU / 2 Gi over 9.1 CPU / 22656 Mi of
+native demand against 23833168 Ki of post-reserve memory, after a new 2 Gi
+control worker arrived — and exited nonzero, while the trailing probe exited 0
+and became the shell's result. The caller read that aggregate zero as approval
+and launched its own normal publication and setup phase from an earlier accepted
+snapshot: unit `lcars-root-inbox-publication-01a11f2d` (invocation
+`4233bb705590459fb47d5d9c7aa5e51d`) ran 19.103 s wall with 18.591 CPU seconds
+and 371.6 MiB/no swap before SIGTERM during dependency setup, and systemd
+reported the requested stop as successful
+([#2511](https://github.com/jlapenna/agent-lcars/issues/2511)).
+
+Capture the admission's numeric result before anything else runs, and return
+that captured value as the composition's own explicit exit. Emit it in
+machine-readable form as well (`admission-exit=<n>`), then have the consumer
+start its owned workload only on the affirmative current result it received in
+that same run: a returned refusal propagates unchanged, and an aggregate status
+that returned no result at all is held under its own explicit nonzero exit —
+never treated as success and never collapsed into the workload's code. A
+read-only observation (probe, sample, status or capacity report) is never
+approval; it may run after the admission, but it cannot overwrite or stand in
+for the verdict. Ordering alone is not the contract either: a refusal that
+reaches the aggregate only because it happened to run last still authorizes
+nothing until the consumer receives it.
+
+A prior accepted receipt qualifies the rows it measured, not this launch. When
+current rows refuse, the current launch is refused even with an accepted receipt
+on disk: do not consult it to recover approval, rewrite it, or rerun the
+completed operation to erase it. Keep hooks, native workers, isolation and
+resource accounting exactly as qualified, and keep the contract in the owning
+composition and its own consumer — do not add a generic wrapper, a shared helper
+lane, or a policy-literal test that only re-reads this section.
+[`tools/contract-tests/refused-admission-fails-closed.test.ts`](../../../../tools/contract-tests/refused-admission-fails-closed.test.ts)
+drives the real composition and its consumer over the recorded rows for an
+accepted envelope, a refusal masked by a trailing read-only probe, a propagated
+refusal, probe-first ordering, and a refusal against an earlier accepted
+receipt, asserting the numeric exit, the gate report, whether the owned setup
+witness exists, the read-only observation, and that the rows and receipt are
+unchanged.
+
 ## Frozen Console test reviews
 
 Use a separate, normally installed Git worktree at the exact reviewed commit
