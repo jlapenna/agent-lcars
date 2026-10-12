@@ -211,6 +211,62 @@ covers those cases through a real transient user unit where a manager is
 reachable, and through a child environment with no inherited PATH everywhere
 else.
 
+### Qualify the workload shape a CPU bound covers
+
+A CPU bound qualified for one workload shape does not qualify a different one.
+A sub-core ceiling is adequate for phases whose work is throughput work —
+formatting, lint, typecheck, syntax and static-hook checks — whose duration is
+CPU spread over any wall-clock window. It cannot qualify a phase whose
+assertions wait on wall-clock deadlines: an asynchronous DOM wait, a lazy
+dynamic import, or a component exit transition must make progress inside that
+wait's own timeout, and a throttled event loop spends the deadline in
+runnable-but-not-scheduled time. Recorded case: phase
+`lcars-root-priority-2189-verify-publish-01a11f2d` (invocation
+`2fdcca9e911542e59cb64db2ee98fe41`) was supervised at `CPUQuota=10%` (100m),
+exited 1 after 325.509 s wall with 32.156 CPU seconds and 630.1 MiB/no swap,
+and reported 78 orchestrator, 36 Work and 175 Console cases passing, 45
+connected-Firestore cases skipped, and 3 failures in
+[`apps/console/src/app/quick-task-button.test.tsx`](../../../../apps/console/src/app/quick-task-button.test.tsx):
+two saw the lazily loaded trigger still `aria-busy` with no dialog at the wait
+deadline and one retained the closed modal inside its 200 ms exit transition.
+Source, assertions and timeouts were unchanged
+([#2529](https://github.com/jlapenna/agent-lcars/issues/2529)).
+
+Classify each selected local phase by shape before recording its CPU bound, and
+qualify deadline-sensitive DOM diagnostics as their own shape:
+
+- A phase inherits the most demanding shape it contains, not the least. Either
+  size and run the DOM diagnostics in an envelope measured for that shape, or
+  do not run those specs locally at all and delegate the owning UI behavior to
+  the unchanged required `Verify`/`E2E` checks, which execute the same files on
+  the supported CI pool. Do not resize the selected CI pool, fleet or host
+  controls, and do not add a local lane, to make a delegated result exist.
+- Qualifying a shape by measurement means a supported run of that same workload
+  under the candidate bound. The absence of any other failure mode, a low
+  absolute CPU count, or a shape that passed a static phase is not evidence the
+  bound covers real-time waits.
+- Keep timing/resource evidence separate from a demonstrated source defect. A
+  deadline-sensitive wait that expires under a bound never qualified for its
+  shape is unattributed: preserve the numeric exit, the resource receipt and the
+  zero-commit/zero-push state that followed, and do not rerun the same
+  unqualified envelope to turn it green, raise a timeout, disable a transition,
+  mock away lazy loading or relax an assertion.
+- Close causation only on the actual exact-head supported-runner result for the
+  same source and assertions, recorded where the failure was. Record the run and
+  job identifiers, the executed file, case count and duration, and what that run
+  did not prove; a partial failure tracked elsewhere stays open under its own
+  anchor. Until that result exists, both the throttling and the defect
+  hypotheses stay open and neither may be reported as the conclusion.
+
+The recorded case closed on supported-runner CI run `38218317094` (Full
+verification job `114708282485`), which executed that file at the priority head
+with source, assertions and timeouts unchanged: 8/8 cases passed in 6999 ms and
+the required browser lane passed. The same full run separately failed the
+connected-Firestore fixture tracked under
+[#2536](https://github.com/jlapenna/agent-lcars/issues/2536), so it is exact-file
+evidence for those UI waits, not an overall green claim; the 100m receipt above
+stays as recorded and was not rerun.
+
 ## Frozen Console test reviews
 
 Use a separate, normally installed Git worktree at the exact reviewed commit
