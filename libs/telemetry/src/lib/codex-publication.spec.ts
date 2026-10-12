@@ -207,6 +207,125 @@ describe('Codex code-mode publication ownership (#2461)', () => {
       ]),
     ).toEqual(unqualifiedExpected);
   });
+  it.each(['pending', 'polling'] as const)(
+    'invalidates ownership after intervening stdin while %s',
+    (phase) => {
+      const before =
+        phase === 'pending' ? fixture.slice(0, 4) : fixture.slice(0, 5);
+      const after =
+        phase === 'pending' ? fixture.slice(4, 6) : fixture.slice(5, 6);
+      expect(
+        unqualified([
+          ...before,
+          call('inject', 'write_stdin', {
+            session_id: 4508,
+            chars: 'echo spoof\n',
+          }),
+          ...after,
+        ]),
+      ).toEqual(unqualifiedExpected);
+    },
+  );
+  it.each(['pending', 'polling'] as const)(
+    'invalidates ownership after unsupported orchestration while %s',
+    (phase) => {
+      const unsafe = call('unsafe', 'exec_command', {});
+      unsafe.payload.input =
+        'await tools.write_stdin({session_id:4508, chars:"spoof"}); text("done");';
+      const before =
+        phase === 'pending' ? fixture.slice(0, 4) : fixture.slice(0, 5);
+      const after =
+        phase === 'pending' ? fixture.slice(4, 6) : fixture.slice(5, 6);
+      expect(unqualified([...before, unsafe, ...after])).toEqual(
+        unqualifiedExpected,
+      );
+    },
+  );
+  it('invalidates code-mode ownership after an intervening direct stdin call', () => {
+    expect(
+      unqualified([
+        ...fixture.slice(0, 4),
+        {
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            call_id: 'direct',
+            name: 'write_stdin',
+            arguments: JSON.stringify({ session_id: 4508, chars: 'spoof' }),
+          },
+        },
+        ...fixture.slice(4, 6),
+      ]),
+    ).toEqual(unqualifiedExpected);
+  });
+  it('rejects immediate terminal session IDs and invalidates their previous owners', () => {
+    expect(
+      unqualified([
+        ...fixture.slice(0, 4),
+        call('collision', 'exec_command', { cmd: 'gh pr create' }),
+        output('collision', { session_id: 4508, exit_code: 0, output: url }),
+        ...fixture.slice(4, 6),
+      ]),
+    ).toEqual(unqualifiedExpected);
+    expect(
+      unqualified([
+        ...fixture.slice(0, 2),
+        call('create', 'exec_command', { cmd: 'gh pr create' }),
+        output('create', { session_id: 123, exit_code: 0, output: url }),
+      ]),
+    ).toEqual(unqualifiedExpected);
+  });
+  it('invalidates a repeated call ID before its first result can be misattributed', () => {
+    expect(
+      unqualified([
+        ...fixture.slice(0, 2),
+        call('create', 'exec_command', { cmd: 'gh pr create' }),
+        call('create', 'exec_command', { cmd: 'gh pr view 2460' }),
+        output('create', { exit_code: 0, output: url }),
+      ]),
+    ).toEqual(unqualifiedExpected);
+  });
+  it.each([
+    'git config --get user.name && git config --get user.email && ',
+    'git var GIT_AUTHOR_IDENT; git var GIT_COMMITTER_IDENT; ',
+  ])('qualifies only literal identity-read prefixes: %s', (prefix) => {
+    const summary = reduce([
+      ...fixture.slice(0, 2),
+      call('create', 'exec_command', { cmd: prefix + 'gh pr create' }),
+      output('create', {
+        exit_code: 0,
+        output: 'Agent\nagent@example.invalid\n' + url,
+      }),
+    ]);
+    expect(summary.deliverables.qualifiedPRs).toEqual([
+      { repo: { owner: 'jlapenna', name: 'agent-lcars' }, number: 2460 },
+    ]);
+  });
+  it.each([0, 1])(
+    'decodes direct shell input_text envelopes without accepting failed exit %i',
+    (exit_code) => {
+      const summary = reduce([
+        ...fixture.slice(0, 2),
+        {
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'exec_command',
+            call_id: 'direct',
+            arguments: JSON.stringify({ cmd: 'gh pr create' }),
+          },
+        },
+        output('direct', { exit_code, output: url }),
+      ]);
+      expect(summary.deliverables.qualifiedPRs).toEqual(
+        exit_code === 0
+          ? [{ repo: { owner: 'jlapenna', name: 'agent-lcars' }, number: 2460 }]
+          : undefined,
+      );
+      expect(summary.deliverables.prNumbers).toContain(2460);
+      expect(summary.tokens.inputTokens).toBe(80);
+    },
+  );
   it('cannot revive consumed call IDs or bind malformed results to a later replay', () => {
     expect(
       unqualified([

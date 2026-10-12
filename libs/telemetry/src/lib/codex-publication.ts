@@ -148,25 +148,17 @@ export function codeModeResult(value: unknown): CodexExecResult | undefined {
  * reads cannot emit fixture URLs; arbitrary compound shell remains excluded. */
 export function codeModePublication(command: unknown): number | undefined {
   if (typeof command !== 'string') return undefined;
-  if (isPRPublicationCommand(command)) return 0;
-  const lines = command.trim().split('\n');
-  const creating = lines.pop();
-  if (
-    !creating ||
-    !isPRPublicationCommand(creating) ||
-    lines.length > 2 ||
-    !lines.length
-  )
-    return undefined;
-  if (
-    !lines.every((line) =>
-      /^git (?:config user\.(?:name|email)|var GIT_(?:AUTHOR|COMMITTER)_IDENT)$/u.test(
-        line.trim(),
-      ),
-    )
-  )
-    return undefined;
-  return lines.length;
+  let remainder = command.trim();
+  let identityReads = 0;
+  const identityPrefix =
+    /^[ \t]*git[ \t]+(?:config[ \t]+(?:--get[ \t]+)?user\.(?:name|email)|var[ \t]+GIT_(?:AUTHOR|COMMITTER)_IDENT)[ \t]*(?:&&|;|\n)[ \t\r\n]*/u;
+  while (identityReads < 2) {
+    const prefix = identityPrefix.exec(remainder);
+    if (!prefix) break;
+    remainder = remainder.slice(prefix[0].length);
+    identityReads++;
+  }
+  return isPRPublicationCommand(remainder) ? identityReads : undefined;
 }
 
 /** Only standalone gh's publication URL is financial evidence. Quoted URLs,

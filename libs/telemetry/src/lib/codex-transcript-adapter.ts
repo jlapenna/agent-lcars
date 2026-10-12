@@ -24,7 +24,21 @@ import {
  * orchestration can add prose plus one envelope per line. Decode only known
  * stdout envelopes; unrelated metadata does not become publication evidence. */
 function publicationOutput(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
+  const blocks = asArray(value);
+  if (blocks)
+    return blocks.map((raw) => {
+      const block = asRecord(raw);
+      return block &&
+        (block['type'] === 'input_text' || block['type'] === 'text')
+        ? publicationOutput(block['text'])
+        : [];
+    });
+  const envelope = asRecord(value);
+  if (envelope && 'output' in envelope)
+    return envelope['exit_code'] === undefined || envelope['exit_code'] === 0
+      ? envelope['output']
+      : [];
+  if (typeof value !== 'string') return [];
   const outputs: unknown[] = [];
   let recognized = false;
   for (const candidate of [value, ...value.split('\n')]) {
@@ -139,6 +153,16 @@ export const codexAdapter: TranscriptAdapter = {
     const pendingExecs = new Map<number, Publication>();
     const seenExecs = new Set<number>();
     const invalidExecs = new Set<number>();
+    const invalidateExec = (session: number) => {
+      pendingExecs.delete(session);
+      invalidExecs.add(session);
+      seenExecs.add(session);
+    };
+    const invalidatePendingExecs = () => {
+      for (const session of pendingExecs.keys()) invalidateExec(session);
+      for (const owned of codeCalls.values())
+        if (owned.sessionId !== undefined) invalidateExec(owned.sessionId);
+    };
     const commitShas = new Set<string>();
 
     for (const line of lines) {
@@ -237,7 +261,12 @@ export const codexAdapter: TranscriptAdapter = {
           const input = payload['arguments'] ?? payload['input'];
           const toolName = asString(payload['name']);
           // Call identities are single use, including non-creating calls.
-          if (seenCalls.has(callId)) continue;
+          if (seenCalls.has(callId)) {
+            creatingCalls.delete(callId);
+            codeCalls.delete(callId);
+            invalidatePendingExecs();
+            continue;
+          }
           seenCalls.add(callId);
           const invocation =
             toolName === 'exec' || toolName === 'functions.exec'
@@ -260,9 +289,34 @@ export const codexAdapter: TranscriptAdapter = {
               pendingExecs.delete(session);
               if (owned && !invalidExecs.has(session))
                 codeCalls.set(callId, owned);
-              else if (seenExecs.has(session)) invalidExecs.add(session);
+              else if (seenExecs.has(session)) invalidateExec(session);
+            } else if (typeof session === 'number') {
+              // Intervening stdin can change process behavior. No later empty
+              // poll may resurrect this publication's previous ownership.
+              invalidateExec(session);
             }
           } else {
+            if (toolName === 'exec' || toolName === 'functions.exec') {
+              // An unrecognized program could print or poll any pending exec.
+              // Without structured nested evidence, independence is unknown.
+              invalidatePendingExecs();
+            }
+            if (
+              toolName === 'write_stdin' ||
+              toolName === 'functions.write_stdin'
+            ) {
+              // Direct stdin calls are outside this code-mode grammar but can
+              // still mutate its owned process, so invalidate conservatively.
+              try {
+                const args = asRecord(
+                  typeof input === 'string' ? JSON.parse(input) : input,
+                );
+                const session = args?.['session_id'];
+                if (typeof session === 'number') invalidateExec(session);
+              } catch {
+                invalidatePendingExecs();
+              }
+            }
             const command = publicationCommand(input);
             if (
               toolName &&
@@ -299,6 +353,16 @@ export const codexAdapter: TranscriptAdapter = {
                   result.sessionId !== owned.sessionId)))
           )
             continue;
+          if (
+            owned.sessionId === undefined &&
+            result.sessionId !== undefined &&
+            (seenExecs.has(result.sessionId) || result.exitCode !== undefined)
+          ) {
+            // Fresh exec results cannot reuse a session or simultaneously claim
+            // a running session and terminal success.
+            invalidateExec(result.sessionId);
+            continue;
+          }
           if (result.exitCode !== undefined) {
             if (owned.sessionId !== undefined)
               pendingExecs.delete(owned.sessionId);
@@ -315,10 +379,7 @@ export const codexAdapter: TranscriptAdapter = {
             }
           } else if (result.sessionId !== undefined) {
             const session = result.sessionId;
-            if (owned.sessionId === undefined && seenExecs.has(session)) {
-              pendingExecs.delete(session);
-              invalidExecs.add(session);
-            } else if (!invalidExecs.has(session)) {
+            if (!invalidExecs.has(session)) {
               seenExecs.add(session);
               pendingExecs.set(session, { ...owned, sessionId: session });
             }
