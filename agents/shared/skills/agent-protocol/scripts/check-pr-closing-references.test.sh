@@ -1,151 +1,136 @@
 #!/usr/bin/env bash
-# Gate contract test for the published closing-scope publication sequence
-# (jlapenna/agent-lcars#2534).
-#
-# On #2324 publication an operator shell sequence joined the read-only
-# closing-reference checker and `gh pr ready` as separate statements without
-# errexit; the checker exited 1 on an unexpected closing reference and the
-# ready mutation ran anyway. These tests execute the ACTUAL published
-# checker (agents/shared/skills/agent-protocol/scripts/
-# check-pr-closing-references.mjs), in the exact `&&`-chained fail-fast form
-# shipped in the shared protocol §6 and this repo's PR workflow reference,
-# against a stubbed gh so no real pull request is read or toggled:
-#
-#   - intentionally wrong declared scope -> the checker rejects, and the
-#     harmless owned mutation and already-armed readback are NOT invoked;
-#   - valid declared scope -> the checker passes and BOTH witnesses run;
-#   - a changed head mid-publication -> the checker rejects and the witness
-#     and readback are NOT invoked.
+# Execute the published Ready/Arm procedures against the actual scope checker.
+# GitHub reads and mutations are owned fixtures; no real PR is accessed.
 set -euo pipefail
-
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-checker="$root/scripts/check-pr-closing-references.mjs"
+protocol_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$protocol_root/../../../.." && pwd)"
+export AGENT_PROTOCOL_PATH="$protocol_root/reference/agent-protocol.md"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
-
-head_sha=$(printf 'a%.0s' {1..40})
-readonly head_sha
-
-# Stub gh: answers the closing-reference GraphQL query with the JSON body in
-# $FAKE_RESPONSE and records that it ran. GitHub commands are stubbed; the
-# merge and view below are owned witnesses; no real PR is touched.
-fake_bin="$temp_dir/bin"
-mkdir -p "$fake_bin"
-cat > "$fake_bin/gh" <<'FAKE_GH'
+export pr_number=2324 reviewed_head
+reviewed_head=$(printf 'a%.0s' {1..40})
+export FAKE_RESPONSE="$temp_dir/response.json"
+export MUTATION_WITNESS="$temp_dir/mutation" READBACK_WITNESS="$temp_dir/readback"
+export FAKE_GH_CALLS="$temp_dir/read"
+mkdir "$temp_dir/bin"
+cat > "$temp_dir/bin/gh" <<'GH'
 #!/usr/bin/env bash
-printf '%s\n' stubbed > "$FAKE_GH_CALLS"
 case "$1 $2" in
   'api graphql')
-    if [[ "$*" == *enablePullRequestAutoMerge* ]]; then
-      printf ran > "$MUTATION_WITNESS"
-    else
+    if [[ "$*" != *enablePullRequestAutoMerge* ]]; then
+      printf read > "$FAKE_GH_CALLS"
       cat "$FAKE_RESPONSE"
-    fi
-    ;;
-  'pr merge') printf ran > "$MUTATION_WITNESS" ;;
+      exit
+    fi ;;
   'pr view')
-    printf ran > "$READBACK_WITNESS"
-    printf '%s\n' '{"state":"OPEN","autoMergeRequest":{"mergeMethod":"SQUASH"}}'
-    ;;
+    if [[ "$*" == *'--json id --jq .id'* ]]; then
+      printf '%s\n' OWNED_PR_NODE
+    else
+      [[ "$*" != *'--json state,'* ]] || printf ran > "$READBACK_WITNESS"
+      printf '%s\n' '{"id":"OWNED_PR_NODE","state":"OPEN","isDraft":false,"autoMergeRequest":{"mergeMethod":"SQUASH"}}'
+    fi
+    exit ;;
+  'pr ready') printf ran > "$MUTATION_WITNESS"; exit ;;
+  'pr merge') ;;
   *) exit 64 ;;
 esac
-FAKE_GH
-chmod +x "$fake_bin/gh"
-export PATH="$fake_bin:$PATH"
+# Model only the public arming API's expected-head precondition. This is a
+# harmless sink, not a replacement checker or a production gh invocation.
+expected='' query=''
+while (($#)); do
+  case "$1" in
+    --match-head-commit) expected=$2; shift 2 ;;
+    -f|-F) case "$2" in head=*) expected=${2#head=} ;; query=*) query=${2#query=} ;; esac; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [[ -n "$query" && "$query" != *expectedHeadOid* ]]; then expected=''; fi
+if [[ -n "$expected" && "$expected" != "$FAKE_MUTATION_HEAD" ]]; then
+  echo 'Head changed at the arming boundary' >&2
+  exit 1
+fi
+printf ran > "$MUTATION_WITNESS"
+GH
+chmod +x "$temp_dir/bin/gh"
+export PATH="$temp_dir/bin:$PATH"
 
-pr_response() {
-  # $1: closing issue number to report, 0 for none; $2: head to report
-  local number=$1 ref_head=$2
-  local nodes='[]'
-  if ((number > 0)); then
-    nodes="[{\"number\": $number, \"repository\": {\"nameWithOwner\": \"jlapenna/agent-lcars\"}}]"
-  fi
-  printf '{"data":{"repository":{"pullRequest":{"state":"OPEN","isDraft":false,"headRefOid":"%s","closingIssuesReferences":{"nodes":%s,"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' \
-    "$ref_head" "$nodes"
+published_block() {
+  # Substitute fixture values only. Preserve the published control flow.
+  node --input-type=module - "$1" "$2" "$3" "$reviewed_head" <<'NODE'
+import {readFileSync} from 'node:fs';
+const [doc, action, declared, head] = process.argv.slice(2);
+const text = readFileSync(doc, 'utf8');
+const blocks = [...text.matchAll(/^[ \t]*```bash\r?\n([\s\S]*?)^[ \t]*```/gm)].map(m => m[1]);
+const candidates = blocks.filter(b => action === 'ready' ? b.includes('gh pr ready') :
+  b.includes('gh pr merge') || b.includes('enablePullRequestAutoMerge'));
+if(candidates.length !== 1) throw Error(`Expected one published ${action} procedure: ${doc}`);
+let block=candidates[0];
+for(const [key,value] of Object.entries({
+  '<owner/repo>':'jlapenna/agent-lcars','<PR>':'2324','<N>':'2324',
+  '<PR_NUMBER>':'2324','<exact-reviewed-pushed-head>':head,
+  '<EXACT_REVIEWED_AND_PUSHED_SHA>':head,'<declared-scope>':declared,
+})) block=block.replaceAll(key,value);
+if(action === 'ready') block=block.replace(/\bnone\b/g,declared);
+process.stdout.write(block);
+NODE
 }
 
-# run_chained <response-json> <declared-scope> <head>
-# Reproduces the shipped fail-fast sequence: the actual read-only guard && a
-# harmless owned mutation AND already-armed status readback witnesses.
-run_chained() {
-  local response=$1 declared=$2 at_head=$3 mode=${4:-shared}
-  export FAKE_GH_CALLS="$temp_dir/gh-calls.$RANDOM$$"
-  export FAKE_RESPONSE="$temp_dir/response.json"
-  printf '%s' "$response" > "$FAKE_RESPONSE"
-  export MUTATION_WITNESS="$temp_dir/witness"
-  export READBACK_WITNESS="$temp_dir/readback"
-  rm -f "$MUTATION_WITNESS" "$READBACK_WITNESS"
-  local chained_out status=0
-  chained_out="$(
-    bash -c '
-      mutation=(gh pr merge 2324 --repo jlapenna/agent-lcars --auto --squash --match-head-commit "$3")
-      if [[ "$4" == interactive ]]; then
-        mutation=(gh api graphql -f "query=mutation { enablePullRequestAutoMerge(input: { pullRequestId: \"owned-test-node\", expectedHeadOid: \"$3\", mergeMethod: SQUASH }) { pullRequest { state } } }" -f id=owned-test-node -f head="$3")
-      fi
-      node "$1" jlapenna/agent-lcars 2324 "$3" "$2" \
-        && "${mutation[@]}" \
-        && gh pr view 2324 --repo jlapenna/agent-lcars --json state,autoMergeRequest \
-          --jq "if .state == \"MERGED\" or .autoMergeRequest != null then . else error(\"auto-merge is not armed\") end"
-    ' _ "$checker" "$declared" "$at_head" "$mode" 2>&1
-  )" || status=$?
+run_published() {
+  local document=$1 action=$2 declared=$3 response_head=$4 closing=$5 mutation_head=$6
+  export FAKE_MUTATION_HEAD="$mutation_head"
+  rm -f "$MUTATION_WITNESS" "$READBACK_WITNESS" "$FAKE_GH_CALLS"
+  local nodes='[]'
+  [[ "$closing" = 0 ]] || nodes='[{"number":2407,"repository":{"nameWithOwner":"jlapenna/agent-lcars"}}]'
+  printf '{"data":{"repository":{"pullRequest":{"state":"OPEN","isDraft":false,"headRefOid":"%s","closingIssuesReferences":{"nodes":%s,"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' "$response_head" "$nodes" > "$FAKE_RESPONSE"
+  local block status=0
+  block=$(published_block "$document" "$action" "$declared")
+  # No ambient errexit: a document's separate successful final command must
+  # retain its actual masking behavior. The document can set its own options.
+  CHAINED_OUT=$(cd "$repo_root" && env -u BASH_ENV bash +e -c "$block" 2>&1) || status=$?
   CHAINED_STATUS=$status
-  CHAINED_OUT=$chained_out
 }
 
 failures=0
-check() { # check <description> <condition-command> [args...]
-  local description=$1
-  shift
-  if "$@"; then
-    echo "ok: $description"
-  else
-    echo "FAILED: $description" >&2
-    failures=$((failures + 1))
+check() {
+  local description=$1; shift
+  if "$@"; then echo "ok: $description"; else
+    echo "FAILED: $description" >&2; failures=$((failures+1))
   fi
 }
+mutation_absent() { [[ ! -e "$MUTATION_WITNESS" ]]; }
+mutation_present() { [[ -e "$MUTATION_WITNESS" ]]; }
+readback_absent() { [[ ! -e "$READBACK_WITNESS" ]]; }
+readback_present() { [[ -e "$READBACK_WITNESS" ]]; }
+checker_read() { [[ -e "$FAKE_GH_CALLS" ]]; }
 
-witness_exists() { [[ -e "$temp_dir/witness" ]]; }
-witness_absent() { [[ ! -e "$temp_dir/witness" ]]; }
-readback_exists() { [[ -e "$temp_dir/readback" ]]; }
-readback_absent() { [[ ! -e "$temp_dir/readback" ]]; }
-gh_was_read() { [[ -e "$FAKE_GH_CALLS" ]]; }
-
-for mode in shared interactive; do
-  echo "arming path: $mode"
-
-# --- negative branch: the incident shape, reproduced hermetically ------------
-# GitHub still returns jlapenna/agent-lcars#2407 while the operator declares
-# scope none; the published guard rejects and the chained witness never runs.
-run_chained "$(pr_response 2407 "$head_sha")" none "$head_sha" "$mode"
-check 'wrong scope: the actual checker exits nonzero' test "$CHAINED_STATUS" -ne 0
-check 'wrong scope: the rejection names the unintended reference' \
-  grep -q 'Closing scope mismatch: unintended \[jlapenna/agent-lcars#2407\]' <<<"$CHAINED_OUT"
-check 'wrong scope: GitHub was actually read (this is the real guard, not a stub of it)' gh_was_read
-check 'wrong scope: the next-step witness was NOT invoked' witness_absent
-check 'wrong scope: already-armed readback was NOT invoked' readback_absent
-printf 'negative-branch diagnosis: %s\n' "$CHAINED_OUT"
-
-# --- positive branch: the valid declared scope lets the SAME witness run ----
-run_chained "$(pr_response 2407 "$head_sha")" jlapenna/agent-lcars#2407 "$head_sha" "$mode"
-check 'valid scope: the actual checker exits zero' test "$CHAINED_STATUS" -eq 0
-check 'valid scope: the checker readback carries the accepted scope' \
-  grep -q '"closingIssuesReferences":\["jlapenna/agent-lcars#2407"\]' <<<"$CHAINED_OUT"
-check 'valid scope: the same witness DID run' witness_exists
-check 'valid scope: already-armed readback DID run' readback_exists
-rm -f "$temp_dir/witness"
-
-# --- a changed head is an incomplete read: the chain still refuses ----------
-run_chained "$(pr_response 0 b)" none "$head_sha" "$mode"
-check 'changed head: the actual checker exits nonzero' test "$CHAINED_STATUS" -ne 0
-check 'changed head: the rejection names the expected head' \
-  grep -q 'expected head' <<<"$CHAINED_OUT"
-check 'changed head: the next-step witness was NOT invoked' witness_absent
-check 'changed head: already-armed readback was NOT invoked' readback_absent
-
+for document in "$AGENT_PROTOCOL_PATH" "$repo_root/.agents/skills/agent-lcars-dev/references/pr.md"; do
+  for action in ready arm; do
+    echo "published procedure: $document $action"
+    run_published "$document" "$action" none "$reviewed_head" 2407 "$reviewed_head"
+    check 'wrong scope: actual procedure exits nonzero' test "$CHAINED_STATUS" -ne 0
+    check 'wrong scope: actual checker rejects unintended reference' grep -q 'Closing scope mismatch: unintended' <<<"$CHAINED_OUT"
+    check 'wrong scope: actual checker read GitHub fixture' checker_read
+    check 'wrong scope: mutation skipped' mutation_absent
+    check 'wrong scope: dependent already-armed readback skipped' readback_absent
+    run_published "$document" "$action" none b 0 "$reviewed_head"
+    check 'changed head: actual procedure exits nonzero' test "$CHAINED_STATUS" -ne 0
+    check 'changed head: actual checker rejects expected head' grep -q 'expected head' <<<"$CHAINED_OUT"
+    check 'changed head: mutation skipped' mutation_absent
+    check 'changed head: dependent readback skipped' readback_absent
+    run_published "$document" "$action" none "$reviewed_head" 0 "$reviewed_head"
+    check 'valid scope: actual procedure exits zero' test "$CHAINED_STATUS" -eq 0
+    check 'valid scope: published mutation reached owned sink' mutation_present
+    if [[ "$action" = arm ]]; then
+      run_published "$document" "$action" jlapenna/agent-lcars#2407 "$reviewed_head" 2407 "$reviewed_head"
+      check 'intentional closure: accepted scope reaches arming' test "$CHAINED_STATUS" -eq 0
+      check 'intentional closure: mutation reached owned sink' mutation_present
+      check 'valid scope: published final readback reached owned sink' readback_present
+      run_published "$document" "$action" none "$reviewed_head" 0 b
+      check 'concurrent push: arming precondition rejects new head' test "$CHAINED_STATUS" -ne 0
+      check 'concurrent push: no mutation' mutation_absent
+      check 'concurrent push: no dependent readback' readback_absent
+    fi
+  done
 done
-
-if ((failures > 0)); then
-  echo "closing-scope gate contract test: $failures failure(s)" >&2
-  exit 1
-fi
-echo "ok: the published closing-scope guard blocks a chained next step on a wrong scope or changed head and admits it only on the declared scope"
+if ((failures)); then echo "closing-scope gate contract test: $failures failure(s)" >&2; exit 1; fi
+echo 'ok: the published closing-scope guard blocks a chained next step; actual shared and interactive Ready/Arm procedures qualify'

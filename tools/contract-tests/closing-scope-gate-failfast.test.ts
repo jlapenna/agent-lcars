@@ -10,7 +10,7 @@ const gateTest = path.join(
 );
 
 describe('closing-scope gate fail-fast chaining (#2534)', () => {
-  it('runs the published checker chained to a next-step witness: wrong scope and changed head invoke no witness, the declared scope admits it', () => {
+  it('executes published shared and interactive Ready/Arm procedures: rejection skips dependent actions, accepted scopes and head bindings are preserved', () => {
     const output = execFileSync('bash', [gateTest], {
       encoding: 'utf8',
       timeout: 120_000,
