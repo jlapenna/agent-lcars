@@ -238,8 +238,22 @@ describe('a work.reader-only principal (#2502)', () => {
     })),
   );
 
-  it('enumerates every published Work operation', () => {
+  it('enumerates every published Work operation, including the owner query', () => {
     expect(operations.length).toBeGreaterThan(30);
+    expect(operations.map((op) => op.operationId)).toEqual(
+      expect.arrayContaining([...readerOperations]),
+    );
+  });
+
+  it('answers the owner query', async () => {
+    authenticateWorkRequest.mockResolvedValue(readerPrincipal);
+    const response = await GET(
+      new Request(
+        'https://lcars.test/api/work/v1/anchors/github/owner?repo=jlapenna/agent-lcars&issue=2502',
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ verdict: 'none' });
   });
 
   it.each(operations.filter((op) => !readerOperations.has(op.operationId)))(

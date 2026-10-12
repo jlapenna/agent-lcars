@@ -99,6 +99,24 @@ const reader = os.use(async ({ context, next }) => {
   return next({ context: { principal } });
 });
 
+/** The issue-owner query alone also accepts `work.reader` (#2502): the
+ *  read-only interactive-session identity, which no other gate admits.
+ *  Deliberately not `work.reaper` -- that caller needs item reads for
+ *  session expiry, never CLI session telemetry. */
+const ownerReader = os.use(async ({ context, next }) => {
+  const { principal } = context;
+  if (
+    principal === undefined ||
+    (!principal.scopes.has('work.operator') &&
+      !principal.scopes.has('work.reader'))
+  ) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.operator or work.reader scope required',
+    });
+  }
+  return next({ context: { principal } });
+});
+
 export const workRouter = os.router({
   lifecycleMetrics: metricsReader.lifecycleMetrics.handler(
     async ({ context }) => {
@@ -151,12 +169,11 @@ export const workRouter = os.router({
   }),
 
   /** Read-only (#2502): who Console says is working a GitHub anchor.
-   *  Least privilege: `operator` only (not `reader`'s `work.reaper`, which
-   *  needs item reads for session expiry, never CLI session telemetry), and
+   *  Least privilege: `ownerReader` (`work.operator` or `work.reader`), and
    *  only for a control-plane repository -- the same repository boundary
    *  GitHub-anchor admission applies, including binding a GitHub Actions
    *  OIDC principal to the repository its token named. */
-  anchorOwner: operator.anchorOwner.handler(
+  anchorOwner: ownerReader.anchorOwner.handler(
     async ({ input, context, errors }) => {
       // GitHub names are case-insensitive, but orchestrator task ids use the
       // configured spelling: resolve to it, or refuse.

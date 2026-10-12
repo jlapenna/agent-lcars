@@ -516,7 +516,8 @@ counterpart of the Work destination.
 - **FE-CLI-1 [Shipped]** `work owner` answers who Console says is working a
   GitHub issue or pull request, so every executor can check before it starts.
   It calls the read-only `GET /api/work/v1/anchors/github/owner`. That route
-  requires `work.operator`, only answers for control-plane repositories, and
+  requires `work.operator` or the read-only `work.reader`, only answers for
+  control-plane repositories, and
   binds a GitHub Actions principal to its own repository. The answer comes only
   from state Console already holds and records no claim. The verdict is
   `fleet-run` when the orchestrator task holds a live run, `interactive-session`
