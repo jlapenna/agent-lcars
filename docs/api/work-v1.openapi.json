@@ -176,7 +176,7 @@
       "get": {
         "operationId": "getGithubAnchorOwner",
         "summary": "Who Console says is working a GitHub issue or pull request",
-        "description": "Read-only. Answers from the orchestrator task and runs for the anchor and from recent CLI session telemetry; it records no claim. Call it before starting work on an issue.",
+        "description": "Read-only. Answers from the orchestrator task and runs for the anchor and from recent CLI session telemetry; it records no claim. Call it before starting work on an issue. Requires work.operator; the repository must be a control-plane repository, and a GitHub Actions principal may read only its own repository.",
         "tags": ["items"],
         "parameters": [
           {
@@ -588,6 +588,23 @@
                     "cliSessions"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal may not read this repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
                 }
               }
             }

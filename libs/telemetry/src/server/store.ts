@@ -178,7 +178,7 @@ const DEFAULT_LIST_LIMIT = 100;
  * this is a read-only reader path with no auth boundary of its own beyond
  * the console's admin gate, so the cap is enforced here rather than trusted
  * to every caller. */
-const MAX_LIST_LIMIT = 200;
+export const MAX_LIST_LIMIT = 200;
 
 export interface ListSessionDocsOptions {
   /** Only return sessions with `lastActivityAt` at or after this ISO

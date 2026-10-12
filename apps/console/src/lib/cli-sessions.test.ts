@@ -2,11 +2,18 @@ import type { CliSessionDoc } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { getCliSessions, MAX_SESSIONS } from './cli-sessions';
+import {
+  getCliSessions,
+  MAX_SESSIONS,
+  OWNER_WINDOW_HOURS,
+} from './cli-sessions';
+
+const MAX_LIST_LIMIT = 200;
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
   listSessionDocs: vi.fn(),
+  MAX_LIST_LIMIT: 200,
 }));
 
 const minutesAgo = (minutes: number) =>
@@ -180,16 +187,36 @@ describe('getCliSessions', () => {
     expect(sessions.map((session) => session.sessionId)).toContain('live-tail');
   });
 
-  it('returns every session in the window when the caller lifts the cap', async () => {
+  it('reads only CLI docs over the wider window, uncapped, in exhaustive mode', async () => {
     (listSessionDocs as Mock).mockResolvedValue(
       Array.from({ length: MAX_SESSIONS + 5 }, (_, index) =>
         makeCliDoc({ sessionId: `live-${index}` }),
       ),
     );
 
-    const { sessions } = await getCliSessions({ limit: Infinity });
+    const { sessions, warnings } = await getCliSessions({ exhaustive: true });
 
     expect(sessions).toHaveLength(MAX_SESSIONS + 5);
+    expect(warnings).toEqual([]);
+    const options = (listSessionDocs as Mock).mock.calls[0][1];
+    expect(options).toMatchObject({ source: 'cli', limit: MAX_LIST_LIMIT });
+    const windowHours =
+      (Date.now() - new Date(options.activeSince).getTime()) / 3_600_000;
+    expect(windowHours).toBeCloseTo(OWNER_WINDOW_HOURS, 1);
+  });
+
+  it('warns when an exhaustive read fills the store page', async () => {
+    (listSessionDocs as Mock).mockResolvedValue(
+      Array.from({ length: MAX_LIST_LIMIT }, (_, index) =>
+        makeCliDoc({ sessionId: `live-${index}` }),
+      ),
+    );
+
+    const { warnings } = await getCliSessions({ exhaustive: true });
+
+    expect(warnings).toEqual([
+      `CLI session listing hit the ${MAX_LIST_LIMIT}-session page limit and may be incomplete.`,
+    ]);
   });
 
   it('passes through status, artifacts, and cost-weighted tokens', async () => {

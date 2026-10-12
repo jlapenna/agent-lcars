@@ -159,8 +159,8 @@ async function handle(request: Request): Promise<Response> {
       sessionsFor: sessionsForRuns,
       getSessionDoc: sessionForResume,
       sessionDocsForRuns,
-      // Uncapped: the anchor-owner query must see every recent session.
-      cliSessions: () => getCliSessions({ limit: Infinity }),
+      // Exhaustive: the anchor-owner query must see every recent session.
+      cliSessions: () => getCliSessions({ exhaustive: true }),
       scheduleStore: createScheduleStore(),
       grants: workGrants,
       now: () => new Date(),

@@ -54,7 +54,7 @@ export async function context(): Promise<WorkContext> {
     sessionsFor: sessionsForRuns,
     getSessionDoc: sessionForResume,
     sessionDocsForRuns,
-    cliSessions: () => getCliSessions({ limit: Infinity }),
+    cliSessions: () => getCliSessions({ exhaustive: true }),
     scheduleStore: createScheduleStore(),
     grants: workGrants,
     now: () => new Date(),

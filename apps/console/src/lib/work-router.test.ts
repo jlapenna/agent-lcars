@@ -2008,15 +2008,73 @@ describe('GET /anchors/github/owner', () => {
     return decidedRun(outcome).runId;
   }
 
-  it('is gated like get/list: operator or reaper only', async () => {
-    for (const principal of [undefined, executorOnly, cronTick])
-      expect((await call(context({ principal }), 'GET', path)).status).toBe(
-        401,
-      );
-    for (const principal of [operator, reaperOnly])
-      expect((await call(context({ principal }), 'GET', path)).status).toBe(
-        200,
-      );
+  it('requires work.operator; reaper, executor, cron and anonymous are refused', async () => {
+    for (const principal of [undefined, executorOnly, cronTick, reaperOnly]) {
+      const cliSessions = vi.fn(async () => ({ sessions: [], warnings: [] }));
+      expect(
+        (await call(context({ principal, cliSessions }), 'GET', path)).status,
+      ).toBe(401);
+      expect(cliSessions).not.toHaveBeenCalled();
+    }
+    expect((await call(context(), 'GET', path)).status).toBe(200);
+  });
+
+  it('refuses repositories the caller may not read, before reading anything', async () => {
+    const cliSessions = vi.fn(async () => ({ sessions: [], warnings: [] }));
+    // Not a control-plane repository.
+    expect(
+      (
+        await call(
+          context({ cliSessions }),
+          'GET',
+          '/anchors/github/owner?repo=octo/example&issue=1',
+        )
+      ).status,
+    ).toBe(403);
+    // A GitHub Actions principal is bound to its own repository.
+    expect(
+      (
+        await call(
+          context({
+            cliSessions,
+            principal: {
+              ...githubActionsOperator,
+              sourceRepository: 'jlapenna/other',
+            },
+          }),
+          'GET',
+          path,
+        )
+      ).status,
+    ).toBe(403);
+    expect(cliSessions).not.toHaveBeenCalled();
+    expect(
+      (await call(context({ principal: githubActionsOperator }), 'GET', path))
+        .status,
+    ).toBe(200);
+  });
+
+  it('resolves a differently cased repository to the configured anchor', async () => {
+    const ctx = context({
+      cliSessions: async () => ({
+        sessions: [
+          cliSession({ repo: { owner: 'JLapenna', name: 'Agent-LCARS' } }),
+        ],
+        warnings: [],
+      }),
+    });
+    const runId = await admit(ctx);
+    const result = await call(
+      ctx,
+      'GET',
+      '/anchors/github/owner?repo=JLAPENNA/agent-lcars&issue=2502',
+    );
+    expect(result.json).toMatchObject({
+      anchor,
+      verdict: 'fleet-run',
+      task: { activeRunId: runId },
+      cliSessions: [{ sessionId: 'cli-1' }],
+    });
   });
 
   it('rejects a malformed anchor before reading anything', async () => {

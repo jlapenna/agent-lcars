@@ -19,6 +19,7 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { readAnchorOwner } from './anchor-owner';
+import { controlPlaneRepositories } from './deployment';
 import { githubDispatchRouter } from './github-dispatch-router';
 import { handleReconcile } from './orchestrator-routes';
 import { scheduleRouter } from './schedule-router';
@@ -149,11 +150,29 @@ export const workRouter = os.router({
     return view(context, input.id, result.task);
   }),
 
-  /** Read-only (#2502): who Console says is working a GitHub anchor. Same
-   *  `reader` gate as `get`/`list` -- it reveals no more than they do plus
-   *  the CLI session telemetry the Agents page already shows operators. */
-  anchorOwner: reader.anchorOwner.handler(async ({ input, context }) =>
-    readAnchorOwner(context, { repo: input.repo, issue: input.issue }),
+  /** Read-only (#2502): who Console says is working a GitHub anchor.
+   *  Least privilege: `operator` only (not `reader`'s `work.reaper`, which
+   *  needs item reads for session expiry, never CLI session telemetry), and
+   *  only for a control-plane repository -- the same repository boundary
+   *  GitHub-anchor admission applies, including binding a GitHub Actions
+   *  OIDC principal to the repository its token named. */
+  anchorOwner: operator.anchorOwner.handler(
+    async ({ input, context, errors }) => {
+      // GitHub names are case-insensitive, but orchestrator task ids use the
+      // configured spelling: resolve to it, or refuse.
+      const repo = controlPlaneRepositories().find(
+        (candidate) => candidate.toLowerCase() === input.repo.toLowerCase(),
+      );
+      const { sourceRepository } = context.principal;
+      if (
+        repo === undefined ||
+        (sourceRepository !== undefined &&
+          sourceRepository.toLowerCase() !== repo.toLowerCase())
+      ) {
+        throw errors.FORBIDDEN();
+      }
+      return readAnchorOwner(context, { repo, issue: input.issue });
+    },
   ),
 
   get: reader.get.handler(async ({ input, context, errors }) => {

@@ -199,8 +199,9 @@ export const githubDispatchAnchorSchema = z.strictObject({
  * - `fleet-run`: the orchestrator task holds a live run (its mutex).
  * - `interactive-session`: no live run, but a live or idle CLI session's
  *   repository and branch or recorded PR reference this anchor.
- * - `none`: neither. When `complete` is false a telemetry read degraded, so
- *   `none` is not proof that nobody is working the anchor.
+ * - `none`: neither, among CLI sessions active in the last 72 hours. When
+ *   `complete` is false the telemetry read failed or may have been
+ *   truncated, so `none` is not proof that nobody is working the anchor.
  */
 export const anchorOwnerVerdictSchema = z.enum([
   'fleet-run',
@@ -225,7 +226,7 @@ export const anchorOwnerSchema = z.strictObject({
   anchor: githubDispatchAnchorSchema,
   observedAt: z.iso.datetime(),
   verdict: anchorOwnerVerdictSchema,
-  /** False when CLI session telemetry could not be read. */
+  /** False when CLI session telemetry could not be read in full. */
   complete: z.boolean(),
   warnings: z.array(z.string()),
   /** Absent when the orchestrator has no task document for the anchor. */
@@ -260,9 +261,16 @@ export const itemsContract = {
         description:
           'Read-only. Answers from the orchestrator task and runs for the ' +
           'anchor and from recent CLI session telemetry; it records no claim. ' +
-          'Call it before starting work on an issue.',
+          'Call it before starting work on an issue. Requires work.operator; ' +
+          'the repository must be a control-plane repository, and a GitHub ' +
+          'Actions principal may read only its own repository.',
       }),
     )
+    .errors({
+      FORBIDDEN: {
+        message: 'Principal may not read this repository',
+      },
+    })
     .input(
       z.strictObject({
         repo: githubDispatchAnchorSchema.shape.repo,
