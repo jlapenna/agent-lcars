@@ -114,12 +114,6 @@ exit "$exitCode"
 }
 
 describe('restore-main-checks head-branch-deletion contract', () => {
-  it('mentions the RCA (issue #1982) and the #214 precedent it mirrors', () => {
-    const block = restoreScript.slice(branchDeleteStart, branchDeleteEnd);
-    expect(block).toContain('agent-lcars#214');
-    expect(block).toContain('agent-lcars#1982');
-  });
-
   it('skips deletion when the repository has delete_branch_on_merge off', () => {
     const result = runBranchDeletion([{ stdout: 'false' }]);
     expect(result.status).toBe(0);

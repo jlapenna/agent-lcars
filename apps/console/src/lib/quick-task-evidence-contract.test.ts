@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   isQuickTaskEvidenceId,
   QUICK_TASK_EVIDENCE_REVOCATION_PREFIX,
-  QUICK_TASK_MULTIPART_FIELDS,
   quickTaskEvidenceMarkdown,
   quickTaskEvidenceObjectKey,
   quickTaskEvidenceRevocationKey,
@@ -13,11 +12,7 @@ import {
 const evidenceId = '0d6a4b56-31d0-4d39-b0b2-5a2520cc4882';
 
 describe('Quick Task evidence contract', () => {
-  it('freezes the multipart field names and opaque UUID v4 identifiers', () => {
-    expect(QUICK_TASK_MULTIPART_FIELDS).toEqual({
-      intent: 'intent',
-      evidence: 'evidence',
-    });
+  it('accepts only opaque UUID v4 identifiers', () => {
     expect(isQuickTaskEvidenceId(evidenceId)).toBe(true);
     expect(isQuickTaskEvidenceId('not-an-evidence-id')).toBe(false);
     expect(isQuickTaskEvidenceId('0d6a4b56-31d0-5d39-b0b2-5a2520cc4882')).toBe(

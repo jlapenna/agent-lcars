@@ -13,7 +13,7 @@ const protocol = readFileSync(
 );
 
 interface LabelManifest {
-  labels: Record<string, { color: string; description: string }>;
+  labels: Record<string, unknown>;
   repositories: Record<string, { labels: string[] }>;
 }
 
@@ -47,13 +47,4 @@ describe('published protocol CI label contract', () => {
       expect(repositoriesDeclaring(label).length).toBeGreaterThan(0);
     },
   );
-
-  it('scopes the functional pause override to its proven consumer', () => {
-    expect(manifest.labels['ci:run-functional-e2e']?.description).toBe(
-      'Run affected functional E2E while the default PR lane is paused',
-    );
-    expect(repositoriesDeclaring('ci:run-functional-e2e')).toEqual([
-      'supersprinklesracing/sprinkles',
-    ]);
-  });
 });

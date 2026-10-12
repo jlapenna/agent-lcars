@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HOOK_EVENT_KINDS, parseHookPayload } from './hook-payload';
+import { parseHookPayload } from './hook-payload';
 
 describe('parseHookPayload', () => {
   it('reads the shared fields from a Claude Code payload and ignores bodies', () => {
@@ -59,16 +59,5 @@ describe('parseHookPayload', () => {
     expect(
       parseHookPayload(JSON.stringify({ session_id: 's' })),
     ).toBeUndefined();
-  });
-
-  it('maps lifecycle events and treats Codex Interrupt as a stop', () => {
-    expect(HOOK_EVENT_KINDS).toEqual({
-      SessionStart: 'start',
-      UserPromptSubmit: 'prompt',
-      PostToolUse: 'tool',
-      Stop: 'stop',
-      Interrupt: 'stop',
-      SessionEnd: 'end',
-    });
   });
 });

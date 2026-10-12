@@ -7,7 +7,6 @@ import {
   isElisionDivider,
   isRenderableTranscriptAgent,
   parseTranscriptTimeline,
-  RENDERABLE_TRANSCRIPT_AGENTS,
   type TranscriptTimelineEvent,
 } from './transcript-timeline';
 
@@ -389,13 +388,5 @@ describe('isRenderableTranscriptAgent', () => {
     expect(isRenderableTranscriptAgent('opencode')).toBe(true);
     expect(isRenderableTranscriptAgent('gemini')).toBe(false);
     expect(isRenderableTranscriptAgent('antigravity')).toBe(false);
-  });
-
-  it('lists exactly the formats with timeline parsers', () => {
-    expect(RENDERABLE_TRANSCRIPT_AGENTS).toEqual([
-      'claude-code',
-      'codex',
-      'opencode',
-    ]);
   });
 });

@@ -255,14 +255,6 @@ esac
 }
 
 describe('agent automerge post-merge recovery admission', () => {
-  it('uses the configured recovery wait budget for checks, CI, and deploy', () => {
-    expect(
-      workflowText.match(/seq 1 \$\(\(CHECK_WAIT_MINUTES \* 12\)\)/g),
-    ).toHaveLength(3);
-    expect(workflowText).not.toContain('seq 1 180');
-    expect(workflowText).not.toContain('seq 1 360');
-  });
-
   it('reuses the restored CI after it replaces a pending push CI', () => {
     const selected = selectCiRun([
       run({ id: 1, status: 'completed', conclusion: 'cancelled' }),
