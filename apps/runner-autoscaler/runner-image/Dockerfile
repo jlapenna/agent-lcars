@@ -379,7 +379,9 @@ COPY --from=telemetry-watcher-build /repo/infra/terraform/.terraform.lock.hcl /t
 COPY --from=telemetry-watcher-build /repo/infra/github-ruleset/.terraform.lock.hcl /tmp/ci-providers/github-ruleset.lock.hcl
 COPY cache-terraform-providers.py /usr/local/lib/agent-lcars/cache-terraform-providers.py
 RUN test "$(terraform version -json | jq -r .terraform_version)" = "$TERRAFORM_VERSION" && \
-    uv python install 3.14 && \
+    # cpython-3.14.8 (python-build-standalone 20261009) fails to extract on
+    # linux/arm64 ("Invalid tar file ... os error 22"); stay on 3.14.7.
+    uv python install 3.14.7 && \
     python3 /usr/local/lib/agent-lcars/cache-terraform-providers.py /tmp/ci-providers/*.lock.hcl && \
     chown -R runner:runner /opt/terraform-plugin-cache /opt/uv-python && \
     rm -rf /tmp/ci-providers
