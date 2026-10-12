@@ -1025,7 +1025,7 @@ describe('handleWebhookDelivery', () => {
     expect(await store.listRuns(ISSUE)).toHaveLength(1);
   });
 
-  it('an unauthorized label change cannot bypass immutable admission', async () => {
+  it('an unauthorized label change cannot switch execution provider', async () => {
     const { deps, store, clock } = fixture();
     await handleWebhookDelivery(deps, {
       event: 'issues',
@@ -1047,9 +1047,46 @@ describe('handleWebhookDelivery', () => {
           },
         }),
       }),
-    ).toMatchObject({ body: { refused: 'work-spec-mismatch' } });
+    ).toMatchObject({
+      body: {
+        refused: 'unauthorized-provider-switch',
+        providerRouting: {
+          status: 'refused',
+          requestedPipeline: 'opencode',
+          effectivePipeline: 'claude',
+        },
+      },
+    });
     expect(await store.listRuns(ISSUE)).toHaveLength(1);
-    expect((await store.readTask(ISSUE))?.task.providerRouting).toBeUndefined();
+    expect((await store.readTask(ISSUE))?.task.providerRouting?.status).toBe(
+      'refused',
+    );
+  });
+
+  it('preserves ordinary same-provider label redispatch for a non-administrator', async () => {
+    const { deps, store, clock } = fixture();
+    const first = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'admin-first',
+      payload: labeledIssuePayload({
+        issue: { ...labeledIssuePayload().issue, updated_at: T0 },
+      }),
+    });
+    await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
+    clock.advanceMinutes(1);
+    const next = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'member-redispatch',
+      payload: labeledIssuePayload({
+        sender: { login: 'member' },
+        issue: { ...labeledIssuePayload().issue, updated_at: clock.now() },
+      }),
+    });
+    expect(next).toMatchObject({ status: 200, body: { dispatched: true } });
+    expect(await store.readRun(next.body['runId'] as string)).toMatchObject({
+      pipeline: 'claude',
+    });
+    expect(await store.listRuns(ISSUE)).toHaveLength(2);
   });
 
   it('does not add a comment window to an initial label dispatch or a reply command', async () => {

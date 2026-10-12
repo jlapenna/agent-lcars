@@ -158,13 +158,16 @@ export async function admitGithubWork(
     }
   }
 
+  const routing = input.labelRouting;
+  const principal = input.authorization?.grantsPrincipal;
   const labelProviderRequest =
-    input.labelRouting?.mode === 'implement' &&
-    input.labelRouting.requestedAt !== undefined &&
-    isAdminGithubLogin(input.labelRouting.actor)
+    routing?.mode === 'implement' &&
+    routing.requestedAt !== undefined &&
+    typeof routing.actor === 'string'
       ? {
-          requestedAt: input.labelRouting.requestedAt,
-          actor: input.labelRouting.actor!,
+          requestedAt: routing.requestedAt,
+          actor: routing.actor,
+          allowProviderChange: isAdminGithubLogin(routing.actor),
         }
       : undefined;
 
@@ -178,10 +181,10 @@ export async function admitGithubWork(
     useEffectivePipeline: input.labelRouting === undefined,
     expectedEffectivePipeline: input.expectedEffectivePipeline,
     isPipelineAuthorized:
-      input.authorization?.grantsPrincipal === undefined
+      principal === undefined
         ? undefined
         : (pipeline) =>
-            forbiddenReason(input.authorization!.grantsPrincipal!, {
+            forbiddenReason(principal, {
               ...work.spec,
               pipeline: pipeline as WorkPayload['spec']['pipeline'],
             }) === undefined,

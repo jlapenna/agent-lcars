@@ -443,6 +443,7 @@ export function runOrchestratorStoreContract(
             labelProviderRequest: {
               requestedAt: clock.now(),
               actor: 'maintainer',
+              allowProviderChange: true,
             },
           });
         const outcomes = await Promise.all([
@@ -480,7 +481,11 @@ export function runOrchestratorStoreContract(
             taskId: TASK,
             requestId: 'older-label',
             pipeline: 'claude',
-            labelProviderRequest: { requestedAt: T0, actor: 'maintainer' },
+            labelProviderRequest: {
+              requestedAt: T0,
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
           }),
         ).toMatchObject({ reason: 'stale-provider-request' });
         expect(await store.listRuns(TASK)).toHaveLength(2);
@@ -506,6 +511,7 @@ export function runOrchestratorStoreContract(
             labelProviderRequest: {
               requestedAt: clock.now(),
               actor: 'maintainer',
+              allowProviderChange: true,
             },
           }),
         ]);
@@ -526,6 +532,7 @@ export function runOrchestratorStoreContract(
               labelProviderRequest: {
                 requestedAt: clock.now(),
                 actor: 'maintainer',
+                allowProviderChange: true,
               },
             }),
           ).toMatchObject({

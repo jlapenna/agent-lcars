@@ -1,4 +1,3 @@
-import { decideLabelProviderRequest } from './provider-routing';
 import type { CapacityWorkerPermit } from './capacity-model';
 import {
   changeCredentialOperation,
@@ -45,6 +44,7 @@ import {
   selectFallbackPipeline,
   settleProviderFallback,
 } from './provider-fallback';
+import { decideLabelProviderRequest } from './provider-routing';
 import {
   availableQueuePipelines,
   type OrchestratorStore,
@@ -102,8 +102,12 @@ export interface RequestInput {
   /** Replace only this exact unclaimed queue attempt when changing provider.
    * Cancellation and admission share the request transaction and its claim fence. */
   replaceQueuedRunId?: string;
-  /** Server-authorized label intent, never a raw Work API field. */
-  labelProviderRequest?: { requestedAt: string; actor: string };
+  /** Server-validated label intent; only its trusted adapter grants provider change. */
+  labelProviderRequest?: {
+    requestedAt: string;
+    actor: string;
+    allowProviderChange: boolean;
+  };
   /** GitHub replies/retries follow execution history rather than historical Work. */
   useEffectivePipeline?: boolean;
   expectedEffectivePipeline?: string;

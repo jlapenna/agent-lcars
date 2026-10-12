@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { decidedRun, isRefusal } from './decide';
 import { MemoryStore } from './memory-store';
 import { Orchestrator } from './orchestrator';
@@ -15,7 +16,11 @@ async function fixture() {
     requestId: 'first',
     pipeline: 'codex',
     work,
-    labelProviderRequest: { requestedAt: T0, actor: 'maintainer' },
+    labelProviderRequest: {
+      requestedAt: T0,
+      actor: 'maintainer',
+      allowProviderChange: true,
+    },
   });
   if (isRefusal(first)) throw new Error(first.reason);
   const run = decidedRun(first);
@@ -26,7 +31,11 @@ async function fixture() {
       taskId,
       requestId: 'switch',
       pipeline: 'opencode',
-      labelProviderRequest: { requestedAt: T1, actor: 'maintainer' },
+      labelProviderRequest: {
+        requestedAt: T1,
+        actor: 'maintainer',
+        allowProviderChange: true,
+      },
     });
   return { store, orchestrator, run, switchProvider };
 }
@@ -111,7 +120,11 @@ describe('source-ordered label provider handoff', () => {
         taskId,
         requestId: 'same-live',
         pipeline: 'codex',
-        labelProviderRequest: { requestedAt: T1, actor: 'maintainer' },
+        labelProviderRequest: {
+          requestedAt: T1,
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
       }),
     ).toMatchObject({
       task: { providerRouting: { status: 'refused', reason: 'task-busy' } },
@@ -123,7 +136,11 @@ describe('source-ordered label provider handoff', () => {
         taskId,
         requestId: 'same-terminal',
         pipeline: 'codex',
-        labelProviderRequest: { requestedAt: T1, actor: 'maintainer' },
+        labelProviderRequest: {
+          requestedAt: T1,
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
       }),
     ).toMatchObject({ run: { pipeline: 'codex' } });
     expect(await store.listRuns(taskId)).toHaveLength(2);
@@ -138,7 +155,11 @@ describe('source-ordered label provider handoff', () => {
           taskId,
           requestId: `old-${requestedAt}`,
           pipeline: 'codex',
-          labelProviderRequest: { requestedAt, actor: 'maintainer' },
+          labelProviderRequest: {
+            requestedAt,
+            actor: 'maintainer',
+            allowProviderChange: true,
+          },
         }),
       ).toMatchObject({ reason: 'stale-provider-request' });
     }

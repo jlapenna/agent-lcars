@@ -1,5 +1,5 @@
 import type { TaskId } from '@agent-lcars/orchestrator';
-import { latestRun, type ItemView } from '@agent-lcars/work/derive';
+import { type ItemView, latestRun } from '@agent-lcars/work/derive';
 import {
   Anchor,
   Badge,

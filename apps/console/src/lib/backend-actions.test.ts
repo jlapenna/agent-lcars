@@ -751,6 +751,7 @@ describe('postComment (direct Work admission)', () => {
       labelProviderRequest: {
         requestedAt: '2026-08-15T12:01:00.000Z',
         actor: 'jlapenna',
+        allowProviderChange: true,
       },
     });
     if ('refused' in handoff || handoff.run === undefined)

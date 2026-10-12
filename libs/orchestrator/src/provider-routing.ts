@@ -15,7 +15,7 @@ import { isLive, isWorkAnchor, providerRoutingSchema, type Run } from './model';
  * the same transaction that cancels and mints. */
 export function decideLabelProviderRequest(
   input: RequestRunInput & {
-    label: { requestedAt: string; actor: string };
+    label: { requestedAt: string; actor: string; allowProviderChange: boolean };
     latestRun?: Run;
     retainedClaims?: readonly Run[];
   },
@@ -69,6 +69,12 @@ export function decideLabelProviderRequest(
           outbox: [],
         };
 
+  if (
+    task !== undefined &&
+    pipeline !== effective &&
+    !label.allowProviderChange
+  )
+    return reject('unauthorized-provider-switch');
   if (task !== undefined && latestRun === undefined)
     return reject('physical-ownership-unavailable');
   if (task?.closedAt !== undefined) return reject('task-closed');
