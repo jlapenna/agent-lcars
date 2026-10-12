@@ -10,6 +10,12 @@ const GUIDANCE =
   'Use a prepared host or the published pinned E2E sandbox (docs/e2e-reliability.md). ' +
   'Do not install system packages or weaken worker privileges.';
 
+// A cold first launch of a freshly provisioned runner can exceed a few seconds
+// (the same-head recovery of the #2553 failure launched in under one second).
+// The bound stays finite and below the whole-phase deadline.
+export const LAUNCH_TIMEOUT_MS = 30000;
+const PHASE_DEADLINE_MS = 45000;
+
 // Never print Playwright's raw launch log: it can contain arbitrary executable
 // output or paths. Retain only a bounded dependency name or a fixed category.
 export function browserFailureReason(error) {
@@ -28,7 +34,7 @@ export function browserFailureReason(error) {
 export async function checkBrowser(chromium, executablePath) {
   const browser = await chromium.launch({
     ...(executablePath ? { executablePath } : {}),
-    timeout: 5000,
+    timeout: LAUNCH_TIMEOUT_MS,
   });
   try {
     return browser.version();
@@ -42,7 +48,9 @@ async function main() {
   const deadline = setTimeout(() => {
     console.error(`e2e-browser: prerequisite check timed out. ${GUIDANCE}`);
     process.exit(1);
-  }, 10000);
+  }, PHASE_DEADLINE_MS);
+  const started = performance.now();
+  const elapsed = () => Math.round(performance.now() - started);
   try {
     const require = createRequire(import.meta.url);
     const testRequire = createRequire(
@@ -71,9 +79,10 @@ async function main() {
       process.exitCode = 1;
       return;
     }
+    const discoveredMs = elapsed();
     const actual = await checkBrowser(chromium, executablePath);
     console.log(
-      `e2e-browser: launched Chromium ${actual}; prerequisites ready`,
+      `e2e-browser: launched Chromium ${actual}; prerequisites ready (discovery ${discoveredMs}ms, launch+close ${elapsed() - discoveredMs}ms)`,
     );
   } catch (error) {
     const reason =
@@ -81,7 +90,7 @@ async function main() {
       error?.code === 'ERR_MODULE_NOT_FOUND'
         ? 'workspace Playwright dependency is unavailable; run the normal worktree setup'
         : browserFailureReason(error);
-    console.error(`e2e-browser: ${reason}. ${GUIDANCE}`);
+    console.error(`e2e-browser: ${reason} after ${elapsed()}ms. ${GUIDANCE}`);
     process.exitCode = 1;
   } finally {
     clearTimeout(deadline);
