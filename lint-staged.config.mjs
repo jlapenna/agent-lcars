@@ -3,7 +3,9 @@
 // an "ignored file" warning is fatal under --max-warnings=0. Suppressing
 // the warning keeps the zero-tolerance budget meaningful for real findings
 // and stays correct for any generated file rather than naming paths.
-const ESLINT = 'eslint --fix --max-warnings=0 --no-warn-ignored';
+// Refresh inside the staged task, after lint-staged hides unstaged changes.
+// Nx's ESLint rule otherwise consumes the graph cached before a base change.
+const ESLINT = './tools/eslint-staged.sh';
 
 export default {
   '*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}': [ESLINT, 'prettier --write'],
