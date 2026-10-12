@@ -55,6 +55,33 @@ mint workflow; never print session cookies or `AUTH_SECRET` into logs. Do not
 use the saved-session verification tool's `--click` option for mutations;
 use the authorized application API operation.
 
+## Operator evidence for stopped work
+
+When a worker cannot observe a required runtime or remote-source fact, use the
+[bounded evidence handoff](.agents/skills/debug-agent-run/references/evidence-handoff.md).
+The operator-bastion helper is not a worker capability. Preserve the original
+trust/access error and request a credential-free receipt bound to the subject
+run, original Job UID, controller revision and missing observation.
+
+This reuses existing owners: the shared protocol's marker-bound PARK artifact
+is the request; `run.result.message` retains the human handoff; explicit native
+parks derive `state: parked` and the decision inbox offers Reply; GitHub parks
+project `status:needs-human` from the accepted outcome. The console owns those
+projections, not the worker. No new evidence state or endpoint is required.
+
+An authorized operator returns the bounded receipt through the existing native
+[Work reply](libs/work/README.md#replying-from-the-cli) or the GitHub anchor's
+evidence comment and recognized provider reply command. The Work reply stores
+the authenticated principal/channel and admits the next run with the text in
+its `reply` context; keep the idempotency key and verify `admittedRunId`.
+GitHub workers read paginated anchor/linked-PR comments on redispatch. Receipts
+are evidence, not authorization to change trust, credentials or runtime.
+
+Operator access is an external prerequisite. If it is unavailable, retain the
+explicit request rather than provision access or duplicate delivered source.
+If the required natural event is absent, its observation gate remains separate
+from the access handoff. A parked exit 0 is not accepted verification.
+
 ## Clear obsolete parked native work
 
 Cancellation preserves the item and run history while removing it from the
