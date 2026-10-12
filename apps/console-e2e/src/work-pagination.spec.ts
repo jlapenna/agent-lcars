@@ -283,12 +283,21 @@ async function clearRepository(page: Page, destination: string) {
   }
 }
 
-test('repository selection and clearing remain reachable on phones across Bridge, Inbox and Agents', async ({
+test('repository selectors stay on Inbox and Agents while Bridge uses scoped navigation', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 740 });
+  await page.goto('/');
+  await expect(
+    page.getByRole('heading', { name: 'Bridge', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('combobox', { name: 'Repository', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Apply repository', exact: true }),
+  ).toHaveCount(0);
   for (const [route, destination, destinationPath] of [
-    ['/', 'Inbox', '/inbox'],
     ['/inbox', 'Agents', '/agents'],
     ['/agents', 'Bridge', '/'],
   ]) {
@@ -327,11 +336,26 @@ test('repository selection and clearing remain reachable on phones across Bridge
         url.searchParams.get('repo') === E2E_FIXTURE_REPOSITORY,
     );
     await expect(
-      page.getByRole('combobox', { name: 'Repository', exact: true }),
-    ).toHaveValue(E2E_FIXTURE_REPOSITORY);
-    await expect(
       page.getByRole('status', { name: 'Loading', exact: true }),
     ).toHaveCount(0);
-    await clearRepository(page, destination);
+    if (destination === 'Bridge') {
+      await expect(
+        page.getByRole('combobox', { name: 'Repository', exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole('button', { name: 'Apply repository', exact: true }),
+      ).toHaveCount(0);
+      await page
+        .getByRole('link', { name: 'show all repos', exact: true })
+        .click();
+      await expect(page).toHaveURL(
+        (url) => url.pathname === '/' && !url.searchParams.has('repo'),
+      );
+    } else {
+      await expect(
+        page.getByRole('combobox', { name: 'Repository', exact: true }),
+      ).toHaveValue(E2E_FIXTURE_REPOSITORY);
+      await clearRepository(page, destination);
+    }
   }
 });

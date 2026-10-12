@@ -54,7 +54,6 @@ import { LiveDashboard } from './live-dashboard';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
-import { RepositorySelector } from './repository-selector';
 import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
@@ -211,8 +210,8 @@ async function IndexBody({
   // Applied last, after every cross-repo join above (itemsByRunId,
   // liveRunFor, silent-error diagnoses) already ran against the full,
   // unfiltered data - a repo filter should narrow what's *displayed*, never
-  // which items can see each other's runs/sessions. The repository selector
-  // and scoped navigation share this same `?repo=` state.
+  // which items can see each other's runs/sessions. Scoped navigation
+  // carries this same `?repo=` state from other destinations.
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
   const filteredActivity = repoFilter
@@ -357,7 +356,6 @@ interface IndexViewProps {
 }
 
 function IndexViewContent({
-  watchedRepos,
   repoFilter,
   repoFilterKey,
   selectedKey,
@@ -366,11 +364,6 @@ function IndexViewContent({
 }: IndexViewProps) {
   return (
     <>
-      <RepositorySelector
-        repos={watchedRepos}
-        selected={repoFilter ? repoKey(repoFilter) : undefined}
-        action="/"
-      />
       <LiveDashboard />
       <Suspense
         key={`${repoFilterKey ?? ''}:${stoppedCursor ?? ''}`}
