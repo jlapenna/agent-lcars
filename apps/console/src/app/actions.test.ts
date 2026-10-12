@@ -19,6 +19,7 @@ import {
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
   retriggerIssue as retriggerIssueLib,
+  retryPostedComment,
   updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
@@ -37,6 +38,7 @@ import {
   rebasePr,
   replyToItem,
   retriggerIssue,
+  retryReplyToItem,
   updateIssueContent,
 } from './actions';
 
@@ -68,6 +70,7 @@ vi.mock('../lib/backend-actions', () => {
     closeIssue: vi.fn(),
     dispatchUnstickPrs: vi.fn(),
     postComment: vi.fn(),
+    retryPostedComment: vi.fn(),
     retriggerIssue: vi.fn(),
     updateIssueContent: vi.fn(),
     updatePrBranch: vi.fn(),
@@ -293,6 +296,7 @@ describe('agent-lcars Server Actions', () => {
         url: 'https://x',
         dispatched: false,
         dispatchWarning: 'dispatch-failed',
+        retryCommentId: 123,
       });
 
       await expect(
@@ -301,9 +305,39 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
         dispatched: false,
         warning: true,
-        note: 'Reply posted, but dispatch failed. Refresh the item and retry assignment without reposting your reply.',
+        retry: { commentId: 123, pipeline: 'claude' },
+        note: 'Reply posted, but dispatch failed. Use Retry dispatch to send the posted reply without posting it again.',
       });
       expect(revalidatePath).toHaveBeenCalledWith('/');
+    });
+
+    it('authenticates and retries the saved comment without posting', async () => {
+      (retryPostedComment as Mock).mockResolvedValue({ dispatched: true });
+      await expect(
+        retryReplyToItem(DEFAULT_REPO, 42, 123, 'codex'),
+      ).resolves.toEqual({ ok: true, note: 'Dispatched codex' });
+      expect(retryPostedComment).toHaveBeenCalledWith(
+        DEFAULT_REPO,
+        42,
+        123,
+        'jlapenna',
+        'codex',
+      );
+      expect(postComment).not.toHaveBeenCalled();
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
+    });
+
+    it('preserves the assignment failure warning after retry admission succeeds', async () => {
+      (retryPostedComment as Mock).mockResolvedValue({
+        dispatched: true,
+        dispatchWarning: 'assignment-update-failed',
+      });
+      await expect(
+        retryReplyToItem(DEFAULT_REPO, 42, 123, 'codex'),
+      ).resolves.toEqual({
+        ok: true,
+        note: 'Agent dispatched, but updating the GitHub assignment failed.',
+      });
     });
 
     it('reports admitted dispatch when only GitHub assignment labeling fails', async () => {
