@@ -137,13 +137,40 @@ describe('source-ordered label provider handoff', () => {
         requestId: 'same-terminal',
         pipeline: 'codex',
         labelProviderRequest: {
-          requestedAt: T1,
+          requestedAt: '2026-08-15T12:02:00.000Z',
           actor: 'maintainer',
           allowProviderChange: true,
         },
       }),
     ).toMatchObject({ run: { pipeline: 'codex' } });
     expect(await store.listRuns(taskId)).toHaveLength(2);
+  });
+
+  it('equal-clock requests cannot erase a busy refusal and admit it on replay', async () => {
+    const { store, orchestrator, run } = await fixture();
+    const request = (requestId: string) =>
+      orchestrator.request({
+        taskId,
+        requestId,
+        pipeline: 'codex',
+        labelProviderRequest: {
+          requestedAt: T1,
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
+      });
+    expect(await request('busy-a')).toMatchObject({
+      task: { providerRouting: { requestId: 'busy-a', status: 'refused' } },
+    });
+    expect(await request('busy-b')).toMatchObject({
+      reason: 'stale-provider-request',
+    });
+    await orchestrator.report(run.runId, { ok: true });
+    expect(await request('busy-a')).toMatchObject({
+      task: { providerRouting: { requestId: 'busy-a', status: 'refused' } },
+      outbox: [],
+    });
+    expect(await store.listRuns(taskId)).toHaveLength(1);
   });
 
   it('stale and equal-clock deliveries cannot switch back', async () => {

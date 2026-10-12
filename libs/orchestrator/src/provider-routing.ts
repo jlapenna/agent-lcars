@@ -39,9 +39,7 @@ export function decideLabelProviderRequest(
   // Fail closed; reapply the intended label after GitHub's clock advances.
   if (
     previous !== undefined &&
-    (Date.parse(label.requestedAt) < Date.parse(previous.requestedAt) ||
-      (Date.parse(label.requestedAt) === Date.parse(previous.requestedAt) &&
-        (pipeline !== effective || pipeline !== previous.requestedPipeline)))
+    Date.parse(label.requestedAt) <= Date.parse(previous.requestedAt)
   )
     return refused('stale-provider-request', latestRun);
   if (

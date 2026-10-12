@@ -491,6 +491,35 @@ export function runOrchestratorStoreContract(
         expect(await store.listRuns(TASK)).toHaveLength(2);
       });
 
+      it('retains an equal-clock label refusal across settlement and replay', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator);
+        clock.advanceMinutes(1);
+        const request = (requestId: string) =>
+          orchestrator.request({
+            taskId: TASK,
+            requestId,
+            pipeline: 'claude',
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
+          });
+        expect(await request('busy-a')).toMatchObject({
+          task: { providerRouting: { requestId: 'busy-a', status: 'refused' } },
+        });
+        expect(await request('busy-b')).toMatchObject({
+          reason: 'stale-provider-request',
+        });
+        await orchestrator.report(run.runId, { ok: true });
+        expect(await request('busy-a')).toMatchObject({
+          task: { providerRouting: { requestId: 'busy-a', status: 'refused' } },
+          outbox: [],
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(1);
+      });
+
       it('serializes a label handoff against claim and retains refusal after terminal settlement', async () => {
         const { store, orchestrator, clock } = await fixture();
         const { run } = await started(orchestrator);
