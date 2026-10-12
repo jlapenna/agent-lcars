@@ -50,6 +50,12 @@ are temporarily occupied or cooling down, the first authorized unattempted
 alternative remains a fresh queued intent; ordinary claim ceilings and cooldowns
 hold it until it can run. Missing opt-in, revoked authority or exhausted
 alternatives still settle without a successor.
+A `provider-capacity` report is the same availability class with no window to wait on: the direct
+runner derives it from the provider's own structured failure events when a round stops before any
+final message, so an empty last message cannot degrade it to a generic agent failure. It holds that
+provider for exactly one bounded probe and never parses a reset, and it keeps the provider's cause
+in the reported message. A cross-provider successor still requires the explicit policy and current
+grant above; without them the attempt stays failed and the only change is an honest cause.
 Claimed Codex terminal transitions reserve exact cleanup authority in the same
 transaction as the original result, successor and outbox. Completion handlers
 reload that reservation under the authenticated claim fingerprint before

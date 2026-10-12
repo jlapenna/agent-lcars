@@ -604,6 +604,18 @@ fi
 if [ "${FAKE_CODEX_FALSE_POSITIVE:-}" = "1" ]; then
   echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"refresh token was already used"}}'
 fi
+# The exact retained shape from the failed attempt in issue #2537: completed
+# work items, then a structured provider stop, with no final message written.
+if [ "${FAKE_CODEX_CAPACITY:-}" = "1" ]; then
+  echo '{"type":"item.completed","item":{"id":"item_31","type":"agent_message","text":"kept the focused edit scoped"}}'
+  echo '{"type":"error","message":"Selected model is at capacity. Please try a different model."}'
+  echo '{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}'
+  exit 1
+fi
+if [ "${FAKE_CODEX_CAPACITY_IN_TOOL_OUTPUT:-}" = "1" ]; then
+  echo '{"type":"item.completed","item":{"id":"item_31","type":"command_output","output":"Selected model is at capacity. Please try a different model."}}'
+  exit 1
+fi
 echo '{"type":"turn.completed"}'
 exit "${FAKE_WORKER_EXIT:-0}"
 FAKE
@@ -2191,6 +2203,23 @@ run_scenario provider-quota
 unset FAKE_GH_NO_MATCH FAKE_CLAUDE_STDOUT
 [ "$rc" -ne 0 ] || fail "quota: expected failure"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "quota: wrong failure classification"
+
+# #2537: a provider that stops on structured stream events leaves no final
+# message, so an empty LAST_MESSAGE_FILE must not degrade the report to a
+# generic agent failure, and it must stay distinct from the weekly quota.
+export FAKE_GH_NO_MATCH=1 FAKE_CODEX_CAPACITY=1
+run_scenario codex-model-capacity codex
+unset FAKE_GH_NO_MATCH FAKE_CODEX_CAPACITY
+[ "$rc" -ne 0 ] || fail "model capacity: a provider stop reported success"
+jq -e '.outcome == "provider-capacity"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "model capacity: wrong failure classification"
+jq -e '.message | contains("Selected model is at capacity")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "model capacity: provider cause not retained"
+
+# The same phrase in tool output is transcript text, not a provider stop.
+export FAKE_GH_NO_MATCH=1 FAKE_CODEX_CAPACITY_IN_TOOL_OUTPUT=1
+run_scenario codex-capacity-in-tool-output codex
+unset FAKE_GH_NO_MATCH FAKE_CODEX_CAPACITY_IN_TOOL_OUTPUT
+[ "$rc" -ne 0 ] || fail "capacity in tool output: a provider stop reported success"
+jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "capacity in tool output: transcript text forged a provider stop"
 
 # All default provider invocations receive the same two-hour allowance.
 for provider in claude codex opencode; do

@@ -12,6 +12,7 @@ const OUTCOMES = [
   'park',
   'no-op',
   'provider-limit',
+  'provider-capacity',
   'runner-failed',
   'agent-failed',
   'no-deliverable',
