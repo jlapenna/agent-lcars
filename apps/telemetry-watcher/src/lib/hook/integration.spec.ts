@@ -137,6 +137,13 @@ describe('lcars integration', () => {
           Notification: [
             { hooks: [{ type: 'command', command: 'tmux-bell' }] },
           ],
+          PreCompact: [
+            {
+              hooks: [
+                { type: 'command', command: 'cat ~/.codex/lcars-hook.sh' },
+              ],
+            },
+          ],
         },
       }),
     );
@@ -157,6 +164,8 @@ describe('lcars integration', () => {
     expect(hooks['Stop'][0].hooks.map((h) => h['command'])).toEqual(['theirs']);
     expect(hooks['Notification']).toHaveLength(1);
     expect(hooks['PostToolUse']).toBeUndefined();
+    // A foreign command that merely mentions the stub path is not ours.
+    expect(hooks['PreCompact']).toHaveLength(1);
   });
 
   it('reports an outdated stub as not installed', () => {

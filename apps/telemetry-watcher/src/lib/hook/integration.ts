@@ -169,11 +169,17 @@ function writeAtomically(target: string, body: string, mode: number): void {
   }
 }
 
+/** Exactly the commands this installer generates, so an unrelated hook that
+ *  merely mentions the stub's file name is never touched. */
+const OUR_COMMANDS: ReadonlySet<string> = new Set(
+  HOOK_RUNTIMES.map((runtime) => stubCommand(runtime)),
+);
+
 function hookIsOurs(hook: unknown): boolean {
   return (
     isRecord(hook) &&
     typeof hook['command'] === 'string' &&
-    hook['command'].includes(STUB_MARKER)
+    OUR_COMMANDS.has(hook['command'])
   );
 }
 
