@@ -41,6 +41,8 @@ export interface GithubWorkAdmissionInput {
   labelRouting?: GithubLabelRouting;
   /** Console reply guard: this is an expectation, never a provider switch. */
   expectedEffectivePipeline?: string;
+  /** A retry inherits execution intent; explicit API/reply selections do not. */
+  followEffectivePipeline?: boolean;
   /** Work API callers are additionally constrained by their signed GitHub
    * Actions repository and their ordinary Work grant. Webhook and console
    * callers have already established their own admission identity. */
@@ -178,7 +180,9 @@ export async function admitGithubWork(
       ? {}
       : { requestBinding: input.requestBinding }),
     labelProviderRequest,
-    useEffectivePipeline: input.labelRouting === undefined,
+    useEffectivePipeline:
+      input.followEffectivePipeline === true ||
+      input.expectedEffectivePipeline !== undefined,
     expectedEffectivePipeline: input.expectedEffectivePipeline,
     isPipelineAuthorized:
       principal === undefined

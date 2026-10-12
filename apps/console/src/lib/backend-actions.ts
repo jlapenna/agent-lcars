@@ -725,6 +725,7 @@ export async function retriggerIssue(
   const outcome = await admitGithubWork(runtime, {
     anchor: taskId,
     requestId: `console-retry:${randomUUID()}`,
+    followEffectivePipeline: true,
     params: { mode: 'implement' },
     work: existingWork,
   });
