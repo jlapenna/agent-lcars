@@ -68,17 +68,14 @@ for (const width of [390, 768, 1280]) {
       delivered: 0,
     });
     // A temporary read outage must not undo the user's browser opt-in.
-    if (width === 390)
-      await page.route('**/api/inbox-notifications', (route) =>
-        route.fulfill({ status: 503, body: '{}' }),
-      );
+    await page.route('**/api/inbox-notifications', (route) =>
+      route.fulfill({ status: 503, body: '{}' }),
+    );
     await control
       .getByRole('button', { name: 'Enable Inbox notifications' })
       .click();
     await expect(control.getByRole('status')).toHaveText(
-      width === 390
-        ? 'Authorization or data unavailable — notifications paused'
-        : 'Watching for new human decisions',
+      'Authorization or data unavailable — notifications paused',
     );
     expect(await counters()).toEqual({
       permission: 1,
