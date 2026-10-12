@@ -378,10 +378,32 @@ ENV TF_PLUGIN_CACHE_DIR=/opt/terraform-plugin-cache
 COPY --from=telemetry-watcher-build /repo/infra/terraform/.terraform.lock.hcl /tmp/ci-providers/terraform.lock.hcl
 COPY --from=telemetry-watcher-build /repo/infra/github-ruleset/.terraform.lock.hcl /tmp/ci-providers/github-ruleset.lock.hcl
 COPY cache-terraform-providers.py /usr/local/lib/agent-lcars/cache-terraform-providers.py
+# uv's archive extractor fails under the QEMU emulation that builds this
+# image's linux/arm64 variant (Homelab has no native arm64 builder,
+# docs/buildkit-builder.md): "failed to inspect python/lib/libpython3.14.so:
+# Invalid argument (os error 22)" for every CPython release and uv setting
+# tried, which is why the 3.14.7 pin (#2522) did not help. On arm64, unpack
+# the same python-build-standalone archive with GNU tar into uv's managed
+# layout instead; `uv python find --managed-python 3.14` (asserted below)
+# resolves it exactly as if uv had installed it. The checksum is the
+# release's published SHA256SUMS entry. amd64 builds natively and keeps uv.
+ARG UV_PYTHON_ARM64_ARCHIVE=cpython-3.14.7%2B20260929-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz
+ARG UV_PYTHON_ARM64_SHA256=9b8bd45d06fc3fcdc56f2713a62535fe1c019816461ae87c170dd56184dd3f4d
 RUN test "$(terraform version -json | jq -r .terraform_version)" = "$TERRAFORM_VERSION" && \
-    # cpython-3.14.8 (python-build-standalone 20261009) fails to extract on
-    # linux/arm64 ("Invalid tar file ... os error 22"); stay on 3.14.7.
-    uv python install 3.14.7 && \
+    if [ "$TARGETARCH" = arm64 ]; then \
+      archive="$(mktemp)" && unpacked="$(mktemp -d)" && \
+      curl -fsSL --retry 3 -o "$archive" \
+        "https://releases.astral.sh/github/python-build-standalone/releases/download/20260929/$UV_PYTHON_ARM64_ARCHIVE" && \
+      echo "$UV_PYTHON_ARM64_SHA256  $archive" | sha256sum -c - && \
+      tar -xzf "$archive" -C "$unpacked" && \
+      mkdir -p "$UV_PYTHON_INSTALL_DIR/cpython-3.14.7-linux-aarch64-gnu" && \
+      cp -a "$unpacked/python/." "$UV_PYTHON_INSTALL_DIR/cpython-3.14.7-linux-aarch64-gnu/" && \
+      rm -rf "$archive" "$unpacked" && \
+      "$UV_PYTHON_INSTALL_DIR/cpython-3.14.7-linux-aarch64-gnu/bin/python3" --version; \
+    else \
+      uv python install 3.14.7; \
+    fi && \
+    test -x "$(uv python find --managed-python 3.14)" && \
     python3 /usr/local/lib/agent-lcars/cache-terraform-providers.py /tmp/ci-providers/*.lock.hcl && \
     chown -R runner:runner /opt/terraform-plugin-cache /opt/uv-python && \
     rm -rf /tmp/ci-providers
