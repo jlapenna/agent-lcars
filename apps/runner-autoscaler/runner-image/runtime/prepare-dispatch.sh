@@ -154,10 +154,36 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
     case "$claim_rc" in
       0|10|11)
         if jq -e 'type == "object" and (.status | type == "string") and (.next | type == "object")' <<<"$claim_out" >/dev/null 2>&1; then
-          existing_claim_json="$(jq -c '{
-            status, next,
-            evidence: [(.evidence // [])[0:10][] | {kind, live, author, url, branch, last_active: .lastActive}]
-          }' <<<"$claim_out")"
+          # Every string below originates in GitHub (PR branch names, logins,
+          # URLs), so it is reduced to a strict shape before it reaches the
+          # agent: a branch the worker may check out must be a plain ref name,
+          # a URL must be a github.com URL, everything else is short and
+          # enum-checked. An adopt/continue-own whose branch fails the check
+          # degrades to stand-down rather than acting on unvalidated input.
+          existing_claim_json="$(jq -c '
+            def safe_branch: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$") and (test("\\.\\.|//|\\.lock$|/$") | not) then . else null end;
+            def safe_url: if type == "string" and test("^https://github\\.com/[A-Za-z0-9._/#?=&-]{1,200}$") then . else null end;
+            def safe_login: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$") then . else null end;
+            def safe_time: if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$") then . else null end;
+            (.next // {}) as $n
+            | ($n.branch | safe_branch) as $branch
+            | (if ($n.action | IN("adopt", "continue-own")) and $branch == null then "stand-down"
+               elif ($n.action | IN("proceed", "adopt", "continue-own", "stand-down", "none")) then $n.action
+               else "stand-down" end) as $action
+            | {
+                status: (if (.status | IN("free", "live", "stale", "closed")) then .status else "live" end),
+                next: ({action: $action}
+                  + (if $action | IN("adopt", "continue-own") then {branch: $branch} else {} end)
+                  + (if $action == "stand-down" then {live_claims: [($n.liveClaims // [])[0:10][] | safe_url | select(. != null)]} else {} end)),
+                evidence: [(.evidence // [])[0:10][] | {
+                  kind: (if (.kind | IN("pull-request", "heartbeat", "legacy-comment")) then .kind else "unknown" end),
+                  live: (.live == true),
+                  author: (.author | safe_login),
+                  url: (.url | safe_url),
+                  branch: (.branch | safe_branch),
+                  last_active: (.lastActive | safe_time)
+                }]
+              }' <<<"$claim_out")"
         fi
         ;;
     esac
