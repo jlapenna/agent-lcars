@@ -26,6 +26,13 @@ for leaving the console's permissions untouched. Sections below that
 describe the ingest route, host tokens, or the `telemetry.writer` scope are
 superseded by this paragraph.
 
+**Runner status (phase 2):** `LCARS_HOOK_TELEMETRY_PROVIDERS` on the queue
+executor selects Claude and Codex pipelines whose workers install the hooks
+and skip the polling sidecar (`runtime/hook-telemetry-bootstrap.sh`); the
+flusher uses the runner's telemetry-writer credentials file through
+`LCARS_TELEMETRY_CREDENTIALS_FILE`. Empty by default; enabling it is an
+executor environment change.
+
 ## 1. Problem
 
 Every session LCARS shows today is observed from the outside by a

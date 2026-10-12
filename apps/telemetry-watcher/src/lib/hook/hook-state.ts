@@ -175,3 +175,15 @@ export function markHookSessionDelivered(
     updatedAt: now,
   });
 }
+
+/**
+ * Written by the runner before `runner finalize` (runtime/hook-telemetry-
+ * bootstrap.sh). A hook that takes its session lock after the fence exists
+ * records nothing, so no late event can follow the authoritative final doc
+ * and reopen an ended session.
+ */
+export const HOOK_FENCE_FILE = 'hook-fence';
+
+export function isHookFenced(stateDirectory: string): boolean {
+  return fs.existsSync(path.join(stateDirectory, HOOK_FENCE_FILE));
+}

@@ -38,6 +38,7 @@ import {
 } from './hook-payload';
 import {
   hookSessionLockPath,
+  isHookFenced,
   readHookSessionState,
   shouldShipEvent,
   writeHookSessionState,
@@ -307,6 +308,10 @@ async function handleRuntimeHook(
     return { action: 'ignored', detail: 'lock busy' };
   }
   try {
+    if (isHookFenced(stateDirectory)) {
+      log('fenced', `session=${sessionTag} event=${payload.hookEventName}`);
+      return { action: 'ignored', detail: 'fenced' };
+    }
     const state = readHookSessionState(stateDirectory, payload.sessionId);
     if (!shouldShipEvent(kind, state, now)) {
       writeHookSessionState(stateDirectory, {

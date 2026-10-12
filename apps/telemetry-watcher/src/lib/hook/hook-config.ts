@@ -18,6 +18,10 @@ export interface HookWriterCredentials {
   readonly projectId: string;
   /** Service-account key; absent means Application Default Credentials. */
   readonly credentials?: { client_email: string; private_key: string };
+  /** A Google credentials file of any supported type (the runner's
+   *  short-lived telemetry-writer file), passed only to the Firestore client
+   *  so it never becomes ambient credentials for the agent. */
+  readonly credentialsFile?: string;
   readonly emulatorHost?: string;
 }
 
@@ -98,7 +102,7 @@ export function loadHookClientConfig(
   const runnerRepo = parseRepoSlug(
     env['LCARS_REPO'] ?? env['GITHUB_REPOSITORY'],
   );
-  const issueNumber = Number(env['NUM']);
+  const issueNumber = Number(env['LCARS_ISSUE_NUMBER'] ?? env['NUM']);
   const runner =
     runId && runnerRepo
       ? {
@@ -146,8 +150,9 @@ function parseKey(
 
 /** Writer credentials, in order: the emulator; a key from
  *  `AGENT_TELEMETRY_WRITER_KEY_JSON`; the key file homegit installs; and on
- *  a runner, ambient credentials (`GOOGLE_APPLICATION_CREDENTIALS`, the
- *  telemetry-writer file the direct runner already provides). */
+ *  a runner, the telemetry-writer credentials file named by
+ *  `LCARS_TELEMETRY_CREDENTIALS_FILE` (preferred: the agent never sees it as
+ *  ambient credentials) or `GOOGLE_APPLICATION_CREDENTIALS`. */
 function resolveWriter(
   env: NodeJS.ProcessEnv,
   readFile: (filePath: string) => string,
@@ -175,6 +180,13 @@ function resolveWriter(
         client_email: key.client_email,
         private_key: key.private_key,
       },
+    };
+  }
+  const credentialsFile = env['LCARS_TELEMETRY_CREDENTIALS_FILE']?.trim();
+  if (isRunner && credentialsFile) {
+    return {
+      projectId: configuredProject ?? DEFAULT_TELEMETRY_PROJECT_ID,
+      credentialsFile,
     };
   }
   if (isRunner && env['GOOGLE_APPLICATION_CREDENTIALS']) {

@@ -183,6 +183,36 @@ describe('lcars integration', () => {
     expect(hooks['PreCompact']).toHaveLength(1);
   });
 
+  it('follows CODEX_HOME and CLAUDE_CONFIG_DIR with an absolute stub path', () => {
+    const home = tempHome();
+    const codexHome = path.join(home, 'volatile', 'codex-home');
+    const claudeDir = path.join(home, 'claude-config');
+    const env = { CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeDir };
+    expect(installIntegration('codex', home, env).installed).toBe(true);
+    expect(installIntegration('claude', home, env).installed).toBe(true);
+    const codexHooks = readJson(path.join(codexHome, 'hooks.json'))[
+      'hooks'
+    ] as Record<string, Array<{ hooks: Array<Record<string, unknown>> }>>;
+    const stub = path.join(codexHome, 'lcars-hook.sh');
+    expect(codexHooks['Stop'][0].hooks[0]['command']).toBe(
+      stubCommand('codex', stub),
+    );
+    expect(fs.existsSync(stub)).toBe(true);
+    expect(fs.existsSync(path.join(claudeDir, 'hooks', 'lcars-hook.sh'))).toBe(
+      true,
+    );
+    expect(fs.existsSync(path.join(home, '.codex'))).toBe(false);
+    expect(uninstallIntegration('codex', home, env).installed).toBe(false);
+    expect(fs.existsSync(stub)).toBe(false);
+  });
+
+  it('refuses a relocated config dir that cannot be quoted safely', () => {
+    const home = tempHome();
+    expect(() =>
+      installIntegration('codex', home, { CODEX_HOME: `${home}/a"b` }),
+    ).toThrow(/shell-unsafe/);
+  });
+
   it('reports an outdated stub as not installed', () => {
     const home = tempHome();
     installIntegration('claude', home);

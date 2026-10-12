@@ -104,6 +104,24 @@ describe('runFlush', () => {
     ).toContain('flush drop invalid session=s1');
   });
 
+  it('uses the runner credentials file named by LCARS_TELEMETRY_CREDENTIALS_FILE', async () => {
+    const home = homeWithEvents(['s1']);
+    const d = deps(
+      home,
+      { apply: vi.fn(async () => 'applied' as const) },
+      {
+        LCARS_RUN_ID: 'run-1',
+        LCARS_REPO: 'jlapenna/agent-lcars',
+        LCARS_TELEMETRY_CREDENTIALS_FILE: '/run/secrets/telemetry-writer.json',
+      },
+    );
+    await runFlush(d);
+    expect(d.createWriter).toHaveBeenCalledWith({
+      projectId: 'agent-lcars',
+      credentialsFile: '/run/secrets/telemetry-writer.json',
+    });
+  });
+
   it('leaves the spool alone without writer credentials', async () => {
     const home = homeWithEvents(['s1']);
     const d = deps(home, { apply: vi.fn() }, {});
