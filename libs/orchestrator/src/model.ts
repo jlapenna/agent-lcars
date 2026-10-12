@@ -477,6 +477,14 @@ export const taskSchema = z.strictObject({
    *  `finished` or was `canceled`. Drives the bounded auto-retry budget in
    *  `decide.ts`'s `expireLease`/`MAX_AUTO_RETRIES`. */
   consecutiveLost: z.number().int().nonnegative(),
+  /** How many runs this task has lost to qualifying scheduler preemption
+   *  since the last run that `finished` or was `canceled`. A separate budget
+   *  because an infra-disrupted attempt whose provider process was never
+   *  observed starting produced no provider effects, so it must not spend the
+   *  execution budget above. Optional: a task written before this counter
+   *  existed reads as zero. Drives `decide.ts`'s
+   *  `MAX_SCHEDULER_DISRUPTION_RECOVERIES`. */
+  schedulerDisruptions: z.number().int().nonnegative().optional(),
   /** The work item's payload, written once when the task is created by
    *  its first request and never modified by the orchestrator afterward.
    *  A native anchor and a GitHub anchor both carry one. */
