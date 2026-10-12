@@ -67,15 +67,31 @@ for (const width of [390, 768, 1280]) {
       registered: 0,
       delivered: 0,
     });
+    // A temporary read outage must not undo the user's browser opt-in.
+    await page.route('**/api/inbox-notifications', (route) =>
+      route.fulfill({ status: 503, body: '{}' }),
+    );
     await control
       .getByRole('button', { name: 'Enable Inbox notifications' })
       .click();
     await expect(control.getByRole('status')).toHaveText(
-      'Watching for new human decisions',
+      'Authorization or data unavailable — notifications paused',
     );
     expect(await counters()).toEqual({
       permission: 1,
       registered: 1,
+      delivered: 0,
+    });
+    await page.unroute('**/api/inbox-notifications');
+    await page.reload();
+    await expect(control.getByRole('status')).toHaveText(
+      'Watching for new human decisions',
+    );
+    // Consent survives a new document without asking permission again or
+    // registering the worker again, and recovery never replays the backlog.
+    expect(await counters()).toEqual({
+      permission: 0,
+      registered: 0,
       delivered: 0,
     });
     const button = control.getByRole('button', {

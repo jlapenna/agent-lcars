@@ -231,13 +231,14 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
         );
         return;
       }
-      const fresh = await bounded(readInboxNotificationSnapshot());
+      // Opt-in is a browser preference, not a health check of every source.
+      // A missing baseline pauses delivery; it must not discard consent.
+      const fresh = await bounded(readInboxNotificationSnapshot()).catch(
+        () => undefined,
+      );
       if (!current()) return;
-      if (
-        fresh.principalId !== principalId ||
-        !notificationSnapshotFresh(fresh, Date.now())
-      )
-        throw new Error('Authorization or data unavailable');
+      if (fresh && fresh.principalId !== principalId)
+        throw new Error('Account changed');
       const registration = await bounded(
         navigator.serviceWorker.register(NOTIFICATION_WORKER, {
           scope: NOTIFICATION_SCOPE,
@@ -264,33 +265,40 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
         );
       }
       if (!current()) return;
+      let baselineReady = false;
       await navigator.locks.request(key, () => {
         if (!current()) return;
-        if (!notificationSnapshotFresh(fresh, Date.now()))
-          throw new Error('Activation snapshot expired');
         const stored = parseNotificationState(localStorage.getItem(key));
-        if (
-          Object.keys(stored.sourceTimes).some(
+        baselineReady =
+          fresh !== undefined &&
+          notificationSnapshotFresh(fresh, Date.now()) &&
+          !Object.keys(stored.sourceTimes).some(
             (key) =>
               fresh.sourceTimes[key as keyof typeof fresh.sourceTimes] <
               stored.sourceTimes[key as keyof typeof fresh.sourceTimes],
-          )
-        )
-          throw new Error('Older activation snapshot');
+          );
         const state = {
           ...stored,
           enabled: true,
-          active: fresh.decisions,
+          // Never establish history from stale or degraded authorization.
+          // The first healthy observation will be a quiet baseline instead.
+          active: baselineReady && fresh ? fresh.decisions : null,
           pending: [],
-          observedAt: fresh.observedAt,
-          sourceTimes: fresh.sourceTimes,
+          observedAt:
+            baselineReady && fresh ? fresh.observedAt : stored.observedAt,
+          sourceTimes:
+            baselineReady && fresh ? fresh.sourceTimes : stored.sourceTimes,
         };
         localStorage.setItem(key, JSON.stringify(state));
       });
       if (!current()) return;
-      baseline.current = false;
+      baseline.current = !baselineReady;
       setEnabled(true);
-      setStatus('Watching for new human decisions');
+      setStatus(
+        baselineReady
+          ? 'Watching for new human decisions'
+          : 'Authorization or data unavailable — notifications paused',
+      );
     } catch {
       if (current()) setStatus('Notification activation unavailable');
     } finally {

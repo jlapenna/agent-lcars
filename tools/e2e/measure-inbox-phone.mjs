@@ -74,6 +74,9 @@ async function seed(origin) {
 }
 
 async function milestone(page, origin) {
+  // These checkpoints explain the existing journey; none relax its load
+  // barrier or replace the real primary-action confirmation with markup.
+
   const response = await page.goto(`${origin}${ITEM_PATH}`, {
     waitUntil: 'load',
     timeout: SAMPLE_TIMEOUT_MS,
@@ -81,12 +84,14 @@ async function milestone(page, origin) {
   if (!response?.ok()) throw new Error('Inbox navigation failed.');
   if (new URL(page.url()).pathname !== '/inbox')
     throw new Error('Inbox redirected.');
+  const documentLoadObservedMs = await page.evaluate(() => performance.now());
   const detail = page.locator('.queue-workspace__detail');
   await detail
     .getByText('feat(console): tap-icon refresh on the queue header', {
       exact: true,
     })
     .waitFor();
+  const clickRequestedMs = await page.evaluate(() => performance.now());
   // This must invoke the real hydrated primary-action handler, not merely
   // observe server-rendered enabled markup. Never confirm a merge or dispatch.
   await detail
@@ -97,32 +102,50 @@ async function milestone(page, origin) {
   const measured = await page.evaluate(() => {
     const navigation = performance.getEntriesByType('navigation')[0];
     const resources = performance.getEntriesByType('resource');
+    const diagnostics = window.__inboxPhoneDiagnostics;
+    diagnostics.collect(diagnostics.observer.takeRecords());
     return {
       readyMs: performance.now(),
       responseStartMs: navigation.responseStart,
       responseEndMs: navigation.responseEnd,
       domInteractiveMs: navigation.domInteractive,
+      domContentLoadedMs: navigation.domContentLoadedEventEnd,
+      loadEventMs: navigation.loadEventEnd,
+      primaryClickDispatchedMs: diagnostics.clickMs,
+      longTasks: diagnostics.longTasks,
+      longTasksTruncated: diagnostics.longTasksTruncated,
+
       resources: resources.map((entry) => ({
         path: new URL(entry.name).pathname,
         type: entry.initiatorType,
+        startMs: entry.startTime,
+        responseStartMs: entry.responseStart,
+        responseEndMs: entry.responseEnd,
         durationMs: entry.duration,
         transferBytes: entry.transferSize,
         encodedBytes: entry.encodedBodySize,
       })),
     };
   });
+  if (!Number.isFinite(measured.primaryClickDispatchedMs))
+    throw new Error('Primary click diagnostic was not captured.');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  return measured;
+  return { documentLoadObservedMs, clickRequestedMs, ...measured };
 }
 
 export async function measure(options) {
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     measuredAt: new Date().toISOString(),
     environment: {
       host: os.hostname(),
       platform: os.platform(),
       arch: os.arch(),
+      cpuModel: os.cpus()[0]?.model,
+      systemObservationsAtStart: {
+        loadAverage: os.loadavg(),
+        freeMemoryBytes: os.freemem(),
+      },
     },
     profile: PROFILE,
     targetMs: TARGET_MS,
@@ -137,6 +160,14 @@ export async function measure(options) {
     samplesPerCase: options.samples,
     quantile:
       'Nearest rank: sorted[ceil(0.95 * n) - 1]; cold and warm never pooled',
+    diagnostics: {
+      checkpoints:
+        'Navigation-relative milliseconds; observation checkpoints include automation scheduling. The captured click is event dispatch, not an exact hydration timestamp.',
+      longTasks:
+        'PerformanceObserver longtask entries (>=50ms), navigation through confirmation observation, capped at 200; overlapping resource and task durations must not be added.',
+      mainThread:
+        'CDP Performance task/script/layout/style durations in milliseconds from collection enabled after warmup, or its restoration in the timed renderer. Current-renderer timeTicks counters include Cancel cleanup and metric-read scheduling; they exclude earlier warmup, are not cross-renderer totals, and are not a CPU profile or hydration-only measure.',
+    },
     samples: [],
   };
   let browser;
@@ -173,6 +204,43 @@ export async function measure(options) {
         try {
           const page = await context.newPage();
           page.setDefaultTimeout(SAMPLE_TIMEOUT_MS);
+          await page.addInitScript(() => {
+            const diagnostics = {
+              clickMs: null,
+              longTasks: [],
+              longTasksTruncated: false,
+            };
+            window.__inboxPhoneDiagnostics = diagnostics;
+            diagnostics.collect = (entries) => {
+              for (const entry of entries) {
+                if (diagnostics.longTasks.length < 200)
+                  diagnostics.longTasks.push({
+                    startMs: entry.startTime,
+                    durationMs: entry.duration,
+                  });
+                else diagnostics.longTasksTruncated = true;
+              }
+            };
+            diagnostics.observer = new PerformanceObserver((list) =>
+              diagnostics.collect(list.getEntries()),
+            );
+            diagnostics.observer.observe({ type: 'longtask', buffered: true });
+            document.addEventListener(
+              'click',
+              (event) => {
+                const button =
+                  event.target instanceof Element
+                    ? event.target.closest('button')
+                    : null;
+                if (
+                  button?.textContent?.trim() === 'Approve & Rebase' &&
+                  button.closest('.queue-workspace__detail')
+                )
+                  diagnostics.clickMs = performance.now();
+              },
+              { capture: true },
+            );
+          });
           const errors = [];
           page.on('pageerror', (error) => errors.push(error.message));
           page.on('console', (message) => {
@@ -195,7 +263,26 @@ export async function measure(options) {
           } else {
             await milestone(page, options.origin);
           }
+          // Start collection after the untimed warmup. Renderer restoration can
+          // reset duration counters across navigation; never subtract an older
+          // document's accumulated work from the timed renderer's counters.
+          await cdp.send('Performance.enable', { timeDomain: 'timeTicks' });
           const sample = await milestone(page, options.origin);
+          const afterMetrics = await cdp.send('Performance.getMetrics');
+          sample.mainThreadMs = Object.fromEntries(
+            afterMetrics.metrics
+              .filter(({ name }) =>
+                [
+                  'TaskDuration',
+                  'V8CompileDuration',
+                  'DevToolsCommandDuration',
+                  'ScriptDuration',
+                  'LayoutDuration',
+                  'RecalcStyleDuration',
+                ].includes(name),
+              )
+              .map(({ name, value }) => [name, value * 1_000]),
+          );
           if (errors.length)
             throw new Error(`Browser errors: ${errors.join('; ')}`);
           report.samples.push({ cache, index: index + 1, ...sample });
@@ -230,6 +317,10 @@ export async function measure(options) {
       error instanceof Error ? error.message : 'Measurement failed';
   } finally {
     clearTimeout(deadline);
+    report.environment.systemObservationsAtEnd = {
+      loadAverage: os.loadavg(),
+      freeMemoryBytes: os.freemem(),
+    };
     try {
       await browser?.close();
     } catch (error) {

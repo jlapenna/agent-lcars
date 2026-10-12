@@ -126,6 +126,50 @@ describe('opt-in Inbox notification delivery', () => {
       screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeVisible();
   });
+  it.each(['failed read', 'degraded data', 'stale data'])(
+    'retains opt-in across remounts after %s and quietly recovers',
+    async (failure) => {
+      if (failure === 'failed read')
+        mocks.read.mockRejectedValue(new Error('Source unavailable'));
+      else
+        mocks.read.mockResolvedValue({
+          ...sample(),
+          available: failure !== 'degraded data',
+          observedAt: failure === 'stale data' ? now - 60_000 : now,
+        });
+      const view = render(tree(sample()));
+      await click('Enable Inbox notifications');
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'notifications paused',
+      );
+      expect(
+        screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+      ).toBeEnabled();
+      view.unmount();
+      render(tree(sample()));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(
+        screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+      ).toBeEnabled();
+      expect(showNotification).not.toHaveBeenCalled();
+      mocks.read.mockImplementation(async () => sample([first, second]));
+      await tick();
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Watching for new human decisions',
+      );
+      expect(showNotification).not.toHaveBeenCalled();
+      const third = { id: 'owner/repo#3', generation: 'needs-human' };
+      mocks.read.mockImplementation(async () => sample([first, second, third]));
+      await tick();
+      expect(showNotification).toHaveBeenCalledOnce();
+      await click('Disable Inbox notifications');
+      expect(
+        parseNotificationState(localStorage.getItem(storageKey)).enabled,
+      ).toBe(false);
+    },
+  );
   it('delivers generic text and a safe native deep link after fresh authorization', async () => {
     const view = render(tree(sample()));
     await click('Enable Inbox notifications');
@@ -713,7 +757,7 @@ describe('opt-in Inbox notification delivery', () => {
       expect.objectContaining({ data: { href: '/inbox?item=work%3A01ABC' } }),
     );
   });
-  it('refuses a baseline that expires while acquiring the activation lock', async () => {
+  it('retains opt-in without a baseline that expires while acquiring the activation lock', async () => {
     const sampledAt = now - 59_000;
     mocks.read.mockResolvedValue({
       ...sample(),
@@ -727,15 +771,21 @@ describe('opt-in Inbox notification delivery', () => {
     });
     render(tree(sample()));
     await click('Enable Inbox notifications');
-    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)),
+    ).toMatchObject({
+      enabled: true,
+      active: null,
+      pending: [],
+    });
     expect(screen.getByRole('status')).toHaveTextContent(
-      'activation unavailable',
+      'notifications paused',
     );
     expect(
-      screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+      screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeEnabled();
   });
-  it('refuses a baseline that expires while registration completes', async () => {
+  it('retains opt-in without a baseline that expires while registration completes', async () => {
     const sampledAt = now - 59_000;
     mocks.read.mockImplementation(async () => ({
       ...sample(),
@@ -749,9 +799,15 @@ describe('opt-in Inbox notification delivery', () => {
     });
     render(tree(sample()));
     await click('Enable Inbox notifications');
-    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)),
+    ).toMatchObject({
+      enabled: true,
+      active: null,
+      pending: [],
+    });
     expect(screen.getByRole('status')).toHaveTextContent(
-      'activation unavailable',
+      'notifications paused',
     );
   });
 });
