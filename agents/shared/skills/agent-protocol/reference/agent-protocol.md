@@ -335,7 +335,10 @@ ready push or PR open only to run local E2E.
 
 For every ready, non-parked pull request you open, **do not request human
 review**. Fleet repositories require zero approving reviews for agent-authored
-PRs; a review request is friction, not a handoff. Before ready/arming, declare the exact fully completed issue scope and read
+PRs; a review request is friction, not a handoff. Publish new PRs as drafts: this lets you check interpreted links before a
+ready-PR auto-merge backstop can arm them. After the check and required review
+pass, mark the draft ready, refresh the check and feedback, and arm below.
+Before ready/arming, declare the exact fully completed issue scope and read
 GitHub's actual `closingIssuesReferences` at the reviewed/pushed head. Required
 runtime or deployment acceptance still open means that issue is excluded:
 use `Tracks #N`, never a negated closing-keyword phrase. GitHub interpreted

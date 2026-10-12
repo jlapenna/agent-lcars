@@ -21,7 +21,7 @@
    reviewer:
 
    ```bash
-   gh pr create --reviewer jlapenna
+   gh pr create --draft --reviewer jlapenna
    ```
 
    **Reconcile GitHub's actual closing scope before ready/arming**, in both
@@ -32,6 +32,9 @@
    PR #2447's “intentionally does not close #2209” still selected #2209 in
    GitHub's interpreted `closingIssuesReferences`.
 
+   Publish new PRs as drafts, so the returned references can be checked before
+   a ready-PR auto-merge backstop can arm delivery. Once the check and required
+   review pass, mark the draft ready and arm through the existing path below.
    After publishing the body, run the shared read-only check against the exact
    reviewed/pushed head, immediately before marking ready or arming:
 
