@@ -16,12 +16,19 @@ function tempSpool(): string {
   dirs.push(dir);
   return path.join(dir, 'spool', 'events.ndjson');
 }
-const lines = (file: string) =>
-  fs
-    .readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => JSON.parse(l) as { n: number });
+const read = (file: string): { n: number }[] =>
+  fs.existsSync(file)
+    ? fs
+        .readFileSync(file, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as { n: number })
+    : [];
+/** Pending leftovers first, then the live file: the order a drain sends. */
+const lines = (file: string) => [
+  ...read(path.join(path.dirname(file), 'events.pending.ndjson')),
+  ...read(file),
+];
 
 describe('spool', () => {
   it('drops the oldest events when the cap is exceeded', () => {
@@ -52,6 +59,8 @@ describe('spool', () => {
       remaining: 3,
     });
     expect(lines(file).map((e) => e.n)).toEqual([2, 3, 99]);
+    // The append during the drain landed in a fresh live file, untouched.
+    expect(read(file).map((e) => e.n)).toEqual([99]);
     expect(fs.existsSync(path.join(path.dirname(file), 'events.lock'))).toBe(
       false,
     );
@@ -63,7 +72,7 @@ describe('spool', () => {
     const lock = path.join(path.dirname(file), 'events.lock');
     fs.writeFileSync(lock, '1');
     expect((await drainSpool(file, async () => 'sent')).locked).toBe(true);
-    const stale = Date.now() + 120_000;
+    const stale = Date.now() + 10 * 60_000;
     expect(
       (
         await drainSpool(

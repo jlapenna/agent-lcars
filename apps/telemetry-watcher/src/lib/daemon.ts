@@ -29,6 +29,7 @@ import { discoverSessionArtifacts as defaultDiscoverArtifacts } from './discover
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
 import { applyGitContext } from './git-context';
 import { resolveGitRepo as defaultResolveGitRepo } from './git-repo';
+import { isHookReported as defaultIsHookReported } from './hook/hook-state';
 import { WatcherMetricsSink } from './metrics';
 import {
   isProcessAliveForCwd as defaultIsProcessAliveForCwd,
@@ -164,6 +165,15 @@ export interface WatcherDaemonOptions {
    * `STATUS_SUBDIRECTORY`'s doc comment for why status gets its own
    * channel directory beneath that same root rather than a new top-level
    * option. */
+  /** Whether a `lcars hook` client reported this session recently (see
+   * `hook/hook-state.ts`'s `isHookReported`). Such sessions are skipped so
+   * the daemon and the hook path never both write one doc. Read from
+   * `sessionStateDir`; a daemon without one never skips. */
+  isHookReported?: (
+    stateDirectory: string,
+    sessionId: string,
+    now: string,
+  ) => boolean;
   readSessionStatusOverlay?: (
     stateDirectory: string,
     sessionIds: Iterable<string>,
@@ -443,6 +453,24 @@ export class WatcherDaemon {
             (!summary.cwd ||
               !isAllowedProjectDir(summary.cwd, root.cwdAllowlist))
           ) {
+            continue;
+          }
+          if (
+            this.options.sessionStateDir &&
+            (this.options.isHookReported ?? defaultIsHookReported)(
+              this.options.sessionStateDir,
+              summary.sessionId,
+              now,
+            )
+          ) {
+            // A hook client owns this session for now; drop any copy this
+            // daemon tracked before the hook took over, forget the dedupe
+            // entry so a later identical write is not suppressed, and keep
+            // the file marked unread so the daemon picks it back up the
+            // moment the marker lapses even if the transcript never changes.
+            this.sessions.delete(summary.sessionId);
+            this.lastWrittenWrites.delete(summary.sessionId);
+            this.fileStats.delete(file);
             continue;
           }
           summaries.push(

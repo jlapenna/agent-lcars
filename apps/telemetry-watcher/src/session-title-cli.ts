@@ -2,6 +2,7 @@ import {
   defaultHookCommandDependencies,
   executeHookCommand,
 } from './lib/hook/hook-command';
+import { executeIntegrationCommand } from './lib/hook/integration';
 import { executeSessionTitleAnnotationCommand } from './lib/session-title-annotation-command';
 import { defaultWorkCommandDeps, executeWorkCommand } from './lib/work-command';
 
@@ -16,6 +17,12 @@ void (async () => {
     // `hook-command.ts` already recorded the decision in hook.log.
     await executeHookCommand(argv.slice(1), defaultHookCommandDependencies());
     process.exitCode = 0;
+    return;
+  }
+  if (argv[0] === 'integration') {
+    // Operator command: installs/removes the runtime hook entries and the
+    // launcher stub they call (docs/hooks-telemetry-design.md §4.7).
+    process.exitCode = executeIntegrationCommand(argv.slice(1));
     return;
   }
   if (argv[0] === 'work') {

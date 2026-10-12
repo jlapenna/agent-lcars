@@ -123,7 +123,8 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 # disk audit is the reason to default to not adding one anyway when
 # combining is this cheap).
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
-    ./tools/nx session-title-cli @agent-lcars/telemetry-watcher
+    ./tools/nx session-title-cli @agent-lcars/telemetry-watcher && \
+    ./tools/nx hook-flush-cli @agent-lcars/telemetry-watcher
 
 # Action archives are immutable repository tarballs, never extracted or executed
 # during preparation. Download them on the existing builder-platform stage;
@@ -499,6 +500,11 @@ RUN chmod +x /usr/local/lib/agent-lcars/direct-runner.sh
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs \
     /usr/local/lib/agent-lcars/lcars-session-title.cjs
+# The hook flusher bundle: `lcars hook` spawns it from beside the CLI bundle
+# so hook invocations never load the Firestore client.
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/dist/apps/telemetry-watcher-hook-flush/lcars-hook-flush.cjs \
+    /usr/local/lib/agent-lcars/lcars-hook-flush.cjs
 
 # Agent-runtime commands are single-sourced from packages/fleet-tools and
 # installed globally from the same fresh-`main` checkout the telemetry stage

@@ -10,9 +10,6 @@ const workScopeSchema = z.enum([
   'work.capacity.recover',
   'work.capacity.fence',
   'work.capacity.operator',
-  /** Post hook-sourced session events to `/api/telemetry/v1/` (see
-   *  `telemetry-ingest.ts`). Confers nothing on the Work API. */
-  'telemetry.writer',
 ]);
 
 /** A pipeline name checked against the same closed set `workSpecSchema`

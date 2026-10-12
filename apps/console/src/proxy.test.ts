@@ -26,7 +26,6 @@ const EXPECTED_PUBLIC_ROUTES = [
 const EXPECTED_PUBLIC_PREFIXES = [
   '/api/e2e/',
   '/api/quick-task-evidence/v1/',
-  '/api/telemetry/v1/',
   '/api/work/v1/',
 ];
 

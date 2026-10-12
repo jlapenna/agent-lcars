@@ -21,17 +21,15 @@ import {
 } from './unknown-value';
 
 /**
- * One hook-sourced observation of a coding-agent session, posted by the
- * `lcars hook` client (apps/telemetry-watcher) to the console's
- * `/api/telemetry/v1/sessions/{sessionId}/events` route — see
- * docs/hooks-telemetry-design.md §4.2. The console turns it into the same
- * `SessionDoc` the host watcher daemon writes today, so nothing downstream
- * of Firestore changes.
+ * One hook-sourced observation of a coding-agent session, spooled by the
+ * `lcars hook` client (apps/telemetry-watcher) and written by `lcars hook
+ * flush` as the same `SessionDoc` the host watcher daemon writes (see
+ * `session-event-write.ts` and docs/hooks-telemetry-design.md), so nothing
+ * downstream of Firestore changes.
  *
  * The contract is deliberately a whitelist: `parseSessionEventV1` copies
- * only the fields named here into fresh objects, so a client (or anyone
- * holding a client's token) cannot smuggle arbitrary keys into a session
- * document.
+ * only the fields named here into fresh objects, so a corrupted spool line
+ * cannot smuggle arbitrary keys into a session document.
  */
 export const SESSION_EVENT_KINDS = [
   'start',

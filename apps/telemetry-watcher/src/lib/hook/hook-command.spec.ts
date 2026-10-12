@@ -57,18 +57,18 @@ function deps(
   stdin: string,
   overrides: Partial<HookCommandDependencies> = {},
 ): HookCommandDependencies {
-  const fetchImpl = vi.fn(async () => new Response(null, { status: 202 }));
   return {
-    env: { LCARS_TELEMETRY_TOKEN: 'secret', LCARS_URL: 'https://lcars.test' },
+    env: {},
     homeDirectory: home,
     now: () => new Date('2026-10-10T12:00:00.000Z'),
     readStdin: () => stdin,
     readTranscriptLines: (filePath) =>
       fs.readFileSync(filePath, 'utf8').split('\n'),
     fileExists: (filePath) => fs.existsSync(filePath),
+    findCodexRollout: () => undefined,
     resolveGitRepo: async () => ({ owner: 'jlapenna', name: 'agent-lcars' }),
     resolveGitBranch: async () => 'feat/hooks',
-    fetchImpl,
+    runFlusher: vi.fn(async () => undefined),
     spawnFlusher: vi.fn(),
     randomId: () => 'evt-fixed',
     hostname: () => 'laforge.lan',
@@ -267,62 +267,97 @@ describe('lcars hook claude', () => {
     });
   });
 
-  it('--inline posts the spooled event to the console with the bearer token', async () => {
+  it('--inline runs the flusher in the foreground instead of spawning it', async () => {
     const home = tempHome();
     const d = deps(home, payload('Stop'));
     expect((await executeHookCommand(['claude', '--inline'], d)).action).toBe(
       'spooled',
     );
     expect(d.spawnFlusher).not.toHaveBeenCalled();
-    expect(d.fetchImpl).toHaveBeenCalledOnce();
-    const [url, init] = vi.mocked(d.fetchImpl).mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
-    expect(url).toBe(
-      `https://lcars.test/api/telemetry/v1/sessions/${SESSION_ID}/events`,
+    expect(d.runFlusher).toHaveBeenCalledOnce();
+    expect(spooledEvents(home).map((e) => e.kind)).toEqual(['stop']);
+  });
+});
+
+describe('lcars hook codex', () => {
+  const CODEX_FIXTURE = path.join(
+    __dirname,
+    '../../../../../libs/telemetry/src/lib/fixtures/codex-session.jsonl',
+  );
+  const CODEX_SESSION = 'codex-session-1';
+
+  function codexPayload(
+    hookEventName: string,
+    overrides: Record<string, unknown> = {},
+  ): string {
+    return JSON.stringify({
+      hook_event_name: hookEventName,
+      session_id: CODEX_SESSION,
+      transcript_path: CODEX_FIXTURE,
+      cwd: '/home/developer/p/members',
+      model: 'gpt-6.1-sol',
+      turn_id: 'turn-1',
+      ...overrides,
+    });
+  }
+
+  it('reduces a Codex rollout with the codex adapter', async () => {
+    const home = tempHome();
+    const d = deps(home, codexPayload('Stop'));
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event).toMatchObject({
+      agent: 'codex',
+      kind: 'stop',
+      runtime: { name: 'codex', hookEvent: 'Stop' },
+    });
+    expect(event.summary).toMatchObject({
+      agent: 'codex',
+      sessionId: CODEX_SESSION,
+      host: 'laforge',
+    });
+    expect(event.summary?.turns).toBeGreaterThan(0);
+  });
+
+  it('falls back to locating the rollout when the payload has no transcript path', async () => {
+    const home = tempHome();
+    const d = deps(
+      home,
+      codexPayload('PostToolUse', { transcript_path: null }),
+      {
+        findCodexRollout: (codexHome, sessionId) =>
+          codexHome === path.join(home, '.codex') && sessionId === CODEX_SESSION
+            ? CODEX_FIXTURE
+            : undefined,
+      },
     );
-    expect((init.headers as Record<string, string>)['authorization']).toBe(
-      'Bearer secret',
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    expect(spooledEvents(home)[0].summary?.turns).toBeGreaterThan(0);
+  });
+
+  it('treats Interrupt as a stop and carries the payload model when nothing else has one', async () => {
+    const home = tempHome();
+    const d = deps(
+      home,
+      codexPayload('Interrupt', { transcript_path: '/nope.jsonl' }),
     );
-    expect(spooledEvents(home)).toEqual([]);
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event.kind).toBe('stop');
+    expect(event.summary).toMatchObject({
+      turns: 0,
+      model: 'gpt-6.1-sol',
+      agent: 'codex',
+    });
   });
 });
 
 describe('lcars hook flush', () => {
-  it('keeps events when the console is unreachable and drops ones it rejects', async () => {
+  it('runs the flusher bundle for the flush subcommand', async () => {
     const home = tempHome();
-    await executeHookCommand(['claude'], deps(home, payload('PostToolUse')));
-    await executeHookCommand(['claude'], deps(home, payload('Stop')));
-    const failing = deps(home, '', {
-      fetchImpl: vi.fn(async () => {
-        throw new Error('offline');
-      }),
-    });
-    expect(await executeHookCommand(['flush'], failing)).toMatchObject({
-      action: 'flushed',
-      detail: 'sent=0 dropped=0 remaining=2',
-    });
-    const rejecting = deps(home, '', {
-      fetchImpl: vi
-        .fn()
-        .mockResolvedValueOnce(new Response('bad', { status: 400 }))
-        .mockResolvedValueOnce(new Response(null, { status: 202 })),
-    });
-    expect(await executeHookCommand(['flush'], rejecting)).toMatchObject({
-      action: 'flushed',
-      detail: 'sent=1 dropped=1 remaining=0',
-    });
-  });
-
-  it('leaves the spool alone without a token', async () => {
-    const home = tempHome();
-    await executeHookCommand(['claude'], deps(home, payload('Stop')));
-    const noToken = deps(home, '', { env: {} });
-    expect((await executeHookCommand(['flush'], noToken)).action).toBe(
-      'flush-no-token',
-    );
-    expect(spooledEvents(home)).toHaveLength(1);
+    const d = deps(home, '');
+    expect((await executeHookCommand(['flush'], d)).action).toBe('flushed');
+    expect(d.runFlusher).toHaveBeenCalledOnce();
   });
 
   it('prints usage for anything else, to stderr only', async () => {
