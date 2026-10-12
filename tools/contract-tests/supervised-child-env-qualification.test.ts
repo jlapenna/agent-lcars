@@ -1,6 +1,13 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -21,6 +28,15 @@ const run = promisify(execFile);
 const bash = '/bin/bash';
 const envProgram = '/usr/bin/env';
 const systemdRun = '/usr/bin/systemd-run';
+const packageManager: unknown = JSON.parse(
+  fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+).packageManager;
+const pnpmPin =
+  typeof packageManager === 'string'
+    ? /^pnpm@([^+]+)(?:\+.*)?$/.exec(packageManager)
+    : null;
+if (!pnpmPin) throw new Error('Repository packageManager must pin pnpm');
+const pinnedPnpmVersion = pnpmPin[1];
 
 // The phase body mirrors what a real supervised phase must do first: report the
 // toolchain the child itself resolved, then start dependent work. The tool
@@ -34,9 +50,11 @@ const phaseScript = [
   '#!/bin/bash',
   'set -euo pipefail',
   'nodeVersion="$(node --version)"',
+  'nodePath="$(command -v node)"',
+  'printf "node-path=%s\\nnode-version=%s\\n" "$nodePath" "$nodeVersion"',
   'pnpmVersion="$(pnpm --version)"',
-  'printf "node-version=%s\\n" "$nodeVersion"',
-  'printf "pnpm-version=%s\\n" "$pnpmVersion"',
+  'pnpmPath="$(command -v pnpm)"',
+  'printf "pnpm-path=%s\\npnpm-version=%s\\n" "$pnpmPath" "$pnpmVersion"',
   ': > "$LCARS_PHASE_WITNESS"',
   '',
 ].join('\n');
@@ -49,15 +67,18 @@ type Phase = {
   witness: string;
   qualifiedPath: string;
   unqualifiedPath: string;
+  nodeOnlyPath: string;
+  expectedNodePath: string;
+  expectedPnpmPath: string;
+  pnpmVersion: string;
 };
 
 type PhaseCase = {
   label: string;
-  key: 'qualifiedPath' | 'unqualifiedPath';
+  key: 'qualifiedPath' | 'unqualifiedPath' | 'nodeOnlyPath';
   exit: number;
   witness: boolean;
   receipt: string;
-  reported: Record<string, unknown>;
 };
 
 async function launch(
@@ -120,22 +141,39 @@ async function fixture(): Promise<Phase> {
   const script = path.join(directory, 'phase.sh');
   const emptyBin = path.join(directory, 'empty-bin');
   const witness = path.join(directory, 'setup-witness');
+  const nodeOnlyBin = path.join(directory, 'node-only-bin');
+  await mkdir(nodeOnlyBin);
+  await symlink(
+    fs.realpathSync(process.execPath),
+    path.join(nodeOnlyBin, 'node'),
+  );
+  const bins = qualifiedBins();
+  const expectedNodePath = path.join(bins[0], 'node');
+  const expectedPnpmPath = bins
+    .map((bin) => path.join(bin, 'pnpm'))
+    .find((candidate) => fs.existsSync(candidate));
+  if (!expectedPnpmPath)
+    throw new Error('Qualified pnpm executable is unavailable');
   await mkdir(emptyBin);
   await writeFile(script, phaseScript, { mode: 0o700 });
   return {
     directory,
     script,
     witness,
-    qualifiedPath: [...qualifiedBins(), emptyBin].join(path.delimiter),
+    qualifiedPath: [...bins, emptyBin].join(path.delimiter),
+    nodeOnlyPath: nodeOnlyBin,
+    expectedNodePath,
+    expectedPnpmPath,
+    pnpmVersion: pinnedPnpmVersion,
     unqualifiedPath: emptyBin,
   };
 }
 
 function reportedToolchain(outcome: Outcome): Record<string, string> {
   return Object.fromEntries(
-    [...outcome.stdout.matchAll(/^(node|pnpm)-version=(\S+)$/gm)].map(
-      (match) => [match[1], match[2]],
-    ),
+    [
+      ...outcome.stdout.matchAll(/^((?:node|pnpm)-(?:version|path))=(.+)$/gm),
+    ].map((match) => [match[1], match[2]]),
   );
 }
 
@@ -148,20 +186,43 @@ const phaseCases: PhaseCase[] = [
     exit: 0,
     witness: true,
     receipt: `node-version=v${process.versions.node}`,
-    reported: {
-      node: `v${process.versions.node}`,
-      pnpm: expect.any(String),
-    },
   },
   {
-    label: 'unqualified',
+    label: 'missing Node',
     key: 'unqualifiedPath',
     exit: 127,
     witness: false,
     receipt: 'node: command not found',
-    reported: {},
+  },
+  {
+    label: 'Node available but pnpm missing',
+    key: 'nodeOnlyPath',
+    exit: 127,
+    witness: false,
+    receipt: 'pnpm: command not found',
   },
 ];
+
+function expectedToolchain(
+  phase: Phase,
+  testCase: PhaseCase,
+): Record<string, string> {
+  if (testCase.key === 'unqualifiedPath') return {};
+  const node = {
+    'node-path':
+      testCase.key === 'nodeOnlyPath'
+        ? path.join(phase.nodeOnlyPath, 'node')
+        : phase.expectedNodePath,
+    'node-version': `v${process.versions.node}`,
+  };
+  return testCase.key === 'nodeOnlyPath'
+    ? node
+    : {
+        ...node,
+        'pnpm-path': phase.expectedPnpmPath,
+        'pnpm-version': phase.pnpmVersion,
+      };
+}
 
 // Probe the real supervisor: a transient user service, never the caller's shell.
 // A host without a reachable manager skips those cases visibly instead of
@@ -192,9 +253,10 @@ async function supervised(phase: Phase, pathValue: string): Promise<Outcome> {
       '--pipe',
       '--wait',
       '--description=lcars-2525-child-env-qualification',
+      `--working-directory=${process.cwd()}`,
       '--property=RuntimeMaxSec=60',
       // Literal values: a transient service inherits the manager's environment,
-      // never the launcher's, and a `$PATH` here would expand in the manager.
+      // never the launcher's. A `$PATH` in this assignment would remain literal.
       `--setenv=PATH=${pathValue}`,
       `--setenv=LCARS_PHASE_WITNESS=${phase.witness}`,
       bash,
@@ -233,7 +295,9 @@ it.runIf(supervisorAvailable).each(phaseCases)(
       const outcome = await supervised(phase, phase[testCase.key]);
       expect(outcome.exit).toBe(testCase.exit);
       expect(await exists(phase.witness)).toBe(testCase.witness);
-      expect(reportedToolchain(outcome)).toEqual(testCase.reported);
+      expect(reportedToolchain(outcome)).toEqual(
+        expectedToolchain(phase, testCase),
+      );
       expect(`${outcome.stdout}\n${outcome.stderr}`).toContain(
         testCase.receipt,
       );
@@ -252,7 +316,9 @@ it.each(phaseCases)(
       const outcome = await childEnvironment(phase, phase[testCase.key]);
       expect(outcome.exit).toBe(testCase.exit);
       expect(await exists(phase.witness)).toBe(testCase.witness);
-      expect(reportedToolchain(outcome)).toEqual(testCase.reported);
+      expect(reportedToolchain(outcome)).toEqual(
+        expectedToolchain(phase, testCase),
+      );
       expect(`${outcome.stdout}\n${outcome.stderr}`).toContain(
         testCase.receipt,
       );
