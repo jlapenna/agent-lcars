@@ -4,8 +4,6 @@ import * as path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { OPENCODE_TELEMETRY_PLUGIN } from './opencode-plugin-source';
-
 import {
   executeIntegrationCommand,
   installIntegration,
@@ -15,6 +13,7 @@ import {
   stubCommand,
   uninstallIntegration,
 } from './integration';
+import { OPENCODE_TELEMETRY_PLUGIN } from './opencode-plugin-source';
 
 const homes: string[] = [];
 afterEach(() => {
