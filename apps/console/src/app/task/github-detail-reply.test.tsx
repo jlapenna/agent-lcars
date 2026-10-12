@@ -1,5 +1,11 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../../lib/action-items';
@@ -78,15 +84,19 @@ describe('GitHub detail reply boundary', () => {
       screen.getByRole('textbox', { name: 'Reply to the agent' }),
       { target: { value: 'Use Firestore.' } },
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Retry dispatch' }),
-    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry dispatch' }));
+    });
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Dispatch unavailable',
     );
     expect(screen.getByRole('textbox')).toHaveValue('');
-    fireEvent.click(screen.getByRole('button', { name: 'Retry dispatch' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry dispatch' }));
+    });
     await waitFor(() =>
       expect(
         screen.queryByRole('button', { name: 'Retry dispatch' }),
