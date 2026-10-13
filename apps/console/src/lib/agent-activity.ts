@@ -8,6 +8,7 @@ import { workSpecSchema } from '@agent-lcars/work';
 
 import {
   type AutoscalerStatusResult,
+  fleetCapacity,
   getAutoscalerStatuses,
 } from './autoscaler-status';
 import { repoItemKey, type WatchedRepo } from './github-client';
@@ -74,7 +75,8 @@ export interface FleetSummary {
   /** Fresh ARC GitHub Actions capacity only; absent is not scaled-to-zero. */
   online?: number;
   busy?: number;
-  /** Sum of the fresh lanes' configured maximum runners. */
+  /** Sum of the fresh lanes' configured maximum runners; absent when any
+   * lane configures no maximum. */
   capacity?: number;
   /** Earliest ARC producer expiry; one stale lane invalidates the total. */
   githubExpiresAt?: string;
@@ -125,7 +127,9 @@ export function fleetFromAutoscalerStatuses(
             0,
           ),
           busy: lanes.reduce((count, lane) => count + lane.runningJobs, 0),
-          capacity: lanes.reduce((count, lane) => count + lane.maxRunners, 0),
+          ...(fleetCapacity(lanes) === undefined
+            ? {}
+            : { capacity: fleetCapacity(lanes) }),
           githubExpiresAt: new Date(
             Math.min(...lanes.map((lane) => Date.parse(lane.updatedAt))) +
               RUNNER_STATUS_STALENESS_MS,

@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { fleetFromAutoscalerStatuses } from './agent-activity';
 import {
+  ARC_UNBOUNDED_MAX_RUNNERS,
+  fleetCapacity,
   getAutoscalerStatuses,
   projectAutoscalerStatuses,
   subscribeAutoscalerStatuses,
@@ -67,6 +69,19 @@ describe('getAutoscalerStatuses', () => {
       status({ updatedAt: expect.any(String) }),
     );
     expect(JSON.stringify(result)).not.toContain('expireAt');
+  });
+
+  it('reads an unbounded scale set as having no maximum, never as int32 runners', async () => {
+    const updatedAt = new Date().toISOString();
+    mockStore([
+      { ...lane, updatedAt, maxRunners: ARC_UNBOUNDED_MAX_RUNNERS },
+      { ...lane, lane: 'lcars-e2e', updatedAt },
+    ]);
+    const result = await getAutoscalerStatuses();
+    expect(result.lanes?.[0]).not.toHaveProperty('maxRunners');
+    expect(fleetCapacity(result.lanes ?? [])).toBeUndefined();
+    expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('capacity');
+    expect(fleetCapacity([{ maxRunners: 4 }, { maxRunners: 2 }])).toBe(6);
   });
 
   it('ignores retired scale-set records instead of publishing obsolete capacity', async () => {

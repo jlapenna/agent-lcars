@@ -1,10 +1,15 @@
 import type { ReactNode } from 'react';
 
-import type {
-  ArcLaneStatus,
-  QueueExecutorStatus,
+import {
+  type ArcLaneStatus,
+  fleetCapacity,
+  type QueueExecutorStatus,
 } from '../lib/autoscaler-status';
 import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
+
+/** Squares drawn per lane; a larger lane is still described in full by its
+ * label. */
+const SLOT_LIMIT = 24;
 
 function Slots({
   busy,
@@ -23,14 +28,14 @@ function Slots({
     ...Array<'pending'>(pending).fill('pending'),
   ];
   if (max !== undefined) {
-    while (squares.length < max) squares.push('free');
+    while (squares.length < Math.min(max, SLOT_LIMIT)) squares.push('free');
   }
   return (
     <div
       className="ops-slots"
       aria-label={`${busy} busy, ${idle} idle, ${pending} pending${max !== undefined ? ` of ${max}` : ''}`}
     >
-      {squares.slice(0, 24).map((state, i) => (
+      {squares.slice(0, SLOT_LIMIT).map((state, i) => (
         <i key={i} data-state={state} />
       ))}
     </div>
@@ -52,11 +57,17 @@ export function RunnerFleetPanel({
   // No lane records is unknown capacity, not zero capacity.
   const known = lanes !== undefined && lanes.length > 0 && !lanesIncomplete;
   const online = lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
-  const max = lanes?.reduce((n, lane) => n + lane.maxRunners, 0);
+  const max = lanes && fleetCapacity(lanes);
   return (
     <OpsPanel
       title="Runner fleet"
-      count={known ? `${online}/${max}` : UNAVAILABLE}
+      count={
+        known
+          ? max === undefined
+            ? `${online}`
+            : `${online}/${max}`
+          : UNAVAILABLE
+      }
       meta={chip}
       data-testid="runner-fleet-panel"
     >
@@ -74,8 +85,10 @@ export function RunnerFleetPanel({
               <td>
                 <span className="ops-host">{lane.lane}</span>
                 <span className="ops-host-spec">
-                  ARC lane · {lane.registeredRunners} registered · max{' '}
-                  {lane.maxRunners}
+                  ARC lane · {lane.registeredRunners} registered ·{' '}
+                  {lane.maxRunners === undefined
+                    ? 'no max'
+                    : `max ${lane.maxRunners}`}
                 </span>
               </td>
               <td>

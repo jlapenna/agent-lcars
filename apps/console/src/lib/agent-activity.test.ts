@@ -24,7 +24,8 @@ vi.mock('./orchestrator-runtime', () => ({
   createOrchestratorRuntime: vi.fn(),
 }));
 
-vi.mock('./autoscaler-status', () => ({
+vi.mock('./autoscaler-status', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./autoscaler-status')>()),
   getAutoscalerStatuses: vi.fn(),
 }));
 

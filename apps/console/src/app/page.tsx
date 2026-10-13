@@ -15,7 +15,7 @@ import {
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
 import type { AgentRun } from '../lib/agent-activity';
-import { getAutoscalerStatuses } from '../lib/autoscaler-status';
+import { fleetCapacity, getAutoscalerStatuses } from '../lib/autoscaler-status';
 import { getCliSessions } from '../lib/cli-sessions';
 import {
   getCachedAgentActivity,
@@ -304,10 +304,7 @@ async function IndexBody({
     ),
   ];
   const decisionCount = decisionCards.length;
-  const capacity = autoscaler.lanes?.reduce(
-    (total, lane) => total + lane.maxRunners,
-    0,
-  );
+  const capacity = autoscaler.lanes && fleetCapacity(autoscaler.lanes);
   const budget = parseCostBudget(
     process.env['AGENT_LCARS_COST_BUDGET_USD'],
     process.env['AGENT_LCARS_COST_WARNING_PERCENT'],

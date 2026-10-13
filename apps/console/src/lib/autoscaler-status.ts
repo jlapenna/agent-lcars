@@ -57,8 +57,26 @@ export interface ArcLaneStatus {
   registeredRunners: number;
   desiredRunners: number;
   minRunners: number;
-  maxRunners: number;
+  /** Absent when the scale set configures no maximum. */
+  maxRunners?: number;
   updatedAt: string;
+}
+
+/** What ARC's `gha_max_runners` reports for a scale set with no maximum
+ * (int32's maximum), not a runner count. */
+export const ARC_UNBOUNDED_MAX_RUNNERS = 2_147_483_647;
+
+/** The lanes' summed maximum runners; undefined when any lane has none, so
+ * one unbounded lane never reads as billions of runners. */
+export function fleetCapacity(
+  lanes: readonly Pick<ArcLaneStatus, 'maxRunners'>[],
+): number | undefined {
+  let total = 0;
+  for (const lane of lanes) {
+    if (lane.maxRunners === undefined) return undefined;
+    total += lane.maxRunners;
+  }
+  return total;
 }
 
 function parseArcLane(value: unknown): ArcLaneStatus | undefined {
@@ -102,7 +120,9 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     registeredRunners: status['registeredRunners'] as number,
     desiredRunners: status['desiredRunners'] as number,
     minRunners: status['minRunners'] as number,
-    maxRunners: status['maxRunners'] as number,
+    ...((status['maxRunners'] as number) < ARC_UNBOUNDED_MAX_RUNNERS
+      ? { maxRunners: status['maxRunners'] as number }
+      : {}),
     updatedAt: status['updatedAt'],
   };
 }
