@@ -168,15 +168,20 @@ jobs:
           # never be complete. Runs created after the ceiling cannot have
           # rollout effects yet; their exact count comes from a filtered count
           # query, which stays far below the cap. A run created mid-scan can
-          # shift a row past the pages read, so completeness is proved by
-          # count, not page order: the unique rows at or before the ceiling
-          # must equal the total minus the newer runs. Any mismatch is a
-          # changed snapshot and retries; incomplete evidence still refuses.
+          # shift a row past the pages read, so the total must be unchanged
+          # across the scan, and the unique rows at or before the ceiling must
+          # equal that total minus the newer runs (a run created after the
+          # total but before the newer count makes them disagree). Any
+          # mismatch is a changed snapshot and retries; incomplete evidence
+          # still refuses.
           route = 'actions/workflows/deploy-console.yml/runs?per_page=100'
 
           def history(ceiling):
+              before = api(route)['total_count']
               rows = {row['id']: row for page in api(route, True) for row in page['workflow_runs']}
               total = api(route)['total_count']
+              if total != before:
+                  raise ValueError('Deployment history is incomplete or changed during discovery')
               newer = api(f"{route}&created={urllib.parse.quote('>' + ceiling, safe='')}")['total_count']
               bound = timestamp(ceiling)
               runs = [row for row in rows.values() if timestamp(row['created_at']) <= bound]
