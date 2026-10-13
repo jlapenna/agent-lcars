@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 import {
   compactNumber,
   stardate,
@@ -114,7 +116,9 @@ function clockTime(at: number): string {
  * time the page was loaded, labelled as a snapshot. */
 export function ConsoleLiveStatus() {
   const live = useLiveState();
-  const now = useMinuteClock();
+  // The page's own load time, captured once: a snapshot does not advance.
+  const [loadedAt, setLoadedAt] = useState<number>();
+  useEffect(() => setLoadedAt(Date.now()), []);
   const mode = live?.mode;
   const tone =
     mode === 'live' || mode === 'updating'
@@ -132,7 +136,8 @@ export function ConsoleLiveStatus() {
           : mode === 'connecting'
             ? 'Connecting'
             : 'Degraded';
-  const at = live?.syncedAt ?? now?.getTime();
+  // A live route shows a sync time only after a sync actually happened.
+  const at = mode === undefined ? loadedAt : live?.syncedAt;
   return (
     <div
       className="console-live-status"

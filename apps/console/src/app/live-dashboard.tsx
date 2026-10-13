@@ -27,6 +27,8 @@ export function LiveDashboard() {
   const applied = useRef(0);
   const lastRefresh = useRef(0);
   const [syncedAt, setSyncedAt] = useState<number>();
+  // The page's data is current as of its load; that is the first sync once
+  // the stream confirms it is live.
   const mountedAt = useRef(Date.now());
   useEffect(() => {
     if (pending || revision === applied.current) return;

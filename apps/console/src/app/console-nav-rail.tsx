@@ -47,10 +47,17 @@ function navHref(
  * live runs and admitted-but-not-running work. */
 function navCounts(
   state: ReturnType<typeof useShellReadouts>,
-): Partial<Record<NavKey, number>> {
+): Partial<Record<NavKey, number | '—'>> {
   if (state.status !== 'ready') return {};
-  const { decisions, liveRuns, queueDepth } = state.readouts;
-  return { inbox: decisions, agents: liveRuns, work: queueDepth };
+  const { user, decisions, liveRuns, queueDepth } = state.readouts;
+  // Maintainers see an explicit unavailable mark for a count that could not
+  // be read; other sessions see no counts at all.
+  if (!user.grants.includes('admin')) return {};
+  return {
+    inbox: decisions ?? '—',
+    agents: liveRuns ?? '—',
+    work: queueDepth ?? '—',
+  };
 }
 
 /**

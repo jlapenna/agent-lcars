@@ -3,9 +3,16 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ShellReadouts } from '../lib/shell-readouts';
-import { ConsoleIdentity, RailReadouts } from './console-frame-readouts';
+import {
+  ConsoleIdentity,
+  ConsoleLiveStatus,
+  RailReadouts,
+} from './console-frame-readouts';
 import { ConsoleNavRail } from './console-nav-rail';
-import { resetShellStateForTests } from './console-shell-state';
+import {
+  publishLiveState,
+  resetShellStateForTests,
+} from './console-shell-state';
 
 vi.mock('next/link', () => ({
   default: ({ children, ...props }: { children: React.ReactNode }) => (
@@ -87,6 +94,40 @@ describe('console frame readouts', () => {
     await renderFrame();
     expect(screen.getByTestId('rail-readout-fleet')).toHaveTextContent('—');
     expect(screen.getByTestId('rail-readout-merged')).toHaveTextContent('—');
+  });
+
+  it('marks a destination count it could not vouch for as unavailable', async () => {
+    respond({ ...admin, decisions: undefined });
+    await renderFrame();
+    expect(screen.getByRole('link', { name: 'Inbox' })).toHaveTextContent(
+      '02 · —',
+    );
+  });
+
+  it('keeps a snapshot time fixed and shows no sync time before a sync', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-13T10:00:00Z'));
+      respond(admin);
+      render(<ConsoleLiveStatus />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const status = screen.getByTestId('console-live-status');
+      const loaded = status.textContent;
+      expect(loaded).toContain('Snapshot');
+      expect(loaded).toContain('loaded');
+      await act(async () => {
+        vi.advanceTimersByTime(5 * 60_000);
+      });
+      expect(status.textContent).toBe(loaded);
+
+      act(() => publishLiveState({ mode: 'connecting', label: 'Connecting' }));
+      expect(status).toHaveTextContent('Connecting');
+      expect(status).not.toHaveTextContent('synced');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('marks a partial token total as a lower bound', async () => {

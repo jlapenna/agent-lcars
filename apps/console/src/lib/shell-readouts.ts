@@ -20,7 +20,7 @@ export interface ShellReadouts {
   user: { login: string; initials: string; grants: string[] };
   /** Host the console is served from, the rail's environment line. */
   environment: string;
-  /** Present for maintainers only. */
+  /** Present for maintainers only. Absent figures read as unavailable. */
   fleet?: { online?: number; capacity?: number };
   /** Admitted runs not yet running (queued + claimed). */
   queueDepth?: number;
@@ -49,11 +49,13 @@ const STORE_FAILED = 'Session archive unavailable';
  * a zero; the caller then reports both figures unavailable. */
 async function readRecentSpend(): Promise<RecentSpend> {
   const now = Date.now();
-  // Merges are attributed through session deliverables, so read a week of
-  // sessions and count the PRs whose recorded merge falls in the last day.
+  // Merges are attributed through session deliverables, so read 30 days of
+  // sessions and count the PRs whose recorded merge falls in the last day. A
+  // PR whose sessions all ended earlier is not attributed; a capped archive
+  // marks the count as a lower bound.
   const [day, week] = await Promise.all([
     getSessionArchive({ days: 1 }, { includeSpend: true }),
-    getSessionArchive({ days: 7 }, { includeSpend: true }),
+    getSessionArchive({ days: 30 }, { includeSpend: true }),
   ]);
   const failed = (warnings: string[]) =>
     warnings.some((warning) => warning.startsWith(STORE_FAILED));
@@ -140,7 +142,9 @@ export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
           liveRuns: activity.data.liveRuns.length,
         }
       : {}),
-    ...(snapshot ? { decisions: snapshot.decisions.length } : {}),
+    // A degraded snapshot may hold a stale or partial list; the frame shows
+    // the count as unavailable rather than a number it cannot vouch for.
+    ...(snapshot?.available ? { decisions: snapshot.decisions.length } : {}),
     ...spend,
   };
 }
