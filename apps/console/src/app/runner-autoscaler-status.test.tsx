@@ -316,9 +316,10 @@ describe('RunnerAutoscalerStatus', () => {
     expect(
       screen.getByRole('link', { name: 'lcars-ci on GitHub ↗' }),
     ).toHaveAttribute('href', lane.registrationUrl);
-    expect(screen.getByTestId('queue-executor-status')).toHaveTextContent(
-      'Direct agent executorreadydraining5 active · 3 max',
-    );
+    const executorRow = screen.getByTestId('queue-executor-status');
+    expect(executorRow).toHaveTextContent('Direct agent executor');
+    expect(executorRow).toHaveTextContent('ready · draining');
+    expect(executorRow).toHaveTextContent('5 active · 3 max');
   });
 
   it('distinguishes missing telemetry from fresh zero ARC capacity and unknown Job occupancy', () => {
