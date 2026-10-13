@@ -87,7 +87,7 @@ export async function runFlush(deps: FlushDependencies): Promise<FlushResult> {
         deps.now().toISOString(),
       );
     } catch {
-      // State is advisory for the daemon; the write already happened.
+      // State is advisory; the write already happened.
     }
     return 'sent';
   });

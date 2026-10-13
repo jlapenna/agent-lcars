@@ -79,13 +79,9 @@ export interface EnvVars {
   /** Dev only */
   FIRESTORE_EMULATOR_HOST?: string;
 
-  // Agent telemetry host watcher (issue #2540). See
+  // Agent telemetry runner finalize/resume and provider hooks. See
   // infra/terraform/main.tf for the dedicated Firestore database + writer
-  // SA this daemon authenticates as.
-  /** Required comma-separated checkout roots this host watcher may ship.
-   * Every source's default privacy allowlist derives from this one value;
-   * host mode deliberately has no built-in path fallback. */
-  AGENT_TELEMETRY_CHECKOUT_ROOTS?: string;
+  // SA they authenticate as.
   /** JSON object of pre-rename `"owner/name"` -> `{owner, name}` entries
    * (issue #1732). A stale local `origin` remote can still report a repo's
    * pre-rename identity after GitHub renames it; this lets a deploying
@@ -93,17 +89,10 @@ export interface EnvVars {
    * No built-in default — every fleet's rename history differs, and most
    * have none. See `apps/telemetry-watcher/src/lib/git-repo.ts`. */
   AGENT_TELEMETRY_REPO_ALIASES?: string;
-  /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts.
-   * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
+  /** Root of `~/.claude/projects` runner finalize/resume default to. */
   AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR?: string;
   /** Root of Codex's date-partitioned rollout JSONL tree. */
   AGENT_TELEMETRY_CODEX_SESSIONS_DIR?: string;
-  /** JSON array of `{ path, adapter, projectDirAllowlist?, recursive?, cwdAllowlist? }` watch-root objects
-   * (#3123 phase 1's multi-root/multi-agent watcher config) - when set, fully
-   * replaces the fallback host roots. See
-   * `apps/telemetry-watcher/src/lib/config.ts`'s `loadConfig` for the
-   * exact format and validation. */
-  AGENT_TELEMETRY_WATCH_ROOTS?: string;
   /** Overrides `os.hostname()` for the `host` field on shipped session docs. */
   AGENT_TELEMETRY_HOST?: string;
   /** GCP project the dedicated `agent-telemetry` Firestore database lives in. */
@@ -114,28 +103,4 @@ export interface EnvVars {
   AGENT_TELEMETRY_TRANSCRIPTS_BUCKET?: string;
   /** Raw JSON contents of the `AGENT_TELEMETRY_WRITER_KEY_JSON` GCP secret. */
   AGENT_TELEMETRY_WRITER_KEY_JSON?: string;
-  /** Tick interval in milliseconds; defaults to 10s. */
-  AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS?: string;
-  /** Staleness window in milliseconds; defaults to 5x the heartbeat interval. */
-  AGENT_TELEMETRY_STALENESS_WINDOW_MS?: string;
-  /** Root of `~/share` (share-media skill convention) to scan for session artifacts; defaults to `~/share`. */
-  AGENT_TELEMETRY_SHARE_DIR?: string;
-  /** Address for the host watcher's Prometheus endpoint; defaults to `0.0.0.0`. */
-  AGENT_TELEMETRY_METRICS_HOST?: string;
-  /** Port for the host watcher's Prometheus endpoint; defaults to `9464`. */
-  AGENT_TELEMETRY_METRICS_PORT?: string;
-  /** Absolute path to Antigravity's global summary-tier SQLite DB
-   * (`conversation_summaries.db`) - default-enabled at
-   * `~/.gemini/antigravity-cli/conversation_summaries.db` when unset; an
-   * explicit empty string disables this source entirely (e.g. a host with
-   * no Antigravity CLI installed). See #3123 phase 3 and
-   * `apps/telemetry-watcher/src/lib/antigravity-summary-source.ts`. */
-  AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB?: string;
-  /** Root of the local session-title overlay state (issue #1212) -
-   * default-enabled at `~/.local/state/agent-lcars` when unset; an explicit
-   * empty string disables the overlay entirely, matching
-   * `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB`'s convention above. Holds
-   * `session-metadata/` (titles an agent declared via `lcars session title`). See
-   * `apps/telemetry-watcher/src/lib/session-title-paths.ts`. */
-  AGENT_TELEMETRY_SESSION_STATE_DIR?: string;
 }

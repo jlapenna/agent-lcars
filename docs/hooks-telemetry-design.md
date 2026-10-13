@@ -1,12 +1,13 @@
 # Hooks-based session telemetry (design)
 
-Status: phases 0-2 shipped; phase 3 done in-repo 2026-10-12. Proposed
+Status: phases 0-3 shipped; phase 3 done in-repo 2026-10-12 and the host
+daemon's code deleted 2026-10-13. Proposed
 2026-10-10, hook surfaces verified empirically the same day (section 11).
 Owner: telemetry. Hooks are the only live telemetry path for Claude Code,
 Codex, and OpenCode on workstations and QueueExecutor runners; the polling
 host watcher daemon (`apps/telemetry-watcher`, issue #2540) and the runner's
-live polling sidecar are retired. See "Phase 3 status" below for what was
-removed and what remains.
+live polling sidecar are retired and their code is deleted. See "Phase 3
+status" below for what was removed.
 
 ## Revision 2026-10-12: hosts write directly
 
@@ -16,8 +17,8 @@ gain write access to the telemetry database, which it holds read-only by
 design, and impersonating `telemetry-writer` from the console would have
 granted the same capability. The route was removed before it was ever
 enabled. Instead `lcars hook flush` writes each spooled event itself as the
-`telemetry-writer` service account (the identity the watcher daemon and
-runner sidecars already use), inside a Firestore transaction that re-reads
+`telemetry-writer` service account (the identity `runner finalize` and the
+retired watcher daemon use), inside a Firestore transaction that re-reads
 the stored doc and refuses an event whose `seq` is not newer than the stored
 hook observer from the same host. Each enrolled host holds the writer key
 at `~/.config/agent-lcars/writer-key.json`, delivered by homegit; this gives
@@ -50,11 +51,20 @@ unchanged.
   `apps/telemetry-watcher/bin/install-session-title-cli.sh`.
 - Removed in Homelab: the deploy play, image publish, Prometheus scrape, and
   alerts (jlapenna/homelab#2405).
-- Remaining: the daemon's host-mode source (`runHostWatcher`,
-  `WatcherDaemon`, `process-check.ts`, `/metrics`, Antigravity polling, the
-  CLI archive policy, and the hook-marker skip) still compiles and backs the
-  standalone bundle smoke test, but nothing builds, publishes, or deploys
-  it. Deleting it is a follow-up.
+- Follow-up done (2026-10-13): the daemon's host-mode source is deleted —
+  `runHostWatcher` and `WatcherDaemon` (`daemon.ts`), `loadConfig` and its
+  daemon-only environment (`AGENT_TELEMETRY_WATCH_ROOTS`,
+  `AGENT_TELEMETRY_CHECKOUT_ROOTS`, heartbeat/staleness, share dir, metrics
+  host/port, `AGENT_TELEMETRY_SESSION_STATE_DIR`), `process-check.ts`,
+  `discover-artifacts.ts`, the Prometheus `/metrics` server (`metrics.ts`),
+  Antigravity summary-DB polling, the opt-in CLI transcript archive
+  (`cli-transcript-archive.ts`, `AGENT_TELEMETRY_CLI_ARCHIVE_POLICY`), the
+  hook-marker skip (`isHookReported`), the `serve` target, and the
+  `chokidar` dependency. `node sidecar.cjs` with no subcommand is now a
+  usage error. The standalone bundle smoke test runs a credential-free
+  `runner finalize` over a fixture instead of booting the daemon. The
+  console still reads `cliTranscriptArchive` pointers already on stored
+  docs.
 
 **OpenCode client:** OpenCode has no command hooks, so
 `agents/opencode/lcars-telemetry.js` is a plugin. On `session.created`, a new
@@ -343,8 +353,8 @@ trusted_hash = "..."` in `~/.codex/config.toml`, and homegit's
   `run_onchange_after_30-homegit-opencode-env.sh.tmpl` exactly. One token
   per host.
 - Config: `~/.config/agent-lcars/config.json` `{ "repos": ["jlapenna/*"] }`
-  derived from the same source the deploy's `AGENT_TELEMETRY_CHECKOUT_ROOTS`
-  comes from today.
+  derived from the same source the retired daemon deploy's
+  `AGENT_TELEMETRY_CHECKOUT_ROOTS` came from.
 
 ### 4.7 Patterns borrowed from herdr
 
@@ -594,9 +604,9 @@ shared module bundled into both artifacts.
 | 3     | `docker compose down` the watcher on each host; delete `WatcherDaemon` host mode, `process-check.ts`, `/metrics`, `deploy/`; reducer lib stays | README/OPERATIONS/onboarding docs updated; homelab Prometheus alert for the watcher removed in the same change           |
 
 Phases 0-2 were reversible by removing the hook entries while the daemon
-kept writing untouched docs. Phase 3 is done in-repo (see "Phase 3 status"
-at the top); rolling it back means reverting that change, since no polling
-writer remains.
+kept writing untouched docs. Phase 3 is done in-repo, including deleting the
+daemon's code (see "Phase 3 status" at the top); rolling it back means
+reverting those changes, since no polling writer remains.
 
 ## 7. Operations after phase 3
 
