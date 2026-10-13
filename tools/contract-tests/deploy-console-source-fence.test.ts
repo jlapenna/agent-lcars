@@ -61,6 +61,7 @@ function sourceDecision(
   growingHistory = false,
   fixedEntryClock = false,
   trailingLocalClock = false,
+  ignoreCreationWindow = false,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
@@ -116,7 +117,12 @@ function sourceDecision(
       conclusion: 'success',
     };
   });
-  routes['fixture-history'] = { rows, incomplete, growingHistory };
+  routes['fixture-history'] = {
+    rows,
+    incomplete,
+    growingHistory,
+    ignoreCreationWindow,
+  };
   writeFileSync(output, '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
   writeFileSync(
@@ -144,9 +150,10 @@ elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
     page=int(query.get('page', ['1'])[0])
     rows=history['rows']
     if history['growingHistory'] and ('created' in query or page > 1):
-        rows=[{'id': len(rows)+1, 'created_at': '2100-01-01T00:00:00Z', 'updated_at': '2100-01-01T00:00:00Z', 'display_title': 'Deploy console [source:'+os.environ['FIXTURE_NEW']+']'}, *rows]
-    if 'created' in query:
-        lower,upper=query['created'][0].split('..')
+        rows=[*[{'id': len(rows)+index+1, 'created_at': '2100-01-01T00:00:00Z', 'updated_at': '2100-01-01T00:00:00Z', 'display_title': 'Deploy console [source:'+os.environ['FIXTURE_NEW']+']'} for index in range(150)], *rows]
+    if 'created' in query and not history['ignoreCreationWindow']:
+        expression=query['created'][0]
+        lower,upper=('1970-01-01T00:00:00Z', expression[2:]) if expression.startswith('<=') else expression.split('..')
         def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
         rows=[row for row in rows if not row.get('created_at') or stamp(lower) <= stamp(row['created_at']) <= stamp(upper)]
     total=len(rows)+int(history['incomplete'])
@@ -174,6 +181,12 @@ else: print(json.dumps(routes[route]))
 _fixture_real_time = _fixture_time.time
 _fixture_origin = _fixture_real_time()
 _fixture_time.time = lambda: ${start} + _fixture_real_time() - _fixture_origin
+import datetime as _fixture_datetime
+class _FixtureDateTime(_fixture_datetime.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls.fromtimestamp(_fixture_time.time(), tz)
+_fixture_datetime.datetime = _FixtureDateTime
 `,
     );
   }
@@ -390,6 +403,26 @@ describe('serialized automatic deployment source fence', () => {
         true,
       ),
     ).toMatchObject({ status: 0, output: 'true' });
+  });
+
+  it('refuses when the API ignores the pinned creation window', () => {
+    expect(
+      sourceDecision(
+        NEW,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [{ source: OLD }],
+        false,
+        true,
+        false,
+        false,
+        true,
+      ),
+    ).toMatchObject({
+      error: expect.stringContaining('escaped its creation window'),
+    });
   });
 
   it('partitions capped history without omitting an old-created rerun or its failed effect', () => {

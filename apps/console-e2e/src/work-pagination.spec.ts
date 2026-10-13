@@ -35,7 +35,14 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await seedWorkPagination();
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto('/work');
-  // Toolbar selects submit on change and carry the typed principal with them.
+  // The subtitle's schedules link is hidden on phones; the band keeps one.
+  await expect(
+    page.getByRole('link', { name: 'Schedules →', exact: true }),
+  ).toBeVisible();
+  // Toolbar selects submit on change and carry the typed principal with them;
+  // principal sits behind More filters so the band stays one row.
+  const moreFilters = page.locator('summary', { hasText: /^More filters/ });
+  await moreFilters.click();
   await page
     .getByLabel('Principal', { exact: true })
     .fill('user:pagination-fixture');
@@ -65,6 +72,7 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   );
   await page.reload();
   await expect(links).toHaveCount(6);
+  await moreFilters.click();
   await page.getByLabel('State', { exact: true }).selectOption('parked');
   await expect(page).not.toHaveURL(/cursor=/);
   await expect(

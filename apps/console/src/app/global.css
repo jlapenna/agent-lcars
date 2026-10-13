@@ -1174,6 +1174,66 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
+/* An inline link inside a header subtitle (Work's "schedules"): keeps the
+   subtitle's single line and size. */
+.console-subtitle-link {
+  color: var(--lcars-accent-ink);
+  text-decoration: none;
+}
+
+.console-subtitle-link:hover,
+.console-subtitle-link:focus-visible {
+  text-decoration: underline;
+}
+
+/* A route's filters beyond the mockup's four (Work: state, principal),
+   folded behind one control so the toolbar band stays a single row. Open,
+   it takes a row of its own in the band (in flow, so the workspace frame
+   never clips it). */
+.console-toolbar__more > summary {
+  color: var(--lcars-ink-dim);
+  cursor: pointer;
+  list-style: none;
+}
+
+.console-toolbar__more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.console-toolbar__more[open] {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.console-toolbar__more[open] > summary {
+  color: var(--lcars-ink);
+  background: var(--lcars-surface-raised);
+}
+
+.console-toolbar__more > summary:focus-visible {
+  outline: 2px solid var(--lcars-amber);
+  outline-offset: 2px;
+}
+
+.console-toolbar__more-panel {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Work's Schedules link: in the header subtitle on wide screens, where the
+   subtitle shows; in the toolbar band below that. */
+@media (min-width: 64em) {
+  .work-schedules-link--compact {
+    display: none;
+  }
+}
+
 /* The pre-hydration Apply (console-toolbar.tsx): a plain submit while the
    controls cannot yet submit on change. Once they can it is hidden but keeps
    its box, so hydrating reflows nothing a pointer may already be aimed at. */
@@ -1414,6 +1474,18 @@ form[data-hydrated] .console-toolbar__apply {
   background: var(--lcars-accent);
 }
 
+/* In the Sessions panel header, beside the meta it names: compact enough to
+   share the title row. */
+.sessions-panel__head .sessions-view-toggle {
+  flex: none;
+  align-self: center;
+}
+
+.sessions-panel__head .sessions-view-toggle__option {
+  min-height: 26px;
+  padding: 0 12px;
+}
+
 .sessions-workspace__content {
   min-width: 0;
 }
@@ -1458,6 +1530,12 @@ form[data-hydrated] .console-toolbar__apply {
 
 .sessions-issue-groups {
   padding: 4px 0;
+}
+
+/* Desktop by-issue view: each issue heading sits on the rows it names, so
+   the groups read as one dense table (design/fleet-console.html). */
+.sessions-issue-groups > .mantine-Stack-root > .mantine-Group-root:first-child {
+  padding: 12px 10px 2px;
 }
 
 /* By-issue view: the group tables share fixed column widths and one visual
@@ -3182,11 +3260,15 @@ td.costs-repo-spend__num {
     min-height: 56px;
   }
 
-  .sessions-view-toggle {
+  .sessions-panel__head {
+    flex-wrap: wrap;
+  }
+
+  .sessions-panel__head .sessions-view-toggle {
     width: 100%;
   }
 
-  .sessions-view-toggle__option {
+  .sessions-panel__head .sessions-view-toggle__option {
     min-height: 44px;
     flex: 1;
     justify-content: center;
@@ -3482,16 +3564,6 @@ td.costs-repo-spend__num {
     width: 100%;
     flex-basis: 100%;
     max-width: none;
-  }
-
-  .queue-search-input .mantine-Input-wrapper {
-    --input-height: 44px !important;
-    --input-right-section-width: 44px !important;
-  }
-
-  .queue-search-input:has([aria-label='Clear search text'])
-    .mantine-Input-wrapper {
-    --input-right-section-width: 88px !important;
   }
 
   .queue-search-input .queue-refine-control {

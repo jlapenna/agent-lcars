@@ -489,7 +489,7 @@ const IndexView = withConsolePageShell(
     repoFilter: repoFilterKey,
     subtitle: (
       <>
-        {subtitle}
+        Fleet overview · {subtitle}
         {repoFilter && (
           <>
             {' · '}

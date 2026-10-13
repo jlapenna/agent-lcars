@@ -68,7 +68,8 @@ test.describe('Work operator access', () => {
     await expect(
       nav.getByRole('link', { name: 'Work', exact: true }),
     ).toBeVisible();
-    await page.getByRole('link', { name: 'Schedules →', exact: true }).click();
+    // The subtitle names schedules and links them (design/fleet-console.html).
+    await page.getByRole('link', { name: 'schedules', exact: true }).click();
     await expect(page).toHaveURL('/work/schedules');
     await expect(
       page.getByRole('heading', { name: 'Schedules', exact: true }),

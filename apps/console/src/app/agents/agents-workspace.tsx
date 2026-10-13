@@ -19,7 +19,7 @@ export function AgentsWorkspace({
   hasSecondary = true,
 }: {
   warnings?: ReactNode;
-  /** The repository scope control, in the frame's toolbar band. */
+  /** The toolbar band: repository, agent, window and find. */
   toolbar?: ReactNode;
   fleet: ReactNode;
   active: ReactNode;
