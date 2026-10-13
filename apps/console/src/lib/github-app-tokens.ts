@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createPrivateKey, type KeyObject } from 'node:crypto';
 
+import { logger } from '@agent-lcars/logging';
 import { SignJWT } from 'jose';
 
 /**
@@ -575,7 +576,7 @@ async function mintInstallationAccessToken(
         minted.permissions[name] !== permissions[name],
     );
     if (missing.length > 0) {
-      console.warn(
+      logger.warn(
         `GitHub App installation token for ${logLabel} minted without optional permissions (${missing.join(', ')}): installation has not approved them`,
       );
     }
@@ -584,7 +585,7 @@ async function mintInstallationAccessToken(
     if (!(error instanceof MintStatusError) || error.status !== 422) {
       throw error;
     }
-    console.warn(
+    logger.warn(
       `GitHub App installation token for ${logLabel} minted without optional permissions (${OPTIONAL_PERMISSIONS.join(', ')}): ${error.message}`,
     );
     return mintOnce(
