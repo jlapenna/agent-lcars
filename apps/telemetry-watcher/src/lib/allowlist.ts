@@ -1,15 +1,3 @@
-import { checkoutSlugGlobs } from './default-checkout';
-
-/**
- * The watcher only ever ships CLI telemetry for project dirs matching this
- * allowlist — interactive transcripts can contain other projects' data, so
- * scope creep here is a privacy incident, not just a bug. See PRD #2112
- * amendment 2026-07-10, decision 3.
- */
-export function defaultProjectDirAllowlist(): string[] {
-  return checkoutSlugGlobs();
-}
-
 const GLOB_SPECIAL_CHARS = /[.+^${}()|[\]\\]/g;
 
 /** Compiles a `*`-wildcard glob pattern into an anchored, full-string regex. */
@@ -20,12 +8,13 @@ function compileGlob(pattern: string): RegExp {
 
 /**
  * Whether a `~/.claude/projects/<dirName>` directory is in scope for
- * watching, per the configured allowlist of `*`-wildcard glob patterns
- * matched against the directory's basename (the Claude Code cwd-slug).
+ * discovery, per an allowlist of `*`-wildcard glob patterns matched against
+ * the directory's basename (the Claude Code cwd-slug). Runner-mode roots
+ * pass `['*']` (see `@agent-lcars/telemetry`'s `runnerWatchRoots`).
  */
 export function isAllowedProjectDir(
   dirName: string,
-  patterns: string[] = defaultProjectDirAllowlist(),
+  patterns: string[],
 ): boolean {
   return patterns.some((pattern) => compileGlob(pattern).test(dirName));
 }

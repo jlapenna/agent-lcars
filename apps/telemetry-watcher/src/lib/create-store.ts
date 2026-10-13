@@ -1,6 +1,6 @@
 import { logger } from '@agent-lcars/logging';
 
-import { WatcherConfig } from './config';
+import { SharedWatcherConfig } from './config';
 import {
   createFirestoreStore,
   createLogOnlyStore,
@@ -8,18 +8,14 @@ import {
   SessionStore,
 } from './store';
 
-/** The subset of `WatcherConfig` that determines which store to build —
- * narrowed (rather than requiring the full host-watcher config) so runner
- * mode's `RunnerConfig` (which has no `shareDir`/`allowlist` concept) can
- * pass itself straight through without a throwaway host-watcher shape. */
+/** The subset of the shared config that determines which store to build;
+ * runner mode's `RunnerConfig` passes itself straight through. */
 export type StoreConfig = Pick<
-  WatcherConfig,
+  SharedWatcherConfig,
   'firestoreEmulatorHost' | 'firestoreProjectId' | 'firestoreWriterKeyJson'
 >;
 
-/** Resolves the one supported telemetry Firestore configuration.  The
- * one-shot schema-backfill operator tool consumes this too, so its emulator
- * behavior cannot drift from the normal watcher store. */
+/** Resolves the one supported telemetry Firestore configuration. */
 export function firestoreStoreOptions(
   config: StoreConfig,
 ): FirestoreStoreOptions | undefined {
@@ -48,9 +44,9 @@ export function firestoreStoreOptions(
 /**
  * Picks the real Firestore store when writer credentials, an emulator, or
  * ambient Application Default Credentials are configured, otherwise falls
- * back to a log-only store — this is what lets `docker run` demonstrate the
- * daemon end-to-end without live GCP access (issue #2540's CI-only
- * verification scope).
+ * back to a log-only store — which is what lets the standalone bundle smoke
+ * test (`tools/telemetry-watcher-standalone-smoke.sh`) run `runner finalize`
+ * end-to-end without live GCP access.
  */
 export function createStoreFromConfig(config: StoreConfig): SessionStore {
   const options = firestoreStoreOptions(config);

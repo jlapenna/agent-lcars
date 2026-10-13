@@ -12,9 +12,7 @@ import type { resumeTranscript } from './lib/resume-transcript';
 // testing below). Importing `./main` is itself only safe because main.ts
 // guards its bottom-level `main()` call behind an entrypoint check (see
 // that file's comment) -- without it, importing this module under vitest
-// falls through to `runHostWatcher()` and throws (no
-// `AGENT_TELEMETRY_CHECKOUT_ROOTS` in the test env), observed directly
-// while building this spec.
+// would run `main()` against the test runner's own argv.
 import { _runRunnerResumeForTesting } from './main';
 
 describe('runner resume subcommand', () => {

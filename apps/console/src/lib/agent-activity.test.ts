@@ -165,6 +165,7 @@ describe('getAgentActivity', () => {
     expect(activity.fleet).toEqual({
       online: 2,
       busy: 1,
+      capacity: 2,
       githubExpiresAt: '2026-08-28T12:03:00.000Z',
     });
     expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 1 });

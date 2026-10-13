@@ -686,7 +686,7 @@ test.describe('Inbox authorized action journeys', () => {
     await page.goto(`/?repo=${REPO_QUERY}`);
     await page
       .getByTestId(`live-run-group-${E2E_ITEM_NUMBERS.duplicateDispatch}`)
-      .getByRole('link', { name: 'Open task', exact: true })
+      .getByTestId('current-run-primary-action')
       .first()
       .click();
     await expect(page).toHaveURL(

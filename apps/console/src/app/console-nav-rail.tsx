@@ -12,6 +12,7 @@ import {
   type NavKey,
 } from './console-navigation';
 import { useConsoleNavigationKeys } from './console-navigation-context';
+import { useShellReadouts } from './console-shell-state';
 
 function navHref(
   item: (typeof CONSOLE_DESTINATIONS)[number],
@@ -42,6 +43,23 @@ function navHref(
   return queryString ? `${item.href}?${queryString}` : item.href;
 }
 
+/** Per-destination counts beside the rail position: decisions waiting,
+ * live runs and admitted-but-not-running work. */
+function navCounts(
+  state: ReturnType<typeof useShellReadouts>,
+): Partial<Record<NavKey, number | '—'>> {
+  if (state.status !== 'ready') return {};
+  const { user, decisions, liveRuns, queueDepth } = state.readouts;
+  // Maintainers see an explicit unavailable mark for a count that could not
+  // be read; other sessions see no counts at all.
+  if (!user.grants.includes('admin')) return {};
+  return {
+    inbox: decisions ?? '—',
+    agents: liveRuns ?? '—',
+    work: queueDepth ?? '—',
+  };
+}
+
 /**
  * The destination rail on its own - ConsoleHeader composes it
  * under the title block. It is exported for the rare embedded navigation
@@ -60,6 +78,7 @@ export function ConsoleNavRail({
   repoFilter?: string;
 }) {
   const allowedKeys = useConsoleNavigationKeys();
+  const counts = navCounts(useShellReadouts());
   return (
     <nav className="lcars-nav" aria-label="Console sections">
       {consoleDestinations(allowedKeys).map((item) => (
@@ -76,6 +95,7 @@ export function ConsoleNavRail({
             {String(
               CONSOLE_DESTINATIONS.findIndex(({ key }) => key === item.key) + 1,
             ).padStart(2, '0')}
+            {counts[item.key] !== undefined ? ` · ${counts[item.key]}` : ''}
           </small>
           <span className="lcars-nav-label">{item.label}</span>
         </Link>

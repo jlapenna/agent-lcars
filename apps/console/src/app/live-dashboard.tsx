@@ -1,6 +1,6 @@
 'use client';
 
-import { Text } from '@mantine/core';
+import { VisuallyHidden } from '@mantine/core';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState, useTransition } from 'react';
 
@@ -11,6 +11,7 @@ import {
   DASHBOARD_STREAM_URL,
   type DashboardSignal,
 } from '../lib/dashboard-stream-contract';
+import { publishLiveState } from './console-shell-state';
 import { refreshDashboard } from './refresh-action';
 
 /** Refresh merges RSC props into the existing tree: URL scope/selection,
@@ -25,6 +26,10 @@ export function LiveDashboard() {
   const [revision, setRevision] = useState(0);
   const applied = useRef(0);
   const lastRefresh = useRef(0);
+  const [syncedAt, setSyncedAt] = useState<number>();
+  // The page's data is current as of its load; that is the first sync once
+  // the stream confirms it is live.
+  const mountedAt = useRef(Date.now());
   useEffect(() => {
     if (pending || revision === applied.current) return;
     const timer = setTimeout(
@@ -37,6 +42,7 @@ export function LiveDashboard() {
             // RSC tree in this same action without a second navigation/fetch.
             await refreshDashboard(pathname);
             setRefreshFailed(false);
+            setSyncedAt(Date.now());
           } catch {
             setRefreshFailed(true);
           }
@@ -123,19 +129,34 @@ export function LiveDashboard() {
       clearTimeout(stale);
     };
   }, []);
-  return (
-    <Text
-      size="xs"
-      c="dimmed"
-      ta="right"
-      role="status"
-      data-testid="live-dashboard-status"
-    >
-      {pending
-        ? 'Updating dashboard'
+  const label = pending
+    ? 'Updating dashboard'
+    : refreshFailed
+      ? 'Refresh failed — data may be stale'
+      : state;
+  // The header shows this state (console-frame-readouts.tsx); the page keeps
+  // the full sentence for assistive technology.
+  useEffect(() => {
+    publishLiveState({
+      mode: pending
+        ? 'updating'
         : refreshFailed
-          ? 'Refresh failed — data may be stale'
-          : state}
-    </Text>
+          ? 'degraded'
+          : state === 'Live updates connected'
+            ? 'live'
+            : state.startsWith('Connecting')
+              ? 'connecting'
+              : 'degraded',
+      label,
+      syncedAt:
+        syncedAt ??
+        (state === 'Live updates connected' ? mountedAt.current : undefined),
+    });
+  }, [pending, refreshFailed, state, label, syncedAt]);
+  useEffect(() => () => publishLiveState(undefined), []);
+  return (
+    <VisuallyHidden role="status" data-testid="live-dashboard-status">
+      {label}
+    </VisuallyHidden>
   );
 }

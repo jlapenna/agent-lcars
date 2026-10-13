@@ -14,10 +14,10 @@ This app ships:
   `runner finalize` and `runner resume` passes.
 
 The polling host watcher daemon (issue #2540) and the runner's live polling
-sidecar are retired (hooks telemetry phase 3). The daemon's source and its
-`serve` target remain in `src/main.ts` and `src/lib/daemon.ts`, but nothing
-in this repository builds, publishes, or deploys it any more; see
-[Legacy host watcher](#legacy-host-watcher-not-deployed).
+sidecar are retired (hooks telemetry phase 3) and their code is deleted:
+`node sidecar.cjs` with no `runner <finalize|resume>` subcommand is a usage
+error, and `runner sidecar` is a logged no-op kept only so a stale caller
+cannot fail a job.
 
 ## QueueExecutor issue-agent telemetry paths
 
@@ -66,121 +66,16 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
    session id, or a failed download — a broken resume degrades to a fresh
    run rather than failing the dispatch.
 
-## Legacy host watcher (not deployed)
+## Archived CLI transcripts (reader only)
 
-> [!NOTE]
-> This section and [Opt-in CLI transcript archives](#opt-in-cli-transcript-archives)
-> describe the retired polling daemon (`node sidecar.cjs` with no
-> subcommand). Its Docker image, Compose deploy bundle and Homelab
-> deployment are removed; workstations report through
-> [`lcars hook`](#hook-client-lcars-hook) instead. The code remains until a
-> follow-up deletes it.
-
-On an interval (`AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`, default 10s, with
-an immediate first tick on start and an `fs.watch`-driven nudge on file
-changes in between), the daemon:
-
-1. Discovers Claude transcripts under `~/.claude/projects/**/*.jsonl` whose
-   project-dir basename matches the configured allowlist
-   (`AGENT_TELEMETRY_WATCH_ROOTS`, `*`-wildcard glob patterns; the deployed
-   host derives them from `AGENT_TELEMETRY_CHECKOUT_ROOTS`).
-   Interactive transcripts can contain
-   other projects' data, so this scoping is a privacy boundary, not just a
-   filter (PRD #2112 amendment 2026-07-10, decision 3). It also recursively
-   discovers Codex rollouts under `~/.codex/sessions/**/*.jsonl`, filtering
-   reduced summaries by cwd (defaulting to that same checkout root) before
-   anything is shipped.
-2. Skips re-reading any file whose mtime/size hasn't changed since the last
-   tick, and reduces the rest via `@agent-lcars/telemetry`'s
-   `reduceTranscripts` into counters/deliverables/timeline summaries —
-   Message bodies stay local unless the explicit CLI archive policy below consents to that individual session.
-3. Resolves liveness (`live` / `idle` / `stale` / `ended`) from transcript
-   recency, whether a process is still running against the session's `cwd`,
-   and whether the watcher itself has kept rediscovering the file within
-   `AGENT_TELEMETRY_STALENESS_WINDOW_MS` (default 5× the heartbeat
-   interval).
-4. Upserts one `source: 'cli'` session doc per tracked session via
-   `buildSessionDoc` + the configured `SessionStore`.
-5. Exposes low-cardinality Prometheus state on `/metrics`: process/tick
-   timestamps, tracked-session count, and the last successful live/idle
-   session upsert. The latter is deliberately narrower than "any write" so
-   stale allowlists that only rediscover archived sessions cannot look healthy.
-
-Every step fails soft and logs rather than crashing — a single broken
-transcript, reducer error, or store write failure never takes down
-telemetry for the daemon's other tracked sessions.
-
-## Opt-in CLI transcript archives
-
-Host-watcher only (see the note above); no deployment enables it.
-
-CLI archival is **off by default**. Summary discovery and its existing project-dir
-and cwd allowlists remain the privacy owner. No production upload policy is set
-by this repository change. Consent to one session does not authorize uploading
-other sessions in the same file or widening a watch root.
-
-The host-only `AGENT_TELEMETRY_CLI_ARCHIVE_POLICY` accepts an explicit JSON object:
-
-```json
-{
-  "bucket": "operator-owned-cli-archives",
-  "sessionIds": ["specific-cli-session-id"],
-  "enabledAfter": "2026-10-09T00:00:00.000Z"
-}
-```
-
-The operator selects at most 100 exact safe session IDs; globs are rejected.
-`enabledAfter` is a deliberate consent cutoff: sessions started before it are
-never archived. The normal discovery gate must still accept the session, and
-at least one of that root's project-dir/cwd allowlists must be restrictive.
-Only file-backed Claude Code and Codex sessions support console transcripts.
-Antigravity summary-DB rows never upload local history. A live/idle session is
-pending; an ended session uploads its own bounded file through the existing
-provider adapter. Changed bytes are revalidated before upload; mixed-session
-files, malformed records, escaped/symlink paths, and excluded cwd are rejected.
-
-Limits and failure behavior:
-
-- Maximum archive and console download: **5 MiB**. Oversized sessions retain
-  their summary and show a size-limit state; no partial transcript is uploaded.
-- Console access expires at last activity + **30 days**, matching CLI ledger
-  retention. The destination must have a Delete lifecycle age of **30 days or
-  less** applying to all objects or the `cli/` prefix, no versioning, no
-  retention lock, and explicit zero soft-delete retention. It must enforce
-  uniform bucket-level access and public-access prevention. The writer checks
-  these properties before each upload and refuses the runner bucket's
-  archived-version-only lifecycle. GCS lifecycle deletion is asynchronous:
-  objects become eligible by 30 days after upload; console access is blocked
-  at the earlier ledger expiry. Re-uploading changed transcripts resets object
-  age, not the console's last-activity retention rule.
-- Upload/bucket-policy failures preserve summary reporting and show unavailable;
-  retries are limited to once per minute per unchanged session. Storage retries
-  have a 30-second budget. A missing/denied/expired archive never hides the
-  session header or becomes a page error.
-- The admin-only detail route uses the existing server storage reader, provider
-  timeline parser, elision and safe Markdown renderer. Raw HTML and dangerous
-  URL schemes are not executed. Raw transcript bodies never enter ledger docs.
-- Removing consent and restarting the watcher clears the CLI archive reference
-  on the next discovered-session write. Previously stored objects remain subject
-  to the bucket lifecycle; this is not an immediate object-erasure operation.
-
-### Operator handoff (separate approved operation)
-
-Homelab owns host configuration, bucket provisioning and credentials. Before
-activation, review the selected sessions/cutoff and the destination's private
-retention policy. The existing host writer identity needs object creation and
-bucket-metadata read access there; the console's runtime identity needs object
-read access. The host upload path uses `AGENT_TELEMETRY_WRITER_KEY_JSON` (or
-ambient ADC when absent), never a new committed credential. Any Terraform/IAM
-change, secret delivery, image publication, host restart or production activation
-requires its separately scoped approved operation.
-
-Supply the policy through an operator-owned Compose environment override for
-`agent-lcars-telemetry-watcher`; the checked-in deployment intentionally does not
-enable it. Keep the existing read-only mounts and allowlists. Verify the bucket
-policy, archive a specifically consented session, inspect its `/sessions/<id>`
-detail and an excluded session, and record the deployed image digest. To disable,
-remove that policy override and restart through the approved host workflow.
+The retired host daemon could archive individually consented CLI
+transcripts (`AGENT_TELEMETRY_CLI_ARCHIVE_POLICY`) and record a
+`cliTranscriptArchive` pointer on the session doc. That writer is deleted;
+nothing creates new CLI archives. The console still renders a doc that
+carries an unexpired pointer (bounded by `CLI_TRANSCRIPT_MAX_BYTES` in
+`@agent-lcars/telemetry`), and a hook write carries an existing pointer
+forward rather than clearing it. Stored objects remain subject to their
+bucket's lifecycle.
 
 ## Session titles (issue #1212)
 
@@ -207,12 +102,11 @@ and `src/lib/session-title-selection.ts` for the rank.
   the next candidate, so a malformed id can never silently retarget another
   runtime's session. The CLI writes
   `~/.local/state/agent-lcars/session-metadata/<sessionId>.json` directly
-  (crash-safe rename-into-place, mode 0700); it never goes through this
-  daemon. Nothing installs the `lcars` binary automatically on a
+  (crash-safe rename-into-place, mode 0700). Nothing installs the `lcars` binary automatically on a
   workstation — see [Installing the `lcars` CLI](#installing-the-lcars-cli).
 
-For Codex, the watcher derives its inferred title from the first real user
-input in watched rollout JSONL. Claude's `aiTitle` remains a transcript-derived
+For Codex, the reducer derives its inferred title from the first real user
+input in the rollout JSONL. Claude's `aiTitle` remains a transcript-derived
 generated title.
 
 ## Hook client (`lcars hook`)
@@ -273,60 +167,33 @@ always exits 0. Every decision is one line in
    what `install` added.
 
 `lcars hook flush` drains the spool by hand (`~/.local/state/agent-lcars/spool/`),
-and `lcars hook <runtime> --inline` posts synchronously for debugging. The
-legacy daemon code still skips any session whose
-`~/.local/state/agent-lcars/hook-sessions/<sessionId>.json` marker is
-younger than ten minutes, so a host still running an old daemon never races
-the hook client on one doc.
+and `lcars hook <runtime> --inline` posts synchronously for debugging.
 
 ## Configuration
 
-All via environment variables (see `src/lib/config.ts`):
+All via environment variables (see `src/lib/config.ts` and, for the hook
+client, `src/lib/hook/hook-config.ts`):
 
-| Variable                                 | Default                                 | Purpose                                                                                                                                                                                                                                         |
-| ---------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_TELEMETRY_CHECKOUT_ROOTS`         | required without explicit roots         | Comma-separated checkout roots used by the host fallback and deploy script to construct privacy allowlists.                                                                                                                                     |
-| `AGENT_TELEMETRY_WATCH_ROOTS`            | deployed host contract                  | JSON array of explicit per-agent roots and privacy allowlists.                                                                                                                                                                                  |
-| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`    | `~/.claude/projects`                    | Runner-mode fallback only.                                                                                                                                                                                                                      |
-| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`     | `~/.codex/sessions`                     | Runner-mode fallback only.                                                                                                                                                                                                                      |
-| `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` | `~/.gemini/antigravity-cli/…`           | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes follow the configured checkout roots.                                                                                                 |
-| `AGENT_TELEMETRY_SESSION_STATE_DIR`      | `~/.local/state/agent-lcars`            | Declared-title overlay root — `session-metadata/`. Empty string disables the overlay, same convention as `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` above. See "Session titles" above.                                                            |
-| `AGENT_TELEMETRY_HOST`                   | `os.hostname()`                         | Host label recorded on each session doc.                                                                                                                                                                                                        |
-| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`  | `10000`                                 | Tick interval.                                                                                                                                                                                                                                  |
-| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`    | `heartbeatIntervalMs * 5`               | How long a session can go unrediscovered before it's marked `stale`.                                                                                                                                                                            |
-| `AGENT_TELEMETRY_SHARE_DIR`              | `~/share`                               | Root for the share-media skill convention; artifact discovery is skipped entirely when unset.                                                                                                                                                   |
-| `AGENT_TELEMETRY_METRICS_HOST`           | `0.0.0.0`                               | Address for the host watcher's Prometheus endpoint. Runner sidecar/finalize modes never start it.                                                                                                                                               |
-| `AGENT_TELEMETRY_METRICS_PORT`           | `9464`                                  | Port for the host watcher's `/metrics` endpoint.                                                                                                                                                                                                |
-| `AGENT_TELEMETRY_PROJECT_ID`             | —                                       | Firestore project id for the real store.                                                                                                                                                                                                        |
-| `AGENT_TELEMETRY_DATABASE_ID`            | `(default)`                             | Firestore database id within that project (`src/lib/store.ts`).                                                                                                                                                                                 |
-| `AGENT_TELEMETRY_WRITER_KEY_JSON`        | —                                       | Service-account key JSON for the real store's writer credentials.                                                                                                                                                                               |
-| `FIRESTORE_EMULATOR_HOST`                | —                                       | If set, writes to the emulator instead (takes precedence over the two above).                                                                                                                                                                   |
-| `SESSION_EXPIRY_BEARER`                  | required (`bin/session-expiry.ts` only) | GitHub-Actions-OIDC bearer (`work.reaper` scope) the session-expiry script reads the work API with — see `work-session-expiry.yml`. `SESSION_EXPIRY_ITEM` names the closed item; empty clears expiry for every open item. Unused by the daemon. |
+| Variable                              | Default                                 | Purpose                                                                                                                                                                                                                   |
+| ------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR` | `~/.claude/projects`                    | Runner finalize/resume default.                                                                                                                                                                                           |
+| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`  | `~/.codex/sessions`                     | Runner finalize/resume default.                                                                                                                                                                                           |
+| `AGENT_TELEMETRY_HOST`                | `os.hostname()`                         | Host label the hook client records on each session doc.                                                                                                                                                                   |
+| `AGENT_TELEMETRY_PROJECT_ID`          | —                                       | Firestore project id for the real store.                                                                                                                                                                                  |
+| `AGENT_TELEMETRY_DATABASE_ID`         | `(default)`                             | Firestore database id within that project (`src/lib/store.ts`).                                                                                                                                                           |
+| `AGENT_TELEMETRY_WRITER_KEY_JSON`     | —                                       | Service-account key JSON for the real store's writer credentials.                                                                                                                                                         |
+| `FIRESTORE_EMULATOR_HOST`             | —                                       | If set, writes to the emulator instead (takes precedence over the two above).                                                                                                                                             |
+| `SESSION_EXPIRY_BEARER`               | required (`bin/session-expiry.ts` only) | GitHub-Actions-OIDC bearer (`work.reaper` scope) the session-expiry script reads the work API with — see `work-session-expiry.yml`. `SESSION_EXPIRY_ITEM` names the closed item; empty clears expiry for every open item. |
 
-The allowlist rows deliberately describe how their defaults are derived
-rather than restating literals. The old deployment duplicated independently
-encoded Claude and Codex paths, and one copy stayed stale after a repository
-rename. A single required checkout-root list now derives Claude project slugs,
-Codex cwd globs, and Antigravity prefixes together; missing scope fails startup
-closed instead of silently watching a developer-specific fallback.
-
-If neither the emulator host nor both of `AGENT_TELEMETRY_PROJECT_ID` /
-`AGENT_TELEMETRY_WRITER_KEY_JSON` are set, the daemon falls back to a
-log-only store — this is what lets `docker run` demonstrate the daemon
-end-to-end without live GCP access (issue #2540's CI-only verification
-scope). Runner mode (`runner finalize`, above) adds a third path,
-**tried after the writer-key-JSON path**: if `AGENT_TELEMETRY_PROJECT_ID`
-is set but `AGENT_TELEMETRY_WRITER_KEY_JSON` is not, the store falls back to
-ambient Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`,
+`runner finalize` picks its store in this order: the emulator when
+`FIRESTORE_EMULATOR_HOST` is set; the writer key JSON when both
+`AGENT_TELEMETRY_PROJECT_ID` and `AGENT_TELEMETRY_WRITER_KEY_JSON` are set;
+when only `AGENT_TELEMETRY_PROJECT_ID` is set, ambient Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`,
 set by the QueueExecutor direct runner to the agent-telemetry-writer SA's
-short-lived credentials file) instead of a key JSON blob — see
+short-lived credentials file). With none of those it falls back to a
+log-only store, which is what lets the standalone bundle smoke test run
+`runner finalize` end to end without GCP access — see
 `src/lib/create-store.ts`.
-
-## Running
-
-```bash
-./tools/nx run @agent-lcars/telemetry-watcher:serve
-```
 
 ## Bundle (runner finalize/resume)
 
@@ -342,7 +209,8 @@ zero runtime `node_modules` dependency:
 # -> dist/apps/telemetry-watcher/sidecar.cjs
 
 # Verify it actually runs standalone (the script copies it out of the
-# checkout so ambient node_modules resolution cannot hide a runtime failure):
+# checkout so ambient node_modules resolution cannot hide a runtime failure,
+# then runs a credential-free `runner finalize` over a one-session fixture):
 ./tools/telemetry-watcher-standalone-smoke.sh
 ```
 
