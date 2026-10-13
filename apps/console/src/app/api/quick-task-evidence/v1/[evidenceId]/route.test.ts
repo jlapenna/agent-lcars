@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   isRevoked: vi.fn(),
@@ -19,8 +19,22 @@ const context = (id = evidenceId) => ({
 });
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-13T00:00:00.000Z'));
+  mocks.store.mockReturnValue({
+    isRevoked: mocks.isRevoked,
+    read: mocks.read,
+    readObject: mocks.readObject,
+  });
+  mocks.isRevoked.mockResolvedValue(false);
+  mocks.readObject.mockResolvedValue({
+    generation: '1',
+    uploadedAt: '2026-10-12T00:00:00.000Z',
+    binding: { createdAt: '2026-10-12T00:00:00.000Z' },
+  });
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('Quick Task evidence public route', () => {
   it('returns only normalized bytes and the frozen headers', async () => {
@@ -78,13 +92,74 @@ describe('Quick Task evidence public route', () => {
       readObject: mocks.readObject,
     });
     mocks.isRevoked.mockResolvedValue(false);
-    mocks.readObject.mockResolvedValue({ generation: '1', binding: {} });
 
     const response = await HEAD(new Request('https://example.test'), context());
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('image/webp');
     expect(await response.text()).toBe('');
+    expect(mocks.read).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['just before expiry', '2026-09-13T00:00:00.001Z', 200],
+    ['exactly expired', '2026-09-13T00:00:00.000Z', 404],
+    ['older than expiry', '2026-09-12T23:59:59.999Z', 404],
+    ['future', '2026-10-13T00:00:00.001Z', 404],
+    [
+      'future within the current millisecond',
+      '2026-10-13T00:00:00.000001Z',
+      404,
+    ],
+    ['missing', undefined, 404],
+    ['null', null, 404],
+    ['malformed', 'not-a-date', 404],
+    ['normalized invalid day', '2026-02-30T00:00:00.000Z', 404],
+    ['local date', '2026-10-12', 404],
+    ['non-UTC', '2026-10-12T00:00:00.000+01:00', 404],
+    ['storage submillisecond precision', '2026-10-12T00:00:00.123456Z', 200],
+  ])(
+    'uses server upload age for GET and HEAD: %s',
+    async (_name, uploadedAt, status) => {
+      mocks.readObject.mockResolvedValue({
+        generation: '1',
+        uploadedAt,
+        binding: { createdAt: '2026-10-13T00:00:00.000Z' },
+      });
+      mocks.read.mockResolvedValue(new Uint8Array([1, 2, 3]));
+      for (const method of [GET, HEAD]) {
+        const response = await method(
+          new Request('https://example.test'),
+          context(),
+        );
+        expect(response.status).toBe(status);
+        if (status === 404) {
+          expect([...response.headers]).toEqual([]);
+          expect(await response.text()).toBe('');
+        }
+      }
+      if (status === 404) expect(mocks.read).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not read object metadata or bytes for revoked evidence', async () => {
+    mocks.isRevoked.mockResolvedValue(true);
+    const response = await GET(new Request('https://example.test'), context());
+    expect(response.status).toBe(404);
+    expect(mocks.readObject).not.toHaveBeenCalled();
+    expect(mocks.read).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when server creation metadata cannot be read', async () => {
+    mocks.readObject.mockRejectedValue(new Error('unavailable'));
+    for (const method of [GET, HEAD]) {
+      const response = await method(
+        new Request('https://example.test'),
+        context(),
+      );
+      expect(response.status).toBe(404);
+      expect([...response.headers]).toEqual([]);
+    }
     expect(mocks.read).not.toHaveBeenCalled();
   });
 });
