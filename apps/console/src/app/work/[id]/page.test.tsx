@@ -47,7 +47,7 @@ describe('RunsTable', () => {
         queue: { state: 'claimed', claimedBy: 'runner-pike-1' },
       },
     ]);
-    expect(screen.getByText('Queue executor')).toBeInTheDocument();
+    expect(screen.getByText('Queue executor · claude')).toBeInTheDocument();
     expect(screen.getByText(/claimed by runner-pike-1/u)).toBeInTheDocument();
   });
 
@@ -61,7 +61,7 @@ describe('RunsTable', () => {
         updatedAt: '2026-08-27T00:00:00.000Z',
       },
     ]);
-    expect(screen.getByText('Queue executor')).toBeInTheDocument();
+    expect(screen.getByText('Queue executor · claude')).toBeInTheDocument();
   });
 });
 

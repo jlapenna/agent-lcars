@@ -44,6 +44,7 @@ import {
   selectFallbackPipeline,
   settleProviderFallback,
 } from './provider-fallback';
+import { decideLabelProviderRequest } from './provider-routing';
 import {
   availableQueuePipelines,
   type OrchestratorStore,
@@ -94,6 +95,10 @@ export interface RequestInput {
   work?: WorkPayload;
   /** Constructed by the authenticated admission adapter, not a raw API field. */
   providerFallback?: ProviderFallbackRequest;
+  /** Authorized alternatives are filtered against the provider chosen in this transaction. */
+  providerFallbackForPipeline?: (
+    pipeline: string,
+  ) => ProviderFallbackRequest | undefined;
   /** Optional opaque atomic request binding. Its owner supplies the key and
    * canonical identity; the store records the first source request with the
    * request transaction rather than leaving a pre-request race to a caller. */
@@ -101,6 +106,18 @@ export interface RequestInput {
   /** Replace only this exact unclaimed queue attempt when changing provider.
    * Cancellation and admission share the request transaction and its claim fence. */
   replaceQueuedRunId?: string;
+  /** Server-validated label intent; only its trusted adapter grants provider change. */
+  labelProviderRequest?: {
+    requestedAt: string;
+    actor: string;
+    allowProviderChange: boolean;
+  };
+  /** The Work owner decodes its pipeline inside the request transaction. */
+  pipelineForStoredTask?: (task: Task) => string;
+  /** GitHub replies/retries follow an accepted handoff, not incidental run history. */
+  useEffectivePipeline?: boolean;
+  expectedEffectivePipeline?: string;
+  isPipelineAuthorized?: (pipeline: string) => boolean;
   /**
    * Called with an already-admitted Task's immutable Work while the request
    * transaction still owns its consistent snapshot. Returning false refuses
@@ -134,7 +151,17 @@ export class Orchestrator {
       ...(input.requestBinding === undefined
         ? {}
         : { requestBinding: input.requestBinding }),
-      decide: ({ task, activeRun, previousRun, requestId }) => {
+      readProviderRouting:
+        input.labelProviderRequest !== undefined ||
+        input.useEffectivePipeline === true,
+      decide: ({
+        task,
+        activeRun,
+        previousRun,
+        requestId,
+        latestRun,
+        retainedClaims,
+      }) => {
         // This belongs inside transactRequest, not in a route-level pre-read:
         // two first admissions may otherwise both observe an absent Task, and
         // the loser can mint its pipeline after the winner persists different
@@ -147,6 +174,26 @@ export class Orchestrator {
         ) {
           return refused('work-spec-mismatch');
         }
+        const storedPipeline =
+          task === undefined
+            ? input.pipeline
+            : (input.pipelineForStoredTask?.(task.task) ?? input.pipeline);
+        const admittedPipeline =
+          task?.task.providerRouting?.acceptedGeneration?.pipeline ??
+          storedPipeline;
+        const pipeline = input.useEffectivePipeline
+          ? admittedPipeline
+          : input.pipeline;
+        if (
+          input.expectedEffectivePipeline !== undefined &&
+          input.expectedEffectivePipeline !== pipeline
+        )
+          return refused('work-spec-mismatch');
+        if (
+          input.isPipelineAuthorized !== undefined &&
+          !input.isPipelineAuthorized(previousRun?.pipeline ?? pipeline)
+        )
+          return refused('pipeline-forbidden');
         // The historical check precedes the live mutex. A retry remains a
         // duplicate even after its original run settled and a newer request
         // took the task lock; transactRequest keeps this check and minting
@@ -154,21 +201,34 @@ export class Orchestrator {
         if (previousRun !== undefined) {
           return refused('duplicate-request', previousRun);
         }
+        const providerFallback =
+          input.providerFallbackForPipeline === undefined
+            ? input.providerFallback
+            : input.providerFallbackForPipeline(pipeline);
         const requestArgs = {
           now,
           taskId: input.taskId,
           requestId,
           requestSource,
-          pipeline: input.pipeline,
+          pipeline,
           priority:
             input.priority ??
             (input.replaceQueuedRunId ? activeRun?.priority : undefined),
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
-          ...(input.providerFallback === undefined
-            ? {}
-            : { providerFallback: input.providerFallback }),
+          ...(providerFallback === undefined ? {} : { providerFallback }),
         };
+        if (input.labelProviderRequest !== undefined) {
+          return decideLabelProviderRequest({
+            admittedPipeline,
+            ...requestArgs,
+            task: task?.task,
+            activeRun,
+            latestRun,
+            retainedClaims,
+            label: input.labelProviderRequest,
+          });
+        }
         if (input.replaceQueuedRunId !== undefined) {
           if (
             task === undefined ||

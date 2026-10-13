@@ -1,5 +1,6 @@
 import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
+import { fleetCapacity } from '../lib/runner-status-contract';
 import type { SessionArchiveResult } from '../lib/session-archive';
 import type { ConsoleReadout } from './console-readouts';
 import { formatCost, formatDuration } from './format';
@@ -51,10 +52,7 @@ export function fleetReadoutInput({
   autoscaler: Pick<AutoscalerStatusResult, 'lanes' | 'lanesIncomplete'>;
   spendArchive?: Pick<SessionArchiveResult, 'spend' | 'spendByRepository'>;
 }): BridgeReadoutInput {
-  const capacity = autoscaler.lanes?.reduce(
-    (total, lane) => total + lane.maxRunners,
-    0,
-  );
+  const capacity = autoscaler.lanes && fleetCapacity(autoscaler.lanes);
   const repoSpend = spendArchive?.spendByRepository;
   return {
     fleet: {
