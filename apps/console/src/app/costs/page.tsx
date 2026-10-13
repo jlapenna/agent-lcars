@@ -13,23 +13,17 @@ import {
   parseSessionArchiveQuery,
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
-import {
-  assessCostBudget,
-  type CostBudget,
-  parseCostBudget,
-  type SessionSpend,
-} from '../../lib/session-spend';
-import type { RepositorySpend } from '../../lib/session-spend-by-repo';
+import { parseCostBudget } from '../../lib/session-spend';
 import { windowOptions } from '../archive-window-options';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
-import { type ConsoleReadout, ConsoleReadouts } from '../console-readouts';
+import { ConsoleReadouts } from '../console-readouts';
 import {
   ConsoleToolbar,
   ToolbarSelect,
   ToolbarWindow,
 } from '../console-toolbar';
-import { formatCost } from '../format';
+import { loadFleetReadouts } from '../fleet-readouts';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { CostsWorkspace } from './costs-workspace';
@@ -64,56 +58,6 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
       {rows.length} session{rows.length === 1 ? '' : 's'}
     </>
   );
-}
-
-const money = (value: number | undefined) =>
-  value === undefined ? '—' : formatCost(value);
-
-/** The headline figures from the same spend aggregate the breakdowns below
- * explain; every caveat stays in that summary. */
-function spendReadouts(
-  spend: SessionSpend,
-  byRepository: RepositorySpend | undefined,
-  budget: CostBudget,
-): ConsoleReadout[] {
-  const estimated = spend.totals.costEstimated
-    ? 'includes estimates'
-    : undefined;
-  return [
-    {
-      id: 'spend-today',
-      label: 'Spend today',
-      value: money(byRepository?.todayUsd),
-      // The configured budget applies to the selected window's subtotal
-      // (docs/cost-ledger.md), not a day, so today is never shown as a
-      // share of it; no daily budget exists to compare against.
-      detail: 'since 00:00 UTC · no daily budget',
-    },
-    {
-      id: 'known-spend',
-      label: 'Known spend',
-      value: money(spend.totals.costUsd),
-      detail: estimated ?? `${spend.totals.unpricedSessions} unpriced`,
-    },
-    {
-      id: 'per-deliverable',
-      label: 'Per merged PR',
-      value: money(spend.costPerMergedDeliverableUsd),
-      detail: estimated,
-    },
-    {
-      id: 'merged',
-      label: 'Merged PRs',
-      value: spend.mergedPRs,
-      detail: `${spend.unmergedPRs} unmerged · ${spend.unknownPRs} unknown`,
-    },
-    {
-      id: 'budget',
-      label: 'Budget',
-      value: budget.state === 'configured' ? money(budget.limitUsd) : '—',
-      detail: assessCostBudget(spend, budget),
-    },
-  ];
 }
 
 function CostsToolbar({
@@ -180,10 +124,11 @@ function CostsToolbar({
           { value: 'issue-agent', label: 'Dispatched agent' },
         ]}
       />
-      {/* A native submit so filters apply before hydration. */}
-      <Button type="submit" variant="light" size="compact-sm">
-        Apply
-      </Button>
+      {/* Selects and the window submit on change; Apply is the
+          script-less fallback (the mockup's toolbar has none). */}
+      <noscript>
+        <button type="submit">Apply</button>
+      </noscript>
     </ConsoleToolbar>
   );
 }
@@ -195,8 +140,11 @@ async function CostsBody({
   query: SessionArchiveQuery;
   watchedRepos: ReturnType<typeof getWatchedRepos>;
 }) {
-  const { ledger, warnings, spend, spendByRepository } =
-    await getArchive(query);
+  const [{ ledger, warnings, spend, spendByRepository }, readouts] =
+    await Promise.all([
+      getArchive(query),
+      loadFleetReadouts(query.repo ? repoKey(query.repo) : undefined),
+    ]);
   const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
   const budget = parseCostBudget(
     process.env['AGENT_LCARS_COST_BUDGET_USD'],
@@ -210,12 +158,7 @@ async function CostsBody({
       }
       toolbar={<CostsToolbar query={query} watchedRepos={watchedRepos} />}
     >
-      {spend && (
-        <ConsoleReadouts
-          label="Spend readouts"
-          readouts={spendReadouts(spend, spendByRepository, budget)}
-        />
-      )}
+      <ConsoleReadouts label="Fleet readouts" readouts={readouts} />
       {spendByRepository && <SpendByRepository spend={spendByRepository} />}
       {spend && <SpendBreakdowns spend={spend} budget={budget} />}
       {hasLedgerData ? (

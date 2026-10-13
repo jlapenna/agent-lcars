@@ -1,5 +1,5 @@
 import { SESSION_AGENTS } from '@agent-lcars/telemetry';
-import { Anchor, Button, Card, Group, Title } from '@mantine/core';
+import { Anchor, Card, Group, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
@@ -158,7 +158,7 @@ async function SessionsBody({
           <ToolbarSelect
             name="agent"
             label="Agent"
-            value={filters.agent ?? ''}
+            value={query.agent ?? ''}
             options={[
               { value: '', label: 'All agents' },
               ...SESSION_AGENTS.map((agent) => ({
@@ -189,10 +189,11 @@ async function SessionsBody({
               { value: 'issue-agent', label: 'Dispatched agent' },
             ]}
           />
-          {/* A native submit so filters apply before hydration. */}
-          <Button type="submit" variant="light" size="compact-sm">
-            Apply
-          </Button>
+          {/* Selects and the window submit on change; Apply is the
+              script-less fallback (the mockup's toolbar has none). */}
+          <noscript>
+            <button type="submit">Apply</button>
+          </noscript>
           <ViewToggle
             view={view}
             flatHref={displayHref(query, { view: 'flat', filters })}
