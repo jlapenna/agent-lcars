@@ -83,12 +83,10 @@ function spendReadouts(
       id: 'spend-today',
       label: 'Spend today',
       value: money(byRepository?.todayUsd),
-      detail:
-        budget.state === 'configured' && byRepository
-          ? `of ${money(budget.limitUsd)} budget · ${Math.round(
-              (byRepository.todayUsd / budget.limitUsd) * 100,
-            )}%`
-          : 'sessions active since 00:00 UTC',
+      // The configured budget applies to the selected window's subtotal
+      // (docs/cost-ledger.md), not a day, so today is never shown as a
+      // share of it; no daily budget exists to compare against.
+      detail: 'since 00:00 UTC · no daily budget',
     },
     {
       id: 'known-spend',
