@@ -206,12 +206,14 @@ export function QueueWorkspace({
     setAgent(next);
     syncControlsToUrl(filter, sort, search.trim(), next);
   };
+  // A selected agent stays an option even when none of its decisions remain
+  // (a live refresh, a stale bookmark), so the filter can always be cleared.
   const agentOptions = useMemo(
     () =>
       [
-        ...new Set(cards.map(inboxCardAgent).filter(Boolean)),
+        ...new Set([...cards.map(inboxCardAgent), agent].filter(Boolean)),
       ].sort() as string[],
-    [cards],
+    [agent, cards],
   );
 
   const visibleCards = useMemo(() => {
@@ -548,7 +550,7 @@ export function QueueWorkspace({
                       : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
                 </Text>
                 <Text size="sm" c="dimmed">
-                  {search.trim() || filter !== 'all'
+                  {search.trim() || filter !== 'all' || agent
                     ? 'Other items may be hidden by the search or active filter.'
                     : 'Check back after the next refresh.'}
                 </Text>
@@ -569,6 +571,15 @@ export function QueueWorkspace({
                       onClick={() => applyQueueControls('all', sort)}
                     >
                       Show all reasons
+                    </Button>
+                  )}
+                  {agent && (
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      onClick={() => applyAgent('')}
+                    >
+                      Show all agents
                     </Button>
                   )}
                 </Group>
