@@ -316,9 +316,10 @@ describe('RunnerAutoscalerStatus', () => {
     expect(
       screen.getByRole('link', { name: 'lcars-ci on GitHub ↗' }),
     ).toHaveAttribute('href', lane.registrationUrl);
-    expect(screen.getByTestId('queue-executor-status')).toHaveTextContent(
-      'Direct agent executorreadydraining5 active · 3 max',
-    );
+    const executorRow = screen.getByTestId('queue-executor-status');
+    expect(executorRow).toHaveTextContent('Direct agent executor');
+    expect(executorRow).toHaveTextContent('ready · draining');
+    expect(executorRow).toHaveTextContent('5 active · 3 max');
   });
 
   it('distinguishes missing telemetry from fresh zero ARC capacity and unknown Job occupancy', () => {
@@ -427,7 +428,10 @@ describe('RunnerAutoscalerStatus', () => {
       );
       const source = FakeEventSource.only();
       expect(source.url).toBe(RUNNER_STATUS_STREAM_URL);
-      expect(screen.getAllByText(warning)).toHaveLength(1);
+      // One band: the warning appears inline in its summary and in the
+      // expanded list of that same band, never in a second band.
+      expect(screen.getAllByTestId('data-warnings')).toHaveLength(1);
+      expect(screen.getByTestId('data-warnings')).toHaveTextContent(warning);
       expect(
         screen
           .getByTestId('data-warnings')
@@ -440,8 +444,13 @@ describe('RunnerAutoscalerStatus', () => {
           warnings: ['ARC status unavailable.'],
         }),
       );
-      expect(screen.queryByText(warning)).not.toBeInTheDocument();
-      expect(screen.getAllByText('ARC status unavailable.')).toHaveLength(1);
+      expect(screen.getByTestId('data-warnings')).not.toHaveTextContent(
+        warning,
+      );
+      expect(screen.getAllByTestId('data-warnings')).toHaveLength(1);
+      expect(screen.getByTestId('data-warnings')).toHaveTextContent(
+        'ARC status unavailable.',
+      );
       expect(screen.getByTestId('queue-executor-status')).toHaveTextContent(
         '2 active',
       );
@@ -456,9 +465,9 @@ describe('RunnerAutoscalerStatus', () => {
       expect(
         screen.queryByTestId('queue-executor-status'),
       ).not.toBeInTheDocument();
-      expect(
-        screen.getByText('Runner capacity status is stale.'),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId('data-warnings')).toHaveTextContent(
+        'Runner capacity status is stale.',
+      );
 
       unmount();
       expect(source.closed).toBe(true);

@@ -1,7 +1,19 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 import { E2E_ITEM_NUMBERS, resetCliSessions } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+
+/** The decision list is full width until a decision is selected
+ * (design/fleet-console.html); open the first row's detail. */
+async function openFirstDecision(page: Page) {
+  await page
+    .locator('.queue-item-row')
+    .first()
+    .getByRole('link')
+    .first()
+    .click();
+  await expect(page).toHaveURL(/item=/);
+}
 
 const ID = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
 const KEY = `work:${ID}`;
@@ -99,6 +111,7 @@ test.describe('native and GitHub human decisions', () => {
     await page.goto('/inbox?q=native+decision&sort=newest');
     await expect(page).not.toHaveURL(/item=/);
     await expect(page.getByTestId(`queue-row-${OTHER_KEY}`)).toBeVisible();
+    await openFirstDecision(page);
     const detail = page.getByTestId('native-decision-detail');
     await detail
       .getByRole('textbox', { name: 'Reply to the agent' })
@@ -109,13 +122,15 @@ test.describe('native and GitHub human decisions', () => {
     ).toHaveText(/Resume will be attempted when the agent starts/);
     await expect(page.getByTestId(`queue-row-${KEY}`)).toHaveCount(0);
     await expect(page.getByTestId(`queue-row-${OTHER_KEY}`)).toBeVisible();
-    await expect(detail).toContainText('Other repository native decision');
+    // The answered decision stays selected and inspectable (#1173); the next
+    // decision waits in the list rather than replacing it.
+    await expect(detail).toContainText('Choose native decision storage');
     await expect(page.getByTestId('native-reply-confirmation')).toContainText(
       'Choose native decision storage',
     );
   });
 
-  test('keeps admitted confirmation when the default selection empties the queue', async ({
+  test('keeps admitted confirmation when the answered decision empties the queue', async ({
     page,
     request,
   }) => {
@@ -131,12 +146,16 @@ test.describe('native and GitHub human decisions', () => {
     ).toBe(true);
     await page.goto('/inbox');
     await expect(page).not.toHaveURL(/item=/);
+    await openFirstDecision(page);
     await page
       .getByRole('textbox', { name: 'Reply to the agent' })
       .fill('Use Firestore.');
     await page.getByRole('button', { name: 'Reply', exact: true }).click();
     await expect(page.getByTestId(`queue-row-${KEY}`)).toHaveCount(0);
-    await expect(page.getByTestId('native-decision-detail')).toHaveCount(0);
+    // The selected decision stays inspectable after it leaves the queue.
+    await expect(page.getByTestId('native-decision-detail')).toContainText(
+      'Choose native decision storage',
+    );
     await expect(page.getByTestId('native-reply-confirmation')).toContainText(
       'Reply admitted for a fresh session',
     );
@@ -151,6 +170,7 @@ test.describe('native and GitHub human decisions', () => {
   }) => {
     await page.goto('/inbox?q=native+decision&sort=newest');
     await expect(page).not.toHaveURL(/item=/);
+    await openFirstDecision(page);
     const detail = page.getByTestId('native-decision-detail');
     const draft = detail.getByRole('textbox', { name: 'Reply to the agent' });
     await draft.fill('Keep this refused draft.');

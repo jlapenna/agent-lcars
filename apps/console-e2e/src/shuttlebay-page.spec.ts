@@ -257,9 +257,10 @@ test.describe('Shuttlebay live stream', () => {
     const warnings = page.getByTestId('data-warnings');
     await expect(warnings).toBeVisible();
     await warnings.locator('summary').click();
-    await expect(
-      page.getByText('Runner capacity status is stale.'),
-    ).toBeVisible();
+    // The warning shows in the band's inline preview and its expanded list.
+    await expect(warnings.locator('.lcars-disclosure__content')).toContainText(
+      'Runner capacity status is stale.',
+    );
     await expect(executor).toHaveCount(0);
 
     // HTTP denial closes EventSource permanently; the application's bounded

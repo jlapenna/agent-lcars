@@ -13,10 +13,6 @@ import {
   MAX_TURNS_BUDGET,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
-import type {
-  ArcLaneStatus,
-  QueueExecutorStatus,
-} from '../lib/autoscaler-status';
 import type { CliSession } from '../lib/cli-sessions';
 import { classifyAgentRun } from '../lib/run-classification';
 import { docCost } from '../lib/session-ledger';
@@ -38,7 +34,24 @@ import {
 import { BridgePaneLink } from './bridge-pane-link';
 import { ExecutionStatus } from './execution-status';
 import { formatCost, formatDuration } from './format';
+import { MobileHistoryDisclosure } from './mobile-history-disclosure';
+import {
+  formatTokens,
+  Meter,
+  OpsPanel,
+  StateMark,
+  UNAVAILABLE,
+} from './ops-primitives';
 import { RelativeTime } from './relative-time';
+
+export {
+  formatTokens,
+  Meter,
+  OpsPanel,
+  StateMark,
+  UNAVAILABLE,
+} from './ops-primitives';
+export { RunnerFleetPanel } from './runner-fleet-panel';
 
 /**
  * The operations panels of design/fleet-console.html: Active dispatches,
@@ -47,102 +60,10 @@ import { RelativeTime } from './relative-time';
  * source in this console says so instead of showing a number.
  */
 
-export const UNAVAILABLE = '—';
-
-/** Compact token count: 980, 12.2k, 1.42M. */
-export function formatTokens(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
-  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
-  return String(tokens);
-}
-
 function sessionTokens(session: IssueAgentSessionDoc): number {
   const t = session.tokens;
   return (
     t.inputTokens + t.outputTokens + t.cacheCreationTokens + t.cacheReadTokens
-  );
-}
-
-/** Panel chrome: spine, uppercase head with count and trailing meta. */
-export function OpsPanel({
-  title,
-  count,
-  meta,
-  signalled = false,
-  className,
-  children,
-  ...rest
-}: {
-  title: string;
-  count?: ReactNode;
-  meta?: ReactNode;
-  /** The decision inbox carries the signal bar down its trailing edge. */
-  signalled?: boolean;
-  className?: string;
-  children: ReactNode;
-  'data-testid'?: string;
-  'aria-label'?: string;
-}) {
-  return (
-    <section
-      className={['ops-panel', className].filter(Boolean).join(' ')}
-      data-signalled={signalled ? '' : undefined}
-      {...rest}
-    >
-      <div className="ops-panel__body">
-        <div className="ops-panel__head">
-          <h2 className="ops-panel__title">{title}</h2>
-          {count !== undefined && (
-            <span className="ops-panel__count">{count}</span>
-          )}
-          {meta && <span className="ops-panel__meta">{meta}</span>}
-        </div>
-        {children}
-      </div>
-    </section>
-  );
-}
-
-/** A coloured square and its label: run and runner state. */
-export function StateMark({
-  tone,
-  children,
-  ...rest
-}: {
-  tone: 'ok' | 'fail' | 'warn' | 'busy' | 'idle' | 'neutral';
-  children: ReactNode;
-  'data-testid'?: string;
-}) {
-  return (
-    <span className="ops-state" data-tone={tone} {...rest}>
-      {children}
-    </span>
-  );
-}
-
-/** A flat track with a fill: budget, load, share of a total. */
-export function Meter({
-  fraction,
-  tone,
-  label,
-}: {
-  fraction: number;
-  tone?: 'warn' | 'fail';
-  label: string;
-}) {
-  const value = Math.max(0, Math.min(1, fraction));
-  return (
-    <div
-      className="ops-meter"
-      data-tone={tone}
-      role="meter"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(value * 100)}
-    >
-      <i style={{ width: `${value * 100}%` }} />
-    </div>
   );
 }
 
@@ -199,6 +120,24 @@ function PhaseBlocks({ run }: { run: AgentRun }) {
         />
       ))}
     </div>
+  );
+}
+
+/** The run's own execution log: a GitHub Actions run or the executor's. */
+function RunLogLink({ run }: { run: AgentRun }) {
+  return (
+    <Anchor
+      href={run.url}
+      target="_blank"
+      rel="noreferrer"
+      size="xs"
+      className="ops-subtle-link"
+      data-testid="run-log-link"
+    >
+      {run.url.startsWith('https://github.com/')
+        ? 'View run on GitHub ↗'
+        : 'View run'}
+    </Anchor>
   );
 }
 
@@ -270,6 +209,7 @@ function DispatchRow({
             Task/run
           </Anchor>
         )}
+        <RunLogLink run={run} />
       </td>
       <td>
         <PhaseBlocks run={run} />
@@ -338,6 +278,7 @@ export function ActiveDispatchesPanel({
   sessionsByRunId = {},
   selectHrefFor,
   showRunner = false,
+  showQueueHealth = true,
   testId = 'current-work',
 }: {
   liveRuns: AgentRun[];
@@ -345,6 +286,8 @@ export function ActiveDispatchesPanel({
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   selectHrefFor?: (run: AgentRun) => string;
   showRunner?: boolean;
+  /** Off where the page already shows the queue-health alert above. */
+  showQueueHealth?: boolean;
   testId?: string;
 }) {
   const byPipeline = new Map<string, number>();
@@ -359,7 +302,7 @@ export function ActiveDispatchesPanel({
       meta={[...byPipeline].map(([p, n]) => `${p} ${n}`).join(' · ')}
       data-testid={testId}
     >
-      <QueueHealthAlert liveRuns={liveRuns} />
+      {showQueueHealth && <QueueHealthAlert liveRuns={liveRuns} />}
       {liveRuns.length === 0 ? (
         <p className="ops-empty">No agent runs queued or running.</p>
       ) : (
@@ -463,6 +406,7 @@ export function RecentCompletionsPanel({
   testId = 'latest-outcomes',
   title = 'Recent completions',
   footer,
+  mobileInitialCount,
 }: {
   runs: AgentRun[];
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
@@ -470,6 +414,8 @@ export function RecentCompletionsPanel({
   testId?: string;
   title?: string;
   footer?: ReactNode;
+  /** Phones show this many rows first, the rest behind a disclosure. */
+  mobileInitialCount?: number;
 }) {
   const classified = runs.map((run) => ({
     run,
@@ -483,6 +429,106 @@ export function RecentCompletionsPanel({
     ({ classification }) => classification.status === 'failed',
   ).length;
   const cycle = median(runs.map((run) => run.elapsedSeconds));
+  const table = (
+    <table className="ops-table">
+      <thead>
+        <tr>
+          <th>Outcome</th>
+          <th>Item</th>
+          <th>Agent</th>
+          <th className="ops-num">Cycle</th>
+          <th className="ops-num">Cost</th>
+          <th className="ops-num">At</th>
+        </tr>
+      </thead>
+      <tbody>
+        {classified.map(({ run, session, classification }, index) => {
+          const selectHref = selectHrefFor?.(run);
+          const taskHref = taskHrefForRun(run);
+          const actionHref = taskHref ?? internalRunHref(run);
+          const cost = session ? docCost(session).costUsd : undefined;
+          return (
+            <tr
+              key={run.id}
+              data-testid="finished-run-row"
+              data-status={classification.status}
+              data-mobile-history-extra={
+                mobileInitialCount !== undefined && index >= mobileInitialCount
+                  ? 'true'
+                  : undefined
+              }
+            >
+              <td>
+                <StateMark
+                  tone={OUTCOME_TONE[classification.status] ?? 'neutral'}
+                  data-testid="recent-run-conclusion"
+                >
+                  {STATUS_LABELS[classification.status]}
+                </StateMark>
+              </td>
+              <td className="ops-cell-clip ops-cell-wide">
+                <BridgePaneLink
+                  mobileHref={actionHref}
+                  paneHref={selectHref ?? actionHref}
+                  className="ops-ref"
+                  data-testid="outcome-primary-action"
+                >
+                  {runRef(run)}
+                </BridgePaneLink>
+                {selectHref ? (
+                  <RowTitle
+                    text={bareTitle(run.displayTitle)}
+                    mobileHref={titleHrefForRun(run)}
+                    selectHref={selectHref}
+                  />
+                ) : (
+                  <Anchor
+                    href={titleHrefForRun(run)}
+                    className="ops-item-title"
+                    data-testid="recent-run-issue-link"
+                  >
+                    {bareTitle(run.displayTitle)}
+                  </Anchor>
+                )}
+                {classification.diagnosis && (
+                  <span
+                    className="ops-diagnosis"
+                    data-testid="finished-run-diagnosis"
+                  >
+                    {classification.diagnosis}
+                  </span>
+                )}
+                {session && (
+                  <Anchor
+                    href={`/sessions/${session.sessionId}`}
+                    size="xs"
+                    className="ops-subtle-link"
+                    data-testid="finished-run-session-link"
+                  >
+                    session
+                  </Anchor>
+                )}
+                <RunLogLink run={run} />
+              </td>
+              <td>
+                <PipelineBadge pipeline={run.pipeline} />
+              </td>
+              <td className="ops-num">
+                <ScreenshotStableDuration seconds={run.elapsedSeconds} />
+              </td>
+              <td className="ops-num">
+                {cost === undefined ? UNAVAILABLE : formatCost(cost)}
+              </td>
+              <td className="ops-num ops-dim">
+                <RelativeTime iso={run.updatedAt} variant="compact" />
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
   return (
     <OpsPanel
       title={title}
@@ -496,98 +542,16 @@ export function RecentCompletionsPanel({
     >
       {runs.length === 0 ? (
         <p className="ops-empty">No finished agent runs yet.</p>
+      ) : mobileInitialCount !== undefined ? (
+        <MobileHistoryDisclosure
+          hiddenCount={Math.max(0, runs.length - mobileInitialCount)}
+          itemLabel="outcome"
+          testId="recent-outcomes-disclosure"
+        >
+          {table}
+        </MobileHistoryDisclosure>
       ) : (
-        <table className="ops-table">
-          <thead>
-            <tr>
-              <th>Outcome</th>
-              <th>Item</th>
-              <th>Agent</th>
-              <th className="ops-num">Cycle</th>
-              <th className="ops-num">Cost</th>
-              <th className="ops-num">At</th>
-            </tr>
-          </thead>
-          <tbody>
-            {classified.map(({ run, session, classification }) => {
-              const selectHref = selectHrefFor?.(run);
-              const taskHref = taskHrefForRun(run);
-              const actionHref = taskHref ?? internalRunHref(run);
-              const cost = session ? docCost(session).costUsd : undefined;
-              return (
-                <tr
-                  key={run.id}
-                  data-testid="finished-run-row"
-                  data-status={classification.status}
-                >
-                  <td>
-                    <StateMark
-                      tone={OUTCOME_TONE[classification.status] ?? 'neutral'}
-                      data-testid="recent-run-conclusion"
-                    >
-                      {STATUS_LABELS[classification.status]}
-                    </StateMark>
-                  </td>
-                  <td className="ops-cell-clip ops-cell-wide">
-                    <BridgePaneLink
-                      mobileHref={actionHref}
-                      paneHref={selectHref ?? actionHref}
-                      className="ops-ref"
-                      data-testid="outcome-primary-action"
-                    >
-                      {runRef(run)}
-                    </BridgePaneLink>
-                    {selectHref ? (
-                      <RowTitle
-                        text={bareTitle(run.displayTitle)}
-                        mobileHref={titleHrefForRun(run)}
-                        selectHref={selectHref}
-                      />
-                    ) : (
-                      <Anchor
-                        href={titleHrefForRun(run)}
-                        className="ops-item-title"
-                        data-testid="recent-run-issue-link"
-                      >
-                        {bareTitle(run.displayTitle)}
-                      </Anchor>
-                    )}
-                    {classification.diagnosis && (
-                      <span
-                        className="ops-diagnosis"
-                        data-testid="finished-run-diagnosis"
-                      >
-                        {classification.diagnosis}
-                      </span>
-                    )}
-                    {session && (
-                      <Anchor
-                        href={`/sessions/${session.sessionId}`}
-                        size="xs"
-                        className="ops-subtle-link"
-                        data-testid="finished-run-session-link"
-                      >
-                        session
-                      </Anchor>
-                    )}
-                  </td>
-                  <td>
-                    <PipelineBadge pipeline={run.pipeline} />
-                  </td>
-                  <td className="ops-num">
-                    <ScreenshotStableDuration seconds={run.elapsedSeconds} />
-                  </td>
-                  <td className="ops-num">
-                    {cost === undefined ? UNAVAILABLE : formatCost(cost)}
-                  </td>
-                  <td className="ops-num ops-dim">
-                    <RelativeTime iso={run.updatedAt} variant="compact" />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        table
       )}
       {footer}
     </OpsPanel>
@@ -667,151 +631,6 @@ export function DecisionInboxPanel({
           ))}
         </ul>
       )}
-    </OpsPanel>
-  );
-}
-
-// ---- Runner fleet ----
-
-function Slots({
-  busy,
-  idle,
-  pending,
-  max,
-}: {
-  busy: number;
-  idle: number;
-  pending: number;
-  max?: number;
-}) {
-  const squares: Array<'busy' | 'idle' | 'pending' | 'free'> = [
-    ...Array<'busy'>(busy).fill('busy'),
-    ...Array<'idle'>(idle).fill('idle'),
-    ...Array<'pending'>(pending).fill('pending'),
-  ];
-  if (max !== undefined) {
-    while (squares.length < max) squares.push('free');
-  }
-  return (
-    <div
-      className="ops-slots"
-      aria-label={`${busy} busy, ${idle} idle, ${pending} pending${max !== undefined ? ` of ${max}` : ''}`}
-    >
-      {squares.slice(0, 24).map((state, i) => (
-        <i key={i} data-state={state} />
-      ))}
-    </div>
-  );
-}
-
-export function RunnerFleetPanel({
-  lanes,
-  lanesIncomplete,
-  executor,
-  chip,
-}: {
-  lanes?: ArcLaneStatus[];
-  lanesIncomplete?: boolean;
-  executor?: QueueExecutorStatus;
-  /** The fleet chip: the authoritative one-line fleet summary. */
-  chip?: ReactNode;
-}) {
-  // No lane records is unknown capacity, not zero capacity.
-  const known = lanes !== undefined && lanes.length > 0 && !lanesIncomplete;
-  const online = lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
-  const max = lanes?.reduce((n, lane) => n + lane.maxRunners, 0);
-  return (
-    <OpsPanel
-      title="Runner fleet"
-      count={known ? `${online}/${max}` : UNAVAILABLE}
-      meta={chip}
-      data-testid="runner-fleet-panel"
-    >
-      <table className="ops-table">
-        <thead>
-          <tr>
-            <th>Host</th>
-            <th>Slots</th>
-            <th>Load</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(lanes ?? []).map((lane) => (
-            <tr key={lane.lane} data-testid={`fleet-lane-${lane.lane}`}>
-              <td>
-                <span className="ops-host">{lane.lane}</span>
-                <span className="ops-host-spec">
-                  ARC lane · {lane.registeredRunners} registered · max{' '}
-                  {lane.maxRunners}
-                </span>
-              </td>
-              <td>
-                <Slots
-                  busy={lane.runningJobs}
-                  idle={lane.idleRunners}
-                  pending={lane.pendingJobs}
-                  max={lane.maxRunners}
-                />
-              </td>
-              <td className="ops-dim">
-                {UNAVAILABLE}{' '}
-                <span className="ops-unavailable">host load unavailable</span>
-              </td>
-            </tr>
-          ))}
-          {executor && (
-            <tr data-testid="fleet-direct-executor">
-              <td>
-                <span className="ops-host">direct executor</span>
-                <span className="ops-host-spec">
-                  QueueExecutor · limit {executor.maxConcurrent}
-                </span>
-              </td>
-              <td>
-                {executor.activeRuns === undefined ? (
-                  <span className="ops-dim">active unknown</span>
-                ) : (
-                  <Slots
-                    busy={executor.activeRuns}
-                    idle={0}
-                    pending={0}
-                    max={executor.maxConcurrent}
-                  />
-                )}
-              </td>
-              <td>
-                <StateMark
-                  tone={
-                    !executor.ready ? 'fail' : executor.draining ? 'warn' : 'ok'
-                  }
-                >
-                  {!executor.ready
-                    ? 'Not ready'
-                    : executor.draining
-                      ? 'Draining'
-                      : 'Ready'}
-                </StateMark>
-              </td>
-            </tr>
-          )}
-          {(lanes === undefined || lanes.length === 0) && !executor && (
-            <tr>
-              <td colSpan={3} className="ops-dim">
-                Runner status unavailable
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-      <div className="ops-telemetry" data-testid="fleet-telemetry">
-        {['Tokens / min', 'CI wait p50', 'Work API p95'].map((label) => (
-          <div key={label}>
-            <div className="lcars-eyebrow">{label}</div>
-            <div className="ops-telemetry__value">{UNAVAILABLE}</div>
-            <div className="ops-unavailable">no metrics source</div>
-          </div>
-        ))}
-      </div>
     </OpsPanel>
   );
 }

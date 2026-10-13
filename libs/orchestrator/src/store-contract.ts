@@ -2304,10 +2304,14 @@ export function runOrchestratorStoreContract(
       }
 
       it('commits priority service turns with concurrent claims, preserving the background bound', async () => {
-        const { store, orchestrator, clock } = await fixture();
+        const { store, clock } = await fixture();
         // Keep every class eligible throughout all seven reservations without
         // spending emulator time on surplus requests: 4:2:1 service leaves
         // one queued item in each class after this 5:3:2 initial backlog.
+        // This case exercises claim transactions. Seed the same valid queued
+        // decisions directly, rather than serializing unrelated request-history
+        // queries and enqueue transactions before the shared-cursor race.
+        const backlog: Promise<void>[] = [];
         for (let index = 0; index < 5; index++) {
           for (const [offset, priority, count] of [
             [100, 'urgent', 5],
@@ -2315,16 +2319,31 @@ export function runOrchestratorStoreContract(
             [300, 'background', 2],
           ] as const) {
             if (index >= count) continue;
-            const run = await queuedRun(
-              orchestrator,
-              `q${offset + index}`,
-              'claude',
+            const requestId = `q${offset + index}`;
+            const decision = requestRun({
+              now: clock.now(),
+              task: undefined,
+              activeRun: undefined,
+              taskId: { workId: queueWorkId(requestId) },
+              requestId,
+              pipeline: 'claude',
               priority,
+              work: TASK_WORK,
+            });
+            if (isRefusal(decision)) throw new Error('unexpected refusal');
+            backlog.push(
+              store.apply({
+                decision: {
+                  ...decision,
+                  run: { ...decidedRun(decision), queue: { state: 'queued' } },
+                },
+                expectedRevision: undefined,
+              }),
             );
-            await store.enqueueRun({ runId: run.runId, now: clock.now() });
             clock.advanceMinutes(1);
           }
         }
+        await Promise.all(backlog);
         // Race the normal/background boundary after five committed turns.
         // A stale concurrent cursor must not serve another normal run and
         // starve background work. One pair exercises that atomic contract
