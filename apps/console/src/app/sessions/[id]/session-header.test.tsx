@@ -126,7 +126,7 @@ describe('SessionHeader', () => {
     expect(runLink.getAttribute('href')).toBe(
       'https://github.com/supersprinklesracing/sprinkles/actions/runs/999',
     );
-    const issueLink = screen.getByRole('link', { name: '#42' });
+    const issueLink = screen.getByRole('link', { name: 'GitHub #42' });
     expect(issueLink.getAttribute('href')).toBe(
       'https://github.com/supersprinklesracing/sprinkles/issues/42',
     );

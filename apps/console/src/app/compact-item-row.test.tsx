@@ -109,3 +109,27 @@ describe('CompactItemRow second line (#169)', () => {
     ).toBeTruthy();
   });
 });
+
+describe('CompactItemRow navigation', () => {
+  it.each(['issue', 'pr'] as const)(
+    'keeps the %s title onsite and labels the GitHub link',
+    (kind) => {
+      const item = makeItem({ kind });
+      render(
+        <MantineProvider>
+          <CompactItemRow item={item} hint="updated now" />
+        </MantineProvider>,
+      );
+      const title = screen.getByRole('link', { name: '#1 Fix the thing' });
+      expect(title).toHaveAttribute(
+        'href',
+        '/task/supersprinklesracing/sprinkles/1',
+      );
+      expect(title).not.toHaveAttribute('target');
+      expect(screen.getByRole('link', { name: 'GitHub ↗' })).toHaveAttribute(
+        'href',
+        item.url,
+      );
+    },
+  );
+});

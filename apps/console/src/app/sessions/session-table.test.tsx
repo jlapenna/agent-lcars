@@ -60,7 +60,7 @@ describe('SessionTable', () => {
         issueUrl: 'https://github.com/o/r/issues/42',
       }),
     ]);
-    const links = screen.getAllByRole('link', { name: '#42' });
+    const links = screen.getAllByRole('link', { name: 'GitHub #42' });
     expect(links).toHaveLength(2);
     for (const link of links) {
       expect(link.getAttribute('href')).toBe(
@@ -83,8 +83,8 @@ describe('SessionTable', () => {
         ],
       }),
     ]);
-    const pr10 = screen.getAllByRole('link', { name: '#10' });
-    const pr20 = screen.getAllByRole('link', { name: '#20' });
+    const pr10 = screen.getAllByRole('link', { name: 'GitHub #10' });
+    const pr20 = screen.getAllByRole('link', { name: 'GitHub #20' });
     expect(pr10).toHaveLength(1);
     expect(pr20).toHaveLength(2);
     for (const link of pr10) {

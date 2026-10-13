@@ -103,7 +103,7 @@ function IssueCell({ row }: { row: IssueLedgerRow }) {
         rel="noreferrer"
         size="sm"
       >
-        #{row.issueNumber}
+        GitHub #{row.issueNumber}
       </Anchor>
       <RepoBadge repo={repo} />
     </Group>
