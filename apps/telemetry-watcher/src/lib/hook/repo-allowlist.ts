@@ -26,18 +26,19 @@ export function matchesRepoAllowlist(
 }
 
 /**
- * Rewrites `repo` into the spelling a matching allowlist pattern declares, so
- * a checkout whose `origin` spells the repository with different capitals
- * (`JLapenna/Agent-LCARS`) still records the canonical `owner/name` that
- * Console's owner query and Claimed-but-Idle matching look up (#2583).
+ * Rewrites `repo` into the spelling the allowlist declares, so a checkout
+ * whose `origin` spells the repository with different capitals
+ * (`JLapenna/Agent-LCARS`) still records an `owner/name` that Console's
+ * owner query and Claimed-but-Idle matching look up (#2583). Console reads
+ * the canonical spelling and its full lowercase form, so the result is
+ * always one of those two, never a mix:
  *
- * The most specific matching pattern decides: a literal `owner/name` beats a
- * one-wildcard pattern, which beats `*` + `/*`. A literal segment supplies
- * its own spelling. A `*` segment knows no spelling, so it records the
- * lowercase form: Console reads the canonical spelling and its lowercase,
- * so lowercase is the one spelling every reader finds. A repository whose
- * canonical name has capitals therefore needs a literal allowlist entry.
- * A repository no pattern matches keeps the remote's spelling.
+ * - a literal `owner/name` entry matching case-insensitively supplies its
+ *   own spelling;
+ * - otherwise a matching pattern with a `*` segment knows no complete
+ *   spelling, so the full lowercase form is recorded. A repository whose
+ *   canonical name has capitals therefore needs a literal entry;
+ * - a repository no pattern matches keeps the remote's spelling.
  */
 export function canonicalRepoSpelling(
   repo: { owner: string; name: string },
@@ -45,21 +46,16 @@ export function canonicalRepoSpelling(
 ): { owner: string; name: string } {
   const owner = repo.owner.toLowerCase();
   const name = repo.name.toLowerCase();
-  let best: { owner: string; name: string; literals: number } | undefined;
   for (const pattern of patterns) {
     const [patternOwner, patternName, ...rest] = pattern.trim().split('/');
     if (!patternOwner || !patternName || rest.length > 0) continue;
-    const ownerLiteral = patternOwner !== '*';
-    const nameLiteral = patternName !== '*';
-    if (ownerLiteral && patternOwner.toLowerCase() !== owner) continue;
-    if (nameLiteral && patternName.toLowerCase() !== name) continue;
-    const literals = Number(ownerLiteral) + Number(nameLiteral);
-    if (best && best.literals >= literals) continue;
-    best = {
-      owner: ownerLiteral ? patternOwner : owner,
-      name: nameLiteral ? patternName : name,
-      literals,
-    };
+    if (patternOwner === '*' || patternName === '*') continue;
+    if (
+      patternOwner.toLowerCase() === owner &&
+      patternName.toLowerCase() === name
+    ) {
+      return { owner: patternOwner, name: patternName };
+    }
   }
-  return best ? { owner: best.owner, name: best.name } : repo;
+  return matchesRepoAllowlist(repo, patterns) ? { owner, name } : repo;
 }

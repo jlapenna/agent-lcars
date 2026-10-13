@@ -141,7 +141,7 @@ function findRepoAlias(
  * canonicalized here, at write time (#2583): a configured rename alias wins
  * and is returned verbatim; otherwise, when `watchedRepos` (the hook
  * client's `owner/name` allowlist patterns) matches, the remote's capitals
- * are replaced by the pattern's canonical spelling (see
+ * are replaced by the allowlist's canonical spelling (see
  * `canonicalRepoSpelling`); an unwatched repository keeps the remote's own
  * spelling. Only the hook client passes `watchedRepos`: the retired polling
  * daemon is not deployed, and the runner's finalize pass resolves a checkout

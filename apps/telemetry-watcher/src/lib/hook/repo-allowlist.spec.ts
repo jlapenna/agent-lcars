@@ -25,11 +25,16 @@ describe('canonicalRepoSpelling', () => {
     [['jlapenna/*'], { owner: 'jlapenna', name: 'agent-lcars' }],
     [['*/agent-lcars'], { owner: 'jlapenna', name: 'agent-lcars' }],
     [['*/*'], { owner: 'jlapenna', name: 'agent-lcars' }],
-    // The most specific match wins regardless of order.
+    // A literal entry wins over wildcards regardless of order.
     [
       ['*/*', 'jlapenna/*', 'JLapenna/Agent-Lcars'],
       { owner: 'JLapenna', name: 'Agent-Lcars' },
     ],
+    // A wildcard never mixes a literal's capitals with lowercase.
+    [['JLapenna/*'], { owner: 'jlapenna', name: 'agent-lcars' }],
+    [['*/Agent-LCARS'], { owner: 'jlapenna', name: 'agent-lcars' }],
+    // Malformed patterns are ignored.
+    [['jlapenna/agent-lcars/extra', 'jlapenna'], mixedCase],
     // No match keeps the remote's spelling.
     [['supersprinklesracing/*'], mixedCase],
     [[], mixedCase],
