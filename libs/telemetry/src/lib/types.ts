@@ -218,6 +218,11 @@ export interface SessionObserver {
 
 interface BaseSessionDoc {
   sessionId: string;
+  /** Stored lifecycle assertion. Hooks write `live`/`idle`/`ended`;
+   * `runner finalize` writes the authoritative `ended`. When a QueueExecutor
+   * worker dies before finalize and the Work API settles its run `lost`, the
+   * executor sets only this field to `ended` on that run's still-`live`/`idle`
+   * docs (`apps/runner-autoscaler/lost_run_sessions.go`). */
   liveness: SessionLiveness;
   observer?: SessionObserver;
   /** Most recent time a host watcher directly observed this CLI session.

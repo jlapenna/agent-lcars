@@ -38,6 +38,9 @@ type runExitReporter struct {
 	acquireToken func(context.Context) (string, error)
 	logger       *slog.Logger
 	now          func() time.Time
+	// sessions ends a lost run's phantom `live`/`idle` session docs. Nil
+	// (status publication disabled) is a no-op.
+	sessions *lostRunSessionEnder
 
 	mu       sync.Mutex
 	reported map[string]time.Time
@@ -133,6 +136,7 @@ func (r *runExitReporter) observeTerminatedWithDisruption(runID, claimedBy, fing
 			r.logger.Warn("Run exit report failed; retrying on the next observation", slog.String("runId", runID), slog.String("error", err.Error()))
 		case state == "lost":
 			r.logger.Warn("Run worker exited without reporting; the Work API settled it lost", slog.String("runId", runID))
+			r.endLostRunSessions(runID)
 		case state == stateNotClaimant:
 			r.logger.Warn("Run exit report refused: this executor did not claim the run; not retried", slog.String("runId", runID), slog.String("runner", runner))
 		default:
@@ -235,9 +239,29 @@ func (r *runExitReporter) settleTerminated(ctx context.Context, runID, runner, f
 		return err
 	}
 	switch state {
-	case "finished", "canceled", "lost":
+	case "lost":
+		r.endLostRunSessions(runID)
+		return nil
+	case "finished", "canceled":
 		return nil
 	default:
 		return fmt.Errorf("receipt logical settlement unproven")
 	}
+}
+
+// endLostRunSessions marks runID's session docs ended in the background. A
+// worker that died without reporting never ran `runner finalize`, so its
+// sessions would otherwise stay stored `live` forever. It never blocks or
+// fails the exit report.
+func (r *runExitReporter) endLostRunSessions(runID string) {
+	if r.sessions == nil {
+		return
+	}
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), lostRunSessionsTimeout)
+		defer cancel()
+		r.sessions.endRunSessions(ctx, runID)
+	}()
 }
