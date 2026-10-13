@@ -13,7 +13,6 @@ const healthy: BridgeReadoutInput = {
   liveRunsAvailable: true,
   queue: { queued: 1, claimed: 2, running: 3 },
   spendToday: { costUsd: 38.42, estimated: false, partial: false },
-  budgetUsd: 60,
 };
 
 const byId = (input: BridgeReadoutInput) =>
@@ -33,7 +32,8 @@ describe('bridgeReadouts', () => {
       value: 3,
       detail: 'claude 2 · codex 1',
     });
-    expect(r['spend']?.detail).toBe('of $60.00 budget · 64%');
+    // The cost budget is window-scoped, so today is never shown as a share.
+    expect(r['spend']?.detail).toBe('since 00:00 UTC · no daily budget');
   });
 
   it('marks a spend total the archive limit truncated as a lower bound', () => {

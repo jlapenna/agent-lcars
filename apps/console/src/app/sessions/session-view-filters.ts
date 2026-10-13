@@ -1,10 +1,8 @@
-import { SESSION_AGENTS, type SessionAgent } from '@agent-lcars/telemetry';
-
 import type { SessionRow } from '../../lib/session-archive';
 
-/** Within-window view filters (not archive query params): agent and find. */
+/** Within-window view filter (not an archive query param): find. The agent
+ * filter is the archive query's own `agent` (session-archive.ts). */
 export interface SessionsViewFilters {
-  agent?: SessionAgent;
   q?: string;
 }
 
@@ -17,13 +15,10 @@ function first(value: RawParam): string | undefined {
 }
 
 export function parseViewFilters(searchParams: {
-  agent?: RawParam;
   q?: RawParam;
 }): SessionsViewFilters {
-  const agentRaw = first(searchParams.agent);
-  const agent = SESSION_AGENTS.find((candidate) => candidate === agentRaw);
   const q = first(searchParams.q)?.trim().slice(0, 128) || undefined;
-  return { ...(agent && { agent }), ...(q && { q }) };
+  return { ...(q && { q }) };
 }
 
 /** Carries the view filters into a link, so switching views keeps them. */
@@ -31,7 +26,6 @@ export function setViewFilterParams(
   params: URLSearchParams,
   filters: SessionsViewFilters,
 ): void {
-  if (filters.agent) params.set('agent', filters.agent);
   if (filters.q) params.set('q', filters.q);
 }
 
@@ -39,7 +33,6 @@ export function matchesSessionView(
   row: SessionRow,
   filters: SessionsViewFilters,
 ): boolean {
-  if (filters.agent && row.agent !== filters.agent) return false;
   if (filters.q) {
     const needle = filters.q.toLowerCase();
     const haystack = [
