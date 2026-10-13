@@ -836,6 +836,31 @@ class GitHubActionsExporterTests(unittest.TestCase):
             self.metrics(),
         )
 
+    def test_deleted_run_with_stale_jobs_snapshot_is_retired(self):
+        repository = "jlapenna/homelab"
+        active = workflow_run(
+            status="in_progress", conclusion=None, updated_at="2026-08-05T04:00:00Z"
+        )
+        self.database.upsert_run(repository, active)
+        self.database.upsert_jobs(
+            repository,
+            active,
+            [
+                workflow_job(
+                    status="queued", conclusion=None, started_at=None, completed_at=None
+                )
+            ],
+        )
+        self.database.upsert_run(repository, workflow_run())
+        self.assertEqual(
+            self.database.pending_job_refresh_run_ids(repository), {active["id"]}
+        )
+
+        self.database.mark_run_missing(repository, active["id"])
+
+        self.assertEqual(self.database.pending_job_refresh_run_ids(repository), set())
+        self.assertNotIn("github_actions_jobs_current{", self.metrics())
+
     def test_empty_retry_keeps_omitted_refresh_pending_job_retryable(self):
         repository = "jlapenna/homelab"
         run = workflow_run()
