@@ -108,8 +108,7 @@ export function decideLabelProviderRequest(
   if (
     activeRun !== undefined &&
     isLive(activeRun.state) &&
-    pipeline !== effective &&
-    activeRun.pipeline !== pipeline
+    pipeline !== effective
   ) {
     if (task === undefined) return refused('unknown-task');
     if (activeRun.queue?.state !== 'queued') return reject('task-busy');
