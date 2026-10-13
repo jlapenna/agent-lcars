@@ -1174,6 +1174,24 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
+/* The pre-hydration Apply (console-toolbar.tsx): a plain submit while the
+   controls cannot yet submit on change, gone once they can. */
+.console-toolbar__apply {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--lcars-hairline);
+  color: var(--lcars-ink);
+  background: var(--lcars-surface);
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+form[data-hydrated] .console-toolbar__apply {
+  display: none;
+}
+
 /* A form's default button kept only for Enter-to-submit; never shown. */
 .console-toolbar__implicit-submit {
   position: absolute;

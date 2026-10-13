@@ -63,6 +63,28 @@ describe('aggregateSpendByRepository', () => {
     expect(spend.sevenDayUnavailable).toBe(false);
   });
 
+  it("marks today estimated only for estimates among today's sessions", () => {
+    const yesterdayEstimated = doc({
+      totalCostUsd: undefined,
+      model: 'claude-opus-4-8',
+      lastActivityAt: '2026-10-12T23:00:00Z',
+    });
+    expect(
+      aggregateSpendByRepository([doc(), yesterdayEstimated], now, 14)
+        .todayEstimated,
+    ).toBe(false);
+    expect(
+      aggregateSpendByRepository(
+        [
+          doc(),
+          { ...yesterdayEstimated, lastActivityAt: '2026-10-13T11:00:00Z' },
+        ],
+        now,
+        14,
+      ).todayEstimated,
+    ).toBe(true);
+  });
+
   it('counts unpriced sessions without inventing cost, and buckets repo-less CLI sessions', () => {
     const spend = aggregateSpendByRepository(
       [

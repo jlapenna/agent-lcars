@@ -81,7 +81,8 @@ export function fleetReadoutInput({
       spendArchive?.spend && repoSpend
         ? {
             costUsd: repoSpend.todayUsd,
-            estimated: repoSpend.rows.some((row) => row.estimated),
+            // Only today's sessions: the archive also holds yesterday's.
+            estimated: repoSpend.todayEstimated,
             partial: spendArchive.spend.coverageLimited,
           }
         : undefined,

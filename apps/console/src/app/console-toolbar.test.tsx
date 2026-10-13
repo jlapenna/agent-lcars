@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ConsoleToolbar,
+  ToolbarApply,
   ToolbarSearch,
   ToolbarSelect,
   ToolbarWindow,
@@ -70,5 +71,22 @@ describe('ConsoleToolbar', () => {
     expect(
       screen.getByRole('button', { name: 'Respond to oldest' }).parentElement,
     ).toHaveClass('console-toolbar__primary');
+  });
+
+  it('shows a native Apply until the controls hydrate', () => {
+    render(
+      <form>
+        <ToolbarSelect
+          name="repo"
+          label="Repository"
+          options={[{ value: '', label: 'All repositories (1)' }]}
+        />
+        <ToolbarApply />
+      </form>,
+    );
+    // After the select's effect runs, CSS hides Apply inside this form.
+    expect(
+      screen.getByRole('button', { name: 'Apply' }).closest('form'),
+    ).toHaveAttribute('data-hydrated');
   });
 });

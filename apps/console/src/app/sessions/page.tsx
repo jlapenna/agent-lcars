@@ -24,6 +24,7 @@ import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import {
   ConsoleToolbar,
+  ToolbarApply,
   ToolbarSearch,
   ToolbarSelect,
   ToolbarWindow,
@@ -189,16 +190,15 @@ async function SessionsBody({
               { value: 'issue-agent', label: 'Dispatched agent' },
             ]}
           />
-          {/* Selects and the window submit on change; Apply is the
-              script-less fallback (the mockup's toolbar has none). */}
-          <noscript>
-            <button type="submit">Apply</button>
-          </noscript>
           <ViewToggle
             view={view}
             flatHref={displayHref(query, { view: 'flat', filters })}
             byIssueHref={displayHref(query, { view: 'by-issue', filters })}
           />
+          {/* Selects and the window submit on change; Apply shows only
+              until they hydrate (the mockup's toolbar has none). Last, so
+              hiding it moves nothing a user may be clicking. */}
+          <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }
     >

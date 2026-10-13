@@ -20,6 +20,7 @@ import { DataWarnings } from '../console-header';
 import { ConsoleReadouts } from '../console-readouts';
 import {
   ConsoleToolbar,
+  ToolbarApply,
   ToolbarSelect,
   ToolbarWindow,
 } from '../console-toolbar';
@@ -124,11 +125,9 @@ function CostsToolbar({
           { value: 'issue-agent', label: 'Dispatched agent' },
         ]}
       />
-      {/* Selects and the window submit on change; Apply is the
-          script-less fallback (the mockup's toolbar has none). */}
-      <noscript>
-        <button type="submit">Apply</button>
-      </noscript>
+      {/* Selects and the window submit on change; Apply shows only until
+          they hydrate (the mockup's toolbar has none). */}
+      <ToolbarApply label="Apply" />
     </ConsoleToolbar>
   );
 }
