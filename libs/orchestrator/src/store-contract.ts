@@ -435,11 +435,14 @@ export function runOrchestratorStoreContract(
         await store.enqueueRun({ runId: run.runId, now: T0 });
         await orchestrator.confirmDispatch(run.runId);
         clock.advanceMinutes(1);
+        // This store fixture owns opaque Work admitted on Claude, just as the
+        // GitHub adapter decodes its immutable Work inside the transaction.
         const switchProvider = () =>
           orchestrator.request({
             taskId: TASK,
             requestId: 'label-switch',
             pipeline: 'opencode',
+            pipelineForStoredTask: () => 'claude',
             labelProviderRequest: {
               requestedAt: clock.now(),
               actor: 'maintainer',
@@ -481,6 +484,7 @@ export function runOrchestratorStoreContract(
             taskId: TASK,
             requestId: 'older-label',
             pipeline: 'claude',
+            pipelineForStoredTask: () => 'claude',
             labelProviderRequest: {
               requestedAt: T0,
               actor: 'maintainer',
@@ -500,6 +504,7 @@ export function runOrchestratorStoreContract(
             taskId: TASK,
             requestId,
             pipeline: 'claude',
+            pipelineForStoredTask: () => 'claude',
             labelProviderRequest: {
               requestedAt: clock.now(),
               actor: 'maintainer',
@@ -537,6 +542,7 @@ export function runOrchestratorStoreContract(
             taskId: TASK,
             requestId: 'racing-label',
             pipeline: 'opencode',
+            pipelineForStoredTask: () => 'claude',
             labelProviderRequest: {
               requestedAt: clock.now(),
               actor: 'maintainer',
@@ -558,6 +564,7 @@ export function runOrchestratorStoreContract(
               taskId: TASK,
               requestId: 'retained-label',
               pipeline: 'opencode',
+              pipelineForStoredTask: () => 'claude',
               labelProviderRequest: {
                 requestedAt: clock.now(),
                 actor: 'maintainer',
