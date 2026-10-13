@@ -3,7 +3,12 @@ import {
   getProjectId,
   isEmulator,
 } from '@agent-lcars/util-server';
-import { Firestore, Query, Timestamp } from '@google-cloud/firestore';
+import {
+  Firestore,
+  Query,
+  type QueryDocumentSnapshot,
+  Timestamp,
+} from '@google-cloud/firestore';
 import { App, getApps, initializeApp } from 'firebase-admin/app';
 import {
   FieldValue as AdminFieldValue,
@@ -254,25 +259,42 @@ export async function listSessionDocs(
   if (options.intentId !== undefined) {
     query = query.where('intentId', '==', options.intentId);
   }
-  const snapshot = await query.get();
-  const docs = snapshot.docs.map((doc) => {
-    const data = doc.data();
+  const limit = Math.min(
+    Math.max(1, options.limit ?? DEFAULT_LIST_LIMIT),
+    MAX_LIST_LIMIT,
+  );
+  const docs: SessionDoc[] = [];
+  // Keep the existing query and indexes: taking the newest page with a new
+  // orderBy would require new composite indexes for scoped session joins.
+  // The SDK streams QueryDocumentSnapshots, despite its generic Node stream
+  // iterator type. Backpressure avoids retaining an all-document snapshot.
+  const snapshots =
+    query.stream() as unknown as AsyncIterable<QueryDocumentSnapshot>;
+  for await (const snapshot of snapshots) {
+    const data = snapshot.data();
     const expireAt = data['expireAt'];
-    return parseSessionDoc({
+    const doc = parseSessionDoc({
       ...data,
       ...(expireAt instanceof Timestamp && {
         expireAt: expireAt.toDate().toISOString(),
       }),
     });
-  });
-  const sorted = docs.sort((a, b) =>
-    b.lastActivityAt.localeCompare(a.lastActivityAt),
-  );
-  const limit = Math.min(
-    Math.max(1, options.limit ?? DEFAULT_LIST_LIMIT),
-    MAX_LIST_LIMIT,
-  );
-  return sorted.slice(0, limit);
+    // Stable descending insertion keeps at most the requested page. Equal
+    // activity clocks retain query order, matching the previous stable sort.
+    let low = 0;
+    let high = docs.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (docs[middle]!.lastActivityAt.localeCompare(doc.lastActivityAt) >= 0)
+        low = middle + 1;
+      else high = middle;
+    }
+    if (low < limit) {
+      docs.splice(low, 0, doc);
+      if (docs.length > limit) docs.pop();
+    }
+  }
+  return docs;
 }
 
 /**
