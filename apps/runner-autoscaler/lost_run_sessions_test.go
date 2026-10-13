@@ -128,8 +128,6 @@ func TestLostRunSessionsLeavesDocsChangedSinceTheQuery(t *testing.T) {
 	cases := map[string]func(sessionDocState) sessionDocState{
 		// finalize (or the dying worker's last flush) ended it first.
 		"ended meanwhile": func(d sessionDocState) sessionDocState { d.Liveness = "ended"; return d },
-		// A late hook write: still live, but newer than what was queried.
-		"written newer": func(d sessionDocState) sessionDocState { d.UpdateTime = d.UpdateTime.Add(time.Minute); return d },
 		// A resumed retry took the session over under its own run.
 		"claimed by retry": func(d sessionDocState) sessionDocState {
 			d.RunID = "jlapenna/homelab#2397/r2"
@@ -262,4 +260,26 @@ func TestRunExitReporterSessionFailureDoesNotFailTheReport(t *testing.T) {
 		t.Fatalf("settleTerminated with a failing session store = %v, want nil", err)
 	}
 	reporter.wg.Wait()
+}
+
+// The dying worker's last flush can land between the query and the
+// transaction. It keeps the lost run's runId, so the single pass still ends it
+// rather than leaving a phantom live session behind.
+func TestLostRunSessionsEndsDocsFlushedAfterTheQuery(t *testing.T) {
+	store := &fakeLostRunSessionStore{docs: map[string]sessionDocState{
+		"ses_live": lostRunDoc("ses_live", lostRunID, "live"),
+	}}
+	store.beforeEnd = func(id string, docs map[string]sessionDocState) {
+		d := docs[id]
+		d.Liveness = "idle"
+		d.UpdateTime = d.UpdateTime.Add(time.Minute)
+		docs[id] = d
+	}
+	ender, _ := newTestLostRunSessionEnder(store)
+
+	ender.endRunSessions(context.Background(), lostRunID)
+
+	if got := store.liveness("ses_live"); got != "ended" {
+		t.Fatalf("liveness = %q, want ended after a late flush", got)
+	}
 }

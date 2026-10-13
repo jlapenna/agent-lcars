@@ -31,8 +31,8 @@ const (
 )
 
 // sessionDocState is the part of a `sessions/{id}` document this pass reads.
-// UpdateTime is Firestore's own write time, which is what lets the
-// transaction refuse a doc that was written after the query saw it.
+// UpdateTime is Firestore's own write time; the transaction re-reads the doc
+// and decides on its current runId and liveness, not on this.
 type sessionDocState struct {
 	ID         string
 	RunID      string
@@ -70,18 +70,16 @@ func newLostRunSessionEnder(publisher consoleStatusPublisher, logger *slog.Logge
 
 // shouldEndLostRunSession is the transaction's guard. A worker whose run was
 // settled lost cannot write again, so its stored `live`/`idle` is a phantom.
-// Anything else is left alone: a doc that is already terminal (`ended` from
-// finalize, or `stale`), one that was written after the query read it (a
-// late flush from the dying worker, or finalize itself), and one that a
-// resumed retry has since claimed under its own runId.
-func shouldEndLostRunSession(runID string, queried, current sessionDocState, exists bool) bool {
+// It still applies when the dying worker's last flush landed after the query:
+// that write keeps the lost run's runId and a non-terminal liveness, and this
+// single pass is the only chance to end it. Anything else is left alone: a
+// doc that is already terminal (`ended` from finalize, or `stale`), and one
+// that a resumed retry has since claimed under its own runId.
+func shouldEndLostRunSession(runID string, current sessionDocState, exists bool) bool {
 	if !exists || current.RunID != runID {
 		return false
 	}
-	if current.Liveness != "live" && current.Liveness != "idle" {
-		return false
-	}
-	return current.UpdateTime.Equal(queried.UpdateTime)
+	return current.Liveness == "live" || current.Liveness == "idle"
 }
 
 // endRunSessions marks each of runID's `live`/`idle` session docs ended. It
@@ -101,7 +99,7 @@ func (e *lostRunSessionEnder) endRunSessions(ctx context.Context, runID string) 
 			continue
 		}
 		ended, err := e.store.endSessionIf(ctx, queried.ID, func(current sessionDocState, exists bool) bool {
-			return shouldEndLostRunSession(runID, queried, current, exists)
+			return shouldEndLostRunSession(runID, current, exists)
 		})
 		switch {
 		case err != nil:
@@ -109,7 +107,7 @@ func (e *lostRunSessionEnder) endRunSessions(ctx context.Context, runID string) 
 		case ended:
 			e.logger.Info("Marked a lost run's session ended", slog.String("runId", runID), slog.String("sessionId", queried.ID), slog.String("was", queried.Liveness))
 		default:
-			e.logger.Debug("Lost run's session changed since it was read; left as stored", slog.String("runId", runID), slog.String("sessionId", queried.ID))
+			e.logger.Debug("Lost run's session is terminal or claimed by another run; left as stored", slog.String("runId", runID), slog.String("sessionId", queried.ID))
 		}
 	}
 }
