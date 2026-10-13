@@ -11,6 +11,7 @@ import { ConsoleWorkspace } from '../console-workspace';
  */
 export function AgentsWorkspace({
   warnings,
+  toolbar,
   fleet,
   active,
   claimedIdle,
@@ -18,6 +19,8 @@ export function AgentsWorkspace({
   hasSecondary = true,
 }: {
   warnings?: ReactNode;
+  /** The repository scope control, in the frame's toolbar band. */
+  toolbar?: ReactNode;
   fleet: ReactNode;
   active: ReactNode;
   claimedIdle: ReactNode;
@@ -31,6 +34,7 @@ export function AgentsWorkspace({
       ariaLabel="Agent operations"
       className="agents-workspace"
       warnings={warnings}
+      toolbar={toolbar}
     >
       {fleet}
       <div className="agents-workspace__operations">
