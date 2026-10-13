@@ -16,7 +16,7 @@ importers:
         version: 8.4.0(supports-color@8.1.1)
       '@google-cloud/tasks':
         specifier: ^7.0.0
-        version: 7.2.1(supports-color@8.1.1)
+        version: 7.3.0(supports-color@8.1.1)
       '@jlapenna/fleet-runtime':
         specifier: github:jlapenna/fleet-runtime#main
         version: https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/511a5df43aa752b3e8d47625ca1b1ae9ae8099ab(@testing-library/jest-dom@7.0.1(@testing-library/dom@10.4.2)(vitest@5.0.4))(@testing-library/react@16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(vitest@5.0.4)
@@ -67,7 +67,7 @@ importers:
         version: 14.5.0(supports-color@8.1.1)
       google-auth-library:
         specifier: ^11.0.0
-        version: 11.2.0(supports-color@8.1.1)
+        version: 11.3.0(supports-color@8.1.1)
       jose:
         specifier: ^6.2.8
         version: 6.2.12
@@ -1401,8 +1401,8 @@ packages:
     resolution: {integrity: sha512-M3kA6UA2Tjp5aznCrgKcm9CzOjiQyRMnquqalqXAeS5wvkqqZxN8wpNjjHafOSYs6lQ82U7f2i8we4eTfIrpkA==}
     engines: {node: '>=22'}
 
-  '@google-cloud/tasks@7.2.1':
-    resolution: {integrity: sha512-Izjk4BY7XzqARntecPaHqWq+gVGjstugVaVzqBe3fWAmM6NHBnaiRy8hpggRkO9SVc2/ZCofl/K/28ttnUXkSg==}
+  '@google-cloud/tasks@7.3.0':
+    resolution: {integrity: sha512-EPK+tFXJ6/j0x5k8TVowVX/Fl8biZX5NioeaQNCqbJVVAGV5wBl0ra0qaBSOyDDYUWiBwHGoxgekVkShQDD73w==}
     engines: {node: '>=22'}
 
   '@googleapis/sqladmin@37.0.0':
@@ -5330,8 +5330,8 @@ packages:
     resolution: {integrity: sha512-i1ydyHrqcIxXkWh/uBmVkzCvIuq5yiK2ATndIe5XxKholrG/MTYP9xGYka4sQhrbIAgGjL2B6NOE7rFaiF3fXw==}
     engines: {node: '>=18'}
 
-  google-auth-library@11.2.0:
-    resolution: {integrity: sha512-R9/Dwc3swSur04RnizQ6EBUmmcno2cC5cAKtrG/C+pY+W7c5l6rSnFWgMkR7NSYj1n6XWmb/KhcjxGslWm4yIA==}
+  google-auth-library@11.3.0:
+    resolution: {integrity: sha512-gZCyszARHj47WNcKrAcQtimDwtTZpydRZ3HSeb66hObfQU9uaG50ejsZ8LzGISIVAjpsZEouGVs65Q/XRau0Qg==}
     engines: {node: '>=22'}
 
   google-auth-library@9.15.1:
@@ -10332,7 +10332,7 @@ snapshots:
       duplexify: 4.1.3
       fast-xml-parser: 5.11.0
       gaxios: 7.3.1(supports-color@8.1.1)
-      google-auth-library: 11.2.0(supports-color@8.1.1)
+      google-auth-library: 11.3.0(supports-color@8.1.1)
       html-entities: 2.6.0
       mime: 3.0.0
       p-limit: 3.1.0
@@ -10341,7 +10341,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@google-cloud/tasks@7.2.1(supports-color@8.1.1)':
+  '@google-cloud/tasks@7.3.0(supports-color@8.1.1)':
     dependencies:
       google-gax: 6.0.1(supports-color@8.1.1)
     transitivePeerDependencies:
@@ -14499,7 +14499,7 @@ snapshots:
       '@firebase/database-compat': 2.1.4
       '@firebase/database-types': 1.0.20
       fast-deep-equal: 3.1.3
-      google-auth-library: 11.2.0(supports-color@8.1.1)
+      google-auth-library: 11.3.0(supports-color@8.1.1)
       jsonwebtoken: 9.0.3
       jwks-rsa: 4.1.0(supports-color@8.1.1)
     optionalDependencies:
@@ -14862,7 +14862,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  google-auth-library@11.2.0(supports-color@8.1.1):
+  google-auth-library@11.3.0(supports-color@8.1.1):
     dependencies:
       base64-js: 1.5.1
       ecdsa-sig-formatter: 1.0.11
@@ -14906,7 +14906,7 @@ snapshots:
       '@grpc/grpc-js': 1.14.4
       '@grpc/proto-loader': 0.8.1
       duplexify: 4.1.3
-      google-auth-library: 11.2.0(supports-color@8.1.1)
+      google-auth-library: 11.3.0(supports-color@8.1.1)
       google-logging-utils: 2.0.1
       node-fetch: 3.3.2
       object-hash: 3.0.0
