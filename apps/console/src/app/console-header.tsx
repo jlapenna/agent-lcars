@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import type { SessionArchiveQuery } from '@/lib/session-archive';
 
+import { ConsoleIdentity, ConsoleLiveStatus } from './console-frame-readouts';
 import { ConsoleNavRail } from './console-nav-rail';
 import type { NavKey } from './console-navigation';
 
@@ -117,9 +118,11 @@ export function ConsoleHeader({
           archiveQuery={archiveQuery}
           repoFilter={repoFilter}
         />
-        {utilities && (
-          <div className="lcars-command-utilities">{utilities}</div>
-        )}
+        <div className="lcars-command-utilities">
+          <ConsoleLiveStatus />
+          {utilities}
+          <ConsoleIdentity />
+        </div>
       </div>
     </Stack>
   );
@@ -129,8 +132,26 @@ export function ConsoleHeader({
  * page (which all now split their header from their data-dependent body -
  * see `ConsoleHeader`'s doc comment) can render it once its data resolves,
  * directly below the nav rail. */
-export function DataWarnings({ warnings }: { warnings: string[] }) {
-  if (warnings.length === 0) return null;
+export function DataWarnings({
+  warnings,
+  sourcesChecked = true,
+}: {
+  warnings: string[];
+  /** The route read its sources and this list is their complete verdict. A
+   * frame given no list says only that nothing was reported. */
+  sourcesChecked?: boolean;
+}) {
+  if (warnings.length === 0) {
+    return (
+      <div
+        className="lcars-data-warnings-none"
+        data-testid="data-warnings-none"
+      >
+        <span className="lcars-eyebrow">No data warnings</span>
+        {sourcesChecked ? <span>All sources reporting</span> : null}
+      </div>
+    );
+  }
 
   return (
     <details
@@ -138,14 +159,19 @@ export function DataWarnings({ warnings }: { warnings: string[] }) {
       data-testid="data-warnings"
     >
       <summary className="lcars-disclosure__summary">
-        <Text size="sm" c="yellow" component="span">
-          ⚠ {warnings.length} data warning{warnings.length === 1 ? '' : 's'} —
-          some sections may be incomplete
-        </Text>
+        <span className="lcars-eyebrow lcars-data-warnings__count">
+          {warnings.length} data warning{warnings.length === 1 ? '' : 's'}
+        </span>
+        {/* A visual preview; the expanded list is what assistive technology
+            reads, so the summary's name stays the count. */}
+        <span className="lcars-data-warnings__inline" aria-hidden="true">
+          {warnings.join(' | ')}
+        </span>
+        <span className="lcars-data-warnings__details">Details</span>
       </summary>
       <Stack gap={4} mt="xs" className="lcars-disclosure__content">
         {warnings.map((warning) => (
-          <Text key={warning} size="xs" c="dimmed">
+          <Text key={warning} size="xs">
             {warning}
           </Text>
         ))}

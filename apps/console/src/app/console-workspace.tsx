@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+import { DataWarnings } from './console-header';
+
 /**
  * Shared LCARS frame for operational route workspaces.
  *
@@ -20,7 +22,9 @@ export function ConsoleWorkspace({
 }: {
   ariaLabel: string;
   className: string;
-  warnings?: ReactNode;
+  /** The route's `DataWarnings`. Omitted, the band still shows that nothing
+   * was reported; `false` drops the band (message states). */
+  warnings?: ReactNode | false;
   toolbar?: ReactNode;
   children: ReactNode;
 }) {
@@ -29,11 +33,11 @@ export function ConsoleWorkspace({
       className={`console-workspace ${className}`}
       aria-label={ariaLabel}
     >
-      {warnings ? (
+      {warnings === false ? null : (
         <div className={`console-workspace__warnings ${className}__warnings`}>
-          {warnings}
+          {warnings ?? <DataWarnings warnings={[]} sourcesChecked={false} />}
         </div>
-      ) : null}
+      )}
       {toolbar ? (
         <div className={`console-workspace__toolbar ${className}__toolbar`}>
           {toolbar}
