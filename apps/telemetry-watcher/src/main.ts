@@ -1,98 +1,11 @@
 import { logger } from '@agent-lcars/logging';
 import { isSafeIdentifier } from '@agent-lcars/telemetry';
-import chokidar from 'chokidar';
 
-import { defaultClaudeProjectsDir, loadConfig } from './lib/config';
+import { defaultClaudeProjectsDir } from './lib/config';
 import { createStoreFromConfig } from './lib/create-store';
-import { WatcherDaemon } from './lib/daemon';
 import { finalizeSidecar } from './lib/finalize';
-import { createWatcherMetricsServer, WatcherMetrics } from './lib/metrics';
 import { resumeTranscript } from './lib/resume-transcript';
 import { loadRunnerConfig } from './lib/runner-config';
-
-/** Long-lived per-host daemon mode (issue #2540): watches a fixed dir for
- * the lifetime of the process, real-time-nudged by chokidar plus a periodic
- * tick as the liveness source of truth. Unchanged by the runner-mode
- * addition below. */
-function runHostWatcher(): void {
-  const config = loadConfig();
-  const store = createStoreFromConfig(config);
-  const metrics = new WatcherMetrics();
-  const metricsServer = createWatcherMetricsServer(metrics);
-
-  const rootsDescription = config.watchRoots
-    .map(
-      (root) =>
-        `${root.path} (${root.adapter}, allowlist: ${(root.projectDirAllowlist ?? ['*']).join(', ')})`,
-    )
-    .join('; ');
-  logger.info(
-    `agent-lcars-telemetry-watcher: starting; watching ${rootsDescription}, heartbeat every ${config.heartbeatIntervalMs}ms`,
-  );
-
-  if (config.antigravitySummaryDb) {
-    logger.info(
-      `agent-lcars-telemetry-watcher: also polling antigravity summary DB at ${config.antigravitySummaryDb.path} (workspace prefixes: ${config.antigravitySummaryDb.workspacePrefixes.join(', ')})`,
-    );
-  }
-
-  if (config.sessionStateDir) {
-    logger.info(
-      `agent-lcars-telemetry-watcher: also overlaying session titles from ${config.sessionStateDir}`,
-    );
-  }
-
-  const daemon = new WatcherDaemon({
-    watchRoots: config.watchRoots,
-    host: config.host,
-    store,
-    heartbeatIntervalMs: config.heartbeatIntervalMs,
-    stalenessWindowMs: config.stalenessWindowMs,
-    shareDir: config.shareDir,
-    antigravitySummaryDb: config.antigravitySummaryDb,
-    sessionStateDir: config.sessionStateDir,
-    cliArchivePolicy: config.cliArchivePolicy,
-    archiveProjectId: config.firestoreProjectId,
-    archiveWriterKeyJson: config.firestoreWriterKeyJson,
-    metrics,
-  });
-
-  metricsServer.listen(config.metricsPort, config.metricsHost, () => {
-    logger.info(
-      `agent-lcars-telemetry-watcher: metrics listening on ${config.metricsHost}:${config.metricsPort}`,
-    );
-  });
-
-  // Real-time nudge on file changes; the periodic tick (started below) is
-  // the source of truth for staleness/liveness regardless of fs events.
-  const watcher = chokidar.watch(
-    config.watchRoots.map((root) => `${root.path}/**/*.jsonl`),
-    { ignoreInitial: true },
-  );
-  watcher.on('add', () => void daemon.tick());
-  watcher.on('change', () => void daemon.tick());
-  watcher.on('error', (error) =>
-    logger.warn('agent-lcars-telemetry-watcher: chokidar watch error', error),
-  );
-
-  daemon.start();
-
-  const shutdown = async (signal: string) => {
-    logger.info(
-      `agent-lcars-telemetry-watcher: received ${signal}, shutting down`,
-    );
-    daemon.stop();
-    await Promise.all([
-      watcher.close(),
-      new Promise<void>((resolve, reject) => {
-        metricsServer.close((error) => (error ? reject(error) : resolve()));
-      }),
-    ]);
-    process.exit(0);
-  };
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-}
 
 /**
  * `node sidecar.cjs runner finalize --run-id <id> --issue-number <n>
@@ -255,8 +168,8 @@ function main(): void {
 
   if (mode === 'runner' && subcommand === 'sidecar') {
     // Retired: provider hooks (`lcars hook`) report live telemetry
-    // (docs/hooks-telemetry-design.md, phase 3). Exit 0 rather than falling
-    // through to the host watcher, so a stale caller can never fail a job.
+    // (docs/hooks-telemetry-design.md, phase 3). Exit 0 rather than the
+    // usage error below, so a stale caller can never fail a job.
     logger.warn(
       'agent-lcars-telemetry-watcher: runner sidecar is retired; provider hooks report live telemetry. Exiting.',
     );
@@ -301,17 +214,18 @@ function main(): void {
     return;
   }
 
-  runHostWatcher();
+  // The per-host watcher daemon that used to run here with no subcommand is
+  // deleted (docs/hooks-telemetry-design.md, phase 3 follow-up): provider
+  // hooks report live telemetry, so a bare invocation is a usage error.
+  process.stderr.write('usage: sidecar.cjs runner <finalize|resume> [flags]\n');
+  process.exitCode = 2;
 }
 
 // Only run when this file is loaded as the actual process entrypoint (`node
 // sidecar.cjs ...`, direct or bundled) -- never as a side effect of a spec
 // importing `_runRunnerResumeForTesting` (sub-project 6, `main.spec.ts`).
-// Without this guard, importing this module under `vitest` falls through to
-// `runHostWatcher()` (no `runner <subcommand>` on `process.argv`), which
-// starts a real chokidar watcher and metrics HTTP server -- observed
-// directly while building this guard: `runHostWatcher` also throws when
-// `AGENT_TELEMETRY_CHECKOUT_ROOTS` is unset, crashing the import outright.
+// Without this guard, importing this module under `vitest` would run
+// `main()` against the test runner's own `process.argv`.
 // An `import.meta.url`-vs-`process.argv[1]` entrypoint check was tried
 // first and rejected: this app's tsconfig.app.json pins `module:
 // "commonjs"` for its emitted declarations, and `import.meta` is a syntax

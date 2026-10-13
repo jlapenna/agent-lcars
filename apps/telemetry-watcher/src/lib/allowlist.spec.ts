@@ -1,42 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { isAllowedProjectDir } from './allowlist';
 
 describe('isAllowedProjectDir', () => {
-  const previousRoots = process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'];
-
-  beforeEach(() => {
-    process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'] =
-      '/srv/checkouts/sprinkles,/srv/checkouts/agent-lcars';
+  it('matches every project dir under the runner-mode wildcard', () => {
+    expect(isAllowedProjectDir('-home-runner-work-repo', ['*'])).toBe(true);
   });
 
-  afterEach(() => {
-    if (previousRoots === undefined) {
-      delete process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'];
-    } else {
-      process.env['AGENT_TELEMETRY_CHECKOUT_ROOTS'] = previousRoots;
-    }
-  });
-
-  it('allows the primary checkout slug', () => {
-    expect(isAllowedProjectDir('-srv-checkouts-sprinkles')).toBe(true);
-  });
-
-  it('allows worktree slugs nested under the primary checkout', () => {
+  it('matches worktree slugs nested under an allowed prefix', () => {
     expect(
       isAllowedProjectDir(
         '-srv-checkouts-sprinkles-claude-worktrees-agent-lcars-telemetry-watcher',
+        ['-srv-checkouts-sprinkles*'],
       ),
     ).toBe(true);
-  });
-
-  it('allows every explicitly configured checkout', () => {
-    expect(isAllowedProjectDir('-srv-checkouts-agent-lcars')).toBe(true);
-  });
-
-  it('rejects unrelated project slugs', () => {
-    expect(isAllowedProjectDir('-srv-checkouts-homelab')).toBe(false);
-    expect(isAllowedProjectDir('-home-developer-p-sprinkles')).toBe(false);
   });
 
   it('respects a custom allowlist', () => {
@@ -46,5 +23,14 @@ describe('isAllowedProjectDir', () => {
     expect(isAllowedProjectDir('-home-bob-p-members', ['-home-alice-*'])).toBe(
       false,
     );
+  });
+
+  it('treats glob-special characters other than * literally', () => {
+    expect(isAllowedProjectDir('-home-a.b', ['-home-a.b'])).toBe(true);
+    expect(isAllowedProjectDir('-home-aXb', ['-home-a.b'])).toBe(false);
+  });
+
+  it('matches nothing with an empty allowlist', () => {
+    expect(isAllowedProjectDir('-home-runner-work-repo', [])).toBe(false);
   });
 });

@@ -62,9 +62,6 @@ importers:
       acorn:
         specifier: 8.19.0
         version: 8.19.0
-      chokidar:
-        specifier: ^5.0.0
-        version: 5.0.0
       firebase-admin:
         specifier: ^14.0.0
         version: 14.5.0(supports-color@8.1.1)
@@ -12985,6 +12982,7 @@ snapshots:
   chokidar@5.0.0:
     dependencies:
       readdirp: 5.0.0
+    optional: true
 
   chownr@3.0.0: {}
 
@@ -17372,7 +17370,8 @@ snapshots:
   readdirp@4.1.2:
     optional: true
 
-  readdirp@5.0.0: {}
+  readdirp@5.0.0:
+    optional: true
 
   redent@3.0.0:
     dependencies:

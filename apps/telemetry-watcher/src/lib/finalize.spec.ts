@@ -109,9 +109,6 @@ function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
     opencodeExportsDir: '/tmp/agent-lcars-opencode-exports',
     opencodeWorkspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
     sessionStateDir: NO_OVERLAY_STATE_DIR,
-    host: 'runner-host',
-    heartbeatIntervalMs: 10_000,
-    stalenessWindowMs: 50_000,
     ...overrides,
   };
 }

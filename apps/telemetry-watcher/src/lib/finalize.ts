@@ -77,8 +77,8 @@ export interface FinalizeSidecarOptions {
   captureOpenCodeExports?: (
     options: CaptureOpenCodeExportsOptions,
   ) => CaptureOpenCodeExportsResult | Promise<CaptureOpenCodeExportsResult>;
-  /** Test-only injection point, mirrored from `daemon.ts`'s own seam of the
-   * same name — production callers (main.ts) never set this; finalize uses
+  /** Test-only injection point — production callers (main.ts) never set
+   * this; finalize uses
    * the real `readSessionStatusOverlay` (real `fs`) by default. */
   readSessionStatusOverlay?: (
     stateDirectory: string,
@@ -148,8 +148,7 @@ export async function finalizeSidecar(
   const uploadTranscript = options.uploadTranscript ?? defaultUploadTranscript;
   const readStatusOverlay =
     options.readSessionStatusOverlay ?? defaultReadSessionStatusOverlay;
-  // Unset means skip entirely, same "unset means skip" convention as
-  // `daemon.ts`'s own `sessionStateDir` handling — `config.sessionStateDir`
+  // Unset means skip entirely — `config.sessionStateDir`
   // is always set for real runner-mode callers (see `runner-config.ts`),
   // so this only ever stays `undefined` for a test fixture that
   // deliberately omits it. A configured-but-nonexistent directory (a
@@ -368,11 +367,9 @@ async function finalizeSummary(
     }
   }
 
-  // Issue #1289: join the session-status overlay the same way `daemon.ts`
-  // joins it into a live tick's summary, straight onto `finalSummary`
-  // (never back onto `summary` — there is no last-good/pristine distinction
-  // to preserve here the way the daemon's tick loop has, since this is a
-  // one-shot pass with no next tick to fall back on). Absence (no
+  // Issue #1289: join the session-status overlay straight onto
+  // `finalSummary` (never back onto `summary` — this is a one-shot pass
+  // with no last-good/pristine distinction to preserve). Absence (no
   // `config.sessionStateDir`, an unreadable/nonexistent directory, or no
   // final file for this session) leaves `finalSummary` exactly as
   // `applyGitContext` produced it — carrying no `status` — which is what
@@ -381,8 +378,7 @@ async function finalizeSummary(
   // doc comment). That is correct here too: a session that never declared
   // a status, or whose declaration this pass couldn't read, should not
   // retain a stale one in the `ended` doc either.
-  // #1293: apply the title overlay too, exactly as `daemon.ts` does per
-  // tick. This write CARRIES `title` (buildSessionDoc emits it whenever the
+  // #1293: apply the title overlay too. This write CARRIES `title` (buildSessionDoc emits it whenever the
   // summary has one), so leaving it to merge semantics overwrote a declared
   // title with the transcript's generated one. Applied to `finalSummary`,
   // never back onto `summary`, matching the status join below.
