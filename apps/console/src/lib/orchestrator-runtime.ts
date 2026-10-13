@@ -15,6 +15,7 @@ import { recoverCodexCredentialOperations } from '@/lib/codex-credential-operati
 import { loadGithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   createDispatchTokenProvider,
+  ORCHESTRATOR_GITHUB_PERMISSIONS,
   type DispatchTokenProvider,
 } from '@/lib/github-app-tokens';
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
@@ -78,7 +79,12 @@ export function orchestratorGithubRuntimeDeps(
         tokens: { tokenFor: async () => 'e2e-fixture-token' },
         githubApiBaseUrl: fixtureBaseUrl,
       }
-    : { tokens: createDispatchTokenProvider(env) };
+    : {
+        tokens: createDispatchTokenProvider(
+          env,
+          ORCHESTRATOR_GITHUB_PERMISSIONS,
+        ),
+      };
 }
 
 export function createOrchestratorRuntime(): OrchestratorRouteDeps {

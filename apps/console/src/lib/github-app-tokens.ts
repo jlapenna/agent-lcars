@@ -119,6 +119,15 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   pull_requests: 'write',
 };
 
+/** Existing outbox writes plus exact-head protected delivery observations.
+ * These read grants already belong to the declared App; legacy commit statuses
+ * are outside its declared capability and are never requested here. */
+export const ORCHESTRATOR_GITHUB_PERMISSIONS: Record<string, string> = {
+  ...DEFAULT_PERMISSIONS,
+  administration: 'read',
+  checks: 'read',
+};
+
 /** Permission set for a direct-mode checkout/push token -- broader than
  *  the drain's `DEFAULT_PERMISSIONS` because there is no separate
  *  `claude[bot]`-vending Action in direct mode: this one token both

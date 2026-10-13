@@ -1,5 +1,22 @@
-import type { DeliveryBinding, Run, Task } from '@agent-lcars/orchestrator';
+// @vitest-environment node
+
+import { generateKeyPairSync } from 'node:crypto';
+
+import {
+  MemoryStore,
+  Orchestrator,
+  decidedRun,
+  isRefusal,
+  type DeliveryBinding,
+  type Run,
+  type Task,
+} from '@agent-lcars/orchestrator';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  AppInstallationTokenProvider,
+  ORCHESTRATOR_GITHUB_PERMISSIONS,
+} from './github-app-tokens';
 
 import {
   deliveryCorrectionAuthorized,
@@ -44,6 +61,9 @@ function fixture(
   overrides: {
     pr?: object;
     checks?: object;
+    workflows?: object;
+    jobs?: object;
+    rules?: unknown;
     review?: object;
     suites?: unknown;
     suite?: unknown;
@@ -62,6 +82,27 @@ function fixture(
     auto_merge: { merge_method: 'squash' },
     ...overrides.pr,
   };
+  const checks = (overrides.checks ?? {
+    total_count: 1,
+    check_runs: [
+      { name: 'Verify', head_sha: HEAD, status: 'queued', conclusion: null },
+    ],
+  }) as {
+    total_count: number;
+    check_runs: {
+      id?: number;
+      check_suite?: { id: number };
+      name: string;
+      head_sha: string;
+      status: string;
+      conclusion: string | null;
+    }[];
+  };
+  checks.check_runs = checks.check_runs.map((check, index) => ({
+    id: index + 1,
+    check_suite: { id: 1 },
+    ...check,
+  }));
   const fetchImpl = vi.fn(async (url: string | URL | Request) => {
     const path = String(url);
     if (path.endsWith('/graphql'))
@@ -88,25 +129,45 @@ function fixture(
       });
     if (path.endsWith('/pulls/12')) return Response.json(pr);
     if (path.includes('/rules/branches/'))
-      return Response.json([
-        { type: 'pull_request' },
-        {
-          type: 'required_status_checks',
-          parameters: { required_status_checks: [{ context: 'Verify' }] },
-        },
-      ]);
-    if (path.includes('/check-runs'))
       return Response.json(
-        overrides.checks ?? {
+        overrides.rules ?? [
+          { type: 'pull_request' },
+          {
+            type: 'required_status_checks',
+            parameters: { required_status_checks: [{ context: 'Verify' }] },
+          },
+        ],
+      );
+    if (path.includes('/check-runs')) return Response.json(checks);
+    if (path.includes('/actions/runs?'))
+      return Response.json(
+        overrides.workflows ?? {
           total_count: 1,
-          check_runs: [
+          workflow_runs: [
             {
-              name: 'Verify',
+              id: 100,
+              workflow_id: 10,
+              run_number: 2,
+              run_attempt: 1,
               head_sha: HEAD,
-              status: 'queued',
+              check_suite_id: 1,
+              event: 'pull_request',
               conclusion: null,
             },
           ],
+        },
+      );
+    if (path.includes('/attempts/'))
+      return Response.json(
+        overrides.jobs ?? {
+          total_count: checks.check_runs.length,
+          jobs: checks.check_runs.map((check) => ({
+            run_id: 100,
+            head_sha: HEAD,
+            check_run_url: `https://api.github.com/repos/octo/example/check-runs/${check.id}`,
+            status: check.status,
+            conclusion: check.conclusion,
+          })),
         },
       );
     if (path.includes('/status?'))
@@ -482,5 +543,282 @@ describe('delivery correction composes accepted routing and temporary fallback',
     expect(deliveryCorrectionAuthorized(task, run)).toBe(false);
     expect(task.providerRouting?.acceptedGeneration?.pipeline).toBe('codex');
     expect((task.work.spec as { pipeline: string }).pipeline).toBe('claude');
+  });
+});
+
+describe('minted delivery permission and current CI boundaries', () => {
+  const { privateKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+  });
+  function mintedFixture(dedicated: boolean, merged = false) {
+    const base = fixture({
+      pr: merged ? { merged: true, merge_commit_sha: MERGE } : {},
+    });
+    let permissions: Record<string, string> = {};
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path.endsWith('/installation')) return Response.json({ id: 123 });
+        if (path.endsWith('/access_tokens')) {
+          permissions = JSON.parse(String(init?.body)).permissions;
+          return Response.json(
+            {
+              token: 'mock-installation-token',
+              expires_at: new Date(Date.now() + 3600000).toISOString(),
+            },
+            { status: 201 },
+          );
+        }
+        if (
+          new Headers(init?.headers).get('authorization') !==
+          'Bearer mock-installation-token'
+        )
+          return Response.json({}, { status: 401 });
+        if (
+          (path.includes('/check-runs') && permissions.checks !== 'read') ||
+          (path.includes('/rule-suites') &&
+            permissions.administration !== 'read') ||
+          path.includes('/status?')
+        )
+          return Response.json({}, { status: 403 });
+        return base.fetchImpl(input, init);
+      },
+    );
+    const tokens = new AppInstallationTokenProvider({
+      clientId: 'Iv1.mock-test',
+      privateKeyPem: privateKey,
+      ...(dedicated ? { permissions: ORCHESTRATOR_GITHUB_PERMISSIONS } : {}),
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    return {
+      tokens,
+      fetchImpl: fetchImpl as typeof fetch,
+      permission: () => permissions,
+      calls: fetchImpl,
+    };
+  }
+  it.each([false, true])(
+    'mints existing declared delivery reads for merged=%s while default remains narrow',
+    async (merged) => {
+      const scoped = mintedFixture(true, merged);
+      expect((await observeGithubDelivery(scoped, BINDING)).kind).toBe(
+        merged ? 'protected-merge' : 'waiting',
+      );
+      expect(scoped.permission()).toEqual({
+        actions: 'write',
+        issues: 'write',
+        pull_requests: 'write',
+        administration: 'read',
+        checks: 'read',
+      });
+      expect(
+        scoped.calls.mock.calls.some(([url]) =>
+          String(url).includes('/status?'),
+        ),
+      ).toBe(false);
+      const ordinary = mintedFixture(false, merged);
+      await expect(observeGithubDelivery(ordinary, BINDING)).rejects.toThrow(
+        '403',
+      );
+      expect(ordinary.permission()).toEqual({
+        actions: 'write',
+        issues: 'write',
+        pull_requests: 'write',
+      });
+    },
+  );
+  it.each(['queued', 'success', 'failure'] as const)(
+    'ignores cancelled draft wrappers when current ready CI is %s',
+    async (state) => {
+      const currentConclusion = state === 'queued' ? null : state;
+      const checks = ['Verify', 'E2E'].flatMap((name, i) => [
+        {
+          id: i + 1,
+          check_suite: { id: 1 },
+          name,
+          head_sha: HEAD,
+          status: 'completed',
+          conclusion: 'failure',
+        },
+        {
+          id: i + 11,
+          check_suite: { id: 2 },
+          name,
+          head_sha: HEAD,
+          status: state === 'queued' ? 'queued' : 'completed',
+          conclusion: currentConclusion,
+        },
+      ]);
+      const deps = fixture({
+        checks: { total_count: 4, check_runs: checks },
+        rules: [
+          { type: 'pull_request' },
+          {
+            type: 'required_status_checks',
+            parameters: {
+              required_status_checks: [
+                { context: 'Verify' },
+                { context: 'E2E' },
+              ],
+            },
+          },
+        ],
+        workflows: {
+          total_count: 2,
+          workflow_runs: [
+            {
+              id: 90,
+              workflow_id: 10,
+              run_number: 1,
+              run_attempt: 1,
+              head_sha: HEAD,
+              check_suite_id: 1,
+              event: 'pull_request',
+              conclusion: 'cancelled',
+            },
+            {
+              id: 100,
+              workflow_id: 10,
+              run_number: 2,
+              run_attempt: 1,
+              head_sha: HEAD,
+              check_suite_id: 2,
+              event: 'pull_request',
+              conclusion: currentConclusion,
+            },
+          ],
+        },
+        jobs: {
+          total_count: 2,
+          jobs: checks
+            .filter((check) => check.check_suite.id === 2)
+            .map((check) => ({
+              run_id: 100,
+              run_attempt: 1,
+              head_sha: HEAD,
+              check_run_url: `https://api.github.com/repos/octo/example/check-runs/${check.id}`,
+              status: check.status,
+              conclusion: check.conclusion,
+            })),
+        },
+      });
+      const observation = await observeGithubDelivery(deps, BINDING);
+      expect(observation.kind).toBe(
+        state === 'failure' ? 'correction' : 'waiting',
+      );
+      const store = new MemoryStore();
+      const controller = new Orchestrator(store, { now: () => NOW });
+      const run = decidedRun(
+        await controller.request({
+          taskId: { repo: 'octo/example', issue: 7 },
+          requestId: 'first',
+          work: TASK.work,
+          pipeline: 'claude',
+          params: { mode: 'implement' },
+        }),
+      );
+      await store.enqueueRun({ runId: run.runId, now: NOW });
+      await controller.confirmDispatch(run.runId);
+      const claim = 'c'.repeat(64);
+      await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: NOW,
+        claimedBy: 'runner',
+        tokenHash: claim,
+      });
+      expect(
+        isRefusal(
+          await controller.report(
+            run.runId,
+            {
+              ok: true,
+              summary: 'pull-request',
+              ref: 'https://github.com/octo/example/pull/12',
+            },
+            claim,
+            undefined,
+            undefined,
+            BINDING,
+          ),
+        ),
+      ).toBe(false);
+      await controller.observeDelivery(run.runId, observation, () => true);
+      await controller.observeDelivery(
+        run.runId,
+        await observeGithubDelivery(deps, BINDING),
+        () => true,
+      );
+      expect((await store.readTask(run.task))?.task.runCount).toBe(
+        state === 'failure' ? 2 : 1,
+      );
+    },
+  );
+  it('retains unknown legacy status contexts without blocking current review feedback', async () => {
+    const rules = [
+      { type: 'pull_request' },
+      {
+        type: 'required_status_checks',
+        parameters: {
+          required_status_checks: [
+            { context: 'Verify' },
+            { context: 'Legacy' },
+          ],
+        },
+      },
+    ];
+    const waiting = fixture({ rules });
+    expect((await observeGithubDelivery(waiting, BINDING)).kind).toBe(
+      'waiting',
+    );
+    const feedback = fixture({
+      rules,
+      review: {
+        reviewThreads: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{ isResolved: false, isOutdated: false }],
+        },
+      },
+    });
+    expect((await observeGithubDelivery(feedback, BINDING)).kind).toBe(
+      'correction',
+    );
+    expect(
+      vi
+        .mocked(feedback.fetchImpl)
+        .mock.calls.some(([url]) => String(url).includes('/status?')),
+    ).toBe(false);
+  });
+});
+
+describe('maintainer withdrawal of ready delivery', () => {
+  it.each([
+    { draft: true },
+    { state: 'closed' },
+    { auto_merge: null },
+    { auto_merge: { merge_method: 'merge' } },
+  ])('retains ownership without correcting withdrawn PR %j', async (pr) => {
+    const deps = fixture({
+      pr,
+      checks: {
+        total_count: 1,
+        check_runs: [
+          {
+            id: 1,
+            check_suite: { id: 1 },
+            name: 'Verify',
+            head_sha: HEAD,
+            status: 'completed',
+            conclusion: 'failure',
+          },
+        ],
+      },
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'waiting',
+      head: HEAD,
+    });
+    expect(vi.mocked(deps.fetchImpl).mock.calls).toHaveLength(1);
   });
 });

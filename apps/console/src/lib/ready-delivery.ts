@@ -376,6 +376,13 @@ export async function observeGithubDelivery(
     !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
   )
     throw new Error('Delivery artifact identity changed');
+  if (
+    !pr.merged &&
+    (pr.state !== 'open' ||
+      pr.draft ||
+      pr.auto_merge?.merge_method !== 'squash')
+  )
+    return { kind: 'waiting', head: binding.head };
   if (pr.head.sha !== binding.head)
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
   if (pr.merged && pr.merge_commit_sha !== null) {
@@ -433,6 +440,8 @@ export async function observeGithubDelivery(
       total_count: z.number(),
       check_runs: z.array(
         z.object({
+          id: z.number().int().positive().optional(),
+          check_suite: z.object({ id: z.number().int().positive() }).optional(),
           name: z.string(),
           head_sha: sha,
           status: z.string(),
@@ -449,7 +458,7 @@ export async function observeGithubDelivery(
     );
   if (checkRuns.total_count > checkRuns.check_runs.length)
     throw new Error('Checks truncated');
-  const failed = checkRuns.check_runs.filter(
+  const candidateFailures = checkRuns.check_runs.filter(
     (check) =>
       check.head_sha === binding.head &&
       required.includes(check.name) &&
@@ -458,44 +467,145 @@ export async function observeGithubDelivery(
         check.conclusion ?? '',
       ),
   );
-  const statuses = z
-    .object({
-      total_count: z.number(),
-      statuses: z.array(z.object({ context: z.string(), state: z.string() })),
-    })
-    .parse(
-      await github(
-        deps,
-        binding.repo,
-        `commits/${binding.head}/status?per_page=100`,
-      ),
-    );
-  if (statuses.total_count > statuses.statuses.length)
-    throw new Error('Statuses truncated');
-  const failedStatuses = statuses.statuses.filter(
-    (status) =>
-      required.includes(status.context) &&
-      ['failure', 'error'].includes(status.state),
+  const currentCheckIds = await currentActionCheckIds(
+    deps,
+    binding,
+    candidateFailures,
   );
+  const failed = candidateFailures.filter(
+    (check) => check.id !== undefined && currentCheckIds.has(check.id),
+  );
+  // The declared App can read Checks, not private-repository commit statuses.
+  // Uncovered legacy required contexts remain unknown until protected landing;
+  // available exact-head check failures and independent review stay actionable.
   const review = await reviews(
     deps,
     binding.repo,
     binding.number,
     binding.head,
   );
-  if (
-    failed.length ||
-    failedStatuses.length ||
-    review.changesRequested ||
-    review.unresolved
-  )
+  if (failed.length || review.changesRequested || review.unresolved)
     return {
       kind: 'correction',
       head: binding.head,
-      reason:
-        failed.length || failedStatuses.length
-          ? `Required checks failed: ${[...failed.map((check) => check.name), ...failedStatuses.map((status) => status.context)].join(', ')}`
-          : 'Review feedback requires correction',
+      reason: failed.length
+        ? `Required checks failed: ${failed.map((check) => check.name).join(', ')}`
+        : 'Review feedback requires correction',
     };
   return { kind: 'waiting', head: binding.head };
+}
+
+/** Same-head checks can outlive canceled draft CI and earlier run attempts.
+ * Only a current workflow attempt's jobs can qualify an Actions failure. */
+async function currentActionCheckIds(
+  deps: DeliveryGithubDeps,
+  binding: DeliveryBinding,
+  checks: readonly { id?: number; check_suite?: { id: number } }[],
+): Promise<Set<number>> {
+  const qualified = new Set<number>();
+  if (checks.length === 0) return qualified;
+  try {
+    const runs = z
+      .object({
+        total_count: z.number(),
+        workflow_runs: z.array(
+          z.object({
+            id: z.number().int().positive(),
+            workflow_id: z.number().int().positive(),
+            run_number: z.number().int().positive(),
+            run_attempt: z.number().int().positive(),
+            head_sha: sha,
+            check_suite_id: z.number().int().positive(),
+            event: z.string(),
+            conclusion: z.string().nullable(),
+          }),
+        ),
+      })
+      .parse(
+        await github(
+          deps,
+          binding.repo,
+          `actions/runs?head_sha=${binding.head}&per_page=100`,
+        ),
+      );
+    if (runs.total_count > runs.workflow_runs.length) return qualified;
+    const current = new Map<string, (typeof runs.workflow_runs)[number]>();
+    for (const run of runs.workflow_runs) {
+      if (run.head_sha !== binding.head) continue;
+      const key = String(run.workflow_id);
+      const previous = current.get(key);
+      if (
+        previous !== undefined &&
+        previous.run_number === run.run_number &&
+        previous.id !== run.id
+      )
+        return qualified;
+      if (
+        previous === undefined ||
+        run.run_number > previous.run_number ||
+        (run.run_number === previous.run_number &&
+          run.run_attempt > previous.run_attempt)
+      )
+        current.set(key, run);
+    }
+    const parents = [...current.values()].filter(
+      (run) =>
+        run.conclusion !== 'cancelled' &&
+        checks.some((check) => check.check_suite?.id === run.check_suite_id),
+    );
+    if (parents.length > 10) return qualified;
+    for (const run of parents) {
+      const jobs = z
+        .object({
+          total_count: z.number(),
+          jobs: z.array(
+            z.object({
+              run_id: z.number(),
+              run_attempt: z.number().optional(),
+              head_sha: sha,
+              check_run_url: z.string(),
+              status: z.string(),
+              conclusion: z.string().nullable(),
+            }),
+          ),
+        })
+        .parse(
+          await github(
+            deps,
+            binding.repo,
+            `actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`,
+          ),
+        );
+      if (jobs.total_count > jobs.jobs.length) continue;
+      for (const job of jobs.jobs) {
+        const prefix = `https://api.github.com/repos/${binding.repo}/check-runs/`;
+        if (
+          job.run_id !== run.id ||
+          (job.run_attempt !== undefined &&
+            job.run_attempt !== run.run_attempt) ||
+          job.head_sha !== binding.head ||
+          !job.check_run_url.startsWith(prefix) ||
+          job.status !== 'completed' ||
+          !['failure', 'timed_out', 'action_required'].includes(
+            job.conclusion ?? '',
+          )
+        )
+          continue;
+        const suffix = job.check_run_url.slice(prefix.length);
+        if (!/^\d+$/u.test(suffix)) continue;
+        const id = Number(suffix);
+        if (
+          checks.some(
+            (check) =>
+              check.id === id && check.check_suite?.id === run.check_suite_id,
+          )
+        )
+          qualified.add(id);
+      }
+    }
+  } catch {
+    // Missing/ambiguous Actions provenance has no correction authority.
+    // Independent current review feedback remains actionable below.
+  }
+  return qualified;
 }

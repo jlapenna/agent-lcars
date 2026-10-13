@@ -340,3 +340,11 @@ through the existing outcome outbox and session-expiry owner. The original
 execution result and settled report event remain unchanged. Native webhooks
 receive this event ID as their idempotency key, so delivery retries cannot
 replay the earlier execution outcome.
+
+Delivery polling requests the declared App's administration/checks read grants
+through its dedicated token purpose. Required GitHub Actions failures must
+belong to the current workflow run and attempt's exact check IDs; canceled
+draft CI and superseded attempts cannot authorize a successor. Private legacy
+commit-status contexts remain unknown without an undeclared grant. Independent
+current review feedback remains actionable. An unmerged draft, closed, or
+unarmed PR retains delivery ownership and does not request correction.
