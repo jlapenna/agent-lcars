@@ -1,10 +1,13 @@
-import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it } from 'vitest';
 
-import { decidedRun, isRefusal } from './decide';
-import { MemoryStore } from './memory-store';
-import type { DeliveryBinding } from './model';
-import { Orchestrator } from './orchestrator';
+import {
+  decidedRun,
+  isRefusal,
+  MemoryStore,
+  Orchestrator,
+  type DeliveryBinding,
+} from '@agent-lcars/orchestrator';
+import { deriveItemState } from './derive';
 
 const NOW = '2026-10-13T10:00:00.000Z';
 const TASK = { repo: 'octo/example', issue: 7 };
