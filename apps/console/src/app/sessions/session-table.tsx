@@ -106,7 +106,7 @@ function SessionCard({ row }: { row: SessionRow }) {
                   rel="noreferrer"
                   size="xs"
                 >
-                  #{row.issueNumber}
+                  GitHub #{row.issueNumber}
                 </Anchor>
               </Group>
             )}
@@ -121,7 +121,7 @@ function SessionCard({ row }: { row: SessionRow }) {
                   rel="noreferrer"
                   size="xs"
                 >
-                  #{latestPr.number}
+                  GitHub #{latestPr.number}
                 </Anchor>
                 {earlierPrCount > 0 && (
                   <Text size="xs" c="dimmed">
@@ -231,7 +231,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                       rel="noreferrer"
                       size="xs"
                     >
-                      #{row.issueNumber}
+                      GitHub #{row.issueNumber}
                     </Anchor>
                   )}
                 </TableTd>
@@ -245,7 +245,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                       size="xs"
                       mr={6}
                     >
-                      #{pr.number}
+                      GitHub #{pr.number}
                     </Anchor>
                   ))}
                 </TableTd>
@@ -262,7 +262,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                         rel="noreferrer"
                         size="xs"
                       >
-                        run ↗
+                        GitHub run ↗
                       </Anchor>
                     ) : (
                       <Text size="xs">{row.runId}</Text>
