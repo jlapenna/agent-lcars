@@ -13,6 +13,7 @@ import {
   RUNNER_STATUS_EVENT,
   RUNNER_STATUS_STALENESS_MS,
 } from '../lib/runner-status-contract';
+import { expireTokenRate, type TokenRate } from '../lib/token-rate';
 import { DataWarnings } from './console-header';
 import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
 import { RelativeTime } from './relative-time';
@@ -295,8 +296,11 @@ export function RunnerAutoscalerStatus({
   initial,
   filters = {},
   toolbar,
+  tokenRate,
 }: {
   initial: AutoscalerStatusResult;
+  /** Read once with the page, already narrowed to the filters. */
+  tokenRate?: TokenRate | { unavailable: string };
   /** The toolbar's repository, agent and find filters. */
   filters?: ShuttlebayFilters;
   /** The workspace toolbar band (the page's filter form). */
@@ -305,6 +309,8 @@ export function RunnerAutoscalerStatus({
   const [storedResult, setResult] = useState(() =>
     expireAutoscalerStatuses(initial),
   );
+  // The token rate arrives once with the page; this tick ages it out.
+  const [clock, setClock] = useState(() => Date.now());
   // Arrival and render are both clock boundaries. A reset/stale timestamp
   // crossed during RSC transport or a sibling render cannot look healthy.
   const live = expireAutoscalerStatuses(storedResult);
@@ -358,6 +364,7 @@ export function RunnerAutoscalerStatus({
     open();
     const timer = window.setInterval(() => {
       setResult((previous) => expireAutoscalerStatuses(previous));
+      setClock(Date.now());
     }, EXPIRY_CHECK_INTERVAL_MS);
     return () => {
       source?.close();
@@ -440,6 +447,7 @@ export function RunnerAutoscalerStatus({
             lanesIncomplete={result.lanesIncomplete}
             executor={result.queueExecutor}
             filteredOut={noMatch}
+            tokenRate={expireTokenRate(tokenRate, clock, STALENESS_MS)}
           />
         </div>
       </div>

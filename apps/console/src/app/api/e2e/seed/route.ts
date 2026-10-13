@@ -4,6 +4,7 @@ import {
   type CliSessionDoc,
   type IssueAgentSessionDoc,
   type SessionWrite,
+  tokenMinuteOf,
 } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryWriterFirestore,
@@ -86,6 +87,12 @@ function fixtureSessions(): CliSessionDoc[] {
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
       },
+      // Hook telemetry's per-minute growth, so the Bridge's Tokens / min
+      // renders a value and sparkline bars.
+      tokenMinutes: [3, 2].map((minutes) => ({
+        minute: tokenMinuteOf(minutesAgo(minutes)),
+        tokens: 2_400,
+      })),
       host: 'e2e-fixture-host-1',
       branch: E2E_FIXTURE_BRANCH,
       worktree: 'agent-lcars-e2e-fixture',

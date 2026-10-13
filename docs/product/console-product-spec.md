@@ -381,8 +381,15 @@ the work that has stopped, and the work in flight.
   `gha_job_startup_duration_seconds` histogram, windowed by the autoscaler. It
   is unavailable until a lane reports a window, and partial when some lanes
   do not. Its label names the minutes actually covered, which are fewer than 30
-  after an autoscaler start or reset. A quiet window reads "no job started", never 0s. Tokens/min and
-  Work API p95 have no console data source and render as unavailable.
+  after an autoscaler start or reset. A quiet window reads "no job started", never 0s.
+- **FE-SB-6 [Implemented]** The same panel shows Tokens / min: the
+  cost-weighted token spend of sessions active in the last 30 minutes,
+  averaged over the last 5 complete minutes, with a per-minute sparkline. The
+  source is each session's `tokenMinutes`, recorded by hook telemetry. It
+  follows the page's repository and agent filters. It is unavailable when the
+  session store fails or no active session is measured, partial when some
+  are not, and a known zero when no session is active. Work API p95 has no
+  console data source and renders as unavailable.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 
