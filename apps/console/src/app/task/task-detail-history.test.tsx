@@ -173,6 +173,13 @@ for (const status of ['accepted', 'refused'] as const) {
     expect(screen.getByRole('status')).toHaveTextContent(
       'effective provider codex',
     );
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'requested by jlapenna at 2026-10-09T01:00:00Z',
+    );
+    expect(screen.getByRole('status').querySelector('time')).toHaveAttribute(
+      'datetime',
+      '2026-10-09T01:00:00Z',
+    );
     expect(screen.getByText('Queue executor · opencode')).toBeInTheDocument();
   });
 }
