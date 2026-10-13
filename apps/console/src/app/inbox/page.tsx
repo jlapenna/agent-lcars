@@ -1,4 +1,4 @@
-import { Anchor, Box } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -23,6 +23,7 @@ import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
 import { DataWarnings } from '../console-header';
+import { ConsoleWorkspace } from '../console-workspace';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { inboxCardKey, inboxCardMetadata } from '../inbox-card';
@@ -99,19 +100,22 @@ async function InboxBody({
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 
   return (
-    <>
-      <div className="inbox-data-freshness">
-        <DataFreshness
-          fetchedAt={dataAsOf}
-          initialLabel={formatRelativeTime(dataAsOf)}
-        />
-      </div>
-      {warnings.length > 0 && (
-        <Box mb="xl">
-          <DataWarnings warnings={warnings} />
-        </Box>
-      )}
-      <InboxNotifications principalId={principalId} />
+    <ConsoleWorkspace
+      ariaLabel="Inbox workspace"
+      className="inbox-frame"
+      warnings={<DataWarnings warnings={warnings} />}
+      toolbar={
+        <>
+          <InboxNotifications principalId={principalId} />
+          <div className="inbox-data-freshness">
+            <DataFreshness
+              fetchedAt={dataAsOf}
+              initialLabel={formatRelativeTime(dataAsOf)}
+            />
+          </div>
+        </>
+      }
+    >
       <DecisionInbox
         yourQueue={decisionCards}
         replyToWorkItem={replyToWorkItem}
@@ -127,7 +131,7 @@ async function InboxBody({
         }
         mobileScopeLabel={mobileScopeLabel}
       />
-    </>
+    </ConsoleWorkspace>
   );
 }
 

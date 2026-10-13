@@ -1344,6 +1344,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .inbox-data-freshness {
   min-height: 20px;
+  margin-left: auto;
+}
+
+/* Inside the workspace frame the notification controls are a toolbar
+   item; their standalone bottom margin would only pad the band. */
+.inbox-frame__toolbar [data-testid='inbox-notifications'] {
+  margin-bottom: 0 !important;
+}
+
+.inbox-frame > .queue-workspace {
+  padding: 12px 16px 16px;
 }
 
 .lcars-command-row {
@@ -2741,6 +2752,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .inbox-data-freshness {
     display: none;
+  }
+
+  .inbox-frame {
+    border: 0;
+  }
+
+  .inbox-frame > .queue-workspace {
+    padding: 0;
   }
 
   .queue-workspace__list {
