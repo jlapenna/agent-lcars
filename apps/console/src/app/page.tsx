@@ -76,7 +76,6 @@ import {
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
-import { RepositorySelector } from './repository-selector';
 import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
@@ -160,14 +159,12 @@ async function IndexBody({
   selectedKey,
   stoppedCursor,
   multiRepo,
-  watchedRepos,
 }: {
   repoFilter: WatchedRepo | undefined;
   repoFilterKey?: string;
   selectedKey?: string;
   stoppedCursor?: string;
   multiRepo: boolean;
-  watchedRepos: WatchedRepo[];
 }) {
   const [
     {
@@ -324,11 +321,11 @@ async function IndexBody({
       warnings={<DataWarnings warnings={warnings} />}
       toolbar={
         <>
-          <RepositorySelector
-            repos={watchedRepos}
-            selected={repoFilterKey}
-            action="/"
-          />
+          {repoFilterKey && (
+            <Anchor href="/" size="sm">
+              Clear repository
+            </Anchor>
+          )}
           <DataFreshness
             fetchedAt={dataAsOf}
             initialLabel={formatRelativeTime(dataAsOf)}
@@ -453,7 +450,6 @@ interface IndexViewProps {
 }
 
 function IndexViewContent({
-  watchedRepos,
   repoFilter,
   repoFilterKey,
   selectedKey,
@@ -473,7 +469,6 @@ function IndexViewContent({
           selectedKey={selectedKey}
           stoppedCursor={stoppedCursor}
           multiRepo={multiRepo}
-          watchedRepos={watchedRepos}
         />
       </Suspense>
     </>
