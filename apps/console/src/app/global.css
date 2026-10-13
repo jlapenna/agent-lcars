@@ -1370,10 +1370,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   justify-content: flex-start;
 }
 
-.inbox-frame > .queue-workspace {
-  padding: 12px 16px 16px;
-}
-
 .lcars-command-row {
   display: flex;
   align-items: center;
@@ -2775,16 +2771,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     border: 0;
   }
 
-  .inbox-frame > .queue-workspace {
-    padding: 0;
-  }
-
-  /* Freshness is hidden on phones and the delivery watch renders nothing,
-     so the band would be empty height above the full-height queue. */
-  .inbox-frame__toolbar {
-    display: none;
-  }
-
   .queue-workspace__list {
     height: 100%;
     border: 0;
@@ -3695,5 +3681,194 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .ops-panel__meta {
     margin-left: 0;
+  }
+}
+
+/* ---- Inbox (design/fleet-console.html #inbox) ----
+   queue-workspace.tsx: a toolbar band (repository, agent, find with its
+   reason/sort menu, freshness, "Respond to oldest"), then the decision inbox
+   as one signalled panel. The detail column opens only for a selected
+   decision, a pending reply draft, or a reply confirmation. */
+.inbox-region {
+  min-width: 0;
+}
+
+.inbox-toolbar {
+  flex-wrap: wrap;
+}
+
+.inbox-toolbar .queue-search-input {
+  flex: 1 1 14rem;
+  max-width: 18rem;
+}
+
+.inbox-agent-select {
+  width: 9rem;
+}
+
+.inbox-respond-oldest {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 20px;
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.inbox-respond-oldest:hover {
+  color: var(--lcars-ink-on-accent);
+  background: color-mix(in srgb, var(--lcars-accent) 86%, white);
+  text-decoration: none;
+}
+
+.inbox-region > .queue-workspace {
+  padding: 20px;
+}
+
+.queue-workspace__list {
+  padding-left: calc(var(--lcars-spine-width) + 16px);
+}
+
+.queue-workspace__list::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: var(--lcars-spine-width);
+  background: var(--lcars-accent);
+}
+
+.queue-workspace__list::after {
+  top: 0;
+  bottom: 0;
+}
+
+.queue-workspace__list-header {
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 4px 10px;
+  min-height: 0;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.queue-workspace__list-header::after {
+  display: none;
+}
+
+.queue-workspace__list-header .ops-panel__meta {
+  margin-left: auto;
+}
+
+.queue-item-row {
+  min-height: 0;
+  border-left: 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.queue-item-row + .queue-item-row {
+  margin-top: 0;
+}
+
+.queue-item-row:hover,
+.queue-item-row:focus-within,
+.queue-item-row[data-selected],
+.queue-item-row[data-loading] {
+  background: var(--lcars-surface-raised);
+}
+
+.queue-item-row[data-selected] {
+  box-shadow: inset var(--lcars-spine-width) 0 0 var(--lcars-accent);
+}
+
+.queue-item-row__link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 12px 0 12px 12px;
+}
+
+.queue-item-row__text {
+  min-width: 0;
+}
+
+.queue-item-row__title {
+  margin: 5px 0 4px;
+  color: var(--lcars-ink);
+}
+
+.queue-item-row__question {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-bottom: 4px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.queue-label-count {
+  color: var(--lcars-ink-dim);
+}
+
+@media (min-width: 48em) {
+  .queue-workspace:not([data-detail]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .queue-workspace:not([data-detail]) .queue-workspace__detail {
+    display: none;
+  }
+}
+
+@media (max-width: 47.99em) {
+  .inbox-region[data-mobile-view='detail'] > .inbox-toolbar {
+    display: none;
+  }
+
+  .inbox-toolbar {
+    padding: 10px 12px;
+  }
+
+  .inbox-toolbar .queue-search-input {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .inbox-agent-select {
+    flex: 1 1 auto;
+  }
+
+  .inbox-respond-oldest {
+    min-height: 44px;
+  }
+
+  .inbox-region > .queue-workspace {
+    padding: 0;
+  }
+
+  .queue-workspace__list {
+    padding-left: 12px;
+  }
+
+  .queue-workspace__list::before {
+    display: none;
+  }
+
+  .queue-item-row {
+    min-height: 0;
+  }
+
+  .queue-item-row__link {
+    min-height: 44px;
+    padding: 10px 6px 10px 0;
   }
 }

@@ -53,10 +53,14 @@ function renderRow(
 }
 
 describe('QueueItemRow', () => {
-  it('renders a chevron affordance on the row link signalling tap-to-open detail', () => {
+  it('renders the Respond affordance inside the one row link', () => {
     renderRow();
     const link = screen.getByRole('link', { name: /Responsive Inbox/ });
-    expect(link.querySelector('.queue-item-row__chevron')).not.toBeNull();
+    const respond = link.querySelector('.queue-item-row__respond');
+    expect(respond).toHaveTextContent('Respond');
+    // Visual only: the row link is the single control, so locators stay
+    // unambiguous and the accessible name stays the decision itself.
+    expect(respond).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('shows immediate progress while item details are loading', () => {

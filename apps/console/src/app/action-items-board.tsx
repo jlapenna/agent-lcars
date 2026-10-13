@@ -22,6 +22,8 @@ export function DecisionInbox({
   mobileDataFreshness,
   mobileScopeLabel,
   replyToWorkItem,
+  toolbarStart,
+  toolbarEnd,
 }: {
   yourQueue: InboxCard[];
   selectedCard?: InboxCard;
@@ -29,6 +31,8 @@ export function DecisionInbox({
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
   replyToWorkItem?: ReplyAction;
+  toolbarStart?: ReactNode;
+  toolbarEnd?: ReactNode;
 }) {
   const watchedRepos = getWatchedRepos();
 
@@ -41,6 +45,8 @@ export function DecisionInbox({
       mobileDataFreshness={mobileDataFreshness}
       mobileScopeLabel={mobileScopeLabel}
       replyToWorkItem={replyToWorkItem}
+      toolbarStart={toolbarStart}
+      toolbarEnd={toolbarEnd}
     />
   );
 }

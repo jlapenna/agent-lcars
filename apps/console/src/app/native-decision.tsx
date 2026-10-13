@@ -1,15 +1,6 @@
 'use client';
 
-import {
-  Anchor,
-  Badge,
-  Button,
-  Group,
-  Stack,
-  Text,
-  Textarea,
-  Title,
-} from '@mantine/core';
+import { Anchor, Button, Stack, Text, Textarea, Title } from '@mantine/core';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useTransition } from 'react';
@@ -48,32 +39,32 @@ export function NativeDecisionRow({
         aria-current={selected ? 'true' : undefined}
         onClick={onNavigate}
       >
-        <Stack gap={5}>
-          <Group justify="space-between" gap="xs">
-            <Badge variant="outline" color="gray" size="xs">
-              Work
-            </Badge>
-            <Badge
-              color={actionTypeMeta('needs-human').color}
-              variant="light"
-              size="sm"
-            >
-              {actionTypeMeta('needs-human').label}
-            </Badge>
-          </Group>
-          <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
-            {work.spec.target.repo} / {work.id}
-          </Text>
-          <Text fw={600} size="sm" className="queue-item-row__title">
+        <div className="queue-item-row__text">
+          <div className="ops-inbox__kind">
+            {actionTypeMeta('needs-human').label}
+          </div>
+          <span className="ops-inbox__title queue-item-row__title">
             {work.spec.title}
-          </Text>
-          <Text size="xs" lineClamp={2}>
+          </span>
+          <span className="queue-item-row__question">
             {nativeDecisionQuestion(work)}
-          </Text>
-          <Text size="xs" c="dimmed">
-            <RelativeTime iso={work.updatedAt} variant="compact" />
-          </Text>
-        </Stack>
+          </span>
+          <div className="ops-inbox__meta">
+            <span className="ops-ref">
+              {work.spec.target.repo} / {work.id}
+            </span>
+            <span>{work.spec.pipeline}</span>
+            <span>
+              waiting <RelativeTime iso={work.updatedAt} variant="compact" />
+            </span>
+          </div>
+        </div>
+        <span
+          className="ops-row-action queue-item-row__respond"
+          aria-hidden="true"
+        >
+          Respond
+        </span>
       </Link>
       {onSnooze && (
         <Button

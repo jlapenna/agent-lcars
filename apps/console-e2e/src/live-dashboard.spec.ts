@@ -135,7 +135,7 @@ test.describe('live authoritative dashboards', () => {
     await expect(page).toHaveURL(url);
   });
 
-  test('does not transfer a default draft when another operator answers its decision', async ({
+  test('does not transfer a selected draft when another operator answers its decision', async ({
     page,
     request,
   }) => {
@@ -154,6 +154,13 @@ test.describe('live authoritative dashboards', () => {
       /Live updates connected/,
       { timeout: 20_000 },
     );
+    // The list is full width until a decision is selected; open the first.
+    await page
+      .locator('.queue-item-row')
+      .first()
+      .getByRole('link')
+      .first()
+      .click();
     const draft = page.getByRole('textbox', { name: 'Reply to the agent' });
     await draft.fill('Do not transfer this to another decision.');
     const answered = await request.post(
