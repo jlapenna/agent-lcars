@@ -12,11 +12,14 @@ usePopulatedFixtures();
 /** The opt-in lives under Preferences in the console menu; delivery runs
  * while the Inbox page is open. */
 async function openPreferences(page: Page) {
-  // Open the menu once the Inbox (which hosts delivery) has rendered; the
-  // menu-before-Inbox race is pinned by the component's unit tests.
+  // Open the menu once the Inbox's delivery watch is live (hydrated, not just
+  // streamed); the menu-before-Inbox race is pinned by the unit tests.
+  // A streamed handoff can briefly hold two copies of the marker.
   await expect(
-    page.getByRole('region', { name: 'Decision Inbox', exact: true }),
-  ).toBeVisible();
+    page
+      .locator('[data-testid="inbox-notifications-watch"][data-active]')
+      .first(),
+  ).toBeAttached();
   await page
     .locator('button[aria-label="More console options"]:visible')
     .first()

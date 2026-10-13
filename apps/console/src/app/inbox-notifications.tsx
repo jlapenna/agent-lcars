@@ -33,6 +33,9 @@ function supported() {
   );
 }
 
+const OFF_INBOX_STATUS =
+  'Notifications on — delivered while an Inbox tab is open';
+
 /** Bound waits for browser/server APIs. Notification attempts are durably
  * consumed before display, so ambiguous completion is never automatically
  * retried; subsequent attempts retain the persisted one-minute limit. */
@@ -102,11 +105,7 @@ function useInboxNotificationsController(
         // Away from the Inbox the preference is shown, never acted on.
         const stored = read();
         setEnabled(stored.enabled);
-        setStatus(
-          stored.enabled
-            ? 'Notifications on — delivered while an Inbox tab is open'
-            : 'Notifications off',
-        );
+        setStatus(stored.enabled ? OFF_INBOX_STATUS : 'Notifications off');
         return;
       }
       const generation = epoch.current;
@@ -346,9 +345,11 @@ function useInboxNotificationsController(
       baseline.current = !baselineReady;
       setEnabled(true);
       setStatus(
-        baselineReady
-          ? 'Watching for new human decisions'
-          : 'Authorization or data unavailable — notifications paused',
+        !watchingRef.current
+          ? OFF_INBOX_STATUS
+          : baselineReady
+            ? 'Watching for new human decisions'
+            : 'Authorization or data unavailable — notifications paused',
       );
     } catch {
       if (current()) setStatus('Notification activation unavailable');
@@ -440,8 +441,25 @@ export function InboxNotificationsProvider({
 /** Marks this page as an open Inbox, which is when notifications deliver. */
 export function InboxNotificationsWatch() {
   const watch = useContext(InboxNotificationsContext)?.watch;
-  useEffect(() => watch?.(), [watch]);
-  return null;
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    if (!watch) return;
+    const release = watch();
+    setActive(true);
+    return () => {
+      setActive(false);
+      release();
+    };
+  }, [watch]);
+  // A hidden marker, so a browser test can wait for the hydrated watch
+  // rather than for streamed HTML that is visible before it is live.
+  return (
+    <span
+      hidden
+      data-testid="inbox-notifications-watch"
+      data-active={active ? '' : undefined}
+    />
+  );
 }
 
 const SCOPE =

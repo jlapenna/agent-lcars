@@ -163,6 +163,19 @@ describe('opt-in Inbox notification delivery', () => {
     expect(showNotification).toHaveBeenCalledOnce();
   });
 
+  it('says delivery waits for an Inbox after opting in from another page', async () => {
+    render(withWatch(false));
+    await click('Enable Inbox notifications');
+    expect(
+      screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+    ).toBeVisible();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Notifications on — delivered while an Inbox tab is open',
+    );
+    expect(mocks.read).toHaveBeenCalledOnce();
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+
   it('delivers nothing from an observation still in flight when the Inbox closes', async () => {
     const view = render(withWatch(true));
     await click('Enable Inbox notifications');

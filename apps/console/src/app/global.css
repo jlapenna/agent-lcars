@@ -2779,6 +2779,12 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     padding: 0;
   }
 
+  /* Freshness is hidden on phones and the delivery watch renders nothing,
+     so the band would be empty height above the full-height queue. */
+  .inbox-frame__toolbar {
+    display: none;
+  }
+
   .queue-workspace__list {
     height: 100%;
     border: 0;
