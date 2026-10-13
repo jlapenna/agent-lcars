@@ -31,8 +31,8 @@ export interface HookPayload {
   readonly reason?: string;
   /** Codex puts the model on every payload; Claude only sometimes. */
   readonly model?: string;
-  /** Present when the hook fired inside a subagent; such payloads are
-   * skipped (the parent transcript already carries the sidechain). */
+  /** Present inside a subagent. Claude/OpenCode remain parent-owned;
+   * Codex requires a verified distinct child transcript and owned usage. */
   readonly isSubagent: boolean;
 }
 

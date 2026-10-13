@@ -48,7 +48,7 @@ import { matchesRepoAllowlist } from './repo-allowlist';
 import { appendToSpool, spoolPath } from './spool';
 
 /** Bumped when the event the client emits changes shape or semantics. */
-export const HOOK_CLIENT_VERSION = '0.3.0';
+export const HOOK_CLIENT_VERSION = '0.4.0';
 
 export const HOOK_CLI_USAGE =
   'usage: lcars hook claude [--inline]   (reads one Claude Code hook payload on stdin)\n' +
@@ -235,6 +235,112 @@ function reduceTranscript(
   }
 }
 
+/** Codex fork rollouts can carry the parent's metadata and history before
+ * their own thread begins. Only the identity-matched child suffix
+ * and its explicit thread counter belong to the child's summary. Missing or
+ * ambiguous ownership remains uncollected rather than billed as a new session. */
+function reduceCodexChildTranscript(
+  deps: HookCommandDependencies,
+  transcriptPath: string | undefined,
+  sessionId: string,
+): SessionSummary | undefined {
+  if (!transcriptPath) return undefined;
+  try {
+    const ownedLines: string[] = [];
+    let parentId: string | undefined;
+    let ownThread = false;
+    let usage: SessionSummary['tokens'] | undefined;
+    let inclusiveInput = 0;
+    for (const line of deps.readTranscriptLines(transcriptPath)) {
+      if (!line.trim()) continue;
+      const row = JSON.parse(line) as {
+        type?: unknown;
+        payload?: {
+          id?: unknown;
+          type?: unknown;
+          thread_id?: unknown;
+          forked_from_id?: unknown;
+          source?: {
+            subagent?: { thread_spawn?: { parent_thread_id?: unknown } };
+          };
+          thread_token_usage?: {
+            input_tokens?: unknown;
+            output_tokens?: unknown;
+            cached_input_tokens?: unknown;
+          };
+        };
+      };
+      const payload = row?.payload;
+      if (!parentId) {
+        const parent =
+          payload?.source?.subagent?.thread_spawn?.parent_thread_id;
+        if (
+          row?.type !== 'session_meta' ||
+          payload?.id !== sessionId ||
+          typeof parent !== 'string' ||
+          !isSafeIdentifier(parent) ||
+          parent === sessionId ||
+          payload?.forked_from_id !== parent
+        )
+          return undefined;
+        parentId = parent;
+        ownedLines.push(line);
+        continue;
+      }
+      if (!ownThread) {
+        if (row?.type === 'session_meta' && payload?.id !== parentId)
+          return undefined;
+        if (
+          row?.type !== 'event_msg' ||
+          payload?.type !== 'thread_settings_applied' ||
+          payload?.thread_id !== sessionId
+        )
+          continue;
+        ownThread = true;
+      }
+      if (row?.type === 'session_meta' && payload?.id !== sessionId)
+        return undefined;
+      if (
+        row?.type === 'token_usage_record' &&
+        payload?.thread_id === sessionId
+      ) {
+        const total = payload?.thread_token_usage;
+        const input = total?.input_tokens;
+        const output = total?.output_tokens;
+        const cached = total?.cached_input_tokens;
+        if (
+          typeof input !== 'number' ||
+          typeof output !== 'number' ||
+          typeof cached !== 'number' ||
+          [input, output, cached].some(
+            (value) => !Number.isSafeInteger(value) || value < 0,
+          ) ||
+          cached > input ||
+          input < inclusiveInput ||
+          output < (usage?.outputTokens ?? 0) ||
+          cached < (usage?.cacheReadTokens ?? 0)
+        )
+          return undefined;
+        inclusiveInput = input;
+        usage = {
+          inputTokens: input - cached,
+          outputTokens: output,
+          cacheReadTokens: cached,
+          cacheCreationTokens: 0,
+        };
+      }
+      ownedLines.push(line);
+    }
+    if (!ownThread || !usage) return undefined;
+    const summary = codexAdapter.reduce(ownedLines)[0];
+    return summary?.sessionId === sessionId
+      ? { ...summary, tokens: usage }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function applyAnnotationOverlays(
   stateDirectory: string,
   summary: SessionSummary,
@@ -323,7 +429,7 @@ async function handleRuntimeHook(
     log('ignored', `event=${payload.hookEventName}`);
     return { action: 'ignored', detail: payload.hookEventName };
   }
-  if (payload.isSubagent) {
+  if (payload.isSubagent && runtime !== 'codex') {
     log('skipped-subagent', `event=${payload.hookEventName}`);
     return { action: 'skipped-subagent' };
   }
@@ -384,12 +490,24 @@ async function handleRuntimeHook(
     }
 
     const transcriptPath = resolveTranscriptPath(deps, runtime, payload);
-    const reduced = reduceTranscript(
-      deps,
-      profile.adapter,
-      transcriptPath,
-      payload.sessionId,
-    );
+    const reduced = payload.isSubagent
+      ? reduceCodexChildTranscript(deps, transcriptPath, payload.sessionId)
+      : reduceTranscript(
+          deps,
+          profile.adapter,
+          transcriptPath,
+          payload.sessionId,
+        );
+    if (payload.isSubagent && !reduced) {
+      log(
+        'skipped-subagent',
+        `session=${sessionTag} unverified child transcript`,
+      );
+      return {
+        action: 'skipped-subagent',
+        detail: 'unverified child transcript',
+      };
+    }
     let summary: SessionSummary | undefined;
     if (reduced || kind !== 'end') {
       const base =

@@ -384,8 +384,13 @@ them:
 - **Stdin to a temp file first.** The launcher copies stdin to `mktemp`
   before doing anything else and deletes it on exit, so a slow or failing
   client never leaves the runtime blocked on a pipe.
-- **Skip what is not a session.** Payloads with `agent_id` (subagents) are
-  ignored; the parent transcript already carries their sidechains. Payloads
+- **Skip what is not a session.** Claude and OpenCode payloads with
+  `agent_id` remain parent-owned. A Codex child is collected only when its
+  first rollout metadata matches the hook identity and distinct parent/fork,
+  an explicit child-thread boundary excludes inherited history, and matching
+  thread usage is present. Its own suffix uses the normal publication guards;
+  copied parent counters never become child usage. Unverified children remain
+  uncollected, rather than emitting invented usage. Payloads
   from wrapped runtimes (herdr checks `CURSOR_VERSION`) are ignored the same
   way when a wrapper is detected.
 - **Identity from the hook, state derived elsewhere.** Herdr's hook reports
