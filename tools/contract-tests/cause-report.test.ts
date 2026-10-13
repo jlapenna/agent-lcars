@@ -207,7 +207,8 @@ describe('complete interactive workstream report assembly', () => {
     (pointer) => {
       const f = fixture();
       f.manifest.sources[1].fields.id = pointer;
-      Reflect.deleteProperty(f.ledger['descriptive-0'], 'id');
+      for (const alias of f.manifest.aliases)
+        Reflect.deleteProperty(f.ledger[alias.key], 'id');
       f.save();
       const result = spawnSync(
         process.execPath,
@@ -288,6 +289,63 @@ describe('complete interactive workstream report assembly', () => {
       ],
     });
   });
+
+  it.each(['array-entry', 'stable-object-key', 'explicit-stable-id'])(
+    'rejects a redundant alias that cannot resolve a descriptive identity (%s)',
+    (shape) => {
+      const f = fixture();
+      if (shape === 'array-entry') {
+        const row = f.root[0];
+        f.manifest.aliases.push({
+          source: 'root',
+          key: '0',
+          id: row.id,
+          issue: row.issue,
+          bodyFile: row.evidence[0],
+          basis: 'fixture/array-redundant-alias-receipt.json',
+        });
+      } else if (shape === 'stable-object-key') {
+        f.ledger.B67 = f.ledger['descriptive-0'];
+        delete f.ledger['descriptive-0'];
+        f.manifest.aliases[0].key = 'B67';
+      } else {
+        f.manifest.sources[1].fields.id = '/id';
+      }
+      f.save();
+      const result = spawnSync(
+        process.execPath,
+        [script, path.join(f.directory, 'manifest.json')],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout);
+      expect(report).toMatchObject({
+        complete: false,
+        totals: null,
+        observed: { identifiedCauses: 182 },
+        missingIds: [],
+      });
+      const source = shape === 'array-entry' ? 'root' : 'ledger';
+      const key =
+        shape === 'array-entry'
+          ? '0'
+          : shape === 'stable-object-key'
+            ? 'B67'
+            : 'descriptive-0';
+      expect(report.aliasErrors).toContainEqual(
+        expect.objectContaining({
+          source,
+          key,
+          reason: 'alias does not resolve a descriptive source record',
+        }),
+      );
+      const retained = report.causes
+        .flatMap((cause: any) => cause.records)
+        .find((record: any) => record.source === source && record.key === key);
+      expect(retained).toBeDefined();
+      expect(retained).not.toHaveProperty('alias');
+    },
+  );
 
   it('does not inflate totals for replayed causes, duplicate aliases or shared owning issues', () => {
     const f = fixture();

@@ -5,7 +5,10 @@ import {
   expectDesktopBridgeHeader,
   expectMobileBridgeHeader,
 } from './util/console-layout';
-import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import {
+  E2E_ADMIN_GITHUB_LOGIN,
+  useE2eAdminBeforeEach,
+} from './util/e2e-test-utils';
 
 useE2eAdminBeforeEach();
 usePopulatedFixtures();
@@ -51,6 +54,45 @@ test.describe('/costs workspace @smoke', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
+  });
+
+  test('opens with spend readouts, spend by repository and a ledger export', async ({
+    page,
+  }) => {
+    await page.goto('/costs?days=30');
+    const workspace = page.getByRole('region', { name: 'Cost ledger' });
+    await expect(workspace.getByTestId('readout-spend-today')).toContainText(
+      'since 00:00 UTC · no daily budget',
+    );
+    const repos = workspace.getByTestId('spend-by-repository');
+    await expect(repos).toContainText('Spend by repository');
+    await expect(
+      repos.getByRole('columnheader', { name: 'Sessions · 7d' }),
+    ).toBeVisible();
+
+    const exportLink = page.getByRole('link', { name: 'Export ledger' });
+    await expect(exportLink).toHaveAttribute('href', '/costs/export?days=30');
+    // The primary action sits outside the filter form, so it never submits it.
+    await expect(
+      page.getByRole('search', { name: 'Filters' }).getByRole('link', {
+        name: 'Export ledger',
+      }),
+    ).toHaveCount(0);
+    // APIRequestContext bypasses page.route's admin adapter; authenticate
+    // the download explicitly, as the notification worker check does.
+    const csv = await page.request.get('/costs/export?days=30', {
+      headers: { 'X-e2e-auth-user': E2E_ADMIN_GITHUB_LOGIN },
+      maxRedirects: 0,
+    });
+    expect(csv.status()).toBe(200);
+    expect(csv.headers()['content-type']).toContain('text/csv');
+    expect((await csv.text()).split('\n')[0]).toBe(
+      'section,key,repository,sessions,turns,cost_weighted_tokens,cost_usd,cost_estimated',
+    );
+    const anonymous = await page.request.get('/costs/export', {
+      maxRedirects: 0,
+    });
+    expect([307, 401]).toContain(anonymous.status());
   });
 
   test('uses the shared elbow header and flat essential mobile ledger rows', async ({

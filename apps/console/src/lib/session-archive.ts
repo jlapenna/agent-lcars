@@ -8,7 +8,11 @@ import type {
   SessionLiveness,
   SessionSource,
 } from '@agent-lcars/telemetry';
-import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  SESSION_AGENTS,
+  totalTokens,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -24,6 +28,10 @@ import {
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
 import { aggregateSessionSpend, type SessionSpend } from './session-spend';
+import {
+  aggregateSpendByRepository,
+  type RepositorySpend,
+} from './session-spend-by-repo';
 import { loadSpendProjections } from './session-spend-projections';
 
 export { DEFAULT_ARCHIVE_DAYS } from './archive-window';
@@ -41,6 +49,8 @@ export interface SessionArchiveQuery {
   source?: SessionSource;
   issueNumber?: number;
   repo?: WatchedRepo;
+  /** Narrows to one agent after the fetch, like `repo`. */
+  agent?: SessionAgent;
 }
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -78,7 +88,10 @@ export function parseSessionArchiveQuery(
 
   const repo = parseRepoFilterParam(searchParams['repo']);
 
-  return { days, source, issueNumber, repo };
+  const agentRaw = firstValue(searchParams['agent']);
+  const agent = SESSION_AGENTS.find((candidate) => candidate === agentRaw);
+
+  return { days, source, issueNumber, repo, ...(agent && { agent }) };
 }
 
 /** Human summary of which slice of the archive a page is showing, for the
@@ -91,6 +104,7 @@ export function describeArchiveWindow(query: SessionArchiveQuery): string {
   if (query.issueNumber !== undefined)
     parts.push(`issue #${query.issueNumber}`);
   if (query.repo) parts.push(`repo=${repoKey(query.repo)}`);
+  if (query.agent) parts.push(`agent=${query.agent}`);
   return parts.join(', ');
 }
 
@@ -233,6 +247,8 @@ export interface SessionArchiveResult {
    * runner-sessions.ts). */
   warnings: string[];
   spend?: SessionSpend;
+  /** With `includeSpend`: spend by repository for today and seven days. */
+  spendByRepository?: RepositorySpend;
 }
 
 /**
@@ -287,6 +303,11 @@ export async function getSessionArchive(
     );
   }
 
+  if (query.agent) {
+    const agentFilter = query.agent;
+    docs = docs.filter((doc) => doc.agent === agentFilter);
+  }
+
   const warnings = coverageLimited
     ? [
         'Session limit reached; totals may be partial, including repository-filtered totals.',
@@ -321,6 +342,13 @@ export async function getSessionArchive(
     rows: docs.map((doc) => toSessionRow(doc, now)),
     ledger: aggregateSessionLedger(docs),
     warnings,
-    ...(spend && { spend }),
+    ...(spend && {
+      spend,
+      spendByRepository: aggregateSpendByRepository(
+        docs,
+        Date.now(),
+        query.days,
+      ),
+    }),
   };
 }

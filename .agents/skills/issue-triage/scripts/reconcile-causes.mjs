@@ -140,18 +140,6 @@ export function reconcileCauses(
       const aliasSelector = selector(source.name, key);
       const alias = aliases.get(aliasSelector);
       const reasons = [];
-      if (alias) {
-        usedAliases.add(aliasSelector);
-        retained.alias = alias;
-        if (causeId(rawId) && rawId !== alias.id)
-          reasons.push('alias conflicts with stable cause id');
-        if (!Array.isArray(evidence) || !evidence.includes(alias.bodyFile))
-          reasons.push(
-            'alias body-file identity is absent from retained evidence',
-          );
-        if (issueKey(issue) !== issueKey(alias.issue))
-          reasons.push('alias conflicts with owning issue');
-      }
       // Aliases describe the exact keyed legacy identity, never a different ID
       // field, array position or malformed spelling of the B cause namespace.
       const descriptiveKey =
@@ -159,6 +147,16 @@ export function reconcileCauses(
         (rawId === undefined || rawId === key) &&
         /[a-z]/i.test(key) &&
         !/^b(?:[^a-z]|$)/i.test(key.trim());
+      if (alias && descriptiveKey) {
+        usedAliases.add(aliasSelector);
+        retained.alias = alias;
+        if (!Array.isArray(evidence) || !evidence.includes(alias.bodyFile))
+          reasons.push(
+            'alias body-file identity is absent from retained evidence',
+          );
+        if (issueKey(issue) !== issueKey(alias.issue))
+          reasons.push('alias conflicts with owning issue');
+      }
       const id = causeId(rawId)
         ? rawId
         : descriptiveKey
@@ -195,7 +193,7 @@ export function reconcileCauses(
     if (!usedAliases.has(key))
       aliasErrors.push({
         ...alias,
-        reason: 'alias does not match a source record',
+        reason: 'alias does not resolve a descriptive source record',
       });
   const expected = new Set(manifest.expectedIds);
   const missingIds = manifest.expectedIds.filter((id) => !causes.has(id));
