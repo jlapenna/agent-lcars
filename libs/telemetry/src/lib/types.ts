@@ -247,6 +247,9 @@ interface BaseSessionDoc {
    * which re-read the stored doc, maintain it; a session without it is not
    * measured per minute. See `nextTokenMinutes`. */
   tokenMinutes?: TokenMinute[];
+  /** The highest total `tokenMinutes` has credited up to, so a total that
+   * dips and recovers is not credited twice. */
+  tokenMinutesBase?: number;
   lastToolCall?: ToolCallDigest;
   /** Persisted client-reported model selection; see SessionSummary.model. */
   model?: string;

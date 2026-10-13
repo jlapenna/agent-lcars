@@ -25,7 +25,7 @@ describe('nextTokenMinutes', () => {
         usage(160),
         '2026-10-13T11:59:45.000Z',
         NOW,
-      ),
+      ).tokenMinutes,
     ).toEqual([
       { minute: '2026-10-13T11:58:00.000Z', tokens: 40 },
       { minute: '2026-10-13T11:59:00.000Z', tokens: 60 },
@@ -40,16 +40,19 @@ describe('nextTokenMinutes', () => {
         usage(17),
         NOW,
         NOW,
-      ),
+      ).tokenMinutes,
     ).toEqual([{ minute: '2026-10-13T12:00:00.000Z', tokens: 12 }]);
     expect(stored[0]?.tokens).toBe(5);
   });
 
   it('credits nothing on a first write or a shrinking total, but still marks the session measured', () => {
-    expect(nextTokenMinutes(undefined, usage(500), NOW, NOW)).toEqual([]);
+    expect(nextTokenMinutes(undefined, usage(500), NOW, NOW)).toEqual({
+      tokenMinutes: [],
+      tokenMinutesBase: 500,
+    });
     expect(
       nextTokenMinutes({ tokens: usage(500) }, usage(400), NOW, NOW),
-    ).toEqual([]);
+    ).toEqual({ tokenMinutes: [], tokenMinutesBase: 500 });
   });
 
   it('drops minutes older than the window and credits a future event now', () => {
@@ -65,11 +68,28 @@ describe('nextTokenMinutes', () => {
         usage(8),
         '2026-10-13T12:05:00.000Z',
         NOW,
-      ),
+      ).tokenMinutes,
     ).toEqual([
       { minute: '2026-10-13T11:30:00.000Z', tokens: 3 },
       { minute: '2026-10-13T12:00:00.000Z', tokens: 8 },
     ]);
+  });
+});
+
+describe('nextTokenMinutes after a dip', () => {
+  it('credits only growth above the highest total already credited', () => {
+    const dipped = nextTokenMinutes({ tokens: usage(500) }, usage(0), NOW, NOW);
+    expect(dipped.tokenMinutes).toEqual([]);
+    const recovered = nextTokenMinutes(
+      { tokens: usage(0), ...dipped },
+      usage(520),
+      NOW,
+      NOW,
+    );
+    expect(recovered).toEqual({
+      tokenMinutes: [{ minute: '2026-10-13T12:00:00.000Z', tokens: 20 }],
+      tokenMinutesBase: 520,
+    });
   });
 });
 

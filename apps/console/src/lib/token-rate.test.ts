@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  expireTokenRate,
   fleetTokenRate,
   tokenRate,
   type TokenRateSnapshot,
@@ -91,5 +92,17 @@ describe('fleetTokenRate', () => {
     expect(fleetTokenRate(snapshot([{ agent: 'codex' }]))).toEqual({
       unavailable: 'no per-minute data',
     });
+  });
+});
+
+describe('expireTokenRate', () => {
+  it('turns a rate read too long ago into unavailable', () => {
+    const rate = tokenRate(snapshot([]));
+    const read = Date.parse(observedAt);
+    expect(expireTokenRate(rate, read + 60_000, 180_000)).toBe(rate);
+    expect(expireTokenRate(rate, read + 181_000, 180_000)).toEqual({
+      unavailable: 'stale · refresh to update',
+    });
+    expect(expireTokenRate(undefined, read, 180_000)).toBeUndefined();
   });
 });

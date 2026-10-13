@@ -123,14 +123,14 @@ export function sessionWriteForEvent(
       clientVersion: event.runtime.clientVersion,
     }),
   };
-  const tokenMinutes = nextTokenMinutes(
+  const credited = nextTokenMinutes(
     existing,
     write.doc.tokens,
     event.occurredAt,
     now,
   );
   return {
-    doc: { ...write.doc, observer, tokenMinutes },
+    doc: { ...write.doc, observer, ...credited },
     clearFields: write.clearFields,
   };
 }

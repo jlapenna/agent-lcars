@@ -294,7 +294,9 @@ runtime, clientVersion }` so provenance is visible next to daemon-written
   token total, so each write also records how much it grew, credited to the
   event's minute, in `tokenMinutes` (the last 30 minutes;
   `nextTokenMinutes` in `libs/telemetry`). The console's Tokens / min readout
-  sums it over sessions active in the window. A first write credits nothing;
+  sums it over sessions active in the window. Only growth above
+  `tokenMinutesBase`, the highest total already credited, counts, so a total
+  that dips and recovers is not credited twice. A first write credits nothing;
   a writer that does not re-read the doc leaves the field absent, and the
   readout marks that session unmeasured.
 - **Health.** `telemetry-hosts/{host}` doc with `lastEventAt`, event counts

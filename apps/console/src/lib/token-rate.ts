@@ -36,6 +36,8 @@ export interface TokenRate {
   sessions: number;
   /** Some active sessions are not measured, or the read was capped. */
   partial: boolean;
+  /** When the sessions were read. A live page expires the rate with it. */
+  observedAt: string;
 }
 
 export interface TokenRateFilter {
@@ -85,6 +87,7 @@ export function tokenRate(
     series,
     sessions: measured.length,
     partial: snapshot.capped || measured.length !== sessions.length,
+    observedAt: snapshot.observedAt,
   };
 }
 
@@ -95,4 +98,18 @@ export function fleetTokenRate(
 ): TokenRate | { unavailable: string } {
   if (!snapshot) return { unavailable: 'session store unavailable' };
   return tokenRate(snapshot, filter) ?? { unavailable: 'no per-minute data' };
+}
+
+/** A page that stays open, like Shuttlebay, read the rate once: past this
+ * age it is no longer current and reads as unavailable. Matches the runner
+ * snapshots' own staleness boundary. */
+export function expireTokenRate(
+  rate: TokenRate | { unavailable: string } | undefined,
+  now: number,
+  staleAfterMs: number,
+): TokenRate | { unavailable: string } | undefined {
+  if (!rate || 'unavailable' in rate) return rate;
+  return now - Date.parse(rate.observedAt) > staleAfterMs
+    ? { unavailable: 'stale · refresh to update' }
+    : rate;
 }

@@ -30,22 +30,27 @@ export function parseTokenMinutes(value: unknown): TokenMinute[] | undefined {
 }
 
 /**
- * The session's per-minute token deltas after one write: what the write adds
- * to the stored cost-weighted total (see {@link totalTokens}), credited to
- * the minute the event occurred in, with entries older than
- * {@link TOKEN_MINUTES_WINDOW} minutes before `now` dropped.
+ * The session's per-minute token deltas after one write: how far the write
+ * lifts the session's cost-weighted total (see {@link totalTokens}) above
+ * the highest total already credited, put in the minute the event occurred,
+ * with entries older than {@link TOKEN_MINUTES_WINDOW} minutes before `now`
+ * dropped.
  *
- * Nothing is credited when there is no stored total to measure from (the
- * session's first write: its earlier tokens have no known minute) or when
- * the total went down (a re-reduced transcript). The result is still a
- * list, possibly empty, which tells the console this session is measured.
+ * Crediting only growth above the high-water mark (`base`) means a write
+ * whose total went down (a re-reduced transcript, or a summary that fell
+ * back to zero) credits nothing, and the recovery after it does not count
+ * those tokens twice. A first write credits nothing either, since its
+ * earlier tokens have no known minute. The list is still returned, possibly
+ * empty, which tells the console this session is measured.
  */
 export function nextTokenMinutes(
-  stored: { tokens: TokenUsage; tokenMinutes?: unknown } | undefined,
+  stored:
+    | { tokens: TokenUsage; tokenMinutes?: unknown; tokenMinutesBase?: unknown }
+    | undefined,
   tokens: TokenUsage,
   occurredAt: string,
   now: string,
-): TokenMinute[] {
+): { tokenMinutes: TokenMinute[]; tokenMinutesBase: number } {
   const nowMs = Date.parse(now);
   const cutoff = nowMs - TOKEN_MINUTES_WINDOW * MINUTE_MS;
   const kept = (parseTokenMinutes(stored?.tokenMinutes) ?? [])
@@ -55,7 +60,15 @@ export function nextTokenMinutes(
       return at + MINUTE_MS > cutoff && at <= nowMs;
     })
     .map((entry) => ({ minute: entry.minute, tokens: entry.tokens }));
-  const delta = stored ? totalTokens(tokens) - totalTokens(stored.tokens) : 0;
+  const total = totalTokens(tokens);
+  const storedBase = stored?.tokenMinutesBase;
+  const base =
+    stored === undefined
+      ? total
+      : Number.isSafeInteger(storedBase) && (storedBase as number) >= 0
+        ? (storedBase as number)
+        : totalTokens(stored.tokens);
+  const delta = total - base;
   const occurred = Date.parse(occurredAt);
   if (delta > 0 && Number.isFinite(occurred)) {
     // A late flush is credited when it happened, never in the future.
@@ -68,7 +81,10 @@ export function nextTokenMinutes(
       else kept.push({ minute, tokens: delta });
     }
   }
-  return kept
-    .sort((a, b) => a.minute.localeCompare(b.minute))
-    .slice(-TOKEN_MINUTES_WINDOW - 1);
+  return {
+    tokenMinutes: kept
+      .sort((a, b) => a.minute.localeCompare(b.minute))
+      .slice(-TOKEN_MINUTES_WINDOW - 1),
+    tokenMinutesBase: Math.max(base, total),
+  };
 }

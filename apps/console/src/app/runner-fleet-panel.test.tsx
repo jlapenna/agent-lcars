@@ -95,6 +95,7 @@ describe('RunnerFleetPanel', () => {
             series: Array<number>(30).fill(48_200),
             sessions: 3,
             partial: true,
+            observedAt: '2026-10-13T15:00:00.000Z',
           }}
         />
       </MantineProvider>,
