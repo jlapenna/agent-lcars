@@ -111,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY_SOURCE'
-          import datetime, json, math, os, re, subprocess
+          import datetime, json, math, os, re, subprocess, time, urllib.parse
           from concurrent.futures import ThreadPoolExecutor
 
           def admit(value):
@@ -162,7 +162,24 @@ jobs:
           if api(f'compare/{source}...{main}')['status'] not in ('ahead', 'identical'):
               raise ValueError('Automatic source is not on current main history')
 
-          runs = records(api('actions/workflows/deploy-console.yml/runs?per_page=100', True), 'workflow_runs')
+          # Read history at a fixed creation ceiling. Runs created after it
+          # (PR skips, queued deployments behind this lock) cannot have rollout
+          # effects yet, and would otherwise shift pages and totals mid-scan.
+          # Incomplete evidence still refuses; only a changed snapshot retries.
+          runs = None
+          for attempt in range(3):
+              ceiling = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+              query = urllib.parse.quote(f'<={ceiling}', safe='')
+              try:
+                  runs = records(api(f'actions/workflows/deploy-console.yml/runs?per_page=100&created={query}', True), 'workflow_runs')
+              except ValueError:
+                  if attempt == 2:
+                      raise
+                  time.sleep(1)
+                  continue
+              if any(timestamp(run['created_at']) > timestamp(ceiling) for run in runs):
+                  raise ValueError('Deployment history ignored its creation ceiling')
+              break
           # Creation order is not effect order: an old run can be rerun later.
           # Discover all metadata before using updated_at as an upper bound;
           # validate observed step timestamps against that bound below.

@@ -55,6 +55,8 @@ function sourceDecision(
   deliveryMode = '',
   rollouts: Rollout[] = [{ source: NEW }],
   incomplete = false,
+  concurrent:
+    { newer: number; ignoreCeiling?: boolean } | undefined = undefined,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
@@ -98,6 +100,7 @@ function sourceDecision(
     };
     return {
       id: i + 1,
+      created_at: '2026-10-13T00:30:00Z',
       updated_at: run.updated ?? time,
       // Displayed workflow SHA intentionally differs from effect source.
       head_sha: main,
@@ -107,15 +110,20 @@ function sourceDecision(
     };
   });
   const total = rows.length + Number(incomplete);
-  for (let page = 1; page <= Math.max(1, Math.ceil(total / 100)); page++) {
-    const route =
-      'actions/workflows/deploy-console.yml/runs?per_page=100' +
-      (page === 1 ? '' : `&page=${page}`);
-    routes[route] = {
-      total_count: total,
-      workflow_runs: rows.slice((page - 1) * 100, page * 100),
-    };
-  }
+  // Rows created after the reader's ceiling, newest first. A server honoring
+  // `created=<=` omits them; one that ignores it prepends them and shifts
+  // every page, which is the failure observed in production.
+  const newer = Array.from({ length: concurrent?.newer ?? 0 }, (_, i) => ({
+    id: 1000 + i,
+    created_at: '2999-01-01T00:00:00Z',
+    updated_at: '2999-01-01T00:00:00Z',
+    display_title: 'Deploy console (skipped PR)',
+    conclusion: 'skipped',
+  }));
+  writeFileSync(
+    path.join(dir, 'runs'),
+    JSON.stringify({ rows, newer, total, ignore: concurrent?.ignoreCeiling }),
+  );
   writeFileSync(output, '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
   writeFileSync(
@@ -132,6 +140,15 @@ if route.startswith('compare/'):
     order=[os.environ['FIXTURE_BASE'], os.environ['FIXTURE_OLD'], os.environ['FIXTURE_NEW']]
     status='identical' if base==head else ('ahead' if base in order and head in order and order.index(base)<order.index(head) else ('behind' if base in order and head in order else 'diverged'))
     print(json.dumps({'status': status}))
+elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
+    with open(os.environ['FIXTURE_RUNS']) as f: runs=json.load(f)
+    query=dict(p.split('=',1) for p in route.split('?',1)[1].split('&'))
+    ceiling=query.get('created')
+    legacy = ceiling is None or runs.get('ignore')
+    rows = runs['newer'] + runs['rows'] if legacy else runs['rows']
+    total = runs['total'] + (len(runs['newer']) if legacy else 0)
+    page=int(query.get('page','1'))
+    print(json.dumps({'total_count': total, 'workflow_runs': rows[(page-1)*100:page*100]}))
 else: print(json.dumps(routes[route]))
 `,
     { mode: 0o755 },
@@ -152,6 +169,7 @@ else: print(json.dumps(routes[route]))
         GH_TOKEN: 'fixture-only',
         FIXTURE_CALLS: calls,
         FIXTURE_ROUTES: path.join(dir, 'routes'),
+        FIXTURE_RUNS: path.join(dir, 'runs'),
         FIXTURE_FAIL: String(fail),
         FIXTURE_BASE: BASE,
         FIXTURE_OLD: OLD,
@@ -357,6 +375,48 @@ describe('serialized automatic deployment source fence', () => {
       ]).status,
     ).not.toBe(0);
     expect(sourceDecision('c'.repeat(40), NEW).status).not.toBe(0);
+  });
+
+  it('reads history at a creation ceiling so concurrent new runs cannot change the scan', () => {
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 150 },
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+    expect(call.calls).toContain('created=%3C%3D');
+  });
+
+  it('still refuses when the server ignores the ceiling or history stays incomplete', () => {
+    expect(
+      sourceDecision(
+        NEW,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [{ source: OLD }],
+        false,
+        { newer: 2, ignoreCeiling: true },
+      ).status,
+    ).not.toBe(0);
+    expect(
+      sourceDecision(
+        NEW,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [{ source: OLD }],
+        true,
+        { newer: 2 },
+      ).status,
+    ).not.toBe(0);
   });
 
   it('refuses terminal rollout evidence without its start or step inventory', () => {
