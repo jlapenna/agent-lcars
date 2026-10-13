@@ -442,7 +442,7 @@ them:
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "lcars hook claude", "async": true }
+          { "type": "command", "command": "lcars hook claude", "timeout": 5 }
         ]
       }
     ],
@@ -473,8 +473,12 @@ them:
 ```
 
 `SessionStart` is synchronous because its stdout is injected as context;
-the client prints nothing. `async: true` everywhere else means the agent
-never waits on telemetry.
+the client prints nothing. `Stop` is synchronous too: when `claude -p` exits
+while an async `Stop` hook is still running, it cancels that hook and skips
+`SessionEnd` hooks entirely, which on a 2-CPU runner lost every end event
+(found by `apps/runner-autoscaler/runner-image/hook-telemetry.test.sh`). It
+costs one hook run (about 0.1-0.3 s) at the end of each turn. `async: true`
+everywhere else means the agent never waits on telemetry mid-turn.
 
 ### 5.2 Codex (`~/.codex/hooks.json`, and `$CODEX_HOME/hooks.json` on runners)
 

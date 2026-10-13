@@ -632,6 +632,9 @@ COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
     /repo/apps/runner-autoscaler/runner-image/opencode-version \
     /usr/local/lib/agent-lcars/opencode-continuation-test/
+COPY --from=telemetry-watcher-build \
+    /repo/apps/runner-autoscaler/runner-image/hook-telemetry.test.sh \
+    /usr/local/lib/agent-lcars/hook-telemetry.test.sh
 
 USER runner
 
@@ -668,6 +671,12 @@ RUN --network=none bash /usr/local/lib/agent-lcars/check-opencode-concurrent-rea
 # reloads instructions and hooks after its own automatic compaction boundary.
 # No registry connection may hide an unprepared dependency during this proof.
 RUN --network=none bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh
+
+# Claude Code and Codex are installed unpinned above. Drive all three agent
+# CLIs through a localhost provider with the hook telemetry this image
+# installs, so a release that stops running our hooks or changes their
+# payloads fails publication instead of silently dropping live sessions.
+RUN --network=none bash /usr/local/lib/agent-lcars/hook-telemetry.test.sh
 
 # Register the shared source checkout in each provider's own runner-user
 # plugin state. Both providers require their own installed plugin snapshot;

@@ -55,7 +55,10 @@ export const INTEGRATION_TARGETS: Readonly<
       { event: 'SessionStart', timeout: 10 },
       { event: 'UserPromptSubmit', async: true },
       { event: 'PostToolUse', async: true },
-      { event: 'Stop', async: true },
+      // Synchronous: when `claude -p` exits with an async Stop hook still
+      // running, it skips SessionEnd hooks entirely. On a 2-CPU runner that
+      // lost every end event (runner-image/hook-telemetry.test.sh).
+      { event: 'Stop', timeout: 5 },
       // SessionEnd's default budget is 1.5 s; a per-hook timeout raises it.
       { event: 'SessionEnd', timeout: 5 },
     ],
