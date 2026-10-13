@@ -103,9 +103,14 @@ test.describe('Shuttlebay live stream', () => {
     await expect(toolbar.getByLabel('Agent', { exact: true })).toHaveValue(
       'codex',
     );
-    await expect(
-      page.getByText('No runner lane matches these filters.'),
-    ).toBeVisible();
+    // Both runner views say a filter, not missing data, emptied them.
+    for (const panel of ['shuttlebay-runners', 'runner-fleet-panel']) {
+      await expect(
+        page
+          .getByTestId(panel)
+          .getByText('No runner lane matches these filters.'),
+      ).toBeVisible();
+    }
     const admission = page.getByTestId('shuttlebay-admission');
     await expect(admission.getByText('codex', { exact: true })).toBeVisible();
     await expect(admission.getByText('claude', { exact: true })).toHaveCount(0);
