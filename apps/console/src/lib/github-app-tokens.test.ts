@@ -287,7 +287,7 @@ describe('AppInstallationTokenProvider', () => {
         { status: 201 },
       );
     }) as typeof fetch;
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const provider = new AppInstallationTokenProvider({
       clientId: CLIENT_ID,
       privateKeyPem: PRIVATE_KEY_PEM,
