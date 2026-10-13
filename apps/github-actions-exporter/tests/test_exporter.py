@@ -778,6 +778,64 @@ class GitHubActionsExporterTests(unittest.TestCase):
             self.metrics(),
         )
 
+    def test_jobs_server_error_keeps_repository_fresh_and_retries_the_run(self):
+        repository = "jlapenna/homelab"
+        run = workflow_run()
+        queued_job = workflow_job(
+            status="queued", conclusion=None, started_at=None, completed_at=None
+        )
+        self.database.upsert_run(
+            repository,
+            workflow_run(
+                status="in_progress",
+                conclusion=None,
+                updated_at="2026-08-05T04:00:00Z",
+            ),
+        )
+        self.database.upsert_jobs(
+            repository,
+            workflow_run(
+                status="in_progress",
+                conclusion=None,
+                updated_at="2026-08-05T04:00:00Z",
+            ),
+            [queued_job],
+        )
+        api = FakeAPI(run, [workflow_job()])
+        api.list_runs = Mock(return_value=[run])
+        api.list_jobs = Mock(
+            side_effect=exporter.GitHubRequestError(
+                "jobs", Mock(status_code=502, headers={})
+            )
+        )
+        state = FakeState()
+        poller = exporter.Poller(
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
+            self.database,
+            api,
+            state,
+        )
+
+        poller.refresh_repository(repository)
+
+        self.assertIsNotNone(self.database.last_success_at(repository))
+        self.assertEqual(
+            self.database.pending_job_refresh_run_ids(repository), {run["id"]}
+        )
+
+        api.list_runs = Mock(return_value=[])
+        api.list_jobs = Mock(return_value=[workflow_job()])
+        poller.refresh_repository(repository)
+
+        self.assertEqual(self.database.pending_job_refresh_run_ids(repository), set())
+        self.assertIn(
+            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            self.metrics(),
+        )
+
     def test_empty_retry_keeps_omitted_refresh_pending_job_retryable(self):
         repository = "jlapenna/homelab"
         run = workflow_run()

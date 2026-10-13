@@ -963,13 +963,13 @@ class Database:
         return {int(row["id"]) for row in rows}
 
     def pending_job_refresh_run_ids(self, repository: str) -> set[int]:
-        """Return terminal runs whose jobs API snapshot was contradictory."""
+        """Return terminal runs whose jobs snapshot is contradictory or stale."""
         with self.lock:
             rows = self.connection.execute(
                 """
                 SELECT id FROM workflow_runs
                 WHERE repository = ? AND status = 'completed'
-                  AND jobs_updated_at IS NULL
+                  AND (jobs_updated_at IS NULL OR jobs_updated_at < updated_at)
                   AND run_attempt = (
                     SELECT MAX(latest.run_attempt) FROM workflow_runs AS latest
                     WHERE latest.repository = workflow_runs.repository
@@ -1722,7 +1722,19 @@ class Poller:
         needs_jobs = self.database.jobs_need_refresh(repository, run)
         self.database.upsert_run(repository, run)
         if needs_jobs:
-            jobs = self.api.list_jobs(repository, int(run["id"]))
+            try:
+                jobs = self.api.list_jobs(repository, int(run["id"]))
+            except GitHubRequestError as exc:
+                # One run's jobs endpoint failing transiently does not make the
+                # repository stale. The run's jobs stay due (active, or
+                # completed with an older snapshot) and are retried next cycle.
+                if exc.rate_limited or exc.status_code < 500:
+                    raise
+                self._record_jobs_failure(repository, int(run["id"]), exc)
+                return
+            except requests.RequestException as exc:
+                self._record_jobs_failure(repository, int(run["id"]), exc)
+                return
             # None (vs. an attempted-but-possibly-empty list) tells
             # upsert_jobs whether the concurrency-group listing was ever
             # queried for this run -- see the "unknown" vs. "none" fallback
@@ -1754,6 +1766,17 @@ class Poller:
                             repository, int(run["id"]), now, exc
                         )
             self.database.upsert_jobs(repository, run, jobs, groups)
+
+    def _record_jobs_failure(
+        self, repository: str, run_id: int, error: Exception
+    ) -> None:
+        self.state.poll_errors.labels(repository, "jobs").inc()
+        LOGGER.warning(
+            "jobs refresh failed for %s run %s (%s); retrying next cycle",
+            repository,
+            run_id,
+            error,
+        )
 
     def _record_optional_metadata_failure(
         self, repository: str, run_id: int, now: float, error: Exception
