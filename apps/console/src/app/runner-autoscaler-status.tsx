@@ -315,6 +315,13 @@ export function RunnerAutoscalerStatus({
     queueExecutor: executorMatches(filters) ? live.queueExecutor : undefined,
   };
   const filtered = Boolean(filters.repo || filters.q);
+  const filteredEmpty =
+    filtered &&
+    (result.lanes?.length ?? 0) === 0 &&
+    (live.lanes?.length ?? 0) > 0;
+  // Only a complete inventory can prove no lane matches: a missing, stale or
+  // invalid lane might be the one asked for.
+  const noMatch = filteredEmpty && !live.lanesIncomplete;
 
   useEffect(() => {
     // EventSource reconnects by itself after the server ends a stream or the
@@ -399,9 +406,11 @@ export function RunnerAutoscalerStatus({
                 {(result.lanes?.length ?? 0) === 0 && (
                   <tr>
                     <td colSpan={5} className="ops-dim">
-                      {filtered && (live.lanes?.length ?? 0) > 0
+                      {noMatch
                         ? 'No runner lane matches these filters.'
-                        : 'GitHub runner status unavailable.'}
+                        : filteredEmpty
+                          ? 'No reporting lane matches these filters; some lanes are not reporting.'
+                          : 'GitHub runner status unavailable.'}
                     </td>
                   </tr>
                 )}
@@ -430,11 +439,7 @@ export function RunnerAutoscalerStatus({
             lanes={result.lanes}
             lanesIncomplete={result.lanesIncomplete}
             executor={result.queueExecutor}
-            filteredOut={
-              filtered &&
-              (result.lanes?.length ?? 0) === 0 &&
-              (live.lanes?.length ?? 0) > 0
-            }
+            filteredOut={noMatch}
           />
         </div>
       </div>

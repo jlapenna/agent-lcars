@@ -65,6 +65,31 @@ describe('RunnerAutoscalerStatus', () => {
     expect(screen.queryByText('Runner status unavailable')).toBeNull();
   });
 
+  it('does not call an empty filter conclusive while lanes are missing', () => {
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{
+            warnings: [],
+            lanes: [lane],
+            lanesIncomplete: true,
+            queueExecutor: executor,
+          }}
+          filters={{ q: 'nomatch' }}
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getByText(
+        'No reporting lane matches these filters; some lanes are not reporting.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('Runner status unavailable')).toBeTruthy();
+    expect(
+      screen.queryByText('No runner lane matches these filters.'),
+    ).toBeNull();
+  });
+
   it('narrows admission to the filtered agent', () => {
     render(
       <MantineProvider>
