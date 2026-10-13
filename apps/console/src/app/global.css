@@ -1895,7 +1895,9 @@ td.work-table__num {
 .costs-repo-spend__repo {
   font-family: var(--font-mono), monospace;
   font-size: 0.8125rem;
-  overflow-wrap: anywhere;
+  /* Breaks after owner/ (a <wbr> in the markup), mid-word only as a last
+     resort. */
+  overflow-wrap: break-word;
 }
 
 .costs-repo-spend__num {
@@ -1920,6 +1922,25 @@ td.costs-repo-spend__num {
   font-family: var(--font-mono), monospace;
   font-size: 0.75rem;
   color: var(--lcars-ink-dim);
+}
+
+.costs-repo-spend__bar > span {
+  white-space: nowrap;
+}
+
+/* Below desktop the table has no room for the bar: keep its value. */
+@media (max-width: 63.99em) {
+  .costs-repo-spend__bar {
+    grid-template-columns: auto;
+  }
+
+  .costs-repo-spend__meter {
+    display: none;
+  }
+
+  .costs-repo-spend__week {
+    width: auto;
+  }
 }
 
 .costs-repo-spend__meter {
@@ -2001,6 +2022,22 @@ td.costs-repo-spend__num {
 .costs-ledger-table td {
   border: 0;
   border-bottom: 1px solid var(--lcars-hairline);
+}
+
+/* Stacked breakdowns: counts and money stay on one line, and the auto
+   table layout gives the identity column what is left. */
+.costs-ledger-grid--stacked .costs-ledger-table td + td,
+.costs-ledger-grid--stacked .costs-ledger-table th + th {
+  white-space: nowrap;
+}
+
+.costs-ledger-table__aside {
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+}
+
+.costs-ledger-grid--stacked {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .costs-ledger-table tbody tr:hover {

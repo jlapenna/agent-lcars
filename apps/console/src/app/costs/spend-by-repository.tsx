@@ -26,6 +26,19 @@ function money(usd: number | undefined, estimated = false): string {
  * session count and the spend per session. Seven-day figures are withheld,
  * not undercounted, when the selected window is shorter than seven days.
  */
+/** `owner/name`, breakable after the slash rather than mid-word. */
+function RepoName({ repo }: { repo: string }) {
+  const slash = repo.indexOf('/');
+  if (slash < 0) return <>{repo}</>;
+  return (
+    <>
+      {repo.slice(0, slash + 1)}
+      <wbr />
+      {repo.slice(slash + 1)}
+    </>
+  );
+}
+
 export function SpendByRepository({ spend }: { spend: RepositorySpend }) {
   const max = Math.max(0, ...spend.rows.map((row) => row.sevenDayUsd));
   const unavailable = spend.sevenDayUnavailable;
@@ -74,7 +87,7 @@ export function SpendByRepository({ spend }: { spend: RepositorySpend }) {
               {spend.rows.map((row) => (
                 <TableTr key={row.repo} data-testid={`repo-spend-${row.repo}`}>
                   <TableTd className="costs-repo-spend__repo">
-                    {row.repo}
+                    <RepoName repo={row.repo} />
                   </TableTd>
                   <TableTd className="costs-repo-spend__num">
                     {money(row.todayUsd, row.estimated)}
