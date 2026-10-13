@@ -177,7 +177,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .lcars-header-bar-segment {
   flex: none;
-  border-radius: 999px;
+  border-radius: 0;
   /* Each segment carries its own `data-accent`, so the accent table resolves
      its colour - the strip previews the destination rail using the rail's own
      values rather than a second copy of them. That copy had already drifted:
@@ -186,25 +186,34 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-accent);
 }
 
-.lcars-header-bar-segment[data-accent='amber'] {
-  width: 4.5rem;
-}
-
 .lcars-header-bar-segment[data-accent='blue'] {
-  width: 2.75rem;
+  flex: 0 0 34%;
 }
 
-.lcars-header-bar-segment[data-accent='periwinkle'] {
-  width: 2rem;
+.lcars-header-bar-segment[data-accent='violet'] {
+  flex: 0 0 12%;
 }
 
 .lcars-header-bar-segment[data-accent='gold'] {
-  width: 1.25rem;
+  flex: 0 0 7%;
+}
+
+.lcars-header-bar-segment[data-accent='amber'] {
+  flex: 0 0 3%;
 }
 
 .lcars-header-bar-segment[data-accent='teal'] {
   flex: 1 1 auto;
-  max-width: 8rem;
+  max-width: 14%;
+}
+
+/* The arm, the frame rail, and the nav index only exist in the desktop
+   rail layout (min-width 64em, below). */
+.lcars-header-arm,
+.lcars-rail-head,
+.lcars-rail-body,
+.lcars-nav-index {
+  display: none;
 }
 
 /* ---- Signature: LCARS destination rail ----
@@ -235,7 +244,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   align-items: center;
   padding: 8px 22px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   font-family: var(--font-display), sans-serif;
   font-weight: 600;
   font-size: 0.9375rem;
@@ -390,7 +399,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .lcars-command-utilities
   :is(.mantine-ActionIcon-root, .lcars-refresh-button) {
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--lcars-ink-on-muted);
   background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
   box-shadow: none;
@@ -769,24 +778,24 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* The frame's two standard bands, owned here rather than restated by each
-   route. The toolbar takes the route accent, so Sessions' filter bar and
-   Costs' controls are the same band in two different colors instead of two
-   different bands (#1828). */
+   route (#1828). Both sit on the one ground: the warning band is marked by
+   its status-colour leading edge, the toolbar only by the hairline below. */
 .console-workspace__warnings {
-  padding: 10px 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--lcars-hairline);
-  background: color-mix(in srgb, var(--lcars-warning) 8%, var(--lcars-surface));
+  border-left: 4px solid var(--lcars-warning);
+  background: var(--lcars-surface);
 }
 
 .console-workspace__toolbar {
   display: flex;
-  min-height: 48px;
+  min-height: 56px;
   align-items: center;
   justify-content: flex-start;
   gap: var(--mantine-spacing-sm);
-  padding: 6px 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--lcars-hairline);
-  background: color-mix(in srgb, var(--lcars-accent) 10%, var(--lcars-surface));
+  background: var(--lcars-surface);
 }
 
 /* A workspace's content divides into stacked sections separated by the same
@@ -994,7 +1003,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: inline-flex;
   overflow: hidden;
   gap: 2px;
-  border-radius: 999px;
+  border-radius: 0;
 }
 
 .sessions-view-toggle__option {
@@ -1530,14 +1539,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   justify-content: center;
   border: 1px solid
     color-mix(in srgb, var(--mantine-color-blue-4) 58%, transparent);
-  border-radius: 50%;
+  border-radius: 0;
   background: color-mix(in srgb, var(--mantine-color-blue-5) 16%, transparent);
 }
 
 .queue-row-signal > span {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--mantine-color-blue-4);
   box-shadow: 0 0 0 3px
     color-mix(in srgb, var(--mantine-color-blue-5) 18%, transparent);
@@ -1874,6 +1883,264 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 }
 
+/* ---- Desktop frame: the elbow rail ----
+   From 64em the page takes the frame in design/fleet-console.html: a broad
+   vertical rail down the leading edge whose head turns through a concentric
+   knee into the header's arm. It is still the one elbow per page; it simply
+   encloses the workspace from the side as well as from above. The header
+   (arm, title row, signal bar, destination rail) and the content share the
+   second column, so titles and workspaces align on one leading edge.
+
+   Below 64em there is no room for a 152px rail beside a usable workspace,
+   and the header keeps the compact elbow drawn by the blocks above. */
+@media (min-width: 64em) {
+  .console-page-shell[data-frame='rail'] {
+    --lcars-rail-width: 152px;
+    --lcars-rail-gap: 32px;
+    --lcars-rail-arm: 24px;
+    --lcars-rail-outer-radius: 72px;
+    --lcars-content-start: 0px;
+    display: grid;
+    grid-template-columns: var(--lcars-rail-width) minmax(0, 1fr);
+    grid-template-rows: auto 1fr auto;
+    column-gap: var(--lcars-rail-gap);
+    padding: 0 28px 0 0 !important;
+  }
+
+  .console-page-shell[data-frame='rail'] > .lcars-rail-head {
+    position: relative;
+    display: flex;
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0 12px 14px;
+    color: var(--lcars-ink-on-accent);
+    text-align: right;
+    background: var(--lcars-accent);
+    border-top-left-radius: var(--lcars-rail-outer-radius);
+  }
+
+  /* The knee: the arm's thickness carried across the column gap, with a
+     concave quarter-circle cut from beneath it. */
+  .console-page-shell[data-frame='rail'] > .lcars-rail-head::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 100%;
+    width: var(--lcars-rail-gap);
+    height: calc(var(--lcars-rail-arm) + var(--lcars-rail-gap));
+    background: var(--lcars-accent);
+    mask:
+      radial-gradient(
+          circle at 100% 100%,
+          transparent calc(var(--lcars-rail-gap) - 0.5px),
+          #000 var(--lcars-rail-gap)
+        )
+        0 var(--lcars-rail-arm) / var(--lcars-rail-gap) var(--lcars-rail-gap)
+        no-repeat,
+      linear-gradient(#000 0 0) 0 0 / 100% var(--lcars-rail-arm) no-repeat;
+  }
+
+  .lcars-rail-brand {
+    font-family: var(--font-display), sans-serif;
+    font-size: 1.375rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .console-page-shell[data-frame='rail'] > .lcars-rail-body {
+    display: flex;
+    grid-column: 1;
+    grid-row: 2 / span 2;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+  }
+
+  .lcars-rail-block {
+    display: block;
+    background: color-mix(
+      in srgb,
+      var(--lcars-accent) 52%,
+      var(--lcars-surface)
+    );
+  }
+
+  .lcars-rail-block--short {
+    height: 84px;
+  }
+
+  .lcars-rail-block--medium {
+    height: 120px;
+  }
+
+  .lcars-rail-block--tall {
+    height: 168px;
+  }
+
+  .lcars-rail-block--fill {
+    flex: 1 1 auto;
+    min-height: 40px;
+  }
+
+  .lcars-rail-block--end {
+    height: 44px;
+    background: var(--lcars-accent);
+  }
+
+  .console-page-shell[data-frame='rail'] > .console-header[data-current] {
+    --lcars-elbow-arm: var(--lcars-rail-arm);
+    grid-column: 2;
+    grid-row: 1;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-rows: var(--lcars-rail-arm) auto auto auto;
+    gap: 0 24px;
+    padding: 0 0 18px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    > .console-header[data-current]::before {
+    display: none;
+  }
+
+  .console-page-shell[data-frame='rail'] .lcars-header-arm {
+    display: flex;
+    grid-column: 1 / -1;
+    grid-row: 1;
+    gap: 6px;
+    height: var(--lcars-rail-arm);
+  }
+
+  .lcars-header-arm > span {
+    display: block;
+    background: var(--lcars-accent);
+  }
+
+  .lcars-header-arm > span:first-child {
+    flex: 1 1 auto;
+  }
+
+  .lcars-header-arm > span:nth-child(2) {
+    width: 56px;
+  }
+
+  .lcars-header-arm > span:nth-child(3) {
+    width: 20px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header {
+    display: contents;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header
+    > .mantine-Group-root {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: end;
+    min-width: 0;
+    padding-top: 18px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header-title {
+    font-size: 2.875rem;
+    font-weight: 700;
+    line-height: 0.95;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-long-title]
+    .lcars-header-title {
+    font-size: 1.75rem;
+    line-height: 1.05;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header
+    .mantine-Text-root {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.8125rem;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header-bar {
+    display: flex;
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin: 16px 0 12px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-command-utilities {
+    grid-row: 2;
+    align-self: end;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-nav {
+    grid-row: 4;
+  }
+
+  /* Square modules, the label docked to the trailing edge and the rail
+     position in the leading corner. */
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-nav-pill {
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    min-width: 6.5rem;
+    height: 44px;
+    min-height: 44px;
+    padding: 0 12px 7px;
+    font-size: 0.9375rem;
+    letter-spacing: 0.06em;
+  }
+
+  .console-page-shell[data-frame='rail'] .lcars-nav-index {
+    display: block;
+    align-self: flex-start;
+    padding-top: 7px;
+    font-family: var(--font-mono), monospace;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0;
+  }
+
+  .console-page-shell[data-frame='rail'] > .console-page-content {
+    grid-column: 2;
+    grid-row: 2;
+    padding: 16px 0 28px;
+  }
+
+  .console-page-shell[data-frame='rail'] > .console-page-footer {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  /* The streamed placeholder shell hides its header once the resolved one
+     exists (top of this file); its rail goes with it. */
+  body:has(.console-header:not([data-streaming-fallback]))
+    .console-page-shell[data-streaming-fallback]
+    > :is(.lcars-rail-head, .lcars-rail-body) {
+    display: none;
+  }
+}
+
 @media (max-width: 47.99em) {
   /* Mantine renders menus in a body-level portal, outside the workspace
      that opened them. Size the portal items themselves for touch instead
@@ -2107,7 +2374,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     color: var(--lcars-accent-ink);
     font-weight: 600;
     border: 1px solid var(--mantine-color-default-border);
-    border-radius: var(--mantine-radius-sm);
+    border-radius: 0;
     background: color-mix(in srgb, var(--lcars-accent) 8%, transparent);
   }
 
@@ -2333,7 +2600,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     align-self: stretch;
     min-width: 7.25rem;
     min-height: 44px;
-    border-radius: 0 0 24px;
+    border-radius: 0;
     font-family: var(--font-display), sans-serif;
     font-size: 0.8125rem;
     letter-spacing: 0.05em;
@@ -2582,7 +2849,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   min-height: 2.35rem;
   padding-inline: 0.9rem;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   font-family: var(--font-display), sans-serif;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -2770,7 +3037,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   border-left: 3px solid var(--mantine-color-dark-4);
   background: var(--lcars-surface-raised);
   padding: 8px 12px;
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .console-repository-selector {
