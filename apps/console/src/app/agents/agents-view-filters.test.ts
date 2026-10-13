@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   matchesAgentsRun,
   matchesAgentsSession,
+  matchesClaimedAgent,
   matchesFind,
   parseAgentsViewFilters,
 } from './agents-view-filters';
@@ -25,6 +26,27 @@ describe('parseAgentsViewFilters', () => {
     expect(
       parseAgentsViewFilters({ agent: 'robot', window: '3d', q: '  ' }),
     ).toEqual({ agent: undefined, window: undefined, q: undefined });
+  });
+
+  it('takes the first of a repeated parameter instead of throwing', () => {
+    expect(
+      parseAgentsViewFilters({ q: ['oom', 'leak'], agent: ['codex', 'x'] }),
+    ).toEqual({ agent: 'codex', window: undefined, q: 'oom' });
+  });
+});
+
+describe('matchesClaimedAgent', () => {
+  it('prefers the authoritative spec pipeline over labels', () => {
+    expect(matchesClaimedAgent({ labels: [] }, 'codex', 'codex')).toBe(true);
+    expect(
+      matchesClaimedAgent({ labels: ['agent:claude'] }, 'codex', 'claude'),
+    ).toBe(false);
+    expect(
+      matchesClaimedAgent({ labels: ['agent:claude'] }, undefined, 'claude'),
+    ).toBe(true);
+    expect(matchesClaimedAgent({ labels: [] }, undefined, undefined)).toBe(
+      true,
+    );
   });
 });
 

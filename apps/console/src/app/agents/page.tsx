@@ -56,6 +56,7 @@ import {
   type AgentsViewFilters,
   matchesAgentsRun,
   matchesAgentsSession,
+  matchesClaimedAgent,
   matchesFind,
   parseAgentsViewFilters,
 } from './agents-view-filters';
@@ -68,9 +69,9 @@ interface PageProps {
   searchParams: Promise<{
     repo?: string;
     sel?: string;
-    agent?: string;
-    window?: string;
-    q?: string;
+    agent?: string | string[];
+    window?: string | string[];
+    q?: string | string[];
   }>;
 }
 
@@ -199,7 +200,12 @@ async function AgentsPageBody({
   const filteredClaimedIdle = claimedIdle.filter(
     (item) =>
       matchesFilter(item.repo) &&
-      (!filters.agent || item.labels.includes(`agent:${filters.agent}`)) &&
+      matchesClaimedAgent(
+        item,
+        authoritative.states.get(repoItemKey(item.repo, item.number))?.spec
+          .pipeline,
+        filters.agent,
+      ) &&
       matchesFind(
         [item.title, `${repoKey(item.repo)}#${item.number}`],
         filters.q,

@@ -20,21 +20,29 @@ export interface AgentsViewFilters {
   q?: string;
 }
 
+type RawParam = string | string[] | undefined;
+
+/** Next hands a repeated parameter (`?q=a&q=b`) over as an array; the first
+ * value wins, as on Sessions. */
+function first(value: RawParam): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 /** Unknown values are ignored rather than rejected, as on Work. */
 export function parseAgentsViewFilters(params: {
-  agent?: string;
-  window?: string;
-  q?: string;
+  agent?: RawParam;
+  window?: RawParam;
+  q?: RawParam;
 }): AgentsViewFilters {
-  const agent = (PIPELINES as readonly string[]).includes(params.agent ?? '')
-    ? (params.agent as AgentPipeline)
+  const agentParam = first(params.agent) ?? '';
+  const agent = (PIPELINES as readonly string[]).includes(agentParam)
+    ? (agentParam as AgentPipeline)
     : undefined;
-  const window = (AGENTS_WINDOWS as readonly string[]).includes(
-    params.window ?? '',
-  )
-    ? (params.window as AgentsWindow)
+  const windowParam = first(params.window) ?? '';
+  const window = (AGENTS_WINDOWS as readonly string[]).includes(windowParam)
+    ? (windowParam as AgentsWindow)
     : undefined;
-  const q = params.q?.trim().slice(0, 128) || undefined;
+  const q = first(params.q)?.trim().slice(0, 128) || undefined;
   return { agent, window, q };
 }
 
@@ -70,6 +78,19 @@ export function matchesAgentsRun(
       ? repoKey(run.repo)
       : `${repoKey(run.repo)}#${run.issueNumber}`;
   return matchesFind([run.displayTitle, anchor, run.id], filters.q);
+}
+
+/** Claimed work belongs to the pipeline its authoritative Work spec names;
+ * only work with no task record falls back to its `agent:` label. */
+export function matchesClaimedAgent(
+  item: { labels: readonly string[] },
+  specPipeline: string | undefined,
+  agent: AgentPipeline | undefined,
+): boolean {
+  if (!agent) return true;
+  return specPipeline === undefined
+    ? item.labels.includes(`agent:${agent}`)
+    : specPipeline === agent;
 }
 
 /** A dispatch pipeline's CLI adapter, for narrowing interactive sessions. */
