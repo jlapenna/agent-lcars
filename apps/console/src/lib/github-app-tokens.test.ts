@@ -311,6 +311,34 @@ describe('AppInstallationTokenProvider', () => {
     warn.mockRestore();
   });
 
+  it('warns when a successful mint omits an optional permission from its grant', async () => {
+    const { fetchImpl } = fakeAppFetch({
+      tokenBody: {
+        token: 'ghs_minted-token',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        permissions: {
+          actions: 'write',
+          contents: 'write',
+          pull_requests: 'write',
+          issues: 'write',
+        },
+      },
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const provider = new AppInstallationTokenProvider({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+      permissions: DIRECT_RUNNER_PERMISSIONS,
+    });
+
+    await expect(provider.tokenFor(REPO)).resolves.toBe('ghs_minted-token');
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).toContain('workflows');
+    warn.mockRestore();
+  });
+
   it('caches the minted token: a second call within its expiry window does not re-fetch', async () => {
     const { fetchImpl, calls } = fakeAppFetch();
     const provider = new AppInstallationTokenProvider({

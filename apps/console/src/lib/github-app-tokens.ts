@@ -185,6 +185,8 @@ export interface AppInstallationTokenProviderOptions {
 interface CachedInstallationToken {
   token: string;
   expiresAtMs: number;
+  /** The grant GitHub reports for this token, when the response carries it. */
+  permissions?: Record<string, string>;
 }
 
 /**
@@ -555,7 +557,7 @@ async function mintInstallationAccessToken(
     );
   }
   try {
-    return await mintOnce(
+    const minted = await mintOnce(
       fetchImpl,
       jwt,
       installationId,
@@ -563,6 +565,21 @@ async function mintInstallationAccessToken(
       logLabel,
       permissions,
     );
+    // GitHub can also succeed with a narrowed grant, omitting an optional
+    // permission the installation has not approved from the response
+    // (the case mint-agent-token's verify-workflows-grant.sh handles).
+    const missing = OPTIONAL_PERMISSIONS.filter(
+      (name) =>
+        name in permissions &&
+        minted.permissions !== undefined &&
+        minted.permissions[name] !== permissions[name],
+    );
+    if (missing.length > 0) {
+      console.warn(
+        `GitHub App installation token for ${logLabel} minted without optional permissions (${missing.join(', ')}): installation has not approved them`,
+      );
+    }
+    return minted;
   } catch (error) {
     if (!(error instanceof MintStatusError) || error.status !== 422) {
       throw error;
@@ -628,6 +645,7 @@ async function mintOnce(
   const body = (await response.json()) as {
     token?: unknown;
     expires_at?: unknown;
+    permissions?: unknown;
   };
   if (typeof body.token !== 'string' || typeof body.expires_at !== 'string') {
     throw new Error(
@@ -640,7 +658,11 @@ async function mintOnce(
       `GitHub App installation access token response for ${logLabel} has an unparseable expires_at`,
     );
   }
-  return { token: body.token, expiresAtMs };
+  const granted =
+    typeof body.permissions === 'object' && body.permissions !== null
+      ? (body.permissions as Record<string, string>)
+      : undefined;
+  return { token: body.token, expiresAtMs, permissions: granted };
 }
 
 function errorMessage(error: unknown): string {
