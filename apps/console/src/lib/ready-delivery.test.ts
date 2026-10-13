@@ -1248,3 +1248,199 @@ describe('complete applicable protected-check policy', () => {
     await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow();
   });
 });
+
+describe('required non-Actions check provenance', () => {
+  const APP = { id: 77, slug: 'coverage-app' };
+  const CHECK = {
+    id: 20,
+    check_suite: { id: 7 },
+    app: APP,
+    name: 'Coverage',
+    head_sha: HEAD,
+    status: 'completed',
+    conclusion: 'failure',
+  };
+  const SUITE = {
+    id: 7,
+    app: APP,
+    head_sha: HEAD,
+    status: 'completed',
+    conclusion: 'failure',
+  };
+  function external(
+    over: {
+      suite?: unknown;
+      latest?: unknown;
+      integration?: number | null;
+    } = {},
+  ) {
+    const base = fixture({
+      rules: [
+        { type: 'pull_request' },
+        {
+          type: 'required_status_checks',
+          parameters: {
+            required_status_checks: [
+              {
+                context: 'Coverage',
+                integration_id:
+                  over.integration === undefined ? 77 : over.integration,
+              },
+            ],
+          },
+        },
+      ],
+      checks: { total_count: 1, check_runs: [CHECK] },
+      workflows: { total_count: 0, workflow_runs: [] },
+    });
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path.endsWith('/check-suites/7')) {
+          const suite = over.suite ?? SUITE;
+          return suite instanceof Response ? suite : Response.json(suite);
+        }
+        if (
+          path.includes('/check-runs?') &&
+          new URL(path).searchParams.has('app_id')
+        ) {
+          const latest = over.latest ?? { total_count: 1, check_runs: [CHECK] };
+          return latest instanceof Response ? latest : Response.json(latest);
+        }
+        return base.fetchImpl(input, init);
+      },
+    );
+    return { ...base, fetchImpl: fetchImpl as unknown as typeof fetch };
+  }
+  it('requests correction for a current required failure from its configured non-Actions App', async () => {
+    const deps = external();
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Required checks failed: Coverage',
+    });
+    expect(
+      vi.mocked(deps.fetchImpl).mock.calls.map(([input]) => String(input)),
+    ).toContain(
+      `https://api.github.com/repos/octo/example/commits/${HEAD}/check-runs?per_page=100&filter=latest&app_id=77&check_name=Coverage`,
+    );
+    expect(
+      vi
+        .mocked(deps.fetchImpl)
+        .mock.calls.some(([input]) => String(input).includes('/actions/runs')),
+    ).toBe(false);
+  });
+  it('qualifies an unpinned required context through its exact non-Actions App and suite', async () => {
+    expect(
+      await observeGithubDelivery(external({ integration: null }), BINDING),
+    ).toMatchObject({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Required checks failed: Coverage',
+    });
+  });
+  it('does not substitute an Actions failure for a context pinned to another App', async () => {
+    const deps = fixture({
+      rules: [
+        { type: 'pull_request' },
+        {
+          type: 'required_status_checks',
+          parameters: {
+            required_status_checks: [{ context: 'Verify', integration_id: 77 }],
+          },
+        },
+      ],
+      checks: {
+        total_count: 1,
+        check_runs: [
+          {
+            id: 20,
+            check_suite: { id: 1 },
+            app: { id: 15368, slug: 'github-actions' },
+            name: 'Verify',
+            head_sha: HEAD,
+            status: 'completed',
+            conclusion: 'failure',
+          },
+        ],
+      },
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'waiting',
+      head: HEAD,
+    });
+  });
+  it.each([
+    { id: 21, status: 'queued', conclusion: null },
+    { id: 21, status: 'completed', conclusion: 'success' },
+  ])(
+    'retains ownership when the provider current check supersedes the failed candidate: %j',
+    async (latest) => {
+      expect(
+        await observeGithubDelivery(
+          external({
+            latest: { total_count: 1, check_runs: [{ ...CHECK, ...latest }] },
+          }),
+          BINDING,
+        ),
+      ).toEqual({ kind: 'waiting', head: HEAD });
+    },
+  );
+  it.each([
+    { id: 8 },
+    { head_sha: MERGE },
+    { app: { id: 78, slug: 'other-app' } },
+    { status: 'in_progress', conclusion: null },
+    { conclusion: 'success' },
+  ])(
+    'retains unknown for stale, wrong-App, pending or successful suite evidence: %j',
+    async (suite) => {
+      expect(
+        await observeGithubDelivery(
+          external({ suite: { ...SUITE, ...suite } }),
+          BINDING,
+        ),
+      ).toEqual({ kind: 'waiting', head: HEAD });
+    },
+  );
+  it('retains unknown for competing current check identities', async () => {
+    expect(
+      await observeGithubDelivery(
+        external({
+          latest: {
+            total_count: 2,
+            check_runs: [
+              CHECK,
+              { ...CHECK, id: 21, status: 'queued', conclusion: null },
+            ],
+          },
+        }),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'waiting', head: HEAD });
+  });
+  it('retains unknown for a truncated provider current-check read', async () => {
+    expect(
+      await observeGithubDelivery(
+        external({ latest: { total_count: 2, check_runs: [CHECK] } }),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'waiting', head: HEAD });
+  });
+  it('retains unknown for refused provider evidence without treating the App as Actions', async () => {
+    expect(
+      await observeGithubDelivery(
+        external({ latest: new Response('refused', { status: 403 }) }),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'waiting', head: HEAD });
+  });
+  it('retains unknown for malformed provider evidence', async () => {
+    expect(
+      await observeGithubDelivery(
+        external({ suite: { invalid: true } }),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'waiting', head: HEAD });
+  });
+});

@@ -25,6 +25,21 @@ export interface DeliveryGithubDeps {
 }
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
+const checkRunSchema = z.object({
+  id: z.number().int().positive().optional(),
+  check_suite: z.object({ id: z.number().int().positive() }).optional(),
+  app: z
+    .object({
+      id: z.number().int().positive(),
+      slug: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  name: z.string(),
+  head_sha: sha,
+  status: z.string(),
+  conclusion: z.string().nullable(),
+});
 const prSchema = z.object({
   number: z.number().int().positive(),
   body: z.string().nullable(),
@@ -82,17 +97,34 @@ async function protectedChecks(
       checkRules.length === 0
     )
       throw new Error('Protected delivery policy could not be established');
-    const required = checkRules.flatMap((rule) =>
-      z
-        .object({
-          required_status_checks: z.array(z.object({ context: z.string() })),
-        })
-        .parse(rule.parameters)
-        .required_status_checks.map((check) => check.context),
+    const required = checkRules.flatMap(
+      (rule) =>
+        z
+          .object({
+            required_status_checks: z.array(
+              z.object({
+                context: z.string(),
+                integration_id: z
+                  .number()
+                  .int()
+                  .nonnegative()
+                  .nullable()
+                  .optional(),
+              }),
+            ),
+          })
+          .parse(rule.parameters).required_status_checks,
     );
     if (required.length === 0)
       throw new Error('Protected delivery policy could not be established');
-    return [...new Set(required)];
+    return [
+      ...new Map(
+        required.map((check) => [
+          JSON.stringify([check.context, check.integration_id ?? 0]),
+          check,
+        ]),
+      ).values(),
+    ];
   }
   throw new Error('Protected delivery policy read was truncated');
 }
@@ -483,16 +515,7 @@ export async function observeGithubDelivery(
   const checkRuns = z
     .object({
       total_count: z.number(),
-      check_runs: z.array(
-        z.object({
-          id: z.number().int().positive().optional(),
-          check_suite: z.object({ id: z.number().int().positive() }).optional(),
-          name: z.string(),
-          head_sha: sha,
-          status: z.string(),
-          conclusion: z.string().nullable(),
-        }),
-      ),
+      check_runs: z.array(checkRunSchema),
     })
     .parse(
       await github(
@@ -506,7 +529,11 @@ export async function observeGithubDelivery(
   const candidateFailures = checkRuns.check_runs.filter(
     (check) =>
       check.head_sha === binding.head &&
-      required.includes(check.name) &&
+      required.some(
+        (rule) =>
+          rule.context === check.name &&
+          (!rule.integration_id || rule.integration_id === check.app?.id),
+      ) &&
       check.status === 'completed' &&
       ['failure', 'timed_out', 'action_required'].includes(
         check.conclusion ?? '',
@@ -515,10 +542,21 @@ export async function observeGithubDelivery(
   const currentCheckIds = await currentActionCheckIds(
     deps,
     binding,
-    candidateFailures,
+    candidateFailures.filter(
+      (check) => !check.app?.slug || check.app.slug === 'github-actions',
+    ),
+  );
+  const currentAppCheckIds = await currentNonActionCheckIds(
+    deps,
+    binding,
+    candidateFailures.filter(
+      (check) => check.app?.slug && check.app.slug !== 'github-actions',
+    ),
   );
   const failed = candidateFailures.filter(
-    (check) => check.id !== undefined && currentCheckIds.has(check.id),
+    (check) =>
+      check.id !== undefined &&
+      (currentCheckIds.has(check.id) || currentAppCheckIds.has(check.id)),
   );
   // The declared App can read Checks, not private-repository commit statuses.
   // Uncovered legacy required contexts remain unknown until protected landing;
@@ -532,6 +570,80 @@ export async function observeGithubDelivery(
         : 'Review feedback requires correction',
     };
   return { kind: 'waiting', head: binding.head };
+}
+
+/** Other Apps have their own check suites, not Actions workflow attempts.
+ * Only complete, exact-App/suite/current-check evidence authorizes correction. */
+async function currentNonActionCheckIds(
+  deps: DeliveryGithubDeps,
+  binding: DeliveryBinding,
+  checks: readonly z.infer<typeof checkRunSchema>[],
+): Promise<Set<number>> {
+  const qualified = new Set<number>();
+  if (checks.length > 10) return qualified;
+  for (const check of checks) {
+    const app = check.app;
+    if (check.id === undefined || check.check_suite === undefined || !app?.slug)
+      continue;
+    try {
+      const suite = z
+        .object({
+          id: z.number().int().positive(),
+          head_sha: sha,
+          app: z.object({ id: z.number().int().positive(), slug: z.string() }),
+          status: z.string(),
+          conclusion: z.string().nullable(),
+        })
+        .parse(
+          await github(
+            deps,
+            binding.repo,
+            `check-suites/${check.check_suite.id}`,
+          ),
+        );
+      if (
+        suite.id !== check.check_suite.id ||
+        suite.head_sha !== binding.head ||
+        suite.app.id !== app.id ||
+        suite.app.slug !== app.slug ||
+        suite.status !== 'completed' ||
+        !['failure', 'timed_out', 'action_required'].includes(
+          suite.conclusion ?? '',
+        )
+      )
+        continue;
+      const latest = z
+        .object({
+          total_count: z.number().int().nonnegative(),
+          check_runs: z.array(checkRunSchema),
+        })
+        .parse(
+          await github(
+            deps,
+            binding.repo,
+            `commits/${binding.head}/check-runs?per_page=100&filter=latest&app_id=${app.id}&check_name=${encodeURIComponent(check.name)}`,
+          ),
+        );
+      if (latest.total_count !== 1 || latest.check_runs.length !== 1) continue;
+      const current = latest.check_runs[0];
+      if (
+        current.id === check.id &&
+        current.name === check.name &&
+        current.head_sha === binding.head &&
+        current.check_suite?.id === suite.id &&
+        current.app?.id === app.id &&
+        current.app?.slug === app.slug &&
+        current.status === 'completed' &&
+        ['failure', 'timed_out', 'action_required'].includes(
+          current.conclusion ?? '',
+        )
+      )
+        qualified.add(check.id);
+    } catch {
+      // Unknown provider evidence never becomes a failure or grants completion.
+    }
+  }
+  return qualified;
 }
 
 /** Same-head checks can outlive canceled draft CI and earlier run attempts.
