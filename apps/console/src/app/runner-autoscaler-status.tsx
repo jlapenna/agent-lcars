@@ -430,6 +430,11 @@ export function RunnerAutoscalerStatus({
             lanes={result.lanes}
             lanesIncomplete={result.lanesIncomplete}
             executor={result.queueExecutor}
+            filteredOut={
+              filtered &&
+              (result.lanes?.length ?? 0) === 0 &&
+              (live.lanes?.length ?? 0) > 0
+            }
           />
         </div>
       </div>

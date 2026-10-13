@@ -48,6 +48,36 @@ describe('RunnerAutoscalerStatus', () => {
     vi.restoreAllMocks();
   });
 
+  it('says a filter, not missing data, emptied the runner views', () => {
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{ warnings: [], lanes: [lane], queueExecutor: executor }}
+          filters={{ q: 'nomatch' }}
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getAllByText('No runner lane matches these filters.'),
+    ).toHaveLength(2);
+    expect(screen.queryByText('Direct agent executor')).toBeNull();
+    expect(screen.queryByText('GitHub runner status unavailable.')).toBeNull();
+    expect(screen.queryByText('Runner status unavailable')).toBeNull();
+  });
+
+  it('narrows admission to the filtered agent', () => {
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{ warnings: [], lanes: [lane], queueExecutor: executor }}
+          filters={{ agent: 'codex' }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('provider-admission-codex')).toBeTruthy();
+    expect(screen.queryByTestId('provider-admission-claude')).toBeNull();
+  });
+
   it('renders quota provenance, exact recent claims, drain and unavailable updates', () => {
     const now = new Date(Date.now()).toISOString();
     const reset = new Date(Date.now() + 60_000).toISOString();
