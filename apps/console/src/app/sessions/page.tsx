@@ -196,8 +196,8 @@ async function SessionsBody({
             byIssueHref={displayHref(query, { view: 'by-issue', filters })}
           />
           {/* Selects and the window submit on change; Apply shows only
-              until they hydrate (the mockup's toolbar has none). Last, so
-              hiding it moves nothing a user may be clicking. */}
+              until they hydrate (the mockup's toolbar has none), then keeps
+              its box so hydrating moves nothing. */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }

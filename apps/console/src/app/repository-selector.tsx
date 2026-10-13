@@ -2,7 +2,7 @@ import { Anchor } from '@mantine/core';
 
 import { repoKey, type WatchedRepo } from '@/lib/watched-repo';
 
-import { ToolbarApply, ToolbarSelect } from './console-toolbar';
+import { ToolbarSelect } from './console-toolbar';
 
 /**
  * The workspace toolbar's repository control (design/fleet-console.html):
@@ -36,13 +36,14 @@ export function RepositorySelector({
           })),
         ]}
       />
+      <noscript>
+        <button type="submit">Apply repository</button>
+      </noscript>
       {selected ? (
         <Anchor href={action} size="sm">
           Clear repository
         </Anchor>
       ) : null}
-      {/* Last, so hiding it on hydration moves nothing. */}
-      <ToolbarApply label="Apply repository" />
     </form>
   );
 }
