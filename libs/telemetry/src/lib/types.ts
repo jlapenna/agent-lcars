@@ -153,8 +153,8 @@ export interface SessionSummary {
   titleSource?: SessionTitleSource;
   /** What the agent says it is doing RIGHT NOW — `lcars session status
    * "<text>"` (issue #1257), joined onto a pristine reducer summary the same
-   * way the daemon joins `title`'s declared/generated overlay (see
-   * `WatcherDaemon.tick`). Unlike `title`, there is only one source (the
+   * way `title`'s declared/generated overlay is joined (see
+   * `applyAnnotationOverlays` in the hook client). Unlike `title`, there is only one source (the
    * declared status annotation) and no precedence to compute: present means
    * "joined this tick", absent means "no current status annotation, clear
    * it" — see `buildSessionWrite`'s `clearFields` derivation, which reads
@@ -404,8 +404,7 @@ export type ClearableSessionField =
  * performed — `(doc, clearFields)` — and anything in the operation but not
  * in the key becomes a silent no-op by construction. See
  * `buildSessionWrite`'s doc comment (`session-doc.ts`) for the full
- * argument and `WatcherDaemon.tick`'s write cache for where this matters in
- * practice.
+ * argument.
  */
 export interface SessionWrite {
   readonly doc: SessionDoc;

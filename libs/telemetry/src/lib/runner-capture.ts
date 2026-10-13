@@ -61,9 +61,9 @@ export const RUNNER_CAPTURE_AGENTS: readonly SessionAgent[] = [
  * adding one entry here (plus a `TranscriptAdapter`, see
  * `transcript-adapter.ts`), not editing two call sites in lockstep.
  *
- * A runner container has no privacy-scoping concept the way the host
- * watcher does (see `allowlist.ts`'s `defaultProjectDirAllowlist` comment):
- * it is single-purpose and destroyed after one job, so the `*` wildcard
+ * A runner container has no privacy-scoping concept the way a workstation
+ * does (host hook clients scope by repository allowlist instead): it is
+ * single-purpose and destroyed after one job, so the `*` wildcard
  * allowlists below are a no-op here, not a scoping gap.
  */
 export function runnerWatchRoots(config: {
