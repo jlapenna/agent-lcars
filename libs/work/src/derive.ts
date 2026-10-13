@@ -1,11 +1,11 @@
 import {
+  type DeliveryBinding,
   isLive,
   MAX_AUTO_RETRIES,
   type ProviderFallback,
   type Run,
   type Task,
   type TaskId,
-  type DeliveryBinding,
   taskKey,
 } from '@agent-lcars/orchestrator';
 

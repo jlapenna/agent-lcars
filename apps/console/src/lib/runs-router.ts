@@ -48,8 +48,8 @@ import type {
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
-import { toRunResult } from './run-result';
 import { readyDeliveryBinding } from './ready-delivery';
+import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import { getWatchedRepos } from './watched-repos-config';
 import type { WorkPrincipal } from './work-auth';

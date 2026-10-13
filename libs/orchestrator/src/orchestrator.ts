@@ -1,4 +1,3 @@
-import { advanceDelivery, type DeliveryObservation } from './delivery';
 import type { CapacityWorkerPermit } from './capacity-model';
 import {
   changeCredentialOperation,
@@ -24,9 +23,10 @@ import {
   type SchedulerDisruptionEvidence,
   updateTaskWork,
 } from './decide';
+import { advanceDelivery, type DeliveryObservation } from './delivery';
 import {
-  isLive,
   type DeliveryBinding,
+  isLive,
   type ProviderFallbackRequest,
   type QueuePriority,
   type RequestSource,

@@ -15,9 +15,9 @@ import {
 } from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
-  ORCHESTRATOR_GITHUB_PERMISSIONS,
   DIRECT_RUNNER_PERMISSIONS,
   lazyDispatchTokenProvider,
+  ORCHESTRATOR_GITHUB_PERMISSIONS,
 } from '@/lib/github-app-tokens';
 import {
   createOrchestratorRuntime,

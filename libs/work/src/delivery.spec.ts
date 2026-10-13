@@ -1,12 +1,12 @@
-import { describe, expect, it } from 'vitest';
-
 import {
   decidedRun,
+  type DeliveryBinding,
   isRefusal,
   MemoryStore,
   Orchestrator,
-  type DeliveryBinding,
 } from '@agent-lcars/orchestrator';
+import { describe, expect, it } from 'vitest';
+
 import { deriveItemState } from './derive';
 
 const NOW = '2026-10-13T10:00:00.000Z';
@@ -21,15 +21,15 @@ async function handedOff(
 ) {
   const store = new MemoryStore();
   const orchestrator = new Orchestrator(store, { now: () => NOW });
-  const first = decidedRun(
-    await orchestrator.request({
-      taskId: TASK,
-      requestId: 'original',
-      pipeline,
-      work: { spec: { title: 'deliver' } },
-      params: { mode: 'implement' },
-    }),
-  );
+  const decision = await orchestrator.request({
+    taskId: TASK,
+    requestId: 'original',
+    pipeline,
+    work: { spec: { title: 'deliver' } },
+    params: { mode: 'implement' },
+  });
+  if (isRefusal(decision)) throw new Error(decision.reason);
+  const first = decidedRun(decision);
   await store.enqueueRun({ runId: first.runId, now: NOW });
   await orchestrator.confirmDispatch(first.runId);
   await store.claimQueuedRun({

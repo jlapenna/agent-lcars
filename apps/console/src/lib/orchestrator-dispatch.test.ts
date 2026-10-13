@@ -841,55 +841,82 @@ describe('native delivery finalization reuses terminal outcome and session expir
     expect(deliver.mock.calls[0]?.[1]).not.toHaveProperty('eventId');
     return { ...f, run, original, fetchImpl, deliver, deps };
   }
-  it.each(['none', 'required'] as const)(
-    'emits one distinct final native event and expiry after %s runtime gating, preserving the original result',
-    async (runtimeGate) => {
-      const f = await waiting(runtimeGate);
-      const landing = await f.orchestrator.observeDelivery(
-        f.run.runId,
-        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
-        () => false,
-      );
-      expect(isRefusal(landing)).toBe(false);
-      if (runtimeGate === 'required') {
-        expect((await drainOutbox(f.deps)).reported).toEqual([]);
-        expect(f.fetchImpl).not.toHaveBeenCalled();
-        const runtime = await f.orchestrator.observeDelivery(
-          f.run.runId,
-          {
-            kind: 'runtime-evidence',
-            head: HEAD,
-            mergeCommit: MERGE,
-            principal: 'user:operator',
-            ref: 'https://example.test/runtime-proof',
-          },
-          () => true,
-        );
-        expect(isRefusal(runtime)).toBe(false);
-      }
-      const final = await drainOutbox(f.deps);
-      expect(final.reported).toEqual([f.run.runId]);
-      expect(f.fetchImpl).toHaveBeenCalledOnce();
-      expect(String(vi.mocked(f.fetchImpl).mock.calls[0]?.[0])).toContain(
-        '/work-session-expiry.yml/dispatches',
-      );
-      expect(f.deliver).toHaveBeenCalledTimes(2);
-      expect(f.deliver.mock.calls[1]?.[1]).toMatchObject({
-        eventId: `delivery-outcome/${f.run.runId}`,
-        deliveryStage: 'complete',
-        runId: f.run.runId,
-      });
-      expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
-      await f.orchestrator.observeDelivery(
-        f.run.runId,
-        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
-        () => false,
-      );
-      await drainOutbox(f.deps);
-      expect(f.deliver).toHaveBeenCalledTimes(2);
-      expect(f.fetchImpl).toHaveBeenCalledOnce();
-    },
-  );
+  it('emits one distinct final native event and expiry after none runtime gating, preserving the original result', async () => {
+    const f = await waiting('none');
+    const landing = await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    expect(isRefusal(landing)).toBe(false);
+    const final = await drainOutbox(f.deps);
+    expect(final.reported).toEqual([f.run.runId]);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(f.fetchImpl).mock.calls[0]?.[0])).toContain(
+      '/work-session-expiry.yml/dispatches',
+    );
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.deliver.mock.calls[1]?.[1]).toMatchObject({
+      eventId: `delivery-outcome/${f.run.runId}`,
+      deliveryStage: 'complete',
+      runId: f.run.runId,
+    });
+    expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    await drainOutbox(f.deps);
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('emits one distinct final native event and expiry after required runtime gating, preserving the original result', async () => {
+    const f = await waiting('required');
+    const landing = await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    expect(isRefusal(landing)).toBe(false);
+    expect((await drainOutbox(f.deps)).reported).toEqual([]);
+    expect(f.fetchImpl).not.toHaveBeenCalled();
+    const runtime = await f.orchestrator.observeDelivery(
+      f.run.runId,
+      {
+        kind: 'runtime-evidence',
+        head: HEAD,
+        mergeCommit: MERGE,
+        principal: 'user:operator',
+        ref: 'https://example.test/runtime-proof',
+      },
+      () => true,
+    );
+    expect(isRefusal(runtime)).toBe(false);
+
+    const final = await drainOutbox(f.deps);
+    expect(final.reported).toEqual([f.run.runId]);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(f.fetchImpl).mock.calls[0]?.[0])).toContain(
+      '/work-session-expiry.yml/dispatches',
+    );
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.deliver.mock.calls[1]?.[1]).toMatchObject({
+      eventId: `delivery-outcome/${f.run.runId}`,
+      deliveryStage: 'complete',
+      runId: f.run.runId,
+    });
+    expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    await drainOutbox(f.deps);
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+  });
   it('retries final delivery with the same event identity without replaying the settled execution event', async () => {
     const f = await waiting();
     await f.orchestrator.observeDelivery(

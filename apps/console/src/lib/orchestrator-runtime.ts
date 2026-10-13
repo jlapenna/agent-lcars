@@ -15,8 +15,8 @@ import { recoverCodexCredentialOperations } from '@/lib/codex-credential-operati
 import { loadGithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   createDispatchTokenProvider,
-  ORCHESTRATOR_GITHUB_PERMISSIONS,
   type DispatchTokenProvider,
+  ORCHESTRATOR_GITHUB_PERMISSIONS,
 } from '@/lib/github-app-tokens';
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';

@@ -1,14 +1,14 @@
 import {
-  isRefusal,
   decidedRun,
+  type Decision,
+  isRefusal,
+  type Refusal,
   refused,
   requestRun,
-  type Decision,
-  type Refusal,
 } from './decide';
 import {
-  isWorkAnchor,
   type DeliveryBinding,
+  isWorkAnchor,
   type OutboxEntry,
   type Run,
   type Task,

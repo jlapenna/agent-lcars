@@ -12,8 +12,8 @@ import {
 import {
   itemsContract,
   type MaintenanceTickOutput,
-  type WorkSpec,
   workPayloadSchema,
+  type WorkSpec,
 } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
@@ -23,8 +23,8 @@ import { readAnchorOwner } from './anchor-owner';
 import { controlPlaneRepositories } from './deployment';
 import { githubDispatchRouter } from './github-dispatch-router';
 import { handleReconcile } from './orchestrator-routes';
-import { grantForPrincipal } from './work-grants';
 import { scheduleRouter } from './schedule-router';
+import { grantForPrincipal } from './work-grants';
 import {
   forbiddenReason,
   isWorkOperatorPrincipal,

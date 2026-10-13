@@ -3,11 +3,11 @@
 import { generateKeyPairSync } from 'node:crypto';
 
 import {
+  decidedRun,
+  type DeliveryBinding,
+  isRefusal,
   MemoryStore,
   Orchestrator,
-  decidedRun,
-  isRefusal,
-  type DeliveryBinding,
   type Run,
   type Task,
 } from '@agent-lcars/orchestrator';
@@ -17,11 +17,10 @@ import {
   AppInstallationTokenProvider,
   ORCHESTRATOR_GITHUB_PERMISSIONS,
 } from './github-app-tokens';
-
 import {
   deliveryCorrectionAuthorized,
-  readGithubIntakePermission,
   observeGithubDelivery,
+  readGithubIntakePermission,
   readyDeliveryBinding,
 } from './ready-delivery';
 
