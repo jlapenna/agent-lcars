@@ -156,9 +156,10 @@ elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
         lower,upper=('1970-01-01T00:00:00Z', expression[2:]) if expression.startswith('<=') else expression.split('..')
         def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
         rows=[row for row in rows if not row.get('created_at') or stamp(lower) <= stamp(row['created_at']) <= stamp(upper)]
-    total=len(rows)+int(history['incomplete'])
     # The documented filtered-search cap is deliberately enforced by the API.
     visible=rows[:1000] if 'created' in query else rows
+    # A count at the cap cannot prove there are no additional matching runs.
+    total=len(visible)+int(history['incomplete'])
     print(json.dumps({'total_count': total, 'workflow_runs': visible[(page-1)*100:page*100]}))
 else: print(json.dumps(routes[route]))
 `,
@@ -431,8 +432,8 @@ describe('serialized automatic deployment source fence', () => {
     const earlier = Array.from({ length: 1100 }, (_, index) => ({
       source: OLD,
       created: new Date(index * 1000).toISOString(),
-      updated: '1970-01-01T00:20:00Z',
-      end: '1970-01-01T00:20:00Z',
+      updated: new Date((index + 100) * 1000).toISOString(),
+      end: new Date((index + 100) * 1000).toISOString(),
     }));
     const entry = '1970-01-01T00:33:20Z';
     expect(
