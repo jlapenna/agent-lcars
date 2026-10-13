@@ -1,5 +1,5 @@
 import { SESSION_AGENTS } from '@agent-lcars/telemetry';
-import { Anchor, Card, Group, Title } from '@mantine/core';
+import { Anchor, Button, Card, Group, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
@@ -31,10 +31,12 @@ import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
+import { windowOptions } from '../archive-window-options';
 import {
   matchesSessionView,
   parseViewFilters,
   type SessionsViewFilters,
+  setViewFilterParams,
 } from './session-view-filters';
 import { SessionsWorkspace } from './sessions-workspace';
 import { ViewToggle } from './view-toggle';
@@ -56,7 +58,11 @@ function parseView(searchParams: { view?: string }): SessionsView {
  * getSessionArchive). */
 function displayHref(
   query: SessionArchiveQuery,
-  { view, path = '' }: { view: SessionsView; path?: string },
+  {
+    view,
+    path = '',
+    filters,
+  }: { view: SessionsView; path?: string; filters?: SessionsViewFilters },
 ): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
@@ -68,6 +74,7 @@ function displayHref(
   }
   if (query.repo) params.set('repo', repoKey(query.repo));
   if (path !== '/costs' && view === 'flat') params.set('view', 'flat');
+  if (filters) setViewFilterParams(params, filters);
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path || '?';
 }
@@ -92,14 +99,6 @@ interface PageProps {
     q?: string;
   }>;
 }
-
-const WINDOW_OPTIONS = [
-  { value: '1', label: '24h' },
-  { value: '7', label: '7d' },
-  { value: '14', label: '14d' },
-  { value: '30', label: '30d' },
-  { value: '90', label: '90d' },
-] as const;
 
 /** The subtitle's row count, split out so it can stream in on its own,
  * narrower Suspense boundary while the rest of the header (title, window
@@ -171,7 +170,7 @@ async function SessionsBody({
             name="days"
             label="Window"
             value={String(query.days)}
-            options={WINDOW_OPTIONS}
+            options={windowOptions(query.days)}
           />
           <ToolbarSearch
             name="q"
@@ -189,10 +188,14 @@ async function SessionsBody({
               { value: 'issue-agent', label: 'Dispatched agent' },
             ]}
           />
+          {/* A native submit so filters apply before hydration. */}
+          <Button type="submit" variant="light" size="compact-sm">
+            Apply
+          </Button>
           <ViewToggle
             view={view}
-            flatHref={displayHref(query, { view: 'flat' })}
-            byIssueHref={displayHref(query, { view: 'by-issue' })}
+            flatHref={displayHref(query, { view: 'flat', filters })}
+            byIssueHref={displayHref(query, { view: 'by-issue', filters })}
           />
         </ConsoleToolbar>
       }

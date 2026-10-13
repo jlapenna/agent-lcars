@@ -8,17 +8,31 @@ export interface SessionsViewFilters {
   q?: string;
 }
 
+type RawParam = string | string[] | undefined;
+
+/** Next hands a repeated parameter (`?q=a&q=b`) over as an array; the first
+ * value wins, as in the archive's own parser. */
+function first(value: RawParam): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export function parseViewFilters(searchParams: {
-  agent?: string;
-  q?: string;
+  agent?: RawParam;
+  q?: RawParam;
 }): SessionsViewFilters {
-  const agent = (SESSION_AGENTS as readonly string[]).includes(
-    searchParams.agent ?? '',
-  )
-    ? (searchParams.agent as SessionAgent)
-    : undefined;
-  const q = searchParams.q?.trim().slice(0, 128) || undefined;
-  return { agent, q };
+  const agentRaw = first(searchParams.agent);
+  const agent = SESSION_AGENTS.find((candidate) => candidate === agentRaw);
+  const q = first(searchParams.q)?.trim().slice(0, 128) || undefined;
+  return { ...(agent && { agent }), ...(q && { q }) };
+}
+
+/** Carries the view filters into a link, so switching views keeps them. */
+export function setViewFilterParams(
+  params: URLSearchParams,
+  filters: SessionsViewFilters,
+): void {
+  if (filters.agent) params.set('agent', filters.agent);
+  if (filters.q) params.set('q', filters.q);
 }
 
 export function matchesSessionView(

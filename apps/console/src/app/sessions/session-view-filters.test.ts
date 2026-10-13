@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionRow } from '../../lib/session-archive';
-import { matchesSessionView, parseViewFilters } from './session-view-filters';
+import {
+  matchesSessionView,
+  parseViewFilters,
+  setViewFilterParams,
+} from './session-view-filters';
 
 const row: SessionRow = {
   sessionId: 'ses-8f3a21c4',
@@ -20,12 +24,22 @@ const row: SessionRow = {
 };
 
 describe('session view filters', () => {
+  it('carries the view filters into links', () => {
+    const params = new URLSearchParams('view=flat');
+    setViewFilterParams(params, { agent: 'codex', q: '#2477' });
+    expect(params.toString()).toBe('view=flat&agent=codex&q=%232477');
+  });
+
   it('accepts only known agents and bounds the search text', () => {
     expect(parseViewFilters({ agent: 'codex', q: '  #2477 ' })).toEqual({
       agent: 'codex',
       q: '#2477',
     });
     expect(parseViewFilters({ agent: 'nobody' }).agent).toBeUndefined();
+    // A repeated parameter arrives as an array; the first value wins.
+    expect(parseViewFilters({ q: ['a ', 'b'], agent: ['codex', 'x'] })).toEqual(
+      { agent: 'codex', q: 'a' },
+    );
     expect(parseViewFilters({ q: 'x'.repeat(500) }).q).toHaveLength(128);
   });
 

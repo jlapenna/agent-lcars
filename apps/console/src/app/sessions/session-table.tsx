@@ -194,7 +194,15 @@ function SessionRef({ row }: { row: SessionRow }) {
  * route, backend, turns and cost are the session's detail (FE-SE-3), one
  * click away on its row title. Below `sm` the same rows become cards.
  */
-export function SessionTable({ rows }: { rows: SessionRow[] }) {
+export function SessionTable({
+  rows,
+  fixedColumns = false,
+}: {
+  rows: SessionRow[];
+  /** The by-issue view's group tables: fixed shared columns that fit the
+   * panel rather than scrolling, so one header strip aligns with all. */
+  fixedColumns?: boolean;
+}) {
   if (rows.length === 0) {
     return (
       <Text size="sm" c="dimmed" data-testid="session-table-empty">
@@ -212,7 +220,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
       </Stack>
 
       <TableScrollContainer
-        minWidth={820}
+        minWidth={fixedColumns ? 0 : 820}
         visibleFrom="sm"
         className="sessions-table-scroll"
       >

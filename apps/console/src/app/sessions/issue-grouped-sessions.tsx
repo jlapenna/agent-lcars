@@ -118,12 +118,12 @@ export function IssueGroupedSessions({
               <NoIssueSessionGroup
                 sessionCount={<SessionCountLabel group={group} />}
               >
-                <SessionTable rows={group.sessions} />
+                <SessionTable rows={group.sessions} fixedColumns />
               </NoIssueSessionGroup>
             ) : (
               <>
                 <GroupHeading group={group} />
-                <SessionTable rows={group.sessions} />
+                <SessionTable rows={group.sessions} fixedColumns />
               </>
             )}
           </Stack>
