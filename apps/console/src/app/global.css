@@ -2057,6 +2057,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 
   .console-page-shell[data-frame='rail']
+    .console-header[data-long-title]
+    .lcars-header-title {
+    font-size: 1.75rem;
+    line-height: 1.05;
+  }
+
+  .console-page-shell[data-frame='rail']
     .console-header[data-current]
     .lcars-header
     .mantine-Text-root {
