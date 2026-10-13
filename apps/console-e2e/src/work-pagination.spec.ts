@@ -140,7 +140,8 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await page.getByRole('link', { name: '← All activity', exact: true }).click();
   await expect(page).toHaveURL(stoppedPageUrl);
   await expect(olderRow).toBeVisible();
-  await expect(page.getByTestId('bridge-detail-empty')).toBeVisible();
+  // With nothing selected the Bridge renders no detail pane at all.
+  await expect(page.getByTestId('bridge-detail')).toHaveCount(0);
   await page.goBack();
   await expect(page).toHaveURL(selectedUrl);
   await expect(page.getByTestId('bridge-detail')).toContainText(

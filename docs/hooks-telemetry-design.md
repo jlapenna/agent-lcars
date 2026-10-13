@@ -58,11 +58,13 @@ unchanged.
 
 **OpenCode client:** OpenCode has no command hooks, so
 `agents/opencode/lcars-telemetry.js` is a plugin. On `session.created`, a new
-user message, a completed tool part (throttled to one report per 15 s),
-`session.idle`, and `session.deleted` it reads the session through the SDK
-client, writes an export-shaped `{info, messages}` snapshot to a private temp
-file, and hands it to a detached `lcars hook opencode` as `transcript_path`,
-so the same reducer that reads `opencode export` output produces the summary.
+user message, a completed tool part (throttled to one report per 15 s), and
+`session.idle` it reads the session through the SDK client, writes an
+export-shaped `{info, messages}` snapshot to a private temp file, and hands it
+to a detached `lcars hook opencode` as `transcript_path`, so the same reducer
+that reads `opencode export` output produces the summary. `session.deleted`
+fires after OpenCode has removed the session, so its `SessionEnd` is
+lifecycle-only: no snapshot and no summary, with `cwd` taken from the event.
 The client deletes the snapshot after reading it, which lets the final report
 survive `opencode run` exiting on its last idle. Reports for one session never
 overlap; events arriving mid-report coalesce to the most important one.

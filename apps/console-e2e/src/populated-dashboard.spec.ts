@@ -315,8 +315,10 @@ test.describe('populated dashboard', () => {
     await expect(recent.getByText('success').first()).toBeVisible();
     await expect(recent.getByText('failed').first()).toBeVisible();
     await expect(recent.getByText('timeout').first()).toBeVisible();
-    // Pipeline source tags stay on the deeper Agents evidence view.
-    await expect(recent.getByText('opencode', { exact: true })).toHaveCount(0);
+    // The completions table carries the agent column (design/fleet-console.html).
+    await expect(
+      recent.getByText('opencode', { exact: true }).first(),
+    ).toBeVisible();
   });
 
   test('the primary Open task action opens the selected run in the desktop Bridge pane', async ({
@@ -330,7 +332,10 @@ test.describe('populated dashboard', () => {
     const primaryAction = duplicateGroup
       .getByTestId('current-run-primary-action')
       .first();
-    await expect(primaryAction).toHaveText('Open task');
+    // The run's reference is its primary action (design/fleet-console.html).
+    await expect(primaryAction).toHaveText(
+      `sprinkles#${E2E_ITEM_NUMBERS.duplicateDispatch}`,
+    );
     await primaryAction.click();
 
     await expect(page).toHaveURL(/\bsel=run%3A/);
