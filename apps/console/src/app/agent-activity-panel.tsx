@@ -76,7 +76,7 @@ export const STATUS_COLORS: Record<RunStatusClassification, string> = {
   'silent-error': 'orange',
 };
 
-function budgetColor(fraction: number): string {
+export function budgetColor(fraction: number): string {
   if (fraction >= 0.8) return 'red';
   if (fraction >= 0.5) return 'yellow';
   return 'blue';
@@ -115,7 +115,7 @@ export function isActiveCliSession(session: CliSession): boolean {
  * rows - which render the same components at the `detail` variant - are
  * untouched.
  */
-function RowTitle({
+export function RowTitle({
   text,
   mobileHref,
   selectHref,
@@ -148,7 +148,10 @@ function RowTitle({
   );
 }
 
-function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
+export function taskHrefForRun(
+  run: AgentRun,
+  item?: RunItemRef,
+): string | undefined {
   if (run.workId) return workHrefForRun(run);
   const issueNumber = item?.number ?? run.issueNumber;
   if (issueNumber === undefined) return workHrefForRun(run);
@@ -160,19 +163,19 @@ function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
  * page, the same way `taskHrefForRun`/`issueUrlForRun` link issue-anchored
  * activity.
  */
-function workHrefForRun(run: AgentRun): string | undefined {
+export function workHrefForRun(run: AgentRun): string | undefined {
   return run.workId ? `/work/${run.workId}` : undefined;
 }
 
 /** New title links need a known projection; existing explicit task actions
  * retain their task-history navigation contract. */
-function titleHrefForRun(run: AgentRun, item?: RunItemRef): string {
+export function titleHrefForRun(run: AgentRun, item?: RunItemRef): string {
   if (run.workId || item) return taskHrefForRun(run, item)!;
   return internalRunHref(run);
 }
 
 /** Inspect the existing run record without requiring a GitHub projection. */
-function internalRunHref(run: AgentRun): string {
+export function internalRunHref(run: AgentRun): string {
   return `/agents?${new URLSearchParams({ repo: repoKey(run.repo), sel: runKey(run) })}`;
 }
 
@@ -313,7 +316,7 @@ export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
   );
 }
 
-function ScreenshotStableDuration({ seconds }: { seconds: number }) {
+export function ScreenshotStableDuration({ seconds }: { seconds: number }) {
   return (
     <span data-screenshot="hide" data-screenshot-width="duration">
       {formatDuration(seconds)}
@@ -537,7 +540,7 @@ export function LiveRunRow({
  * cross-pipeline race, not an anomaly - see #306's LogicalWork model, which
  * treats these two cases distinctly for exactly this reason).
  */
-function duplicatePipelineSummary(runs: AgentRun[]): string | undefined {
+export function duplicatePipelineSummary(runs: AgentRun[]): string | undefined {
   const duplicated = duplicateLivePipelineGroups(runs);
   if (duplicated.size === 0) return undefined;
   return Array.from(duplicated.entries())

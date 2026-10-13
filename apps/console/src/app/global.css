@@ -1796,7 +1796,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (min-width: 64em) {
-  .bridge-workspace {
+  .bridge-workspace[data-sel] {
     display: grid;
     grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
     align-items: start;
@@ -3206,4 +3206,494 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   align-items: center;
   min-height: 44px;
   min-width: 44px;
+}
+
+/* ---- Operations panels (ops-panels.tsx) ----
+   The panel language of design/fleet-console.html, shared by Bridge, Inbox,
+   Agents and Shuttlebay: a square accent spine, an uppercase head with count
+   and trailing meta, hairline tables, flat phase blocks and meters, and state
+   squares. The decision inbox also carries the signal bar down its trailing
+   edge. */
+.ops-panel {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: var(--lcars-spine-width) minmax(0, 1fr);
+  column-gap: 16px;
+}
+
+.ops-panel::before {
+  content: '';
+  background: var(--lcars-accent);
+}
+
+.ops-panel[data-signalled] {
+  grid-template-columns:
+    var(--lcars-spine-width) minmax(0, 1fr)
+    var(--lcars-spine-width);
+}
+
+.ops-panel[data-signalled]::after {
+  content: '';
+  background: linear-gradient(to bottom, var(--lcars-signal-stops));
+}
+
+.ops-panel__body {
+  min-width: 0;
+}
+
+.ops-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.ops-panel__title {
+  margin: 0;
+  color: var(--lcars-ink);
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.1875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ops-panel__count {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.ops-panel__meta {
+  margin-left: auto;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.ops-empty {
+  margin: 0;
+  padding: 12px 0;
+  color: var(--lcars-ink-dim);
+  font-size: 0.8125rem;
+}
+
+.ops-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ops-table th {
+  padding: 10px 10px 8px 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ops-table td {
+  padding: 10px 10px 10px 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+  vertical-align: middle;
+}
+
+.ops-table tbody tr:hover td {
+  background: var(--lcars-surface-raised);
+}
+
+.ops-table :is(td, th).ops-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ops-table td.ops-num {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+}
+
+.ops-cell-clip {
+  width: 40%;
+  max-width: 0;
+}
+
+.ops-table .mantine-Badge-root {
+  max-width: none;
+  overflow: visible;
+}
+
+.ops-table .mantine-Badge-label {
+  overflow: visible;
+}
+
+.ops-cell-wide {
+  width: 52%;
+}
+
+.ops-ref {
+  display: inline-block;
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ops-cell-clip :is(.ops-item-title, .bridge-row-select) {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--lcars-ink);
+  font-size: 0.875rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-subtle-link {
+  margin-right: 8px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.6875rem;
+}
+
+.ops-diagnosis {
+  display: block;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--lcars-warning) 70%, var(--lcars-ink));
+  font-size: 0.75rem;
+  white-space: normal;
+}
+
+.ops-dim,
+.ops-mono-dim {
+  color: var(--lcars-ink-dim);
+}
+
+.ops-mono-dim {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.ops-unavailable {
+  color: var(--lcars-ink-dim);
+  font-size: 0.6875rem;
+}
+
+.ops-phase {
+  display: flex;
+  gap: 2px;
+}
+
+.ops-phase > i {
+  display: block;
+  width: 18px;
+  height: 8px;
+  background: var(--lcars-hairline);
+}
+
+.ops-phase > i[data-state='done'] {
+  background: var(--lcars-accent);
+}
+
+.ops-phase > i[data-state='current'] {
+  background: linear-gradient(
+    to right,
+    var(--lcars-accent) var(--p),
+    color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface)) var(--p)
+  );
+}
+
+.ops-phase-label {
+  margin-top: 6px;
+}
+
+.ops-meter {
+  min-width: 80px;
+  height: 6px;
+  background: var(--lcars-hairline);
+}
+
+.ops-meter > i {
+  display: block;
+  height: 100%;
+  background: color-mix(
+    in srgb,
+    var(--lcars-ink-dim) 60%,
+    var(--lcars-surface)
+  );
+}
+
+.ops-meter[data-tone='warn'] > i {
+  background: var(--lcars-warning);
+}
+
+.ops-meter[data-tone='fail'] > i {
+  background: var(--mantine-color-red-5);
+}
+
+.ops-budget-cell {
+  width: 170px;
+}
+
+.ops-budget {
+  margin-top: 6px;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.ops-budget b {
+  color: var(--lcars-ink);
+  font-weight: 500;
+}
+
+.ops-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.ops-state::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: currentColor;
+}
+
+.ops-state[data-tone='ok'] {
+  color: color-mix(in srgb, var(--mantine-color-green-5) 60%, var(--lcars-ink));
+}
+
+.ops-state[data-tone='fail'] {
+  color: color-mix(in srgb, var(--mantine-color-red-5) 60%, var(--lcars-ink));
+}
+
+.ops-state[data-tone='warn'] {
+  color: color-mix(in srgb, var(--lcars-warning) 70%, var(--lcars-ink));
+}
+
+.ops-state[data-tone='busy'] {
+  color: var(--lcars-ink);
+}
+
+.ops-group-head td {
+  padding-top: 12px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.ops-group-alert {
+  margin-top: 6px;
+  padding: 4px 10px;
+  border-left: 4px solid var(--mantine-color-red-5);
+  color: var(--lcars-ink);
+  font-weight: 400;
+}
+
+.ops-inbox {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ops-inbox > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.ops-inbox__kind {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ops-inbox__title {
+  margin: 5px 0 4px;
+  color: var(--lcars-ink);
+}
+
+.ops-inbox__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.ops-row-action {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--lcars-ink-on-muted);
+  background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.ops-row-action:hover {
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
+  text-decoration: none;
+}
+
+.ops-host {
+  font-family: var(--font-mono), monospace;
+  font-weight: 500;
+}
+
+.ops-host-spec {
+  display: block;
+  margin-top: 2px;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.6875rem;
+}
+
+.ops-slots {
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 180px;
+  gap: 2px;
+}
+
+.ops-slots > i {
+  display: block;
+  width: 12px;
+  height: 12px;
+  background: var(--lcars-hairline);
+}
+
+.ops-slots > i[data-state='busy'] {
+  background: var(--lcars-ink-dim);
+}
+
+.ops-slots > i[data-state='pending'] {
+  background: var(--lcars-warning);
+}
+
+.ops-slots > i[data-state='free'] {
+  border: 1px solid var(--lcars-hairline);
+  background: transparent;
+}
+
+.ops-telemetry {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.ops-telemetry > div {
+  padding: 0 14px;
+  border-left: 1px solid var(--lcars-hairline);
+}
+
+.ops-telemetry > div:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.ops-telemetry__value {
+  margin-top: 6px;
+  font-family: var(--font-mono), monospace;
+  font-size: 1.125rem;
+  font-weight: 500;
+}
+
+.ops-rows > * + * {
+  border-top: 1px solid var(--lcars-hairline);
+}
+
+/* Bridge: readouts, then a wide stack beside a narrow one. The detail pane
+   appears only once a row is selected. */
+.bridge-cols {
+  display: grid;
+  gap: 28px;
+  align-items: start;
+}
+
+.bridge-stack {
+  display: grid;
+  min-width: 0;
+  gap: 28px;
+  align-content: start;
+}
+
+@media (min-width: 82.5em) {
+  .bridge-workspace:not([data-sel]) .bridge-cols {
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  }
+}
+
+/* Phones: each table row becomes a stacked card; the head is redundant with
+   the cell content. */
+@media (max-width: 47.99em) {
+  .ops-table thead {
+    display: none;
+  }
+
+  .ops-table,
+  .ops-table tbody {
+    display: block;
+  }
+
+  .ops-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--lcars-hairline);
+  }
+
+  .ops-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .ops-table td.ops-cell-clip {
+    grid-column: 1 / -1;
+    width: auto;
+    max-width: none;
+  }
+
+  .ops-table :is(.ops-ref, .ops-item-title, .bridge-row-select) {
+    display: block;
+    min-height: 44px;
+    padding-block: 12px;
+    line-height: 20px;
+  }
+
+  .ops-row-action {
+    min-height: 44px;
+  }
+
+  .ops-panel__meta {
+    margin-left: 0;
+  }
 }
