@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -8,8 +10,8 @@ import (
 )
 
 // Upper bounds in seconds for Work API response times: the console's Work
-// API p95 readout reads milliseconds to seconds, and anything past the last
-// bound is a timeout in all but name.
+// API p95 readout reads milliseconds to seconds. Calls that time out land
+// past the last bound or in the bucket of their own deadline.
 var workAPILatencyBounds = []float64{0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 2, 5, 10}
 
 // latencyRecorder counts response times into fixed buckets for the life of
@@ -59,8 +61,11 @@ func (r *latencyRecorder) histogram() *cumulativeHistogram {
 var workAPILatency = newLatencyRecorder(workAPILatencyBounds)
 
 // workAPITimingTransport times requests to the console's Work API, from
-// sending the request to receiving the response headers. A request that
-// fails without a response is not a latency and is not recorded.
+// sending the request to receiving the response headers. A call that hits
+// its deadline is recorded at the time it waited: dropping it would hide
+// exactly the slow tail a p95 exists to show. Other failures without a
+// response (a refused dial, a shutdown cancel) say nothing about latency
+// and are not recorded.
 type workAPITimingTransport struct {
 	base     http.RoundTripper
 	recorder *latencyRecorder
@@ -72,7 +77,7 @@ func (t workAPITimingTransport) RoundTrip(req *http.Request) (*http.Response, er
 	}
 	start := time.Now()
 	resp, err := t.base.RoundTrip(req)
-	if err == nil {
+	if err == nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(req.Context().Err(), context.DeadlineExceeded) {
 		t.recorder.record(time.Since(start))
 	}
 	return resp, err

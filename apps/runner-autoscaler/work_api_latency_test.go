@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -33,10 +34,11 @@ func TestLatencyRecorderBucketsCumulatively(t *testing.T) {
 	}
 }
 
-func TestWorkAPITimingTransportRecordsOnlyAnsweredWorkAPICalls(t *testing.T) {
+func TestWorkAPITimingTransportRecordsAnsweredAndTimedOutWorkAPICalls(t *testing.T) {
 	recorder := newLatencyRecorder([]float64{0.001, 10})
 	answered := workAPITimingTransport{base: stubRoundTripper{delay: 2 * time.Millisecond}, recorder: recorder}
 	failed := workAPITimingTransport{base: stubRoundTripper{err: errors.New("dial")}, recorder: recorder}
+	timedOut := workAPITimingTransport{base: stubRoundTripper{delay: 2 * time.Millisecond, err: context.DeadlineExceeded}, recorder: recorder}
 	for _, call := range []struct {
 		transport workAPITimingTransport
 		url       string
@@ -44,6 +46,7 @@ func TestWorkAPITimingTransportRecordsOnlyAnsweredWorkAPICalls(t *testing.T) {
 		{answered, "https://console.example/api/work/v1/runs/claim"},
 		{answered, "http://listener.example:30081/metrics"},
 		{failed, "https://console.example/api/work/v1/runs/claim"},
+		{timedOut, "https://console.example/api/work/v1/runs/claim"},
 	} {
 		req, err := http.NewRequest(http.MethodPost, call.url, http.NoBody)
 		if err != nil {
@@ -53,8 +56,8 @@ func TestWorkAPITimingTransportRecordsOnlyAnsweredWorkAPICalls(t *testing.T) {
 			resp.Body.Close()
 		}
 	}
-	if got := recorder.histogram().counts; !reflect.DeepEqual(got, []int64{0, 1, 1}) {
-		t.Fatalf("recorded %v, want one answered Work API call in (1ms, 10s]", got)
+	if got := recorder.histogram().counts; !reflect.DeepEqual(got, []int64{0, 2, 2}) {
+		t.Fatalf("recorded %v, want the answered and the timed-out Work API calls in (1ms, 10s]", got)
 	}
 }
 

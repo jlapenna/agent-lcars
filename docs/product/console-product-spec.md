@@ -392,7 +392,7 @@ the work that has stopped, and the work in flight.
 - **FE-SB-7 [Implemented]** The same panel shows Work API p95: the 95th
   percentile response time (request sent to response headers) of the queue
   executor's own Work API calls (claims, placements, fences, exits and
-  schedule ticks) over the last 30 minutes, with a per-minute sparkline. The
+  schedule ticks), counting a call that times out at the time it waited, over the last 30 minutes, with a per-minute sparkline. The
   executor windows the samples itself and publishes them on its status
   document. It is unavailable without that window, reads "no calls" for a
   quiet one, and names the minutes covered.
