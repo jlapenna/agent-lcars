@@ -13,6 +13,7 @@ import { imageVersion } from '../probes/qualification-version.mjs';
 for (const kind of ['version', 'scenario']) {
   it.each([
     'success',
+    'slow-first-cleanup-inspect',
     'hang',
     'ignored-sigterm',
     'inherited-pipe',
@@ -72,6 +73,10 @@ start)
   fi ;;
 inspect)
   inspections=$((inspections + 1)); save
+  # Collection already proved a stopped exit. The first cleanup inspection
+  # deliberately gives no answer, so finite conservative cleanup must kill
+  # the owned name, read back stopped state, then remove it.
+  if [ "$mode" = slow-first-cleanup-inspect ] && [ "$inspections" -eq 2 ]; then hang; fi
   if [ "$mode" = hung-inspect ] && [ "$inspections" -le 2 ]; then trap '' TERM; hang; fi
   if { [ "$mode" = inspect-failure ] && [ "$inspections" -le 2 ]; } || [ "$mode" = cleanup-inspect-failure ] || { [ "$mode" = cleanup-only-failure ] && [ "$inspections" -gt 1 ]; }; then exit 1; fi
   if { [ "$mode" = partial-state ] && [ "$inspections" -le 2 ]; } || { [ "$mode" = bad-json ] && [ "$kind" = version ] && [ "$inspections" -eq 1 ]; }; then echo '{partial'
@@ -121,7 +126,7 @@ esac
           failed = true;
         }
         const expectedFailure =
-          mode !== 'success' &&
+          !['success', 'slow-first-cleanup-inspect'].includes(mode) &&
           !(
             kind === 'version' &&
             ['copy-failure', 'missing-native-diagnostics'].includes(mode)
@@ -146,13 +151,30 @@ esac
           .trim()
           .split('\n')
           .map((line) => JSON.parse(line));
-        const expectedKill = ![
+        const requiresKill = ![
           'success',
           'create-disconnect',
           'copy-failure',
           'missing-native-diagnostics',
         ].includes(mode);
-        expect(calls.some((call) => call[0] === 'kill')).toBe(expectedKill);
+        // A stopped workload can still need conservative owned termination
+        // when its cleanup inspection is inconclusive; successful collection
+        // does not promise that every later subprocess beats a host deadline.
+        if (requiresKill)
+          expect(calls.some((call) => call[0] === 'kill')).toBe(true);
+        if (mode === 'slow-first-cleanup-inspect') {
+          expect(calls.map((call) => call[0])).toEqual([
+            'create',
+            'start',
+            'inspect',
+            ...(kind === 'scenario' ? ['cp', 'cp'] : []),
+            'inspect',
+            'kill',
+            'inspect',
+            'rm',
+          ]);
+          expect(state.inspections).toBe(3);
+        }
         expect(performance.now() - started).toBeLessThan(5000);
       } finally {
         rmSync(root, { recursive: true, force: true });
