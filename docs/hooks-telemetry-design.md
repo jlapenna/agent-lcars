@@ -433,7 +433,7 @@ them:
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "lcars hook claude", "timeout": 10 }
+          { "type": "command", "command": "lcars hook claude", "timeout": 5 }
         ]
       }
     ],
