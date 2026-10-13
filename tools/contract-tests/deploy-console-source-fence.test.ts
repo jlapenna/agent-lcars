@@ -60,6 +60,7 @@ function sourceDecision(
   incomplete = false,
   growingHistory = false,
   fixedEntryClock = false,
+  trailingLocalClock = false,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
@@ -121,13 +122,17 @@ function sourceDecision(
   writeFileSync(
     path.join(dir, 'gh'),
     `#!/usr/bin/env python3
-import datetime, json, os, sys
+import datetime, json, os, sys, time
+from email.utils import formatdate
 from urllib.parse import parse_qs, urlsplit
 args=sys.argv[1:]
 with open(os.environ['FIXTURE_CALLS'], 'a') as f: f.write(' '.join(args)+'\\n')
 if os.environ['FIXTURE_FAIL']=='true': sys.exit(1)
 route=args[1].removeprefix('repos/jlapenna/agent-lcars/')
 with open(os.environ['FIXTURE_ROUTES']) as f: routes=json.load(f)
+if '--include' in args:
+    epoch=float(os.environ['FIXTURE_SERVER_EPOCH'])+int(time.time()-float(os.environ['FIXTURE_SERVER_REAL_START']))
+    print('HTTP/2.0 200 OK\\nDate: '+formatdate(epoch, usegmt=True)+'\\nAge: 0\\n')
 if route.startswith('compare/'):
     base, head = route.removeprefix('compare/').split('...')
     order=[os.environ['FIXTURE_BASE'], os.environ['FIXTURE_OLD'], os.environ['FIXTURE_NEW']]
@@ -153,10 +158,12 @@ else: print(json.dumps(routes[route]))
     { mode: 0o755 },
   );
   let program = guard.run!;
-  if (fixedEntryClock) {
+  if (fixedEntryClock || trailingLocalClock) {
     // Drive the actual guard with a controlled wall clock, while preserving
     // real elapsed time and its bounded wait for the entry second to close.
-    const start = Date.parse(rollouts[0]!.created!) / 1000 + 0.25;
+    const start =
+      Date.parse(rollouts[0]!.created!) / 1000 +
+      (trailingLocalClock ? -1 : 0.25);
     const entry = "python3 - <<'PY_SOURCE'\n";
     if (!program.includes(entry) || !Number.isFinite(start))
       throw new Error('Missing guard clock boundary');
@@ -187,6 +194,13 @@ _fixture_time.time = lambda: ${start} + _fixture_real_time() - _fixture_origin
         FIXTURE_CALLS: calls,
         FIXTURE_ROUTES: path.join(dir, 'routes'),
         FIXTURE_FAIL: String(fail),
+        FIXTURE_SERVER_EPOCH: String(
+          fixedEntryClock || trailingLocalClock
+            ? Date.parse(rollouts[0]!.created!) / 1000 +
+                (trailingLocalClock ? 2 : 0)
+            : Math.floor(Date.now() / 1000),
+        ),
+        FIXTURE_SERVER_REAL_START: String(Date.now() / 1000),
         FIXTURE_BASE: BASE,
         FIXTURE_OLD: OLD,
         FIXTURE_NEW: NEW,
@@ -439,6 +453,31 @@ describe('serialized automatic deployment source fence', () => {
     ).toMatchObject({ status: 0, output: 'false' });
   });
 
+  it('retains a completed newer rollout when the verifier wall clock trails GitHub', () => {
+    expect(
+      sourceDecision(
+        OLD,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [
+          {
+            source: NEW,
+            created: '2026-10-13T16:00:01Z',
+            start: '2026-10-13T16:00:01Z',
+            updated: '2026-10-13T16:00:02Z',
+            end: '2026-10-13T16:00:02Z',
+          },
+        ],
+        false,
+        false,
+        false,
+        true,
+      ),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
   it('fails closed rather than truncating an overloaded single-second window', () => {
     const second = '1970-01-01T00:00:04Z';
     expect(
@@ -485,7 +524,7 @@ describe('serialized automatic deployment source fence', () => {
     ).toMatchObject({ status: 0, output: 'false' });
   });
 
-  it('fails closed for incomplete history, unknown effect provenance and incomparable sources', () => {
+  it('fails closed for incomplete history', () => {
     expect(
       sourceDecision(
         NEW,
@@ -497,16 +536,25 @@ describe('serialized automatic deployment source fence', () => {
         true,
       ).status,
     ).not.toBe(0);
+  });
+
+  it('fails closed for unknown effect provenance', () => {
     expect(
       sourceDecision(NEW, NEW, 'workflow_run', false, '', [
         { marker: 'legacy no source' },
       ]).status,
     ).not.toBe(0);
+  });
+
+  it('fails closed for an incomparable rollout source', () => {
     expect(
       sourceDecision(NEW, NEW, 'workflow_run', false, '', [
         { source: 'c'.repeat(40) },
       ]).status,
     ).not.toBe(0);
+  });
+
+  it('fails closed for an automatic source outside main history', () => {
     expect(sourceDecision('c'.repeat(40), NEW).status).not.toBe(0);
   });
 

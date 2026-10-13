@@ -113,6 +113,7 @@ jobs:
           python3 - <<'PY_SOURCE'
           import datetime, json, math, os, re, subprocess, time
           from urllib.parse import urlencode
+          from email.utils import parsedate_to_datetime
           from concurrent.futures import ThreadPoolExecutor
 
           def admit(value):
@@ -125,7 +126,6 @@ jobs:
 
           # The deploy job owns the lock. Future creations cannot have rollout
           # effects yet; retain the inclusive entry second, then let it close.
-          discovery_second = int(time.time())
           repo = os.environ['GITHUB_REPOSITORY']
           source = os.environ['SOURCE_SHA']
           if not re.fullmatch('[0-9a-f]{40}', source):
@@ -163,19 +163,39 @@ jobs:
                   raise ValueError('Deployment history is incomplete or changed during discovery')
               return list(rows.values())
 
-          main = api('git/ref/heads/main')['object']['sha']
+          def server_clock():
+              response = subprocess.check_output([
+                  'gh', 'api', f'repos/{repo}/git/ref/heads/main',
+                  '--include', '-H', 'Cache-Control: no-cache',
+              ], text=True, timeout=30)
+              headers, separator, body = response.partition('\n\n')
+              if not separator:
+                  raise ValueError('GitHub clock response has no header boundary')
+              values = {}
+              for header in headers.splitlines()[1:]:
+                  name, colon, value = header.partition(':')
+                  if colon:
+                      values.setdefault(name.lower(), []).append(value.strip())
+              if len(values.get('date', [])) != 1 or any(age != '0' for age in values.get('age', [])):
+                  raise ValueError('GitHub clock response is missing or stale')
+              date = parsedate_to_datetime(values['date'][0])
+              if date.tzinfo is None or date.utcoffset() != datetime.timedelta(0):
+                  raise ValueError('GitHub clock response has no UTC authority')
+              return int(date.timestamp()), json.loads(body)
+
+          discovery_second, main_response = server_clock()
+          main = main_response['object']['sha']
           if not isinstance(main, str) or not re.fullmatch('[0-9a-f]{40}', main):
               raise ValueError('Could not verify the current main tip')
           if api(f'compare/{source}...{main}')['status'] not in ('ahead', 'identical'):
               raise ValueError('Automatic source is not on current main history')
 
-          remaining = discovery_second + 1 - time.time()
-          if remaining > 1:
-              raise ValueError('Deployment discovery clock moved backward')
-          if remaining > 0:
-              time.sleep(remaining)
-          if time.time() < discovery_second + 1:
-              raise ValueError('Deployment discovery second is not closed')
+          # Local wall-clock skew cannot omit an already completed rollout.
+          # A second fresh server response qualifies closure of the pinned second.
+          time.sleep(1)
+          closed_second, _ = server_clock()
+          if closed_second <= discovery_second:
+              raise ValueError('GitHub deployment discovery second is not closed')
 
           def workflow_runs(lower, upper):
               def instant(second):
