@@ -227,6 +227,57 @@ describe('source-ordered label provider handoff', () => {
     expect(await store.listRuns(taskId)).toHaveLength(2);
   });
 
+  it.each([false, true])(
+    'preserves an explicit queued provider when the admitted label is unchanged (administrator=%s)',
+    async (allowProviderChange) => {
+      const { store, orchestrator, run } = await fixture();
+      await orchestrator.report(run.runId, { ok: true });
+      const explicit = await orchestrator.request({
+        taskId,
+        requestId: 'explicit-other-provider',
+        pipeline: 'opencode',
+      });
+      if (isRefusal(explicit)) throw new Error(explicit.reason);
+      const queued = decidedRun(explicit);
+      await store.enqueueRun({ runId: queued.runId, now: T0 });
+      const before = await store.readRun(queued.runId);
+      expect(
+        await orchestrator.request({
+          taskId,
+          requestId: 'reapply-admitted-label',
+          pipeline: 'codex',
+          labelProviderRequest: {
+            requestedAt: T1,
+            actor: allowProviderChange ? 'maintainer' : 'ordinary',
+            allowProviderChange,
+          },
+        }),
+      ).toMatchObject({
+        task: {
+          activeRunId: queued.runId,
+          runCount: 2,
+          providerRouting: {
+            effectivePipeline: 'codex',
+            status: 'refused',
+            reason: 'task-busy',
+            acceptedGeneration: { runId: run.runId, pipeline: 'codex' },
+          },
+        },
+        outbox: [],
+      });
+      expect(await store.readRun(queued.runId)).toEqual(before);
+      expect(await store.listRuns(taskId)).toHaveLength(2);
+      expect(
+        await store.claimQueuedRun({
+          pipelines: ['opencode'],
+          now: T1,
+          claimedBy: 'executor',
+          tokenHash: 'a'.repeat(64),
+        }),
+      ).toMatchObject({ runId: queued.runId, pipeline: 'opencode' });
+    },
+  );
+
   it('equal-clock requests cannot erase a busy refusal and admit it on replay', async () => {
     const { store, orchestrator, run } = await fixture();
     const request = (requestId: string) =>

@@ -1,5 +1,5 @@
 import type { TaskId } from '@agent-lcars/orchestrator';
-import { type ItemView, latestRun } from '@agent-lcars/work/derive';
+import type { ItemView } from '@agent-lcars/work/derive';
 import {
   Anchor,
   Badge,
@@ -183,6 +183,10 @@ export function TaskDetailHistory({
   canViewSessions?: boolean;
 }) {
   const native = 'workId' in anchor;
+  const effectivePipeline =
+    item.providerRouting?.acceptedGeneration?.pipeline ??
+    item.providerRouting?.effectivePipeline ??
+    item.spec.pipeline;
   const deliverables = item.runs.filter(
     (run) => resultRefs(run.result).length > 0,
   );
@@ -197,8 +201,7 @@ export function TaskDetailHistory({
           {item.state}
         </Badge>
         <Text size="sm" c="dimmed">
-          {item.spec.target.repo} · effective provider{' '}
-          {latestRun(item.runs)?.pipeline ?? item.spec.pipeline}
+          {item.spec.target.repo} · effective provider {effectivePipeline}
         </Text>
         <Text size="xs" c="dimmed">
           {native ? 'Native work' : `GitHub · ${anchor.repo}#${anchor.issue}`} ·{' '}
@@ -214,10 +217,8 @@ export function TaskDetailHistory({
       {item.providerRouting !== undefined && (
         <Text size="sm" role="status">
           Requested provider {item.providerRouting.requestedPipeline} ·
-          effective provider{' '}
-          {latestRun(item.runs)?.pipeline ??
-            item.providerRouting.effectivePipeline}{' '}
-          · handoff {item.providerRouting.status}
+          effective provider {effectivePipeline} · handoff{' '}
+          {item.providerRouting.status}
           {item.providerRouting.reason
             ? ` (${item.providerRouting.reason})`
             : ''}
