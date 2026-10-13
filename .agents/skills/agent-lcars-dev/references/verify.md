@@ -259,6 +259,37 @@ covers those cases through a real transient user unit where a manager is
 reachable, and through a child environment with no inherited PATH everywhere
 else.
 
+### Qualify native-binding cache ancestors
+
+For a phase that loads SWC, an owned cache leaf alone does not qualify its
+placement. Inspect the nested native-loader error: `ERR_SWC_NATIVE_CACHE` can
+reject a group-writable ancestor even when the installed native package and
+binary are present. Check the selected directory's ownership, permissions and
+ancestor trust before claiming a missing dependency or reinstalling.
+
+If the selected cache fails that trust check, use the supported
+`SWC_NATIVE_BINDING_CACHE` override with a phase-specific, user-owned mode `0700`
+directory directly beneath a verified trusted sticky directory (such as
+root-owned mode `01777` `/tmp`), with the remaining ancestors trusted. Pass its absolute path through the
+supervisor's explicit child environment, as with PATH above. Include this cache
+in the phase's storage sizing/accounting. Preserve the existing `HOME`, worktree,
+Nx cache receipt/helper, other native-cache guards and normal hooks; do not
+change shared directory permissions, reset caches or disable a plugin to make
+the loader succeed.
+
+From the normally installed worktree and qualified child environment, prove the
+actual module loads, for example `node -e "console.log(require('@swc/core').version)"`.
+That readiness result does not replace the normal affected lint/typechecks,
+Console build/standalone smoke when selected, or actual publication.
+
+Recorded [#2662](https://github.com/jlapenna/agent-lcars/issues/2662): SWC
+`1.16.18` rejected the verifier's XDG/TMP locations beneath a mode `0775`
+ancestor. A private `0700` cache beneath trusted sticky `/tmp` loaded the same
+installed module and completed the unchanged-source normal push, including the
+one-worker production Console build, seven traced external packages and HTTP
+401 smoke. Preserve the original failed hook receipt separately; neither a
+missing payload nor a need to reinstall was established.
+
 ### Qualify the workload shape a CPU bound covers
 
 A CPU bound qualified for one workload shape does not qualify a different one.
