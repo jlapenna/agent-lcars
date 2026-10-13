@@ -19,6 +19,7 @@ import {
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
 import { groupSessionsByIssue } from '../../lib/session-issue-groups';
+import { windowOptions } from '../archive-window-options';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import {
@@ -31,7 +32,6 @@ import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
-import { windowOptions } from '../archive-window-options';
 import {
   matchesSessionView,
   parseViewFilters,
