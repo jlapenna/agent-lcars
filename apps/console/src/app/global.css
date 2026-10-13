@@ -2003,6 +2003,26 @@ td.costs-repo-spend__num {
   border-bottom: 1px solid var(--lcars-hairline);
 }
 
+/* Counts and money stay on one line; the identity column takes the slack. */
+.costs-ledger-table td + td,
+.costs-ledger-table th + th {
+  white-space: nowrap;
+}
+
+.costs-ledger-table__aside {
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+}
+
+.costs-ledger-grid--stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Stacked breakdowns share one column grid, so they read as one ledger. */
+.costs-ledger-grid--stacked .costs-ledger-table {
+  table-layout: fixed;
+}
+
 .costs-ledger-table tbody tr:hover {
   background: var(--lcars-surface-raised) !important;
 }
