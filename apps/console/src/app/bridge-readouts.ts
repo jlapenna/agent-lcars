@@ -1,3 +1,6 @@
+import type { AgentActivity } from '../lib/agent-activity';
+import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
+import type { SessionArchiveResult } from '../lib/session-archive';
 import type { ConsoleReadout } from './console-readouts';
 import { formatCost, formatDuration } from './format';
 
@@ -14,15 +17,15 @@ export interface BridgeReadoutInput {
   /** Authoritative lifecycle counts in the same scope as `liveRuns`;
    * undefined when the read failed. */
   queue?: { queued: number; claimed: number; running: number };
-  /** Known spend of sessions active in the last day; undefined when the
-   * archive read failed or no session could be priced. */
+  /** Known spend of sessions active since 00:00 UTC, the same figure as the
+   * cost ledger's "Spend by repository"; undefined when the archive read
+   * failed. */
   spendToday?: {
     costUsd?: number;
     estimated: boolean;
     /** The archive hit its session limit: the total is a lower bound. */
     partial: boolean;
   };
-  budgetUsd?: number;
 }
 
 const UNAVAILABLE = '—';
@@ -33,6 +36,59 @@ const UNAVAILABLE = '—';
  * shown as unavailable, never as an exact figure: an outage must not read as
  * "no agents running".
  */
+/** Maps the reads every readout row shares (fleet activity, autoscaler
+ * lanes, today's archive) to `bridgeReadouts`' input, scoped to `liveRuns`.
+ * The Bridge and the cost ledger both render the row from it. */
+export function fleetReadoutInput({
+  activity,
+  liveRuns,
+  autoscaler,
+  spendArchive,
+}: {
+  activity: Pick<AgentActivity, 'fleet' | 'queue'>;
+  /** Live runs in the page's repository scope. */
+  liveRuns: AgentActivity['liveRuns'];
+  autoscaler: Pick<AutoscalerStatusResult, 'lanes' | 'lanesIncomplete'>;
+  spendArchive?: Pick<SessionArchiveResult, 'spend' | 'spendByRepository'>;
+}): BridgeReadoutInput {
+  const capacity = autoscaler.lanes?.reduce(
+    (total, lane) => total + lane.maxRunners,
+    0,
+  );
+  const repoSpend = spendArchive?.spendByRepository;
+  return {
+    fleet: {
+      online: activity.fleet?.online,
+      busy: activity.fleet?.busy,
+      capacity:
+        autoscaler.lanesIncomplete || !autoscaler.lanes?.length
+          ? undefined
+          : capacity,
+    },
+    liveRuns,
+    liveRunsAvailable: activity.queue !== undefined,
+    // Same scope as the runs: a repository filter narrows the counts too.
+    queue: activity.queue && {
+      queued: liveRuns.filter(
+        (run) => run.status === 'queued' && run.queue?.state !== 'claimed',
+      ).length,
+      claimed: liveRuns.filter(
+        (run) => run.status === 'queued' && run.queue?.state === 'claimed',
+      ).length,
+      running: liveRuns.filter((run) => run.status === 'running').length,
+    },
+    spendToday:
+      spendArchive?.spend && repoSpend
+        ? {
+            costUsd: repoSpend.todayUsd,
+            // Only today's sessions: the archive also holds yesterday's.
+            estimated: repoSpend.todayEstimated,
+            partial: spendArchive.spend.coverageLimited,
+          }
+        : undefined,
+  };
+}
+
 export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
   const { online, busy, capacity } = input.fleet;
   const runningRuns = input.liveRuns.filter((run) => run.status === 'running');
@@ -95,14 +151,14 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
         spend === undefined
           ? UNAVAILABLE
           : `${formatCost(spend)}${input.spendToday?.partial ? '+' : ''}`,
+      // The configured cost budget applies to a ledger window
+      // (docs/cost-ledger.md), not a day, so today is not shown as a share.
       detail:
         spend === undefined
           ? 'unavailable'
           : input.spendToday?.partial
             ? 'partial: session archive limit reached'
-            : input.budgetUsd !== undefined
-              ? `of ${formatCost(input.budgetUsd)} budget · ${Math.round((spend / input.budgetUsd) * 100)}%${input.spendToday?.estimated ? ' · est.' : ''}`
-              : `sessions active today${input.spendToday?.estimated ? ' · est.' : ''}`,
+            : `since 00:00 UTC · no daily budget${input.spendToday?.estimated ? ' · est.' : ''}`,
     },
   ];
 }

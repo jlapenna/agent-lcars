@@ -56,12 +56,16 @@ test.describe('/costs workspace @smoke', () => {
     ).toBe(true);
   });
 
-  test('opens with spend readouts, spend by repository and a ledger export', async ({
+  test('opens with the fleet readouts, spend by repository and a ledger export', async ({
     page,
   }) => {
     await page.goto('/costs?days=30');
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
-    await expect(workspace.getByTestId('readout-spend-today')).toContainText(
+    // The same readout row as the Bridge (design/fleet-console.html#costs).
+    for (const id of ['online', 'busy', 'queue', 'running']) {
+      await expect(workspace.getByTestId(`readout-${id}`)).toBeVisible();
+    }
+    await expect(workspace.getByTestId('readout-spend')).toContainText(
       'since 00:00 UTC · no daily budget',
     );
     const repos = workspace.getByTestId('spend-by-repository');

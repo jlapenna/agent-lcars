@@ -1,5 +1,5 @@
 import { SESSION_AGENTS } from '@agent-lcars/telemetry';
-import { Anchor, Button, Card, Group, Title } from '@mantine/core';
+import { Anchor, Card, Group, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
@@ -24,6 +24,7 @@ import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import {
   ConsoleToolbar,
+  ToolbarApply,
   ToolbarSearch,
   ToolbarSelect,
   ToolbarWindow,
@@ -158,7 +159,7 @@ async function SessionsBody({
           <ToolbarSelect
             name="agent"
             label="Agent"
-            value={filters.agent ?? ''}
+            value={query.agent ?? ''}
             options={[
               { value: '', label: 'All agents' },
               ...SESSION_AGENTS.map((agent) => ({
@@ -189,15 +190,15 @@ async function SessionsBody({
               { value: 'issue-agent', label: 'Dispatched agent' },
             ]}
           />
-          {/* A native submit so filters apply before hydration. */}
-          <Button type="submit" variant="light" size="compact-sm">
-            Apply
-          </Button>
           <ViewToggle
             view={view}
             flatHref={displayHref(query, { view: 'flat', filters })}
             byIssueHref={displayHref(query, { view: 'by-issue', filters })}
           />
+          {/* Selects and the window submit on change; Apply shows only
+              until they hydrate (the mockup's toolbar has none), then keeps
+              its box so hydrating moves nothing. */}
+          <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }
     >
