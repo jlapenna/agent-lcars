@@ -1030,6 +1030,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
+/* Phone touch targets for the toolbar on the Work, Sessions and Costs
+   routes (44px, as every other phone control). Belongs in the shared
+   toolbar block once it lands there for every route. */
+@media (max-width: 47.99em) {
+  :is(.work-workspace, .sessions-workspace, .costs-workspace)
+    :is(.console-toolbar__field, .console-toolbar__segmented button) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* A workspace's content divides into stacked sections separated by the same
    hairline the frame uses. Routes that are a list of blocks (Shuttlebay's
    scale sets, Costs' ledgers) get this instead of inventing their own card

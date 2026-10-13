@@ -375,12 +375,16 @@ the work that has stopped, and the work in flight.
 **Purpose:** issue and follow native work items that are independent of
 GitHub issues, and manage recurring work.
 
-- **FE-WK-1 [Shipped]** The list is a table with columns Title, State,
-  Pipeline, Repo, Principal, and Updated, showing up to 200 rows. State is one
-  of `running`, `parked`, `done`, `failed`, or `canceled`. It is derived and
-  never stored.
-- **FE-WK-2 [Shipped] Create work** ("New work" in the header; see FE-AUTH-4
-  for when it is shown):
+- **FE-WK-1 [Shipped]** The list follows `design/fleet-console.html#work`:
+  an "Admitted queue" panel (running work in priority order, FIFO within a
+  priority) and a "Recent work" panel for the rest of the page (stopped work
+  first), both with columns Pri, Item (repository · principal and title),
+  Agent, State (with the latest run's execution phase), and Waiting or
+  Updated, over up to 200 examined rows. State is one of `running`, `parked`,
+  `done`, `failed`, or `canceled`. It is derived and never stored.
+- **FE-WK-2 [Shipped] Create work** ("New work", the Work toolbar's primary
+  action and the header command elsewhere; see FE-AUTH-4 for when it is
+  shown):
   - Fields: Repo, Agent, Priority (`urgent`, `normal`, or `background`),
     Allowed fallback order, Description, and an optional screenshot (paste
     or attach).
@@ -426,7 +430,8 @@ GitHub issues, and manage recurring work.
     `work-schedules.spec.ts` covers create, enable, disable, edit, and
     confirmed delete in the browser.
 - **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
-  and cursor-based next-page navigation in the URL. Each page examines up to
+  (Work API inputs), agent, window (1h/24h/7d) and find (applied within the
+  examined page), and cursor-based next-page navigation in the URL. Each page examines up to
   200 native tasks; an empty filtered page can still lead to older matches.
   Bridge stopped work pages over the authoritative all-anchor task feed with
   the same explicit 200-task bound. Bridge, Inbox, and Agents have a repository
