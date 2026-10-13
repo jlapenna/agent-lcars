@@ -48,6 +48,38 @@ requests are visible in task history and require a new label application; they
 never become automatic deferred execution. Ordinary provider claim and capacity
 fences still apply to the successor.
 
+## Worker startup acknowledgement
+
+The direct-runner installs its best-effort EXIT failure reporter after reading
+its authenticated brief, then synchronously sends one ordinary heartbeat before
+checkout, credential restoration, telemetry startup or provider execution. It
+requires HTTP 200 and one JSON object containing the exact `runId` and a valid
+UTC `expiresAt`. Refusal, transport failure or an unknown acknowledgement stops
+setup without retrying into provider work. The Console returns this existing
+response only after authenticated renewal commits. Its original startup deadline
+and exact claim/credential authority remain authoritative; a successful brief
+read alone does not establish completion authority.
+
+After acknowledgement the existing periodic heartbeat loop maintains liveness
+through setup, credential contention and execution. Bootstrap liveness does not
+report OS process spawn: the separate provider-process supervisor owns that
+observation, and neither observation proves model activity or useful results.
+Provider execution/correction budgets retain their existing monotonic clocks.
+
+| Producer / reader                                                                          | Startup behavior                                                                                                |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Acknowledgement-gated worker / Console returning the existing committed heartbeat response | Setup proceeds only after accepted startup, including placement with less than one periodic interval remaining. |
+| Acknowledgement-gated worker / missing route, refused or malformed response                | Stops before checkout, credential restoration or provider work.                                                 |
+| Older worker without this gate / startup-fenced Console                                    | No retroactive protection; a periodic first heartbeat arriving after the startup deadline is still refused.     |
+
+This gate does not attest an image before claim. Runner identity alone does not
+prove compatibility; exact image/source adoption and a genuine delayed-start
+attempt with terminal credential persistence/completion remain separate runtime
+qualification gates. A refused EXIT callback cannot prove durable settlement.
+Existing authenticated executor exit, deadline recovery, credential cleanup and
+positive physical retirement own recovery; published artifacts do not authorize
+reviving an expired worker or releasing its claim.
+
 ## Explicit provider fallback
 
 Fallback is opt in: Work `spec.fallbackPipelines` names ordered alternatives;
