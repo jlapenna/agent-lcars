@@ -508,19 +508,35 @@ describe('Codex child publication ownership (#2669)', () => {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as Row);
-  function childDeps(home: string, input = rows()) {
+  function childDeps(
+    home: string,
+    input = rows(),
+    event = 'PostToolUse',
+    overrides: Record<string, unknown> = {},
+  ) {
     const transcript = path.join(home, 'child.jsonl');
+    const parentTranscript = path.join(home, 'parent.jsonl');
     fs.writeFileSync(
       transcript,
       input.map((row) => JSON.stringify(row)).join('\n'),
     );
+    fs.writeFileSync(
+      parentTranscript,
+      JSON.stringify({ type: 'session_meta', payload: { id: parentId } }),
+    );
     return deps(
       home,
-      payload('Stop', {
-        session_id: childId,
-        agent_id: 'review_inbox_scope',
-        transcript_path: transcript,
+      payload(event, {
+        session_id: parentId,
+        agent_id: childId,
+        transcript_path: parentTranscript,
+        ...(event === 'SubagentStop' && { agent_transcript_path: transcript }),
+        ...overrides,
       }),
+      {
+        findCodexRollout: (_codexHome, sessionId) =>
+          sessionId === childId ? transcript : undefined,
+      },
     );
   }
 
@@ -616,6 +632,54 @@ describe('Codex child publication ownership (#2669)', () => {
     );
     expect(replacement?.doc.deliverables.qualifiedPRs).toHaveLength(1);
     expect(replacement?.doc.tokens).toEqual(write?.doc.tokens);
+  });
+
+  it('collects the documented parent-session SubagentStop from its exact child transcript', async () => {
+    const home = tempHome();
+    const d = childDeps(home, rows(), 'SubagentStop');
+    d.findCodexRollout = vi.fn(() => undefined);
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    expect(spooledEvents(home)[0]).toMatchObject({
+      sessionId: childId,
+      kind: 'stop',
+    });
+    expect(d.findCodexRollout).not.toHaveBeenCalled();
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), parentId),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    'wrong parent',
+    'unsafe child',
+    'same child and parent',
+    'parent transcript',
+    'missing child lookup',
+  ])('refuses documented child payload with %s', async (defect) => {
+    const home = tempHome();
+    const overrides: Record<string, unknown> = {};
+    if (defect === 'wrong parent') overrides.session_id = 'another-parent';
+    if (defect === 'unsafe child') overrides.agent_id = '../child';
+    if (defect === 'same child and parent') overrides.agent_id = parentId;
+    if (defect === 'parent transcript')
+      overrides.agent_transcript_path = path.join(home, 'parent.jsonl');
+    const d = childDeps(home, rows(), 'SubagentStop', overrides);
+    if (defect === 'missing child lookup') {
+      d.readStdin = () =>
+        payload('PostToolUse', {
+          session_id: parentId,
+          agent_id: childId,
+          transcript_path: path.join(home, 'parent.jsonl'),
+        });
+      d.findCodexRollout = () => undefined;
+    }
+    expect((await executeHookCommand(['codex'], d)).action).toBe(
+      'skipped-subagent',
+    );
+    expect(spooledEvents(home)).toEqual([]);
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), parentId),
+    ).toBeUndefined();
   });
 
   it.each([

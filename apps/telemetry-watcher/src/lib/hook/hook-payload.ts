@@ -21,6 +21,7 @@ export function isHookRuntime(value: unknown): value is HookRuntime {
  */
 export interface HookPayload {
   readonly hookEventName: string;
+  /** Codex subagent hooks name the parent here, not the child. */
   readonly sessionId: string;
   /** Claude always sets it; Codex documents it as nullable. */
   readonly transcriptPath?: string;
@@ -34,6 +35,9 @@ export interface HookPayload {
   /** Present inside a subagent. Claude/OpenCode remain parent-owned;
    * Codex requires a verified distinct child transcript and owned usage. */
   readonly isSubagent: boolean;
+  readonly agentId?: string;
+  /** Codex SubagentStop supplies the child path separately from the parent. */
+  readonly agentTranscriptPath?: string;
 }
 
 /** Hook event name → session event kind. Events not listed here
@@ -72,6 +76,8 @@ export function parseHookPayload(raw: string): HookPayload | undefined {
   const source = optionalString(record['source']);
   const reason = optionalString(record['reason']);
   const model = optionalString(record['model']);
+  const agentId = optionalString(record['agent_id']);
+  const agentTranscriptPath = optionalString(record['agent_transcript_path']);
   return {
     hookEventName,
     sessionId,
@@ -80,6 +86,8 @@ export function parseHookPayload(raw: string): HookPayload | undefined {
     ...(source && { source }),
     ...(reason && { reason }),
     ...(model && { model }),
-    isSubagent: optionalString(record['agent_id']) !== undefined,
+    ...(agentId && { agentId }),
+    ...(agentTranscriptPath && { agentTranscriptPath }),
+    isSubagent: agentId !== undefined,
   };
 }

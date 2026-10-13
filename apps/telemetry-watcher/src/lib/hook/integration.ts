@@ -70,6 +70,7 @@ export const INTEGRATION_TARGETS: Readonly<
       { event: 'UserPromptSubmit', async: true },
       { event: 'PostToolUse', async: true },
       { event: 'Stop', async: true },
+      { event: 'SubagentStop', async: true },
       { event: 'Interrupt', timeout: 1 },
       { event: 'SessionEnd', timeout: 3 },
     ],

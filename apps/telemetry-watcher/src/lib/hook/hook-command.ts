@@ -243,8 +243,9 @@ function reduceCodexChildTranscript(
   deps: HookCommandDependencies,
   transcriptPath: string | undefined,
   sessionId: string,
+  expectedParentId: string | undefined,
 ): SessionSummary | undefined {
-  if (!transcriptPath) return undefined;
+  if (!transcriptPath || !expectedParentId) return undefined;
   try {
     const ownedLines: string[] = [];
     let parentId: string | undefined;
@@ -280,6 +281,7 @@ function reduceCodexChildTranscript(
           typeof parent !== 'string' ||
           !isSafeIdentifier(parent) ||
           parent === sessionId ||
+          parent !== expectedParentId ||
           payload?.forked_from_id !== parent
         )
           return undefined;
@@ -418,20 +420,43 @@ async function handleRuntimeHook(
       `${now} ${runtime} ${action} ${detail}`.trimEnd(),
     );
 
-  const payload = parseHookPayload(deps.readStdin());
+  let payload = parseHookPayload(deps.readStdin());
   if (!payload) {
     log('ignored', 'unparseable payload');
     return { action: 'ignored', detail: 'unparseable payload' };
   }
   const kind: SessionEventKind | undefined =
-    HOOK_EVENT_KINDS[payload.hookEventName];
+    runtime === 'codex' && payload.hookEventName === 'SubagentStop'
+      ? 'stop'
+      : HOOK_EVENT_KINDS[payload.hookEventName];
   if (!kind) {
     log('ignored', `event=${payload.hookEventName}`);
     return { action: 'ignored', detail: payload.hookEventName };
   }
-  if (payload.isSubagent && runtime !== 'codex') {
-    log('skipped-subagent', `event=${payload.hookEventName}`);
-    return { action: 'skipped-subagent' };
+  if (payload.hookEventName === 'SubagentStop' && !payload.isSubagent) {
+    log('ignored', 'missing child identity');
+    return { action: 'ignored', detail: 'missing child identity' };
+  }
+  let codexParentId: string | undefined;
+  if (payload.isSubagent) {
+    if (
+      runtime !== 'codex' ||
+      !payload.agentId ||
+      !isSafeIdentifier(payload.agentId) ||
+      !isSafeIdentifier(payload.sessionId) ||
+      payload.agentId === payload.sessionId
+    ) {
+      log('skipped-subagent', `event=${payload.hookEventName}`);
+      return { action: 'skipped-subagent' };
+    }
+    // Codex hook session_id identifies the parent. Use only the explicit child
+    // path or exact agent_id rollout lookup; the common transcript is parent-owned.
+    codexParentId = payload.sessionId;
+    payload = {
+      ...payload,
+      sessionId: payload.agentId,
+      transcriptPath: payload.agentTranscriptPath,
+    };
   }
   if (!isSafeIdentifier(payload.sessionId)) {
     log('ignored', 'unsafe session id');
@@ -491,7 +516,12 @@ async function handleRuntimeHook(
 
     const transcriptPath = resolveTranscriptPath(deps, runtime, payload);
     const reduced = payload.isSubagent
-      ? reduceCodexChildTranscript(deps, transcriptPath, payload.sessionId)
+      ? reduceCodexChildTranscript(
+          deps,
+          transcriptPath,
+          payload.sessionId,
+          codexParentId,
+        )
       : reduceTranscript(
           deps,
           profile.adapter,

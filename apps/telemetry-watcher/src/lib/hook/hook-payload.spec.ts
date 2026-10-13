@@ -44,6 +44,27 @@ describe('parseHookPayload', () => {
     expect(payload?.transcriptPath).toBeUndefined();
   });
 
+  it('retains documented Codex parent and child identity fields without message bodies', () => {
+    const result = parseHookPayload(
+      JSON.stringify({
+        hook_event_name: 'SubagentStop',
+        session_id: 'parent',
+        transcript_path: '/parent.jsonl',
+        agent_id: 'child',
+        agent_transcript_path: '/child.jsonl',
+        last_assistant_message: 'private child body',
+      }),
+    );
+    expect(result).toMatchObject({
+      sessionId: 'parent',
+      transcriptPath: '/parent.jsonl',
+      agentId: 'child',
+      agentTranscriptPath: '/child.jsonl',
+      isSubagent: true,
+    });
+    expect(JSON.stringify(result)).not.toContain('private child body');
+  });
+
   it('flags subagent payloads and rejects malformed input', () => {
     expect(
       parseHookPayload(
