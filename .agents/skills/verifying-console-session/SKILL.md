@@ -173,9 +173,9 @@ at the launch decision. Keep capacity, supervisor, accounting and storage
 requirements in that authoritative owner; this skill supplies the saved-session
 sequence. Read-only credential readiness above remains a separate check.
 
-Preserve the original failed preflight receipt alongside its valid functional
-evidence. Checking this route establishes the handoff, not future agent behavior
-or resource enforcement.
+Keep failed guard receipts distinct from later functional evidence. Checking
+this route establishes the handoff, not future agent behavior or resource
+enforcement.
 
 After rotation, run `check-session` above, qualify the local phase, then prove
 the admin session and the intended page with the supported browser verifier:
