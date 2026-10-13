@@ -439,8 +439,10 @@ GitHub issues, and manage recurring work.
   examined page), and cursor-based next-page navigation in the URL. Each page examines up to
   200 native tasks; an empty filtered page can still lead to older matches.
   Bridge stopped work pages over the authoritative all-anchor task feed with
-  the same explicit 200-task bound. Bridge, Inbox, and Agents have a repository
-  selector and clear action, with scope preserved across their navigation.
+  the same explicit 200-task bound. Inbox and Agents provide a repository
+  selector and clear action. Bridge accepts repository scope from navigation
+  and exposes a clear action when scoped, without a repository selector.
+  Scope is preserved across navigation between these pages.
   Schedules support revision-checked editing/deletion in the UI and API,
   with UTC evaluation and labeled local display. `PUT` remains an idempotent
   create; `PATCH` edits and `DELETE` stops future recurrence. See R8.
