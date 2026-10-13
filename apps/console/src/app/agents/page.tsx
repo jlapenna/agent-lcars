@@ -56,9 +56,11 @@ interface PageProps {
 async function AgentsPageBody({
   repoFilter,
   selectedKey,
+  watchedRepos,
 }: {
   repoFilter: WatchedRepo | undefined;
   selectedKey?: string;
+  watchedRepos: WatchedRepo[];
 }) {
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
@@ -220,6 +222,13 @@ async function AgentsPageBody({
 
   return (
     <AgentsWorkspace
+      toolbar={
+        <RepositorySelector
+          repos={watchedRepos}
+          selected={repoFilter ? repoKey(repoFilter) : undefined}
+          action="/agents"
+        />
+      }
       warnings={
         warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
       }
@@ -307,14 +316,13 @@ function AgentsViewContent({
 }: AgentsViewProps) {
   return (
     <>
-      <RepositorySelector
-        repos={watchedRepos}
-        selected={repoFilter ? repoKey(repoFilter) : undefined}
-        action="/agents"
-      />
       <LiveDashboard />
       <Suspense fallback={<PageLoading rows={5} header={false} />}>
-        <AgentsPageBody repoFilter={repoFilter} selectedKey={selectedKey} />
+        <AgentsPageBody
+          repoFilter={repoFilter}
+          selectedKey={selectedKey}
+          watchedRepos={watchedRepos}
+        />
       </Suspense>
     </>
   );

@@ -87,8 +87,11 @@ that a source fix, deployment or provider execution was qualified.
 
 ## Resolve aliases without guessing
 
-A descriptive key needs an explicit alias tied to its retained body-file
-identity. Add an entry in `aliases` with `source` (source name), `key` (exact
+An alias may resolve only a descriptive object key whose mapped ID is absent
+or that exact same key. Different explicit ID values, array positions, numeric keys and
+malformed cause-namespace spellings such as `B-1`, `b1` or `B 1` remain
+unresolved. A descriptive key needs an explicit alias tied to its retained
+body-file identity. Add an entry in `aliases` with `source` (source name), `key` (exact
 collection entry key), `id` (stable cause ID), `issue` (qualified owning issue),
 `bodyFile` (exact pointer already present in the row's evidence), and `basis`
 (the retained receipt that establishes this mapping). The operator must read

@@ -202,6 +202,93 @@ describe('complete interactive workstream report assembly', () => {
     });
   });
 
+  it.each(['/id', '$key'])(
+    'retains a receipt-backed descriptive-key alias when the ID field is absent (%s)',
+    (pointer) => {
+      const f = fixture();
+      f.manifest.sources[1].fields.id = pointer;
+      Reflect.deleteProperty(f.ledger['descriptive-0'], 'id');
+      f.save();
+      const result = spawnSync(
+        process.execPath,
+        [script, path.join(f.directory, 'manifest.json')],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        complete: true,
+        totals: { causes: 182, owningIssues: 182 },
+      });
+    },
+  );
+
+  it.each(['B-1', 'b1', 'B 1', 'B_1', 'B01', 'B0', '', null, 'descriptive-id'])(
+    'never uses an alias to replace an explicit invalid ID %s',
+    (id) => {
+      const f = fixture();
+      f.manifest.sources[1].fields.id = '/id';
+      Object.assign(f.ledger['descriptive-0'], { id });
+      f.save();
+      const result = spawnSync(
+        process.execPath,
+        [script, path.join(f.directory, 'manifest.json')],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        complete: false,
+        totals: null,
+        missingIds: ['B67'],
+        unresolved: [
+          expect.objectContaining({
+            source: 'ledger',
+            key: 'descriptive-0',
+            reasons: expect.arrayContaining(['unknown or malformed cause id']),
+          }),
+        ],
+      });
+    },
+  );
+
+  it.each([
+    'B-1',
+    'b1',
+    'B 1',
+    'B_1',
+    'B01',
+    'B0',
+    'B',
+    '0',
+    ' B1',
+    'B1 ',
+    ' b1 ',
+    ' B-1 ',
+  ])('does not alias a malformed cause-namespace or numeric key %s', (key) => {
+    const f = fixture();
+    f.ledger[key] = f.ledger['descriptive-0'];
+    delete f.ledger['descriptive-0'];
+    f.manifest.aliases[0].key = key;
+    f.save();
+    const result = spawnSync(
+      process.execPath,
+      [script, path.join(f.directory, 'manifest.json')],
+      { encoding: 'utf8' },
+    );
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      complete: false,
+      totals: null,
+      missingIds: ['B67'],
+      unresolved: [
+        expect.objectContaining({
+          source: 'ledger',
+          key,
+          reasons: expect.arrayContaining(['unknown or malformed cause id']),
+        }),
+      ],
+    });
+  });
+
   it('does not inflate totals for replayed causes, duplicate aliases or shared owning issues', () => {
     const f = fixture();
     f.root.push(...f.rows.slice(66, 70));

@@ -110,10 +110,46 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-surface);
 }
 
-/* A route passes its `DataWarnings` element whether or not it has warnings;
-   with none, the band would be an empty status edge. */
-.console-workspace__warnings:empty {
-  display: none;
+/* The band is always present (design/fleet-console.html): a status edge and
+   inline warnings when sources degraded, a quiet hairline edge when not. */
+.console-workspace__warnings:has(> .lcars-data-warnings-none) {
+  border-left-color: var(--lcars-hairline);
+}
+
+.lcars-data-warnings-none {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.8125rem;
+}
+
+.lcars-data-warnings > .lcars-disclosure__summary {
+  gap: 14px;
+  padding: 0;
+  font-family: var(--font-body), sans-serif;
+  font-size: 0.8125rem;
+  letter-spacing: 0;
+}
+
+.lcars-data-warnings__count {
+  flex: 0 0 auto;
+  color: inherit;
+}
+
+.lcars-data-warnings__inline {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lcars-data-warnings__details {
+  flex: 0 0 auto;
+  margin-left: auto;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* Inside a workspace the warning band already draws the status edge. */
@@ -219,13 +255,97 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   max-width: 14%;
 }
 
-/* The arm, the frame rail, and the nav index only exist in the desktop
-   rail layout (min-width 64em, below). */
+/* The arm, the frame rail, the nav index and the header's status and
+   identity only exist in the desktop rail layout (min-width 64em, below). */
 .lcars-header-arm,
 .lcars-rail-head,
 .lcars-rail-body,
-.lcars-nav-index {
+.lcars-nav-index,
+.console-live-status,
+.console-identity,
+.lcars-refresh-button__label {
   display: none;
+}
+
+.console-live-status {
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.console-live-status b {
+  font-weight: 500;
+}
+
+.console-live-status[data-tone='ok'] b {
+  color: var(--mantine-color-green-5);
+}
+
+.console-live-status[data-tone='warn'] b {
+  color: var(--lcars-warning);
+}
+
+/* Status ink on the light ground needs the darker end of each hue to clear
+   AA, the same move the light badges make. */
+:root[data-mantine-color-scheme='light']
+  .console-live-status[data-tone='ok']
+  b {
+  color: color-mix(in srgb, var(--mantine-color-green-7) 70%, black);
+}
+
+:root[data-mantine-color-scheme='light']
+  .console-live-status[data-tone='warn']
+  b {
+  color: color-mix(in srgb, var(--lcars-warning) 55%, black);
+}
+
+/* Below the desktop rail the Refresh control is its icon on a 44px target,
+   matching the menu trigger beside it. */
+.lcars-refresh-button {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+}
+
+@media (max-width: 63.99em) {
+  .console-header .lcars-refresh-button {
+    height: 44px;
+  }
+}
+
+.lcars-refresh-button .mantine-Button-section {
+  margin: 0;
+}
+
+.console-identity {
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.console-identity__avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  background: var(--lcars-hairline);
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.console-identity__text {
+  display: flex;
+  flex-direction: column;
+}
+
+.console-identity__grants {
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
 }
 
 /* ---- Signature: LCARS destination rail ----
@@ -530,6 +650,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   left: 0;
   width: var(--lcars-spine-width);
   background: var(--lcars-accent);
+}
+
+@media (min-width: 80em) {
+  .console-page-shell[data-frame='rail'] .console-live-status {
+    display: block;
+  }
+}
+
+@media (min-width: 90em) {
+  .console-page-shell[data-frame='rail'] .console-identity__text {
+    display: flex;
+  }
 }
 
 /* ---- Panels, tables and tags ----
@@ -931,6 +1063,128 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-surface);
 }
 
+/* The toolbar band's controls (console-toolbar.tsx): hairline fields on the
+   one ground, a segmented window control, FIND search, and the route's
+   primary action docked to the trailing edge. */
+.console-toolbar,
+.console-toolbar__filters {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.console-toolbar__field {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--lcars-hairline);
+  border-radius: 0;
+  color: var(--lcars-ink);
+  background: var(--lcars-surface);
+  font-family: var(--font-body), sans-serif;
+  font-size: 0.8125rem;
+}
+
+.console-toolbar__select {
+  min-width: 10rem;
+  padding-right: 28px;
+  appearance: none;
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--lcars-ink-dim) 50%),
+    linear-gradient(-45deg, transparent 50%, var(--lcars-ink-dim) 50%);
+  background-position:
+    right 14px center,
+    right 9px center;
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+}
+
+.console-toolbar__segmented {
+  display: inline-flex;
+  border: 1px solid var(--lcars-hairline);
+}
+
+.console-toolbar__segmented label {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  padding: 0 14px;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.console-toolbar__segmented label + label {
+  border-left: 1px solid var(--lcars-hairline);
+}
+
+.console-toolbar__segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.console-toolbar__segmented label:hover {
+  color: var(--lcars-ink);
+  background: var(--lcars-surface-raised);
+}
+
+.console-toolbar__segmented label:has(input:checked) {
+  color: var(--lcars-ink-on-muted);
+  background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
+}
+
+.console-toolbar__segmented label:has(input:focus-visible) {
+  outline: 2px solid var(--lcars-amber);
+  outline-offset: 2px;
+}
+
+.console-toolbar__search {
+  width: 15rem;
+  max-width: 100%;
+}
+
+.console-toolbar__search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--lcars-ink);
+  background: transparent;
+  font: inherit;
+}
+
+.console-toolbar__search input::placeholder {
+  color: var(--lcars-ink-dim);
+}
+
+.console-toolbar__search:focus-within {
+  outline: 2px solid var(--lcars-amber);
+  outline-offset: 2px;
+}
+
+.console-toolbar__primary {
+  margin-left: auto;
+}
+
+/* Phone touch targets for the toolbar on the Work, Sessions and Costs
+   routes (44px, as every other phone control). Belongs in the shared
+   toolbar block once it lands there for every route. */
+@media (max-width: 47.99em) {
+  :is(.work-workspace, .sessions-workspace, .costs-workspace)
+    :is(.console-toolbar__field, .console-toolbar__segmented label) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* A workspace's content divides into stacked sections separated by the same
    hairline the frame uses. Routes that are a list of blocks (Shuttlebay's
    scale sets, Costs' ledgers) get this instead of inventing their own card
@@ -1245,6 +1499,120 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-accent);
 }
 
+/* The mockup's Work view (design/fleet-console.html#work): an admitted
+   queue panel and recent work in Pri · Item · Agent · State · Waiting
+   columns, with filters, window and the primary action in the toolbar. */
+.work-panels {
+  padding: 6px 4px 12px;
+}
+
+.work-panel__head .mantine-Title-root {
+  flex: 0 0 auto;
+}
+
+.work-panel__count {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.work-panel__meta {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-priority {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+}
+
+.work-item-ref {
+  display: block;
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.work-item-title {
+  display: block;
+  margin-top: 2px;
+  color: var(--lcars-ink);
+}
+
+.work-table__item {
+  width: 46%;
+}
+
+.work-table__num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+td.work-table__num {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+}
+
+/* State: a square of the status colour beside the label (mockup `.state`).
+   Each hue is mixed with the scheme's ink so the label clears AA on both
+   grounds: darker on light, lighter on dark. */
+.work-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.work-state::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: currentColor;
+}
+
+.work-state[data-tone='ok'] {
+  color: color-mix(in srgb, var(--mantine-color-green-6) 55%, var(--lcars-ink));
+}
+
+.work-state[data-tone='fail'] {
+  color: color-mix(in srgb, var(--mantine-color-red-6) 55%, var(--lcars-ink));
+}
+
+.work-state[data-tone='warn'] {
+  color: color-mix(in srgb, var(--lcars-warning) 55%, var(--lcars-ink));
+}
+
+.work-state[data-tone='busy'] {
+  color: var(--lcars-ink);
+}
+
+.work-state[data-tone='idle'] {
+  color: var(--lcars-ink-dim);
+}
+
+.work-principal-filter {
+  width: 11rem;
+  max-width: 100%;
+}
+
+.work-cards__group {
+  padding: 14px 16px 6px;
+}
+
+.work-mobile-row__meta {
+  font-family: var(--font-mono), monospace;
+}
+
 /* ---- Costs ledger workspace (#255) ---- */
 
 .costs-workspace__content {
@@ -1368,10 +1736,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .inbox-notifications__toggle {
   min-height: 44px;
   justify-content: flex-start;
-}
-
-.inbox-frame > .queue-workspace {
-  padding: 12px 16px 16px;
 }
 
 .lcars-command-row {
@@ -2090,7 +2454,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 
   .lcars-rail-block {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 8px 12px;
+    color: var(--lcars-ink-on-muted);
+    text-align: right;
     background: color-mix(
       in srgb,
       var(--lcars-accent) 52%,
@@ -2117,7 +2487,64 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .lcars-rail-block--end {
     height: 44px;
+    color: var(--lcars-ink-on-accent);
     background: var(--lcars-accent);
+  }
+
+  .lcars-rail-block b {
+    font-family: var(--font-mono), monospace;
+    font-size: 1.125rem;
+    font-weight: 500;
+    line-height: 1.1;
+  }
+
+  .lcars-rail-block span {
+    font-family: var(--font-display), sans-serif;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .lcars-rail-code {
+    margin-top: 6px;
+    font-family: var(--font-mono), monospace;
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+
+  /* Header utilities: live status, the route's commands, identity. */
+  .console-page-shell[data-frame='rail'] .lcars-command-utilities {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .console-identity {
+    display: flex;
+  }
+
+  /* The header's title keeps its room at laptop widths: the live status
+     joins from 80em and the identity's login from 90em; below that the
+     identity is its avatar alone. */
+  .console-identity__text {
+    display: none;
+  }
+
+  .lcars-refresh-button__label {
+    display: inline;
+  }
+
+  .console-page-shell[data-frame='rail'] .lcars-refresh-button {
+    min-height: 36px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .lcars-refresh-button
+    .mantine-Button-section {
+    margin-right: 8px;
   }
 
   .console-page-shell[data-frame='rail'] > .console-header[data-current] {
@@ -2188,8 +2615,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .console-page-shell[data-frame='rail']
     .console-header[data-long-title]
     .lcars-header-title {
-    font-size: 1.75rem;
-    line-height: 1.05;
+    font-size: 1.5rem;
+    line-height: 1.1;
   }
 
   .console-page-shell[data-frame='rail']
@@ -2775,16 +3202,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     border: 0;
   }
 
-  .inbox-frame > .queue-workspace {
-    padding: 0;
-  }
-
-  /* Freshness is hidden on phones and the delivery watch renders nothing,
-     so the band would be empty height above the full-height queue. */
-  .inbox-frame__toolbar {
-    display: none;
-  }
-
   .queue-workspace__list {
     height: 100%;
     border: 0;
@@ -3179,11 +3596,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .console-repository-selector {
-  margin-bottom: 16px;
-  min-width: 0;
-}
-.work-list-filters {
-  flex: 1 1 100%;
+  flex: 0 1 auto;
   min-width: 0;
 }
 .work-workspace__toolbar {
@@ -3693,7 +4106,259 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     min-height: 44px;
   }
 
+  /* Secondary row links (session, Task/run) keep a full touch target. */
+  .ops-table :is(.ops-subtle-link, .ops-budget a, .ops-group-head a) {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
   .ops-panel__meta {
     margin-left: 0;
+  }
+}
+
+/* ---- Agents (design/fleet-console.html #agents) ----
+   The mockup stacks the panels full width: active dispatches (with CLI
+   sessions), recent completions, then claimed-but-idle work. */
+.agents-workspace__operations,
+.agents-workspace__operations:has(.agents-workspace__secondary) {
+  display: block;
+  padding: 20px;
+  background: none;
+}
+
+.agents-workspace__secondary {
+  display: block;
+  background: none;
+}
+
+.agents-workspace__operations > * + *,
+.agents-workspace__secondary > * + *,
+.agents-active > * + * {
+  margin-top: 28px;
+}
+
+@media (max-width: 47.99em) {
+  .agents-workspace__operations,
+  .agents-workspace__operations:has(.agents-workspace__secondary) {
+    padding: 4px;
+  }
+}
+
+/* ---- Shuttlebay (design/fleet-console.html #shuttlebay) ----
+   Runners and provider admission beside the runner fleet panel. */
+.shuttlebay-cols {
+  display: grid;
+  align-items: start;
+  gap: 28px;
+  padding: 20px;
+}
+
+.shuttlebay-stack {
+  display: grid;
+  min-width: 0;
+  gap: 28px;
+}
+
+@media (min-width: 82.5em) {
+  .shuttlebay-cols {
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 47.99em) {
+  .shuttlebay-cols {
+    padding: 12px;
+  }
+}
+
+/* ---- Inbox (design/fleet-console.html #inbox) ----
+   queue-workspace.tsx: a toolbar band (repository, agent, find with its
+   reason/sort menu, freshness, "Respond to oldest"), then the decision inbox
+   as one signalled panel. The detail column opens only for a selected
+   decision, a pending reply draft, or a reply confirmation. */
+.inbox-region {
+  min-width: 0;
+}
+
+.inbox-toolbar {
+  flex-wrap: wrap;
+}
+
+.inbox-toolbar .queue-search-input {
+  flex: 1 1 14rem;
+  max-width: 18rem;
+}
+
+.inbox-agent-select {
+  width: 9rem;
+}
+
+.inbox-respond-oldest {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 20px;
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.inbox-respond-oldest:hover {
+  color: var(--lcars-ink-on-accent);
+  background: color-mix(in srgb, var(--lcars-accent) 86%, white);
+  text-decoration: none;
+}
+
+.inbox-region > .queue-workspace {
+  padding: 20px;
+}
+
+.queue-workspace__list {
+  padding-left: calc(var(--lcars-spine-width) + 16px);
+}
+
+.queue-workspace__list::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: var(--lcars-spine-width);
+  background: var(--lcars-accent);
+}
+
+.queue-workspace__list::after {
+  top: 0;
+  bottom: 0;
+}
+
+.queue-workspace__list-header {
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 4px 10px;
+  min-height: 0;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.queue-workspace__list-header::after {
+  display: none;
+}
+
+.queue-workspace__list-header .ops-panel__meta {
+  margin-left: auto;
+}
+
+.queue-item-row {
+  min-height: 0;
+  border-left: 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.queue-item-row + .queue-item-row {
+  margin-top: 0;
+}
+
+.queue-item-row:hover,
+.queue-item-row:focus-within,
+.queue-item-row[data-selected],
+.queue-item-row[data-loading] {
+  background: var(--lcars-surface-raised);
+}
+
+.queue-item-row[data-selected] {
+  box-shadow: inset var(--lcars-spine-width) 0 0 var(--lcars-accent);
+}
+
+.queue-item-row__link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 12px 0 12px 12px;
+}
+
+.queue-item-row__text {
+  min-width: 0;
+}
+
+.queue-item-row__title {
+  margin: 5px 0 4px;
+  color: var(--lcars-ink);
+}
+
+.queue-item-row__question {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-bottom: 4px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.queue-label-count {
+  color: var(--lcars-ink-dim);
+}
+
+@media (min-width: 48em) {
+  .queue-workspace:not([data-detail]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .queue-workspace:not([data-detail]) .queue-workspace__detail {
+    display: none;
+  }
+}
+
+@media (max-width: 47.99em) {
+  .inbox-region[data-mobile-view='detail'] > .inbox-toolbar {
+    display: none;
+  }
+
+  .inbox-toolbar {
+    padding: 10px 12px;
+  }
+
+  .inbox-toolbar .queue-search-input {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .inbox-agent-select {
+    flex: 1 1 auto;
+  }
+
+  .inbox-respond-oldest {
+    min-height: 44px;
+  }
+
+  .inbox-region > .queue-workspace {
+    padding: 0;
+  }
+
+  .queue-workspace__list {
+    padding-left: 12px;
+  }
+
+  .queue-workspace__list::before {
+    display: none;
+  }
+
+  .queue-item-row {
+    min-height: 0;
+  }
+
+  .queue-item-row__link {
+    min-height: 44px;
+    padding: 10px 6px 10px 0;
   }
 }

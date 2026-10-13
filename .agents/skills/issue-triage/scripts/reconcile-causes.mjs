@@ -152,14 +152,19 @@ export function reconcileCauses(
         if (issueKey(issue) !== issueKey(alias.issue))
           reasons.push('alias conflicts with owning issue');
       }
-      // Descriptive keys require a retained, explicit alias. Malformed B IDs
-      // remain errors even if an alias attempts to replace them.
-      const id = causeId(rawId) ? rawId : alias?.id;
-      if (
-        !causeId(id) ||
-        (typeof rawId === 'string' && /^B\d/u.test(rawId) && !causeId(rawId))
-      )
-        reasons.push('unknown or malformed cause id');
+      // Aliases describe the exact keyed legacy identity, never a different ID
+      // field, array position or malformed spelling of the B cause namespace.
+      const descriptiveKey =
+        !Array.isArray(rows) &&
+        (rawId === undefined || rawId === key) &&
+        /[a-z]/i.test(key) &&
+        !/^b(?:[^a-z]|$)/i.test(key.trim());
+      const id = causeId(rawId)
+        ? rawId
+        : descriptiveKey
+          ? alias?.id
+          : undefined;
+      if (!causeId(id)) reasons.push('unknown or malformed cause id');
       if (!issueKey(issue)) reasons.push('missing qualified owning issue');
       if (
         !Array.isArray(evidence) ||

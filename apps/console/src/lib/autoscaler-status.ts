@@ -181,6 +181,13 @@ function isFresh(updatedAt: string, now: number): boolean {
   return Number.isFinite(parsed) && now - parsed <= RUNNER_STATUS_STALENESS_MS;
 }
 
+function isLaneName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name)
+  );
+}
+
 /**
  * Projects raw `runner-status` documents into the client contract: only
  * schema-valid, fresh documents, and only primitive fields (never a
@@ -203,15 +210,13 @@ export function projectAutoscalerStatuses(
   const lanes = laneRecords
     .filter((status) => isFresh(status.updatedAt, now))
     .sort((a, b) => a.lane.localeCompare(b.lane));
-  const arcRecordCount = records.filter(
-    (record) =>
+  const arcRecords = records.filter(
+    (record): record is Record<string, unknown> =>
       record !== null &&
       typeof record === 'object' &&
       'kind' in record &&
       record.kind === 'arc-lane',
-  ).length;
-  const stale = laneRecords.length > lanes.length;
-  const invalid = arcRecordCount > laneRecords.length;
+  );
   // Do not infer configured capacity from the documents that happened to
   // survive. Every fresh lane must attest the same bounded inventory, with
   // exactly one fresh record per expected lane. Old producers fail closed.
@@ -220,11 +225,25 @@ export function projectAutoscalerStatuses(
   const inventoryValid =
     expected.length > 0 &&
     expected.length <= 64 &&
-    expected.every((name) =>
-      /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name),
-    ) &&
+    expected.every(isLaneName) &&
     new Set(expected).size === expected.length &&
     lanes.every((lane) => lane.expectedLanes === inventory);
+  // Firestore TTL deletion is asynchronous. Only a valid unanimous current
+  // inventory can prove that an expired, identifiable snapshot is retired.
+  // Fresh unexpected producers and unidentifiable evidence still fail closed.
+  const retired = (record: ArcLaneStatus | Record<string, unknown>) =>
+    inventoryValid &&
+    isLaneName(record['lane']) &&
+    !expected.includes(record['lane']) &&
+    typeof record['updatedAt'] === 'string' &&
+    Number.isFinite(Date.parse(record['updatedAt'])) &&
+    !isFresh(record['updatedAt'], now);
+  const stale = laneRecords.some(
+    (record) => !isFresh(record.updatedAt, now) && !retired(record),
+  );
+  const invalid = arcRecords.some(
+    (record) => !retired(record) && parseArcLane(record) === undefined,
+  );
   const missing =
     inventoryValid &&
     (expected.length !== lanes.length ||

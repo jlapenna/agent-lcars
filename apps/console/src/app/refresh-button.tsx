@@ -1,6 +1,6 @@
 'use client';
 
-import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
 import { IconRefresh } from '@tabler/icons-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useTransition } from 'react';
@@ -49,24 +49,24 @@ export function RefreshButton({
           Updated {label}
         </Text>
       )}
-      <Tooltip label="Refresh">
-        <ActionIcon
-          variant="subtle"
-          size={compact ? 44 : 'sm'}
-          className="lcars-refresh-button"
-          loading={isPending}
-          aria-label="Refresh"
-          onClick={() =>
-            startTransition(async () => {
-              // Invalidate the authoritative queue before re-rendering it.
-              if (refreshesAuthoritativeQueue) await refreshDashboard();
-              router.refresh();
-            })
-          }
-        >
-          <IconRefresh aria-hidden="true" size={16} stroke={1.5} />
-        </ActionIcon>
-      </Tooltip>
+      <Button
+        variant="default"
+        size="compact-sm"
+        className="lcars-refresh-button"
+        data-compact={compact ? '' : undefined}
+        loading={isPending}
+        aria-label="Refresh"
+        leftSection={<IconRefresh aria-hidden="true" size={16} stroke={1.5} />}
+        onClick={() =>
+          startTransition(async () => {
+            if (refreshesAuthoritativeQueue) await refreshDashboard();
+            router.refresh();
+          })
+        }
+      >
+        {/* The mockup's text control; narrow headers keep the icon only. */}
+        <span className="lcars-refresh-button__label">Refresh</span>
+      </Button>
     </Group>
   );
 }

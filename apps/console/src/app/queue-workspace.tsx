@@ -7,6 +7,7 @@ import {
   Group,
   Menu,
   Modal,
+  NativeSelect,
   Stack,
   Text,
   TextInput,
@@ -28,6 +29,7 @@ import { ActionItemCard } from './action-item-card';
 import { formatAbsoluteLocal } from './format';
 import {
   type InboxCard,
+  inboxCardAgent,
   inboxCardKey,
   inboxCardMetadata,
   inboxCardSignature,
@@ -37,6 +39,7 @@ import { NativeDecisionDetail, NativeDecisionRow } from './native-decision';
 import { PersistedDetails } from './persisted-details';
 import { QueueItemRow } from './queue-item-row';
 import { INBOX_FILTER_REASONS } from './queue-reason';
+import { RelativeTime } from './relative-time';
 import { useDecisionSnoozes } from './use-decision-snoozes';
 import type { ReplyAction } from './work/work-actions';
 
@@ -65,6 +68,7 @@ const SORT_OPTIONS: Array<{ value: QueueSort; label: string }> = [
 const REASON_PARAM = 'reason';
 const SORT_PARAM = 'sort';
 const SEARCH_PARAM = 'q';
+const AGENT_PARAM = 'agent';
 
 export function parseQueueFilter(value: string | null): QueueFilter {
   return FILTER_OPTIONS.some((option) => option.value === value)
@@ -97,6 +101,8 @@ export function QueueWorkspace({
   mobileDataFreshness,
   mobileScopeLabel,
   replyToWorkItem,
+  toolbarStart,
+  toolbarEnd,
 }: {
   cards: InboxCard[];
   /** The URL-selected item resolved from the server's full loaded item set.
@@ -107,6 +113,10 @@ export function QueueWorkspace({
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
   replyToWorkItem?: ReplyAction;
+  /** Server-rendered toolbar controls: the repository selector first, the
+   * data freshness last (design/fleet-console.html toolbar band). */
+  toolbarStart?: ReactNode;
+  toolbarEnd?: ReactNode;
 }) {
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
@@ -119,6 +129,7 @@ export function QueueWorkspace({
   const [search, setSearch] = useState(
     () => searchParams.get(SEARCH_PARAM) ?? '',
   );
+  const [agent, setAgent] = useState(() => searchParams.get(AGENT_PARAM) ?? '');
   const [replyConfirmation, setReplyConfirmation] = useState<{
     workId: string;
     title: string;
@@ -154,6 +165,7 @@ export function QueueWorkspace({
     setFilter(parseQueueFilter(searchParams.get(REASON_PARAM)));
     setSort(parseQueueSort(searchParams.get(SORT_PARAM)));
     setSearch(searchParams.get(SEARCH_PARAM) ?? '');
+    setAgent(searchParams.get(AGENT_PARAM) ?? '');
   }, [searchParams]);
 
   // Mirror the controls into the URL without a server round-trip -
@@ -163,8 +175,11 @@ export function QueueWorkspace({
     nextFilter: QueueFilter,
     nextSort: QueueSort,
     nextSearch: string,
+    nextAgent: string = agent,
   ) => {
     const params = new URLSearchParams(window.location.search);
+    if (nextAgent) params.set(AGENT_PARAM, nextAgent);
+    else params.delete(AGENT_PARAM);
     if (nextFilter === 'all') params.delete(REASON_PARAM);
     else params.set(REASON_PARAM, nextFilter);
     if (nextSort === 'priority') params.delete(SORT_PARAM);
@@ -187,6 +202,19 @@ export function QueueWorkspace({
     setSearch(next);
     syncControlsToUrl(filter, sort, next.trim());
   };
+  const applyAgent = (next: string) => {
+    setAgent(next);
+    syncControlsToUrl(filter, sort, search.trim(), next);
+  };
+  // A selected agent stays an option even when none of its decisions remain
+  // (a live refresh, a stale bookmark), so the filter can always be cleared.
+  const agentOptions = useMemo(
+    () =>
+      [
+        ...new Set([...cards.map(inboxCardAgent), agent].filter(Boolean)),
+      ].sort() as string[],
+    [agent, cards],
+  );
 
   const visibleCards = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -194,6 +222,7 @@ export function QueueWorkspace({
       const meta = inboxCardMetadata(card);
       if (isSnoozed(inboxCardKey(card), inboxCardSignature(card))) return false;
       if (needle && !meta.search.toLowerCase().includes(needle)) return false;
+      if (agent && inboxCardAgent(card) !== agent) return false;
       return (
         filter === 'all' || meta.actionTypes.some((type) => type === filter)
       );
@@ -208,7 +237,7 @@ export function QueueWorkspace({
       }
       return inboxCardMetadata(a).rank - inboxCardMetadata(b).rank;
     });
-  }, [cards, filter, isSnoozed, search, sort]);
+  }, [agent, cards, filter, isSnoozed, search, sort]);
 
   const cardsByKey = new Map(cards.map((card) => [inboxCardKey(card), card]));
   const snoozedItems = Object.entries(entries).filter(([key, entry]) => {
@@ -253,6 +282,14 @@ export function QueueWorkspace({
   const onReplyDraftChange = (hasDraft: boolean) =>
     setDraftCard(hasDraft ? selectedCard : undefined);
   const explicitDetail = selectedItemKey !== undefined;
+  const oldestCard = visibleCards.reduce<InboxCard | undefined>(
+    (oldest, card) =>
+      !oldest ||
+      inboxCardMetadata(card).updatedAt < inboxCardMetadata(oldest).updatedAt
+        ? card
+        : oldest,
+    undefined,
+  );
   const backHref = queueSelectionHref(currentSearch);
 
   // Gmail-style list keys, global while the Inbox is mounted: j/k move the
@@ -328,193 +365,244 @@ export function QueueWorkspace({
     if (loadingItemKey === selectedItemKey) setLoadingItemKey(undefined);
   }, [loadingItemKey, selectedItemKey]);
 
+  const showDetail =
+    explicitDetail || Boolean(retainedDraft) || Boolean(replyConfirmation);
+  const mobileView = explicitDetail ? 'detail' : 'list';
+
   return (
     <section
-      className="queue-workspace"
-      data-mobile-view={explicitDetail ? 'detail' : 'list'}
+      className="inbox-region"
+      data-mobile-view={mobileView}
       aria-label="Decision Inbox"
     >
-      <InboxMobileCommandDeck
-        view={explicitDetail ? 'detail' : 'list'}
-        selectedItem={
-          selectedCard && !('work' in selectedCard)
-            ? selectedCard.item
-            : undefined
-        }
-        selectedIdentity={
-          selectedCard && 'work' in selectedCard
-            ? `${selectedCard.work.spec.target.repo} / ${selectedCard.work.id}`
-            : undefined
-        }
-        backHref={backHref}
-        scopeLabel={mobileScopeLabel}
-        dataFreshness={mobileDataFreshness}
-      />
+      <div className="console-workspace__toolbar inbox-toolbar">
+        {toolbarStart}
+        {agentOptions.length > 0 && (
+          <NativeSelect
+            size="xs"
+            aria-label="Agent"
+            className="inbox-agent-select"
+            value={agent}
+            onChange={(event) => applyAgent(event.currentTarget.value)}
+            data={[
+              { value: '', label: 'All agents' },
+              ...agentOptions.map((value) => ({ value, label: value })),
+            ]}
+          />
+        )}
+        <TextInput
+          ref={searchInputRef}
+          size="xs"
+          rightSectionWidth={search ? 52 : 28}
+          rightSectionPointerEvents="all"
+          value={search}
+          onChange={(event) => applySearch(event.currentTarget.value)}
+          placeholder="Search title, #, author, label"
+          aria-label="Search the Inbox"
+          leftSection={<IconSearch aria-hidden="true" size={13} />}
+          rightSection={
+            <Group gap={0} wrap="nowrap" justify="flex-end">
+              {search && (
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="xs"
+                  aria-label="Clear search text"
+                  onClick={() => applySearch('')}
+                >
+                  <IconX aria-hidden="true" size={12} />
+                </ActionIcon>
+              )}
+              <Menu position="bottom-end" withinPortal>
+                <Menu.Target>
+                  <ActionIcon
+                    variant={
+                      filter === 'all' && sort === 'priority'
+                        ? 'subtle'
+                        : 'light'
+                    }
+                    color={
+                      filter === 'all' && sort === 'priority' ? 'gray' : 'blue'
+                    }
+                    size="xs"
+                    aria-label="Filter and sort"
+                    className="queue-refine-control"
+                  >
+                    <IconAdjustments aria-hidden="true" size={14} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Label>Filter</Menu.Label>
+                  {FILTER_OPTIONS.map((option) => (
+                    <Menu.Item
+                      key={option.value}
+                      aria-current={
+                        filter === option.value ? 'true' : undefined
+                      }
+                      onClick={() => applyQueueControls(option.value, sort)}
+                      data-active={filter === option.value ? '' : undefined}
+                    >
+                      {option.label}
+                    </Menu.Item>
+                  ))}
+                  <Menu.Divider />
+                  <Menu.Label>Sort</Menu.Label>
+                  {SORT_OPTIONS.map((option) => (
+                    <Menu.Item
+                      key={option.value}
+                      aria-current={sort === option.value ? 'true' : undefined}
+                      onClick={() => applyQueueControls(filter, option.value)}
+                      data-active={sort === option.value ? '' : undefined}
+                    >
+                      {option.label}
+                    </Menu.Item>
+                  ))}
+                </Menu.Dropdown>
+              </Menu>
+            </Group>
+          }
+          className="queue-search-input"
+        />
+        {toolbarEnd}
+        {oldestCard && (
+          <Link
+            href={queueSelectionHref(currentSearch, inboxCardKey(oldestCard))}
+            scroll={false}
+            className="inbox-respond-oldest"
+          >
+            Respond to oldest
+          </Link>
+        )}
+      </div>
+      <div
+        className="queue-workspace"
+        data-mobile-view={mobileView}
+        data-detail={showDetail ? '' : undefined}
+      >
+        <InboxMobileCommandDeck
+          view={explicitDetail ? 'detail' : 'list'}
+          selectedItem={
+            selectedCard && !('work' in selectedCard)
+              ? selectedCard.item
+              : undefined
+          }
+          selectedIdentity={
+            selectedCard && 'work' in selectedCard
+              ? `${selectedCard.work.spec.target.repo} / ${selectedCard.work.id}`
+              : undefined
+          }
+          backHref={backHref}
+          scopeLabel={mobileScopeLabel}
+          dataFreshness={mobileDataFreshness}
+        />
 
-      <div className="queue-workspace__list">
-        {error && (
-          <Text role="alert" size="sm" p="xs">
-            {error}
-          </Text>
-        )}
-        {legacyAnchors.length > 0 && (
-          <Stack p="xs" gap="xs">
-            <Text size="xs">
-              This browser has {legacyAnchors.length} old mutes without a
-              recorded owner. Import them into your account as 24-hour snoozes?
+        <div className="queue-workspace__list">
+          {error && (
+            <Text role="alert" size="sm" p="xs">
+              {error}
             </Text>
-            <Button
-              size="compact-xs"
-              variant="default"
-              disabled={pending}
-              onClick={() => void importLegacy(legacyAnchors)}
-            >
-              Import this browser’s mutes
-            </Button>
-          </Stack>
-        )}
-        <div className="queue-workspace__list-header">
-          <div>
-            <Text size="xs" c="dimmed">
-              {visibleCards.length}{' '}
-              {visibleCards.length === 1 ? 'item' : 'items'} · needs your
-              decision or response
-              <Text
-                component="span"
-                size="xs"
-                c="dimmed"
-                className="queue-kbd-hint"
+          )}
+          {legacyAnchors.length > 0 && (
+            <Stack p="xs" gap="xs">
+              <Text size="xs">
+                This browser has {legacyAnchors.length} old mutes without a
+                recorded owner. Import them into your account as 24-hour
+                snoozes?
+              </Text>
+              <Button
+                size="compact-xs"
+                variant="default"
+                disabled={pending}
+                onClick={() => void importLegacy(legacyAnchors)}
               >
+                Import this browser’s mutes
+              </Button>
+            </Stack>
+          )}
+          <div className="queue-workspace__list-header">
+            <h2 className="ops-panel__title">Decision inbox</h2>
+            <span className="ops-panel__count">{visibleCards.length}</span>
+            <span className="ops-panel__meta">
+              {oldestCard && (
+                <>
+                  oldest{' '}
+                  <RelativeTime
+                    iso={inboxCardMetadata(oldestCard).updatedAt}
+                    variant="compact"
+                  />
+                </>
+              )}
+              <span className="queue-kbd-hint">
                 {' '}
                 · j/k to move · / to search
-              </Text>
-            </Text>
+              </span>
+            </span>
           </div>
-          <Group gap={6} className="queue-list-controls">
-            <TextInput
-              ref={searchInputRef}
-              size="xs"
-              rightSectionWidth={search ? 52 : 28}
-              rightSectionPointerEvents="all"
-              value={search}
-              onChange={(event) => applySearch(event.currentTarget.value)}
-              placeholder="Search title, #, author, label"
-              aria-label="Search the Inbox"
-              leftSection={<IconSearch aria-hidden="true" size={13} />}
-              rightSection={
-                <Group gap={0} wrap="nowrap" justify="flex-end">
-                  {search && (
-                    <ActionIcon
-                      variant="subtle"
-                      color="gray"
-                      size="xs"
-                      aria-label="Clear search text"
+
+          <div className="queue-workspace__rows">
+            {visibleCards.length === 0 ? (
+              <div className="queue-workspace__empty">
+                <Text fw={600}>
+                  {search.trim()
+                    ? `No matches for “${search.trim()}”.`
+                    : filter === 'all'
+                      ? 'Nothing needs you right now.'
+                      : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {search.trim() || filter !== 'all' || agent
+                    ? 'Other items may be hidden by the search or active filter.'
+                    : 'Check back after the next refresh.'}
+                </Text>
+                <Group gap="xs">
+                  {search.trim() && (
+                    <Button
+                      variant="default"
+                      size="compact-sm"
                       onClick={() => applySearch('')}
                     >
-                      <IconX aria-hidden="true" size={12} />
-                    </ActionIcon>
+                      Clear search
+                    </Button>
                   )}
-                  <Menu position="bottom-end" withinPortal>
-                    <Menu.Target>
-                      <ActionIcon
-                        variant={
-                          filter === 'all' && sort === 'priority'
-                            ? 'subtle'
-                            : 'light'
-                        }
-                        color={
-                          filter === 'all' && sort === 'priority'
-                            ? 'gray'
-                            : 'blue'
-                        }
-                        size="xs"
-                        aria-label="Filter and sort"
-                        className="queue-refine-control"
-                      >
-                        <IconAdjustments aria-hidden="true" size={14} />
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Label>Filter</Menu.Label>
-                      {FILTER_OPTIONS.map((option) => (
-                        <Menu.Item
-                          key={option.value}
-                          aria-current={
-                            filter === option.value ? 'true' : undefined
-                          }
-                          onClick={() => applyQueueControls(option.value, sort)}
-                          data-active={filter === option.value ? '' : undefined}
-                        >
-                          {option.label}
-                        </Menu.Item>
-                      ))}
-                      <Menu.Divider />
-                      <Menu.Label>Sort</Menu.Label>
-                      {SORT_OPTIONS.map((option) => (
-                        <Menu.Item
-                          key={option.value}
-                          aria-current={
-                            sort === option.value ? 'true' : undefined
-                          }
-                          onClick={() =>
-                            applyQueueControls(filter, option.value)
-                          }
-                          data-active={sort === option.value ? '' : undefined}
-                        >
-                          {option.label}
-                        </Menu.Item>
-                      ))}
-                    </Menu.Dropdown>
-                  </Menu>
+                  {filter !== 'all' && (
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      onClick={() => applyQueueControls('all', sort)}
+                    >
+                      Show all reasons
+                    </Button>
+                  )}
+                  {agent && (
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      onClick={() => applyAgent('')}
+                    >
+                      Show all agents
+                    </Button>
+                  )}
                 </Group>
-              }
-              className="queue-search-input"
-            />
-          </Group>
-        </div>
-
-        <div className="queue-workspace__rows">
-          {visibleCards.length === 0 ? (
-            <div className="queue-workspace__empty">
-              <Text fw={600}>
-                {search.trim()
-                  ? `No matches for “${search.trim()}”.`
-                  : filter === 'all'
-                    ? 'Nothing needs you right now.'
-                    : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
-              </Text>
-              <Text size="sm" c="dimmed">
-                {search.trim() || filter !== 'all'
-                  ? 'Other items may be hidden by the search or active filter.'
-                  : 'Check back after the next refresh.'}
-              </Text>
-              <Group gap="xs">
-                {search.trim() && (
-                  <Button
-                    variant="default"
-                    size="compact-sm"
-                    onClick={() => applySearch('')}
-                  >
-                    Clear search
-                  </Button>
-                )}
-                {filter !== 'all' && (
-                  <Button
-                    variant="default"
-                    size="compact-sm"
-                    onClick={() => applyQueueControls('all', sort)}
-                  >
-                    Show all reasons
-                  </Button>
-                )}
-              </Group>
-            </div>
-          ) : (
-            visibleCards.map((card) => {
-              const key = inboxCardKey(card);
-              if ('work' in card)
+              </div>
+            ) : (
+              visibleCards.map((card) => {
+                const key = inboxCardKey(card);
+                if ('work' in card)
+                  return (
+                    <NativeDecisionRow
+                      key={key}
+                      card={card}
+                      href={queueSelectionHref(currentSearch, key)}
+                      selected={
+                        selectedCard !== undefined &&
+                        inboxCardKey(selectedCard) === key
+                      }
+                      onNavigate={() => setLoadingItemKey(key)}
+                      onSnooze={() => setSnoozeCard(card)}
+                    />
+                  );
                 return (
-                  <NativeDecisionRow
+                  <QueueItemRow
                     key={key}
                     card={card}
                     href={queueSelectionHref(currentSearch, key)}
@@ -522,212 +610,203 @@ export function QueueWorkspace({
                       selectedCard !== undefined &&
                       inboxCardKey(selectedCard) === key
                     }
+                    loading={loadingItemKey === key}
                     onNavigate={() => setLoadingItemKey(key)}
-                    onSnooze={() => setSnoozeCard(card)}
+                    muted={false}
+                    onToggleMute={() => setSnoozeCard(card)}
                   />
                 );
-              return (
-                <QueueItemRow
-                  key={key}
-                  card={card}
-                  href={queueSelectionHref(currentSearch, key)}
-                  selected={
-                    selectedCard !== undefined &&
-                    inboxCardKey(selectedCard) === key
-                  }
-                  loading={loadingItemKey === key}
-                  onNavigate={() => setLoadingItemKey(key)}
-                  muted={false}
-                  onToggleMute={() => setSnoozeCard(card)}
-                />
-              );
-            })
+              })
+            )}
+          </div>
+
+          {snoozedItems.length > 0 && (
+            <PersistedDetails
+              className="queue-muted-items"
+              storageKey="inbox:muted"
+              summary={<>Snoozed ({snoozedItems.length})</>}
+            >
+              <Stack gap={4} mt="xs">
+                {snoozedItems.map(([key, entry]) => {
+                  const card = cardsByKey.get(key);
+                  const title = card
+                    ? 'work' in card
+                      ? card.work.spec.title
+                      : `#${card.item.number} ${card.item.title}`
+                    : key;
+                  return (
+                    <Group key={key} justify="space-between" wrap="nowrap">
+                      <Text size="xs" truncate>
+                        {title}
+                        <Text
+                          component="span"
+                          display="block"
+                          size="xs"
+                          c="dimmed"
+                        >
+                          Until{' '}
+                          <time dateTime={entry.expiresAt}>
+                            {formatAbsoluteLocal(entry.expiresAt)}
+                          </time>
+                        </Text>
+                      </Text>
+                      <Button
+                        variant="subtle"
+                        color="gray"
+                        size="compact-xs"
+                        disabled={pending}
+                        onClick={() =>
+                          void unsnooze({
+                            anchor: key,
+                            signature: entry.signature,
+                          })
+                        }
+                      >
+                        Unsnooze
+                      </Button>
+                    </Group>
+                  );
+                })}
+              </Stack>
+            </PersistedDetails>
           )}
         </div>
 
-        {snoozedItems.length > 0 && (
-          <PersistedDetails
-            className="queue-muted-items"
-            storageKey="inbox:muted"
-            summary={<>Snoozed ({snoozedItems.length})</>}
-          >
-            <Stack gap={4} mt="xs">
-              {snoozedItems.map(([key, entry]) => {
-                const card = cardsByKey.get(key);
-                const title = card
-                  ? 'work' in card
-                    ? card.work.spec.title
-                    : `#${card.item.number} ${card.item.title}`
-                  : key;
-                return (
-                  <Group key={key} justify="space-between" wrap="nowrap">
-                    <Text size="xs" truncate>
-                      {title}
-                      <Text
-                        component="span"
-                        display="block"
-                        size="xs"
-                        c="dimmed"
-                      >
-                        Until{' '}
-                        <time dateTime={entry.expiresAt}>
-                          {formatAbsoluteLocal(entry.expiresAt)}
-                        </time>
-                      </Text>
-                    </Text>
-                    <Button
-                      variant="subtle"
-                      color="gray"
-                      size="compact-xs"
-                      disabled={pending}
-                      onClick={() =>
-                        void unsnooze({
-                          anchor: key,
-                          signature: entry.signature,
-                        })
-                      }
-                    >
-                      Unsnooze
-                    </Button>
-                  </Group>
-                );
-              })}
-            </Stack>
-          </PersistedDetails>
-        )}
-      </div>
-
-      <div className="queue-workspace__detail">
-        {draftLeftQueue && (
-          <Text role="status" size="sm">
-            The selected item left the queue. Your pending reply is preserved.
-          </Text>
-        )}
-        {replyConfirmation && (
-          <Stack p="md" gap="xs" data-testid="native-reply-confirmation">
-            <Text fw={600}>{replyConfirmation.title}</Text>
+        <div className="queue-workspace__detail">
+          {draftLeftQueue && (
             <Text role="status" size="sm">
-              {replyConfirmation.message}
-            </Text>
-            <Anchor component={Link} href={`/work/${replyConfirmation.workId}`}>
-              Full history of the answered work
-            </Anchor>
-          </Stack>
-        )}
-        {selectedCard && 'work' in selectedCard ? (
-          <Stack gap="xs">
-            <Button
-              size="compact-xs"
-              variant="subtle"
-              disabled={pending}
-              onClick={() => setSnoozeCard(selectedCard)}
-            >
-              Snooze decision
-            </Button>
-            <NativeDecisionDetail
-              key={selectedCard.work.id}
-              card={
-                draftLeftQueue
-                  ? { ...selectedCard, canReply: false }
-                  : selectedCard
-              }
-              onReplyDraftChange={onReplyDraftChange}
-              replyToWorkItem={replyToWorkItem}
-              onReplyAdmitted={(message) =>
-                setReplyConfirmation({
-                  workId: selectedCard.work.anchor.workId,
-                  title: selectedCard.work.spec.title,
-                  message,
-                })
-              }
-            />
-          </Stack>
-        ) : selectedCard ? (
-          <ActionItemCard
-            item={selectedCard.item}
-            primaryAction={selectedCard.primaryAction}
-            multiRepo={watchedRepos.length > 1}
-            muted={isSnoozed(
-              inboxCardKey(selectedCard),
-              inboxCardSignature(selectedCard),
-            )}
-            onToggleMute={() => {
-              const anchor = inboxCardKey(selectedCard);
-              const signature = inboxCardSignature(selectedCard);
-              if (isSnoozed(anchor, signature))
-                void unsnooze({ anchor, signature });
-              else setSnoozeCard(selectedCard);
-            }}
-            variant="workspace"
-            onReplyDraftChange={onReplyDraftChange}
-          />
-        ) : explicitDetail ? (
-          <div className="queue-detail-state" role="status">
-            <Title order={2} size="h3">
-              Item unavailable
-            </Title>
-            <Text c="dimmed" size="sm">
-              This item is stale, filtered out, or no longer needs a decision.
-            </Text>
-            <Button component="a" href={backHref} variant="default">
-              Back to Inbox
-            </Button>
-          </div>
-        ) : (
-          <div className="queue-detail-state">
-            <Title order={2} size="h3">
-              Inbox clear
-            </Title>
-            <Text c="dimmed" size="sm">
-              Select an item when new work arrives.
-            </Text>
-          </div>
-        )}
-      </div>
-      <Modal
-        opened={Boolean(snoozeCard)}
-        onClose={() => {
-          if (!pending) setSnoozeCard(undefined);
-        }}
-        title="Snooze decision"
-        size="sm"
-        closeOnClickOutside={!pending}
-        closeOnEscape={!pending}
-        withCloseButton={!pending}
-      >
-        <Stack gap="sm">
-          <Text size="sm">
-            Hide this decision only for your account, across devices. New
-            activity or a changed decision brings it back sooner. No work or
-            GitHub labels are changed.
-          </Text>
-          {error && (
-            <Text role="alert" size="sm">
-              {error}
+              The selected item left the queue. Your pending reply is preserved.
             </Text>
           )}
-          {SNOOZE_DURATIONS.map((duration) => (
-            <Button
-              key={duration.minutes}
-              variant="default"
-              disabled={pending}
-              onClick={async () => {
-                if (
-                  snoozeCard &&
-                  (await snooze({
-                    anchor: inboxCardKey(snoozeCard),
-                    signature: inboxCardSignature(snoozeCard),
-                    minutes: duration.minutes,
-                  }))
-                )
-                  setSnoozeCard(undefined);
+          {replyConfirmation && (
+            <Stack p="md" gap="xs" data-testid="native-reply-confirmation">
+              <Text fw={600}>{replyConfirmation.title}</Text>
+              <Text role="status" size="sm">
+                {replyConfirmation.message}
+              </Text>
+              <Anchor
+                component={Link}
+                href={`/work/${replyConfirmation.workId}`}
+              >
+                Full history of the answered work
+              </Anchor>
+            </Stack>
+          )}
+          {selectedCard && 'work' in selectedCard ? (
+            <Stack gap="xs">
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                disabled={pending}
+                onClick={() => setSnoozeCard(selectedCard)}
+              >
+                Snooze decision
+              </Button>
+              <NativeDecisionDetail
+                key={selectedCard.work.id}
+                card={
+                  draftLeftQueue
+                    ? { ...selectedCard, canReply: false }
+                    : selectedCard
+                }
+                onReplyDraftChange={onReplyDraftChange}
+                replyToWorkItem={replyToWorkItem}
+                onReplyAdmitted={(message) =>
+                  setReplyConfirmation({
+                    workId: selectedCard.work.anchor.workId,
+                    title: selectedCard.work.spec.title,
+                    message,
+                  })
+                }
+              />
+            </Stack>
+          ) : selectedCard ? (
+            <ActionItemCard
+              item={selectedCard.item}
+              primaryAction={selectedCard.primaryAction}
+              multiRepo={watchedRepos.length > 1}
+              muted={isSnoozed(
+                inboxCardKey(selectedCard),
+                inboxCardSignature(selectedCard),
+              )}
+              onToggleMute={() => {
+                const anchor = inboxCardKey(selectedCard);
+                const signature = inboxCardSignature(selectedCard);
+                if (isSnoozed(anchor, signature))
+                  void unsnooze({ anchor, signature });
+                else setSnoozeCard(selectedCard);
               }}
-            >
-              {duration.label}
-            </Button>
-          ))}
-        </Stack>
-      </Modal>
+              variant="workspace"
+              onReplyDraftChange={onReplyDraftChange}
+            />
+          ) : explicitDetail ? (
+            <div className="queue-detail-state" role="status">
+              <Title order={2} size="h3">
+                Item unavailable
+              </Title>
+              <Text c="dimmed" size="sm">
+                This item is stale, filtered out, or no longer needs a decision.
+              </Text>
+              <Button component="a" href={backHref} variant="default">
+                Back to Inbox
+              </Button>
+            </div>
+          ) : (
+            <div className="queue-detail-state">
+              <Title order={2} size="h3">
+                Inbox clear
+              </Title>
+              <Text c="dimmed" size="sm">
+                Select an item when new work arrives.
+              </Text>
+            </div>
+          )}
+        </div>
+        <Modal
+          opened={Boolean(snoozeCard)}
+          onClose={() => {
+            if (!pending) setSnoozeCard(undefined);
+          }}
+          title="Snooze decision"
+          size="sm"
+          closeOnClickOutside={!pending}
+          closeOnEscape={!pending}
+          withCloseButton={!pending}
+        >
+          <Stack gap="sm">
+            <Text size="sm">
+              Hide this decision only for your account, across devices. New
+              activity or a changed decision brings it back sooner. No work or
+              GitHub labels are changed.
+            </Text>
+            {error && (
+              <Text role="alert" size="sm">
+                {error}
+              </Text>
+            )}
+            {SNOOZE_DURATIONS.map((duration) => (
+              <Button
+                key={duration.minutes}
+                variant="default"
+                disabled={pending}
+                onClick={async () => {
+                  if (
+                    snoozeCard &&
+                    (await snooze({
+                      anchor: inboxCardKey(snoozeCard),
+                      signature: inboxCardSignature(snoozeCard),
+                      minutes: duration.minutes,
+                    }))
+                  )
+                    setSnoozeCard(undefined);
+                }}
+              >
+                {duration.label}
+              </Button>
+            ))}
+          </Stack>
+        </Modal>
+      </div>
     </section>
   );
 }
