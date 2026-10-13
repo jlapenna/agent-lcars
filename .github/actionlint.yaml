@@ -6,6 +6,7 @@
 self-hosted-runner:
   labels:
     - agent-lcars-ci
+    - agent-lcars-e2e
 
 # GitHub supports concurrency.queue; pinned actionlint 1.7.7 does not yet.
 # Required deploy-console-source-fence contracts validate queue values and
