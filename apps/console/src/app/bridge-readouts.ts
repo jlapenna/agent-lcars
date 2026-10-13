@@ -11,11 +11,17 @@ export interface BridgeReadoutInput {
     elapsedSeconds: number;
   }[];
   liveRunsAvailable: boolean;
-  /** Authoritative lifecycle counts; undefined when the read failed. */
+  /** Authoritative lifecycle counts in the same scope as `liveRuns`;
+   * undefined when the read failed. */
   queue?: { queued: number; claimed: number; running: number };
   /** Known spend of sessions active in the last day; undefined when the
    * archive read failed or no session could be priced. */
-  spendToday?: { costUsd?: number; estimated: boolean };
+  spendToday?: {
+    costUsd?: number;
+    estimated: boolean;
+    /** The archive hit its session limit: the total is a lower bound. */
+    partial: boolean;
+  };
   budgetUsd?: number;
 }
 
@@ -85,13 +91,18 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
     {
       id: 'spend',
       label: 'Spend today',
-      value: spend === undefined ? UNAVAILABLE : formatCost(spend),
+      value:
+        spend === undefined
+          ? UNAVAILABLE
+          : `${formatCost(spend)}${input.spendToday?.partial ? '+' : ''}`,
       detail:
         spend === undefined
           ? 'unavailable'
-          : input.budgetUsd !== undefined
-            ? `of ${formatCost(input.budgetUsd)} budget · ${Math.round((spend / input.budgetUsd) * 100)}%${input.spendToday?.estimated ? ' · est.' : ''}`
-            : `sessions active today${input.spendToday?.estimated ? ' · est.' : ''}`,
+          : input.spendToday?.partial
+            ? 'partial: session archive limit reached'
+            : input.budgetUsd !== undefined
+              ? `of ${formatCost(input.budgetUsd)} budget · ${Math.round((spend / input.budgetUsd) * 100)}%${input.spendToday?.estimated ? ' · est.' : ''}`
+              : `sessions active today${input.spendToday?.estimated ? ' · est.' : ''}`,
     },
   ];
 }

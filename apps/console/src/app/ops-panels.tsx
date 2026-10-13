@@ -716,16 +716,14 @@ export function RunnerFleetPanel({
   /** The fleet chip: the authoritative one-line fleet summary. */
   chip?: ReactNode;
 }) {
+  // No lane records is unknown capacity, not zero capacity.
+  const known = lanes !== undefined && lanes.length > 0 && !lanesIncomplete;
   const online = lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
   const max = lanes?.reduce((n, lane) => n + lane.maxRunners, 0);
   return (
     <OpsPanel
       title="Runner fleet"
-      count={
-        online === undefined || lanesIncomplete
-          ? UNAVAILABLE
-          : `${online}/${max}`
-      }
+      count={known ? `${online}/${max}` : UNAVAILABLE}
       meta={chip}
       data-testid="runner-fleet-panel"
     >

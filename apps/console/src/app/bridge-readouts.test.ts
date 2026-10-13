@@ -12,7 +12,7 @@ const healthy: BridgeReadoutInput = {
   ],
   liveRunsAvailable: true,
   queue: { queued: 1, claimed: 2, running: 3 },
-  spendToday: { costUsd: 38.42, estimated: false },
+  spendToday: { costUsd: 38.42, estimated: false, partial: false },
   budgetUsd: 60,
 };
 
@@ -34,6 +34,17 @@ describe('bridgeReadouts', () => {
       detail: 'claude 2 · codex 1',
     });
     expect(r['spend']?.detail).toBe('of $60.00 budget · 64%');
+  });
+
+  it('marks a spend total the archive limit truncated as a lower bound', () => {
+    const r = byId({
+      ...healthy,
+      spendToday: { costUsd: 38.42, estimated: false, partial: true },
+    });
+    expect(r['spend']).toMatchObject({
+      value: '$38.42+',
+      detail: 'partial: session archive limit reached',
+    });
   });
 
   it('never turns failed reads into zeros', () => {

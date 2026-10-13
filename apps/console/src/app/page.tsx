@@ -198,9 +198,12 @@ async function IndexBody({
       return { store: context.runtime.store, principal: context.principal };
     }),
     getAutoscalerStatuses(),
-    getSessionArchive(parseSessionArchiveQuery({ days: '1' }), {
-      includeSpend: true,
-    }).catch((error: unknown) => {
+    getSessionArchive(
+      parseSessionArchiveQuery({ days: '1', repo: repoFilterKey }),
+      {
+        includeSpend: true,
+      },
+    ).catch((error: unknown) => {
       logger.error('agent-lcars: Bridge spend readout unavailable:', error);
       return undefined;
     }),
@@ -313,15 +316,30 @@ async function IndexBody({
     fleet: {
       online: activity.fleet?.online,
       busy: activity.fleet?.busy,
-      capacity: autoscaler.lanesIncomplete ? undefined : capacity,
+      capacity:
+        autoscaler.lanesIncomplete || !autoscaler.lanes?.length
+          ? undefined
+          : capacity,
     },
     liveRuns: filteredActivity.liveRuns,
     liveRunsAvailable: activity.queue !== undefined,
-    queue: activity.queue,
+    // Same scope as the runs: a repository filter narrows the counts too.
+    queue: activity.queue && {
+      queued: filteredActivity.liveRuns.filter(
+        (run) => run.status === 'queued' && run.queue?.state !== 'claimed',
+      ).length,
+      claimed: filteredActivity.liveRuns.filter(
+        (run) => run.status === 'queued' && run.queue?.state === 'claimed',
+      ).length,
+      running: filteredActivity.liveRuns.filter(
+        (run) => run.status === 'running',
+      ).length,
+    },
     spendToday: spendArchive?.spend
       ? {
           costUsd: spendArchive.spend.totals.costUsd,
           estimated: spendArchive.spend.totals.costEstimated ?? false,
+          partial: spendArchive.spend.coverageLimited,
         }
       : undefined,
     budgetUsd: budget.state === 'configured' ? budget.limitUsd : undefined,
