@@ -123,6 +123,24 @@ function PhaseBlocks({ run }: { run: AgentRun }) {
   );
 }
 
+/** The run's own execution log: a GitHub Actions run or the executor's. */
+function RunLogLink({ run }: { run: AgentRun }) {
+  return (
+    <Anchor
+      href={run.url}
+      target="_blank"
+      rel="noreferrer"
+      size="xs"
+      className="ops-subtle-link"
+      data-testid="run-log-link"
+    >
+      {run.url.startsWith('https://github.com/')
+        ? 'View run on GitHub ↗'
+        : 'View run'}
+    </Anchor>
+  );
+}
+
 /** The ref line carries `repo#N`; the title need not repeat it. */
 function bareTitle(title: string): string {
   return title.replace(/^#\d+:?\s*/, '');
@@ -191,6 +209,7 @@ function DispatchRow({
             Task/run
           </Anchor>
         )}
+        <RunLogLink run={run} />
       </td>
       <td>
         <PhaseBlocks run={run} />
@@ -489,6 +508,7 @@ export function RecentCompletionsPanel({
                     session
                   </Anchor>
                 )}
+                <RunLogLink run={run} />
               </td>
               <td>
                 <PipelineBadge pipeline={run.pipeline} />
