@@ -2386,7 +2386,7 @@ describe('runtime evidence authorization after accepted provider handoff', () =>
       ),
     ).toBe(false);
     const task = (await ctx.runtime.store.readTask(anchor))!.task;
-    expect(task.work?.spec.pipeline).toBe('claude');
+    expect(workPayloadSchema.parse(task.work).spec.pipeline).toBe('claude');
     expect(task.providerRouting?.acceptedGeneration?.pipeline).toBe('codex');
     return { ctx, anchor, runId: current.runId, initial: first.runId, task };
   }
