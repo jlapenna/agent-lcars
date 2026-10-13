@@ -127,18 +127,22 @@ describe('Quick Task evidence public route', () => {
         binding: { createdAt: '2026-10-13T00:00:00.000Z' },
       });
       mocks.read.mockResolvedValue(new Uint8Array([1, 2, 3]));
+      const refusals = [];
       for (const method of [GET, HEAD]) {
         const response = await method(
           new Request('https://example.test'),
           context(),
         );
         expect(response.status).toBe(status);
-        if (status === 404) {
-          expect([...response.headers]).toEqual([]);
-          expect(await response.text()).toBe('');
-        }
+        if (status === 404) refusals.push(response);
       }
-      if (status === 404) expect(mocks.read).not.toHaveBeenCalled();
+      expect(refusals.map((response) => [...response.headers])).toEqual(
+        status === 404 ? [[], []] : [],
+      );
+      expect(
+        await Promise.all(refusals.map((response) => response.text())),
+      ).toEqual(status === 404 ? ['', ''] : []);
+      expect(mocks.read).toHaveBeenCalledTimes(status === 404 ? 0 : 1);
     },
   );
 
