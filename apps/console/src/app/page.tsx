@@ -1,7 +1,7 @@
 import { logger } from '@agent-lcars/logging';
 import type { TaskListCursor } from '@agent-lcars/orchestrator';
 import type { WorkSummary } from '@agent-lcars/work/derive';
-import { Anchor, Box } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -46,6 +46,8 @@ import { resolveBridgeDetail } from './bridge-rows';
 import { parseBridgeSelection } from './bridge-selection';
 import { DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
+import { type ConsoleReadout, ConsoleReadouts } from './console-readouts';
+import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
@@ -258,35 +260,77 @@ async function IndexBody({
   // list visible (its empty state carries no back control to recover to).
   const hasSelection = detail.kind !== 'none';
 
-  return (
-    <>
-      <DataFreshness
-        fetchedAt={dataAsOf}
-        initialLabel={formatRelativeTime(dataAsOf)}
-      />
-      {warnings.length > 0 && (
-        <Box mb="xl">
-          <DataWarnings warnings={warnings} />
-        </Box>
-      )}
+  const decisionCount =
+    queueView.yourQueue.filter((item) => matchesFilter(item.repo)).length +
+    nativeInbox.cards.filter((card) =>
+      matchesFilter(inboxCardMetadata(card).repo),
+    ).length;
+  const activeCliSessionCount =
+    filteredCliSessions.filter(isActiveCliSession).length;
+  const runsByPipeline = new Map<string, number>();
+  for (const run of filteredActivity.liveRuns) {
+    runsByPipeline.set(
+      run.pipeline,
+      (runsByPipeline.get(run.pipeline) ?? 0) + 1,
+    );
+  }
+  const readouts: ConsoleReadout[] = [
+    {
+      id: 'stopped',
+      label: 'Stopped work',
+      value: stoppedError
+        ? '—'
+        : `${parkedWorkItems.length}${hasMoreParkedTasks ? '+' : ''}`,
+      detail: stoppedError ? 'unavailable' : 'parked or failed',
+    },
+    {
+      id: 'running',
+      label: 'Agents running',
+      value: filteredActivity.liveRuns.length,
+      detail:
+        [...runsByPipeline]
+          .map(([pipeline, count]) => `${pipeline} ${count}`)
+          .join(' · ') || undefined,
+    },
+    {
+      id: 'cli',
+      label: 'CLI sessions',
+      value: activeCliSessionCount,
+      detail: 'live or idle',
+    },
+    {
+      id: 'waiting',
+      label: 'Waiting',
+      value: deployCards.length + blockedCards.length,
+      detail: `deploy ${deployCards.length} · blocked ${blockedCards.length}`,
+    },
+  ];
 
+  return (
+    <ConsoleWorkspace
+      ariaLabel="Bridge"
+      className="bridge-frame"
+      warnings={<DataWarnings warnings={warnings} />}
+      toolbar={
+        <>
+          <DataFreshness
+            fetchedAt={dataAsOf}
+            initialLabel={formatRelativeTime(dataAsOf)}
+          />
+          <DeckInboxSummary
+            count={decisionCount}
+            nativeAvailable={nativeInbox.available}
+            inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
+          />
+        </>
+      }
+    >
+      <ConsoleReadouts label="Bridge readouts" readouts={readouts} />
       <section
         className="bridge-workspace"
         data-sel={hasSelection ? '' : undefined}
       >
         <div className="bridge-workspace__list">
-          <DeckInboxSummary
-            count={
-              queueView.yourQueue.filter((item) => matchesFilter(item.repo))
-                .length +
-              nativeInbox.cards.filter((card) =>
-                matchesFilter(inboxCardMetadata(card).repo),
-              ).length
-            }
-            nativeAvailable={nativeInbox.available}
-            inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
-          />
-
           <ParkedWorkPanel
             items={parkedWorkItems}
             hasMoreTasks={hasMoreParkedTasks}
@@ -334,7 +378,7 @@ async function IndexBody({
           />
         </div>
       </section>
-    </>
+    </ConsoleWorkspace>
   );
 }
 
