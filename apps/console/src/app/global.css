@@ -3915,6 +3915,11 @@ td.costs-repo-spend__num {
     min-height: 44px;
   }
 
+  .repo-scope-link {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .operations-panel a,
   .operations-more-link,
   .takeover-command-button {
