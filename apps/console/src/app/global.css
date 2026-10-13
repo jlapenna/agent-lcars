@@ -1328,6 +1328,15 @@ form[data-hydrated] .console-toolbar__apply {
   color: var(--lcars-accent-ink);
 }
 
+/* The repository link owns the phone hit target; its child paints a compact
+   pill beside the status badges. */
+.repo-scope-link {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  text-decoration: none;
+}
+
 /* Badges in light mode (#1848).
    Mantine picks a badge's colours from the family's shade 6, which is chosen
    to carry white text on a dark ground. On a light ground the same values
@@ -3903,6 +3912,11 @@ td.costs-repo-spend__num {
 
   .operations-primary-action {
     flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  .repo-scope-link {
+    min-width: 44px;
     min-height: 44px;
   }
 
