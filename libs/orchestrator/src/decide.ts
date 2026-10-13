@@ -1,4 +1,5 @@
 import {
+  type DeliveryBinding,
   isLive,
   isWorkAnchor,
   type OutboxEntry,
@@ -162,6 +163,9 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     }
     return refused('task-busy', activeRun);
   }
+  if (input.task?.closedAt !== undefined) {
+    return refused('task-closed');
+  }
   if (
     input.task?.delivery !== undefined &&
     input.task.delivery.state !== 'complete' &&
@@ -176,9 +180,6 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     )
   )
     return refused('task-busy');
-  if (input.task?.closedAt !== undefined) {
-    return refused('task-closed');
-  }
   const work = input.task?.work ?? input.work;
   if (work === undefined) return refused('missing-work');
   const baseTask: Task = {
@@ -544,25 +545,28 @@ export function reportResult(input: {
     now,
   );
   if (result.ok && run.delivery !== undefined) {
+    const deliveryOutbox: OutboxEntry[] =
+      isWorkAnchor(run.task) && run.delivery.state === 'complete'
+        ? finalDeliveryOutbox(decision.task, settled, run.delivery, now)
+        : [
+            {
+              entryId: `delivery/${run.runId}`,
+              kind: 'monitor-delivery',
+              // Completion drains outcomes; monitoring starts after the worker
+              // can finish credential cleanup and physical retirement.
+              nextAttemptAt: new Date(Date.parse(now) + 60_000).toISOString(),
+              task: run.task,
+              runId: run.runId,
+              state: 'pending',
+              attempts: 0,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ];
     return {
       ...decision,
       task: { ...decision.task, delivery: run.delivery },
-      outbox: [
-        ...decision.outbox,
-        {
-          entryId: `delivery/${run.runId}`,
-          kind: 'monitor-delivery',
-          // Completion drains outcomes; monitoring starts after the worker
-          // can finish credential cleanup and physical retirement.
-          nextAttemptAt: new Date(Date.parse(now) + 60_000).toISOString(),
-          task: run.task,
-          runId: run.runId,
-          state: 'pending',
-          attempts: 0,
-          createdAt: now,
-          updatedAt: now,
-        },
-      ],
+      outbox: [...decision.outbox, ...deliveryOutbox],
     };
   }
   return decision;
@@ -970,4 +974,27 @@ function outcomeEntry(run: Run, now: string): OutboxEntry {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/** The original execution outcome is immutable and already delivered. Native
+ * logical completion owns a distinct durable event through the same dispatcher. */
+export function finalDeliveryOutbox(
+  task: Task,
+  run: Run,
+  delivery: DeliveryBinding,
+  now: string,
+): OutboxEntry[] {
+  if (!isWorkAnchor(task.task) || delivery.state !== 'complete') return [];
+  return [
+    {
+      entryId: `delivery-outcome/${run.runId}`,
+      kind: 'report-outcome',
+      task: run.task,
+      runId: run.runId,
+      state: 'pending',
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
 }

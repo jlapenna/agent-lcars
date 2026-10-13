@@ -709,3 +709,68 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
+
+describe('canceled CLI delivery presentation', () => {
+  it.each(['waiting', 'runtime-required'] as const)(
+    'canceled CLI commands retain canceled state with %s history',
+    async (deliveryState) => {
+      const value = {
+        ...item('canceled'),
+        runs: [
+          {
+            runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+            state: 'finished',
+            pipeline: 'claude',
+            createdAt: 't',
+            updatedAt: 't',
+            delivery: {
+              runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+              repo: 'o/r',
+              number: 12,
+              baseRef: 'main',
+              head: 'a'.repeat(40),
+              state: deliveryState,
+              runtimeGate: 'required',
+              observedAt: 't',
+              ...(deliveryState === 'runtime-required'
+                ? { mergeCommit: 'b'.repeat(40) }
+                : {}),
+            },
+          },
+        ],
+      };
+      const d = deps({
+        'POST /api/work/v1/items/{id}/cancel': () => value,
+        'GET /api/work/v1/items/{id}': () => value,
+        'GET /api/work/v1/items': ({ url }) => {
+          expect(new URL(url).searchParams.get('state')).toBe('canceled');
+          return { items: [value] };
+        },
+      });
+      for (const args of [
+        ['cancel', value.id],
+        ['status', value.id],
+        ['status', value.id, '--watch'],
+        ['list', '--state', 'canceled'],
+      ])
+        expect(await executeWorkCommand(args, d)).toEqual({ ok: true });
+      expect(d.out).toHaveLength(4);
+      for (const output of d.out) {
+        expect(output).toContain('canceled');
+        expect(output).not.toContain('delivery:');
+      }
+      expect(d.sleep).not.toHaveBeenCalled();
+    },
+  );
+  it('keeps a pending delivery label while the authoritative item is running', async () => {
+    const value = {
+      ...item('running'),
+      runs: [{ delivery: { state: 'waiting' } }],
+    };
+    const d = deps({ 'GET /api/work/v1/items/{id}': () => value });
+    expect(await executeWorkCommand(['status', value.id], d)).toEqual({
+      ok: true,
+    });
+    expect(d.out[0]).toContain('delivery:waiting');
+  });
+});

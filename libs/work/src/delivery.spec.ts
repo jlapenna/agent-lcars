@@ -4,6 +4,7 @@ import {
   isRefusal,
   MemoryStore,
   Orchestrator,
+  type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
@@ -18,11 +19,13 @@ const CLAIM = 'c'.repeat(64);
 async function handedOff(
   runtimeGate: DeliveryBinding['runtimeGate'] = 'none',
   pipeline = 'claude',
+  taskId: TaskId = TASK,
+  state: 'waiting' | 'complete' = 'waiting',
 ) {
   const store = new MemoryStore();
   const orchestrator = new Orchestrator(store, { now: () => NOW });
   const decision = await orchestrator.request({
-    taskId: TASK,
+    taskId,
     requestId: 'original',
     pipeline,
     work: { spec: { title: 'deliver' } },
@@ -44,7 +47,8 @@ async function handedOff(
     number: 12,
     baseRef: 'main',
     head: HEAD,
-    state: 'waiting',
+    state,
+    ...(state === 'complete' ? { mergeCommit: MERGE } : {}),
     runtimeGate,
     observedAt: NOW,
   };
@@ -264,4 +268,99 @@ it('retains a parked correction binding while the existing authenticated human r
   });
   expect(isRefusal(resumed)).toBe(false);
   expect((await f.store.readTask(TASK))?.task.delivery?.runId).toBe(f.runId);
+});
+
+describe('native delivery terminal authority', () => {
+  const native = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4H' };
+  it('immediate native complete handoff retains execution and emits the distinct final event', async () => {
+    const f = await handedOff('none', 'claude', native, 'complete');
+    const entries = await f.store.claimPendingOutbox({
+      now: '2026-10-13T10:01:00.000Z',
+      leaseExpiresAt: '2026-10-13T10:02:00.000Z',
+      limit: 20,
+    });
+    expect(entries.map((entry) => entry.entryId)).toContain(
+      `outcome/${f.runId}`,
+    );
+    expect(entries.map((entry) => entry.entryId)).toContain(
+      `delivery-outcome/${f.runId}`,
+    );
+    expect(entries.some((entry) => entry.kind === 'monitor-delivery')).toBe(
+      false,
+    );
+    expect(
+      deriveItemState(
+        (await f.store.readTask(native))!.task,
+        await f.store.listRuns(native),
+      ),
+    ).toBe('done');
+    expect((await f.store.readRun(f.runId))!.result).toMatchObject({
+      ok: true,
+      summary: 'pull-request',
+    });
+  });
+  it.each([
+    { kind: 'protected-merge' as const, head: HEAD, mergeCommit: MERGE },
+    { kind: 'revision' as const, head: HEAD, newHead: MERGE },
+    { kind: 'correction' as const, head: HEAD, reason: 'red checks' },
+  ])(
+    'closed native delivery rejects $kind without changing history',
+    async (observation) => {
+      const f = await handedOff('none', 'claude', native);
+      const original = (await f.store.readRun(f.runId))!;
+      const binding = (await f.store.readTask(native))!.task.delivery;
+      expect(isRefusal(await f.orchestrator.close(native))).toBe(false);
+      expect(
+        await f.orchestrator.observeDelivery(f.runId, observation, () => true),
+      ).toMatchObject({ refused: true, reason: 'task-closed' });
+      expect(
+        await f.orchestrator.request({
+          taskId: native,
+          requestId: 'after-close',
+          pipeline: 'claude',
+        }),
+      ).toMatchObject({ refused: true, reason: 'task-closed' });
+      expect((await f.store.readTask(native))!.task.delivery).toEqual(binding);
+      expect((await f.store.readTask(native))!.task.runCount).toBe(1);
+      expect((await f.store.readRun(f.runId))!.result).toEqual(original.result);
+      const entries = await f.store.claimPendingOutbox({
+        now: '2026-10-13T10:01:00.000Z',
+        leaseExpiresAt: '2026-10-13T10:02:00.000Z',
+        limit: 20,
+      });
+      expect(
+        entries.some(
+          (entry) => entry.entryId === `delivery-outcome/${f.runId}`,
+        ),
+      ).toBe(false);
+      expect(
+        entries.some((entry) => entry.entryId === `outcome/${f.runId}`),
+      ).toBe(true);
+    },
+  );
+  it('closed native delivery refuses a later runtime receipt for its protected merge', async () => {
+    const f = await handedOff('required', 'claude', native);
+    await f.orchestrator.observeDelivery(
+      f.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => true,
+    );
+    const binding = (await f.store.readTask(native))!.task.delivery;
+    expect(binding?.state).toBe('runtime-required');
+    expect(isRefusal(await f.orchestrator.close(native))).toBe(false);
+    expect(
+      await f.orchestrator.observeDelivery(
+        f.runId,
+        {
+          kind: 'runtime-evidence',
+          head: HEAD,
+          mergeCommit: MERGE,
+          principal: 'user:operator',
+          ref: 'https://example.test/proof',
+        },
+        () => true,
+      ),
+    ).toMatchObject({ refused: true, reason: 'task-closed' });
+    expect((await f.store.readTask(native))!.task.delivery).toEqual(binding);
+  });
 });

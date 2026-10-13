@@ -1,18 +1,13 @@
 import {
   decidedRun,
   type Decision,
+  finalDeliveryOutbox,
   isRefusal,
   type Refusal,
   refused,
   requestRun,
 } from './decide';
-import {
-  type DeliveryBinding,
-  isWorkAnchor,
-  type OutboxEntry,
-  type Run,
-  type Task,
-} from './model';
+import { type DeliveryBinding, type Run, type Task } from './model';
 
 /** Exact server observation; partial GitHub/projection data has no authority. */
 export type DeliveryObservation =
@@ -37,6 +32,7 @@ export function advanceDelivery(input: {
   correctionAuthorized: boolean;
 }): Decision | Refusal {
   const { now, task, run, observation } = input;
+  if (task.closedAt !== undefined) return refused('task-closed');
   const binding = task.delivery;
   if (
     binding === undefined ||
@@ -130,27 +126,4 @@ export function advanceDelivery(input: {
     run,
     additionalRuns: [correction],
   };
-}
-
-/** The original execution outcome is immutable and already delivered. Native
- * logical completion owns a distinct durable event through the same dispatcher. */
-function finalDeliveryOutbox(
-  task: Task,
-  run: Run,
-  delivery: DeliveryBinding,
-  now: string,
-): OutboxEntry[] {
-  if (!isWorkAnchor(task.task) || delivery.state !== 'complete') return [];
-  return [
-    {
-      entryId: `delivery-outcome/${run.runId}`,
-      kind: 'report-outcome',
-      task: run.task,
-      runId: run.runId,
-      state: 'pending',
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    },
-  ];
 }

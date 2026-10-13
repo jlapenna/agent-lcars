@@ -785,7 +785,10 @@ describe('native delivery finalization reuses terminal outcome and session expir
   const HEAD = 'a'.repeat(40),
     MERGE = 'b'.repeat(40);
   afterEach(() => vi.unstubAllEnvs());
-  async function waiting(runtimeGate: 'none' | 'required' = 'none') {
+  async function reported(
+    runtimeGate: 'none' | 'required' = 'none',
+    state: 'waiting' | 'complete' = 'waiting',
+  ) {
     vi.stubEnv(
       'AGENT_LCARS_OUTCOME_WEBHOOKS',
       JSON.stringify({
@@ -804,7 +807,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
       ref: 'https://github.com/octo/example/pull/12',
       message: 'Published ready PR',
     };
-    await f.orchestrator.report(
+    const decision = await f.orchestrator.report(
       run.runId,
       original,
       undefined,
@@ -816,7 +819,8 @@ describe('native delivery finalization reuses terminal outcome and session expir
         number: 12,
         baseRef: 'main',
         head: HEAD,
-        state: 'waiting',
+        state,
+        ...(state === 'complete' ? { mergeCommit: MERGE } : {}),
         runtimeGate,
         observedAt: NOW,
       },
@@ -835,11 +839,16 @@ describe('native delivery finalization reuses terminal outcome and session expir
       deliverOutcomeWebhook: deliver,
       now: () => NOW,
     };
-    await drainOutbox(deps);
-    expect(fetchImpl).not.toHaveBeenCalled();
-    expect(deliver).toHaveBeenCalledOnce();
-    expect(deliver.mock.calls[0]?.[1]).not.toHaveProperty('eventId');
-    return { ...f, run, original, fetchImpl, deliver, deps };
+    if (isRefusal(decision)) throw new Error(decision.reason);
+    return { ...f, run, original, fetchImpl, deliver, deps, decision };
+  }
+  async function waiting(runtimeGate: 'none' | 'required' = 'none') {
+    const f = await reported(runtimeGate);
+    await drainOutbox(f.deps);
+    expect(f.fetchImpl).not.toHaveBeenCalled();
+    expect(f.deliver).toHaveBeenCalledOnce();
+    expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('eventId');
+    return f;
   }
   it('emits one distinct final native event and expiry after none runtime gating, preserving the original result', async () => {
     const f = await waiting('none');
@@ -938,5 +947,169 @@ describe('native delivery finalization reuses terminal outcome and session expir
     expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
     await drainOutbox(retry);
     expect(f.deliver).toHaveBeenCalledTimes(3);
+  });
+  it('immediate native complete delivery emits one final marker and owns expiry once', async () => {
+    const f = await reported('none', 'complete');
+    expect(f.decision.outbox.map((entry) => entry.entryId)).toContain(
+      `outcome/${f.run.runId}`,
+    );
+    expect(f.decision.outbox.map((entry) => entry.entryId)).toContain(
+      `delivery-outcome/${f.run.runId}`,
+    );
+    await drainOutbox(f.deps);
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('eventId');
+    expect(f.deliver.mock.calls[1]?.[1]).toMatchObject({
+      eventId: `delivery-outcome/${f.run.runId}`,
+      deliveryStage: 'complete',
+    });
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    await drainOutbox(f.deps);
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+  });
+  it('closed native monitor retires before any GitHub read and preserves accepted execution', async () => {
+    const f = await waiting();
+    expect(isRefusal(await f.orchestrator.close(f.run.task))).toBe(false);
+    expect(
+      (await drainOutbox({ ...f.deps, now: () => '2026-08-29T12:01:00.000Z' }))
+        .failed,
+    ).toEqual([]);
+    expect(f.fetchImpl).not.toHaveBeenCalled();
+    expect(f.deliver).toHaveBeenCalledOnce();
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    const pending = await f.store.claimPendingOutbox({
+      now: '2026-08-29T12:10:00.000Z',
+      leaseExpiresAt: '2026-08-29T12:11:00.000Z',
+      limit: 20,
+    });
+    expect(pending.some((entry) => entry.kind === 'monitor-delivery')).toBe(
+      false,
+    );
+  });
+  it('closed native monitor rejects closure racing the actual GitHub evidence read', async () => {
+    const f = await waiting();
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/pulls/12')) {
+        const closed = await f.orchestrator.close(f.run.task);
+        if (isRefusal(closed)) throw new Error(closed.reason);
+        return Response.json({
+          number: 12,
+          body: `<!-- attempt-claim:g1:${f.run.runId} -->`,
+          state: 'closed',
+          draft: false,
+          head: { sha: HEAD },
+          base: { ref: 'main' },
+          user: { login: 'author' },
+          merged: true,
+          merge_commit_sha: MERGE,
+          auto_merge: null,
+        });
+      }
+      if (url.endsWith('/rulesets/rule-suites?per_page=100'))
+        return Response.json([
+          { id: 1, after_sha: MERGE, result: 'pass', ref: 'refs/heads/main' },
+        ]);
+      if (url.endsWith('/rulesets/rule-suites/1'))
+        return Response.json({
+          result: 'pass',
+          after_sha: MERGE,
+          rule_evaluations: [
+            { rule_type: 'required_status_checks', result: 'pass' },
+            { rule_type: 'pull_request', result: 'pass' },
+          ],
+        });
+      throw new Error(`Unexpected evidence request ${url}`);
+    });
+    expect(
+      (
+        await drainOutbox({
+          ...f.deps,
+          fetchImpl,
+          now: () => '2026-08-29T12:01:00.000Z',
+        })
+      ).failed,
+    ).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    const task = (await f.store.readTask(f.run.task))!.task;
+    expect(task.closedAt).toBe(NOW);
+    expect(task.delivery).toMatchObject({ head: HEAD, state: 'waiting' });
+    expect(task.runCount).toBe(1);
+    expect(f.deliver).toHaveBeenCalledOnce();
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    const pending = await f.store.claimPendingOutbox({
+      now: '2026-08-29T12:10:00.000Z',
+      leaseExpiresAt: '2026-08-29T12:11:00.000Z',
+      limit: 20,
+    });
+    expect(
+      pending.some(
+        (entry) =>
+          entry.kind === 'monitor-delivery' ||
+          entry.entryId.startsWith('delivery-outcome/'),
+      ),
+    ).toBe(false);
+  });
+  async function laterPark(f: Awaited<ReturnType<typeof waiting>>, ok = true) {
+    const request = await f.orchestrator.request({
+      taskId: f.run.task,
+      requestId: 'later-reply',
+      pipeline: 'claude',
+      params: { mode: 'reply', replyPrincipal: 'user:operator' },
+    });
+    if (isRefusal(request)) throw new Error(request.reason);
+    const later = decidedRun(request);
+    await f.orchestrator.confirmDispatch(later.runId);
+    const outcome = await f.orchestrator.report(later.runId, {
+      ok,
+      summary: ok ? 'park' : 'failed',
+    });
+    if (isRefusal(outcome)) throw new Error(outcome.reason);
+    return later;
+  }
+  it('closed native final delivery is suppressed while the later execution outcome remains', async () => {
+    const f = await waiting();
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => true,
+    );
+    const later = await laterPark(f);
+    expect(isRefusal(await f.orchestrator.close(f.run.task))).toBe(false);
+    await drainOutbox(f.deps);
+    expect(
+      f.deliver.mock.calls
+        .map((call) => call[1])
+        .filter((payload) => payload.deliveryStage === 'complete'),
+    ).toEqual([]);
+    expect(f.deliver.mock.calls.at(-1)?.[1]).toMatchObject({
+      runId: later.runId,
+      parked: true,
+    });
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    expect((await f.store.readTask(f.run.task))!.task.closedAt).toBe(NOW);
+  });
+  it('a later failed reply retains its ordinary expiry after an older completed delivery', async () => {
+    const f = await waiting();
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => true,
+    );
+    await drainOutbox(f.deps);
+    vi.mocked(f.fetchImpl).mockClear();
+    f.deliver.mockClear();
+    const later = await laterPark(f, false);
+    await drainOutbox(f.deps);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+    expect(f.deliver).toHaveBeenCalledOnce();
+    expect(f.deliver.mock.calls[0]?.[1]).toMatchObject({
+      runId: later.runId,
+      ok: false,
+    });
+    expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('deliveryStage');
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
   });
 });

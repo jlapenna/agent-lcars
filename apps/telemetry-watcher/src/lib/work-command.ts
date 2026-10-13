@@ -120,7 +120,9 @@ interface ItemSummary {
 function line(item: ItemSummary): string {
   const delivery = item.runs?.at(-1)?.delivery;
   const state =
-    delivery !== undefined && delivery.state !== 'complete'
+    item.state === 'running' &&
+    delivery !== undefined &&
+    delivery.state !== 'complete'
       ? `delivery:${delivery.state}`
       : item.state;
   return `${item.id}  ${state.padEnd(8)}  ${item.spec.pipeline.padEnd(8)}  ${item.spec.target.repo}  ${item.spec.title}`;

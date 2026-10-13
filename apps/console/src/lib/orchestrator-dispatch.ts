@@ -235,6 +235,7 @@ async function handleMonitorDelivery(
     run === undefined ? undefined : (await deps.store.readTask(run.task))?.task;
   if (
     run === undefined ||
+    task?.closedAt !== undefined ||
     task?.delivery?.runId !== run.runId ||
     task.delivery.state !== 'waiting'
   ) {
@@ -254,8 +255,8 @@ async function handleMonitorDelivery(
         deliveryCorrectionAuthorized(currentTask, currentRun, permission),
     );
     if (
-      !('refused' in decision) &&
-      decision.task.delivery?.state !== 'waiting'
+      ('refused' in decision && decision.reason === 'task-closed') ||
+      (!('refused' in decision) && decision.task.delivery?.state !== 'waiting')
     ) {
       await settleClaim(deps, entry, 'done');
       return;
@@ -665,7 +666,8 @@ async function deliverNativeOutcome(
   const finalDelivery = entry.entryId === `delivery-outcome/${run.runId}`;
   if (
     finalDelivery &&
-    (task.delivery?.runId !== run.runId ||
+    (task.closedAt !== undefined ||
+      task.delivery?.runId !== run.runId ||
       task.delivery.state !== 'complete' ||
       run.delivery?.state !== 'complete' ||
       run.delivery.head !== task.delivery.head)
@@ -682,7 +684,11 @@ async function deliverNativeOutcome(
   // the item so the workflow can be re-run for it. Idempotent if a webhook
   // retry dispatches it again.
   const itemState = deriveItemState(task, await deps.store.listRuns(run.task));
-  if (isClosedItemState(itemState)) {
+  const boundCompleteExecution =
+    !finalDelivery &&
+    run.delivery?.runId === run.runId &&
+    run.delivery.state === 'complete';
+  if (isClosedItemState(itemState) && !boundCompleteExecution) {
     try {
       await dispatchSessionExpiry(deps, run.task.workId);
     } catch (error) {
