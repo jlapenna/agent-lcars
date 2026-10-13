@@ -59,6 +59,13 @@ describe('matchesAgentsRun', () => {
     expect(matchesAgentsRun(run, { q: 'SESSION' }, opts)).toBe(true);
     expect(matchesAgentsRun(run, { q: 'run-1' }, opts)).toBe(true);
     expect(matchesAgentsRun(run, { q: 'homelab' }, opts)).toBe(false);
+    expect(
+      matchesAgentsRun(
+        run,
+        { q: 'renamed' },
+        { ...opts, shownTitle: 'Renamed issue title' },
+      ),
+    ).toBe(true);
   });
 
   it('applies the window to finished runs only', () => {

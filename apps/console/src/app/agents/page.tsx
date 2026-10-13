@@ -189,7 +189,11 @@ async function AgentsPageBody({
     liveRuns: activity.liveRuns.filter(
       (run) =>
         matchesFilter(run.repo) &&
-        matchesAgentsRun(run, filters, { finished: false, now }),
+        matchesAgentsRun(run, filters, {
+          finished: false,
+          now,
+          shownTitle: itemsByRunId[run.id]?.title,
+        }),
     ),
     recentRuns: activity.recentRuns.filter(
       (run) =>

@@ -63,7 +63,17 @@ export function matchesAgentsRun(
     'id' | 'pipeline' | 'displayTitle' | 'repo' | 'issueNumber' | 'updatedAt'
   >,
   filters: AgentsViewFilters,
-  { finished, now }: { finished: boolean; now: number },
+  {
+    finished,
+    now,
+    shownTitle,
+  }: {
+    finished: boolean;
+    now: number;
+    /** The title the row displays when it differs from the run's own (a
+     * live issue renamed since admission). */
+    shownTitle?: string;
+  },
 ): boolean {
   if (filters.agent && run.pipeline !== filters.agent) return false;
   if (
@@ -77,7 +87,7 @@ export function matchesAgentsRun(
     run.issueNumber === undefined
       ? repoKey(run.repo)
       : `${repoKey(run.repo)}#${run.issueNumber}`;
-  return matchesFind([run.displayTitle, anchor, run.id], filters.q);
+  return matchesFind([run.displayTitle, shownTitle, anchor, run.id], filters.q);
 }
 
 /** Claimed work belongs to the pipeline its authoritative Work spec names;
