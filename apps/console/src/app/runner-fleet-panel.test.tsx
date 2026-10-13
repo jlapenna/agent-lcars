@@ -71,7 +71,7 @@ describe('RunnerFleetPanel', () => {
       screen
         .getByTestId('fleet-telemetry')
         .textContent?.match(/no metrics source/g),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it('shows CI wait as unavailable when no lane reports job starts', () => {
@@ -82,6 +82,38 @@ describe('RunnerFleetPanel', () => {
     );
     expect(screen.getByTestId('fleet-ci-wait').textContent).toContain(
       'no job-startup data',
+    );
+  });
+
+  it('shows tokens per minute with its sparkline, or why it is unknown', () => {
+    const { unmount } = render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          lanes={[lane]}
+          tokenRate={{
+            perMinute: 48_200,
+            series: Array<number>(30).fill(48_200),
+            sessions: 3,
+            partial: true,
+          }}
+        />
+      </MantineProvider>,
+    );
+    const rate = screen.getByTestId('fleet-token-rate');
+    expect(rate.textContent).toContain('48.2k');
+    expect(rate.textContent).toContain('5m avg · 3 sessions · partial');
+    expect(rate.querySelectorAll('rect')).toHaveLength(30);
+    unmount();
+    render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          lanes={[lane]}
+          tokenRate={{ unavailable: 'no per-minute data' }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('fleet-token-rate').textContent).toContain(
+      'no per-minute data',
     );
   });
 });

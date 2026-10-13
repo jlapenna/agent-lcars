@@ -7,6 +7,8 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../auth';
 import { getWatchedRepos } from '../../lib/github-client';
 import { getShuttlebayStatus } from '../../lib/shuttlebay-status';
+import { fleetTokenRate } from '../../lib/token-rate';
+import { getTokenRateSnapshot } from '../../lib/token-rate-data';
 import { repoKey } from '../../lib/watched-repo';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import {
@@ -24,12 +26,19 @@ import {
 } from './shuttlebay-view-filters';
 
 async function ShuttlebayBody({ filters, watchedRepos }: ShuttlebayViewProps) {
-  const autoscaler = await getShuttlebayStatus();
+  const [autoscaler, tokenRateSnapshot] = await Promise.all([
+    getShuttlebayStatus(),
+    getTokenRateSnapshot(),
+  ]);
 
   return (
     <RunnerAutoscalerStatus
       initial={autoscaler}
       filters={filters}
+      tokenRate={fleetTokenRate(tokenRateSnapshot, {
+        repo: filters.repo,
+        agent: filters.agent,
+      })}
       toolbar={
         <ConsoleToolbar
           action="/shuttlebay"

@@ -13,6 +13,7 @@ import {
   RUNNER_STATUS_EVENT,
   RUNNER_STATUS_STALENESS_MS,
 } from '../lib/runner-status-contract';
+import type { TokenRate } from '../lib/token-rate';
 import { DataWarnings } from './console-header';
 import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
 import { RelativeTime } from './relative-time';
@@ -295,8 +296,11 @@ export function RunnerAutoscalerStatus({
   initial,
   filters = {},
   toolbar,
+  tokenRate,
 }: {
   initial: AutoscalerStatusResult;
+  /** Read once with the page, already narrowed to the filters. */
+  tokenRate?: TokenRate | { unavailable: string };
   /** The toolbar's repository, agent and find filters. */
   filters?: ShuttlebayFilters;
   /** The workspace toolbar band (the page's filter form). */
@@ -440,6 +444,7 @@ export function RunnerAutoscalerStatus({
             lanesIncomplete={result.lanesIncomplete}
             executor={result.queueExecutor}
             filteredOut={noMatch}
+            tokenRate={tokenRate}
           />
         </div>
       </div>
