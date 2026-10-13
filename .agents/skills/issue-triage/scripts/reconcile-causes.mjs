@@ -6,10 +6,20 @@ import { pathToFileURL } from 'node:url';
 const causeId = (value) =>
   typeof value === 'string' && /^B[1-9]\d*$/.test(value);
 const text = (value) => typeof value === 'string' && value.trim().length > 0;
-const issueKey = (value) =>
-  typeof value === 'string' && /^[\w.-]+\/[\w.-]+#[1-9]\d*$/.test(value)
-    ? value.toLowerCase()
-    : null;
+function issueKey(value) {
+  if (typeof value !== 'string') return null;
+  const match = /^([^/]+)\/([\w.-]{1,100})#[1-9]\d*$/.exec(value);
+  if (
+    !match ||
+    match[1].length > 39 ||
+    // Normal GitHub logins, plus its documented managed-user shortcode suffix.
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]{3,8})?$/i.test(match[1]) ||
+    match[2] === '.' ||
+    match[2] === '..'
+  )
+    return null;
+  return value.toLowerCase();
+}
 
 // Only explicit JSON pointers are supported. No title, filename or issue-number
 // heuristic may turn an unidentified ledger row into a measured cause.

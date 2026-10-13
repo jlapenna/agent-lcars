@@ -290,6 +290,79 @@ describe('complete interactive workstream report assembly', () => {
     });
   });
 
+  it.each([
+    '../..#1',
+    '-/-#1',
+    'owner/..#1',
+    'owner/.#1',
+    '-owner/repo#1',
+    'owner-/repo#1',
+    'own--er/repo#1',
+    'owner__emu/repo#1',
+    `${'o'.repeat(40)}/repo#1`,
+    `owner/${'r'.repeat(101)}#1`,
+  ])(
+    'rejects a malformed qualified record issue %s through the CLI',
+    (issue) => {
+      const f = fixture();
+      f.root[0].issue = issue;
+      f.save();
+      const result = spawnSync(
+        process.execPath,
+        [script, path.join(f.directory, 'manifest.json')],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        complete: false,
+        totals: null,
+        missingIds: ['B1'],
+        unresolved: [expect.objectContaining({ source: 'root', key: '0' })],
+      });
+    },
+  );
+
+  it.each(['../..#1', '-/-#1'])(
+    'rejects a malformed qualified alias issue %s before counting',
+    (issue) => {
+      const f = fixture();
+      f.manifest.aliases[0].issue = issue;
+      f.ledger['descriptive-0'].issue = issue;
+      f.save();
+      const result = spawnSync(
+        process.execPath,
+        [script, path.join(f.directory, 'manifest.json')],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        complete: false,
+        totals: null,
+        error: expect.stringContaining('qualified issue'),
+      });
+    },
+  );
+
+  it.each([
+    'Mixed-Owner/.repo_name-1#1',
+    'mona-cat_octo/-repo#1',
+    `${'o'.repeat(39)}/${'r'.repeat(100)}#1`,
+  ])('accepts a qualified GitHub issue syntax %s through the CLI', (issue) => {
+    const f = fixture();
+    f.root[0].issue = issue;
+    f.save();
+    const result = spawnSync(
+      process.execPath,
+      [script, path.join(f.directory, 'manifest.json')],
+      { encoding: 'utf8' },
+    );
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      complete: true,
+      totals: { causes: 182, owningIssues: 182 },
+    });
+  });
+
   it.each(['array-entry', 'stable-object-key', 'explicit-stable-id'])(
     'rejects a redundant alias that cannot resolve a descriptive identity (%s)',
     (shape) => {
