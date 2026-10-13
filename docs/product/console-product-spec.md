@@ -457,15 +457,20 @@ GitHub issues, and manage recurring work.
 **Purpose:** the durable audit record of every agent session, both interactive
 CLI sessions and dispatched runs.
 
-- **FE-SE-1 [Shipped]** Filters:
-  - `days`: default 14, maximum 90.
-  - `source`: `cli` or `issue-agent`.
-  - `issue` and `repo`.
+- **FE-SE-1 [Shipped]** Filters, in the workspace toolbar
+  (`ConsoleToolbar`, as in `design/fleet-console.html#sessions`):
+  - `repo` (Repository select) and `days` (Window: 24h, 7d, 14d default, 30d,
+    90d; maximum 90).
+  - `source`: `cli` or `issue-agent`; `issue` is carried through.
+  - `agent` and `q` (Find: session, issue, PR, run, host or repository text)
+    narrow the loaded window on the page; they are not archive query params.
   - `view`: `by-issue` (the default, grouped, with older groups behind a
     disclosure on phones) or `flat`.
-- **FE-SE-2 [Shipped]** The flat table shows Source, Session, Issue, PRs,
-  Host/Run, Requested model/route, Resolved backend, Turns, Cost-weighted
-  tokens, Cost, Started, Duration, and Status.
+- **FE-SE-2 [Shipped]** One "Sessions N" panel. Its table shows Session
+  (source, run/host/session id, title, status line), Issue, Agent, Outcome
+  (liveness mark and deliverable PRs), Duration, cost-weighted Tokens, and
+  Started. Requested model/route, resolved backend, turns and cost are the
+  session's detail (FE-SE-3); phones show the same rows as cards.
 - **FE-SE-3 [Shipped]** Session detail shows badges for source, liveness
   (`live`, `idle`, `ended`, `stale`), and agent. Below them it shows the
   model, route, and resolved backend; permission mode; turns, tokens, and
