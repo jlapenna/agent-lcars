@@ -934,7 +934,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 /* The toolbar band's controls (console-toolbar.tsx): hairline fields on the
    one ground, a segmented window control, FIND search, and the route's
    primary action docked to the trailing edge. */
-.console-toolbar {
+.console-toolbar,
+.console-toolbar__filters {
   display: flex;
   flex: 1 1 auto;
   flex-wrap: wrap;
@@ -977,29 +978,40 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   border: 1px solid var(--lcars-hairline);
 }
 
-.console-toolbar__segmented button {
+.console-toolbar__segmented label {
+  display: inline-flex;
   height: 34px;
+  align-items: center;
   padding: 0 14px;
-  border: 0;
   color: var(--lcars-ink-dim);
-  background: transparent;
   font-family: var(--font-mono), monospace;
   font-size: 0.75rem;
   cursor: pointer;
 }
 
-.console-toolbar__segmented button + button {
+.console-toolbar__segmented label + label {
   border-left: 1px solid var(--lcars-hairline);
 }
 
-.console-toolbar__segmented button:hover {
+.console-toolbar__segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.console-toolbar__segmented label:hover {
   color: var(--lcars-ink);
   background: var(--lcars-surface-raised);
 }
 
-.console-toolbar__segmented button[aria-pressed='true'] {
+.console-toolbar__segmented label:has(input:checked) {
   color: var(--lcars-ink-on-muted);
   background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
+}
+
+.console-toolbar__segmented label:has(input:focus-visible) {
+  outline: 2px solid var(--lcars-amber);
+  outline-offset: 2px;
 }
 
 .console-toolbar__search {
@@ -1035,7 +1047,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    toolbar block once it lands there for every route. */
 @media (max-width: 47.99em) {
   :is(.work-workspace, .sessions-workspace, .costs-workspace)
-    :is(.console-toolbar__field, .console-toolbar__segmented button) {
+    :is(.console-toolbar__field, .console-toolbar__segmented label) {
     min-width: 44px;
     min-height: 44px;
   }
