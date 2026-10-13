@@ -1,3 +1,4 @@
+import { advanceDelivery, type DeliveryObservation } from './delivery';
 import type { CapacityWorkerPermit } from './capacity-model';
 import {
   changeCredentialOperation,
@@ -25,6 +26,7 @@ import {
 } from './decide';
 import {
   isLive,
+  type DeliveryBinding,
   type ProviderFallbackRequest,
   type QueuePriority,
   type RequestSource,
@@ -289,6 +291,22 @@ export class Orchestrator {
     );
   }
 
+  async observeDelivery(
+    runId: string,
+    observation: DeliveryObservation,
+    authorize: (task: Task, run: Run) => boolean,
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(runId, (task, run) =>
+      advanceDelivery({
+        now: this.clock.now(),
+        task,
+        run,
+        observation,
+        correctionAuthorized: authorize(task, run),
+      }),
+    );
+  }
+
   async report(
     runId: string,
     result: RunResult,
@@ -296,6 +314,8 @@ export class Orchestrator {
     /** Server-owned cleanup identity, captured before the retryable transaction. */
     credentialCleanupId?: string,
     workerPermit?: CapacityWorkerPermit,
+    /** Validated server-only ready handoff, never a raw worker field. */
+    delivery?: DeliveryBinding,
   ): Promise<Decision | Refusal> {
     if (this.fallbackAuthority !== undefined && !result.ok) {
       return this.transactOnRun(
@@ -348,14 +368,22 @@ export class Orchestrator {
     }
     return this.transactOnRun(
       runId,
-      (task, run) =>
-        reportResult({
+      (task, run) => {
+        if (
+          delivery !== undefined &&
+          (delivery.runId !== run.runId ||
+            !result.ok ||
+            (run.delivery !== undefined && run.delivery.head !== delivery.head))
+        )
+          return refused('stale-lease');
+        return reportResult({
           now: this.clock.now(),
           task,
-          run,
+          run: delivery === undefined ? run : { ...run, delivery },
           result,
           ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
-        }),
+        });
+      },
       credentialCleanupId,
       undefined,
       workerPermit,

@@ -5,6 +5,7 @@ import {
   type Run,
   type Task,
   type TaskId,
+  type DeliveryBinding,
   taskKey,
 } from '@agent-lcars/orchestrator';
 
@@ -34,14 +35,22 @@ export function latestRun<T extends RunOrder>(
  * First match wins, in the order the design spec's table lists them.
  */
 export function deriveItemState(
-  task: Pick<Task, 'closedAt' | 'consecutiveLost'>,
+  task: Pick<Task, 'closedAt' | 'consecutiveLost' | 'delivery'>,
   runs: readonly Run[],
 ): ItemState {
   const latest = latestRun(runs);
   if (task.closedAt !== undefined || latest?.state === 'canceled')
     return 'canceled';
+  if (task.delivery !== undefined && task.delivery.state !== 'complete') {
+    if (latest?.state === 'finished' && latest.result?.ok === false)
+      return 'failed';
+    if (latest?.state === 'finished' && latest.result?.summary === 'park')
+      return 'parked';
+    return 'running';
+  }
   if (latest === undefined) return 'running';
   if (isLive(latest.state)) return 'running';
+  if (task.delivery?.state === 'complete') return 'done';
   if (latest.state === 'finished') {
     // Only an explicit park is a human handoff. Missing deliverables and
     // execution failures need diagnosis, not a fabricated human decision.
@@ -60,6 +69,7 @@ export interface ItemRunView {
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
+  delivery?: DeliveryBinding;
   providerFallback?: Pick<
     ProviderFallback,
     | 'allowedPipelines'
@@ -154,6 +164,7 @@ export function toItemView(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
       ...(r.providerFallback === undefined
         ? {}
         : {
@@ -238,6 +249,7 @@ export function toWorkSummary(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
       ...(r.providerFallback === undefined
         ? {}
         : {

@@ -39,6 +39,9 @@ export const workSpecSchema = z
     /** Every operator may select priority; absence preserves historical FIFO. */
     priority: z.enum(QUEUE_PRIORITIES).default('normal'),
     fallbackPipelines: fallbackPipelinesSchema.optional(),
+    /** Trusted immutable intake policy. Omitted legacy/implicit requests retain
+     * an unknown runtime gate rather than letting a worker waive evidence. */
+    deliveryRuntime: z.enum(['none', 'required']).optional(),
     target: workTargetSchema,
   })
   .refine((spec) => !spec.fallbackPipelines?.includes(spec.pipeline), {

@@ -1,0 +1,470 @@
+import 'server-only';
+
+import {
+  formatAttemptId,
+  parseRunGeneration,
+} from '@agent-lcars/dispatch-contracts';
+import type {
+  DeliveryBinding,
+  DeliveryObservation,
+  Run,
+  Task,
+} from '@agent-lcars/orchestrator';
+import { workPayloadSchema } from '@agent-lcars/work';
+import { z } from 'zod';
+
+import { isControlPlaneRepository } from './deployment';
+import type { DispatchTokenProvider } from './github-app-tokens';
+import { grantForPrincipal, resolvePrincipal } from './work-grants';
+
+export interface DeliveryGithubDeps {
+  tokens: DispatchTokenProvider;
+  fetchImpl?: typeof fetch;
+  githubApiBaseUrl?: string;
+}
+
+const sha = z.string().regex(/^[a-f0-9]{40}$/u);
+const prSchema = z.object({
+  number: z.number().int().positive(),
+  body: z.string().nullable(),
+  state: z.enum(['open', 'closed']),
+  draft: z.boolean(),
+  head: z.object({ sha }),
+  base: z.object({ ref: z.string() }),
+  user: z.object({ login: z.string() }),
+  merged: z.boolean(),
+  merge_commit_sha: sha.nullable(),
+  auto_merge: z.object({ merge_method: z.string() }).nullable(),
+});
+
+async function github(deps: DeliveryGithubDeps, repo: string, path: string) {
+  const token = await deps.tokens.tokenFor(repo);
+  const response = await (deps.fetchImpl ?? fetch)(
+    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${repo}/${path}`,
+    {
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+      },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  if (!response.ok)
+    throw new Error(`Delivery read refused (${response.status})`);
+  return response.json() as Promise<unknown>;
+}
+
+async function protectedChecks(
+  deps: DeliveryGithubDeps,
+  repo: string,
+  base: string,
+) {
+  const rules = z
+    .array(z.object({ type: z.string(), parameters: z.unknown().optional() }))
+    .parse(
+      await github(deps, repo, `rules/branches/${encodeURIComponent(base)}`),
+    );
+  const checkRule = rules.find(
+    (rule) => rule.type === 'required_status_checks',
+  );
+  if (
+    !rules.some((rule) => rule.type === 'pull_request') ||
+    checkRule === undefined
+  )
+    throw new Error('Protected delivery policy could not be established');
+  return z
+    .object({
+      required_status_checks: z.array(z.object({ context: z.string() })).min(1),
+    })
+    .parse(checkRule.parameters)
+    .required_status_checks.map((check) => check.context);
+}
+
+async function reviews(
+  deps: DeliveryGithubDeps,
+  repo: string,
+  number: number,
+  head: string,
+) {
+  // Complete bounded reads only: truncation and field errors retain ownership.
+  const token = await deps.tokens.tokenFor(repo);
+  const [owner, name] = repo.split('/');
+  const response = await (deps.fetchImpl ?? fetch)(
+    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/graphql`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({
+        query: `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviews(last:100){pageInfo{hasPreviousPage} nodes{state author{login} commit{oid}}} reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved}}}}}`,
+        variables: { owner, name, number },
+      }),
+    },
+  );
+  if (!response.ok) throw new Error('Delivery review read refused');
+  const data = z
+    .object({
+      errors: z.array(z.unknown()).optional(),
+      data: z.object({
+        repository: z.object({
+          pullRequest: z.object({
+            headRefOid: sha,
+            reviews: z.object({
+              pageInfo: z.object({ hasPreviousPage: z.literal(false) }),
+              nodes: z.array(
+                z.object({
+                  state: z.string(),
+                  author: z.object({ login: z.string() }),
+                  commit: z.object({ oid: sha }),
+                }),
+              ),
+            }),
+            reviewThreads: z.object({
+              pageInfo: z.object({ hasNextPage: z.literal(false) }),
+              nodes: z.array(z.object({ isResolved: z.boolean() })),
+            }),
+          }),
+        }),
+      }),
+    })
+    .parse(await response.json());
+  if (
+    data.errors?.length ||
+    data.data.repository.pullRequest.headRefOid !== head
+  )
+    throw new Error('Delivery revision or review evidence changed');
+  const pr = data.data.repository.pullRequest;
+  const latest = new Map(
+    pr.reviews.nodes
+      .filter(
+        (review) =>
+          review.commit.oid === head &&
+          ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state),
+      )
+      .map((review) => [review.author.login, review]),
+  );
+  return {
+    approvals: pr.reviews.nodes.filter(
+      (review) =>
+        review.commit.oid === head &&
+        ['APPROVED', 'COMMENTED'].includes(review.state) &&
+        !['DISMISSED', 'CHANGES_REQUESTED'].includes(
+          latest.get(review.author.login)?.state ?? '',
+        ),
+    ),
+    changesRequested: [...latest.values()].some(
+      (review) => review.state === 'CHANGES_REQUESTED',
+    ),
+    unresolved: pr.reviewThreads.nodes.some((thread) => !thread.isResolved),
+  };
+}
+
+/** A successful PR artifact is not a completion verdict. This exact server
+ * read establishes the narrow ready handoff before authenticated settlement. */
+export async function readyDeliveryBinding(
+  deps: DeliveryGithubDeps,
+  input: {
+    run: Run;
+    task: Task;
+    repo: string;
+    number: number;
+    now: string;
+  },
+): Promise<DeliveryBinding> {
+  const { run, task, repo, number, now } = input;
+  const pr = prSchema.parse(await github(deps, repo, `pulls/${number}`));
+  const generation = parseRunGeneration(run.runId);
+  if (generation === undefined) throw new Error('Delivery generation invalid');
+  const attempt = formatAttemptId({ generation, intentId: run.runId });
+  if (
+    pr.number !== number ||
+    (!pr.merged && pr.state !== 'open') ||
+    pr.draft ||
+    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`) ||
+    (!pr.merged && pr.auto_merge?.merge_method !== 'squash')
+  )
+    throw new Error('Deliverable is not ready and armed');
+  await protectedChecks(deps, repo, pr.base.ref);
+  const review = await reviews(deps, repo, number, pr.head.sha);
+  if (
+    review.unresolved ||
+    review.changesRequested ||
+    !review.approvals.some(
+      (approval) =>
+        approval.author.login.toLowerCase() !== pr.user.login.toLowerCase(),
+    )
+  )
+    throw new Error('Deliverable requires exact-head independent review');
+  const payload = workPayloadSchema.parse(task.work);
+  if (payload.spec.target.repo !== repo)
+    throw new Error('Delivery target changed');
+  const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
+  if (
+    final.head.sha !== pr.head.sha ||
+    final.base.ref !== pr.base.ref ||
+    final.merged !== pr.merged ||
+    (!final.merged && final.state !== 'open') ||
+    final.draft ||
+    (!final.merged && final.auto_merge?.merge_method !== 'squash') ||
+    final.body !== pr.body
+  )
+    throw new Error('Ready delivery changed during verification');
+  const binding: DeliveryBinding = {
+    runId: run.runId,
+    repo,
+    number,
+    baseRef: pr.base.ref,
+    head: pr.head.sha,
+    state: 'waiting',
+    runtimeGate: payload.spec.deliveryRuntime ?? 'unknown',
+    observedAt: now,
+  };
+  if (pr.merged) {
+    const landed = await observeGithubDelivery(deps, binding);
+    if (landed.kind !== 'protected-merge')
+      throw new Error('Protected landing not established');
+    return {
+      ...binding,
+      mergeCommit: landed.mergeCommit,
+      state: binding.runtimeGate === 'none' ? 'complete' : 'runtime-required',
+    };
+  }
+  return binding;
+}
+
+interface GithubIntakePermission {
+  runId: string;
+  head: string;
+  repo: string;
+  principal: string;
+  pipeline: string;
+  observedAt: number;
+}
+
+/** The webhook intake class is distinct from Work API grants. Current metadata
+ * permission plus its original provider intent authorize only that same class. */
+export async function readGithubIntakePermission(
+  deps: DeliveryGithubDeps,
+  task: Task,
+  run: Run,
+): Promise<GithubIntakePermission | undefined> {
+  const payload = workPayloadSchema.safeParse(task.work);
+  if (
+    !payload.success ||
+    payload.data.origin.channel !== 'github' ||
+    task.delivery === undefined ||
+    payload.data.spec.pipeline !== run.pipeline ||
+    task.delivery.repo !== payload.data.spec.target.repo ||
+    !isControlPlaneRepository(task.delivery.repo)
+  )
+    return undefined;
+  const actor = /^github:([\w.-]+(?:\[bot\])?)$/u.exec(
+    payload.data.origin.principal,
+  )?.[1];
+  if (actor === undefined) return undefined;
+  const permission = z
+    .object({
+      permission: z.string(),
+      role_name: z.string(),
+      user: z.object({ login: z.string() }),
+    })
+    .parse(
+      await github(
+        deps,
+        task.delivery.repo,
+        `collaborators/${encodeURIComponent(actor)}/permission`,
+      ),
+    );
+  if (
+    permission.user.login.toLowerCase() !== actor.toLowerCase() ||
+    (!['admin', 'write', 'maintain', 'triage'].includes(
+      permission.permission,
+    ) &&
+      !['triage', 'triage_plus'].includes(permission.role_name))
+  )
+    return undefined;
+  return {
+    runId: run.runId,
+    head: task.delivery.head,
+    repo: task.delivery.repo,
+    principal: payload.data.origin.principal,
+    pipeline: run.pipeline,
+    observedAt: Date.now(),
+  };
+}
+
+export function deliveryCorrectionAuthorized(
+  task: Task,
+  run: Run,
+  permission?: GithubIntakePermission,
+): boolean {
+  const payload = workPayloadSchema.safeParse(task.work);
+  if (
+    !payload.success ||
+    !isControlPlaneRepository(payload.data.spec.target.repo) ||
+    task.delivery?.repo !== payload.data.spec.target.repo ||
+    ('repo' in task.task && task.task.repo !== payload.data.spec.target.repo)
+  )
+    return false;
+  const grant =
+    grantForPrincipal(payload.data.origin.principal) ??
+    resolvePrincipal(payload.data.origin.principal);
+  if (
+    grant?.scopes.includes('work.operator') === true &&
+    grant.pipelines.includes(run.pipeline as 'claude' | 'codex' | 'opencode')
+  )
+    return true;
+  return (
+    payload.data.origin.channel === 'github' &&
+    payload.data.spec.pipeline === run.pipeline &&
+    permission?.runId === run.runId &&
+    permission.head === task.delivery.head &&
+    permission.repo === task.delivery.repo &&
+    permission.pipeline === run.pipeline &&
+    permission.principal === payload.data.origin.principal &&
+    Date.now() - permission.observedAt <= 30_000
+  );
+}
+
+export async function observeGithubDelivery(
+  deps: DeliveryGithubDeps,
+  binding: DeliveryBinding,
+): Promise<DeliveryObservation> {
+  const pr = prSchema.parse(
+    await github(deps, binding.repo, `pulls/${binding.number}`),
+  );
+  const generation = parseRunGeneration(binding.runId);
+  if (generation === undefined) throw new Error('Delivery generation invalid');
+  const attempt = formatAttemptId({ generation, intentId: binding.runId });
+  if (
+    pr.number !== binding.number ||
+    pr.base.ref !== binding.baseRef ||
+    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
+  )
+    throw new Error('Delivery artifact identity changed');
+  if (pr.head.sha !== binding.head)
+    return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
+  if (pr.merged && pr.merge_commit_sha !== null) {
+    const suites = z
+      .array(
+        z.object({
+          id: z.number(),
+          after_sha: sha,
+          result: z.string(),
+          ref: z.string(),
+        }),
+      )
+      .parse(
+        await github(deps, binding.repo, 'rulesets/rule-suites?per_page=100'),
+      );
+    const suite = suites.find(
+      (candidate) =>
+        candidate.after_sha === pr.merge_commit_sha &&
+        candidate.ref === `refs/heads/${binding.baseRef}` &&
+        candidate.result === 'pass',
+    );
+    if (suite === undefined)
+      throw new Error('Protected merge evidence unavailable');
+    const details = z
+      .object({
+        result: z.literal('pass'),
+        after_sha: sha,
+        rule_evaluations: z
+          .array(z.object({ rule_type: z.string(), result: z.string() }))
+          .min(1),
+      })
+      .parse(
+        await github(deps, binding.repo, `rulesets/rule-suites/${suite.id}`),
+      );
+    if (
+      details.after_sha !== pr.merge_commit_sha ||
+      details.rule_evaluations.some((rule) => rule.result !== 'pass') ||
+      !details.rule_evaluations.some(
+        (rule) => rule.rule_type === 'required_status_checks',
+      ) ||
+      !details.rule_evaluations.some(
+        (rule) => rule.rule_type === 'pull_request',
+      )
+    )
+      throw new Error('Protected checks did not pass');
+    return {
+      kind: 'protected-merge',
+      head: binding.head,
+      mergeCommit: pr.merge_commit_sha,
+    };
+  }
+  const required = await protectedChecks(deps, binding.repo, pr.base.ref);
+  const checkRuns = z
+    .object({
+      total_count: z.number(),
+      check_runs: z.array(
+        z.object({
+          name: z.string(),
+          head_sha: sha,
+          status: z.string(),
+          conclusion: z.string().nullable(),
+        }),
+      ),
+    })
+    .parse(
+      await github(
+        deps,
+        binding.repo,
+        `commits/${binding.head}/check-runs?per_page=100&filter=latest`,
+      ),
+    );
+  if (checkRuns.total_count > checkRuns.check_runs.length)
+    throw new Error('Checks truncated');
+  const failed = checkRuns.check_runs.filter(
+    (check) =>
+      check.head_sha === binding.head &&
+      required.includes(check.name) &&
+      check.status === 'completed' &&
+      ['failure', 'timed_out', 'action_required'].includes(
+        check.conclusion ?? '',
+      ),
+  );
+  const statuses = z
+    .object({
+      total_count: z.number(),
+      statuses: z.array(z.object({ context: z.string(), state: z.string() })),
+    })
+    .parse(
+      await github(
+        deps,
+        binding.repo,
+        `commits/${binding.head}/status?per_page=100`,
+      ),
+    );
+  if (statuses.total_count > statuses.statuses.length)
+    throw new Error('Statuses truncated');
+  const failedStatuses = statuses.statuses.filter(
+    (status) =>
+      required.includes(status.context) &&
+      ['failure', 'error'].includes(status.state),
+  );
+  const review = await reviews(
+    deps,
+    binding.repo,
+    binding.number,
+    binding.head,
+  );
+  if (
+    failed.length ||
+    failedStatuses.length ||
+    review.changesRequested ||
+    review.unresolved
+  )
+    return {
+      kind: 'correction',
+      head: binding.head,
+      reason:
+        failed.length || failedStatuses.length
+          ? `Required checks failed: ${[...failed.map((check) => check.name), ...failedStatuses.map((status) => status.context)].join(', ')}`
+          : 'Review feedback requires correction',
+    };
+  return { kind: 'waiting', head: binding.head };
+}

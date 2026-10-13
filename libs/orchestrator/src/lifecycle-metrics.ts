@@ -336,7 +336,11 @@ export function lifecycleMetricSnapshot(
         records.outstandingOutbox.map((entry) => [entry.entryId, entry]),
       ).values(),
     ];
-    for (const kind of ['dispatch-run', 'report-outcome'] as const) {
+    for (const kind of [
+      'dispatch-run',
+      'report-outcome',
+      'monitor-delivery',
+    ] as const) {
       const entries = outbox.filter((entry) => entry.kind === kind);
       for (const state of ['pending', 'leased', 'failed'] as const)
         gauge(

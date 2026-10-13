@@ -287,6 +287,19 @@ async function call(
 }
 
 const context = {
+  loadReadyDeliveryBinding: async (
+    _deps: unknown,
+    input: { run: Run; repo: string; number: number; now: string },
+  ) => ({
+    runId: input.run.runId,
+    repo: input.repo,
+    number: input.number,
+    baseRef: 'main',
+    head: 'a'.repeat(40),
+    state: 'waiting' as const,
+    runtimeGate: 'none' as const,
+    observedAt: input.now,
+  }),
   tokens: { tokenFor: async () => 'ambient-token' },
   checkoutTokens: {
     tokenFor: async () => 'checkout-token',
@@ -909,7 +922,8 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     const task = await store.readTask({ workId });
     const runs = await store.listRuns({ workId });
     expect(task).toBeDefined();
-    expect(deriveItemState(task!.task, runs)).toBe('done');
+    expect(deriveItemState(task!.task, runs)).toBe('running');
+    expect(task!.task.delivery?.state).toBe('waiting');
   });
 
   it('settles a park outcome finished/ok and the item derives parked, not done (#1757)', async () => {
@@ -3256,7 +3270,7 @@ describe('exact outcome links cross the authenticated completion boundary', () =
       outcome: 'pull-request',
       reference: { kind: 'pull-request', number: 12 },
       ref: `https://github.com/${repo}/pull/12`,
-      state: 'done',
+      state: 'running',
     },
     { outcome: 'comment', reference: comment, ref: comment.url, state: 'done' },
     { outcome: 'review', reference: review, ref: review.url, state: 'done' },
@@ -4893,9 +4907,13 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
         '1970-01-01T00:00:00.000Z',
       );
       const next = await f.orchestrator.request({
-        taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+        taskId: { repo: 'jlapenna/agent-lcars', issue: 43 },
         requestId: 'successor',
         pipeline: 'codex',
+        work: (await f.store.readTask({
+          repo: 'jlapenna/agent-lcars',
+          issue: 42,
+        }))!.task.work,
       });
       if ('refused' in next || next.run === undefined)
         throw new Error('successor was not admitted');
@@ -5056,9 +5074,13 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       expect((await originalRead(f.runId))?.state).toBe('finished');
       const lease = await f.codexAuth.readLease();
       const next = await f.orchestrator.request({
-        taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+        taskId: { repo: 'jlapenna/agent-lcars', issue: 43 },
         requestId: 'after-renew-completion',
         pipeline: 'codex',
+        work: (await f.store.readTask({
+          repo: 'jlapenna/agent-lcars',
+          issue: 42,
+        }))!.task.work,
       });
       if ('refused' in next || next.run === undefined)
         throw new Error('successor admission failed');
@@ -5145,9 +5167,13 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           entries.filter((entry) => entry.kind === 'report-outcome'),
         ).toHaveLength(1);
         const next = await f.orchestrator.request({
-          taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+          taskId: { repo: 'jlapenna/agent-lcars', issue: 43 },
           requestId: `after-normal-${route}-completion`,
           pipeline: 'codex',
+          work: (await f.store.readTask({
+            repo: 'jlapenna/agent-lcars',
+            issue: 42,
+          }))!.task.work,
         });
         if ('refused' in next || next.run === undefined)
           throw new Error('successor admission failed');

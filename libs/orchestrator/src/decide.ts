@@ -160,6 +160,20 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     }
     return refused('task-busy', activeRun);
   }
+  if (
+    input.task?.delivery !== undefined &&
+    input.task.delivery.state !== 'complete' &&
+    !(
+      input.params?.mode === 'reply' &&
+      input.params.replyPrincipal !== undefined
+    ) &&
+    !(
+      input.requestSource !== undefined &&
+      input.requestSource !== 'caller' &&
+      input.params?.deliveryPredecessor === input.task.delivery.runId
+    )
+  )
+    return refused('task-busy');
   if (input.task?.closedAt !== undefined) {
     return refused('task-closed');
   }
@@ -177,6 +191,11 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     // a later operator request, or the pre-startup recovery path would be
     // unbounded for anyone willing to re-request.
     schedulerDisruptions: input.task?.schedulerDisruptions ?? 0,
+    // Delivery correction/recovery retains logical ownership until a fresh
+    // authenticated ready handoff replaces the binding.
+    ...(input.task?.delivery === undefined
+      ? {}
+      : { delivery: input.task.delivery }),
     // Written once: only the request that creates the task may set `work`.
     work,
     updatedAt: now,
@@ -514,11 +533,34 @@ export function reportResult(input: {
     events: [...run.events, { at: now, to: 'finished', by: 'report' }],
     updatedAt: now,
   };
-  return settle(
+  const decision = settle(
     resetLossBudgets(releaseLock(task, run.runId, now)),
     settled,
     now,
   );
+  if (result.ok && run.delivery !== undefined) {
+    return {
+      ...decision,
+      task: { ...decision.task, delivery: run.delivery },
+      outbox: [
+        ...decision.outbox,
+        {
+          entryId: `delivery/${run.runId}`,
+          kind: 'monitor-delivery',
+          // Completion drains outcomes; monitoring starts after the worker
+          // can finish credential cleanup and physical retirement.
+          nextAttemptAt: new Date(Date.parse(now) + 60_000).toISOString(),
+          task: run.task,
+          runId: run.runId,
+          state: 'pending',
+          attempts: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    };
+  }
+  return decision;
 }
 
 /** An operator stops a run and releases the lock; reports onward. */

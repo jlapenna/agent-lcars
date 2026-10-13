@@ -22,6 +22,11 @@ import {
   outcomeWebhookFor,
   type OutcomeWebhookPayload,
 } from './outcome-webhook';
+import {
+  deliveryCorrectionAuthorized,
+  observeGithubDelivery,
+  readGithubIntakePermission,
+} from './ready-delivery';
 import { dispatchSessionExpiry, isClosedItemState } from './session-expiry';
 
 /**
@@ -197,6 +202,9 @@ export async function drainOutbox(
     try {
       if (entry.kind === 'dispatch-run') {
         await handleDispatchRun(deps, entry, result);
+      } else if (entry.kind === 'monitor-delivery') {
+        await handleMonitorDelivery(deps, entry, result);
+        failedThisDrain.add(entry.entryId);
       } else {
         await handleReportOutcome(deps, entry, result);
       }
@@ -212,6 +220,55 @@ export async function drainOutbox(
   }
 
   return result;
+}
+
+/** A durable lightweight wait, not a failed worker or a second capacity ledger.
+ * Uncertain external evidence keeps this entry retryable without the generic
+ * outcome-delivery retirement budget. Every mutation rechecks Task+Run fencing. */
+async function handleMonitorDelivery(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+  result: DrainOutboxResult,
+): Promise<void> {
+  const run = await deps.store.readRun(entry.runId);
+  const task =
+    run === undefined ? undefined : (await deps.store.readTask(run.task))?.task;
+  if (
+    run === undefined ||
+    task?.delivery?.runId !== run.runId ||
+    task.delivery.state !== 'waiting'
+  ) {
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+  try {
+    const observed = await observeGithubDelivery(deps, task.delivery);
+    const permission =
+      observed.kind === 'correction' && !deliveryCorrectionAuthorized(task, run)
+        ? await readGithubIntakePermission(deps, task, run)
+        : undefined;
+    const decision = await deps.orchestrator.observeDelivery(
+      run.runId,
+      observed,
+      (currentTask, currentRun) =>
+        deliveryCorrectionAuthorized(currentTask, currentRun, permission),
+    );
+    if (
+      !('refused' in decision) &&
+      decision.task.delivery?.state !== 'waiting'
+    ) {
+      await settleClaim(deps, entry, 'done');
+      return;
+    }
+  } catch {
+    result.failed.push({
+      entryId: entry.entryId,
+      error: 'Delivery evidence unavailable; ownership retained',
+    });
+  }
+  await settleClaim(deps, entry, 'pending', {
+    nextAttemptAt: new Date(Date.parse(now(deps)) + 5 * 60_000).toISOString(),
+  });
 }
 
 /**
@@ -961,7 +1018,11 @@ export function outcomeCommentBody(
   switch (run.state) {
     case 'finished': {
       const lines = run.result?.ok
-        ? [`✅ Run ${run.runId} finished.`]
+        ? [
+            run.delivery === undefined
+              ? `✅ Run ${run.runId} finished.`
+              : `⏳ Run ${run.runId} released implementation execution; delivery ownership remains ${run.delivery.state}.`,
+          ]
         : [`❌ Run ${run.runId} failed.`];
       if (run.result?.ok && run.result.ref !== undefined) {
         lines.push(run.result.ref, ...(run.result.relatedRefs ?? []));

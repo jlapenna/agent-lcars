@@ -102,6 +102,8 @@ esac
 ATTEMPT_ID="$(jq -r '.attemptId' <<<"$brief")"
 INTENT_ID="$(jq -r '.intentId' <<<"$brief")"
 MODE="$(jq -er '.mode' <<<"$brief")"
+# Only a serving authority advertising this contract enables the baked handoff.
+export DELIVERY_HANDOFF_VERSION="$(jq -r 'if .deliveryHandoffVersion == 1 then "1" else "" end' <<<"$brief")"
 REPLY="$(jq -r '.reply // ""' <<<"$brief")"
 RUNBOOK="$(jq -r '.runbook // ""' <<<"$brief")"
 CONTEXT="$(jq -r '.context // ""' <<<"$brief")"

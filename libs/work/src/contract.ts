@@ -72,7 +72,31 @@ const runResultSchema = z.strictObject({
   message: z.string().max(16_384).optional(),
 });
 
+const deliveryBindingSchema = z.strictObject({
+  runId: z.string(),
+  repo: z.string(),
+  number: z.number().int().positive(),
+  baseRef: z.string().min(1).max(255),
+  head: z.string().regex(/^[a-f0-9]{40}$/u),
+  state: z.enum(['waiting', 'runtime-required', 'complete']),
+  correctionRunId: z.string().optional(),
+  runtimeGate: z.enum(['none', 'required', 'unknown']),
+  observedAt: z.string(),
+  mergeCommit: z
+    .string()
+    .regex(/^[a-f0-9]{40}$/u)
+    .optional(),
+  runtimeEvidence: z
+    .strictObject({
+      principal: z.string(),
+      ref: z.string().url(),
+      observedAt: z.string(),
+    })
+    .optional(),
+});
+
 export const itemRunViewSchema = z.strictObject({
+  delivery: deliveryBindingSchema.optional(),
   runId: z.string(),
   state: z.enum(['pending', 'running', 'finished', 'canceled', 'lost']),
   pipeline: z.string(),
@@ -196,7 +220,7 @@ export const githubDispatchAnchorSchema = z.strictObject({
  * runs, plus recent CLI session telemetry matched to the anchor the same way
  * the Agents page matches it -- never a second claim record.
  *
- * - `fleet-run`: the orchestrator task holds a live run (its mutex).
+ * - `fleet-run`: the task holds execution or durable delivery ownership.
  * - `interactive-session`: no live run, but a live or idle CLI session's
  *   repository and branch or recorded PR reference this anchor.
  * - `none`: neither, among CLI sessions active in the last 72 hours. When
@@ -251,6 +275,31 @@ export const anchorOwnerSchema = z.strictObject({
 export type AnchorOwner = z.output<typeof anchorOwnerSchema>;
 
 export const itemsContract = {
+  deliveryEvidence: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/delivery/{runId}/evidence',
+        operationId: 'recordDeliveryRuntimeEvidence',
+        summary: 'Record an operator verified exact-merge runtime receipt',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Principal may not verify this delivery' },
+      CONFLICT: { message: 'Delivery binding changed' },
+    })
+    .input(
+      z.strictObject({
+        runId: z.string().min(1).max(175),
+        head: z.string().regex(/^[a-f0-9]{40}$/u),
+        mergeCommit: z.string().regex(/^[a-f0-9]{40}$/u),
+        ref: z.string().url().max(2048),
+      }),
+    )
+    .output(
+      z.strictObject({ runId: z.string(), state: z.literal('complete') }),
+    ),
+
   anchorOwner: base
     .meta(
       openapi({
@@ -912,6 +961,8 @@ export const runClaimResponseSchema = z.strictObject({
 });
 
 const runBriefSharedSchema = {
+  /** Serving authority advertises the ready delivery contract to baked workers. */
+  deliveryHandoffVersion: z.literal(1).optional(),
   pipeline: z.string(),
   /** The worker behavior requested at admission, never inferred from labels. */
   mode: z.string(),
