@@ -56,7 +56,9 @@ function sourceDecision(
   rollouts: Rollout[] = [{ source: NEW }],
   incomplete = false,
   concurrent:
-    { newer: number; ignoreCeiling?: boolean } | undefined = undefined,
+    | { newer: number; ignoreCeiling?: boolean; race?: boolean }
+    | undefined = undefined,
+  history = 0,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
@@ -109,6 +111,18 @@ function sourceDecision(
       conclusion: 'success',
     };
   });
+  // Older history: runs updated before every rollout above, so the reader
+  // counts them but never needs their jobs.
+  for (let i = 0; i < history; i++) {
+    rows.push({
+      id: 100000 + i,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      head_sha: main,
+      display_title: 'Deploy console (skipped PR)',
+      conclusion: 'skipped',
+    });
+  }
   const total = rows.length + Number(incomplete);
   // Rows created after the reader's ceiling, newest first. A server honoring
   // `created=<=` omits them; one that ignores it prepends them and shifts
@@ -122,7 +136,13 @@ function sourceDecision(
   }));
   writeFileSync(
     path.join(dir, 'runs'),
-    JSON.stringify({ rows, newer, total, ignore: concurrent?.ignoreCeiling }),
+    JSON.stringify({
+      rows,
+      newer,
+      total,
+      ignore: concurrent?.ignoreCeiling,
+      race: concurrent?.race,
+    }),
   );
   writeFileSync(output, '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
@@ -143,10 +163,36 @@ if route.startswith('compare/'):
 elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
     with open(os.environ['FIXTURE_RUNS']) as f: runs=json.load(f)
     query=dict(p.split('=',1) for p in route.split('?',1)[1].split('&'))
-    ceiling=query.get('created')
-    legacy = ceiling is None or runs.get('ignore')
-    rows = runs['newer'] + runs['rows'] if legacy else runs['rows']
-    total = runs['total'] + (len(runs['newer']) if legacy else 0)
+    created=query.get('created')
+    if runs.get('race'):
+        # Review race on #2641. Until the world settles, unfiltered pages miss
+        # the oldest row (a run created mid-scan shifted it), the total grows
+        # by one after the first read, and the newer count already includes a
+        # second run, so total minus newer still equals the rows seen.
+        state_path=os.environ['FIXTURE_RUNS']+'.state'
+        state=json.load(open(state_path)) if os.path.exists(state_path) else {'calls': 0, 'stable': False}
+        if not state['stable']:
+            if created is not None:
+                state['stable']=True
+                rows, total = runs['newer'], len(runs['newer'])
+            else:
+                rows, total = runs['rows'][1:], runs['total'] + min(state['calls'], 1)
+                state['calls']+=1
+                state['stable']=state['calls']>=3
+            json.dump(state, open(state_path,'w'))
+            print(json.dumps({'total_count': total, 'workflow_runs': rows}))
+            sys.exit(0)
+    if created is None:
+        rows = runs['newer'] + runs['rows']
+        total = runs['total'] + len(runs['newer'])
+    elif created.startswith('%3E') and not runs.get('ignore'):
+        rows, total = runs['newer'], len(runs['newer'])
+    else:
+        # GitHub's search-filter behavior: total_count reports every match,
+        # but only the first 1,000 results are ever returned.
+        rows = runs['rows'] if created.startswith('%3C') else []
+        total = len(rows) if created.startswith('%3C') else 0
+        rows = rows[:1000]
     page=int(query.get('page','1'))
     print(json.dumps({'total_count': total, 'workflow_runs': rows[(page-1)*100:page*100]}))
 else: print(json.dumps(routes[route]))
@@ -375,7 +421,7 @@ describe('serialized automatic deployment source fence', () => {
       ]).status,
     ).not.toBe(0);
     expect(sourceDecision('c'.repeat(40), NEW).status).not.toBe(0);
-  });
+  }, 20000);
 
   it('reads history at a creation ceiling so concurrent new runs cannot change the scan', () => {
     const call = sourceDecision(
@@ -389,10 +435,43 @@ describe('serialized automatic deployment source fence', () => {
       { newer: 150 },
     );
     expect(call).toMatchObject({ status: 0, output: 'false' });
-    expect(call.calls).toContain('created=%3C%3D');
+    expect(call.calls).toContain('created=%3E');
   });
 
-  it('still refuses when the server ignores the ceiling or history stays incomplete', () => {
+  it('retries a scan whose total changed, even when total minus newer still matches', () => {
+    // Without the before/after total bracket, the first scan admits OLD
+    // because it never saw the newer NEW rollout.
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 2, race: true },
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+  }, 20000);
+
+  it('reads complete history beyond the 1,000-result cap of a filtered listing', () => {
+    // Run 38438235710: `created=<=` returned 1,000 of 2,500 runs, so every
+    // scan was incomplete and each automatic deployment refused.
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 3 },
+      1200,
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('still refuses when the newer-run count disagrees or history stays incomplete', () => {
     expect(
       sourceDecision(
         NEW,
@@ -417,7 +496,7 @@ describe('serialized automatic deployment source fence', () => {
         { newer: 2 },
       ).status,
     ).not.toBe(0);
-  });
+  }, 20000);
 
   it('refuses terminal rollout evidence without its start or step inventory', () => {
     expect(
