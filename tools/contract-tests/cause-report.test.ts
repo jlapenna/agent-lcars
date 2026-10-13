@@ -299,6 +299,7 @@ describe('complete interactive workstream report assembly', () => {
     'owner-/repo#1',
     'own--er/repo#1',
     'owner__emu/repo#1',
+    'owner/repo#1\n',
     `${'o'.repeat(40)}/repo#1`,
     `owner/${'r'.repeat(101)}#1`,
   ])(
