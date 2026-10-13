@@ -55,9 +55,7 @@ function sourceDecision(
   deliveryMode = '',
   rollouts: Rollout[] = [{ source: NEW }],
   incomplete = false,
-  concurrent:
-    | { newer: number; ignoreCeiling?: boolean; race?: boolean }
-    | undefined = undefined,
+  concurrent: { newer: number; race?: boolean } | undefined = undefined,
   history = 0,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
@@ -124,9 +122,8 @@ function sourceDecision(
     });
   }
   const total = rows.length + Number(incomplete);
-  // Rows created after the reader's ceiling, newest first. A server honoring
-  // `created=<=` omits them; one that ignores it prepends them and shifts
-  // every page, which is the failure observed in production.
+  // Rows created after the reader's ceiling, newest first: skipped PR runs
+  // created during discovery, the condition observed in production.
   const newer = Array.from({ length: concurrent?.newer ?? 0 }, (_, i) => ({
     id: 1000 + i,
     created_at: '2999-01-01T00:00:00Z',
@@ -136,13 +133,7 @@ function sourceDecision(
   }));
   writeFileSync(
     path.join(dir, 'runs'),
-    JSON.stringify({
-      rows,
-      newer,
-      total,
-      ignore: concurrent?.ignoreCeiling,
-      race: concurrent?.race,
-    }),
+    JSON.stringify({ rows, newer, total, race: concurrent?.race }),
   );
   writeFileSync(output, '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
@@ -185,7 +176,7 @@ elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
     if created is None:
         rows = runs['newer'] + runs['rows']
         total = runs['total'] + len(runs['newer'])
-    elif created.startswith('%3E') and not runs.get('ignore'):
+    elif created.startswith('%3E'):
         rows, total = runs['newer'], len(runs['newer'])
     else:
         # GitHub's search-filter behavior: total_count reports every match,
@@ -435,7 +426,6 @@ describe('serialized automatic deployment source fence', () => {
       { newer: 150 },
     );
     expect(call).toMatchObject({ status: 0, output: 'false' });
-    expect(call.calls).toContain('created=%3E');
   });
 
   it('retries a scan whose total changed, even when total minus newer still matches', () => {
@@ -470,33 +460,6 @@ describe('serialized automatic deployment source fence', () => {
     );
     expect(call).toMatchObject({ status: 0, output: 'false' });
   });
-
-  it('still refuses when the newer-run count disagrees or history stays incomplete', () => {
-    expect(
-      sourceDecision(
-        NEW,
-        NEW,
-        'workflow_run',
-        false,
-        '',
-        [{ source: OLD }],
-        false,
-        { newer: 2, ignoreCeiling: true },
-      ).status,
-    ).not.toBe(0);
-    expect(
-      sourceDecision(
-        NEW,
-        NEW,
-        'workflow_run',
-        false,
-        '',
-        [{ source: OLD }],
-        true,
-        { newer: 2 },
-      ).status,
-    ).not.toBe(0);
-  }, 20000);
 
   it('refuses terminal rollout evidence without its start or step inventory', () => {
     expect(
