@@ -54,7 +54,11 @@ export function deriveItemState(
   }
   if (latest === undefined) return 'running';
   if (isLive(latest.state)) return 'running';
-  if (task.delivery?.state === 'complete') return 'done';
+  if (
+    task.delivery?.state === 'complete' &&
+    task.delivery.runId === latest.runId
+  )
+    return 'done';
   if (latest.state === 'finished') {
     // Only an explicit park is a human handoff. Missing deliverables and
     // execution failures need diagnosis, not a fabricated human decision.

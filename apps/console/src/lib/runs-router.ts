@@ -913,7 +913,10 @@ export const runsRouter = os.router({
       { issue: target.issue, mode: run.params?.mode },
     );
     if (
-      run.params?.deliveryPredecessor !== undefined &&
+      (run.params?.deliveryPredecessor !== undefined ||
+        (task?.delivery !== undefined &&
+          task.delivery.state !== 'complete' &&
+          task.delivery.runId !== run.runId)) &&
       result.ok &&
       result.summary !== 'park' &&
       (!['pull-request', 'merged-deliverable'].includes(result.summary ?? '') ||

@@ -7,6 +7,7 @@ import {
   type CredentialMutation,
   FirestoreStore,
   isRefusal,
+  MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
   type OrchestratorStore,
@@ -28,6 +29,8 @@ import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 import { ConditionalCodexBucket, deferred } from './testing/codex-auth-bucket';
 import { truncatedDescription } from './work-from-github';
+import { requestReply } from './work-reply';
+import type { WorkContext } from './work-router';
 
 /**
  * `requireRunToken` (`runs-router.ts`) now reads its "is this lease still
@@ -5879,5 +5882,219 @@ describe('merged delivery corrections cross the authenticated PR gate', () => {
       ).status,
     ).toBe(409);
     expect((await f.store.readRun(f.runId))?.result).toBeUndefined();
+  });
+});
+
+describe('reply recovery preserves incomplete delivery output requirements', () => {
+  async function recovery(completed = false) {
+    const f = fixture();
+    const workId = wid('reply-delivery-recovery');
+    const originalId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId,
+      now: NOW,
+      spec: {
+        title: 't',
+        description: 'd',
+        pipeline: 'claude',
+        deliveryRuntime: 'none',
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+    });
+    const executor = { ...f, ...context, principal: executorPrincipal() };
+    const claimedOriginal = await call(executor, 'POST', '/runs/claim', {
+      runner: 'original-runner',
+    });
+    expect(claimedOriginal.status).toBe(200);
+    const originalContext = {
+      ...f,
+      ...context,
+      bearerToken: (claimedOriginal.json as { token: string }).token,
+      loadReadyDeliveryBinding: async (
+        _deps: unknown,
+        input: { run: Run; repo: string; number: number; now: string },
+      ) => ({
+        runId: input.run.runId,
+        repo: input.repo,
+        number: input.number,
+        baseRef: 'main',
+        head: 'a'.repeat(40),
+        state: completed ? ('complete' as const) : ('waiting' as const),
+        runtimeGate: 'none' as const,
+        observedAt: input.now,
+        ...(completed ? { mergeCommit: 'b'.repeat(40) } : {}),
+      }),
+    };
+    expect(
+      (
+        await call(originalContext, 'POST', runPath(originalId, '/complete'), {
+          outcome: 'pull-request',
+          outcomeReference: { kind: 'pull-request', number: 12 },
+        })
+      ).status,
+    ).toBe(200);
+    if (!completed) {
+      expect(
+        isRefusal(
+          await f.orchestrator.observeDelivery(
+            originalId,
+            {
+              kind: 'correction',
+              head: 'a'.repeat(40),
+              reason: 'review correction',
+            },
+            () => true,
+          ),
+        ),
+      ).toBe(false);
+      const correction = (await f.store.readActiveRun({ workId }))!;
+      await f.orchestrator.confirmDispatch(correction.runId);
+      expect(
+        isRefusal(
+          await f.orchestrator.report(correction.runId, {
+            ok: true,
+            summary: 'park',
+            message: 'Need a decision',
+          }),
+        ),
+      ).toBe(false);
+    }
+    const originalResult = (await f.store.readRun(originalId))!.result;
+    const originalBinding = (await f.store.readTask({ workId }))!.task.delivery;
+    const replyContext: WorkContext = {
+      principal: operatorPrincipal(),
+      runtime: { ...f, ...context } as unknown as WorkContext['runtime'],
+      sessionsFor: async () => [],
+      getSessionDoc: async () => undefined,
+      sessionDocsForRuns: async () => [],
+      cliSessions: async () => ({ sessions: [], warnings: [] }),
+      scheduleStore: new MemoryScheduleStore(),
+      grants: () => [],
+      now: f.now,
+    };
+    const reply = await requestReply(replyContext, {
+      task: { workId },
+      text: 'Proceed with the correction',
+      channel: 'console',
+      principal: 'user:jlapenna',
+    });
+    expect(reply.ok).toBe(true);
+    if (!reply.ok) throw new Error('Reply fixture admission failed');
+    const runId = reply.runId;
+    expect((await f.store.readRun(runId))!.params).toMatchObject({
+      mode: 'reply',
+      replyPrincipal: 'user:jlapenna',
+    });
+    expect(
+      (await f.store.readRun(runId))!.params?.deliveryPredecessor,
+    ).toBeUndefined();
+    await f.store.enqueueRun({ runId, now: NOW });
+    await f.orchestrator.confirmDispatch(runId);
+    const claimed = await call(executor, 'POST', '/runs/claim', {
+      runner: 'recovery-runner',
+    });
+    expect(claimed.status).toBe(200);
+    expect((claimed.json as { runId: string }).runId).toBe(runId);
+    const ready = vi.fn(context.loadReadyDeliveryBinding);
+    return {
+      ...f,
+      originalId,
+      originalResult,
+      originalBinding,
+      runId,
+      ready,
+      ctx: {
+        ...f,
+        ...context,
+        bearerToken: (claimed.json as { token: string }).token,
+        loadReadyDeliveryBinding: ready,
+      },
+    };
+  }
+  it.each(['comment', 'no-op'] as const)(
+    'refuses reply recovery %s without a fresh PR and keeps the run live',
+    async (outcome) => {
+      const f = await recovery();
+      expect(
+        (await call(f.ctx, 'POST', runPath(f.runId, '/complete'), { outcome }))
+          .status,
+      ).toBe(409);
+      expect(f.ready).not.toHaveBeenCalled();
+      expect((await f.store.readRun(f.runId))!.state).toBe('running');
+      expect(
+        (await f.store.readTask((await f.store.readRun(f.runId))!.task))!.task
+          .delivery,
+      ).toEqual(f.originalBinding);
+      expect((await f.store.readRun(f.originalId))!.result).toEqual(
+        f.originalResult,
+      );
+    },
+  );
+  it('preserves explicit parked recovery and its original binding', async () => {
+    const f = await recovery();
+    expect(
+      (
+        await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+          outcome: 'park',
+          message: 'Need another decision',
+        })
+      ).status,
+    ).toBe(200);
+    const run = (await f.store.readRun(f.runId))!;
+    const task = (await f.store.readTask(run.task))!.task;
+    expect(run.result?.summary).toBe('park');
+    expect(deriveItemState(task, await f.store.listRuns(run.task))).toBe(
+      'parked',
+    );
+    expect(task.delivery).toEqual(f.originalBinding);
+    expect((await f.store.readRun(f.originalId))!.result).toEqual(
+      f.originalResult,
+    );
+  });
+  it('settles reply recovery only through the existing fresh server PR handoff', async () => {
+    const f = await recovery();
+    expect(
+      (
+        await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+          outcome: 'pull-request',
+          outcomeReference: { kind: 'pull-request', number: 99 },
+        })
+      ).status,
+    ).toBe(200);
+    expect(f.ready).toHaveBeenCalledOnce();
+    const run = (await f.store.readRun(f.runId))!;
+    const task = (await f.store.readTask(run.task))!.task;
+    expect(run.state).toBe('finished');
+    expect(task.delivery).toMatchObject({
+      runId: f.runId,
+      number: 99,
+      state: 'waiting',
+    });
+    expect(deriveItemState(task, await f.store.listRuns(run.task))).toBe(
+      'running',
+    );
+    expect((await f.store.readRun(f.originalId))!.result).toEqual(
+      f.originalResult,
+    );
+  });
+  it('allows an ordinary successful reply after completed delivery', async () => {
+    const f = await recovery(true);
+    expect(
+      (
+        await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+          outcome: 'comment',
+        })
+      ).status,
+    ).toBe(200);
+    expect(f.ready).not.toHaveBeenCalled();
+    const run = (await f.store.readRun(f.runId))!;
+    const task = (await f.store.readTask(run.task))!.task;
+    expect(run.result?.summary).toBe('comment');
+    expect(task.delivery).toEqual(f.originalBinding);
+    expect(deriveItemState(task, await f.store.listRuns(run.task))).toBe(
+      'done',
+    );
+    expect((await f.store.readRun(f.originalId))!.result).toEqual(
+      f.originalResult,
+    );
   });
 });

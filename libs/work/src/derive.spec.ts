@@ -383,3 +383,60 @@ it('projects fallback lineage together with queue clocks without private run aut
     expect(itemRunViewSchema.parse(legacy)).toEqual(legacy);
   }
 });
+
+describe('completed delivery is bound to its run', () => {
+  const original = run(1, 'finished', {
+    result: { ok: true, summary: 'pull-request' },
+  });
+  const delivery = {
+    runId: original.runId,
+    repo: 'octo/example',
+    number: 9,
+    baseRef: 'main',
+    head: 'a'.repeat(40),
+    mergeCommit: 'b'.repeat(40),
+    state: 'complete' as const,
+    runtimeGate: 'none' as const,
+    observedAt: T,
+  };
+  it('completes its bound run and preserves a later successful reply', () => {
+    const bound = task({ delivery });
+    expect(deriveItemState(bound, [original])).toBe('done');
+    expect(
+      deriveItemState(bound, [
+        original,
+        run(2, 'finished', {
+          params: { mode: 'reply' },
+          result: { ok: true, summary: 'comment' },
+        }),
+      ]),
+    ).toBe('done');
+    expect(bound.delivery).toEqual(delivery);
+  });
+  it.each([
+    [
+      'failed',
+      run(2, 'finished', { result: { ok: false, summary: 'failed' } }),
+      0,
+      'failed',
+    ],
+    [
+      'parked',
+      run(2, 'finished', { result: { ok: true, summary: 'park' } }),
+      0,
+      'parked',
+    ],
+    ['lost-spent', run(2, 'lost'), 3, 'failed'],
+    ['lost-left', run(2, 'lost'), 1, 'running'],
+    ['live', run(2, 'running'), 0, 'running'],
+    ['canceled', run(2, 'canceled'), 0, 'canceled'],
+  ] as const)(
+    'completed delivery follows later %s outcome',
+    (_name, later, consecutiveLost, expected) => {
+      const bound = task({ delivery, runCount: 2, consecutiveLost });
+      expect(deriveItemState(bound, [original, later])).toBe(expected);
+      expect(bound.delivery).toEqual(delivery);
+      expect(original.result).toEqual({ ok: true, summary: 'pull-request' });
+    },
+  );
+});
