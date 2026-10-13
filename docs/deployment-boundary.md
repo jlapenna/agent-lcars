@@ -177,7 +177,7 @@ when a caller omits or empties the legacy override variables.
 
 | Variable                          | This deployment                                                                  | Used by                                                                                         |
 | --------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `CI_RUNNER_LABEL`                 | `lcars-ci`                                                                       | ci (verify, e2e), local App Hosting build/deploy — every self-hosted job                        |
+| `CI_RUNNER_LABEL`                 | `agent-lcars-ci`                                                                 | ci (verify, e2e), local App Hosting build/deploy — every self-hosted job                        |
 | `E2E_ENABLED`                     | `true`                                                                           | CI E2E operational kill switch; only the exact value `true` enables the job                     |
 | `GCP_PROJECT_ID`                  | `agent-lcars`                                                                    | Console credential brokering                                                                    |
 | `GCP_WIF_PROVIDER`                | `projects/611425338852/…/providers/github`                                       | Console-adjacent GitHub workflows only                                                          |

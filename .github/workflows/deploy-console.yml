@@ -91,7 +91,7 @@ jobs:
       # Keep newer eligible work when an older gate finishes late. Source
       # freshness is checked again after this FIFO queue grants the lock.
       queue: max
-    runs-on: ['lcars-ci']
+    runs-on: ['agent-lcars-ci']
     timeout-minutes: 40
     environment: production
 

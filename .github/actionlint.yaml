@@ -5,7 +5,7 @@
 # non-provider workflow that later pins one literally.
 self-hosted-runner:
   labels:
-    - lcars-ci
+    - agent-lcars-ci
 
 # GitHub supports concurrency.queue; pinned actionlint 1.7.7 does not yet.
 # Required deploy-console-source-fence contracts validate queue values and
