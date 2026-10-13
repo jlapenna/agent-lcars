@@ -113,6 +113,13 @@ describe('parseSessionArchiveQuery', () => {
     });
   });
 
+  it('parses a known agent and ignores an unknown one', () => {
+    expect(parseSessionArchiveQuery({ agent: 'codex' }).agent).toBe('codex');
+    expect(parseSessionArchiveQuery({ agent: 'nobody' })).not.toHaveProperty(
+      'agent',
+    );
+  });
+
   it('ignores a `repo` value that matches no watched repo', () => {
     expect(
       parseSessionArchiveQuery({ repo: 'nope/not-watched' }).repo,

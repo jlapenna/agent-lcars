@@ -492,6 +492,13 @@ CLI sessions and dispatched runs.
   sessions, turns, cost-weighted tokens, and cost. The window and source
   filters are shared with Sessions. When a provider reports no `costUSD`, cost
   is estimated from `MODEL_RATES`.
+- **FE-CO-3 [Shipped]** The page follows `design/fleet-console.html#costs`.
+  The toolbar carries Repository, Agent (an archive filter), Window (`days`)
+  and Source, with **Export ledger** (the by-issue and by-week ledger as CSV,
+  `/costs/export`, same filters) as the primary action. A readout row leads
+  with spend today (UTC day), and "Spend by repository" lists each
+  repository's today and seven-day known spend, sessions and spend per
+  session; seven-day figures are withheld when the window is under 7 days.
 - **FE-CO-2 [Partial]** Costs shows spend by pipeline, requested model, and
   resolved model; cost per merged deliverable with a per-deliverable list; and
   budget warning states when `AGENT_LCARS_COST_BUDGET_USD` is configured

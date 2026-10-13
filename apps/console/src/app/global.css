@@ -1619,6 +1619,71 @@ td.work-table__num {
   min-width: 0;
 }
 
+/* "Spend by repository" (design/fleet-console.html#costs). */
+.costs-repo-spend.mantine-Card-root {
+  margin: 20px 20px 4px;
+}
+
+.costs-repo-spend__count {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.costs-repo-spend__meta {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.costs-repo-spend__repo {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.costs-repo-spend__num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+td.costs-repo-spend__num {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+}
+
+.costs-repo-spend__week {
+  width: 38%;
+}
+
+.costs-repo-spend__bar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  color: var(--lcars-ink-dim);
+}
+
+.costs-repo-spend__meter {
+  height: 6px;
+  background: var(--lcars-hairline);
+}
+
+.costs-repo-spend__meter > i {
+  display: block;
+  height: 100%;
+  background: var(--lcars-accent);
+}
+
 .costs-workspace__empty {
   padding: 18px 16px;
 }
