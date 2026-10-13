@@ -79,6 +79,11 @@ export function ConsoleHeader({
       data-has-utilities={utilities ? '' : undefined}
       data-streaming-fallback={streamingFallback ? '' : undefined}
     >
+      <div className="lcars-header-arm" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
       <div className="lcars-header">
         <Group justify="space-between" align="flex-start" gap="sm">
           <div className="lcars-header-copy">
@@ -92,10 +97,10 @@ export function ConsoleHeader({
         </Group>
 
         <div className="lcars-header-bar" aria-hidden="true">
-          <span className="lcars-header-bar-segment" data-accent="amber" />
           <span className="lcars-header-bar-segment" data-accent="blue" />
-          <span className="lcars-header-bar-segment" data-accent="periwinkle" />
+          <span className="lcars-header-bar-segment" data-accent="violet" />
           <span className="lcars-header-bar-segment" data-accent="gold" />
+          <span className="lcars-header-bar-segment" data-accent="amber" />
           <span className="lcars-header-bar-segment" data-accent="teal" />
         </div>
       </div>

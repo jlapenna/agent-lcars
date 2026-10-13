@@ -265,9 +265,10 @@ describe('LCARS design system contract', () => {
       expect(elbowRules).not.toEqual([]);
       for (const rule of elbowRules) {
         // `.lcars-header::before` is the same elbow at the base breakpoint;
-        // the desktop and mobile blocks replace it with the tapered build.
+        // the tablet and mobile blocks replace it with the tapered build, and
+        // the desktop frame draws it as the rail head turning into the arm.
         expect(rule).toMatch(
-          /\.lcars-header::before|\.console-header\[data-current\]::before/,
+          /\.lcars-header::before|\.console-header\[data-current\]::before|> \.lcars-rail-head \{/,
         );
       }
     });

@@ -21,6 +21,9 @@ import { createTheme } from '@mantine/core';
 //   void       (dark ramp)        — dark-mode surfaces/borders/dimmed text
 export const theme = createTheme({
   primaryColor: 'orange',
+  // Radius 0 everywhere: buttons, inputs, tags and panels are flat square
+  // blocks. The page elbow is the only curve (design/fleet-console.html).
+  defaultRadius: 0,
   white: '#f4f4f6',
   black: '#101318',
 
@@ -155,12 +158,11 @@ export const theme = createTheme({
   },
 
   components: {
-    // Capsule ends are the LCARS idiom for a *control or tag* - a badge, a
-    // rail module, a button.
+    // Badges are square tags, like every other block inside the frame.
     Badge: {
-      defaultProps: { radius: 'xl' },
+      defaultProps: { radius: 0 },
     },
-    // ...and square edges are the idiom for a *panel*. A rounded card inside
+    // Square edges are also the idiom for a *panel*. A rounded card inside
     // the square workspace frame, carrying a square accent spine, was three
     // different corner treatments stacked on one block (#1827). The curve on
     // an LCARS screen belongs to the elbow, not to every box.

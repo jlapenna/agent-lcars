@@ -18,11 +18,16 @@ export function ConsolePageShell({
   className,
   route,
   accent,
+  framed = false,
+  streamingFallback = false,
 }: {
   children: ReactNode;
   className?: string;
   route?: NavKey;
   accent?: NavAccent;
+  /** Lays the page out around the desktop elbow rail (`ConsoleAppShell`). */
+  framed?: boolean;
+  streamingFallback?: boolean;
 }) {
   return (
     <Container
@@ -32,6 +37,8 @@ export function ConsolePageShell({
       className={['console-page-shell', className].filter(Boolean).join(' ')}
       data-route={route}
       data-accent={accent}
+      data-frame={framed ? 'rail' : undefined}
+      data-streaming-fallback={streamingFallback ? '' : undefined}
     >
       {children}
     </Container>
