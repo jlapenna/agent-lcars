@@ -497,12 +497,15 @@ test.describe('responsive decision inbox', () => {
       header.getByRole('heading', { level: 1, name: 'Decision Inbox' }),
     ).toBeVisible();
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
-    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+    // The decision list is full width until a decision is selected
+    // (design/fleet-console.html).
+    await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
 
     await workspace
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
       .getByRole('link')
       .click();
+    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
 
     await expect(page).toHaveURL(
       new RegExp(`\\bitem=[^&]*${E2E_ITEM_NUMBERS.reviewRequested}`),
@@ -579,6 +582,11 @@ test.describe('responsive decision inbox', () => {
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
+    // The detail column opens beside the list once a decision is selected.
+    await workspace
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
     expect(
       await page.evaluate(

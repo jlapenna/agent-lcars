@@ -282,7 +282,7 @@ describe('QueueWorkspace', () => {
     renderWorkspace([makeCard()]);
 
     expect(
-      screen.getByText(/1 item · needs your decision or response/),
+      screen.getByRole('heading', { level: 2, name: 'Decision inbox' }),
     ).toBeTruthy();
     expect(screen.queryByTestId('inbox-mobile-command-deck')).toBeNull();
   });

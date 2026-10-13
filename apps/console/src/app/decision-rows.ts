@@ -1,12 +1,12 @@
 import { repoItemKey } from '../lib/watched-repo';
-import { type InboxCard, inboxCardKey, inboxCardMetadata } from './inbox-card';
+import {
+  type InboxCard,
+  inboxCardAgent,
+  inboxCardKey,
+  inboxCardMetadata,
+} from './inbox-card';
 import type { DecisionRow } from './ops-panels';
 import { queueReasonFor } from './queue-reason';
-
-/** The agent an anchor is assigned to, from its `agent:*` label. */
-function agentLabel(labels: readonly string[]): string | undefined {
-  return labels.find((label) => label.startsWith('agent:'))?.slice(6);
-}
 
 /** Inbox link that opens one decision, keeping the repository scope. */
 export function inboxItemHref(card: InboxCard, repoFilterKey?: string): string {
@@ -41,7 +41,7 @@ export function decisionRows(
           title: card.work.spec.title,
           ref: `${meta.repo.name} work`,
           refHref: `/work/${card.work.id}`,
-          agent: card.work.spec.pipeline,
+          agent: inboxCardAgent(card),
           waitingSince: meta.updatedAt,
           respondHref: inboxItemHref(card, repoFilterKey),
         };
@@ -53,7 +53,7 @@ export function decisionRows(
         title: item.title,
         ref: `${item.repo.name} ${item.kind === 'pr' ? 'PR ' : ''}#${item.number}`,
         refHref: `/task/${item.repo.owner}/${item.repo.name}/${item.number}`,
-        agent: agentLabel(item.labels),
+        agent: inboxCardAgent(card),
         waitingSince: item.updatedAt,
         respondHref: inboxItemHref(card, repoFilterKey),
       };
