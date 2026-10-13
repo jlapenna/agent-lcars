@@ -75,7 +75,7 @@ jobs:
       fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       app-token-enabled: true
       app-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
-      runs-on: '["lcars-ci"]'
+      runs-on: '["agent-lcars-ci"]'
       # The required CI checks in the Protect main ruleset.
       required-checks: '["E2E","Verify","Runner image pnpm-store seed","repository-owned Terraform"]'
     secrets:
