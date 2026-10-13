@@ -10,9 +10,11 @@ import { ConsoleWorkspace } from '../console-workspace';
  */
 export function CostsWorkspace({
   warnings,
+  toolbar,
   children,
 }: {
   warnings?: ReactNode;
+  toolbar?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -20,6 +22,7 @@ export function CostsWorkspace({
       ariaLabel="Cost ledger"
       className="costs-workspace"
       warnings={warnings}
+      toolbar={toolbar}
     >
       <div className="costs-workspace__content">{children}</div>
     </ConsoleWorkspace>

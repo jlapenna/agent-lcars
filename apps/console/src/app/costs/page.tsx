@@ -1,4 +1,5 @@
-import { Text } from '@mantine/core';
+import { SESSION_AGENTS } from '@agent-lcars/telemetry';
+import { Button, Text } from '@mantine/core';
 import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -18,15 +19,22 @@ import {
   parseCostBudget,
   type SessionSpend,
 } from '../../lib/session-spend';
+import type { RepositorySpend } from '../../lib/session-spend-by-repo';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { type ConsoleReadout, ConsoleReadouts } from '../console-readouts';
+import {
+  ConsoleToolbar,
+  ToolbarSelect,
+  ToolbarWindow,
+} from '../console-toolbar';
 import { formatCost } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { CostsWorkspace } from './costs-workspace';
 import { LedgerTables } from './ledger-tables';
 import { SpendBreakdowns } from './spend-breakdowns';
+import { SpendByRepository } from './spend-by-repository';
 
 // Request-scoped memoization, same reasoning as /sessions': `CostsCount` and
 // `CostsBody` each await from their own Suspense boundary, and this keeps
@@ -41,6 +49,7 @@ interface PageProps {
     source?: string;
     issue?: string;
     repo?: string;
+    agent?: string;
   }>;
 }
 
@@ -63,6 +72,7 @@ const money = (value: number | undefined) =>
  * explain; every caveat stays in that summary. */
 function spendReadouts(
   spend: SessionSpend,
+  byRepository: RepositorySpend | undefined,
   budget: CostBudget,
 ): ConsoleReadout[] {
   const estimated = spend.totals.costEstimated
@@ -70,10 +80,21 @@ function spendReadouts(
     : undefined;
   return [
     {
+      id: 'spend-today',
+      label: 'Spend today',
+      value: money(byRepository?.todayUsd),
+      detail:
+        budget.state === 'configured' && byRepository
+          ? `of ${money(budget.limitUsd)} budget · ${Math.round(
+              (byRepository.todayUsd / budget.limitUsd) * 100,
+            )}%`
+          : 'sessions active since 00:00 UTC',
+    },
+    {
       id: 'known-spend',
       label: 'Known spend',
       value: money(spend.totals.costUsd),
-      detail: estimated,
+      detail: estimated ?? `${spend.totals.unpricedSessions} unpriced`,
     },
     {
       id: 'per-deliverable',
@@ -88,12 +109,6 @@ function spendReadouts(
       detail: `${spend.unmergedPRs} unmerged · ${spend.unknownPRs} unknown`,
     },
     {
-      id: 'unpriced',
-      label: 'Unpriced sessions',
-      value: spend.totals.unpricedSessions,
-      detail: spend.coverageLimited ? 'incomplete archive' : undefined,
-    },
-    {
       id: 'budget',
       label: 'Budget',
       value: budget.state === 'configured' ? money(budget.limitUsd) : '—',
@@ -102,8 +117,91 @@ function spendReadouts(
   ];
 }
 
-async function CostsBody({ query }: { query: SessionArchiveQuery }) {
-  const { ledger, warnings, spend } = await getArchive(query);
+const WINDOW_OPTIONS = [
+  { value: '1', label: '24h' },
+  { value: '7', label: '7d' },
+  { value: '14', label: '14d' },
+  { value: '30', label: '30d' },
+  { value: '90', label: '90d' },
+] as const;
+
+function CostsToolbar({
+  query,
+  watchedRepos,
+}: {
+  query: SessionArchiveQuery;
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+}) {
+  return (
+    <ConsoleToolbar
+      action="/costs"
+      preserve={{
+        issue:
+          query.issueNumber === undefined
+            ? undefined
+            : String(query.issueNumber),
+      }}
+      primary={
+        <Button
+          component="a"
+          href={archiveHref(query, '/costs/export')}
+          download
+          size="sm"
+        >
+          Export ledger
+        </Button>
+      }
+    >
+      <ToolbarSelect
+        name="repo"
+        label="Repository"
+        value={query.repo ? repoKey(query.repo) : ''}
+        options={[
+          { value: '', label: `All repositories (${watchedRepos.length})` },
+          ...watchedRepos.map((repo) => ({
+            value: repoKey(repo),
+            label: repoKey(repo),
+          })),
+        ]}
+      />
+      <ToolbarSelect
+        name="agent"
+        label="Agent"
+        value={query.agent ?? ''}
+        options={[
+          { value: '', label: 'All agents' },
+          ...SESSION_AGENTS.map((agent) => ({ value: agent, label: agent })),
+        ]}
+      />
+      <ToolbarWindow
+        name="days"
+        label="Window"
+        value={String(query.days)}
+        options={WINDOW_OPTIONS}
+      />
+      <ToolbarSelect
+        name="source"
+        label="Source"
+        value={query.source ?? ''}
+        options={[
+          { value: '', label: 'All sources' },
+          { value: 'cli', label: 'CLI' },
+          { value: 'issue-agent', label: 'Dispatched agent' },
+        ]}
+      />
+    </ConsoleToolbar>
+  );
+}
+
+async function CostsBody({
+  query,
+  watchedRepos,
+}: {
+  query: SessionArchiveQuery;
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+}) {
+  const { ledger, warnings, spend, spendByRepository } =
+    await getArchive(query);
   const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
   const budget = parseCostBudget(
     process.env['AGENT_LCARS_COST_BUDGET_USD'],
@@ -115,13 +213,15 @@ async function CostsBody({ query }: { query: SessionArchiveQuery }) {
       warnings={
         warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
       }
+      toolbar={<CostsToolbar query={query} watchedRepos={watchedRepos} />}
     >
       {spend && (
         <ConsoleReadouts
           label="Spend readouts"
-          readouts={spendReadouts(spend, budget)}
+          readouts={spendReadouts(spend, spendByRepository, budget)}
         />
       )}
+      {spendByRepository && <SpendByRepository spend={spendByRepository} />}
       {spend && <SpendBreakdowns spend={spend} budget={budget} />}
       {hasLedgerData ? (
         <LedgerTables ledger={ledger} />
@@ -149,6 +249,7 @@ function archiveHref(query: SessionArchiveQuery, path: string): string {
     params.set('issue', String(query.issueNumber));
   }
   if (query.repo) params.set('repo', repoKey(query.repo));
+  if (query.agent) params.set('agent', query.agent);
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }
@@ -172,10 +273,10 @@ interface CostsViewProps {
   mobileNavigationHrefs: { sessions: string; costs: string };
 }
 
-function CostsViewContent({ query }: CostsViewProps) {
+function CostsViewContent({ query, watchedRepos }: CostsViewProps) {
   return (
     <Suspense fallback={<PageLoading rows={6} header={false} />}>
-      <CostsBody query={query} />
+      <CostsBody query={query} watchedRepos={watchedRepos} />
     </Suspense>
   );
 }
