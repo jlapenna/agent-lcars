@@ -290,13 +290,113 @@ describe('authenticated ready delivery evidence', () => {
     ).toMatchObject({ kind: 'correction', head: HEAD });
   });
 
-  it('reports a newer revision against the old fence before checking its landing', async () => {
-    expect(
-      await observeGithubDelivery(
-        fixture({ pr: { head: { sha: MERGE } } }),
-        BINDING,
-      ),
-    ).toEqual({ kind: 'revision', head: HEAD, newHead: MERGE });
+  it('rebinds only a newly independently reviewed revision against the old fence', async () => {
+    const deps = fixture({
+      pr: { head: { sha: MERGE } },
+      review: {
+        headRefOid: MERGE,
+        reviews: {
+          pageInfo: { hasPreviousPage: false },
+          nodes: [
+            {
+              state: 'COMMENTED',
+              author: { login: 'reviewer' },
+              commit: { oid: MERGE },
+            },
+          ],
+        },
+      },
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'revision',
+      head: HEAD,
+      newHead: MERGE,
+    });
+  });
+
+  it.each(['open', 'merged'] as const)(
+    'retains the old fence for an unreviewed %s new head despite protected landing evidence',
+    async (state) => {
+      const deps = fixture({
+        pr: {
+          head: { sha: MERGE },
+          merged: state === 'merged',
+          state: state === 'merged' ? 'closed' : 'open',
+          merge_commit_sha: state === 'merged' ? MERGE : null,
+        },
+        review: {
+          headRefOid: MERGE,
+          reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+        },
+      });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'waiting',
+        head: HEAD,
+      });
+      expect(BINDING.head).toBe(HEAD);
+      expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+        expect.stringContaining('/rule-suites'),
+        expect.anything(),
+      );
+    },
+  );
+
+  it.each([
+    'old-head',
+    'self-review',
+    'changes-requested',
+    'unresolved',
+  ] as const)(
+    'retains the old fence when new-head review is %s',
+    async (cause) => {
+      const deps = fixture({
+        pr: { head: { sha: MERGE } },
+        review: {
+          headRefOid: MERGE,
+          reviews: {
+            pageInfo: { hasPreviousPage: false },
+            nodes: [
+              {
+                state:
+                  cause === 'changes-requested'
+                    ? 'CHANGES_REQUESTED'
+                    : 'APPROVED',
+                author: {
+                  login: cause === 'self-review' ? 'author' : 'reviewer',
+                },
+                commit: { oid: cause === 'old-head' ? HEAD : MERGE },
+              },
+            ],
+          },
+          reviewThreads: {
+            pageInfo: { hasNextPage: false },
+            nodes: cause === 'unresolved' ? [{ isResolved: false }] : [],
+          },
+        },
+      });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'waiting',
+        head: HEAD,
+      });
+    },
+  );
+
+  it('retains the old fence when the revision changes during review or review is truncated', async () => {
+    for (const review of [
+      { headRefOid: HEAD },
+      {
+        headRefOid: MERGE,
+        reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] },
+      },
+    ]) {
+      await expect(
+        observeGithubDelivery(
+          fixture({ pr: { head: { sha: MERGE } }, review }),
+          BINDING,
+        ),
+      ).rejects.toThrow();
+      expect(BINDING.head).toBe(HEAD);
+    }
   });
 
   it('requires passing exact-merge protected evaluations; merged flags and bypasses do not complete work', async () => {

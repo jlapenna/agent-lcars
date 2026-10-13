@@ -110,6 +110,48 @@ describe('deriveItemState', () => {
   });
 });
 
+describe('delivery correction loss projection', () => {
+  const delivery = {
+    runId: `work:${WORK_ID}/r1`,
+    repo: 'octo/example',
+    number: 9,
+    baseRef: 'main',
+    head: 'a'.repeat(40),
+    state: 'waiting' as const,
+    runtimeGate: 'none' as const,
+    observedAt: T,
+    correctionRunId: `work:${WORK_ID}/r2`,
+  };
+  it.each([
+    [1, 'running'],
+    [3, 'failed'],
+  ] as const)(
+    'uses the existing loss budget %s for terminal correction loss',
+    (consecutiveLost, expected) => {
+      const current = task({ delivery, consecutiveLost, runCount: 2 });
+      const runs = [
+        run(1, 'finished', { result: { ok: true, summary: 'pull-request' } }),
+        run(2, 'lost'),
+      ];
+      expect(deriveItemState(current, runs)).toBe(expected);
+      expect(toItemView({ workId: WORK_ID, task: current, runs }).state).toBe(
+        expected,
+      );
+      expect(current.delivery).toEqual(delivery);
+      expect(runs[0]?.result).toEqual({ ok: true, summary: 'pull-request' });
+    },
+  );
+  it('retains running delivery after successful execution and for an active recovery even with prior loss debt', () => {
+    const current = task({ delivery, consecutiveLost: 3, runCount: 3 });
+    expect(
+      deriveItemState(current, [run(1, 'finished', { result: { ok: true } })]),
+    ).toBe('running');
+    expect(deriveItemState(current, [run(2, 'lost'), run(3, 'pending')])).toBe(
+      'running',
+    );
+  });
+});
+
 describe('latestRun', () => {
   it('keeps conversation views and latest-round selection consistent when generations share a timestamp', () => {
     const runs = [

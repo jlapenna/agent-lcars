@@ -163,6 +163,20 @@ async function reviews(
   };
 }
 
+function hasIndependentReview(
+  review: Awaited<ReturnType<typeof reviews>>,
+  author: string,
+): boolean {
+  return (
+    !review.unresolved &&
+    !review.changesRequested &&
+    review.approvals.some(
+      (approval) =>
+        approval.author.login.toLowerCase() !== author.toLowerCase(),
+    )
+  );
+}
+
 /** A successful PR artifact is not a completion verdict. This exact server
  * read establishes the narrow ready handoff before authenticated settlement. */
 export async function readyDeliveryBinding(
@@ -190,14 +204,7 @@ export async function readyDeliveryBinding(
     throw new Error('Deliverable is not ready and armed');
   await protectedChecks(deps, repo, pr.base.ref);
   const review = await reviews(deps, repo, number, pr.head.sha);
-  if (
-    review.unresolved ||
-    review.changesRequested ||
-    !review.approvals.some(
-      (approval) =>
-        approval.author.login.toLowerCase() !== pr.user.login.toLowerCase(),
-    )
-  )
+  if (!hasIndependentReview(review, pr.user.login))
     throw new Error('Deliverable requires exact-head independent review');
   const payload = workPayloadSchema.parse(task.work);
   if (payload.spec.target.repo !== repo)
@@ -383,8 +390,17 @@ export async function observeGithubDelivery(
       pr.auto_merge?.merge_method !== 'squash')
   )
     return { kind: 'waiting', head: binding.head };
-  if (pr.head.sha !== binding.head)
+  if (pr.head.sha !== binding.head) {
+    const review = await reviews(
+      deps,
+      binding.repo,
+      binding.number,
+      pr.head.sha,
+    );
+    if (!hasIndependentReview(review, pr.user.login))
+      return { kind: 'waiting', head: binding.head };
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
+  }
   if (pr.merged && pr.merge_commit_sha !== null) {
     const suites = z
       .array(

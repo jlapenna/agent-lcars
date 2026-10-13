@@ -2462,3 +2462,110 @@ describe('runtime evidence authorization after accepted provider handoff', () =>
     },
   );
 });
+
+describe('exhausted delivery correction recovery', () => {
+  async function lostCorrection(consecutiveLost = 3) {
+    const ctx = context();
+    expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    const anchor = { workId: ID };
+    const original = (await ctx.runtime.store.readRun(`work:${ID}/r1`))!;
+    const delivery = {
+      runId: original.runId,
+      repo: spec.target.repo,
+      number: 12,
+      baseRef: 'main',
+      head: 'a'.repeat(40),
+      state: 'waiting' as const,
+      runtimeGate: 'none' as const,
+      observedAt: original.createdAt,
+      correctionRunId: `work:${ID}/r2`,
+    };
+    const result = {
+      ok: true,
+      summary: 'pull-request',
+      ref: `https://github.com/${spec.target.repo}/pull/12`,
+    };
+    const snapshot = (await ctx.runtime.store.readTask(anchor))!;
+    const { activeRunId: _activeRunId, ...withoutActiveRun } = snapshot.task;
+    await ctx.runtime.store.apply({
+      expectedRevision: snapshot.revision,
+      decision: {
+        task: { ...withoutActiveRun, runCount: 2, consecutiveLost, delivery },
+        run: { ...original, state: 'finished', result, delivery },
+        additionalRuns: [
+          {
+            ...original,
+            runId: delivery.correctionRunId,
+            requestId: 'delivery-correction',
+            requestSource: 'delivery-correction',
+            state: 'lost',
+            createdAt: original.createdAt,
+            params: { mode: 'implement', deliveryPredecessor: original.runId },
+          },
+        ],
+        outbox: [],
+      },
+    });
+    return { ctx, anchor, original, delivery, result };
+  }
+  it('reports exhausted loss as failed and permits authenticated reply recovery without dropping delivery ownership', async () => {
+    const f = await lostCorrection();
+    expect(await call(f.ctx, 'GET', `/items/${ID}`)).toMatchObject({
+      status: 200,
+      json: { state: 'failed' },
+    });
+    expect(
+      await call(f.ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'Recover the lost correction.',
+        requestId: 'lost-correction-recovery',
+      }),
+    ).toMatchObject({ status: 200, json: { admittedRunId: `work:${ID}/r3` } });
+    const task = (await f.ctx.runtime.store.readTask(f.anchor))!.task;
+    expect(task.delivery).toEqual(f.delivery);
+    expect(task.activeRunId).toBe(`work:${ID}/r3`);
+    expect(
+      (await f.ctx.runtime.store.readRun(f.original.runId))!.result,
+    ).toEqual(f.result);
+    expect(await call(f.ctx, 'GET', `/items/${ID}`)).toMatchObject({
+      status: 200,
+      json: { state: 'running' },
+    });
+  });
+  it('retains the ordinary same-Task redispatch barrier and refuses recovery after the pipeline grant is revoked', async () => {
+    const f = await lostCorrection();
+    expect((await call(f.ctx, 'POST', `/items/${ID}/redispatch`)).status).toBe(
+      409,
+    );
+    const revoked = { ...f.ctx, principal: { ...operator, pipelines: [] } };
+    expect(
+      (
+        await call(revoked, 'POST', `/items/${ID}/reply`, {
+          text: 'Recover.',
+          requestId: 'revoked-recovery',
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await f.ctx.runtime.store.readTask(f.anchor))!.task.delivery,
+    ).toEqual(f.delivery);
+    expect(await f.ctx.runtime.store.readRun(`work:${ID}/r3`)).toBeUndefined();
+  });
+  it('retains running while the automatic lost retry budget remains', async () => {
+    const f = await lostCorrection(1);
+    expect(await call(f.ctx, 'GET', `/items/${ID}`)).toMatchObject({
+      status: 200,
+      json: { state: 'running' },
+    });
+    expect(
+      (
+        await call(f.ctx, 'POST', `/items/${ID}/reply`, {
+          text: 'Race the pending automatic retry.',
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (await f.ctx.runtime.store.readTask(f.anchor))!.task.delivery,
+    ).toEqual(f.delivery);
+    expect(await f.ctx.runtime.store.readRun(`work:${ID}/r3`)).toBeUndefined();
+  });
+});

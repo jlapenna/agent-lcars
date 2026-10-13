@@ -41,7 +41,11 @@ export function deriveItemState(
   const latest = latestRun(runs);
   if (task.closedAt !== undefined || latest?.state === 'canceled')
     return 'canceled';
-  if (task.delivery !== undefined && task.delivery.state !== 'complete') {
+  if (
+    task.delivery !== undefined &&
+    task.delivery.state !== 'complete' &&
+    latest?.state !== 'lost'
+  ) {
     if (latest?.state === 'finished' && latest.result?.ok === false)
       return 'failed';
     if (latest?.state === 'finished' && latest.result?.summary === 'park')
