@@ -24,13 +24,16 @@ describe('SessionsWorkspace', () => {
     ).toBe('Archive rows');
   });
 
-  it('does not render warning chrome when there are no warnings', () => {
+  it('shows a quiet warning band when there are no warnings', () => {
     const { container } = render(
       <SessionsWorkspace toolbar={<p>Flat</p>}>
         <p>Archive rows</p>
       </SessionsWorkspace>,
     );
 
-    expect(container.querySelector('.sessions-workspace__warnings')).toBeNull();
+    expect(
+      container.querySelector('.sessions-workspace__warnings'),
+    ).toHaveTextContent('No data warnings');
+    expect(container.querySelector('[data-testid="data-warnings"]')).toBeNull();
   });
 });

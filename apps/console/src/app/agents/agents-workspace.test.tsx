@@ -29,7 +29,7 @@ describe('AgentsWorkspace', () => {
     ).toBe('Claimed idleRecent outcomes');
   });
 
-  it('does not render warning chrome when there are no warnings', () => {
+  it('shows a quiet warning band when there are no warnings', () => {
     const { container } = render(
       <AgentsWorkspace
         fleet={<p>Fleet status</p>}
@@ -39,7 +39,10 @@ describe('AgentsWorkspace', () => {
       />,
     );
 
-    expect(container.querySelector('.agents-workspace__warnings')).toBeNull();
+    expect(
+      container.querySelector('.agents-workspace__warnings'),
+    ).toHaveTextContent('No data warnings');
+    expect(container.querySelector('[data-testid="data-warnings"]')).toBeNull();
   });
 
   it('does not reserve a secondary column when every secondary panel is empty', () => {
