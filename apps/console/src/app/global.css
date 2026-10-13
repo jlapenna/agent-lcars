@@ -607,6 +607,46 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: transparent;
 }
 
+/* Readouts: large figures across the top of a workspace, each separated by
+   a hairline (console-readouts.tsx). */
+.lcars-readouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  row-gap: 16px;
+  padding: 20px 20px 0;
+}
+
+.lcars-readout {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 2px 20px;
+  border-left: 1px solid var(--lcars-hairline);
+}
+
+.lcars-readout:first-child {
+  padding-left: 4px;
+  border-left: 0;
+}
+
+.lcars-readout__value {
+  margin: 10px 0 2px;
+  color: var(--lcars-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 1.875rem;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.lcars-readout__detail {
+  overflow: hidden;
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---- Console surface system ----
    THE rule this file is organized around: the console has exactly ONE
    ground. Header, page, workspace, panel and card all paint
@@ -1701,6 +1741,21 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .bridge-workspace__detail {
   display: none;
   min-width: 0;
+}
+
+/* Inside the workspace frame. `clip` rather than the frame's `hidden`, so the
+   frame stays clipped without becoming the scroll container that would stop
+   the desktop detail pane from sticking. */
+.bridge-frame {
+  overflow: clip;
+}
+
+.bridge-frame > .bridge-workspace {
+  padding: 20px;
+}
+
+.bridge-frame__toolbar {
+  flex-wrap: wrap;
 }
 
 .bridge-workspace[data-sel] .bridge-workspace__list {
@@ -2890,31 +2945,33 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 }
 
-/* Bridge decision signpost: the count and its one direct action are the first
-   things in the workspace, ahead of operational context. */
-.deck-inbox-summary {
-  min-height: 5rem;
-  padding: 0.8rem 0.9rem 0.8rem 1.75rem;
-  margin-bottom: var(--mantine-spacing-xl);
-  border: 1px solid var(--lcars-hairline);
-  background: color-mix(in srgb, var(--lcars-accent) 10%, var(--lcars-surface));
+/* Bridge decision signpost: the count and its one direct action come ahead
+   of operational context.
+   It sits at the trailing end of the workspace toolbar, where the mockup puts
+   a page's primary action, so it carries no panel box or spine of its own. */
+.deck-inbox-summary.lcars-panel {
+  margin-left: auto;
+  padding: 0;
+  overflow: visible;
+}
+
+.deck-inbox-summary.lcars-panel::before {
+  display: none;
 }
 
 .deck-inbox-summary__count {
-  min-width: 2.4rem;
   color: var(--lcars-accent-ink);
-  font-family: var(--font-display), sans-serif;
-  font-size: 2.3rem;
+  font-family: var(--font-mono), monospace;
+  font-size: 1.5rem;
+  font-weight: 500;
   line-height: 1;
-  text-align: center;
 }
 
 .deck-inbox-summary__label {
-  flex: 1 1 10rem;
   min-width: 0;
   font-family: var(--font-display), sans-serif;
-  font-size: 1.05rem;
-  letter-spacing: 0.045em;
+  font-size: 0.9375rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -3040,14 +3097,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (max-width: 47.99em) {
-  .deck-inbox-summary {
+  .deck-inbox-summary.lcars-panel {
     gap: 0.65rem;
-    min-height: 0;
-  }
-
-  .deck-inbox-summary__count {
-    min-width: 2rem;
-    font-size: 1.9rem;
+    width: 100%;
+    margin-left: 0;
   }
 
   .deck-inbox-summary__action {
