@@ -1187,11 +1187,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* A route's filters beyond the mockup's four (Work: state, principal),
-   folded behind one control so the toolbar band stays a single row. */
-.console-toolbar__more {
-  position: relative;
-}
-
+   folded behind one control so the toolbar band stays a single row. Open,
+   it takes a row of its own in the band (in flow, so the workspace frame
+   never clips it). */
 .console-toolbar__more > summary {
   color: var(--lcars-ink-dim);
   cursor: pointer;
@@ -1200,6 +1198,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .console-toolbar__more > summary::-webkit-details-marker {
   display: none;
+}
+
+.console-toolbar__more[open] {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
 }
 
 .console-toolbar__more[open] > summary {
@@ -1213,17 +1219,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .console-toolbar__more-panel {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  left: 0;
   display: flex;
-  min-width: max-content;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--lcars-hairline);
-  background: var(--lcars-surface);
+}
+
+/* Work's Schedules link: in the header subtitle on wide screens, where the
+   subtitle shows; in the toolbar band below that. */
+@media (min-width: 64em) {
+  .work-schedules-link--compact {
+    display: none;
+  }
 }
 
 /* The pre-hydration Apply (console-toolbar.tsx): a plain submit while the
@@ -1258,18 +1266,6 @@ form[data-hydrated] .console-toolbar__apply {
 /* Phone touch targets for every toolbar control (44px, as every other
    phone control). */
 @media (max-width: 47.99em) {
-  /* Phones: the extra filters open inline and wrap, never past the gutter. */
-  .console-toolbar__more {
-    width: 100%;
-  }
-
-  .console-toolbar__more-panel {
-    position: static;
-    min-width: 0;
-    flex-wrap: wrap;
-    margin-top: 8px;
-  }
-
   :is(.console-toolbar__field, .console-toolbar__segmented label) {
     min-width: 44px;
     min-height: 44px;

@@ -107,113 +107,120 @@ function WorkViewContent({
   return (
     <WorkWorkspace
       toolbar={
-        <>
-          {canCreateWork ? (
-            <ConsoleToolbar
-              action="/work"
-              primary={
-                <QuickTaskButton
-                  watchedRepos={watchedRepos}
-                  size="sm"
-                  primary
-                />
-              }
-            >
-              <ToolbarSelect
-                name="repo"
-                label="Repository"
-                value={query.repo}
-                options={[
-                  {
-                    value: '',
-                    label: `All repositories (${watchedRepos.length})`,
-                  },
-                  ...watchedRepos.map((repo) => ({
-                    value: `${repo.owner}/${repo.name}`,
-                    label: `${repo.owner}/${repo.name}`,
-                  })),
-                ]}
-              />
-              <ToolbarSelect
-                name="agent"
-                label="Agent"
-                value={query.agent}
-                options={[
-                  { value: '', label: 'All agents' },
-                  ...PIPELINES.map((pipeline) => ({
-                    value: pipeline,
-                    label: `agent:${pipeline}`,
-                  })),
-                ]}
-              />
-              <ToolbarWindow
-                name="window"
-                label="Window"
-                value={query.window ?? ''}
-                options={[
-                  ...WORK_WINDOWS.map((window) => ({
-                    value: window,
-                    label: window,
-                  })),
-                  { value: '', label: 'all' },
-                ]}
-              />
-              <ToolbarSearch
-                name="q"
-                label="Find"
-                placeholder="title, repo, work id"
-                value={query.q}
-              />
-              {/* Filters the mockup's toolbar does not draw, kept one click
+        canCreateWork ? (
+          <ConsoleToolbar
+            action="/work"
+            primary={
+              <QuickTaskButton watchedRepos={watchedRepos} size="sm" primary />
+            }
+          >
+            <ToolbarSelect
+              name="repo"
+              label="Repository"
+              value={query.repo}
+              options={[
+                {
+                  value: '',
+                  label: `All repositories (${watchedRepos.length})`,
+                },
+                ...watchedRepos.map((repo) => ({
+                  value: `${repo.owner}/${repo.name}`,
+                  label: `${repo.owner}/${repo.name}`,
+                })),
+              ]}
+            />
+            <ToolbarSelect
+              name="agent"
+              label="Agent"
+              value={query.agent}
+              options={[
+                { value: '', label: 'All agents' },
+                ...PIPELINES.map((pipeline) => ({
+                  value: pipeline,
+                  label: `agent:${pipeline}`,
+                })),
+              ]}
+            />
+            <ToolbarWindow
+              name="window"
+              label="Window"
+              value={query.window ?? ''}
+              options={[
+                ...WORK_WINDOWS.map((window) => ({
+                  value: window,
+                  label: window,
+                })),
+                { value: '', label: 'all' },
+              ]}
+            />
+            <ToolbarSearch
+              name="q"
+              label="Find"
+              placeholder="title, repo, work id"
+              value={query.q}
+            />
+            {/* Filters the mockup's toolbar does not draw, kept one click
                   away so the band stays one row. */}
-              <details className="console-toolbar__more">
-                <summary className="console-toolbar__field">
-                  More filters
-                  {query.state || query.principal
-                    ? ` · ${[query.state, query.principal].filter(Boolean).length}`
-                    : ''}
-                </summary>
-                <div className="console-toolbar__more-panel">
-                  <ToolbarSelect
-                    name="state"
-                    label="State"
-                    value={query.state}
-                    options={[
-                      '',
-                      'running',
-                      'done',
-                      'parked',
-                      'failed',
-                      'canceled',
-                    ].map((value) => ({ value, label: value || 'All states' }))}
-                  />
-                  <input
-                    className="console-toolbar__field work-principal-filter"
-                    name="principal"
-                    aria-label="Principal"
-                    defaultValue={query.principal ?? ''}
-                    maxLength={128}
-                    placeholder="All principals"
-                  />
-                  <Anchor href="/work" size="sm">
-                    Clear filters
-                  </Anchor>
-                </div>
-              </details>
-              {/* The form's default button, so Enter in either text field
+            <details className="console-toolbar__more">
+              <summary className="console-toolbar__field">
+                More filters
+                {query.state || query.principal
+                  ? ` · ${[query.state, query.principal].filter(Boolean).length}`
+                  : ''}
+              </summary>
+              <div className="console-toolbar__more-panel">
+                <ToolbarSelect
+                  name="state"
+                  label="State"
+                  value={query.state}
+                  options={[
+                    '',
+                    'running',
+                    'done',
+                    'parked',
+                    'failed',
+                    'canceled',
+                  ].map((value) => ({ value, label: value || 'All states' }))}
+                />
+                <input
+                  className="console-toolbar__field work-principal-filter"
+                  name="principal"
+                  aria-label="Principal"
+                  defaultValue={query.principal ?? ''}
+                  maxLength={128}
+                  placeholder="All principals"
+                />
+                <Anchor href="/work" size="sm">
+                  Clear filters
+                </Anchor>
+              </div>
+            </details>
+            {/* The form's default button, so Enter in either text field
                   submits (two text fields block implicit submission without
                   one). Hidden: the mockup's toolbar shows no Apply step. */}
-              <button
-                type="submit"
-                className="console-toolbar__implicit-submit"
-                tabIndex={-1}
-                aria-hidden="true"
-              >
-                Apply
-              </button>
-            </ConsoleToolbar>
-          ) : null}
-        </>
+            <button
+              type="submit"
+              className="console-toolbar__implicit-submit"
+              tabIndex={-1}
+              aria-hidden="true"
+            >
+              Apply
+            </button>
+            {/* The header subtitle carries this link only on wide screens. */}
+            <Anchor
+              href="/work/schedules"
+              size="sm"
+              className="work-schedules-link--compact"
+            >
+              Schedules →
+            </Anchor>
+          </ConsoleToolbar>
+        ) : (
+          // Without the Work grant there are no filters; Schedules stays.
+          <Anchor href="/work/schedules" size="sm">
+            Schedules →
+          </Anchor>
+        )
       }
     >
       <Suspense

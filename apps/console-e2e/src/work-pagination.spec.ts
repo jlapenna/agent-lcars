@@ -35,6 +35,10 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await seedWorkPagination();
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto('/work');
+  // The subtitle's schedules link is hidden on phones; the band keeps one.
+  await expect(
+    page.getByRole('link', { name: 'Schedules →', exact: true }),
+  ).toBeVisible();
   // Toolbar selects submit on change and carry the typed principal with them;
   // principal sits behind More filters so the band stays one row.
   const moreFilters = page.locator('summary', { hasText: /^More filters/ });
