@@ -53,8 +53,8 @@ import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
 import {
   AGENTS_WINDOWS,
-  agentsViewHref,
   type AgentsViewFilters,
+  agentsViewHref,
   matchesAgentsRun,
   matchesAgentsSession,
   matchesClaimedAgent,
