@@ -548,18 +548,28 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* The hairline goes under the whole head. A heading followed by its own
-   description line (SectionHeading) draws it under that line instead. */
-.lcars-panel > .mantine-Title-root:first-child:not(:has(+ .mantine-Text-root)),
-.lcars-panel > .mantine-Title-root:first-child + .mantine-Text-root,
-.lcars-panel > .mantine-Group-root:first-child:has(> .mantine-Title-root),
-.lcars-panel > .mantine-Group-root:first-child:has(> * > .mantine-Title-root) {
+   description line (SectionHeading) draws it under that line instead. A
+   panel whose content is wrapped in a Stack (Operations, the Agents columns)
+   has its head as that Stack's first child. */
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child:not(:has(+ .mantine-Text-root)),
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child
+  + .mantine-Text-root,
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child:has(> .mantine-Title-root),
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child:has(> * > .mantine-Title-root) {
   padding-bottom: 12px;
   margin-bottom: 12px;
   border-bottom: 1px solid var(--lcars-hairline);
 }
 
-.lcars-panel > .mantine-Title-root:first-child,
-.lcars-panel > .mantine-Group-root:first-child .mantine-Title-root {
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child,
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child
+  .mantine-Title-root {
   font-size: 1.1875rem;
   line-height: 1;
   letter-spacing: 0.06em;
