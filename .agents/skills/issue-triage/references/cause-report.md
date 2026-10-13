@@ -25,6 +25,9 @@ does not create another LCARS runtime store or replace those records.
    their classification and preserve them in a reviewed extraction with links
    back to the original snapshot. Do not silently drop ambiguous rows.
 
+Duplicate JSON property names in any source or manifest are rejected; the helper
+never treats silently overwritten evidence as a complete retained inventory.
+
 Paths are relative to the manifest, except absolute paths. `collection` and
 field mappings use JSON pointers (`~0` for `~`, `~1` for `/`). A collection can
 be an array or keyed object. `$key` as the ID field explicitly selects a keyed

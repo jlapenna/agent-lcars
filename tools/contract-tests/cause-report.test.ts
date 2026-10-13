@@ -364,6 +364,98 @@ describe('complete interactive workstream report assembly', () => {
     });
   });
 
+  it.each([
+    'ledger-row',
+    'record-field',
+    'escaped-record-field',
+    'nested-retained-field',
+    'manifest-scope',
+    'manifest-sources',
+    'prototype-name',
+  ])(
+    'rejects duplicate JSON names without dropping retained evidence (%s)',
+    (kind) => {
+      const f = fixture();
+      const sourceFile = kind === 'ledger-row' ? 'ledger.json' : 'root.json';
+      const filename = path.join(f.directory, sourceFile);
+      let bytes = readFileSync(filename, 'utf8');
+      if (kind === 'ledger-row')
+        bytes = bytes.replace(
+          '{"causes":{',
+          '{"causes":{"B71":{"issue":"other/owner#1","evidence":["discarded"]},',
+        );
+      else if (kind === 'record-field')
+        bytes = bytes.replace('"issue":', '"issue":"../..#1","issue":');
+      else if (kind === 'escaped-record-field')
+        bytes = bytes.replace('"issue":', '"\\u0069ssue":"../..#1","issue":');
+      else if (kind === 'nested-retained-field')
+        bytes = bytes.replace('"receipt":', '"receipt":"discarded","receipt":');
+      else if (kind === 'prototype-name')
+        bytes = bytes.replace('[{', '[{"__proto__":false,"__proto__":null,');
+      writeFileSync(filename, bytes);
+      const source = f.manifest.sources.find((row) => row.path === sourceFile)!;
+      source.sha256 = createHash('sha256').update(bytes).digest('hex');
+      let manifest = JSON.stringify(f.manifest);
+      if (kind === 'manifest-scope')
+        manifest = manifest.replace(
+          '"expectedIds":',
+          '"expectedIds":[],"expectedIds":',
+        );
+      else if (kind === 'manifest-sources')
+        manifest = manifest.replace('"sources":', '"sources":[],"sources":');
+      writeFileSync(path.join(f.directory, 'manifest.json'), manifest);
+      const result = spawnSync(
+        process.execPath,
+        [script, path.join(f.directory, 'manifest.json')],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        complete: false,
+        totals: null,
+        error: expect.stringContaining('Duplicate JSON property'),
+      });
+      expect(readFileSync(filename, 'utf8')).toBe(bytes);
+      expect(
+        readFileSync(path.join(f.directory, 'manifest.json'), 'utf8'),
+      ).toBe(manifest);
+    },
+  );
+
+  it('keeps JSON values and repeated names in separate objects intact', () => {
+    const f = fixture();
+    (f.root[0] as any).metadata = {
+      date: '2026-01-01',
+      literal: 'yes',
+      boolean: true,
+      absent: null,
+      quoted: '"issue":{},[]',
+      exponent: 1e3,
+    };
+    (f.root[1] as any).metadata = {
+      date: '2026-01-02',
+      literal: 'no',
+      boolean: false,
+      absent: null,
+      quoted: '"issue":{},[]',
+      exponent: 1e4,
+    };
+    f.save();
+    const result = spawnSync(
+      process.execPath,
+      [script, path.join(f.directory, 'manifest.json')],
+      { encoding: 'utf8' },
+    );
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({
+      complete: true,
+      totals: { causes: 182, owningIssues: 182 },
+    });
+    expect(report.causes[0].records[0].record).toEqual(f.root[0]);
+    expect(report.causes[1].records[0].record).toEqual(f.root[1]);
+  });
+
   it.each(['array-entry', 'stable-object-key', 'explicit-stable-id'])(
     'rejects a redundant alias that cannot resolve a descriptive identity (%s)',
     (shape) => {

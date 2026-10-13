@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { parseDocument } from 'yaml';
+
 const causeId = (value) =>
   typeof value === 'string' && /^B[1-9]\d*$/.test(value);
 const text = (value) => typeof value === 'string' && value.trim().length > 0;
@@ -19,6 +21,20 @@ function issueKey(value) {
   )
     return null;
   return value.toLowerCase();
+}
+
+// Keep strict JSON grammar and values; use the declared lossless parser only
+// to reject names JSON.parse would silently discard, including nested records.
+function parseRetainedJSON(bytes) {
+  const source = bytes.toString();
+  const value = JSON.parse(source);
+  const document = parseDocument(source, { schema: 'json', uniqueKeys: true });
+  const duplicate = document.errors.find(
+    (error) => error.code === 'DUPLICATE_KEY',
+  );
+  if (duplicate)
+    throw new Error(`Duplicate JSON property: ${duplicate.message}`);
+  return value;
 }
 
 // Only explicit JSON pointers are supported. No title, filename or issue-number
@@ -111,7 +127,7 @@ export function reconcileCauses(
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     if (source.sha256.toLowerCase() !== sha256)
       throw new Error(`Source snapshot changed: ${source.name}`);
-    const document = JSON.parse(bytes.toString());
+    const document = parseRetainedJSON(bytes);
     const rows = at(document, source.collection ?? '');
     if (rows === null || typeof rows !== 'object')
       throw new Error(
@@ -249,7 +265,7 @@ if (
       throw new Error('Usage: node reconcile-causes.mjs <manifest.json>');
     const filename = path.resolve(process.argv[2]);
     const report = reconcileCauses(
-      JSON.parse(readFileSync(filename, 'utf8')),
+      parseRetainedJSON(readFileSync(filename, 'utf8')),
       path.dirname(filename),
     );
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
