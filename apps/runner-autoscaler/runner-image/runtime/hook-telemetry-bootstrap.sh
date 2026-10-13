@@ -5,6 +5,14 @@
 # returns nonzero so the caller can warn and continue without live
 # telemetry: telemetry must never fail a dispatch.
 
+# Compatibility shim: the runner image fetches this helper from
+# AGENT_LCARS_REF (main by default) while direct-runner.sh comes from the
+# build context, so an image rebuilt from an older context still asks whether
+# hooks are selected. Every pipeline is, so answer yes; otherwise that runner
+# would start the retired sidecar, whose `start` is now a no-op, and lose live
+# telemetry.
+hook_telemetry_selected() { return 0; }
+
 # Installs this pipeline's hook entries and exports the run context the hook
 # client stamps on every event. OpenCode's plugin (lcars-telemetry.js) is
 # already in the image's OpenCode config and stays inert until
