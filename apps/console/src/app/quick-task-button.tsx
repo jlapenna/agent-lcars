@@ -24,11 +24,15 @@ export function QuickTaskButton({
   initialRepoKey,
   sourceIdentities,
   size = 'compact-sm',
+  primary = false,
 }: {
   watchedRepos: WatchedRepo[];
   initialRepoKey?: string;
   sourceIdentities?: QuickTaskSourceIdentity[];
   size?: string;
+  /** A route's primary toolbar action: a full route-accent block instead of
+   * the header's amber command. */
+  primary?: boolean;
 }) {
   const [hydrated, setHydrated] = useState(false);
   const [activation, setActivation] = useState<QuickTaskActivation | null>(
@@ -39,8 +43,8 @@ export function QuickTaskButton({
   return (
     <>
       <Button
-        className="lcars-action-button"
-        data-accent="amber"
+        className={primary ? undefined : 'lcars-action-button'}
+        data-accent={primary ? undefined : 'amber'}
         size={size}
         disabled={!hydrated}
         aria-busy={!!activation && !ready}

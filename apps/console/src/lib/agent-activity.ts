@@ -74,6 +74,8 @@ export interface FleetSummary {
   /** Fresh ARC GitHub Actions capacity only; absent is not scaled-to-zero. */
   online?: number;
   busy?: number;
+  /** Sum of the fresh lanes' configured maximum runners. */
+  capacity?: number;
   /** Earliest ARC producer expiry; one stale lane invalidates the total. */
   githubExpiresAt?: string;
   directExecutor?: {
@@ -123,6 +125,7 @@ export function fleetFromAutoscalerStatuses(
             0,
           ),
           busy: lanes.reduce((count, lane) => count + lane.runningJobs, 0),
+          capacity: lanes.reduce((count, lane) => count + lane.maxRunners, 0),
           githubExpiresAt: new Date(
             Math.min(...lanes.map((lane) => Date.parse(lane.updatedAt))) +
               RUNNER_STATUS_STALENESS_MS,

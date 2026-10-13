@@ -35,15 +35,13 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await seedWorkPagination();
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto('/work');
+  // Toolbar selects submit on change and carry the typed principal with them.
   await page
     .getByLabel('Principal', { exact: true })
     .fill('user:pagination-fixture');
   await page
     .getByLabel('Repository', { exact: true })
     .selectOption(E2E_FIXTURE_REPOSITORY);
-  await page
-    .getByRole('button', { name: 'Apply filters', exact: true })
-    .click();
   await expect(page).toHaveURL(/principal=user%3Apagination-fixture/);
   const links = page
     .getByTestId('work-cards')
@@ -68,9 +66,6 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await page.reload();
   await expect(links).toHaveCount(6);
   await page.getByLabel('State', { exact: true }).selectOption('parked');
-  await page
-    .getByRole('button', { name: 'Apply filters', exact: true })
-    .click();
   await expect(page).not.toHaveURL(/cursor=/);
   await expect(
     page.getByText('No matching work items on this page.'),
@@ -173,25 +168,20 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
     page.getByText('Your GitHub login has no work grant.'),
   ).toBeVisible();
   await expect(
-    page.getByRole('button', { name: 'Apply filters', exact: true }),
+    page.getByRole('search', { name: 'Filters', exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByRole('link', { name: /^Pagination fixture / }),
   ).toHaveCount(0);
 });
 
+/** The Inbox's repository select is in its toolbar band, which streams in
+ * with the decision queue; wait for it rather than sampling once. */
 async function revealInboxRepositoryFilter(page: Page) {
   if (new URL(page.url()).pathname !== '/inbox') return;
-  const repository = page.getByRole('combobox', {
-    name: 'Repository',
-    exact: true,
-  });
-  if (await repository.isVisible()) return;
-  await page
-    .getByTestId('inbox-repository-filter')
-    .getByText('Repository filter', { exact: true })
-    .click();
-  await expect(repository).toBeVisible();
+  await expect(
+    page.getByRole('combobox', { name: 'Repository', exact: true }),
+  ).toBeVisible();
 }
 
 async function clearRepository(page: Page, destination: string) {
@@ -309,18 +299,11 @@ test('repository selection and clearing remain reachable on phones across Bridge
     ['/agents', 'Bridge', '/'],
   ]) {
     await page.goto(route);
-    if (route === '/inbox') {
-      await expect(
-        page.getByRole('button', { name: 'Apply repository', exact: true }),
-      ).toBeHidden();
-    }
     await revealInboxRepositoryFilter(page);
+    // The toolbar select navigates on change (no Apply step).
     await page
       .getByRole('combobox', { name: 'Repository', exact: true })
       .selectOption(E2E_FIXTURE_REPOSITORY);
-    await page
-      .getByRole('button', { name: 'Apply repository', exact: true })
-      .click();
     await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
     await revealInboxRepositoryFilter(page);
     await expect(

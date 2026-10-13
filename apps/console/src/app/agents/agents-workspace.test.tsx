@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { AgentsWorkspace } from './agents-workspace';
 
 describe('AgentsWorkspace', () => {
-  it('keeps fleet status first and groups active work ahead of secondary work', () => {
+  it('keeps fleet status first, then dispatches, completions and idle claims', () => {
     render(
       <AgentsWorkspace
         warnings={<p>Partial data</p>}
@@ -19,17 +19,17 @@ describe('AgentsWorkspace', () => {
       name: 'Agent operations',
     });
     expect(workspace.textContent).toBe(
-      'Partial dataFleet statusActive agentsClaimed idleRecent outcomes',
+      'Partial dataFleet statusActive agentsRecent outcomesClaimed idle',
     );
     expect(
       workspace.querySelector('.agents-workspace__primary')?.textContent,
     ).toBe('Active agents');
     expect(
       workspace.querySelector('.agents-workspace__secondary')?.textContent,
-    ).toBe('Claimed idleRecent outcomes');
+    ).toBe('Recent outcomesClaimed idle');
   });
 
-  it('does not render warning chrome when there are no warnings', () => {
+  it('shows a quiet warning band when there are no warnings', () => {
     const { container } = render(
       <AgentsWorkspace
         fleet={<p>Fleet status</p>}
@@ -39,7 +39,10 @@ describe('AgentsWorkspace', () => {
       />,
     );
 
-    expect(container.querySelector('.agents-workspace__warnings')).toBeNull();
+    expect(
+      container.querySelector('.agents-workspace__warnings'),
+    ).toHaveTextContent('No data warnings');
+    expect(container.querySelector('[data-testid="data-warnings"]')).toBeNull();
   });
 
   it('does not reserve a secondary column when every secondary panel is empty', () => {

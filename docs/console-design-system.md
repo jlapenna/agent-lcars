@@ -140,8 +140,10 @@ From 64em the elbow is the full frame in
 the leading edge (`.lcars-rail-head` and `.lcars-rail-body`, rendered by
 `ConsoleAppShell`) whose head turns through a concentric knee into the header's
 arm. It is still one elbow; it encloses the workspace from the side as well as
-from above. The rail's blocks are frame, not readouts, and carry no numbers.
-A readout belongs in the workspace, where its route can supply real data.
+from above. The rail's blocks carry the fleet readouts (fleet online, queue
+depth, tokens and merges over the last day, the date) and the header carries
+the live status and identity; all come from `/api/console/shell-readouts`,
+and a figure that could not be read shows as `—`, never as zero.
 
 For the same reason the theme sets `defaultRadius: 0`. Buttons, inputs, tags,
 nav modules, cards and panels are all square. A rounded card inside a square
