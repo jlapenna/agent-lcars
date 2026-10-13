@@ -512,21 +512,8 @@ export async function observeGithubDelivery(
     };
   }
   const required = await protectedChecks(deps, binding.repo, pr.base.ref);
-  const checkRuns = z
-    .object({
-      total_count: z.number(),
-      check_runs: z.array(checkRunSchema),
-    })
-    .parse(
-      await github(
-        deps,
-        binding.repo,
-        `commits/${binding.head}/check-runs?per_page=100&filter=latest`,
-      ),
-    );
-  if (checkRuns.total_count > checkRuns.check_runs.length)
-    throw new Error('Checks truncated');
-  const candidateFailures = checkRuns.check_runs.filter(
+  const checkRuns = await currentCheckRuns(deps, binding);
+  const candidateFailures = checkRuns.filter(
     (check) =>
       check.head_sha === binding.head &&
       required.some(
@@ -570,6 +557,45 @@ export async function observeGithubDelivery(
         : 'Review feedback requires correction',
     };
   return { kind: 'waiting', head: binding.head };
+}
+
+/** Collect the complete bounded current-check read before classifying failures. */
+async function currentCheckRuns(
+  deps: DeliveryGithubDeps,
+  binding: DeliveryBinding,
+): Promise<z.infer<typeof checkRunSchema>[]> {
+  const collected: z.infer<typeof checkRunSchema>[] = [];
+  const ids = new Set<number>();
+  let total: number | undefined;
+  for (let page = 1; page <= 10; page += 1) {
+    const data = z
+      .object({
+        total_count: z.number().int().nonnegative(),
+        check_runs: z.array(checkRunSchema).max(100),
+      })
+      .parse(
+        await github(
+          deps,
+          binding.repo,
+          `commits/${binding.head}/check-runs?per_page=100&filter=latest&page=${page}`,
+        ),
+      );
+    if (total !== undefined && total !== data.total_count)
+      throw new Error('Checks changed during pagination');
+    total = data.total_count;
+    for (const check of data.check_runs) {
+      if (check.id !== undefined) {
+        if (ids.has(check.id))
+          throw new Error('Checks pagination repeated evidence');
+        ids.add(check.id);
+      }
+      collected.push(check);
+    }
+    if (collected.length > total) throw new Error('Checks count inconsistent');
+    if (collected.length === total) return collected;
+    if (data.check_runs.length < 100) throw new Error('Checks truncated');
+  }
+  throw new Error('Checks exceed bounded read');
 }
 
 /** Other Apps have their own check suites, not Actions workflow attempts.
@@ -656,30 +682,54 @@ async function currentActionCheckIds(
   const qualified = new Set<number>();
   if (checks.length === 0) return qualified;
   try {
-    const runs = z
-      .object({
-        total_count: z.number(),
-        workflow_runs: z.array(
-          z.object({
-            id: z.number().int().positive(),
-            workflow_id: z.number().int().positive(),
-            run_number: z.number().int().positive(),
-            run_attempt: z.number().int().positive(),
-            head_sha: sha,
-            check_suite_id: z.number().int().positive(),
-            event: z.string(),
-            conclusion: z.string().nullable(),
-          }),
-        ),
-      })
-      .parse(
+    let reads = 0;
+    const runPageSchema = z.object({
+      total_count: z.number().int().nonnegative(),
+      workflow_runs: z.array(
+        z.object({
+          id: z.number().int().positive(),
+          workflow_id: z.number().int().positive(),
+          run_number: z.number().int().positive(),
+          run_attempt: z.number().int().positive(),
+          head_sha: sha,
+          check_suite_id: z.number().int().positive(),
+          event: z.string(),
+          conclusion: z.string().nullable(),
+        }),
+      ),
+    });
+    const runs = {
+      workflow_runs: [] as z.infer<typeof runPageSchema>['workflow_runs'],
+    };
+    const runIds = new Set<number>();
+    let runTotal: number | undefined;
+    for (let page = 1; page <= 10; page += 1) {
+      reads += 1;
+      const data = runPageSchema.parse(
         await github(
           deps,
           binding.repo,
-          `actions/runs?head_sha=${binding.head}&per_page=100`,
+          `actions/runs?head_sha=${binding.head}&per_page=100&page=${page}`,
         ),
       );
-    if (runs.total_count > runs.workflow_runs.length) return qualified;
+      if (
+        data.workflow_runs.length > 100 ||
+        (runTotal !== undefined && runTotal !== data.total_count)
+      )
+        throw new Error('Actions workflow evidence changed');
+      runTotal = data.total_count;
+      for (const run of data.workflow_runs) {
+        if (runIds.has(run.id))
+          throw new Error('Actions workflow evidence repeated');
+        runIds.add(run.id);
+        runs.workflow_runs.push(run);
+      }
+      if (runs.workflow_runs.length > runTotal)
+        throw new Error('Actions workflow count inconsistent');
+      if (runs.workflow_runs.length === runTotal) break;
+      if (data.workflow_runs.length < 100 || page === 10)
+        throw new Error('Actions workflow evidence incomplete');
+    }
     const current = new Map<string, (typeof runs.workflow_runs)[number]>();
     for (const run of runs.workflow_runs) {
       if (run.head_sha !== binding.head) continue;
@@ -706,28 +756,51 @@ async function currentActionCheckIds(
     );
     if (parents.length > 10) return qualified;
     for (const run of parents) {
-      const jobs = z
-        .object({
-          total_count: z.number(),
-          jobs: z.array(
-            z.object({
-              run_id: z.number(),
-              run_attempt: z.number().optional(),
-              head_sha: sha,
-              check_run_url: z.string(),
-              status: z.string(),
-              conclusion: z.string().nullable(),
-            }),
-          ),
-        })
-        .parse(
+      const jobPageSchema = z.object({
+        total_count: z.number().int().nonnegative(),
+        jobs: z.array(
+          z.object({
+            run_id: z.number(),
+            run_attempt: z.number().optional(),
+            head_sha: sha,
+            check_run_url: z.string(),
+            status: z.string(),
+            conclusion: z.string().nullable(),
+          }),
+        ),
+      });
+      const jobs = { jobs: [] as z.infer<typeof jobPageSchema>['jobs'] };
+      const jobUrls = new Set<string>();
+      let jobTotal: number | undefined;
+      for (let page = 1; page <= 10; page += 1) {
+        reads += 1;
+        if (reads > 20)
+          throw new Error('Actions evidence exceeds bounded read');
+        const data = jobPageSchema.parse(
           await github(
             deps,
             binding.repo,
-            `actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`,
+            `actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100&page=${page}`,
           ),
         );
-      if (jobs.total_count > jobs.jobs.length) continue;
+        if (
+          data.jobs.length > 100 ||
+          (jobTotal !== undefined && jobTotal !== data.total_count)
+        )
+          throw new Error('Actions job evidence changed');
+        jobTotal = data.total_count;
+        for (const job of data.jobs) {
+          if (jobUrls.has(job.check_run_url))
+            throw new Error('Actions job evidence repeated');
+          jobUrls.add(job.check_run_url);
+          jobs.jobs.push(job);
+        }
+        if (jobs.jobs.length > jobTotal)
+          throw new Error('Actions job count inconsistent');
+        if (jobs.jobs.length === jobTotal) break;
+        if (data.jobs.length < 100 || page === 10)
+          throw new Error('Actions job evidence incomplete');
+      }
       for (const job of jobs.jobs) {
         const prefix = `https://api.github.com/repos/${binding.repo}/check-runs/`;
         if (

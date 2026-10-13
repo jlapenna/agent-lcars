@@ -1444,3 +1444,356 @@ describe('required non-Actions check provenance', () => {
     ).toEqual({ kind: 'waiting', head: HEAD });
   });
 });
+
+describe('complete current check-run discovery', () => {
+  const APP = { id: 77, slug: 'coverage-app' };
+  const FAILED = {
+    id: 20,
+    check_suite: { id: 1 },
+    name: 'Verify',
+    head_sha: HEAD,
+    status: 'completed',
+    conclusion: 'failure',
+  };
+  function paged(
+    options: {
+      external?: boolean;
+      count?: number;
+      firstFailure?: boolean;
+      second?: unknown;
+      missingIdentity?: boolean;
+    } = {},
+  ) {
+    const required = {
+      ...(options.external
+        ? { ...FAILED, name: 'Coverage', app: APP, check_suite: { id: 7 } }
+        : FAILED),
+      id: options.missingIdentity ? undefined : FAILED.id,
+    };
+    const count = options.count ?? 101;
+    const rows = Array.from(
+      { length: count },
+      (_, index) =>
+        ({
+          id: 1000 + index,
+          check_suite: { id: 9 },
+          name: `Unrelated ${index}`,
+          head_sha: HEAD,
+          status: 'completed',
+          conclusion: 'success',
+        }) as Record<string, unknown>,
+    );
+    rows[options.firstFailure ? 0 : count - 1] = required;
+    const base = fixture({
+      rules: [
+        { type: 'pull_request' },
+        {
+          type: 'required_status_checks',
+          parameters: {
+            required_status_checks: [
+              {
+                context: required.name,
+                integration_id: options.external ? 77 : null,
+              },
+            ],
+          },
+        },
+      ],
+      checks: { total_count: count, check_runs: rows },
+      jobs: {
+        total_count: 1,
+        jobs: [
+          {
+            run_id: 100,
+            head_sha: HEAD,
+            check_run_url:
+              'https://api.github.com/repos/octo/example/check-runs/20',
+            status: 'completed',
+            conclusion: 'failure',
+          },
+        ],
+      },
+    });
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        const url = new URL(path);
+        if (path.includes('/commits/') && path.includes('/check-runs?')) {
+          if (url.searchParams.has('app_id'))
+            return Response.json({ total_count: 1, check_runs: [required] });
+          const page = Number(url.searchParams.get('page') ?? '1');
+          const size = Number(url.searchParams.get('per_page') ?? '30');
+          const data =
+            page === 2 && options.second !== undefined
+              ? options.second
+              : {
+                  total_count: count,
+                  check_runs: rows.slice((page - 1) * size, page * size),
+                };
+          return data instanceof Response ? data : Response.json(data);
+        }
+        if (path.endsWith('/check-suites/7'))
+          return Response.json({
+            id: 7,
+            app: APP,
+            head_sha: HEAD,
+            status: 'completed',
+            conclusion: 'failure',
+          });
+        return base.fetchImpl(input, init);
+      },
+    );
+    return { ...base, fetchImpl: fetchImpl as unknown as typeof fetch, rows };
+  }
+  it('finds a current required Actions failure after the first 100 unrelated check runs', async () => {
+    const deps = paged();
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Required checks failed: Verify',
+    });
+    expect(deps.fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('filter=latest&page=2'),
+      expect.anything(),
+    );
+  });
+  it('finds a configured external-App failure after the first 100 unrelated check runs', async () => {
+    expect(
+      await observeGithubDelivery(paged({ external: true }), BINDING),
+    ).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Required checks failed: Coverage',
+    });
+  });
+  it.each([
+    { external: false, label: 'Actions' },
+    { external: true, label: 'external App' },
+  ])(
+    'retains legacy waiting for a $label candidate without immutable check identity',
+    async ({ external }) => {
+      expect(
+        await observeGithubDelivery(
+          paged({ external, count: 1, missingIdentity: true }),
+          BINDING,
+        ),
+      ).toEqual({ kind: 'waiting', head: HEAD });
+    },
+  );
+  it('completes a full final page against the authoritative total without reading an extra page', async () => {
+    const deps = paged({ count: 200 });
+    expect(await observeGithubDelivery(deps, BINDING)).toMatchObject({
+      kind: 'correction',
+    });
+    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining('page=3'),
+      expect.anything(),
+    );
+  });
+  it('retains unknown at the ten-page cap without classifying an earlier required failure', async () => {
+    const deps = paged({ count: 1001, firstFailure: true });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow();
+    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining('page=11'),
+      expect.anything(),
+    );
+    expect(
+      vi
+        .mocked(deps.fetchImpl)
+        .mock.calls.some(([url]) => String(url).includes('/actions/runs')),
+    ).toBe(false);
+  });
+  it('retains unknown when a later page is refused', async () => {
+    const deps = paged({
+      firstFailure: true,
+      second: new Response('refused', { status: 403 }),
+    });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow();
+    expect(
+      vi
+        .mocked(deps.fetchImpl)
+        .mock.calls.some(([url]) => String(url).includes('/actions/runs')),
+    ).toBe(false);
+  });
+  it('retains unknown when the total changes between pages', async () => {
+    const deps = paged({ second: { total_count: 102, check_runs: [FAILED] } });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow();
+  });
+  it('retains unknown when repeated check identities mask a missing page', async () => {
+    const deps = paged({ count: 200 });
+    const first = deps.rows.slice(0, 100);
+    const duplicate = paged({
+      count: 200,
+      second: { total_count: 200, check_runs: first },
+    });
+    await expect(observeGithubDelivery(duplicate, BINDING)).rejects.toThrow();
+  });
+});
+
+describe('complete Actions provenance discovery', () => {
+  const CURRENT = {
+    id: 100,
+    workflow_id: 10,
+    run_number: 2,
+    run_attempt: 1,
+    head_sha: HEAD,
+    check_suite_id: 1,
+    event: 'pull_request',
+    conclusion: null,
+  };
+  const FAILED_JOB = {
+    run_id: 100,
+    run_attempt: 1,
+    head_sha: HEAD,
+    check_run_url: 'https://api.github.com/repos/octo/example/check-runs/20',
+    status: 'completed',
+    conclusion: 'failure',
+  };
+  function paged(
+    kind: 'workflows' | 'jobs' | 'both',
+    options: {
+      count?: number;
+      second?: unknown;
+      firstFailure?: boolean;
+    } = {},
+  ) {
+    const count = options.count ?? 101;
+    const workflows = Array.from(
+      { length: count },
+      (_, index) =>
+        ({
+          ...CURRENT,
+          id: 1000 + index,
+          workflow_id: 1000 + index,
+          check_suite_id: 1000 + index,
+          conclusion: 'success',
+        }) as Record<string, unknown>,
+    );
+    workflows[options.firstFailure ? 0 : count - 1] = CURRENT;
+    const jobs = Array.from(
+      { length: count },
+      (_, index) =>
+        ({
+          ...FAILED_JOB,
+          check_run_url: `https://api.github.com/repos/octo/example/check-runs/${1000 + index}`,
+          conclusion: 'success',
+        }) as Record<string, unknown>,
+    );
+    jobs[options.firstFailure ? 0 : count - 1] = FAILED_JOB;
+    const base = fixture({
+      checks: {
+        total_count: 1,
+        check_runs: [
+          {
+            id: 20,
+            check_suite: { id: 1 },
+            name: 'Verify',
+            head_sha: HEAD,
+            status: 'completed',
+            conclusion: 'failure',
+          },
+        ],
+      },
+    });
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        const url = new URL(path);
+        const workflow = path.includes('/actions/runs?') && kind !== 'jobs';
+        const job = path.includes('/attempts/') && kind !== 'workflows';
+        if (workflow || job) {
+          const rows = workflow ? workflows : jobs;
+          const field = workflow ? 'workflow_runs' : 'jobs';
+          const page = Number(url.searchParams.get('page') ?? '1');
+          const size = Number(url.searchParams.get('per_page') ?? '30');
+          const over = options.second;
+          const data =
+            page === 2 && over !== undefined
+              ? over
+              : {
+                  total_count: count,
+                  [field]: rows.slice((page - 1) * size, page * size),
+                };
+          return data instanceof Response ? data : Response.json(data);
+        }
+        return base.fetchImpl(input, init);
+      },
+    );
+    return {
+      ...base,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      workflows,
+      jobs,
+    };
+  }
+  it.each(['workflows', 'jobs', 'both'] as const)(
+    'qualifies a current failure beyond 100 %s records without losing the attempt fence',
+    async (kind) => {
+      const deps = paged(kind);
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'correction',
+        head: HEAD,
+        reason: 'Required checks failed: Verify',
+      });
+      expect(deps.fetchImpl).toHaveBeenCalledWith(
+        expect.stringContaining('page=2'),
+        expect.anything(),
+      );
+    },
+  );
+  it.each(['workflows', 'jobs'] as const)(
+    'retains unknown when the %s read exceeds ten pages',
+    async (kind) => {
+      const deps = paged(kind, { count: 1001, firstFailure: true });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'waiting',
+        head: HEAD,
+      });
+      expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+        expect.stringContaining('page=11'),
+        expect.anything(),
+      );
+    },
+  );
+  it.each(['workflows', 'jobs'] as const)(
+    'retains unknown when a later %s page is refused',
+    async (kind) => {
+      expect(
+        await observeGithubDelivery(
+          paged(kind, { second: new Response('refused', { status: 403 }) }),
+          BINDING,
+        ),
+      ).toEqual({ kind: 'waiting', head: HEAD });
+    },
+  );
+  it.each(['workflows', 'jobs'] as const)(
+    'retains unknown when the %s total changes between pages',
+    async (kind) => {
+      const field = kind === 'workflows' ? 'workflow_runs' : 'jobs';
+      const record = kind === 'workflows' ? CURRENT : FAILED_JOB;
+      expect(
+        await observeGithubDelivery(
+          paged(kind, { second: { total_count: 102, [field]: [record] } }),
+          BINDING,
+        ),
+      ).toEqual({ kind: 'waiting', head: HEAD });
+    },
+  );
+  it.each(['workflows', 'jobs'] as const)(
+    'retains unknown for repeated %s identities across pages',
+    async (kind) => {
+      const base = paged(kind, { count: 200 });
+      const rows = kind === 'workflows' ? base.workflows : base.jobs;
+      const field = kind === 'workflows' ? 'workflow_runs' : 'jobs';
+      expect(
+        await observeGithubDelivery(
+          paged(kind, {
+            count: 200,
+            second: { total_count: 200, [field]: rows.slice(0, 100) },
+          }),
+          BINDING,
+        ),
+      ).toEqual({ kind: 'waiting', head: HEAD });
+    },
+  );
+});
