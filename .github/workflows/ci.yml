@@ -417,7 +417,7 @@ jobs:
 
       # This bundle is outside the default build graph, but is what the
       # runner image's telemetry finalize/resume steps execute. Keep its
-      # isolated startup gate in normal CI now that image publishing is owned
+      # isolated finalize gate in normal CI now that image publishing is owned
       # by the canonical homelab controller.
       - name: Smoke test telemetry-watcher bundle
         run: ./tools/telemetry-watcher-standalone-smoke.sh

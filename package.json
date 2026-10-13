@@ -46,7 +46,6 @@
     "@orpc/zod": "2.0.0-beta.35",
     "@tabler/icons-react": "^3.41.1",
     "acorn": "8.19.0",
-    "chokidar": "^5.0.0",
     "firebase-admin": "^14.0.0",
     "google-auth-library": "^11.0.0",
     "jose": "^6.2.8",
