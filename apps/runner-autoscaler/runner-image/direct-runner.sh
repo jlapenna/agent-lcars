@@ -122,23 +122,12 @@ export ATTEMPT_ID
 RESUME_SESSION_ID="$(jq -r '.resume.sessionId // empty' <<<"$brief")"
 RESUME_TRANSCRIPT_URI="$(jq -r '.resume.transcriptGcsUri // empty' <<<"$brief")"
 
-# From here through the real /complete POST near the end of this script,
-# the run is claimed and LCARS_RUN_TOKEN is confirmed valid -- the /brief
-# call above just proved it, and runs-router.ts's requireRunToken accepts
-# this same token for this run's own completion report right up until it
-# settles. Every step in that window can still fail outright under `set
-# -e` (checkout-token, git clone, prepare.sh, the claude-token file check
-# below, ...): review fix (PR #1568) -- an early abort here used to just
-# exit, leaving the run claimed and silently stuck until its 2h lease
-# expires and passive retry mints a replacement, even though the console
-# would have accepted an immediate failure report. COMPLETED is flipped to
-# 1 only once the real /complete call below actually succeeds, so a normal
-# exit (including the intentional non-zero exit for a legitimately reported
-# non-pull-request outcome) never reports twice. A second report attempt
-# here is otherwise harmless even if one somehow raced past that guard --
-# requireRunToken refuses a token whose run already settled, and `|| true`
-# below swallows that refusal exactly like every other best-effort call in
-# this script.
+# A successful /brief read proves authority only at that instant. Startup
+# and execution deadlines still fence every callback, including completion.
+# Install the best-effort failure reporter before the startup handshake and
+# setup: a refused callback (including an expired token) does not prove durable
+# settlement. Existing executor exit/recovery owns that case. COMPLETED becomes
+# 1 only when the normal completion request actually succeeds.
 COMPLETED=0
 CODEX_RUNTIME_DIR=''
 CODEX_STDERR_TEE_PID=''
@@ -197,6 +186,58 @@ CURLCFG
   return 0
 }
 trap report_early_failure EXIT
+
+# Require the existing Console heartbeat acknowledgement before checkout,
+# credential restoration or provider work. The server owns the original
+# startup fence and claim authority; HTTP success alone, a brief read, or OS
+# spawn cannot establish accepted startup. Do not retry an unknown result into
+# expensive execution, or log a response that may contain private diagnostics.
+EARLY_FAILURE_MESSAGE='Worker startup heartbeat was not acknowledged; provider work was not started. Inspect executor retirement/recovery for settlement.'
+if ! startup_response="$(curl -sS --config - 2>/dev/null <<CURLCFG
+url = "$RUNS_API/heartbeat"
+request = "POST"
+header = "$AUTH_HEADER"
+$(worker_identity_config)
+$CURL_TIMEOUT_CONFIG
+write-out = "\n%{http_code}"
+CURLCFG
+)"; then
+  echo 'FATAL: worker startup heartbeat transport failed' >&2
+  exit 1
+fi
+startup_status="${startup_response##*$'\n'}"
+startup_body="${startup_response%$'\n'*}"
+if [ "$startup_status" != 200 ] || ! jq -se --arg runId "$LCARS_RUN_ID" '
+  length == 1 and (.[0] | type == "object" and .runId == $runId and
+  (.expiresAt | type == "string" and
+    test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$") and
+    (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | type == "number")))
+' >/dev/null 2>&1 <<<"$startup_body"; then
+  echo 'FATAL: worker startup heartbeat refused or acknowledgement invalid' >&2
+  exit 1
+fi
+unset startup_response startup_status startup_body
+EARLY_FAILURE_MESSAGE=''
+
+# Maintain bootstrap liveness during setup and credential contention as well
+# as execution. This is the same periodic loop, started only after the gate.
+# It neither reports OS process spawn nor resets a provider's execution budget.
+# Individual later transport failures remain best effort; the EXIT trap and
+# normal provider tail stop this owned loop. Deadline recovery remains fenced.
+HEARTBEAT_INTERVAL_SECONDS="${HEARTBEAT_INTERVAL_SECONDS:-300}"
+(
+  while true; do
+    sleep "$HEARTBEAT_INTERVAL_SECONDS"
+    curl -sf --config - >/dev/null 2>&1 <<CURLCFG || true
+url = "$RUNS_API/heartbeat"
+request = "POST"
+header = "$AUTH_HEADER"
+$(worker_identity_config)
+$CURL_TIMEOUT_CONFIG
+CURLCFG
+  done
+) &
+HEARTBEAT_PID=$!
 
 if [ "$AGENT_NAME" = "Unknown" ]; then
   echo "FATAL: direct runner does not support pipeline '$PIPELINE'" >&2
@@ -708,40 +749,6 @@ activate_hook_telemetry() {
 if [ "$PIPELINE" = codex ]; then
   activate_hook_telemetry
 fi
-
-# Best-effort lease renewal for the duration of the agent's own run. A
-# claimed run's lease is minted for a fixed window (2h -- see
-# libs/orchestrator/src/decide.ts's LEASE_MS); nothing else in this script
-# renews it, and `requireRunToken` refuses every run-token route, complete
-# included, the instant it expires. A long agent turn with no renewal risks
-# racing that expiry and losing the ability to ever report back. Backgrounded
-# for exactly the `claude` invocation below and killed (not waited on) the
-# moment it exits -- explicitly right after, AND via report_early_failure's
-# own EXIT trap above as a safety net for any earlier abort (e.g. `set -e`
-# unwinding out of the `claude` step itself before reaching that explicit
-# kill; that function already kills HEARTBEAT_PID when it is set, so there
-# is deliberately no second `trap ... EXIT` here to overwrite it -- bash
-# keeps only the most recently installed handler per signal). This
-# container's whole process tree ends with the script regardless, so there
-# is nothing further to clean up beyond not leaving the loop running
-# through the verify/complete tail below once it is no longer needed.
-# Failures are swallowed (`|| true`): a missed heartbeat is not fatal on
-# its own, unlike telemetry (sidecar-lifecycle.sh's own fail-soft contract)
-# -- there is nothing else that could restore a lease already lost.
-HEARTBEAT_INTERVAL_SECONDS="${HEARTBEAT_INTERVAL_SECONDS:-300}"
-(
-  while true; do
-    sleep "$HEARTBEAT_INTERVAL_SECONDS"
-    curl -sf --config - >/dev/null 2>&1 <<CURLCFG || true
-url = "$RUNS_API/heartbeat"
-request = "POST"
-header = "$AUTH_HEADER"
-$(worker_identity_config)
-$CURL_TIMEOUT_CONFIG
-CURLCFG
-  done
-) &
-HEARTBEAT_PID=$!
 
 AGENT_EXIT=1
 if [ "$PIPELINE" = "claude" ]; then

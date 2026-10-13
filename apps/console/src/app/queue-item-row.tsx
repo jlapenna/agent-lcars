@@ -1,12 +1,12 @@
 'use client';
 
-import { Badge, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
-import { IconChevronRight } from '@tabler/icons-react';
+import { Loader, Tooltip } from '@mantine/core';
 import Link from 'next/link';
 import type { MouseEvent } from 'react';
 
 import { repoDisplayName } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
+import { inboxCardAgent } from './inbox-card';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
 import { RelativeTime } from './relative-time';
@@ -30,6 +30,7 @@ export function QueueItemRow({
 }) {
   const { item } = card;
   const reason = queueReasonFor(item);
+  const agent = inboxCardAgent(card);
   const hiddenLabels = queueDisclosureLabels(item);
   const handleNavigate = (event: MouseEvent<HTMLAnchorElement>) => {
     if (
@@ -61,94 +62,58 @@ export function QueueItemRow({
         aria-busy={loading || undefined}
         onClick={handleNavigate}
       >
-        <Stack gap={5}>
-          <Group justify="space-between" gap="xs" wrap="nowrap">
-            <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-              <Badge
-                variant="outline"
-                color="gray"
-                size="xs"
-                className="queue-kind-badge"
-              >
-                {item.kind === 'pr' ? 'PR' : 'Issue'}
-              </Badge>
-              <Text
-                component="span"
-                size="xs"
-                c="dimmed"
-                ff="monospace"
-                truncate
-              >
-                {repoDisplayName(item.repo)} / #{item.number}
-              </Text>
-            </Group>
-            <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-              {reason && (
-                <Badge
-                  color={reason.color}
-                  variant="light"
-                  size="sm"
-                  className="queue-reason-badge"
-                >
-                  {reason.label}
-                </Badge>
-              )}
-              {item.ciRunning && (
-                <Tooltip label="CI running" openDelay={300}>
-                  <span
-                    className="queue-row-signal"
-                    role="status"
-                    aria-label="CI running"
-                  >
-                    <span aria-hidden="true" />
-                  </span>
-                </Tooltip>
-              )}
-            </Group>
-          </Group>
-
+        <div className="queue-item-row__text">
+          <div className="ops-inbox__kind">{reason?.label ?? 'Decision'}</div>
           <Tooltip label={item.title} multiline maw={320} openDelay={300}>
-            <Text
-              component="span"
-              fw={600}
-              size="sm"
-              className="queue-item-row__title"
-            >
+            <span className="ops-inbox__title queue-item-row__title">
               {item.title}
-            </Text>
+            </span>
           </Tooltip>
-          {loading ? (
-            <Loader
-              size={16}
-              className="queue-item-row__loader"
-              aria-label="Loading item details"
-            />
-          ) : (
-            <IconChevronRight
-              size={16}
-              aria-hidden="true"
-              className="queue-item-row__chevron"
-            />
-          )}
-
-          <Group justify="space-between" gap="xs" wrap="nowrap">
-            <Text component="span" size="xs" c="dimmed" truncate>
-              {item.author ? `by ${item.author} · ` : ''}
-              <RelativeTime iso={item.updatedAt} variant="compact" />
-            </Text>
+          <div className="ops-inbox__meta">
+            <span className="ops-ref">
+              {repoDisplayName(item.repo)} {item.kind === 'pr' ? 'PR ' : ''}#
+              {item.number}
+            </span>
+            {agent && <span>{agent}</span>}
+            <span>
+              waiting <RelativeTime iso={item.updatedAt} variant="compact" />
+            </span>
+            {item.author && <span>by {item.author}</span>}
+            {item.ciRunning && (
+              <Tooltip label="CI running" openDelay={300}>
+                <span
+                  className="queue-row-signal"
+                  role="status"
+                  aria-label="CI running"
+                >
+                  <span aria-hidden="true" />
+                </span>
+              </Tooltip>
+            )}
             {hiddenLabels.length > 0 && (
-              <Badge
-                variant="outline"
-                color="gray"
-                size="xs"
+              <span
                 className="queue-label-count"
                 aria-label={`${hiddenLabels.length} labels shown in detail`}
               >
                 +{hiddenLabels.length}
-              </Badge>
+              </span>
             )}
-          </Group>
-        </Stack>
+          </div>
+        </div>
+        {loading ? (
+          <Loader
+            size={16}
+            className="queue-item-row__loader"
+            aria-label="Loading item details"
+          />
+        ) : (
+          <span
+            className="ops-row-action queue-item-row__respond"
+            aria-hidden="true"
+          >
+            Respond
+          </span>
+        )}
       </Link>
 
       <div className="queue-item-row__overflow">

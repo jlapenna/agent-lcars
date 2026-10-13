@@ -23,7 +23,7 @@ import {
 /**
  * One hook-sourced observation of a coding-agent session, spooled by the
  * `lcars hook` client (apps/telemetry-watcher) and written by `lcars hook
- * flush` as the same `SessionDoc` the host watcher daemon writes (see
+ * flush` as the same `SessionDoc` shape `runner finalize` writes (see
  * `session-event-write.ts` and docs/hooks-telemetry-design.md), so nothing
  * downstream of Firestore changes.
  *

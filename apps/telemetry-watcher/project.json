@@ -39,24 +39,6 @@
         }
       }
     },
-    "serve": {
-      "continuous": true,
-      "executor": "@nx/js:node",
-      "defaultConfiguration": "development",
-      "dependsOn": ["build"],
-      "options": {
-        "buildTarget": "@agent-lcars/telemetry-watcher:build",
-        "runBuildTargetDependencies": false
-      },
-      "configurations": {
-        "development": {
-          "buildTarget": "@agent-lcars/telemetry-watcher:build:development"
-        },
-        "production": {
-          "buildTarget": "@agent-lcars/telemetry-watcher:build:production"
-        }
-      }
-    },
     "bundle": {
       "executor": "@nx/esbuild:esbuild",
       "outputs": ["{options.outputPath}"],

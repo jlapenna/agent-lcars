@@ -22,7 +22,11 @@ export function ConsoleMessage({
   children: ReactNode;
 }) {
   return (
-    <ConsoleWorkspace ariaLabel={ariaLabel} className="console-message">
+    <ConsoleWorkspace
+      ariaLabel={ariaLabel}
+      className="console-message"
+      warnings={false}
+    >
       <div className="console-message__body lcars-panel">{children}</div>
     </ConsoleWorkspace>
   );

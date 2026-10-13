@@ -118,6 +118,59 @@ describe('producer freshness in Bridge and Agents', () => {
     vi.unstubAllGlobals();
   });
 
+  it.each(['Bridge', 'Agents'])(
+    '%s renders current totals with retained retired snapshots and still hides a configured outage',
+    (surface) => {
+      const current = records();
+      const retired = {
+        ...current[0],
+        lane: 'retired',
+        expectedLanes: 'retired,older-zero,standard',
+        updatedAt: new Date(T0 - 86_400_000).toISOString(),
+        registeredRunners: 100,
+        runningJobs: 100,
+      };
+      const rendered = render(
+        view(
+          surface,
+          fleetFromAutoscalerStatuses(
+            projectAutoscalerStatuses([...current, retired]),
+          ),
+        ),
+      );
+      expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
+        '5 GitHub runners registered (2 running)',
+      );
+      const outage = current.map((record) =>
+        record.kind === 'arc-lane' && record.lane === 'standard'
+          ? { ...record, updatedAt: new Date(T0 - 180_001).toISOString() }
+          : record,
+      );
+      rendered.rerender(
+        view(
+          surface,
+          fleetFromAutoscalerStatuses(
+            projectAutoscalerStatuses([...outage, retired]),
+          ),
+        ),
+      );
+      expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
+        'GitHub runner status unavailable',
+      );
+      rendered.rerender(
+        view(
+          surface,
+          fleetFromAutoscalerStatuses(
+            projectAutoscalerStatuses([...current, retired]),
+          ),
+        ),
+      );
+      expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
+        '5 GitHub runners registered (2 running)',
+      );
+    },
+  );
+
   it.each([
     ['Bridge', 'unchanged'],
     ['Agents', 'unchanged'],

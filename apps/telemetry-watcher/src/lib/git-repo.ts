@@ -58,8 +58,7 @@ function parseGitHubRemote(
  * mapping to the current `{owner, name}`. Every deploying fleet has its own
  * repo-rename history (or none at all), so there is no built-in alias here —
  * an unset or empty value means no aliases apply. Throws with a specific
- * reason on malformed input rather than silently ignoring it, matching
- * `config.ts`'s `AGENT_TELEMETRY_WATCH_ROOTS` convention.
+ * reason on malformed input rather than silently ignoring it.
  */
 function parseRepoAliasesJson(
   raw: string,
@@ -101,11 +100,9 @@ function parseRepoAliasesJson(
 }
 
 /**
- * Loads the configured rename aliases fresh on every call (like
- * `config.ts`'s env-driven fields) rather than caching at module scope, so
- * tests can set `AGENT_TELEMETRY_REPO_ALIASES` per case and a long-lived
- * daemon process picks up an env change on next resolution without a
- * restart-triggering code path of its own.
+ * Loads the configured rename aliases fresh on every call rather than
+ * caching at module scope, so tests can set `AGENT_TELEMETRY_REPO_ALIASES`
+ * per case.
  */
 function loadRepoAliases(): Record<string, { owner: string; name: string }> {
   const raw = optional('AGENT_TELEMETRY_REPO_ALIASES');
@@ -143,8 +140,7 @@ function findRepoAlias(
  * client's `owner/name` allowlist patterns) matches, the remote's capitals
  * are replaced by the allowlist's canonical spelling (see
  * `canonicalRepoSpelling`); an unwatched repository keeps the remote's own
- * spelling. Only the hook client passes `watchedRepos`: the retired polling
- * daemon is not deployed, and the runner's finalize pass resolves a checkout
+ * spelling. Only the hook client passes `watchedRepos`: the runner's finalize pass resolves a checkout
  * cloned from its canonical `GITHUB_REPOSITORY`.
  *
  * A malformed `AGENT_TELEMETRY_REPO_ALIASES` is deliberately NOT part of

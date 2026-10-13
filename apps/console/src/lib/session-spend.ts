@@ -25,6 +25,8 @@ export interface SpendDeliverable {
   key: string;
   url: string;
   status: 'merged' | 'unmerged' | 'unknown';
+  /** When `status` is merged: the projection's merge time. */
+  mergedAt?: string;
   /** Equal shares across a session's unique repository-qualified PR refs.
    * Includes unknown/unmerged shares; never charges a session twice. */
   reportedCostUsd: number;
@@ -177,6 +179,9 @@ export function aggregateSessionSpend(
         estimatedCostUsd: 0,
         unpricedShares: 0,
         sessions: 0,
+        ...(status === 'merged' && projection?.mergedAt
+          ? { mergedAt: projection.mergedAt }
+          : {}),
       };
       row.sessions++;
       if (cost.costUsd === undefined) row.unpricedShares += 1 / keys.length;

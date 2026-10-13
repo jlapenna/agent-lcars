@@ -51,10 +51,12 @@ async function InboxBody({
   repoFilter,
   selectedItemKey,
   mobileScopeLabel,
+  watchedRepos,
 }: {
   repoFilter: WatchedRepo | undefined;
   selectedItemKey?: string;
   mobileScopeLabel: string;
+  watchedRepos: WatchedRepo[];
 }) {
   const [
     {
@@ -102,17 +104,6 @@ async function InboxBody({
       ariaLabel="Inbox workspace"
       className="inbox-frame"
       warnings={<DataWarnings warnings={warnings} />}
-      toolbar={
-        <>
-          <InboxNotificationsWatch />
-          <div className="inbox-data-freshness">
-            <DataFreshness
-              fetchedAt={dataAsOf}
-              initialLabel={formatRelativeTime(dataAsOf)}
-            />
-          </div>
-        </>
-      }
     >
       <DecisionInbox
         yourQueue={decisionCards}
@@ -128,6 +119,24 @@ async function InboxBody({
           />
         }
         mobileScopeLabel={mobileScopeLabel}
+        toolbarStart={
+          <RepositorySelector
+            repos={watchedRepos}
+            selected={repoFilter ? repoKey(repoFilter) : undefined}
+            action="/inbox"
+          />
+        }
+        toolbarEnd={
+          <>
+            <InboxNotificationsWatch />
+            <div className="inbox-data-freshness">
+              <DataFreshness
+                fetchedAt={dataAsOf}
+                initialLabel={formatRelativeTime(dataAsOf)}
+              />
+            </div>
+          </>
+        }
       />
     </ConsoleWorkspace>
   );
@@ -149,27 +158,13 @@ function InboxViewContent({
 }: InboxViewProps) {
   return (
     <>
-      <details
-        className="lcars-disclosure"
-        data-testid="inbox-repository-filter"
-      >
-        <summary className="lcars-disclosure__summary">
-          Repository filter
-        </summary>
-        <div className="lcars-disclosure__content">
-          <RepositorySelector
-            repos={watchedRepos}
-            selected={repoFilter ? repoKey(repoFilter) : undefined}
-            action="/inbox"
-          />
-        </div>
-      </details>
       <LiveDashboard />
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <InboxBody
           repoFilter={repoFilter}
           selectedItemKey={selectedItemKey}
           mobileScopeLabel={subtitle}
+          watchedRepos={watchedRepos}
         />
       </Suspense>
     </>

@@ -150,9 +150,15 @@ cat > "$plugin_tmp/home/.local/bin/lcars" <<'FAKE'
 #!/bin/sh
 n="$(date +%s%N)"
 cat > "$CAPTURE_DIR/$n.payload"
-snapshot="$(jq -r .transcript_path "$CAPTURE_DIR/$n.payload")"
-cp "$snapshot" "$CAPTURE_DIR/$n.snapshot"
-rm -rf "$(dirname "$snapshot")"
+snapshot="$(jq -r '.transcript_path // empty' "$CAPTURE_DIR/$n.payload")"
+# Lifecycle-only reports (SessionEnd) carry no snapshot. Only ever remove a
+# plugin snapshot directory under this test's TMPDIR.
+case "$snapshot" in
+  "$TMPDIR"/lcars-opencode-*/export.json)
+    cp "$snapshot" "$CAPTURE_DIR/$n.snapshot"
+    rm -rf "$(dirname "$snapshot")"
+    ;;
+esac
 FAKE
 chmod +x "$plugin_tmp/home/.local/bin/lcars"
 HOME="$plugin_tmp/home" TMPDIR="$plugin_tmp/tmp" CAPTURE_DIR="$plugin_tmp/capture" \
@@ -173,8 +179,9 @@ let holdGet = false;
 const client = {
   session: {
     get: async ({ path }) => {
+      const session = sessions[path.id];
       if (holdGet) await new Promise((resolve) => { releaseGet = resolve; });
-      return { data: sessions[path.id] };
+      return { data: session };
     },
     messages: async ({ path }) => {
       messageCalls += 1;
@@ -211,11 +218,15 @@ await send('session.idle', { sessionID: 'ses_main' });
 await until(4);
 // Events arriving while a report is in flight collapse to the most
 // important one, run after the current report.
+// A deleted session is gone from the server: its end report is built from
+// the event alone, never by re-reading the session.
 holdGet = true;
-await send('session.deleted', { info: sessions.ses_main });
+await send('session.idle', { sessionID: 'ses_main' });
 await sleep(50);
 holdGet = false;
-await send('session.idle', { sessionID: 'ses_main' });
+const deleted = sessions.ses_main;
+delete sessions.ses_main;
+await send('session.deleted', { info: deleted });
 await send('session.idle', { sessionID: 'ses_main' });
 releaseGet();
 await until(6);
@@ -223,12 +234,16 @@ await sleep(200);
 
 assert.deepEqual(
   payloads().map((p) => p.hook_event_name),
-  ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'SessionEnd', 'Stop'],
+  ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'Stop', 'SessionEnd'],
 );
 for (const payload of payloads()) {
   assert.equal(payload.session_id, 'ses_main');
   assert.equal(payload.cwd, '/work/main');
-  assert.match(payload.transcript_path, /lcars-opencode-[A-Za-z0-9]{6}\/export\.json$/);
+  if (payload.hook_event_name === 'SessionEnd') {
+    assert.equal(payload.transcript_path, undefined);
+  } else {
+    assert.match(payload.transcript_path, /lcars-opencode-[A-Za-z0-9]{6}\/export\.json$/);
+  }
 }
 const snapshot = JSON.parse(
   readFileSync(join(capture, readdirSync(capture).find((n) => n.endsWith('.snapshot'))), 'utf8'),
@@ -236,7 +251,7 @@ const snapshot = JSON.parse(
 assert.equal(snapshot.info.id, 'ses_main');
 assert.equal(snapshot.messages.length, 1);
 // The subagent's history was never fetched.
-assert.equal(messageCalls, 6);
+assert.equal(messageCalls, 5);
 assert.deepEqual(
   readdirSync(process.env.TMPDIR).filter((n) => n.startsWith('lcars-opencode-')),
   ['lcars-opencode-fresh01'],

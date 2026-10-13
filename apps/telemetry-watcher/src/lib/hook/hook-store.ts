@@ -13,7 +13,7 @@ import { type HookWriterCredentials } from './hook-config';
 /**
  * Applies hook events straight to the `sessions` collection as the
  * `telemetry-writer` service account (docs/hooks-telemetry-design.md §4.4),
- * the same identity the watcher daemon and runner sidecars write as. Each
+ * the same identity `runner finalize` writes as. Each
  * event is one transaction: re-read the stored doc, refuse it if a newer
  * event from the same host already landed, otherwise merge the write.
  */

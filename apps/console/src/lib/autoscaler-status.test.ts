@@ -134,6 +134,133 @@ describe('authoritative ARC inventory', () => {
     expectedLanes: 'lcars-ci,lcars-e2e',
   };
 
+  // The production incident retained four retired snapshots after the fleet
+  // changed from fifteen configured lanes to these twelve surviving producers.
+  const configured = [
+    'build-client',
+    'control',
+    'default',
+    'e2e',
+    'girosf-default',
+    'homelab-ci',
+    'homelab-control',
+    'lcars-ci',
+    'lcars-e2e',
+    'nx-cache-server-default',
+    'sync-padd-default',
+    'www-default',
+  ];
+  const current = configured.map((name) => ({
+    ...fresh,
+    lane: name,
+    expectedLanes: configured.join(','),
+  }));
+  const retired = ['ci-light', 'e2e-light', 'lcars-default', 'wait'].map(
+    (name) => ({
+      ...fresh,
+      lane: name,
+      expectedLanes: [...configured, 'ci-light', 'e2e-light', 'lcars-default']
+        .sort()
+        .join(','),
+      updatedAt: new Date(now - 86_400_000).toISOString(),
+      registeredRunners: 100,
+      runningJobs: 100,
+    }),
+  );
+
+  it('publishes current twelve-lane totals without waiting for retired snapshot TTL deletion', () => {
+    const result = projectAutoscalerStatuses([...current, ...retired], now);
+    expect(result.lanes).toEqual(current);
+    expect(result.lanesIncomplete).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+    expect(fleetFromAutoscalerStatuses(result)).toMatchObject({
+      online: 24,
+      busy: 12,
+    });
+    const zero = projectAutoscalerStatuses(
+      [
+        ...current.map((record) => ({
+          ...record,
+          registeredRunners: 0,
+          runningJobs: 0,
+        })),
+        ...retired,
+      ],
+      now,
+    );
+    expect(fleetFromAutoscalerStatuses(zero)).toMatchObject({
+      online: 0,
+      busy: 0,
+    });
+  });
+
+  it('ignores malformed counters only when fresh inventory proves the expired lane was retired', () => {
+    const result = projectAutoscalerStatuses(
+      [
+        ...current,
+        ...retired.map((record) => ({ ...record, runningJobs: NaN })),
+      ],
+      now,
+    );
+    expect(result.lanesIncomplete).toBeUndefined();
+    expect(fleetFromAutoscalerStatuses(result)).toMatchObject({
+      online: 24,
+      busy: 12,
+    });
+  });
+
+  it.each([
+    'missing',
+    'expired',
+    'malformed',
+    'disagrees',
+    'all-expired',
+    'fresh-unexpected',
+    'unknown-retired-age',
+  ] as const)(
+    'retains unknown totals for %s evidence and restores them after configured producers recover',
+    (failure) => {
+      const first = current[0];
+      const bad = {
+        missing: current.slice(1),
+        expired: [
+          { ...first, updatedAt: new Date(now - 180_001).toISOString() },
+          ...current.slice(1),
+        ],
+        malformed: [{ ...first, runningJobs: NaN }, ...current.slice(1)],
+        disagrees: [
+          { ...first, expectedLanes: `${first.expectedLanes},new-lane` },
+          ...current.slice(1),
+        ],
+        'all-expired': current.map((record) => ({
+          ...record,
+          updatedAt: new Date(now - 180_001).toISOString(),
+        })),
+        'fresh-unexpected': [
+          ...current,
+          {
+            ...retired[0],
+            expectedLanes: first.expectedLanes,
+            updatedAt: new Date(now).toISOString(),
+          },
+        ],
+        'unknown-retired-age': [
+          ...current,
+          { ...retired[0], updatedAt: 'unknown' },
+        ],
+      }[failure];
+      const result = projectAutoscalerStatuses([...bad, ...retired], now);
+      expect(result.lanesIncomplete).toBe(true);
+      expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('online');
+      expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('busy');
+      expect(
+        fleetFromAutoscalerStatuses(
+          projectAutoscalerStatuses([...current, ...retired], now),
+        ),
+      ).toMatchObject({ online: 24, busy: 12 });
+    },
+  );
+
   it('suppresses totals when a configured lane never published or disappeared after TTL', () => {
     const result = projectAutoscalerStatuses([fresh], now);
     expect(result.lanes).toEqual([fresh]);
