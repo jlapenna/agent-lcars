@@ -4,8 +4,8 @@ import * as path from 'node:path';
 
 import {
   isNewerHookWrite,
-  sessionWriteForEvent,
   type SessionEventV1,
+  sessionWriteForEvent,
 } from '@agent-lcars/telemetry';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
