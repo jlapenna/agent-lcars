@@ -20,6 +20,7 @@ import {
   type SessionSpend,
 } from '../../lib/session-spend';
 import type { RepositorySpend } from '../../lib/session-spend-by-repo';
+import { windowOptions } from '../archive-window-options';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { type ConsoleReadout, ConsoleReadouts } from '../console-readouts';
@@ -115,14 +116,6 @@ function spendReadouts(
   ];
 }
 
-const WINDOW_OPTIONS = [
-  { value: '1', label: '24h' },
-  { value: '7', label: '7d' },
-  { value: '14', label: '14d' },
-  { value: '30', label: '30d' },
-  { value: '90', label: '90d' },
-] as const;
-
 function CostsToolbar({
   query,
   watchedRepos,
@@ -175,7 +168,7 @@ function CostsToolbar({
         name="days"
         label="Window"
         value={String(query.days)}
-        options={WINDOW_OPTIONS}
+        options={windowOptions(query.days)}
       />
       <ToolbarSelect
         name="source"
@@ -187,6 +180,10 @@ function CostsToolbar({
           { value: 'issue-agent', label: 'Dispatched agent' },
         ]}
       />
+      {/* A native submit so filters apply before hydration. */}
+      <Button type="submit" variant="light" size="compact-sm">
+        Apply
+      </Button>
     </ConsoleToolbar>
   );
 }

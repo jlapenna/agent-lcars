@@ -55,6 +55,7 @@ function displayHref(
     params.set('issue', String(query.issueNumber));
   }
   if (query.repo) params.set('repo', repoKey(query.repo));
+  if (query.agent) params.set('agent', query.agent);
   if (path !== '/costs' && view === 'flat') params.set('view', 'flat');
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path || '?';
