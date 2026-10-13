@@ -31,31 +31,108 @@ const workflow = parse(
   concurrency?: Concurrency;
   jobs: Record<string, { steps: Step[]; concurrency?: Concurrency }>;
 };
+const BASE = '0'.repeat(40);
 const OLD = 'a'.repeat(40),
   NEW = 'b'.repeat(40);
 const guard = workflow.jobs.deploy.steps.find((step) => step.id === 'source');
 
+interface Rollout {
+  source?: string;
+  updated?: string;
+  end?: string;
+  conclusion?: string;
+  verify?: string;
+  marker?: string;
+  attempts?: Rollout[];
+  missingStart?: boolean;
+  missingSteps?: boolean;
+}
 function sourceDecision(
   source: string,
   main: string,
   event = 'workflow_run',
   fail = false,
   deliveryMode = '',
+  rollouts: Rollout[] = [{ source: NEW }],
+  incomplete = false,
 ) {
-  // The old workflow has no source fence and admits every Verify-passed run.
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
   const output = path.join(dir, 'output'),
     calls = path.join(dir, 'calls');
+  const time = '2026-10-13T01:00:00Z';
+  const routes: Record<string, unknown> = {
+    'git/ref/heads/main': { object: { sha: main } },
+  };
+  const rows = rollouts.map((run, i) => {
+    const jobs = (run.attempts ?? [run]).map((attempt, j) => ({
+      id: i * 10 + j + 1,
+      name: 'deploy',
+      started_at: '2026-10-13T00:00:00Z',
+      ...(run.missingSteps
+        ? {}
+        : {
+            steps: [
+              {
+                name: 'Deploy with managed App Hosting build',
+                status: 'completed',
+                conclusion: attempt.conclusion ?? 'success',
+                started_at: attempt.missingStart
+                  ? undefined
+                  : new Date(
+                      new Date(attempt.end ?? time).getTime() - 60000,
+                    ).toISOString(),
+                completed_at: attempt.end ?? time,
+              },
+              {
+                name: 'Verify the deployed console is serving',
+                status: 'completed',
+                conclusion: attempt.verify ?? 'success',
+              },
+            ],
+          }),
+    }));
+    routes[`actions/runs/${i + 1}/jobs?filter=all&per_page=100`] = {
+      total_count: jobs.length,
+      jobs,
+    };
+    return {
+      id: i + 1,
+      updated_at: run.updated ?? time,
+      // Displayed workflow SHA intentionally differs from effect source.
+      head_sha: main,
+      display_title:
+        run.marker ?? `Deploy console [source:${run.source ?? NEW}]`,
+      conclusion: 'success',
+    };
+  });
+  const total = rows.length + Number(incomplete);
+  for (let page = 1; page <= Math.max(1, Math.ceil(total / 100)); page++) {
+    const route =
+      'actions/workflows/deploy-console.yml/runs?per_page=100' +
+      (page === 1 ? '' : `&page=${page}`);
+    routes[route] = {
+      total_count: total,
+      workflow_runs: rows.slice((page - 1) * 100, page * 100),
+    };
+  }
   writeFileSync(output, '');
+  writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
   writeFileSync(
     path.join(dir, 'gh'),
-    `#!/bin/bash
-set -eu
-printf '%s\\n' "$*" >> "$FIXTURE_CALLS"
-test "$*" = 'api repos/jlapenna/agent-lcars/git/ref/heads/main --jq .object.sha'
-if [ "$FIXTURE_FAIL" = true ]; then exit 1; fi
-printf '%s\\n' "$FIXTURE_MAIN"
+    `#!/usr/bin/env python3
+import json, os, sys
+args=sys.argv[1:]
+with open(os.environ['FIXTURE_CALLS'], 'a') as f: f.write(' '.join(args)+'\\n')
+if os.environ['FIXTURE_FAIL']=='true': sys.exit(1)
+route=args[1].removeprefix('repos/jlapenna/agent-lcars/')
+with open(os.environ['FIXTURE_ROUTES']) as f: routes=json.load(f)
+if route.startswith('compare/'):
+    base, head = route.removeprefix('compare/').split('...')
+    order=[os.environ['FIXTURE_BASE'], os.environ['FIXTURE_OLD'], os.environ['FIXTURE_NEW']]
+    status='identical' if base==head else ('ahead' if base in order and head in order and order.index(base)<order.index(head) else ('behind' if base in order and head in order else 'diverged'))
+    print(json.dumps({'status': status}))
+else: print(json.dumps(routes[route]))
 `,
     { mode: 0o755 },
   );
@@ -70,17 +147,20 @@ printf '%s\\n' "$FIXTURE_MAIN"
         DELIVERY_MODE: deliveryMode,
         SOURCE_SHA: source,
         GITHUB_REPOSITORY: 'jlapenna/agent-lcars',
+        GITHUB_RUN_ID: '999',
         GITHUB_OUTPUT: output,
         GH_TOKEN: 'fixture-only',
         FIXTURE_CALLS: calls,
-        FIXTURE_MAIN: main,
+        FIXTURE_ROUTES: path.join(dir, 'routes'),
         FIXTURE_FAIL: String(fail),
+        FIXTURE_BASE: BASE,
+        FIXTURE_OLD: OLD,
+        FIXTURE_NEW: NEW,
       },
     });
-    const lines = readFileSync(output, 'utf8');
     return {
       status: result.status,
-      output: lines.match(/^deploy_current=(.*)$/m)?.[1],
+      output: readFileSync(output, 'utf8').match(/^deploy_current=(.*)$/m)?.[1],
       calls: existsSync(calls) ? readFileSync(calls, 'utf8') : '',
     };
   } finally {
@@ -182,6 +262,147 @@ describe('serialized automatic deployment source fence', () => {
       output: 'true',
       calls: '',
     });
+  });
+
+  it('deploys a validated ancestor while newer main is still waiting for CI', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [{ source: BASE }]),
+    ).toMatchObject({ status: 0, output: 'true' });
+  });
+
+  it('rejects an old automatic source after a newer manual rollout even when serving verification failed', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, verify: 'failure' },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('treats a failed rollout command as a possible production effect', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, conclusion: 'failure' },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('retains a newer cancelled possible effect after an older successful rollout', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD },
+        {
+          source: NEW,
+          conclusion: 'cancelled',
+          updated: '2026-10-13T02:00:00Z',
+          end: '2026-10-13T02:00:00Z',
+        },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('ignores successful skipped workflows and their misleading displayed main SHA', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, conclusion: 'skipped' },
+        { source: OLD },
+      ]),
+    ).toMatchObject({ status: 0, output: 'true' });
+  });
+
+  it('reads newer rollback evidence beyond the first 100 history records', () => {
+    const earlier = Array.from({ length: 100 }, () => ({
+      source: OLD,
+      updated: '2026-10-12T23:00:00Z',
+      end: '2026-10-12T23:00:00Z',
+    }));
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        ...earlier,
+        { source: NEW },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('includes actual rollout evidence from older rerun attempts', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        {
+          source: NEW,
+          attempts: [{ conclusion: 'success' }, { conclusion: 'skipped' }],
+        },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('fails closed for incomplete history, unknown effect provenance and incomparable sources', () => {
+    expect(
+      sourceDecision(
+        NEW,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [{ source: OLD }],
+        true,
+      ).status,
+    ).not.toBe(0);
+    expect(
+      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
+        { marker: 'legacy no source' },
+      ]).status,
+    ).not.toBe(0);
+    expect(
+      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
+        { source: 'c'.repeat(40) },
+      ]).status,
+    ).not.toBe(0);
+    expect(sourceDecision('c'.repeat(40), NEW).status).not.toBe(0);
+  });
+
+  it('refuses terminal rollout evidence without its start or step inventory', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, missingStart: true },
+      ]).status,
+    ).not.toBe(0);
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, missingSteps: true },
+      ]).status,
+    ).not.toBe(0);
+  });
+
+  it('excludes earlier legacy evidence only after a proved later successful rollout', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD },
+        {
+          marker: 'legacy unknown',
+          updated: '2026-10-12T23:00:00Z',
+          end: '2026-10-12T23:00:00Z',
+        },
+      ]),
+    ).toMatchObject({ status: 0, output: 'true' });
+    // Equality is not an earlier bound: retain unknown evidence at T.
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD },
+        { marker: 'legacy unknown' },
+      ]).status,
+    ).not.toBe(0);
+  });
+
+  it('parses timestamps by instant and refuses a run timestamp older than its effect', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD, updated: '2026-10-13T03:00:00+02:00' },
+      ]),
+    ).toMatchObject({ status: 0, output: 'true' });
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD, updated: '2026-10-13T00:59:59Z' },
+      ]).status,
+    ).not.toBe(0);
   });
 
   it.each(['', 'not-a-sha', 'c'.repeat(39)])(
