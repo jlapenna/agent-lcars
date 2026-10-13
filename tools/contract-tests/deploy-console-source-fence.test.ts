@@ -55,7 +55,7 @@ function sourceDecision(
   deliveryMode = '',
   rollouts: Rollout[] = [{ source: NEW }],
   incomplete = false,
-  concurrent: { newer: number } | undefined = undefined,
+  concurrent: { newer: number; race?: boolean } | undefined = undefined,
   history = 0,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
