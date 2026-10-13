@@ -249,9 +249,6 @@ jobs:
       - name: Test the GitHub attachment download helper
         run: bash agents/shared/skills/agent-protocol/scripts/download-github-attachment.test.sh
 
-      - name: Test generic in-job daemon lifecycle (#1246)
-        run: bash apps/telemetry-watcher/bin/job-daemon.test.sh
-
       - name: Test runner-image toolchain preflight (#468)
         run: bash apps/runner-autoscaler/runner-image/toolchain-health.test.sh
 
@@ -418,8 +415,8 @@ jobs:
       - name: OpenAPI document is current
         run: ./tools/nx run @agent-lcars/work:openapi-check
 
-      # This bundle is outside the default build graph, but is what both the
-      # telemetry-watcher image and the runner sidecar execute. Keep its
+      # This bundle is outside the default build graph, but is what the
+      # runner image's telemetry finalize/resume steps execute. Keep its
       # isolated startup gate in normal CI now that image publishing is owned
       # by the canonical homelab controller.
       - name: Smoke test telemetry-watcher bundle

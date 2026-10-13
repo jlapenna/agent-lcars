@@ -4,7 +4,7 @@
 # site for why a dispatched agent needs this at all.
 #
 # Mirrors the host watcher's own launcher
-# (apps/telemetry-watcher/deploy/install-session-title-cli.sh, issue #1212)
+# (apps/telemetry-watcher/bin/install-session-title-cli.sh, issue #1212)
 # in shape and in why it exists: `lcars-session-title.cjs` (built by the
 # `session-title-cli` Nx target from
 # apps/telemetry-watcher/src/session-title-cli.ts) is a CommonJS bundle, not

@@ -62,8 +62,8 @@ describe('loadRunnerConfig', () => {
   });
 
   // Issue #1289: `sessionStateDir` must always be set (never omitted the
-  // way `runId`/`issueNumber` are) — `startSidecar` and `finalizeSidecar`
-  // both key their overlay reads directly off this field, unconditionally.
+  // way `runId`/`issueNumber` are) — `finalizeSidecar` keys its overlay
+  // reads directly off this field, unconditionally.
   it('always sets sessionStateDir to the same default the host watcher uses', () => {
     const config = loadRunnerConfig([]);
 

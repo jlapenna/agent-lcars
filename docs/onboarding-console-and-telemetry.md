@@ -63,7 +63,7 @@ A new repo therefore needs no provider workflow, repository secret, or
 repository variable for telemetry; it needs Console admission and shared
 QueueExecutor capacity.
 
-### 2a. The sidecar tool needs to be on the runner
+### 2a. The telemetry tools need to be on the runner
 
 Telemetry is shipped by baking `apps/telemetry-watcher`'s `bundle` Nx
 target — a single self-contained `.cjs` file with every dependency
@@ -73,7 +73,9 @@ inlined, including `@google-cloud/firestore` — into the runner image at
 this image; the former duplicate in `jlapenna/homelab` was removed along
 with the local-build fallback it served — for the build stage: it clones
 this repo's `main` at image-build
-time and runs `./tools/nx bundle @agent-lcars/telemetry-watcher`. No
+time and runs `./tools/nx bundle @agent-lcars/telemetry-watcher` (the
+finalize/resume tool) plus the `lcars` CLI and hook-flusher bundles that
+provider hooks use for live telemetry. No
 download, no version pin to keep in sync — the image build is the release
 step.
 
@@ -93,8 +95,8 @@ repositories do not call a provider lane or configure telemetry workflow
 inputs. Do not copy telemetry steps into consumers or create per-repository
 writer variables.
 
-The sidecar remains fail-soft: broken telemetry authentication or an old runner
-image must not turn a healthy agent deliverable red. That makes live
+Telemetry remains fail-soft: broken telemetry authentication, a failed hook
+install, or an old runner image must not turn a healthy agent deliverable red. That makes live
 console/storage verification mandatory; GitHub Actions is not dispatch
 evidence.
 
@@ -171,7 +173,7 @@ Don't take any of the above on faith — confirm each layer:
    deliverable (PR opened, or a parked `status:needs-human` comment) — not a
    GitHub Actions job.
 2. While it's running, check this console's dashboard for the in-flight
-   session (live turns/tokens updating) — proves the sidecar + WIF auth +
+   session (live turns/tokens updating) — proves the provider hooks + writer auth +
    watched-repos config are all correctly wired end to end, not just each
    individually plausible.
 3. After it finishes, check the Sessions page for the archived transcript

@@ -51,7 +51,7 @@ describe('IssueGroupedSessions', () => {
       },
     ]);
 
-    const link = screen.getByRole('link', { name: '#42' });
+    const link = screen.getByRole('link', { name: 'GitHub #42' });
     expect(link.getAttribute('href')).toBe('https://github.com/o/r/issues/42');
   });
 
@@ -81,7 +81,7 @@ describe('IssueGroupedSessions', () => {
       },
     ]);
 
-    expect(screen.getByRole('link', { name: '#42' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'GitHub #42' })).toBeTruthy();
   });
 
   it('labels the no-issue group in plain text with no link', () => {
@@ -100,7 +100,7 @@ describe('IssueGroupedSessions', () => {
       name: 'Expand No issue sessions',
     });
     expect(toggle.contains(heading)).toBe(false);
-    expect(screen.queryByRole('link', { name: '#42' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'GitHub #42' })).toBeNull();
   });
 
   it('shows the correct session count per group, singular and plural', () => {

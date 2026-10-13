@@ -2126,20 +2126,25 @@ describe('GET /anchors/github/owner', () => {
   });
 
   it('resolves a differently cased repository to the configured anchor', async () => {
-    const ctx = context({
-      cliSessions: async () => ({
-        sessions: [
-          cliSession({ repo: { owner: 'JLapenna', name: 'Agent-LCARS' } }),
-        ],
-        warnings: [],
-      }),
-    });
+    const cliSessions = vi.fn(async () => ({
+      sessions: [
+        cliSession({ repo: { owner: 'JLapenna', name: 'Agent-LCARS' } }),
+      ],
+      warnings: [],
+    }));
+    const ctx = context({ cliSessions });
     const runId = await admit(ctx);
     const result = await call(
       ctx,
       'GET',
       '/anchors/github/owner?repo=JLAPENNA/agent-lcars&issue=2502',
     );
+    // The session read is scoped to the configured spelling of the anchor's
+    // repository, never the caller's casing.
+    expect(cliSessions).toHaveBeenCalledWith({
+      owner: 'jlapenna',
+      name: 'agent-lcars',
+    });
     expect(result.json).toMatchObject({
       anchor,
       verdict: 'fleet-run',
