@@ -90,9 +90,16 @@ export function reconcileCauses(
     if (!text(source.name) || names.has(source.name) || !text(source.path))
       throw new Error('Sources require unique names and paths');
     names.add(source.name);
+    if (
+      typeof source.sha256 !== 'string' ||
+      !/^[a-fA-F0-9]{64}$/.test(source.sha256)
+    )
+      throw new Error(
+        `Sources require a valid SHA256 snapshot pin: ${source.name}`,
+      );
     const bytes = read(path.resolve(directory, source.path));
     const sha256 = createHash('sha256').update(bytes).digest('hex');
-    if (source.sha256 !== undefined && source.sha256 !== sha256)
+    if (source.sha256.toLowerCase() !== sha256)
       throw new Error(`Source snapshot changed: ${source.name}`);
     const document = JSON.parse(bytes.toString());
     const rows = at(document, source.collection ?? '');

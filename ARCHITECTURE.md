@@ -37,7 +37,7 @@ GitHub / Work API / schedule
 | `libs/orchestrator`                                     | Task/run state machine, admission, leases, retry, reconciliation, outbox                       | Model/decision tests and store integration tests           |
 | `libs/work`                                             | Shared Work API schemas and client-facing contracts                                            | OpenAPI freshness and consumer tests                       |
 | `apps/runner-autoscaler` and direct-runner image        | Queue claims, capacity reservation, bootstrap, provider execution, completion reporting        | Go/contract tests, image checks, controlled smoke evidence |
-| `apps/telemetry-watcher`                                | Transcript discovery, normalization, privacy scope, and session publication                    | Adapter tests and session evidence                         |
+| `apps/telemetry-watcher`                                | Provider hook client, runner finalize/resume, and session publication                          | Adapter tests and session evidence                         |
 | `.github/actions` and reusable workflows                | Published fleet CI capabilities                                                                | Published-action contracts and member-repo consumer checks |
 | `agents/shared/skills`                                  | Headless worker behavior consumed across the fleet                                             | Runtime loading tests and observed dispatched trajectories |
 | `infra/github-ruleset` and `infra/terraform`            | Repository policy and GCP resource declarations                                                | Protected Terraform plan/apply path and drift checks       |

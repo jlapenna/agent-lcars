@@ -1,5 +1,9 @@
 'use client';
 
+import {
+  QUEUE_PRIORITIES,
+  type QueuePriority,
+} from '@agent-lcars/dispatch-contracts';
 import { parseCron, PIPELINES, ulid, type WorkSpec } from '@agent-lcars/work';
 import {
   Button,
@@ -84,6 +88,9 @@ export function ScheduleCreateForm({
     initial?.spec?.pipeline ?? pipelines[0] ?? 'claude',
   );
   const [cron, setCron] = useState(initial?.cron ?? '0 * * * *');
+  const [priority, setPriority] = useState<QueuePriority>(
+    initial?.spec?.priority ?? 'normal',
+  );
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [error, setError] = useState<string | undefined>();
 
@@ -110,7 +117,7 @@ export function ScheduleCreateForm({
         const [err] = await create({
           id,
           cron,
-          spec: { title, description, pipeline, target: { repo } },
+          spec: { title, description, pipeline, priority, target: { repo } },
           enabled,
         });
         if (err) {
@@ -177,6 +184,15 @@ export function ScheduleCreateForm({
             allowDeselect={false}
           />
         </Group>
+        <Select
+          label="Priority"
+          disabled={isPending}
+          description="Background suits recurring maintenance; capacity and provider fairness still apply"
+          data={[...QUEUE_PRIORITIES]}
+          value={priority}
+          onChange={(value) => value && setPriority(value as QueuePriority)}
+          allowDeselect={false}
+        />
         <TextInput
           disabled={isPending}
           label="Cron (UTC, 5-field: min hour dom mon dow)"

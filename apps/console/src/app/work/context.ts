@@ -1,4 +1,5 @@
 import { auth } from '@/auth';
+import { getCliSessions } from '@/lib/cli-sessions';
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifySessionExpiryOidcToken } from '@/lib/github-actions-oidc';
 import {
@@ -53,6 +54,7 @@ export async function context(): Promise<WorkContext> {
     sessionsFor: sessionsForRuns,
     getSessionDoc: sessionForResume,
     sessionDocsForRuns,
+    cliSessions: (repo) => getCliSessions({ repo }),
     scheduleStore: createScheduleStore(),
     grants: workGrants,
     now: () => new Date(),

@@ -28,6 +28,7 @@ describe('WORK_ID_PATTERN', () => {
 describe('itemsContract', () => {
   it('declares item and maintenance procedures', () => {
     expect(Object.keys(itemsContract).sort()).toEqual([
+      'anchorOwner',
       'cancel',
       'create',
       'get',
@@ -118,7 +119,10 @@ describe('dispatchesContract.github', () => {
       mode: 'implement',
       requestId: 'workflow-run:123:dispatch:1633',
     };
-    expect(shape?.parse(input)).toEqual(input);
+    expect(shape?.parse(input)).toEqual({
+      ...input,
+      spec: { ...input.spec, priority: 'normal' },
+    });
     expect(() => {
       const { requestId: _requestId, ...withoutIdempotency } = input;
       shape?.parse(withoutIdempotency);
@@ -455,6 +459,7 @@ describe('generateWorkOpenApi', () => {
     expect(doc.openapi).toMatch(/^3\./);
     expect(Object.keys(doc.paths).sort()).toEqual(
       [
+        '/anchors/github/owner',
         '/dispatches/github',
         '/dispatches/github/redispatch',
         '/items',
@@ -591,6 +596,7 @@ describe('generateWorkOpenApi', () => {
       'POST /items/{id}/reply': ['200', '403', '404', '409'],
       'POST /maintenance/tick': ['200'],
       'GET /metrics/lifecycle': ['200'],
+      'GET /anchors/github/owner': ['200', '403'],
       'POST /dispatches/github': ['200', '400', '403', '409'],
       'POST /dispatches/github/redispatch': ['200', '403', '404', '409'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],

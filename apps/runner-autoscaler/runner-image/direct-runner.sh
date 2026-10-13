@@ -122,23 +122,12 @@ export ATTEMPT_ID
 RESUME_SESSION_ID="$(jq -r '.resume.sessionId // empty' <<<"$brief")"
 RESUME_TRANSCRIPT_URI="$(jq -r '.resume.transcriptGcsUri // empty' <<<"$brief")"
 
-# From here through the real /complete POST near the end of this script,
-# the run is claimed and LCARS_RUN_TOKEN is confirmed valid -- the /brief
-# call above just proved it, and runs-router.ts's requireRunToken accepts
-# this same token for this run's own completion report right up until it
-# settles. Every step in that window can still fail outright under `set
-# -e` (checkout-token, git clone, prepare.sh, the claude-token file check
-# below, ...): review fix (PR #1568) -- an early abort here used to just
-# exit, leaving the run claimed and silently stuck until its 2h lease
-# expires and passive retry mints a replacement, even though the console
-# would have accepted an immediate failure report. COMPLETED is flipped to
-# 1 only once the real /complete call below actually succeeds, so a normal
-# exit (including the intentional non-zero exit for a legitimately reported
-# non-pull-request outcome) never reports twice. A second report attempt
-# here is otherwise harmless even if one somehow raced past that guard --
-# requireRunToken refuses a token whose run already settled, and `|| true`
-# below swallows that refusal exactly like every other best-effort call in
-# this script.
+# A successful /brief read proves authority only at that instant. Startup
+# and execution deadlines still fence every callback, including completion.
+# Install the best-effort failure reporter before the startup handshake and
+# setup: a refused callback (including an expired token) does not prove durable
+# settlement. Existing executor exit/recovery owns that case. COMPLETED becomes
+# 1 only when the normal completion request actually succeeds.
 COMPLETED=0
 CODEX_RUNTIME_DIR=''
 CODEX_STDERR_TEE_PID=''
@@ -197,6 +186,58 @@ CURLCFG
   return 0
 }
 trap report_early_failure EXIT
+
+# Require the existing Console heartbeat acknowledgement before checkout,
+# credential restoration or provider work. The server owns the original
+# startup fence and claim authority; HTTP success alone, a brief read, or OS
+# spawn cannot establish accepted startup. Do not retry an unknown result into
+# expensive execution, or log a response that may contain private diagnostics.
+EARLY_FAILURE_MESSAGE='Worker startup heartbeat was not acknowledged; provider work was not started. Inspect executor retirement/recovery for settlement.'
+if ! startup_response="$(curl -sS --config - 2>/dev/null <<CURLCFG
+url = "$RUNS_API/heartbeat"
+request = "POST"
+header = "$AUTH_HEADER"
+$(worker_identity_config)
+$CURL_TIMEOUT_CONFIG
+write-out = "\n%{http_code}"
+CURLCFG
+)"; then
+  echo 'FATAL: worker startup heartbeat transport failed' >&2
+  exit 1
+fi
+startup_status="${startup_response##*$'\n'}"
+startup_body="${startup_response%$'\n'*}"
+if [ "$startup_status" != 200 ] || ! jq -se --arg runId "$LCARS_RUN_ID" '
+  length == 1 and (.[0] | type == "object" and .runId == $runId and
+  (.expiresAt | type == "string" and
+    test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$") and
+    (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | type == "number")))
+' >/dev/null 2>&1 <<<"$startup_body"; then
+  echo 'FATAL: worker startup heartbeat refused or acknowledgement invalid' >&2
+  exit 1
+fi
+unset startup_response startup_status startup_body
+EARLY_FAILURE_MESSAGE=''
+
+# Maintain bootstrap liveness during setup and credential contention as well
+# as execution. This is the same periodic loop, started only after the gate.
+# It neither reports OS process spawn nor resets a provider's execution budget.
+# Individual later transport failures remain best effort; the EXIT trap and
+# normal provider tail stop this owned loop. Deadline recovery remains fenced.
+HEARTBEAT_INTERVAL_SECONDS="${HEARTBEAT_INTERVAL_SECONDS:-300}"
+(
+  while true; do
+    sleep "$HEARTBEAT_INTERVAL_SECONDS"
+    curl -sf --config - >/dev/null 2>&1 <<CURLCFG || true
+url = "$RUNS_API/heartbeat"
+request = "POST"
+header = "$AUTH_HEADER"
+$(worker_identity_config)
+$CURL_TIMEOUT_CONFIG
+CURLCFG
+  done
+) &
+HEARTBEAT_PID=$!
 
 if [ "$AGENT_NAME" = "Unknown" ]; then
   echo "FATAL: direct runner does not support pipeline '$PIPELINE'" >&2
@@ -487,7 +528,7 @@ RESUME_FLAG=()
 if [ "$PIPELINE" = "claude" ] && [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
   # GOOGLE_APPLICATION_CREDENTIALS and AGENT_TELEMETRY_PROJECT_ID are
   # exported inline exactly as sidecar-lifecycle.sh already does for
-  # `runner sidecar`/`runner finalize` -- the same telemetry-writer
+  # `runner finalize` -- the same telemetry-writer
   # credential and GCS project the transcript was uploaded to/from.
   if ! resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
     AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
@@ -597,12 +638,12 @@ PROMPT
 )"
 fi
 
-# OpenCode and the telemetry sidecar share its SQLite store. On a fresh home,
-# either process can otherwise race schema migration. The published image
-# carries an empty, version-matched store (#2040), so fresh runs can use an
-# empty baseline. Resumes, nonempty/missing stores, and a different CLI keep
-# synchronous migration/listing before the sidecar starts. The baseline lets
-# continuation select only one unambiguous newly-created workspace session.
+# OpenCode's SQLite store needs schema migration on a fresh home. The
+# published image carries an empty, version-matched store (#2040), so fresh
+# runs can use an empty baseline. Resumes, nonempty/missing stores, and a
+# different CLI keep synchronous migration/listing before the agent starts.
+# The baseline lets continuation select only one unambiguous newly-created
+# workspace session.
 OPENCODE_BASELINE_SESSIONS=''
 if [ "$PIPELINE" = "opencode" ]; then
   OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
@@ -666,10 +707,10 @@ if [ "$PIPELINE" = "opencode" ]; then
 fi
 
 if [ "$PIPELINE" = "codex" ]; then
-  # The sidecar starts before the agent invocation so it can emit live state.
-  # Allocate the per-run tmpfs home first, then pass its eventual session root
-  # to both sidecar phases. Auth is restored below, after this setup but before
-  # Codex executes; nothing from a previous run is visible in this directory.
+  # Allocate the per-run tmpfs home before hook telemetry installs into it;
+  # finalize later archives its session root. Auth is restored below, after
+  # this setup but before Codex executes; nothing from a previous run is
+  # visible in this directory.
   : "${LCARS_CODEX_VOLATILE_DIR:?LCARS_CODEX_VOLATILE_DIR is required for Codex runs}"
   if [ ! -d "$LCARS_CODEX_VOLATILE_DIR" ]; then
     echo "FATAL: Codex volatile directory is missing" >&2
@@ -688,71 +729,26 @@ if [ "$PIPELINE" = "codex" ]; then
   worker_policy_bootstrap "$CODEX_HOME/hooks.json"
 fi
 
-start_telemetry_sidecar() {
-  WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
-    RUN_ID="$LCARS_RUN_ID" \
-    INTENT_ID="$INTENT_ID" \
-    CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
-    "$SIDECAR_LIFECYCLE" start
-}
-
-# Selected pipelines report through provider hooks instead of the polling
-# sidecar. The hooks install after the provider's own config (worker policy
-# included) exists; any failure there starts the sidecar instead.
-HOOK_TELEMETRY_STATE=off
-if hook_telemetry_selected; then
-  HOOK_TELEMETRY_STATE=pending
-else
-  start_telemetry_sidecar
-fi
+# Every pipeline reports live telemetry through its provider's own hooks
+# (docs/hooks-telemetry-design.md, phase 3). The hooks install after the
+# provider's own config (worker policy included) exists. A failed install
+# only loses live telemetry: there is no polling fallback, and the
+# `"$SIDECAR_LIFECYCLE" finalize` pass below still writes the authoritative
+# final session doc either way. Telemetry never fails a dispatch.
+HOOK_TELEMETRY_STATE=pending
 
 activate_hook_telemetry() {
   [ "$HOOK_TELEMETRY_STATE" = pending ] || return 0
   if hook_telemetry_bootstrap; then
     HOOK_TELEMETRY_STATE=on
   else
-    echo "::warning::hook telemetry install failed; falling back to the telemetry sidecar"
+    echo "::warning::hook telemetry install failed; this run has no live telemetry (finalize still records the session)"
     HOOK_TELEMETRY_STATE=off
-    start_telemetry_sidecar
   fi
 }
 if [ "$PIPELINE" = codex ]; then
   activate_hook_telemetry
 fi
-
-# Best-effort lease renewal for the duration of the agent's own run. A
-# claimed run's lease is minted for a fixed window (2h -- see
-# libs/orchestrator/src/decide.ts's LEASE_MS); nothing else in this script
-# renews it, and `requireRunToken` refuses every run-token route, complete
-# included, the instant it expires. A long agent turn with no renewal risks
-# racing that expiry and losing the ability to ever report back. Backgrounded
-# for exactly the `claude` invocation below and killed (not waited on) the
-# moment it exits -- explicitly right after, AND via report_early_failure's
-# own EXIT trap above as a safety net for any earlier abort (e.g. `set -e`
-# unwinding out of the `claude` step itself before reaching that explicit
-# kill; that function already kills HEARTBEAT_PID when it is set, so there
-# is deliberately no second `trap ... EXIT` here to overwrite it -- bash
-# keeps only the most recently installed handler per signal). This
-# container's whole process tree ends with the script regardless, so there
-# is nothing further to clean up beyond not leaving the loop running
-# through the verify/complete tail below once it is no longer needed.
-# Failures are swallowed (`|| true`): a missed heartbeat is not fatal on
-# its own, unlike telemetry (sidecar-lifecycle.sh's own fail-soft contract)
-# -- there is nothing else that could restore a lease already lost.
-HEARTBEAT_INTERVAL_SECONDS="${HEARTBEAT_INTERVAL_SECONDS:-300}"
-(
-  while true; do
-    sleep "$HEARTBEAT_INTERVAL_SECONDS"
-    curl -sf --config - >/dev/null 2>&1 <<CURLCFG || true
-url = "$RUNS_API/heartbeat"
-request = "POST"
-header = "$AUTH_HEADER"
-$(worker_identity_config)
-$CURL_TIMEOUT_CONFIG
-CURLCFG
-  done
-) &
-HEARTBEAT_PID=$!
 
 AGENT_EXIT=1
 if [ "$PIPELINE" = "claude" ]; then
@@ -1019,6 +1015,19 @@ CURLCFG
     AGENT_EXIT=1
   fi
 
+  # #2537: a provider that stops on structured stream events never writes its
+  # --output-last-message file, so the completion classifier below would read
+  # an empty message and report a generic agent failure for what is really a
+  # provider-availability stop. Retain a bounded copy of the provider's own
+  # failure events, outside $CODEX_RUNTIME_DIR for the same reason
+  # CODEX_LAST_MESSAGE_FILE is (cleanup_codex_material runs first). An
+  # credential fence already owns this round's diagnosis, so it is not
+  # re-reported as a capacity stop.
+  if [ -z "$CODEX_AUTH_FAILURE" ] && [ -s "$CODEX_FAILURE_MESSAGES" ]; then
+    PROVIDER_FAILURE_FILE="$RUNNER_TEMP/provider-failures.txt"
+    tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
+  fi
+
   if [ ! -s "$CODEX_AUTH_FILE" ]; then
     echo "FATAL: Codex auth.json is missing or empty after the run; refusing to persist" >&2
     AGENT_EXIT=1
@@ -1116,6 +1125,7 @@ else
   mv "$opencode_proxy_config" "$OPENCODE_CONFIG_DIR/opencode.json"
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
   worker_policy_bootstrap "$OPENCODE_CONFIG"
+  activate_hook_telemetry
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
   # leave the surrounding direct runner alive to finalize telemetry and
@@ -1283,11 +1293,29 @@ payload_file="$RUNNER_TEMP/complete-payload.json"
 # pipeline today; no message captured) is not an error -- the round still
 # has a real outcome, it just renders without a turn.
 AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || true)"
+# The provider's own structured failure events, when it emitted any. These are
+# the only honest provider cause for a round that stopped before its final
+# message (#2537); they are never task or tool output, so quoted text in a
+# transcript cannot forge them.
+PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
 # Capacity exhaustion is a provider failure, never a request for a human
 # task decision. Keep this narrow and only classify unsuccessful outcomes.
-if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]] &&
-  [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]]; then
-  OUTCOME=provider-limit
+# A published deliverable has already settled the outcome above, so work the
+# agent finished and pushed is never reclassified.
+if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]]; then
+  if [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]] ||
+    [[ "$PROVIDER_FAILURES" == *"You've hit your weekly limit"* ]]; then
+    OUTCOME=provider-limit
+  elif [[ "$PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
+    # Distinct from the weekly quota window: the control plane holds this
+    # provider for one bounded probe instead of a reported reset, and only an
+    # already-authorized fallback policy may create a cross-provider successor.
+    OUTCOME=provider-capacity
+    if [[ "$AGENT_MESSAGE" != *'model is at capacity'* ]]; then
+      AGENT_MESSAGE="Selected model is at capacity. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
+    fi
+    AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
+  fi
 fi
 if worker_control_failed; then
   case "$OUTCOME" in

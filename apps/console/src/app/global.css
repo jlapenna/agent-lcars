@@ -107,7 +107,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .lcars-data-warnings {
   border-left: 4px solid var(--lcars-warning);
-  background: color-mix(in srgb, var(--lcars-warning) 8%, var(--lcars-surface));
+  background: var(--lcars-surface);
+}
+
+/* A route passes its `DataWarnings` element whether or not it has warnings;
+   with none, the band would be an empty status edge. */
+.console-workspace__warnings:empty {
+  display: none;
+}
+
+/* Inside a workspace the warning band already draws the status edge. */
+.console-workspace__warnings .lcars-data-warnings {
+  border-left: 0;
+  padding: 0;
 }
 
 .lcars-data-warnings > .lcars-disclosure__summary {
@@ -177,7 +189,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .lcars-header-bar-segment {
   flex: none;
-  border-radius: 999px;
+  border-radius: 0;
   /* Each segment carries its own `data-accent`, so the accent table resolves
      its colour - the strip previews the destination rail using the rail's own
      values rather than a second copy of them. That copy had already drifted:
@@ -186,25 +198,34 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-accent);
 }
 
-.lcars-header-bar-segment[data-accent='amber'] {
-  width: 4.5rem;
-}
-
 .lcars-header-bar-segment[data-accent='blue'] {
-  width: 2.75rem;
+  flex: 0 0 34%;
 }
 
-.lcars-header-bar-segment[data-accent='periwinkle'] {
-  width: 2rem;
+.lcars-header-bar-segment[data-accent='violet'] {
+  flex: 0 0 12%;
 }
 
 .lcars-header-bar-segment[data-accent='gold'] {
-  width: 1.25rem;
+  flex: 0 0 7%;
+}
+
+.lcars-header-bar-segment[data-accent='amber'] {
+  flex: 0 0 3%;
 }
 
 .lcars-header-bar-segment[data-accent='teal'] {
   flex: 1 1 auto;
-  max-width: 8rem;
+  max-width: 14%;
+}
+
+/* The arm, the frame rail, and the nav index only exist in the desktop
+   rail layout (min-width 64em, below). */
+.lcars-header-arm,
+.lcars-rail-head,
+.lcars-rail-body,
+.lcars-nav-index {
+  display: none;
 }
 
 /* ---- Signature: LCARS destination rail ----
@@ -235,7 +256,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   align-items: center;
   padding: 8px 22px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   font-family: var(--font-display), sans-serif;
   font-weight: 600;
   font-size: 0.9375rem;
@@ -390,7 +411,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .lcars-command-utilities
   :is(.mantine-ActionIcon-root, .lcars-refresh-button) {
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--lcars-ink-on-muted);
   background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
   box-shadow: none;
@@ -509,6 +530,127 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   left: 0;
   width: var(--lcars-spine-width);
   background: var(--lcars-accent);
+}
+
+/* ---- Panels, tables and tags ----
+   The block language of design/fleet-console.html. A panel is its spine and
+   its content, with no box drawn around it: the workspace frame is already
+   the box. Its first heading is the panel head, a display-face caption over a
+   hairline. Tables and tags are drawn in the same hairlines, and status keeps
+   its hue in the text rather than in a tinted chip. */
+
+/* 4px on the top and trailing edges keeps the 2px focus ring and its 2px
+   offset inside the panel's `overflow: hidden`. The Agents columns and fleet
+   strip keep their own insets: they tile a grid with 1px dividers. */
+.lcars-panel.mantine-Card-root:not(.agents-panel, .agents-fleet-strip) {
+  padding: 4px 4px 4px calc(var(--lcars-spine-width) + 16px);
+  border: 0;
+}
+
+/* The hairline goes under the whole head. A heading followed by its own
+   description line (SectionHeading) draws it under that line instead. A
+   panel whose content is wrapped in a Stack (Operations, the Agents columns)
+   has its head as that Stack's first child. */
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child:not(:has(+ .mantine-Text-root)),
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child
+  + .mantine-Text-root,
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child:has(> .mantine-Title-root),
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child:has(> * > .mantine-Title-root) {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child,
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child
+  .mantine-Title-root {
+  font-size: 1.1875rem;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+:root .mantine-Table-table {
+  --table-border-color: var(--lcars-hairline);
+  --table-striped-color: transparent;
+  --table-hover-color: var(--lcars-surface-raised);
+}
+
+.mantine-Table-th {
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.mantine-Badge-root {
+  font-family: var(--font-mono), monospace;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.mantine-Badge-root:is(
+  [data-variant='light'],
+  [data-variant='outline'],
+  [data-variant='default']
+) {
+  border: 1px solid var(--lcars-hairline);
+  background: transparent;
+}
+
+/* Readouts: large figures across the top of a workspace, each separated by
+   a hairline (console-readouts.tsx). */
+.lcars-readouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  row-gap: 16px;
+  padding: 20px 20px 0;
+}
+
+.lcars-readout {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 2px 16px;
+  border-left: 1px solid var(--lcars-hairline);
+  container-type: inline-size;
+}
+
+.lcars-readout:first-child {
+  padding-left: 4px;
+  border-left: 0;
+}
+
+.lcars-readout__value {
+  overflow: hidden;
+  margin: 10px 0 2px;
+  color: var(--lcars-ink);
+  font-family: var(--font-mono), monospace;
+  /* Scales with its cell so a five-figure amount ("$13,953.71") fits a
+     narrow track; ellipsis is only the last resort. */
+  font-size: min(1.875rem, 15cqi);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.lcars-readout__detail {
+  overflow: hidden;
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- Console surface system ----
@@ -769,24 +911,24 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* The frame's two standard bands, owned here rather than restated by each
-   route. The toolbar takes the route accent, so Sessions' filter bar and
-   Costs' controls are the same band in two different colors instead of two
-   different bands (#1828). */
+   route (#1828). Both sit on the one ground: the warning band is marked by
+   its status-colour leading edge, the toolbar only by the hairline below. */
 .console-workspace__warnings {
-  padding: 10px 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--lcars-hairline);
-  background: color-mix(in srgb, var(--lcars-warning) 8%, var(--lcars-surface));
+  border-left: 4px solid var(--lcars-warning);
+  background: var(--lcars-surface);
 }
 
 .console-workspace__toolbar {
   display: flex;
-  min-height: 48px;
+  min-height: 56px;
   align-items: center;
   justify-content: flex-start;
   gap: var(--mantine-spacing-sm);
-  padding: 6px 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--lcars-hairline);
-  background: color-mix(in srgb, var(--lcars-accent) 10%, var(--lcars-surface));
+  background: var(--lcars-surface);
 }
 
 /* A workspace's content divides into stacked sections separated by the same
@@ -865,11 +1007,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     [data-variant='default']
   ) {
   color: color-mix(in srgb, var(--badge-color) 60%, black);
-}
-
-:root[data-mantine-color-scheme='light']
-  .mantine-Badge-root[data-variant='outline'] {
-  border-color: color-mix(in srgb, var(--badge-color) 60%, black);
 }
 
 /* Small unfilled tags need body-text contrast, including violet source
@@ -958,26 +1095,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .agents-panel {
   min-height: 100%;
-}
-
-.agents-panel--active {
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-violet-9) 8%,
-    var(--lcars-surface)
-  );
-}
-
-.agents-panel--claimed {
-  background: color-mix(in srgb, var(--lcars-accent) 7%, var(--lcars-surface));
-}
-
-.agents-panel--recent {
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-blue-9) 7%,
-    var(--lcars-surface)
-  );
+  background: var(--lcars-surface);
 }
 
 .agents-panel h2 {
@@ -994,7 +1112,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: inline-flex;
   overflow: hidden;
   gap: 2px;
-  border-radius: 999px;
+  border-radius: 0;
 }
 
 .sessions-view-toggle__option {
@@ -1037,7 +1155,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--lcars-surface-raised);
 }
 
 .sessions-table th,
@@ -1045,16 +1162,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   border-color: var(--mantine-color-default-border);
 }
 
-.sessions-table tbody tr:nth-of-type(odd) {
-  background: color-mix(in srgb, var(--lcars-accent) 5%, var(--lcars-surface));
-}
-
 .sessions-table tbody tr:hover {
-  background: color-mix(
-    in srgb,
-    var(--lcars-accent) 15%,
-    var(--lcars-surface)
-  ) !important;
+  background: var(--lcars-surface-raised) !important;
 }
 
 .sessions-workspace .session-title-link {
@@ -1113,7 +1222,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--lcars-surface-raised);
 }
 
 .work-table th,
@@ -1147,6 +1255,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   padding: 18px 16px;
 }
 
+/* The written summary under the readouts keeps the frame's inset rather than
+   running into its edge. */
+.costs-workspace__content
+  > [data-testid='spend-breakdowns']
+  > section:first-child {
+  padding: 16px 16px 0;
+}
+
 .costs-ledger-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1166,7 +1282,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   gap: 12px;
   padding: 0 16px;
   border-bottom: 1px solid var(--mantine-color-default-border);
-  background: color-mix(in srgb, var(--lcars-accent) 8%, var(--lcars-surface));
+  background: var(--lcars-surface);
 }
 
 .costs-ledger-section__heading::before {
@@ -1197,28 +1313,16 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--lcars-surface-raised);
 }
 
 .costs-ledger-table th,
 .costs-ledger-table td {
   border: 0;
-}
-
-.costs-ledger-table tbody tr:nth-of-type(odd) {
-  background: color-mix(in srgb, var(--lcars-accent) 7%, var(--lcars-surface));
+  border-bottom: 1px solid var(--lcars-hairline);
 }
 
 .costs-ledger-table tbody tr:hover {
-  background: color-mix(
-    in srgb,
-    var(--lcars-accent) 16%,
-    var(--lcars-surface)
-  ) !important;
-}
-
-.costs-ledger-table tbody td:first-child {
-  border-left: 3px solid var(--lcars-accent);
+  background: var(--lcars-surface-raised) !important;
 }
 
 .costs-ledger-mobile-list {
@@ -1249,6 +1353,25 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .inbox-data-freshness {
   min-height: 20px;
+  margin-left: auto;
+}
+
+/* Inbox notifications: the Preferences entry in the console menu
+   (inbox-notifications.tsx). The status line wraps under the toggle. */
+.queue-utility-menu__control.inbox-notifications {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  max-width: 18rem;
+}
+
+.inbox-notifications__toggle {
+  min-height: 44px;
+  justify-content: flex-start;
+}
+
+.inbox-frame > .queue-workspace {
+  padding: 12px 16px 16px;
 }
 
 .lcars-command-row {
@@ -1530,14 +1653,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   justify-content: center;
   border: 1px solid
     color-mix(in srgb, var(--mantine-color-blue-4) 58%, transparent);
-  border-radius: 50%;
+  border-radius: 0;
   background: color-mix(in srgb, var(--mantine-color-blue-5) 16%, transparent);
 }
 
 .queue-row-signal > span {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--mantine-color-blue-4);
   box-shadow: 0 0 0 3px
     color-mix(in srgb, var(--mantine-color-blue-5) 18%, transparent);
@@ -1612,6 +1735,21 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   min-width: 0;
 }
 
+/* Inside the workspace frame. `clip` rather than the frame's `hidden`, so the
+   frame stays clipped without becoming the scroll container that would stop
+   the desktop detail pane from sticking. */
+.bridge-frame {
+  overflow: clip;
+}
+
+.bridge-frame > .bridge-workspace {
+  padding: 20px;
+}
+
+.bridge-frame__toolbar {
+  flex-wrap: wrap;
+}
+
 .bridge-workspace[data-sel] .bridge-workspace__list {
   display: none;
 }
@@ -1658,7 +1796,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (min-width: 64em) {
-  .bridge-workspace {
+  .bridge-workspace[data-sel] {
     display: grid;
     grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
     align-items: start;
@@ -1871,6 +2009,264 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+}
+
+/* ---- Desktop frame: the elbow rail ----
+   From 64em the page takes the frame in design/fleet-console.html: a broad
+   vertical rail down the leading edge whose head turns through a concentric
+   knee into the header's arm. It is still the one elbow per page; it simply
+   encloses the workspace from the side as well as from above. The header
+   (arm, title row, signal bar, destination rail) and the content share the
+   second column, so titles and workspaces align on one leading edge.
+
+   Below 64em there is no room for a 152px rail beside a usable workspace,
+   and the header keeps the compact elbow drawn by the blocks above. */
+@media (min-width: 64em) {
+  .console-page-shell[data-frame='rail'] {
+    --lcars-rail-width: 152px;
+    --lcars-rail-gap: 32px;
+    --lcars-rail-arm: 24px;
+    --lcars-rail-outer-radius: 72px;
+    --lcars-content-start: 0px;
+    display: grid;
+    grid-template-columns: var(--lcars-rail-width) minmax(0, 1fr);
+    grid-template-rows: auto 1fr auto;
+    column-gap: var(--lcars-rail-gap);
+    padding: 0 28px 0 0 !important;
+  }
+
+  .console-page-shell[data-frame='rail'] > .lcars-rail-head {
+    position: relative;
+    display: flex;
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0 12px 14px;
+    color: var(--lcars-ink-on-accent);
+    text-align: right;
+    background: var(--lcars-accent);
+    border-top-left-radius: var(--lcars-rail-outer-radius);
+  }
+
+  /* The knee: the arm's thickness carried across the column gap, with a
+     concave quarter-circle cut from beneath it. */
+  .console-page-shell[data-frame='rail'] > .lcars-rail-head::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 100%;
+    width: var(--lcars-rail-gap);
+    height: calc(var(--lcars-rail-arm) + var(--lcars-rail-gap));
+    background: var(--lcars-accent);
+    mask:
+      radial-gradient(
+          circle at 100% 100%,
+          transparent calc(var(--lcars-rail-gap) - 0.5px),
+          #000 var(--lcars-rail-gap)
+        )
+        0 var(--lcars-rail-arm) / var(--lcars-rail-gap) var(--lcars-rail-gap)
+        no-repeat,
+      linear-gradient(#000 0 0) 0 0 / 100% var(--lcars-rail-arm) no-repeat;
+  }
+
+  .lcars-rail-brand {
+    font-family: var(--font-display), sans-serif;
+    font-size: 1.375rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .console-page-shell[data-frame='rail'] > .lcars-rail-body {
+    display: flex;
+    grid-column: 1;
+    grid-row: 2 / span 2;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+  }
+
+  .lcars-rail-block {
+    display: block;
+    background: color-mix(
+      in srgb,
+      var(--lcars-accent) 52%,
+      var(--lcars-surface)
+    );
+  }
+
+  .lcars-rail-block--short {
+    height: 84px;
+  }
+
+  .lcars-rail-block--medium {
+    height: 120px;
+  }
+
+  .lcars-rail-block--tall {
+    height: 168px;
+  }
+
+  .lcars-rail-block--fill {
+    flex: 1 1 auto;
+    min-height: 40px;
+  }
+
+  .lcars-rail-block--end {
+    height: 44px;
+    background: var(--lcars-accent);
+  }
+
+  .console-page-shell[data-frame='rail'] > .console-header[data-current] {
+    --lcars-elbow-arm: var(--lcars-rail-arm);
+    grid-column: 2;
+    grid-row: 1;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-rows: var(--lcars-rail-arm) auto auto auto;
+    gap: 0 24px;
+    padding: 0 0 18px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    > .console-header[data-current]::before {
+    display: none;
+  }
+
+  .console-page-shell[data-frame='rail'] .lcars-header-arm {
+    display: flex;
+    grid-column: 1 / -1;
+    grid-row: 1;
+    gap: 6px;
+    height: var(--lcars-rail-arm);
+  }
+
+  .lcars-header-arm > span {
+    display: block;
+    background: var(--lcars-accent);
+  }
+
+  .lcars-header-arm > span:first-child {
+    flex: 1 1 auto;
+  }
+
+  .lcars-header-arm > span:nth-child(2) {
+    width: 56px;
+  }
+
+  .lcars-header-arm > span:nth-child(3) {
+    width: 20px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header {
+    display: contents;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header
+    > .mantine-Group-root {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: end;
+    min-width: 0;
+    padding-top: 18px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header-title {
+    font-size: 2.875rem;
+    font-weight: 700;
+    line-height: 0.95;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-long-title]
+    .lcars-header-title {
+    font-size: 1.75rem;
+    line-height: 1.05;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header
+    .mantine-Text-root {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.8125rem;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-header-bar {
+    display: flex;
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin: 16px 0 12px;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-command-utilities {
+    grid-row: 2;
+    align-self: end;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-nav {
+    grid-row: 4;
+  }
+
+  /* Square modules, the label docked to the trailing edge and the rail
+     position in the leading corner. */
+  .console-page-shell[data-frame='rail']
+    .console-header[data-current]
+    .lcars-nav-pill {
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    min-width: 6.5rem;
+    height: 44px;
+    min-height: 44px;
+    padding: 0 12px 7px;
+    font-size: 0.9375rem;
+    letter-spacing: 0.06em;
+  }
+
+  .console-page-shell[data-frame='rail'] .lcars-nav-index {
+    display: block;
+    align-self: flex-start;
+    padding-top: 7px;
+    font-family: var(--font-mono), monospace;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0;
+  }
+
+  .console-page-shell[data-frame='rail'] > .console-page-content {
+    grid-column: 2;
+    grid-row: 2;
+    padding: 16px 0 28px;
+  }
+
+  .console-page-shell[data-frame='rail'] > .console-page-footer {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  /* The streamed placeholder shell hides its header once the resolved one
+     exists (top of this file); its rail goes with it. */
+  body:has(.console-header:not([data-streaming-fallback]))
+    .console-page-shell[data-streaming-fallback]
+    > :is(.lcars-rail-head, .lcars-rail-body) {
+    display: none;
   }
 }
 
@@ -2107,7 +2503,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     color: var(--lcars-accent-ink);
     font-weight: 600;
     border: 1px solid var(--mantine-color-default-border);
-    border-radius: var(--mantine-radius-sm);
+    border-radius: 0;
     background: color-mix(in srgb, var(--lcars-accent) 8%, transparent);
   }
 
@@ -2221,11 +2617,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     justify-content: space-between;
     gap: 16px;
     padding: 10px 16px;
-    background: color-mix(
-      in srgb,
-      var(--lcars-accent) 6%,
-      var(--lcars-surface)
-    );
+    border-bottom: 1px solid var(--lcars-hairline);
+    background: var(--lcars-surface);
   }
 
   .costs-ledger-mobile-row:nth-child(even) {
@@ -2333,7 +2726,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     align-self: stretch;
     min-width: 7.25rem;
     min-height: 44px;
-    border-radius: 0 0 24px;
+    border-radius: 0;
     font-family: var(--font-display), sans-serif;
     font-size: 0.8125rem;
     letter-spacing: 0.05em;
@@ -2375,6 +2768,20 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 
   .inbox-data-freshness {
+    display: none;
+  }
+
+  .inbox-frame {
+    border: 0;
+  }
+
+  .inbox-frame > .queue-workspace {
+    padding: 0;
+  }
+
+  /* Freshness is hidden on phones and the delivery watch renders nothing,
+     so the band would be empty height above the full-height queue. */
+  .inbox-frame__toolbar {
     display: none;
   }
 
@@ -2541,31 +2948,33 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 }
 
-/* Bridge decision signpost: the count and its one direct action are the first
-   things in the workspace, ahead of operational context. */
-.deck-inbox-summary {
-  min-height: 5rem;
-  padding: 0.8rem 0.9rem 0.8rem 1.75rem;
-  margin-bottom: var(--mantine-spacing-xl);
-  border: 1px solid var(--lcars-hairline);
-  background: color-mix(in srgb, var(--lcars-accent) 10%, var(--lcars-surface));
+/* Bridge decision signpost: the count and its one direct action come ahead
+   of operational context.
+   It sits at the trailing end of the workspace toolbar, where the mockup puts
+   a page's primary action, so it carries no panel box or spine of its own. */
+.deck-inbox-summary.lcars-panel {
+  margin-left: auto;
+  padding: 0;
+  overflow: visible;
+}
+
+.deck-inbox-summary.lcars-panel::before {
+  display: none;
 }
 
 .deck-inbox-summary__count {
-  min-width: 2.4rem;
   color: var(--lcars-accent-ink);
-  font-family: var(--font-display), sans-serif;
-  font-size: 2.3rem;
+  font-family: var(--font-mono), monospace;
+  font-size: 1.5rem;
+  font-weight: 500;
   line-height: 1;
-  text-align: center;
 }
 
 .deck-inbox-summary__label {
-  flex: 1 1 10rem;
   min-width: 0;
   font-family: var(--font-display), sans-serif;
-  font-size: 1.05rem;
-  letter-spacing: 0.045em;
+  font-size: 0.9375rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -2582,7 +2991,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   min-height: 2.35rem;
   padding-inline: 0.9rem;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   font-family: var(--font-display), sans-serif;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -2691,14 +3100,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (max-width: 47.99em) {
-  .deck-inbox-summary {
+  .deck-inbox-summary.lcars-panel {
     gap: 0.65rem;
-    min-height: 0;
-  }
-
-  .deck-inbox-summary__count {
-    min-width: 2rem;
-    font-size: 1.9rem;
+    width: 100%;
+    margin-left: 0;
   }
 
   .deck-inbox-summary__action {
@@ -2770,7 +3175,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   border-left: 3px solid var(--mantine-color-dark-4);
   background: var(--lcars-surface-raised);
   padding: 8px 12px;
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .console-repository-selector {
@@ -2801,4 +3206,494 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   align-items: center;
   min-height: 44px;
   min-width: 44px;
+}
+
+/* ---- Operations panels (ops-panels.tsx) ----
+   The panel language of design/fleet-console.html, shared by Bridge, Inbox,
+   Agents and Shuttlebay: a square accent spine, an uppercase head with count
+   and trailing meta, hairline tables, flat phase blocks and meters, and state
+   squares. The decision inbox also carries the signal bar down its trailing
+   edge. */
+.ops-panel {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: var(--lcars-spine-width) minmax(0, 1fr);
+  column-gap: 16px;
+}
+
+.ops-panel::before {
+  content: '';
+  background: var(--lcars-accent);
+}
+
+.ops-panel[data-signalled] {
+  grid-template-columns:
+    var(--lcars-spine-width) minmax(0, 1fr)
+    var(--lcars-spine-width);
+}
+
+.ops-panel[data-signalled]::after {
+  content: '';
+  background: linear-gradient(to bottom, var(--lcars-signal-stops));
+}
+
+.ops-panel__body {
+  min-width: 0;
+}
+
+.ops-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.ops-panel__title {
+  margin: 0;
+  color: var(--lcars-ink);
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.1875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ops-panel__count {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.ops-panel__meta {
+  margin-left: auto;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.ops-empty {
+  margin: 0;
+  padding: 12px 0;
+  color: var(--lcars-ink-dim);
+  font-size: 0.8125rem;
+}
+
+.ops-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ops-table th {
+  padding: 10px 10px 8px 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ops-table td {
+  padding: 10px 10px 10px 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+  vertical-align: middle;
+}
+
+.ops-table tbody tr:hover td {
+  background: var(--lcars-surface-raised);
+}
+
+.ops-table :is(td, th).ops-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ops-table td.ops-num {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+}
+
+.ops-cell-clip {
+  width: 40%;
+  max-width: 0;
+}
+
+.ops-table .mantine-Badge-root {
+  max-width: none;
+  overflow: visible;
+}
+
+.ops-table .mantine-Badge-label {
+  overflow: visible;
+}
+
+.ops-cell-wide {
+  width: 52%;
+}
+
+.ops-ref {
+  display: inline-block;
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ops-cell-clip :is(.ops-item-title, .bridge-row-select) {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--lcars-ink);
+  font-size: 0.875rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-subtle-link {
+  margin-right: 8px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.6875rem;
+}
+
+.ops-diagnosis {
+  display: block;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--lcars-warning) 70%, var(--lcars-ink));
+  font-size: 0.75rem;
+  white-space: normal;
+}
+
+.ops-dim,
+.ops-mono-dim {
+  color: var(--lcars-ink-dim);
+}
+
+.ops-mono-dim {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.ops-unavailable {
+  color: var(--lcars-ink-dim);
+  font-size: 0.6875rem;
+}
+
+.ops-phase {
+  display: flex;
+  gap: 2px;
+}
+
+.ops-phase > i {
+  display: block;
+  width: 18px;
+  height: 8px;
+  background: var(--lcars-hairline);
+}
+
+.ops-phase > i[data-state='done'] {
+  background: var(--lcars-accent);
+}
+
+.ops-phase > i[data-state='current'] {
+  background: linear-gradient(
+    to right,
+    var(--lcars-accent) var(--p),
+    color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface)) var(--p)
+  );
+}
+
+.ops-phase-label {
+  margin-top: 6px;
+}
+
+.ops-meter {
+  min-width: 80px;
+  height: 6px;
+  background: var(--lcars-hairline);
+}
+
+.ops-meter > i {
+  display: block;
+  height: 100%;
+  background: color-mix(
+    in srgb,
+    var(--lcars-ink-dim) 60%,
+    var(--lcars-surface)
+  );
+}
+
+.ops-meter[data-tone='warn'] > i {
+  background: var(--lcars-warning);
+}
+
+.ops-meter[data-tone='fail'] > i {
+  background: var(--mantine-color-red-5);
+}
+
+.ops-budget-cell {
+  width: 170px;
+}
+
+.ops-budget {
+  margin-top: 6px;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.ops-budget b {
+  color: var(--lcars-ink);
+  font-weight: 500;
+}
+
+.ops-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.ops-state::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: currentColor;
+}
+
+.ops-state[data-tone='ok'] {
+  color: color-mix(in srgb, var(--mantine-color-green-5) 60%, var(--lcars-ink));
+}
+
+.ops-state[data-tone='fail'] {
+  color: color-mix(in srgb, var(--mantine-color-red-5) 60%, var(--lcars-ink));
+}
+
+.ops-state[data-tone='warn'] {
+  color: color-mix(in srgb, var(--lcars-warning) 70%, var(--lcars-ink));
+}
+
+.ops-state[data-tone='busy'] {
+  color: var(--lcars-ink);
+}
+
+.ops-group-head td {
+  padding-top: 12px;
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.ops-group-alert {
+  margin-top: 6px;
+  padding: 4px 10px;
+  border-left: 4px solid var(--mantine-color-red-5);
+  color: var(--lcars-ink);
+  font-weight: 400;
+}
+
+.ops-inbox {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ops-inbox > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.ops-inbox__kind {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ops-inbox__title {
+  margin: 5px 0 4px;
+  color: var(--lcars-ink);
+}
+
+.ops-inbox__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+.ops-row-action {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--lcars-ink-on-muted);
+  background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.ops-row-action:hover {
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
+  text-decoration: none;
+}
+
+.ops-host {
+  font-family: var(--font-mono), monospace;
+  font-weight: 500;
+}
+
+.ops-host-spec {
+  display: block;
+  margin-top: 2px;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.6875rem;
+}
+
+.ops-slots {
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 180px;
+  gap: 2px;
+}
+
+.ops-slots > i {
+  display: block;
+  width: 12px;
+  height: 12px;
+  background: var(--lcars-hairline);
+}
+
+.ops-slots > i[data-state='busy'] {
+  background: var(--lcars-ink-dim);
+}
+
+.ops-slots > i[data-state='pending'] {
+  background: var(--lcars-warning);
+}
+
+.ops-slots > i[data-state='free'] {
+  border: 1px solid var(--lcars-hairline);
+  background: transparent;
+}
+
+.ops-telemetry {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.ops-telemetry > div {
+  padding: 0 14px;
+  border-left: 1px solid var(--lcars-hairline);
+}
+
+.ops-telemetry > div:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.ops-telemetry__value {
+  margin-top: 6px;
+  font-family: var(--font-mono), monospace;
+  font-size: 1.125rem;
+  font-weight: 500;
+}
+
+.ops-rows > * + * {
+  border-top: 1px solid var(--lcars-hairline);
+}
+
+/* Bridge: readouts, then a wide stack beside a narrow one. The detail pane
+   appears only once a row is selected. */
+.bridge-cols {
+  display: grid;
+  gap: 28px;
+  align-items: start;
+}
+
+.bridge-stack {
+  display: grid;
+  min-width: 0;
+  gap: 28px;
+  align-content: start;
+}
+
+@media (min-width: 82.5em) {
+  .bridge-workspace:not([data-sel]) .bridge-cols {
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  }
+}
+
+/* Phones: each table row becomes a stacked card; the head is redundant with
+   the cell content. */
+@media (max-width: 47.99em) {
+  .ops-table thead {
+    display: none;
+  }
+
+  .ops-table,
+  .ops-table tbody {
+    display: block;
+  }
+
+  .ops-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--lcars-hairline);
+  }
+
+  .ops-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .ops-table td.ops-cell-clip {
+    grid-column: 1 / -1;
+    width: auto;
+    max-width: none;
+  }
+
+  .ops-table :is(.ops-ref, .ops-item-title, .bridge-row-select) {
+    display: block;
+    min-height: 44px;
+    padding-block: 12px;
+    line-height: 20px;
+  }
+
+  .ops-row-action {
+    min-height: 44px;
+  }
+
+  .ops-panel__meta {
+    margin-left: 0;
+  }
 }

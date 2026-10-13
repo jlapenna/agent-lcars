@@ -745,12 +745,14 @@ describe('handleWebhookDelivery', () => {
     });
     expect(requestSpy).toHaveBeenCalledWith(
       expect.objectContaining({
+        priority: 'normal',
         work: {
           origin: { principal: 'github:jlapenna', channel: 'github' },
           spec: {
             title: 'T',
             description: 'B',
             pipeline: 'claude',
+            priority: 'normal',
             target: { repo: 'jlapenna/agent-lcars' },
           },
         },

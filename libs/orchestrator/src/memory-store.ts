@@ -55,6 +55,7 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  queuePriorityTurnAfter,
   type RequestBinding,
   type RequestTransactionState,
   type RunTransactionState,
@@ -70,6 +71,7 @@ export class MemoryStore implements OrchestratorStore {
   readonly #capacityRecords = new Map<string, CapacityRecord>();
   readonly #tasks = new Map<string, VersionedTask>();
   readonly #providerCooldowns = new Map<string, ProviderCooldown>();
+  readonly #priorityPositions = new Map<string, number>();
   readonly #runs = new Map<string, Run>();
   readonly #requestRuns = new Map<string, string>();
   readonly #requestBindings = new Map<
@@ -115,6 +117,7 @@ export class MemoryStore implements OrchestratorStore {
       state: structuredClone(this.#capacity),
       records,
       runs: structuredClone(runs),
+      priorityPositions: new Map(this.#priorityPositions),
       coolingPipelines: new Set(
         [...this.#providerCooldowns.entries()]
           .filter(([, value]) => providerIsCoolingDown(value, input.now))
@@ -133,6 +136,11 @@ export class MemoryStore implements OrchestratorStore {
       this.#capacityRecords.set(key, structuredClone(record));
     if (result.run !== undefined)
       this.#runs.set(result.run.runId, structuredClone(result.run));
+    if (result.priorityTurn !== undefined)
+      this.#priorityPositions.set(
+        result.priorityTurn.pipeline,
+        result.priorityTurn.position,
+      );
     return structuredClone(result.value);
   }
 
@@ -742,7 +750,13 @@ export class MemoryStore implements OrchestratorStore {
           input.now,
         ),
     );
-    const candidate = selectFairQueuedRun(runs, runs, eligible, input.now);
+    const candidate = selectFairQueuedRun(
+      runs,
+      runs,
+      eligible,
+      input.now,
+      this.#priorityPositions,
+    );
     if (candidate === undefined) return undefined;
     const claimed: Run = {
       ...candidate,
@@ -768,6 +782,13 @@ export class MemoryStore implements OrchestratorStore {
       updatedAt: input.now,
     };
     this.#runs.set(candidate.runId, claimed);
+    this.#priorityPositions.set(
+      candidate.pipeline,
+      queuePriorityTurnAfter(
+        this.#priorityPositions.get(candidate.pipeline) ?? 0,
+        candidate.priority ?? 'normal',
+      ),
+    );
     return structuredClone(claimed);
   }
 

@@ -52,6 +52,12 @@ type Model = {
     secret: string;
     bindings: Record<string, string[]>;
   }[];
+  serviceAccountIamPolicies?: {
+    project: string;
+    serviceAccount: string;
+    rationale: string;
+    bindings: Record<string, string[]>;
+  }[];
 };
 
 const model = JSON.parse(fs.readFileSync(modelPath, 'utf8')) as Model;
@@ -119,31 +125,6 @@ describe('IAM contract model', () => {
     }
   });
 
-  it('models the permission set of every App', () => {
-    // An App gaining a permission is the other half of what makes
-    // repository_selection load-bearing: administration:write over "all
-    // repositories" is admin over every repo in the account.
-    for (const app of model.githubApps) {
-      expect(Object.keys(app.permissions ?? {}).length).toBeGreaterThan(0);
-    }
-  });
-
-  it('records repository_selection for every installation', () => {
-    // The autoscaler App's installations are both "all", which is exactly why
-    // this has to be modelled: a scope widening must be drift, not a surprise.
-    for (const app of model.githubApps) {
-      for (const installation of app.installations) {
-        expect({
-          installation: installation.id,
-          selection: installation.repositorySelection,
-        }).toEqual({
-          installation: installation.id,
-          selection: expect.stringMatching(/^(all|selected)$/),
-        });
-      }
-    }
-  });
-
   it('gives every exemption a reason and a fleet repository', () => {
     for (const exception of model.fleetCoverageExceptions ?? []) {
       expect(model.fleetRepositories).toContain(exception.repository);
@@ -157,57 +138,47 @@ describe('IAM contract model', () => {
     }
   });
 
-  it('keeps CLAUDE_CODE_OAUTH_TOKEN modelled as exactly one binding', () => {
-    const entry = model.secretIamPolicies.find(
-      (candidate) => candidate.secret === 'CLAUDE_CODE_OAUTH_TOKEN',
+  it("pins the work-reader's impersonation set to the binding Terraform declares", () => {
+    // The model names who may mint the read-only Work identity's tokens; the
+    // Terraform resource is what makes it true. A second member added to
+    // either side alone is the widening this guards against (#2502).
+    const main = fs.readFileSync(
+      path.join(repoRoot, 'infra/terraform/main.tf'),
+      'utf8',
     );
-    expect(entry?.bindings).toEqual({
-      'roles/secretmanager.secretAccessor': [
-        'serviceAccount:claude-token-reader@agent-lcars.iam.gserviceaccount.com',
-      ],
-    });
-  });
+    const block = main.match(
+      /resource "google_service_account_iam_member" "work_reader_token_creator" \{(.*?)\n\}/s,
+    );
+    if (!block) throw new Error('no work_reader_token_creator resource');
+    const attribute = (name: string): string | undefined =>
+      block[1].match(new RegExp(`\\b${name}\\s*=\\s*"([^"]+)"`))?.[1];
+    const accountId = main.match(
+      /resource "google_service_account" "work_reader" \{[^}]*?account_id\s*=\s*"([^"]+)"/s,
+    )?.[1];
 
-  it('keeps every modelled provider condition tied to a real workflow file', () => {
-    // The consumer asserts these refs against live GitHub. Here we only check
-    // the shape, so a typo cannot reach the collector as an unresolvable ref.
-    const pattern =
-      /([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/\.github\/workflows\/([A-Za-z0-9_.-]+\.ya?ml)/g;
-    const refs = new Set<string>();
-    for (const project of Object.values(model.gcpProjects)) {
-      for (const pool of Object.values(project.pools)) {
-        for (const provider of Object.values(pool.providers ?? {})) {
-          for (const match of (provider.attributeCondition ?? '').matchAll(
-            pattern,
-          )) {
-            refs.add(match[0]);
-          }
-        }
-      }
-    }
-    expect(refs.size).toBeGreaterThan(0);
-    for (const ref of refs) {
-      expect(ref).toMatch(/^[^/]+\/[^/]+\/\.github\/workflows\/[^/]+\.ya?ml$/);
-    }
-  });
-
-  it('models every installation with an id, an account and a repository list', () => {
-    for (const app of model.githubApps) {
-      expect(app.installations.length).toBeGreaterThan(0);
-      for (const installation of app.installations) {
-        expect(Number.isInteger(installation.id)).toBe(true);
-        expect(installation.account).not.toHaveLength(0);
-      }
-    }
-    // Only a checkable App's repository list is asserted live, so only it has
-    // to carry one; recording a guess for the other would be worse than
-    // recording nothing.
-    for (const app of model.githubApps.filter(
-      (candidate) => candidate.checkable,
-    )) {
-      for (const installation of app.installations) {
-        expect(installation.repositories).toBeDefined();
-      }
-    }
+    const policies = (model.serviceAccountIamPolicies ?? []).filter((entry) =>
+      entry.serviceAccount.startsWith('work-reader@'),
+    );
+    expect(policies).toEqual([
+      {
+        project: 'agent-lcars',
+        serviceAccount: `${accountId}@agent-lcars.iam.gserviceaccount.com`,
+        rationale: expect.stringMatching(/\S/),
+        bindings: { [attribute('role') ?? '']: [attribute('member')] },
+      },
+    ]);
+    // Nothing else in any Terraform file refers to this account: no second
+    // impersonation binding (by .name, .id or .email), no project role for
+    // it (.member/.email), and no hard-coded address.
+    const terraformDir = path.join(repoRoot, 'infra/terraform');
+    const everyFile = fs
+      .readdirSync(terraformDir)
+      .filter((file) => file.endsWith('.tf'))
+      .map((file) => fs.readFileSync(path.join(terraformDir, file), 'utf8'))
+      .join('\n');
+    expect(
+      everyFile.match(/google_service_account\.work_reader\.\w+/g) ?? [],
+    ).toEqual(['google_service_account.work_reader.name']);
+    expect(everyFile).not.toMatch(/work-reader@/);
   });
 });

@@ -1,12 +1,13 @@
 # Hooks-based session telemetry (design)
 
-Status: proposal, 2026-10-10, hook surfaces verified empirically the same day
-(section 11). Phase 0 (contract, `lcars hook claude`, gated ingest route)
-and the in-repo part of phase 1 (`lcars hook codex`, `lcars integration
-install`, the daemon's hook-marker skip) are implemented; nothing is enabled
-in production yet. Owner: telemetry. Supersedes nothing yet; the host watcher
-daemon (`apps/telemetry-watcher`, issue #2540) keeps running until phase 3
-below.
+Status: phases 0-3 shipped; phase 3 done in-repo 2026-10-12 and the host
+daemon's code deleted 2026-10-13. Proposed
+2026-10-10, hook surfaces verified empirically the same day (section 11).
+Owner: telemetry. Hooks are the only live telemetry path for Claude Code,
+Codex, and OpenCode on workstations and QueueExecutor runners; the polling
+host watcher daemon (`apps/telemetry-watcher`, issue #2540) and the runner's
+live polling sidecar are retired and their code is deleted. See "Phase 3
+status" below for what was removed.
 
 ## Revision 2026-10-12: hosts write directly
 
@@ -16,8 +17,8 @@ gain write access to the telemetry database, which it holds read-only by
 design, and impersonating `telemetry-writer` from the console would have
 granted the same capability. The route was removed before it was ever
 enabled. Instead `lcars hook flush` writes each spooled event itself as the
-`telemetry-writer` service account (the identity the watcher daemon and
-runner sidecars already use), inside a Firestore transaction that re-reads
+`telemetry-writer` service account (the identity `runner finalize` and the
+retired watcher daemon use), inside a Firestore transaction that re-reads
 the stored doc and refuses an event whose `seq` is not newer than the stored
 hook observer from the same host. Each enrolled host holds the writer key
 at `~/.config/agent-lcars/writer-key.json`, delivered by homegit; this gives
@@ -26,12 +27,62 @@ for leaving the console's permissions untouched. Sections below that
 describe the ingest route, host tokens, or the `telemetry.writer` scope are
 superseded by this paragraph.
 
-**Runner status (phase 2):** `LCARS_HOOK_TELEMETRY_PROVIDERS` on the queue
-executor selects Claude and Codex pipelines whose workers install the hooks
-and skip the polling sidecar (`runtime/hook-telemetry-bootstrap.sh`); the
-flusher uses the runner's telemetry-writer credentials file through
-`LCARS_TELEMETRY_CREDENTIALS_FILE`. Empty by default; enabling it is an
-executor environment change.
+**Runner status (phase 3):** every QueueExecutor pipeline (Claude, Codex,
+OpenCode) reports through hooks unconditionally
+(`runtime/hook-telemetry-bootstrap.sh`); the flusher uses the runner's
+telemetry-writer credentials file through `LCARS_TELEMETRY_CREDENTIALS_FILE`.
+Phase 2 gated this behind the executor selector
+`LCARS_HOOK_TELEMETRY_PROVIDERS`; the selector is removed and the executor
+ignores the variable if a deployment still sets it. A failed hook install
+(for example, unreadable credentials) prints a `::warning::` and the run
+continues without live telemetry; there is no polling fallback.
+`sidecar-lifecycle.sh finalize` still writes the authoritative ended doc
+after the hook spool is fenced and drained, and `runner resume` is
+unchanged.
+
+**Phase 3 status (2026-10-12):**
+
+- Removed in this repository: the runner's live `runner sidecar` mode
+  (`src/lib/runner.ts`), `sidecar-lifecycle.sh start` (now a fail-soft
+  no-op for older `direct-runner.sh` copies), the `job-daemon.sh` wrapper,
+  the executor selector, the daemon image (`apps/telemetry-watcher/Dockerfile`
+  and its `docker-build` target), and the `deploy/` Compose bundle. The
+  workstation CLI installer moved to
+  `apps/telemetry-watcher/bin/install-session-title-cli.sh`.
+- Removed in Homelab: the deploy play, image publish, Prometheus scrape, and
+  alerts (jlapenna/homelab#2405).
+- Follow-up done (2026-10-13): the daemon's host-mode source is deleted —
+  `runHostWatcher` and `WatcherDaemon` (`daemon.ts`), `loadConfig` and its
+  daemon-only environment (`AGENT_TELEMETRY_WATCH_ROOTS`,
+  `AGENT_TELEMETRY_CHECKOUT_ROOTS`, heartbeat/staleness, share dir, metrics
+  host/port, `AGENT_TELEMETRY_SESSION_STATE_DIR`), `process-check.ts`,
+  `discover-artifacts.ts`, the Prometheus `/metrics` server (`metrics.ts`),
+  Antigravity summary-DB polling, the opt-in CLI transcript archive
+  (`cli-transcript-archive.ts`, `AGENT_TELEMETRY_CLI_ARCHIVE_POLICY`), the
+  hook-marker skip (`isHookReported`), the `serve` target, and the
+  `chokidar` dependency. `node sidecar.cjs` with no subcommand is now a
+  usage error. The standalone bundle smoke test runs a credential-free
+  `runner finalize` over a fixture instead of booting the daemon. The
+  console still reads `cliTranscriptArchive` pointers already on stored
+  docs.
+
+**OpenCode client:** OpenCode has no command hooks, so
+`agents/opencode/lcars-telemetry.js` is a plugin. On `session.created`, a new
+user message, a completed tool part (throttled to one report per 15 s), and
+`session.idle` it reads the session through the SDK client, writes an
+export-shaped `{info, messages}` snapshot to a private temp file, and hands it
+to a detached `lcars hook opencode` as `transcript_path`, so the same reducer
+that reads `opencode export` output produces the summary. `session.deleted`
+fires after OpenCode has removed the session, so its `SessionEnd` is
+lifecycle-only: no snapshot and no summary, with `cwd` taken from the event.
+The client deletes the snapshot after reading it, which lets the final report
+survive `opencode run` exiting on its last idle. Reports for one session never
+overlap; events arriving mid-report coalesce to the most important one.
+Subagent sessions (`parentID` set) are never snapshotted. `lcars integration
+install opencode` copies the plugin into
+`${XDG_CONFIG_HOME:-~/.config}/opencode/plugins/`; the runner image ships it
+in its OpenCode config instead, where it stays inert unless the bootstrap
+exported `LCARS_TELEMETRY_CREDENTIALS_FILE`.
 
 ## 1. Problem
 
@@ -260,7 +311,9 @@ runtime, clientVersion }` so provenance is visible next to daemon-written
   `LCARS_TELEMETRY_CREDENTIALS=/run/secrets/telemetry-writer.json`.
 - Delete the `start` mode of `sidecar-lifecycle.sh` and the `telemetry`
   job-daemon; `finalize` and `resume` stay exactly as they are. The
-  bounded stop-wait before finalize disappears with the daemon.
+  bounded stop-wait before finalize disappears with the daemon. (Done in
+  phase 3; the shipped runner installs hooks with `lcars integration
+install` rather than baked `--settings` files.)
 
 In-Flight UI latency improves from a 10 s tick to the hook (seconds).
 
@@ -284,7 +337,7 @@ trusted_hash = "..."` in `~/.codex/config.toml`, and homegit's
   everything else.
 - `~/.config/opencode/plugins/lcars-telemetry.js` installed by homegit.
 - `lcars` binary: stop relying on the manual
-  `deploy/install-session-title-cli.sh`. `packages/fleet-tools`
+  `bin/install-session-title-cli.sh` (formerly `deploy/`). `packages/fleet-tools`
   (`@agent-lcars/agent-tools`) is dependency-free committed scripts packed
   straight from a sparse clone by homegit's
   `homegit-repo-tools-bootstrap.sh`, so a built esbuild bundle does not fit
@@ -300,8 +353,8 @@ trusted_hash = "..."` in `~/.codex/config.toml`, and homegit's
   `run_onchange_after_30-homegit-opencode-env.sh.tmpl` exactly. One token
   per host.
 - Config: `~/.config/agent-lcars/config.json` `{ "repos": ["jlapenna/*"] }`
-  derived from the same source the deploy's `AGENT_TELEMETRY_CHECKOUT_ROOTS`
-  comes from today.
+  derived from the same source the retired daemon deploy's
+  `AGENT_TELEMETRY_CHECKOUT_ROOTS` came from.
 
 ### 4.7 Patterns borrowed from herdr
 
@@ -311,7 +364,7 @@ this fleet (`~/.claude/hooks/herdr-agent-state.sh`,
 Its choices were made under the same constraints and this design adopts
 them:
 
-- **Self-installing integration.** `lcars integration install claude|codex|all`
+- **Self-installing integration.** `lcars integration install claude|codex|opencode|all`
   writes the launcher script, idempotently, with `# LCARS_INTEGRATION_ID` /
   `# LCARS_INTEGRATION_VERSION` headers so `lcars integration status` can
   report an outdated or hand-edited install, and appends the hook entries on
@@ -550,8 +603,10 @@ shared module bundled into both artifacts.
 | 2     | Runner: `--settings`, `CODEX_HOME` hooks, OpenCode plugin; remove `sidecar start`                                                              | Native work smoke runbook passes on all three pipelines; In-Flight UI updates within 5 s of a tool call                  |
 | 3     | `docker compose down` the watcher on each host; delete `WatcherDaemon` host mode, `process-check.ts`, `/metrics`, `deploy/`; reducer lib stays | README/OPERATIONS/onboarding docs updated; homelab Prometheus alert for the watcher removed in the same change           |
 
-Each phase is reversible by removing the hook entries; the daemon keeps
-writing untouched docs until phase 3.
+Phases 0-2 were reversible by removing the hook entries while the daemon
+kept writing untouched docs. Phase 3 is done in-repo, including deleting the
+daemon's code (see "Phase 3 status" at the top); rolling it back means
+reverting those changes, since no polling writer remains.
 
 ## 7. Operations after phase 3
 
@@ -593,6 +648,14 @@ writing untouched docs until phase 3.
    summary.
 6. **Missed `SessionEnd`.** Tolerated by `displayLiveness` ageing (4.3);
    the only visible effect is `idle` instead of `ended` for up to 10 min.
+   A QueueExecutor worker that dies (node reboot, OOM, eviction) never runs
+   `runner finalize` either. When the executor's exit report gets `lost`
+   back from the Work API, it sets `liveness: ended` on that run's
+   `live`/`idle` session docs, each in a transaction that re-reads the doc and
+   skips one that is already terminal or now carries another `runId` (a
+   resumed retry). A late flush from the dying worker keeps the lost run's
+   `runId`, so it is still ended (`apps/runner-autoscaler/lost_run_sessions.go`). Best effort, and
+   only when executor status publication is enabled.
 
 ## 9. Decisions
 

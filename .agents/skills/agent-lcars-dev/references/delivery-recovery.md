@@ -86,6 +86,28 @@ was lost. A changed head, draft, closed PR, unaddressed finding or known failed
 check needs its owning correction. Pending checks remain pending; arming
 does not bypass them.
 
+Separate a deterministic state refusal from transport and quota failure before
+any retry. A request that got a complete response and refuses with the same
+message on every re-read is validation, not a lost packet: `UNPROCESSABLE` with
+`Pull request ... is in clean status` is that case. It is not eligible for the
+one queue-only recovery below, and the rate-limit/head-mismatch categories in
+its receipt do not describe it; record it as a state refusal. On PR #2551's
+reviewed head, the queue-only arming that had previously succeeded refused that
+way after the operator withdrew the armed request to diagnose an
+infrastructure-only failed check, while the PR readback stayed OPEN/ready with
+`autoMergeRequest` null and every required current-head check green
+([#2558](https://github.com/jlapenna/agent-lcars/issues/2558)). Keep the causes
+distinct — the runner preemption, and the withdrawn-queue/clean-status refusal
+that followed the disarm, are two failures, and neither is quota or transport.
+Preserving the existing exact-head queue avoids the second one entirely.
+
+For that unchanged-head case, reconcile actual head, queue state, review state,
+closing scope and current checks, then act on what actually changed: qualify the
+real source composition at a fresh revision and arm that reviewed head through
+[pr.md](pr.md), rather than repeating the same arming request on a head GitHub
+already considers clean. Repeated identical queueing is a retry loop, not
+recovery.
+
 Query the same login's visible quota independently:
 
 ```bash
@@ -159,21 +181,28 @@ After success or failure, re-read the exact PR/head and auto-merge state.
 Require the same ready head and non-null SQUASH request; otherwise retain the
 blocker without blind retries. If it merged during recovery, audit the exact
 merge/rules suite as [pr.md](pr.md) requires. Direct/admin merge, policy edits,
-deployment and CI reruns are not fallbacks for transport errors.
+deployment and CI reruns are not fallbacks for transport errors, and a
+deterministic state refusal grants no more authority than a timeout does.
 
 ## Qualify the procedure at its actual boundary
 
 Record observed, inferred and unknown facts separately. #2339's SYN-SENT and
 terminal connect error located the proximal blockage; a simultaneous fresh
 successful probe did not establish its network cause. #2329's API error with
-nonzero visible quota did not establish token exhaustion.
+nonzero visible quota did not establish token exhaustion. #2558's
+`UNPROCESSABLE` clean-status refusal on an OPEN/ready, all-green, unqueued PR
+established an operator-sequencing cause — a withdrawn exact-head queue — not a
+scheduler, quota or transport cause.
 
 Exercise terminal transport failure/unchanged-head recovery, lost-response
 already-published/armed state, changed heads, failed reads, hook rejection and
 response-header filtering. Use owned local Git repositories and sanitized
 response fixtures; do not manufacture production dispatches, disable controls
-or change host policy. A fresh independent operator trajectory can demonstrate
-usability; fixtures do not prove a GitHub backend cause or deployed product.
+or change host policy. Classify an already-armed queue, an unchanged-head
+infrastructure retry and a deterministic clean-status refusal from sanitized
+state and fixture bodies; do not toggle a live PR to demonstrate them. A fresh
+independent operator trajectory can demonstrate usability; fixtures do not prove
+a GitHub backend cause or deployed product.
 
 Command references: [GitHub CLI API](https://cli.github.com/manual/gh_api) and
 [curl time limits](https://curl.se/docs/manpage.html).

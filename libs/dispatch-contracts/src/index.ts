@@ -29,6 +29,7 @@ export {
   PLACEMENT_STALENESS_MS,
   runPlacementSchema,
 } from './placement';
+export { QUEUE_PRIORITIES, type QueuePriority } from './priority';
 export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,

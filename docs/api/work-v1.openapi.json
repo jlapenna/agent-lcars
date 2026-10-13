@@ -172,6 +172,451 @@
   },
   "openapi": "3.2.0",
   "paths": {
+    "/anchors/github/owner": {
+      "get": {
+        "operationId": "getGithubAnchorOwner",
+        "summary": "Who Console says is working a GitHub issue or pull request",
+        "description": "Read-only. Answers from the orchestrator task and runs for the anchor and from recent CLI session telemetry; it records no claim. Call it before starting work on an issue. Requires work.operator or work.reader; the repository must be a control-plane repository, and a GitHub Actions principal may read only its own repository.",
+        "tags": ["items"],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "repo",
+            "schema": {
+              "type": "string",
+              "maxLength": 140,
+              "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true,
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "issue",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true,
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "anchor": {
+                      "type": "object",
+                      "properties": {
+                        "repo": {
+                          "type": "string",
+                          "maxLength": 140,
+                          "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                        },
+                        "issue": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["repo", "issue"],
+                      "additionalProperties": false
+                    },
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "verdict": {
+                      "type": "string",
+                      "enum": ["fleet-run", "interactive-session", "none"]
+                    },
+                    "complete": {
+                      "type": "boolean"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "task": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "running",
+                            "done",
+                            "parked",
+                            "failed",
+                            "canceled"
+                          ]
+                        },
+                        "pipeline": {
+                          "type": "string"
+                        },
+                        "runCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "activeRunId": {
+                          "type": "string"
+                        },
+                        "updatedAt": {
+                          "type": "string"
+                        },
+                        "run": {
+                          "type": "object",
+                          "properties": {
+                            "runId": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "running",
+                                "finished",
+                                "canceled",
+                                "lost"
+                              ]
+                            },
+                            "pipeline": {
+                              "type": "string"
+                            },
+                            "priority": {
+                              "default": "normal",
+                              "type": "string",
+                              "enum": ["urgent", "normal", "background"]
+                            },
+                            "createdAt": {
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "type": "string"
+                            },
+                            "result": {
+                              "type": "object",
+                              "properties": {
+                                "ok": {
+                                  "type": "boolean"
+                                },
+                                "summary": {
+                                  "type": "string",
+                                  "maxLength": 4096
+                                },
+                                "ref": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                },
+                                "relatedRefs": {
+                                  "maxItems": 1,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "maxLength": 1024
+                                  }
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "maxLength": 16384
+                                }
+                              },
+                              "required": ["ok"],
+                              "additionalProperties": false
+                            },
+                            "providerFallback": {
+                              "type": "object",
+                              "properties": {
+                                "allowedPipelines": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "attemptedPipelines": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "originalRunId": {
+                                  "type": "string"
+                                },
+                                "fromRunId": {
+                                  "type": "string"
+                                },
+                                "trigger": {
+                                  "type": "object",
+                                  "properties": {
+                                    "reason": {
+                                      "type": "string",
+                                      "enum": [
+                                        "provider-limit",
+                                        "provider-cooldown"
+                                      ]
+                                    },
+                                    "failureRunId": {
+                                      "type": "string"
+                                    },
+                                    "limitedPipeline": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "reason",
+                                    "failureRunId",
+                                    "limitedPipeline"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "allowedPipelines",
+                                "attemptedPipelines",
+                                "originalRunId"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "reply": {
+                              "type": "string",
+                              "maxLength": 16384
+                            },
+                            "replyChannel": {
+                              "type": "string",
+                              "maxLength": 64
+                            },
+                            "replyPrincipal": {
+                              "type": "string",
+                              "maxLength": 256
+                            },
+                            "queue": {
+                              "type": "object",
+                              "properties": {
+                                "state": {
+                                  "type": "string",
+                                  "enum": ["queued", "claimed", "retired"]
+                                },
+                                "claimedBy": {
+                                  "type": "string"
+                                },
+                                "claimedAt": {
+                                  "type": "string"
+                                },
+                                "firstHeartbeatAt": {
+                                  "type": "string"
+                                },
+                                "providerProcessStartedAt": {
+                                  "type": "string"
+                                },
+                                "startDeadlineAt": {
+                                  "type": "string"
+                                },
+                                "placement": {
+                                  "type": "object",
+                                  "properties": {
+                                    "phase": {
+                                      "type": "string",
+                                      "enum": [
+                                        "waiting-for-placement",
+                                        "bootstrapping",
+                                        "unavailable"
+                                      ]
+                                    },
+                                    "reason": {
+                                      "type": "string",
+                                      "enum": [
+                                        "pending",
+                                        "unschedulable",
+                                        "scheduled",
+                                        "inventory-unavailable",
+                                        "launch-pending"
+                                      ]
+                                    },
+                                    "observedAt": {
+                                      "type": "string",
+                                      "maxLength": 32,
+                                      "format": "date-time",
+                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                    },
+                                    "jobCreatedAt": {
+                                      "type": "string",
+                                      "maxLength": 32,
+                                      "format": "date-time",
+                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                    }
+                                  },
+                                  "required": ["phase", "reason", "observedAt"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": ["state"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "runId",
+                            "state",
+                            "pipeline",
+                            "priority",
+                            "createdAt",
+                            "updatedAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "runSessions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string"
+                              },
+                              "runId": {
+                                "type": "string"
+                              },
+                              "startedAt": {
+                                "type": "string"
+                              },
+                              "lastActivityAt": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string"
+                              },
+                              "transcriptGcsUri": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "runId",
+                              "startedAt",
+                              "lastActivityAt"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "pipeline",
+                        "runCount",
+                        "updatedAt",
+                        "runSessions"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "cliSessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "liveness": {
+                            "type": "string",
+                            "enum": ["live", "idle", "ended", "stale"]
+                          },
+                          "host": {
+                            "type": "string"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "pr": {
+                            "type": "object",
+                            "properties": {
+                              "number": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "url": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["number", "url"],
+                            "additionalProperties": false
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "lastActivityAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sessionId",
+                          "agent",
+                          "liveness",
+                          "startedAt",
+                          "lastActivityAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "anchor",
+                    "observedAt",
+                    "verdict",
+                    "complete",
+                    "warnings",
+                    "cliSessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal may not read this repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/metrics/lifecycle": {
       "get": {
         "operationId": "getLifecycleMetrics",
@@ -401,6 +846,11 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "priority": {
+                        "default": "normal",
+                        "type": "string",
+                        "enum": ["urgent", "normal", "background"]
+                      },
                       "fallbackPipelines": {
                         "maxItems": 2,
                         "type": "array",
@@ -473,6 +923,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -497,6 +952,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -550,6 +1006,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -720,6 +1181,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -873,6 +1335,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -897,6 +1364,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -950,6 +1418,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -1120,6 +1593,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -1279,6 +1753,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -1303,6 +1782,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -1356,6 +1836,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -1526,6 +2011,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -1730,6 +2216,11 @@
                                 "type": "string",
                                 "enum": ["claude", "codex", "opencode"]
                               },
+                              "priority": {
+                                "default": "normal",
+                                "type": "string",
+                                "enum": ["urgent", "normal", "background"]
+                              },
                               "fallbackPipelines": {
                                 "maxItems": 2,
                                 "type": "array",
@@ -1754,6 +2245,7 @@
                               "title",
                               "description",
                               "pipeline",
+                              "priority",
                               "target"
                             ],
                             "additionalProperties": false
@@ -1813,6 +2305,11 @@
                                 },
                                 "pipeline": {
                                   "type": "string"
+                                },
+                                "priority": {
+                                  "default": "normal",
+                                  "type": "string",
+                                  "enum": ["urgent", "normal", "background"]
                                 },
                                 "createdAt": {
                                   "type": "string"
@@ -1987,6 +2484,7 @@
                                 "runId",
                                 "state",
                                 "pipeline",
+                                "priority",
                                 "createdAt",
                                 "updatedAt"
                               ],
@@ -2127,6 +2625,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -2151,6 +2654,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -2204,6 +2708,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -2374,6 +2883,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -2553,6 +3063,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -2577,6 +3092,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -2630,6 +3146,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -2800,6 +3321,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -3027,6 +3549,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -3051,6 +3578,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -3104,6 +3632,11 @@
                           },
                           "pipeline": {
                             "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
                           },
                           "createdAt": {
                             "type": "string"
@@ -3274,6 +3807,7 @@
                           "runId",
                           "state",
                           "pipeline",
+                          "priority",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -3445,6 +3979,11 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "priority": {
+                        "default": "normal",
+                        "type": "string",
+                        "enum": ["urgent", "normal", "background"]
+                      },
                       "fallbackPipelines": {
                         "maxItems": 2,
                         "type": "array",
@@ -3509,6 +4048,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -3533,6 +4077,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -3701,6 +4246,11 @@
                         "type": "string",
                         "enum": ["claude", "codex", "opencode"]
                       },
+                      "priority": {
+                        "default": "normal",
+                        "type": "string",
+                        "enum": ["urgent", "normal", "background"]
+                      },
                       "fallbackPipelines": {
                         "maxItems": 2,
                         "type": "array",
@@ -3765,6 +4315,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -3789,6 +4344,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -4090,6 +4646,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -4114,6 +4675,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -4256,6 +4818,11 @@
                                 "type": "string",
                                 "enum": ["claude", "codex", "opencode"]
                               },
+                              "priority": {
+                                "default": "normal",
+                                "type": "string",
+                                "enum": ["urgent", "normal", "background"]
+                              },
                               "fallbackPipelines": {
                                 "maxItems": 2,
                                 "type": "array",
@@ -4280,6 +4847,7 @@
                               "title",
                               "description",
                               "pipeline",
+                              "priority",
                               "target"
                             ],
                             "additionalProperties": false
@@ -4420,6 +4988,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -4444,6 +5017,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -4647,6 +5221,11 @@
                           "type": "string",
                           "enum": ["claude", "codex", "opencode"]
                         },
+                        "priority": {
+                          "default": "normal",
+                          "type": "string",
+                          "enum": ["urgent", "normal", "background"]
+                        },
                         "fallbackPipelines": {
                           "maxItems": 2,
                           "type": "array",
@@ -4671,6 +5250,7 @@
                         "title",
                         "description",
                         "pipeline",
+                        "priority",
                         "target"
                       ],
                       "additionalProperties": false
@@ -4938,6 +5518,11 @@
                   "spec": {
                     "type": "object",
                     "properties": {
+                      "priority": {
+                        "default": "normal",
+                        "type": "string",
+                        "enum": ["urgent", "normal", "background"]
+                      },
                       "title": {
                         "type": "string",
                         "minLength": 1,
@@ -7563,6 +8148,11 @@
                               "type": "string",
                               "enum": ["claude", "codex", "opencode"]
                             },
+                            "priority": {
+                              "default": "normal",
+                              "type": "string",
+                              "enum": ["urgent", "normal", "background"]
+                            },
                             "fallbackPipelines": {
                               "maxItems": 2,
                               "type": "array",
@@ -7587,6 +8177,7 @@
                             "title",
                             "description",
                             "pipeline",
+                            "priority",
                             "target"
                           ],
                           "additionalProperties": false
@@ -7736,6 +8327,11 @@
                                   "type": "string",
                                   "enum": ["claude", "codex", "opencode"]
                                 },
+                                "priority": {
+                                  "default": "normal",
+                                  "type": "string",
+                                  "enum": ["urgent", "normal", "background"]
+                                },
                                 "fallbackPipelines": {
                                   "maxItems": 2,
                                   "type": "array",
@@ -7760,6 +8356,7 @@
                                 "title",
                                 "description",
                                 "pipeline",
+                                "priority",
                                 "target"
                               ],
                               "additionalProperties": false
@@ -8472,6 +9069,32 @@
                   "claimFingerprint": {
                     "type": "string",
                     "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "disruption": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "scheduler-preemption"
+                      },
+                      "jobUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "podUid": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "observedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                      }
+                    },
+                    "required": ["kind", "jobUid", "podUid", "observedAt"],
+                    "additionalProperties": false
                   }
                 },
                 "required": ["runner"]

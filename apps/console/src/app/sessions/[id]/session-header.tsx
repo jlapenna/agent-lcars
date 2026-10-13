@@ -143,7 +143,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
                 rel="noreferrer"
                 size="sm"
               >
-                #{doc.runId} ↗
+                GitHub run #{doc.runId} ↗
               </Anchor>
             ) : (
               doc.runId
@@ -158,7 +158,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
               rel="noreferrer"
               size="sm"
             >
-              #{doc.issueNumber}
+              GitHub #{doc.issueNumber}
             </Anchor>
           </Field>
         )}
@@ -180,7 +180,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
                   rel="noreferrer"
                   size="sm"
                 >
-                  PR #{number} ↗
+                  GitHub PR #{number} ↗
                 </Anchor>
               ))}
             {doc.deliverables.commitShas.length > 0 && (

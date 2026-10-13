@@ -140,7 +140,8 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await page.getByRole('link', { name: '← All activity', exact: true }).click();
   await expect(page).toHaveURL(stoppedPageUrl);
   await expect(olderRow).toBeVisible();
-  await expect(page.getByTestId('bridge-detail-empty')).toBeVisible();
+  // With nothing selected the Bridge renders no detail pane at all.
+  await expect(page.getByTestId('bridge-detail')).toHaveCount(0);
   await page.goBack();
   await expect(page).toHaveURL(selectedUrl);
   await expect(page.getByTestId('bridge-detail')).toContainText(
@@ -178,6 +179,20 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
     page.getByRole('link', { name: /^Pagination fixture / }),
   ).toHaveCount(0);
 });
+
+async function revealInboxRepositoryFilter(page: Page) {
+  if (new URL(page.url()).pathname !== '/inbox') return;
+  const repository = page.getByRole('combobox', {
+    name: 'Repository',
+    exact: true,
+  });
+  if (await repository.isVisible()) return;
+  await page
+    .getByTestId('inbox-repository-filter')
+    .getByText('Repository filter', { exact: true })
+    .click();
+  await expect(repository).toBeVisible();
+}
 
 async function clearRepository(page: Page, destination: string) {
   const pathname = new URL(page.url()).pathname;
@@ -252,6 +267,7 @@ async function clearRepository(page: Page, destination: string) {
         (url) => url.pathname === pathname && !url.searchParams.has('repo'),
       );
       record('scope-cleared');
+      await revealInboxRepositoryFilter(page);
       await expect(
         page.getByRole('combobox', { name: 'Repository', exact: true }),
       ).toHaveValue('');
@@ -293,6 +309,12 @@ test('repository selection and clearing remain reachable on phones across Bridge
     ['/agents', 'Bridge', '/'],
   ]) {
     await page.goto(route);
+    if (route === '/inbox') {
+      await expect(
+        page.getByRole('button', { name: 'Apply repository', exact: true }),
+      ).toBeHidden();
+    }
+    await revealInboxRepositoryFilter(page);
     await page
       .getByRole('combobox', { name: 'Repository', exact: true })
       .selectOption(E2E_FIXTURE_REPOSITORY);
@@ -300,6 +322,7 @@ test('repository selection and clearing remain reachable on phones across Bridge
       .getByRole('button', { name: 'Apply repository', exact: true })
       .click();
     await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
+    await revealInboxRepositoryFilter(page);
     await expect(
       page.getByRole('combobox', { name: 'Repository', exact: true }),
     ).toHaveValue(E2E_FIXTURE_REPOSITORY);
@@ -326,6 +349,7 @@ test('repository selection and clearing remain reachable on phones across Bridge
         url.pathname === destinationPath &&
         url.searchParams.get('repo') === E2E_FIXTURE_REPOSITORY,
     );
+    await revealInboxRepositoryFilter(page);
     await expect(
       page.getByRole('combobox', { name: 'Repository', exact: true }),
     ).toHaveValue(E2E_FIXTURE_REPOSITORY);

@@ -31,14 +31,35 @@ be an array or keyed object. `$key` as the ID field explicitly selects a keyed
 object's key; array indices are not cause IDs. For example, for records already
 using `id`, `issue` and `evidence`:
 
+The following illustrative source bytes each end with one newline:
+
+`blockers.snapshot.json`:
+
+```text
+[{"id":"B1","issue":"jlapenna/agent-lcars#1","evidence":["retained/B1.md"]}]
+```
+
+`ledger.snapshot.json`:
+
+```text
+{"causes":{"B2":{"issue":"jlapenna/agent-lcars#2","bodyFile":"retained/B2.md"}}}
+```
+
+Their pinned manifest is:
+
 ```json
 {
   "expectedIds": ["B1", "B2"],
   "sources": [
-    { "name": "root", "path": "blockers.snapshot.json" },
+    {
+      "name": "root",
+      "path": "blockers.snapshot.json",
+      "sha256": "ee8ccfba2ec2552cdd01997bbc3fa493bc175750a695ad15fb4bffcee4c4e185"
+    },
     {
       "name": "delegate",
       "path": "ledger.snapshot.json",
+      "sha256": "ab1e222e99c64f21b0e328032e6bc73a784fe66dcc18c204affb59888b4f2978",
       "collection": "/causes",
       "fields": {
         "id": "$key",
@@ -50,7 +71,11 @@ using `id`, `issue` and `evidence`:
 }
 ```
 
-Add each snapshot's actual `sha256` to its source declaration for a real report.
+Every source requires its actual 64-digit hexadecimal `sha256`; absent or invalid
+pins fail before that source is read. Letter case does not change the pin. For a
+real report, compute hashes from the retained exact bytes rather than copying
+these illustrative pins. If formatting changes the bytes, recompute the hashes
+only after reviewing and freezing that new source snapshot.
 The issue field must be a repository-qualified owning identity such as
 `jlapenna/agent-lcars#2465`, not a bare number. Convert a retained public issue
 URL to that identity only in a reviewed extraction that also preserves its
@@ -89,7 +114,7 @@ Check the actual exit status before proceeding. Exit 1 withholds `totals` and
 retains diagnostic subtotals under `observed`; those are never a complete
 workstream count. Inspect `unresolved`, `aliasErrors`, `missingIds` and
 `unexpectedIds`. Missing/unreadable sources, malformed mappings, invalid JSON
-or a changed pinned snapshot also fail with no totals. Repair the smallest
+or an absent, invalid or changed snapshot pin also fail with no totals. Repair the smallest
 authoritative source or explicit alias from evidence, then assemble again.
 Retain each failed report alongside the successful one.
 

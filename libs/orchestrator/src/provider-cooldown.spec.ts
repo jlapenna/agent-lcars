@@ -60,6 +60,24 @@ describe('provider quota holds', () => {
     ).toBe('2026-09-12T01:15:00.000Z');
   });
 
+  it.each(['claude', 'codex', 'opencode'])(
+    'holds %s for one bounded probe after a model-capacity stop',
+    (pipeline) => {
+      expect(
+        providerCooldownForRun({
+          ...run,
+          pipeline,
+          result: {
+            ok: false,
+            summary: 'provider-capacity',
+            message:
+              'Selected model is at capacity. Provider failure: Selected model is at capacity. Please try a different model. resets Sep 13, 12am (UTC)',
+          },
+        })?.expiresAt,
+      ).toBe('2026-09-12T01:15:00.000Z');
+    },
+  );
+
   it('does not turn other failures, successful artifacts, or quoted task prose into provider holds', () => {
     expect(
       providerCooldownForRun({

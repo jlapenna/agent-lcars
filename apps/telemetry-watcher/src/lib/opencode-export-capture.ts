@@ -50,7 +50,7 @@ export interface CaptureOpenCodeExportsOptions {
    * session's raw export here -- the same file Claude's `--print` and
    * Codex's `--output-last-message` populate directly, now populated from
    * the sidecar's own structured export instead of scraped terminal output.
-   * Unset (the live-tick `startSidecar` caller) means skip entirely: only
+   * Unset means skip entirely: only
    * the one-shot `finalize` pass, run once after the provider exits, knows
    * the run is actually over. */
   lastMessageFile?: string;

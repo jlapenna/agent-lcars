@@ -54,15 +54,29 @@ These override any default behavior:
   it remains behind rather than stashing, resetting, or switching branches.
 
 - **Push early — the heavy gate runs on CI, not your workstation.** The
-  pre-push hook only runs the fast layer (`format:check`, affected
-  `lint`/`typecheck`) locally; it deliberately does **not** run `test` or
-  `build` — those are the expensive, whole-tree-scanning steps, and
-  `.github/workflows/ci.yml`'s `Verify` job (a required check gating every
-  merge) already re-runs the full `test typecheck build test-race --all`
-  gate on the configured CI runner fleet (GitHub-hosted for fork PRs). Running that
-  same gate again locally first just serializes your own workstation in
-  front of a check that's going to happen anyway — push once the fast
-  layer passes and let CI do the rest. See
+  pre-push hook runs the fast layer (`format:check`, affected
+  `lint`/`typecheck`) locally; it deliberately does **not** run the
+  whole-tree `test` or `build` targets — those are the expensive,
+  whole-tree-scanning steps, and `.github/workflows/ci.yml`'s `Verify` job
+  (a required check gating every merge) already re-runs the full
+  `test typecheck build test-race --all` gate on the configured CI runner
+  fleet (GitHub-hosted for fork PRs). Running that same gate again locally
+  first just serializes your own workstation in front of a check that's
+  going to happen anyway — push once the fast layer passes and let CI do
+  the rest. **The one local build exception is an `apps/console`-affected
+  push.** The hook always calls `tools/console-build-smoke.sh`, which runs
+  the real production `@agent-lcars/console:bundle` build and
+  `tools/console-standalone-smoke.sh` (isolated boot, traced-externals load,
+  webhook HTTP 401 probe) whenever `apps/console` is affected. That build is
+  intentional and Console-scoped; it neither makes the whole-tree `build`
+  target a local step nor duplicates CI's `Verify` gate, and Nx caches it
+  like any other task. Plan the publication envelope for the hook path that
+  actually runs: when Console is affected, budget the real build and give it
+  the supported worker control `LCARS_CONSOLE_BUILD_CPUS`
+  ([apps/console/build-workers.cjs](../../../apps/console/build-workers.cjs))
+  so `next build` sizes its page-data pool from the phase's CPU bound instead
+  of the host's visible CPUs. Never plan a Console-affected publication as
+  "no local build". See
   [references/verify.md](references/verify.md#ci-delegation) for the full
   reasoning. **Local E2E is optional, never a delivery prerequisite.** CI's
   required E2E check selects affected console and harness changes. Run the

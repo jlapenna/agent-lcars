@@ -55,10 +55,11 @@ function fixture() {
   const manifest = {
     expectedIds: ids,
     sources: [
-      { name: 'root', path: 'root.json' },
+      { name: 'root', path: 'root.json', sha256: '' },
       {
         name: 'ledger',
         path: 'ledger.json',
+        sha256: '',
         collection: '/causes',
         fields: { id: '$key', issue: '/issue', evidence: '/evidence' },
       },
@@ -71,6 +72,10 @@ function fixture() {
       path.join(directory, 'ledger.json'),
       JSON.stringify({ causes: ledger }),
     );
+    for (const source of manifest.sources)
+      source.sha256 = createHash('sha256')
+        .update(readFileSync(path.join(directory, source.path)))
+        .digest('hex');
     writeFileSync(
       path.join(directory, 'manifest.json'),
       JSON.stringify(manifest),
@@ -117,6 +122,84 @@ describe('complete interactive workstream report assembly', () => {
         readFileSync(path.join(f.directory, file), 'utf8'),
       ),
     ).toEqual(before);
+  });
+
+  it.each([
+    undefined,
+    null,
+    false,
+    42,
+    '',
+    'a'.repeat(63),
+    'a'.repeat(65),
+    'g'.repeat(64),
+    `${'a'.repeat(64)}\n`,
+    ` ${'a'.repeat(64)}`,
+  ])(
+    'refuses an absent or invalid snapshot pin %s through the actual CLI',
+    (sha256) => {
+      // A later source must not inherit the first source's qualified pin.
+      for (const sourceIndex of [0, 1]) {
+        const f = fixture();
+        const source = f.manifest.sources[sourceIndex];
+        Object.assign(source, { sha256 });
+        writeFileSync(
+          path.join(f.directory, 'manifest.json'),
+          JSON.stringify(f.manifest),
+        );
+        const result = spawnSync(
+          process.execPath,
+          [script, path.join(f.directory, 'manifest.json')],
+          { encoding: 'utf8' },
+        );
+        expect(result.status).toBe(1);
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          complete: false,
+          totals: null,
+          error: `Sources require a valid SHA256 snapshot pin: ${source.name}`,
+        });
+      }
+    },
+  );
+
+  it('rejects content changed after pinning and accepts the exact restored bytes', () => {
+    const f = fixture();
+    const filename = path.join(f.directory, 'ledger.json');
+    const original = readFileSync(filename);
+    // Keep all identities valid so a missing hash check would report complete.
+    f.ledger.B71.remainingGates.push('new evidence requiring review');
+    writeFileSync(filename, JSON.stringify({ causes: f.ledger }));
+    const invoke = () =>
+      spawnSync(
+        process.execPath,
+        [script, path.join(f.directory, 'manifest.json')],
+        { encoding: 'utf8' },
+      );
+    const changed = invoke();
+    expect(changed.status).toBe(1);
+    expect(JSON.parse(changed.stdout)).toMatchObject({
+      complete: false,
+      totals: null,
+      error: 'Source snapshot changed: ledger',
+    });
+    writeFileSync(filename, original);
+    const restored = invoke();
+    expect(restored.status).toBe(0);
+    expect(JSON.parse(restored.stdout)).toMatchObject({
+      complete: true,
+      totals: { causes: 182, owningIssues: 182 },
+    });
+  });
+
+  it('accepts case-equivalent immutable SHA256 pins', () => {
+    const f = fixture();
+    for (const source of f.manifest.sources)
+      source.sha256 = source.sha256.toUpperCase();
+    const report = reconcileCauses(f.manifest, f.directory);
+    expect(report).toMatchObject({
+      complete: true,
+      totals: { causes: 182, owningIssues: 182 },
+    });
   });
 
   it('does not inflate totals for replayed causes, duplicate aliases or shared owning issues', () => {
@@ -208,8 +291,14 @@ describe('complete interactive workstream report assembly', () => {
       f.save();
       if (failure === 'absent-source')
         rmSync(path.join(f.directory, 'ledger.json'));
-      if (failure === 'invalid-json')
-        writeFileSync(path.join(f.directory, 'ledger.json'), '{');
+      if (failure === 'invalid-json') {
+        const filename = path.join(f.directory, 'ledger.json');
+        writeFileSync(filename, '{');
+        // Qualify the bytes so this still reaches JSON parsing, not hash refusal.
+        f.manifest.sources[1].sha256 = createHash('sha256')
+          .update(readFileSync(filename))
+          .digest('hex');
+      }
       if (failure === 'missing-collection')
         f.manifest.sources[1].collection = '/missing';
       if (failure === 'changed-snapshot')

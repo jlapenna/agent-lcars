@@ -25,7 +25,6 @@ registry-side promotion contract.
 | `runner-autoscaler`       | `apps/runner-autoscaler`                     | `apps/runner-autoscaler/Dockerfile`                     | `latest`               |
 | `control-plane-runner`    | `apps/runner-autoscaler/control-plane-image` | `apps/runner-autoscaler/control-plane-image/Dockerfile` | `latest`               |
 | `homelab-runner`          | `apps/runner-autoscaler/runner-image`        | `apps/runner-autoscaler/runner-image/Dockerfile`        | `jit-node24`           |
-| `telemetry-watcher`       | repo root                                    | `apps/telemetry-watcher/Dockerfile`                     | `latest`               |
 | `github-actions-exporter` | `apps/github-actions-exporter`               | `apps/github-actions-exporter/Dockerfile`               | `latest`               |
 | `e2e`                     | `tools/e2e`                                  | `tools/e2e/Dockerfile`                                  | `df-<Dockerfile hash>` |
 | `e2e-runner`              | repo root                                    | `tools/e2e-runner/Dockerfile`                           | `latest`               |
@@ -86,8 +85,7 @@ homelab operation. Select:
 
 - `runner-autoscaler` and `control-plane-runner` for control-plane source or
   Dockerfile changes.
-- `homelab-runner` and `telemetry-watcher` together for any
-  telemetry-watcher bundle input: the watcher app, `libs/telemetry`,
+- `homelab-runner` for any telemetry-watcher bundle input: the watcher app, `libs/telemetry`,
   `libs/logging`, `libs/env-vars`, `libs/util`, `libs/util-server`,
   `package.json`, `pnpm-lock.yaml`, or `patches`.
 - `homelab-runner` alone for its runner-image-only inputs. These go beyond

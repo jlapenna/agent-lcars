@@ -31,6 +31,9 @@ import { indexSessionsByRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { filterSessionsForRepo } from '../../lib/session-repo-filter';
 import type { RunItemRef } from '../agent-activity-panel';
+import { BridgeDetail } from '../bridge-detail';
+import { resolveBridgeDetail } from '../bridge-rows';
+import { parseBridgeSelection } from '../bridge-selection';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { repoScopedConsoleHrefs } from '../console-hrefs';
@@ -47,13 +50,15 @@ import { FleetSnapshotBar } from './fleet-snapshot-bar';
 import { RecentOutcomesSection } from './recent-outcomes-section';
 
 interface PageProps {
-  searchParams: Promise<{ repo?: string }>;
+  searchParams: Promise<{ repo?: string; sel?: string }>;
 }
 
 async function AgentsPageBody({
   repoFilter,
+  selectedKey,
 }: {
   repoFilter: WatchedRepo | undefined;
+  selectedKey?: string;
 }) {
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
@@ -91,23 +96,14 @@ async function AgentsPageBody({
     runnerSessionsByRunId,
   );
 
-  // Same run<->item join as the home page (see its comment for why
-  // issueNumber-first with a title fallback is correct) - kept local here
-  // rather than shared, since it's a small, self-contained join and this
-  // page's item set (all open items) differs from home's per-bucket view.
+  // Join only the exact GitHub identity; title equality cannot establish it.
   const liveRunByNumber = new Map(
     activity.liveRuns
-      .filter((run) => run.issueNumber !== undefined)
+      .filter((run) => !run.workId && run.issueNumber !== undefined)
       .map((run) => [repoItemKey(run.repo, run.issueNumber as number), run]),
   );
-  const liveRunByTitle = new Map(
-    activity.liveRuns
-      .filter((run) => run.issueNumber === undefined)
-      .map((run) => [run.displayTitle, run]),
-  );
   const liveRunFor = (item: ActionItem) =>
-    liveRunByNumber.get(repoItemKey(item.repo, item.number)) ??
-    liveRunByTitle.get(item.title);
+    liveRunByNumber.get(repoItemKey(item.repo, item.number));
 
   const itemsByRunId: Record<string, RunItemRef> = {};
   for (const item of items) {
@@ -210,6 +206,18 @@ async function AgentsPageBody({
     filteredActivity.fleet,
   );
 
+  // Reuse the run inspector against every run this page actually renders,
+  // including recent outcomes beyond the Bridge's five-row summary.
+  const detail = resolveBridgeDetail({
+    selectedKey,
+    liveRuns: filteredActivity.liveRuns,
+    recentRuns: filteredActivity.recentRuns,
+    cliSessions: [],
+    waitingOnDeploy: [],
+    itemsByRunId,
+    sessionsByRunId,
+  });
+
   return (
     <AgentsWorkspace
       warnings={
@@ -231,13 +239,26 @@ async function AgentsPageBody({
         </>
       }
       active={
-        <ActiveAgentsSection
-          liveRuns={filteredActivity.liveRuns}
-          itemsByRunId={itemsByRunId}
-          activeSessions={filteredActiveSessions}
-          items={filteredItems}
-          sessionsByRunId={sessionsByRunId}
-        />
+        <>
+          {selectedKey && (
+            <BridgeDetail
+              detail={detail}
+              backHref={
+                repoScopedConsoleHrefs(
+                  repoFilter ? repoKey(repoFilter) : undefined,
+                )?.agents ?? '/agents'
+              }
+              repoFilterKey={repoFilter ? repoKey(repoFilter) : undefined}
+            />
+          )}
+          <ActiveAgentsSection
+            liveRuns={filteredActivity.liveRuns}
+            itemsByRunId={itemsByRunId}
+            activeSessions={filteredActiveSessions}
+            items={filteredItems}
+            sessionsByRunId={sessionsByRunId}
+          />
+        </>
       }
       hasSecondary={
         filteredClaimedIdle.length > 0 || filteredActivity.recentRuns.length > 0
@@ -276,9 +297,14 @@ interface AgentsViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
   repoFilter: ReturnType<typeof parseRepoFilterParam>;
   subtitle: string;
+  selectedKey?: string;
 }
 
-function AgentsViewContent({ repoFilter, watchedRepos }: AgentsViewProps) {
+function AgentsViewContent({
+  repoFilter,
+  watchedRepos,
+  selectedKey,
+}: AgentsViewProps) {
   return (
     <>
       <RepositorySelector
@@ -288,7 +314,7 @@ function AgentsViewContent({ repoFilter, watchedRepos }: AgentsViewProps) {
       />
       <LiveDashboard />
       <Suspense fallback={<PageLoading rows={5} header={false} />}>
-        <AgentsPageBody repoFilter={repoFilter} />
+        <AgentsPageBody repoFilter={repoFilter} selectedKey={selectedKey} />
       </Suspense>
     </>
   );
@@ -345,7 +371,9 @@ async function AgentsPageShell({ searchParams }: PageProps) {
   assertAdmin(session, '/login');
 
   const watchedRepos = getWatchedRepos();
-  const repoFilter = parseRepoFilterParam((await searchParams).repo);
+  const params = await searchParams;
+  const repoFilter = parseRepoFilterParam(params.repo);
+  const selectedKey = parseBridgeSelection(params.sel);
 
   const subtitle =
     watchedRepos.length <= 1
@@ -359,6 +387,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
       watchedRepos={watchedRepos}
       repoFilter={repoFilter}
       subtitle={subtitle}
+      selectedKey={selectedKey}
     />
   );
 }

@@ -12,6 +12,7 @@ const OUTCOMES = [
   'park',
   'no-op',
   'provider-limit',
+  'provider-capacity',
   'runner-failed',
   'agent-failed',
   'no-deliverable',
@@ -30,6 +31,8 @@ const HELP = {
     'Automatic retry generations admitted during the rolling hour.',
   claims_window:
     'Retained claims timestamped during the rolling hour, not all claim attempts.',
+  provider_starts_window:
+    'Retained server-observed provider OS spawns during the rolling hour, not authentication or model execution.',
   terminal_clock_unknown_window:
     'Recently updated terminal runs without a valid terminal event clock.',
   settled_window:
@@ -45,7 +48,7 @@ const HELP = {
   latency_window_duration_seconds:
     'Sum of known rolling-hour latency durations in seconds; a decreasing gauge.',
   latency_window_unknown:
-    'Rolling-hour latency candidates with missing or reversed clocks.',
+    'Rolling-hour latency candidates with missing, invalid, reversed or future clocks.',
   reported_outcome_window:
     'Finished rolling-hour run identities by worker-reported outcome, not verified usefulness.',
   measurement_unknown_window:
@@ -134,6 +137,19 @@ export function lifecycleMetricSnapshot(
       at !== undefined && Date.parse(at) >= since && Date.parse(at) <= now;
     const pipelineFor = (run: Run) =>
       PIPELINES.find((pipeline) => pipeline === run.pipeline) ?? 'unknown';
+    const providerStarted = (run: Run) => {
+      const start = Date.parse(run.queue?.providerProcessStartedAt ?? '');
+      const claim = Date.parse(run.queue?.claimedAt ?? '');
+      const admission = Date.parse(run.createdAt);
+      return (
+        Number.isFinite(start) &&
+        Number.isFinite(claim) &&
+        Number.isFinite(admission) &&
+        start >= claim &&
+        start >= admission &&
+        start <= now
+      );
+    };
     for (const pipeline of PIPELINES) {
       const runs = [...byId.values()].filter(
         (run) => pipelineFor(run) === pipeline,
@@ -151,6 +167,16 @@ export function lifecycleMetricSnapshot(
         { pipeline },
       );
       gauge('claims_window', claimed.length, { pipeline });
+      const started = runs.filter(
+        (run) =>
+          providerStarted(run) && inWindow(run.queue?.providerProcessStartedAt),
+      );
+      const providerStartCandidates = runs.filter(
+        (run) =>
+          inWindow(run.queue?.providerProcessStartedAt) ||
+          (inWindow(run.queue?.claimedAt) && !providerStarted(run)),
+      );
+      gauge('provider_starts_window', started.length, { pipeline });
       gauge(
         'terminal_clock_unknown_window',
         runs.filter(
@@ -202,7 +228,11 @@ export function lifecycleMetricSnapshot(
         ),
         { pipeline },
       );
-      for (const stage of ['admission_to_queue', 'queue_to_claim'] as const) {
+      for (const stage of [
+        'admission_to_queue',
+        'queue_to_claim',
+        'claim_to_provider_start',
+      ] as const) {
         const candidates =
           stage === 'admission_to_queue'
             ? runs.filter((run) => {
@@ -216,21 +246,36 @@ export function lifecycleMetricSnapshot(
                     inWindow(run.createdAt))
                 );
               })
-            : claimed;
+            : stage === 'queue_to_claim'
+              ? claimed
+              : providerStartCandidates;
         const durations: number[] = [];
         for (const run of candidates) {
           const dispatched = run.events.find(
             (event) => event.by === 'dispatch',
           )?.at;
           const start =
-            stage === 'admission_to_queue' ? run.createdAt : dispatched;
+            stage === 'admission_to_queue'
+              ? run.createdAt
+              : stage === 'queue_to_claim'
+                ? dispatched
+                : run.queue?.claimedAt;
           const end =
-            stage === 'admission_to_queue' ? dispatched : run.queue?.claimedAt;
+            stage === 'admission_to_queue'
+              ? dispatched
+              : stage === 'queue_to_claim'
+                ? run.queue?.claimedAt
+                : run.queue?.providerProcessStartedAt;
           const seconds =
             start === undefined || end === undefined
               ? NaN
               : (Date.parse(end) - Date.parse(start)) / 1_000;
-          if (Number.isFinite(seconds) && seconds >= 0) durations.push(seconds);
+          if (
+            Number.isFinite(seconds) &&
+            seconds >= 0 &&
+            (stage !== 'claim_to_provider_start' || providerStarted(run))
+          )
+            durations.push(seconds);
         }
         for (const bound of BUCKETS)
           gauge(
@@ -272,10 +317,13 @@ export function lifecycleMetricSnapshot(
           { pipeline, outcome },
         );
       }
-      // These facts are NOT in this ledger. Never turn ok=true, a PR-shaped
-      // ref, a bootstrap heartbeat or a claim into evidence/start/merge/cost.
+      // Only the authenticated server spawn clock proves provider start.
+      // Claims/heartbeats/result.ok are not spawn, evidence, merge or cost.
       for (const [measurement, count] of [
-        ['provider_start', claimed.length],
+        [
+          'provider_start',
+          providerStartCandidates.filter((run) => !providerStarted(run)).length,
+        ],
         ['verified_evidence', finished.length],
         ['useful_outcome', finished.length],
         ['human_touch', terminal.length],

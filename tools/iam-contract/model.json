@@ -285,5 +285,15 @@
         ]
       }
     }
+  ],
+  "serviceAccountIamPolicies": [
+    {
+      "project": "agent-lcars",
+      "serviceAccount": "work-reader@agent-lcars.iam.gserviceaccount.com",
+      "rationale": "The read-only Work API identity for interactive maintainer sessions (jlapenna/agent-lcars#2502). Its Console grant carries work.reader alone (the issue-owner query), and it holds no project role. Exactly one principal - the maintainer's Google account - may mint its tokens; another member would extend Console reads to that principal. Declared by google_service_account_iam_member.work_reader_token_creator in infra/terraform/main.tf.",
+      "bindings": {
+        "roles/iam.serviceAccountTokenCreator": ["user:jlapenna@gmail.com"]
+      }
+    }
   ]
 }

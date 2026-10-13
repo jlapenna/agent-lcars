@@ -203,15 +203,20 @@ restarting the executor and affect newly created Jobs; existing attempts retain
 their launch configuration. See
 [worker policy rollout](../../docs/worker-policy-rollout.md) for gates and rollback.
 
-`LCARS_HOOK_TELEMETRY_PROVIDERS` follows the same contract (comma-separated
-subset of `claude,codex,opencode`, validated at startup, snapshotted, and
-forwarded to every Job, empty included). For a selected Claude or Codex
-pipeline the worker installs `lcars` hook entries after its own config
-exists and reports the session through provider hooks
-([design](../../docs/hooks-telemetry-design.md)) instead of starting the
-polling telemetry sidecar; it drains the hook flusher before `runner
-finalize`. A missing credentials file or failed install falls back to the
-sidecar, and OpenCode always keeps the sidecar. Unset is disabled.
+Every pipeline reports live telemetry through provider hooks
+([design](../../docs/hooks-telemetry-design.md), phase 3); there is no
+selector. Claude and Codex workers install `lcars` hook entries after their
+own config exists; for OpenCode the image's `lcars-telemetry.js` plugin
+activates once the writer credentials path is exported. The worker fences
+and drains the hook flusher before `runner finalize`, which writes the
+authoritative final session doc. A worker that dies first never finalizes;
+when the Work API settles that run `lost`, the executor marks the run's
+still-`live`/`idle` session docs `ended` (best effort, only with status
+publication enabled; `lost_run_sessions.go`). A missing credentials file or failed
+install prints a `::warning::` and the run continues without live
+telemetry; there is no polling sidecar fallback. The executor ignores the
+retired `LCARS_HOOK_TELEMETRY_PROVIDERS` variable if a deployment still sets
+it, and no longer forwards it to Jobs.
 
 The poller starts only after the Kubernetes preflight below passes, then sends
 a claim body containing only its runner identity. The server derives
@@ -360,10 +365,11 @@ autoscaler's process environment. The baked OpenCode config consumes the
 read-only key file directly, rather than exporting the key to the OpenCode
 process, so routine agent tool-shell environment inspection cannot recover it.
 
-Before telemetry starts, the direct runner synchronously initializes
+Before the provider starts, the direct runner synchronously initializes
 OpenCode's local store with a pure session listing, bounded to 30 seconds by
-default (`OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS`, valid range 1-120). This avoids
-a first-run migration race between OpenCode and its telemetry sidecar. If an
+default (`OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS`, valid range 1-120), unless the
+image's baked empty store matches. The resulting baseline lets a
+continuation pick the one new workspace session. If an
 OpenCode round exits zero after completed verifier lookups find no exact-marker
 deliverable, the runner may continue the one unambiguous workspace session
 once. That continuation shares the original `OPENCODE_TIMEOUT_SECONDS`
@@ -512,7 +518,7 @@ run's credential. This behavior requires a runner image built from the fix;
 merging the source alone does not update existing images.
 
 Codex session files remain only in the runner's volatile filesystem until the
-telemetry sidecar has finalized and archived them; cleanup then removes the
+telemetry finalize pass has archived them; cleanup then removes the
 per-run directory. A retained Job's Pod therefore holds neither the
 subscription credential nor its session transcript.
 

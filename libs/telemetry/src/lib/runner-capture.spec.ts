@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   claudeProjectSlugFor,
   resumeObjectPath,
-  RUNNER_CAPTURE_AGENTS,
   runnerWatchRoots,
   transcriptObjectPath,
 } from './runner-capture';
@@ -45,12 +44,6 @@ describe('runnerWatchRoots', () => {
     expect(roots[0].path).toBe('/tmp/a');
     expect(roots[1].path).toBe('/tmp/b');
     expect(roots[2].path).toBe('/tmp/c');
-  });
-});
-
-describe('RUNNER_CAPTURE_AGENTS', () => {
-  it('names exactly the agents runnerWatchRoots declares a root for', () => {
-    expect(RUNNER_CAPTURE_AGENTS).toEqual(['claude-code', 'codex', 'opencode']);
   });
 });
 
@@ -116,13 +109,12 @@ describe('claudeProjectSlugFor', () => {
     ['/home/jlapenna/p/agent-lcars', '-home-jlapenna-p-agent-lcars'],
     ['/tmp/agent-lcars-direct/checkout', '-tmp-agent-lcars-direct-checkout'],
     ['/', '-'],
-    // A trailing slash: no normalization happens here (that's
-    // `default-checkout.ts`'s `normalizeRoot`'s job, one layer up), so a
-    // trailing `/` becomes a trailing `-`.
+    // A trailing slash: no normalization happens here, so a trailing `/`
+    // becomes a trailing `-`.
     ['/home/jlapenna/p/agent-lcars/', '-home-jlapenna-p-agent-lcars-'],
     // A dotted path segment, pinned against Claude Code's REAL on-disk
     // encoding (verified empirically — see this function's own doc
-    // comment for how), not `checkoutSlugGlobs`'s looser `/`-only glob
+    // comment for how), not a looser `/`-only glob
     // rule: `.` is also replaced, one dash per character, un-collapsed.
     [
       '/home/runner/work/agent-lcars.git/repo',

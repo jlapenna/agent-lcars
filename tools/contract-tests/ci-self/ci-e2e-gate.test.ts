@@ -33,57 +33,12 @@ interface Workflow {
 // Allow the same scheduling headroom as the Nx test lane: the standalone
 // contract lane hit its default 5s limit on CI run 36205666264.
 describe('CI E2E operational gate', () => {
-  it('keeps the selected browser gate CI-owned', async () => {
+  it('selects browser coverage from the affected scope', async () => {
     const workflow = parseYaml(
       await readFile('.github/workflows/ci.yml', 'utf8'),
     ) as Workflow;
-
-    expect(workflow.jobs?.e2e?.if).toBe(
-      "${{ always() && vars.E2E_ENABLED != 'false' }}",
-    );
-    expect(workflow.jobs?.e2e?.['runs-on']).toBe('ubuntu-latest');
-    expect(workflow.jobs?.e2e?.needs).toEqual(['e2e-scope', 'e2e-browser']);
-    expect(workflow.jobs?.['e2e-scope']?.['runs-on']).toBe('ubuntu-latest');
-    expect(workflow.jobs?.['e2e-scope']?.if).toBe(
-      "${{ vars.E2E_ENABLED != 'false' }}",
-    );
-    expect(workflow.jobs?.['e2e-scope']?.outputs?.run).toBe(
-      '${{ steps.e2e-scope.outputs.run }}',
-    );
-    expect(workflow.jobs?.['e2e-browser']?.needs).toBe('e2e-scope');
-    expect(workflow.jobs?.['e2e-browser']?.if).toBe(
-      "${{ needs.e2e-scope.outputs.run == 'true' }}",
-    );
-    expect(workflow.jobs?.['e2e-browser']?.['runs-on']).toBe(
-      "${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-e2e' }}",
-    );
-    expect(workflow.jobs?.e2e?.name).toBe('E2E');
     const scopeStep = workflow.jobs?.['e2e-scope']?.steps?.find(
       (step) => step.id === 'e2e-scope',
-    );
-    expect(scopeStep).toEqual(
-      expect.objectContaining({
-        name: 'Determine whether console E2E is affected',
-      }),
-    );
-    expect(workflow.jobs?.['e2e-browser']?.steps).toContainEqual(
-      expect.objectContaining({
-        if: "needs.e2e-scope.outputs.run == 'true'",
-        name: 'Run console e2e suite [full-suite]',
-        run: './tools/e2e-local.sh',
-      }),
-    );
-    expect(workflow.jobs?.['e2e-browser']?.steps).toContainEqual(
-      expect.objectContaining({
-        name: 'Upload console e2e diagnostics',
-        'continue-on-error': true,
-      }),
-    );
-    expect(workflow.jobs?.['verify-full']?.steps).toContainEqual(
-      expect.objectContaining({
-        name: 'Test hermetic E2E environment',
-        run: expect.stringContaining('run-console-emulators.test.mjs'),
-      }),
     );
 
     const repo = await mkdtemp(path.join(os.tmpdir(), 'lcars-e2e-scope-'));

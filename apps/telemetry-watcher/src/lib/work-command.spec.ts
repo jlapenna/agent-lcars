@@ -62,6 +62,143 @@ const item = (state: string) => ({
 });
 
 describe('lcars work', () => {
+  describe('owner', () => {
+    const owner = {
+      anchor: { repo: 'jlapenna/agent-lcars', issue: 2502 },
+      observedAt: '2026-08-26T10:00:00.000Z',
+      verdict: 'fleet-run',
+      complete: true,
+      warnings: [],
+      task: {
+        state: 'running',
+        pipeline: 'claude',
+        runCount: 2,
+        activeRunId: 'jlapenna/agent-lcars#2502/r2',
+        updatedAt: '2026-08-26T09:59:00.000Z',
+        run: {
+          runId: 'jlapenna/agent-lcars#2502/r2',
+          state: 'running',
+          pipeline: 'claude',
+          priority: 'normal',
+          createdAt: '2026-08-26T09:00:00.000Z',
+          updatedAt: '2026-08-26T09:59:00.000Z',
+          queue: { state: 'claimed', claimedBy: 'lcars-direct-1' },
+        },
+        runSessions: [
+          {
+            sessionId: 'worker-1',
+            runId: 'jlapenna/agent-lcars#2502/r2',
+            startedAt: '2026-08-26T09:01:00.000Z',
+            lastActivityAt: '2026-08-26T09:58:00.000Z',
+          },
+        ],
+      },
+      cliSessions: [
+        {
+          sessionId: 'cli-1',
+          agent: 'claude-code',
+          liveness: 'idle',
+          host: 'laforge',
+          branch: 'feat/issue-owner-query-2502',
+          pr: { number: 2560, url: 'https://github.com/x/pull/2560' },
+          startedAt: '2026-08-26T08:00:00.000Z',
+          lastActivityAt: '2026-08-26T09:30:00.000Z',
+        },
+      ],
+    };
+
+    it('reads the anchor once and prints the verdict with its evidence', async () => {
+      let query = '';
+      const d = deps({
+        'GET /api/work/v1/anchors/github/owner': (init) => {
+          query = new URL(init.url).search;
+          return owner;
+        },
+      });
+      expect(
+        await executeWorkCommand(['owner', 'jlapenna/agent-lcars#2502'], d),
+      ).toEqual({ ok: true });
+      expect(d.calls).toEqual(['GET /api/work/v1/anchors/github/owner']);
+      expect(new URLSearchParams(query).get('repo')).toBe(
+        'jlapenna/agent-lcars',
+      );
+      expect(new URLSearchParams(query).get('issue')).toBe('2502');
+      expect(d.out).toEqual([
+        'jlapenna/agent-lcars#2502  fleet-run',
+        '  task     running  claude  runs 2  updated 2026-08-26T09:59:00.000Z',
+        '  live run jlapenna/agent-lcars#2502/r2  running  claude  claimed by lcars-direct-1  updated 2026-08-26T09:59:00.000Z',
+        '  worker   worker-1  last activity 2026-08-26T09:58:00.000Z',
+        '  session  cli-1  idle  claude-code  laforge  branch feat/issue-owner-query-2502  PR #2560  last activity 2026-08-26T09:30:00.000Z',
+      ]);
+    });
+
+    it('prints JSON for scripts and names an anchor Console never saw', async () => {
+      const none = {
+        ...owner,
+        verdict: 'none',
+        task: undefined,
+        cliSessions: [],
+      };
+      const d = deps({ 'GET /api/work/v1/anchors/github/owner': () => none });
+      expect(
+        await executeWorkCommand(
+          ['owner', '--json', 'jlapenna/agent-lcars#2502'],
+          d,
+        ),
+      ).toEqual({ ok: true });
+      expect(JSON.parse(d.out[0] ?? '')).toMatchObject({ verdict: 'none' });
+
+      const human = deps({
+        'GET /api/work/v1/anchors/github/owner': () => none,
+      });
+      await executeWorkCommand(['owner', 'jlapenna/agent-lcars#2502'], human);
+      expect(human.out).toEqual([
+        'jlapenna/agent-lcars#2502  none',
+        '  task     none (Console has never dispatched this anchor)',
+        '  session  none referencing this anchor',
+      ]);
+    });
+
+    it('exits 1 with the warning when session telemetry was unavailable', async () => {
+      const d = deps({
+        'GET /api/work/v1/anchors/github/owner': () => ({
+          ...owner,
+          verdict: 'none',
+          task: undefined,
+          cliSessions: [],
+          complete: false,
+          warnings: [
+            'CLI sessions unavailable (agent-telemetry store failed).',
+          ],
+        }),
+      });
+      expect(
+        await executeWorkCommand(['owner', 'jlapenna/agent-lcars#2502'], d),
+      ).toEqual({ ok: false });
+      expect(d.out[0]).toBe('jlapenna/agent-lcars#2502  none  (incomplete)');
+      expect(d.err).toEqual([
+        'warning: CLI sessions unavailable (agent-telemetry store failed).',
+      ]);
+    });
+
+    it.each([
+      [[]],
+      [['jlapenna/agent-lcars']],
+      [['2502']],
+      [['jlapenna/agent-lcars#0']],
+      [['jlapenna/agent-lcars#2502', 'extra']],
+      [['jlapenna/agent-lcars#2502', '--watch']],
+    ])('rejects %j before authenticating', async (args) => {
+      const d = deps({});
+      d.token = vi.fn(async () => {
+        throw new Error('Must not request credentials');
+      });
+      expect((await executeWorkCommand(['owner', ...args], d)).ok).toBe(false);
+      expect(d.calls).toEqual([]);
+      expect(d.token).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([true, false])(
     'exports a bounded metrics snapshot and fails closed when complete=%s',
     async (complete) => {
@@ -335,6 +472,63 @@ describe('lcars work', () => {
       expect(d.out).toEqual([]);
     });
   });
+  it.each(['urgent', 'normal', 'background', undefined])(
+    'create sends validated priority %s',
+    async (priority) => {
+      const d = deps({
+        'PUT /api/work/v1/items/{id}': ({ body }) => {
+          expect(JSON.parse(body as string).spec.priority).toBe(
+            priority ?? 'normal',
+          );
+          return item('running');
+        },
+      });
+      const args = [
+        'create',
+        '--repo',
+        'o/r',
+        '--pipeline',
+        'claude',
+        '--title',
+        't',
+        '--description',
+        'd',
+      ];
+      if (priority) args.push('--priority', priority);
+      expect(await executeWorkCommand(args, d)).toEqual({ ok: true });
+      expect(d.calls).toHaveLength(1);
+    },
+  );
+  it.each([
+    ['--priority', 'invalid'],
+    ['--priority'],
+    ['--priority', '--title', 't'],
+  ])(
+    'rejects invalid priority before credentials or HTTP: %j',
+    async (...flags) => {
+      const d = deps({});
+      d.token = vi.fn(async () => 'tok');
+      const result = await executeWorkCommand(
+        [
+          'create',
+          '--repo',
+          'o/r',
+          '--pipeline',
+          'claude',
+          '--title',
+          't',
+          '--description',
+          'd',
+          ...flags,
+        ],
+        d,
+      );
+      expect(result.ok).toBe(false);
+      expect(result.usage).toContain('urgent|normal|background');
+      expect(d.token).not.toHaveBeenCalled();
+      expect(d.calls).toEqual([]);
+    },
+  );
   it('create PUTs a client-generated ULID and prints it', async () => {
     const d = deps({ 'PUT /api/work/v1/items/{id}': () => item('running') });
     const r = await executeWorkCommand(

@@ -4,6 +4,8 @@ import {
   type OutboxEntry,
   type ProviderFallback,
   type ProviderFallbackRequest,
+  type QueuePriority,
+  queuePrioritySchema,
   requestHistoryKey,
   type RequestSource,
   type Run,
@@ -100,6 +102,32 @@ export function runLeaseExpiresAt(now: string): string {
  *  (the original request plus this many retries). */
 export const MAX_AUTO_RETRIES = 2;
 
+/** How many times one task may be redispatched for a scheduler preemption that
+ *  provably happened before any provider process was observed starting, since
+ *  the last run that `finished` or was `canceled`. Separate from
+ *  `MAX_AUTO_RETRIES` because such an attempt produced no provider effects:
+ *  charging it to the execution budget converts an infrastructure disruption
+ *  into permanent loss of useful work (#2520). The bound is what keeps a
+ *  persistently unschedulable task from redispatching forever; past it a
+ *  disruption is accounted as an ordinary loss and reaches an explicit
+ *  terminal outcome. */
+export const MAX_SCHEDULER_DISRUPTION_RECOVERIES = 2;
+
+/** The executor's exact, provider-honest evidence that the claimed attempt was
+ *  removed by the scheduler rather than by anything the workload did. Only the
+ *  scheduler-preemption kind is recoverable: eviction, node loss, an OOM, or a
+ *  bare "the pod is gone" stay on the ordinary terminal path.
+ *
+ *  `jobUid`/`podUid` are the Kubernetes UIDs of the exact Job and Pod this
+ *  observation came from; `observedAt` is the moment the disruption condition
+ *  was set on that Pod, never the moment the report was written. */
+export interface SchedulerDisruptionEvidence {
+  readonly kind: 'scheduler-preemption';
+  readonly jobUid: string;
+  readonly podUid: string;
+  readonly observedAt: string;
+}
+
 export interface RequestRunInput {
   now: string;
   task: Task | undefined;
@@ -108,6 +136,7 @@ export interface RequestRunInput {
   requestId: string;
   requestSource?: RequestSource;
   pipeline: string;
+  priority?: QueuePriority;
   params?: Record<string, string>;
   work?: WorkPayload;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
@@ -140,10 +169,14 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     task: taskId,
     runCount: input.task?.runCount ?? 0,
     // Carried over, not reset: only a `finished`/`canceled` report resets
-    // the auto-retry streak (see `resetConsecutiveLost`). A request -- manual
+    // the auto-retry streak (see `resetLossBudgets`). A request -- manual
     // or the auto-retry itself -- must not accidentally clear the budget
     // `expireLease` just spent computing.
     consecutiveLost: input.task?.consecutiveLost ?? 0,
+    // Carried over for the same reason: the disruption bound has to survive
+    // a later operator request, or the pre-startup recovery path would be
+    // unbounded for anyone willing to re-request.
+    schedulerDisruptions: input.task?.schedulerDisruptions ?? 0,
     // Written once: only the request that creates the task may set `work`.
     work,
     updatedAt: now,
@@ -155,6 +188,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     requestId,
     requestSource: input.requestSource,
     pipeline: input.pipeline,
+    priority: input.priority,
     params: input.params,
     providerFallback: input.providerFallback,
   });
@@ -168,6 +202,7 @@ function mintRun(input: {
   requestId: string;
   requestSource?: RequestSource;
   pipeline: string;
+  priority?: QueuePriority;
   params?: Record<string, string>;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
 }): Decision {
@@ -180,6 +215,7 @@ function mintRun(input: {
     task: taskId,
     state: 'pending',
     pipeline,
+    priority: queuePrioritySchema.parse(input.priority ?? 'normal'),
     requestId,
     requestSource: requestSource ?? 'caller',
     ...(params === undefined ? {} : { params }),
@@ -479,7 +515,7 @@ export function reportResult(input: {
     updatedAt: now,
   };
   return settle(
-    resetConsecutiveLost(releaseLock(task, run.runId, now)),
+    resetLossBudgets(releaseLock(task, run.runId, now)),
     settled,
     now,
   );
@@ -511,7 +547,7 @@ export function cancelRun(input: {
     updatedAt: now,
   };
   return settle(
-    resetConsecutiveLost(releaseLock(task, run.runId, now)),
+    resetLossBudgets(releaseLock(task, run.runId, now)),
     settled,
     now,
   );
@@ -532,6 +568,16 @@ export function expireLease(input: {
   task: Task;
   run: Run;
 }): Decision | Refusal {
+  const loss = expireLeaseLoss(input);
+  return lossRefused(loss) ? loss : loss.decision;
+}
+
+/** `expireLease`'s guards, shared with the minting wrapper. */
+function expireLeaseLoss(input: {
+  now: string;
+  task: Task;
+  run: Run;
+}): LossOutcome {
   const { now, run } = input;
   if (!isLive(run.state)) return refused('run-not-live');
   // QueueExecutor capacity waits are not execution attempts. A queued run
@@ -545,6 +591,22 @@ export function expireLease(input: {
   if (input.run.credentialOperation !== undefined)
     return refused('credential-operation-pending');
   return settleLost(input, 'expiry');
+}
+
+/** A settled loss plus which budget it was charged to. Minting needs the
+ * distinction: a loss charged to the scheduler-recovery budget is bounded by
+ * that counter, not by the execution budget. */
+interface LossSettlement {
+  readonly decision: Decision;
+  readonly recovered: boolean;
+}
+
+/** What a loss guard returns: the settlement, or why there is nothing to
+ * settle. */
+type LossOutcome = LossSettlement | Refusal;
+
+function lossRefused(outcome: LossOutcome): outcome is Refusal {
+  return 'refused' in outcome;
 }
 
 /** Who is reporting an exit: the authenticated principal's subject and the
@@ -572,13 +634,32 @@ export interface ExitClaimant {
  * without an authenticated subject (written before subjects were recorded)
  * has no provable owner: while live, only its outcome report or lease
  * expiry settles it; once settled, any report gets the idempotent answer.
+ *
+ * A report may carry {@link SchedulerDisruptionEvidence} when the executor can
+ * name the exact preempted Job and Pod. That evidence only changes *which*
+ * bounded budget the loss is charged to, and only when the run provably never
+ * reached a provider process start; every other case is the ordinary loss.
  */
 export function executorExited(input: {
   now: string;
   task: Task;
   run: Run;
   claimant: ExitClaimant;
+  disruption?: SchedulerDisruptionEvidence;
 }): Decision | Refusal {
+  const loss = executorLoss(input);
+  return lossRefused(loss) ? loss : loss.decision;
+}
+
+/** `executorExited`'s guards, kept together so the minting wrapper sees the
+ * same judgement without re-running the ownership checks. */
+function executorLoss(input: {
+  now: string;
+  task: Task;
+  run: Run;
+  claimant: ExitClaimant;
+  disruption?: SchedulerDisruptionEvidence;
+}): LossOutcome {
   const queue = input.run.queue;
   // A legacy claim (no recorded subject) that already settled changes
   // nothing whoever asks, so answer it idempotently: the executor that
@@ -606,14 +687,63 @@ export function executorExited(input: {
   if (input.task.activeRunId !== input.run.runId) return refused('stale-lease');
   if (input.run.credentialOperation !== undefined)
     return refused('credential-operation-pending');
-  return settleLost(input, 'executor');
+  return settleLost(input, 'executor', input.disruption);
+}
+
+/**
+ * Whether one exit report's disruption evidence is eligible for the separate
+ * scheduler-recovery budget. Every condition is a fence, and every fence that
+ * fails degrades to the ordinary loss rather than to a refusal: the run is
+ * still settled and the task is still unblocked.
+ *
+ * - No server-accepted provider-process report: nothing the provider could
+ *   have replayed was ever observed starting. A run that reported a spawn is
+ *   potentially-executed work, so redispatching it could double provider
+ *   effects; it stays a normal loss. This is the fence that keeps recovery
+ *   provider-honest rather than merely optimistic.
+ * - Exact Job UID: when the negotiated startup-placement observer recorded the
+ *   Job UID this attempt runs under, the evidence must name that same Job.
+ * - Fresh receipt: the disruption must fall inside this attempt's own window.
+ *   A condition predating the claim belongs to an older attempt; one dated
+ *   after this decision cannot have caused it.
+ * - The bound: past `MAX_SCHEDULER_DISRUPTION_RECOVERIES` the loss is counted
+ *   as an ordinary one, so a task that keeps being disrupted ends visibly
+ *   rather than redispatching forever.
+ */
+function schedulerDisruptionRecoverable(
+  input: { now: string; task: Task; run: Run },
+  evidence: SchedulerDisruptionEvidence,
+): boolean {
+  const queue = input.run.queue;
+  if (queue?.providerProcessStartedAt !== undefined) return false;
+  const claimedJobUid = queue?.startupPlacement?.jobUid;
+  if (claimedJobUid !== undefined && claimedJobUid !== evidence.jobUid) {
+    return false;
+  }
+  const observed = Date.parse(evidence.observedAt);
+  if (
+    queue?.claimedAt !== undefined &&
+    observed < Date.parse(queue.claimedAt)
+  ) {
+    return false;
+  }
+  if (observed > Date.parse(input.now)) return false;
+  return (
+    (input.task.schedulerDisruptions ?? 0) < MAX_SCHEDULER_DISRUPTION_RECOVERIES
+  );
 }
 
 function settleLost(
   input: { now: string; task: Task; run: Run },
   by: 'expiry' | 'executor',
-): Decision {
+  disruption?: SchedulerDisruptionEvidence,
+): LossSettlement {
   const { now, task, run } = input;
+  const evidence =
+    disruption !== undefined &&
+    schedulerDisruptionRecoverable(input, disruption)
+      ? disruption
+      : undefined;
   const settled: Run = {
     ...run,
     state: 'lost',
@@ -623,36 +753,53 @@ function settleLost(
         at: now,
         to: 'lost',
         by,
-        ...(by === 'expiry' && startDeadlineElapsed(run, now)
+        ...(evidence !== undefined
           ? {
-              note:
-                run.queue?.startupPlacement?.state === 'waiting'
-                  ? 'placement observation deadline exceeded'
-                  : 'first heartbeat deadline exceeded',
+              note: `scheduler preemption before provider start (job ${evidence.jobUid}, pod ${evidence.podUid})`,
             }
-          : {}),
+          : by === 'expiry' && startDeadlineElapsed(run, now)
+            ? {
+                note:
+                  run.queue?.startupPlacement?.state === 'waiting'
+                    ? 'placement observation deadline exceeded'
+                    : 'first heartbeat deadline exceeded',
+              }
+            : {}),
       },
     ],
     updatedAt: now,
   };
-  return settle(
-    {
-      ...releaseLock(task, run.runId, now),
-      consecutiveLost: task.consecutiveLost + 1,
-    },
-    settled,
-    now,
-  );
+  // A recovered disruption charges the separate disruption budget and leaves
+  // the execution budget alone; anything else is an ordinary loss.
+  const released = releaseLock(task, run.runId, now);
+  return {
+    recovered: evidence !== undefined,
+    decision: settle(
+      evidence === undefined
+        ? { ...released, consecutiveLost: task.consecutiveLost + 1 }
+        : {
+            ...released,
+            schedulerDisruptions: (task.schedulerDisruptions ?? 0) + 1,
+          },
+      settled,
+      now,
+    ),
+  };
 }
 
 /** Settle a lost run and, while budget remains, mint its deterministic
  * successor. Both runs and both outbox effects are one Decision, hence one
- * store transaction. */
+ * store transaction. A loss charged to the scheduler-recovery budget mints
+ * under its own bound (already checked at settlement) and is not gated on the
+ * execution budget: exhausting `consecutiveLost` on earlier losses must not
+ * turn a provably pre-provider-startup disruption into permanent loss. */
 function settleLostAndRetry(
   input: { now: string },
-  lost: Decision | Refusal,
+  loss: LossOutcome,
 ): Decision | Refusal {
-  if (isRefusal(lost) || lost.task.consecutiveLost > MAX_AUTO_RETRIES) {
+  if (lossRefused(loss)) return loss;
+  const lost = loss.decision;
+  if (!loss.recovered && lost.task.consecutiveLost > MAX_AUTO_RETRIES) {
     return lost;
   }
   const lostRun = decidedRun(lost);
@@ -663,6 +810,7 @@ function settleLostAndRetry(
     requestId: `retry:${lostRun.runId}`,
     requestSource: 'auto-retry',
     pipeline: lostRun.pipeline,
+    priority: lostRun.priority ?? 'normal',
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
     ...(lostRun.providerFallback === undefined
       ? {}
@@ -682,8 +830,9 @@ export function executorExitedAndRetry(input: {
   task: Task;
   run: Run;
   claimant: ExitClaimant;
+  disruption?: SchedulerDisruptionEvidence;
 }): Decision | Refusal {
-  return settleLostAndRetry(input, executorExited(input));
+  return settleLostAndRetry(input, executorLoss(input));
 }
 
 /** Atomically settle an expired run and, while budget remains, mint its
@@ -694,7 +843,7 @@ export function expireLeaseAndRetry(input: {
   task: Task;
   run: Run;
 }): Decision | Refusal {
-  return settleLostAndRetry(input, expireLease(input));
+  return settleLostAndRetry(input, expireLeaseLoss(input));
 }
 
 /**
@@ -756,10 +905,11 @@ function releaseLock(task: Task, runId: string, now: string): Task {
     : { ...task, updatedAt: now };
 }
 
-/** Resets the auto-retry budget after a run settles into a state where
- * retrying makes no sense: `finished` or `canceled`. */
-function resetConsecutiveLost(task: Task): Task {
-  return { ...task, consecutiveLost: 0 };
+/** Resets the retry budgets after a run settles into a state where retrying
+ * makes no sense: `finished` or `canceled`. Both budgets count losses since
+ * the last such settle, so a completed run clears both streaks. */
+function resetLossBudgets(task: Task): Task {
+  return { ...task, consecutiveLost: 0, schedulerDisruptions: 0 };
 }
 
 function outcomeEntry(run: Run, now: string): OutboxEntry {

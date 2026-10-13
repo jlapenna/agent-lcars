@@ -208,7 +208,7 @@ export function SpendBreakdowns({
                 rel="noreferrer"
                 className="costs-spend-identity"
               >
-                {row.key}
+                GitHub {row.key}
               </Anchor>
               <Text size="sm">
                 {row.status} · {row.sessions} sessions · reported{' '}

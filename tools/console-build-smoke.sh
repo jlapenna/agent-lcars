@@ -15,11 +15,15 @@
 # This runs the real `@nx/next:build` production build - the same one CI
 # runs - so it catches anything a build actually exercises: bundler
 # resolution failures and prerenderable server/client boundary breaks.
-# Measured at ~15-30s uncached (apps/console alone, warm deps), so it's a
-# deliberate, narrow exception to this repo's "pre-push doesn't build"
-# rule (see agent-lcars-dev's verify.md), scoped tightly enough not to
-# matter in practice: it only runs at all when apps/console is affected by
-# the push, and Nx caches the result like any other task.
+# Measured at ~15-30s uncached for the build itself (apps/console alone,
+# warm deps), so it's a deliberate, narrow exception to this repo's "the
+# pre-push hook runs no whole-tree gate" rule (see agent-lcars-dev's
+# verify.md), scoped tightly enough not to matter in practice: it only runs
+# at all when apps/console is affected by the push, and Nx caches the result
+# like any other task. It is still a real production build, so plan the
+# publication envelope for it: its page-data worker pool follows
+# LCARS_CONSOLE_BUILD_CPUS or the phase's cgroup CPU bound
+# (apps/console/build-workers.cjs), not the host's visible CPU count.
 #
 # What it does NOT catch: a bug that only manifests at request time on a
 # route the build doesn't prerender, or a purely client-side/browser

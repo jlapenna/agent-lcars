@@ -1,7 +1,16 @@
 'use client';
 
-import { Button, Group, Stack, Text } from '@mantine/core';
-import { useEffect, useRef, useState } from 'react';
+import { Button, Text, VisuallyHidden } from '@mantine/core';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   advanceNotificationState,
@@ -24,6 +33,9 @@ function supported() {
   );
 }
 
+const OFF_INBOX_STATUS =
+  'Notifications on — delivered while an Inbox tab is open';
+
 /** Bound waits for browser/server APIs. Notification attempts are durably
  * consumed before display, so ambiguous completion is never automatically
  * retried; subsequent attempts retain the persisted one-minute limit. */
@@ -44,7 +56,21 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
-export function InboxNotifications({ principalId }: { principalId: string }) {
+interface InboxNotificationsController {
+  enabled: boolean;
+  busy: boolean;
+  status: string;
+  enable: () => Promise<void>;
+  disable: () => Promise<void>;
+}
+
+/** Delivery state for one signed-in principal. The observer that reads the
+ * decision snapshot and asks the worker to notify runs only while `watching`
+ * (an Inbox page is open); the opt-in itself works from anywhere. */
+function useInboxNotificationsController(
+  principalId: string,
+  watching: boolean,
+): InboxNotificationsController {
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Notifications off');
@@ -52,6 +78,10 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
   const stopped = useRef(false);
   const epoch = useRef(0);
   const baseline = useRef(true);
+  // Read through a ref: an Inbox page mounting or unmounting must not restart
+  // the observer, which would bump the epoch and cancel an opt-in in flight.
+  const watchingRef = useRef(watching);
+  const observeRef = useRef<() => void>(undefined);
   const key = notificationStorageKey(principalId);
   const tag = `inbox:${encodeURIComponent(principalId)}`;
   useEffect(() => {
@@ -71,9 +101,24 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
       localStorage.setItem(key, JSON.stringify(state));
     const observe = async () => {
       if (running || stopped.current || latest.current !== principalId) return;
+      if (!watchingRef.current) {
+        // Away from the Inbox the preference is shown, never acted on. Corrupt
+        // storage fails closed here too.
+        try {
+          const stored = read();
+          setEnabled(stored.enabled);
+          setStatus(stored.enabled ? OFF_INBOX_STATUS : 'Notifications off');
+        } catch {
+          setStatus('Notification delivery or preferences unavailable');
+        }
+        return;
+      }
       const generation = epoch.current;
+      // Leaving the Inbox ends delivery for an observation already in flight:
+      // it may not write the ledger or ask the worker to notify afterwards.
       const current = () =>
         !stopped.current &&
+        watchingRef.current &&
         generation === epoch.current &&
         latest.current === principalId;
       try {
@@ -193,6 +238,7 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
         running = false;
       }
     };
+    observeRef.current = () => void observe();
     void observe();
     const timer = setInterval(() => {
       void observe();
@@ -208,6 +254,15 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
       window.removeEventListener('storage', changed);
     };
   }, [key, tag, principalId]);
+
+  useEffect(() => {
+    // Each return to the Inbox re-baselines, as a fresh mount used to: a
+    // stale prior observation resumes quietly instead of replaying what
+    // arrived while the Inbox was closed.
+    if (watching && !watchingRef.current) baseline.current = true;
+    watchingRef.current = watching;
+    observeRef.current?.();
+  }, [watching]);
 
   async function enable() {
     const identity = principalId;
@@ -231,13 +286,14 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
         );
         return;
       }
-      const fresh = await bounded(readInboxNotificationSnapshot());
+      // Opt-in is a browser preference, not a health check of every source.
+      // A missing baseline pauses delivery; it must not discard consent.
+      const fresh = await bounded(readInboxNotificationSnapshot()).catch(
+        () => undefined,
+      );
       if (!current()) return;
-      if (
-        fresh.principalId !== principalId ||
-        !notificationSnapshotFresh(fresh, Date.now())
-      )
-        throw new Error('Authorization or data unavailable');
+      if (fresh && fresh.principalId !== principalId)
+        throw new Error('Account changed');
       const registration = await bounded(
         navigator.serviceWorker.register(NOTIFICATION_WORKER, {
           scope: NOTIFICATION_SCOPE,
@@ -264,33 +320,42 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
         );
       }
       if (!current()) return;
+      let baselineReady = false;
       await navigator.locks.request(key, () => {
         if (!current()) return;
-        if (!notificationSnapshotFresh(fresh, Date.now()))
-          throw new Error('Activation snapshot expired');
         const stored = parseNotificationState(localStorage.getItem(key));
-        if (
-          Object.keys(stored.sourceTimes).some(
+        baselineReady =
+          fresh !== undefined &&
+          notificationSnapshotFresh(fresh, Date.now()) &&
+          !Object.keys(stored.sourceTimes).some(
             (key) =>
               fresh.sourceTimes[key as keyof typeof fresh.sourceTimes] <
               stored.sourceTimes[key as keyof typeof fresh.sourceTimes],
-          )
-        )
-          throw new Error('Older activation snapshot');
+          );
         const state = {
           ...stored,
           enabled: true,
-          active: fresh.decisions,
+          // Never establish history from stale or degraded authorization.
+          // The first healthy observation will be a quiet baseline instead.
+          active: baselineReady && fresh ? fresh.decisions : null,
           pending: [],
-          observedAt: fresh.observedAt,
-          sourceTimes: fresh.sourceTimes,
+          observedAt:
+            baselineReady && fresh ? fresh.observedAt : stored.observedAt,
+          sourceTimes:
+            baselineReady && fresh ? fresh.sourceTimes : stored.sourceTimes,
         };
         localStorage.setItem(key, JSON.stringify(state));
       });
       if (!current()) return;
-      baseline.current = false;
+      baseline.current = !baselineReady;
       setEnabled(true);
-      setStatus('Watching for new human decisions');
+      setStatus(
+        !watchingRef.current
+          ? OFF_INBOX_STATUS
+          : baselineReady
+            ? 'Watching for new human decisions'
+            : 'Authorization or data unavailable — notifications paused',
+      );
     } catch {
       if (current()) setStatus('Notification activation unavailable');
     } finally {
@@ -343,30 +408,98 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
     }
   }
 
+  return { enabled, busy, status, enable, disable };
+}
+
+const InboxNotificationsContext = createContext<{
+  controller: InboxNotificationsController;
+  watch: () => () => void;
+} | null>(null);
+
+/**
+ * Owns Inbox notification delivery for the signed-in maintainer. It sits at
+ * the root so the preference can be changed from the console menu on any
+ * page, while delivery itself stays scoped to an open Inbox tab: the Inbox
+ * mounts `InboxNotificationsWatch`, and only then does the observer run.
+ */
+export function InboxNotificationsProvider({
+  principalId,
+  children,
+}: {
+  principalId: string;
+  children: ReactNode;
+}) {
+  const [watchers, setWatchers] = useState(0);
+  const controller = useInboxNotificationsController(principalId, watchers > 0);
+  const watch = useCallback(() => {
+    setWatchers((count) => count + 1);
+    return () => setWatchers((count) => count - 1);
+  }, []);
+  const value = useMemo(() => ({ controller, watch }), [controller, watch]);
   return (
-    <Stack gap="xs" mb="md" data-testid="inbox-notifications">
-      <Group>
-        <Button
-          variant="outline"
-          size="compact-md"
-          mih={44}
-          disabled={busy}
-          onClick={() => {
-            void (enabled ? disable() : enable());
-          }}
-        >
-          {enabled
-            ? 'Disable Inbox notifications'
-            : 'Enable Inbox notifications'}
-        </Button>
-        <Text size="xs" c="dimmed" role="status">
-          {status}
-        </Text>
-      </Group>
-      <Text size="xs" c="dimmed">
-        This browser, all repositories. Keep an Inbox tab open. Previews contain
-        no decision details. Closed-tab delivery is unavailable.
+    <InboxNotificationsContext.Provider value={value}>
+      {children}
+    </InboxNotificationsContext.Provider>
+  );
+}
+
+/** Marks this page as an open Inbox, which is when notifications deliver. */
+export function InboxNotificationsWatch() {
+  const watch = useContext(InboxNotificationsContext)?.watch;
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    if (!watch) return;
+    const release = watch();
+    setActive(true);
+    return () => {
+      setActive(false);
+      release();
+    };
+  }, [watch]);
+  // A hidden marker, so a browser test can wait for the hydrated watch
+  // rather than for streamed HTML that is visible before it is live.
+  return (
+    <span
+      hidden
+      data-testid="inbox-notifications-watch"
+      data-active={active ? '' : undefined}
+    />
+  );
+}
+
+const SCOPE =
+  'This browser, all repositories. Keep an Inbox tab open. Previews contain no decision details. Closed-tab delivery is unavailable.';
+
+/** The opt-in control, shown under Preferences in the console menu. */
+export function InboxNotificationsToggle() {
+  const controller = useContext(InboxNotificationsContext)?.controller;
+  if (!controller) return null;
+  const { enabled, busy, status, enable, disable } = controller;
+  return (
+    <div
+      className="queue-utility-menu__control inbox-notifications"
+      data-testid="inbox-notifications"
+    >
+      <Button
+        variant="subtle"
+        size="compact-sm"
+        className="inbox-notifications__toggle"
+        disabled={busy}
+        aria-label={
+          enabled ? 'Disable Inbox notifications' : 'Enable Inbox notifications'
+        }
+        aria-describedby="inbox-notifications-scope"
+        title={SCOPE}
+        onClick={() => {
+          void (enabled ? disable() : enable());
+        }}
+      >
+        {enabled ? 'Disable notifications' : 'Enable notifications'}
+      </Button>
+      <Text size="xs" c="dimmed" role="status">
+        {status}
       </Text>
-    </Stack>
+      <VisuallyHidden id="inbox-notifications-scope">{SCOPE}</VisuallyHidden>
+    </div>
   );
 }
