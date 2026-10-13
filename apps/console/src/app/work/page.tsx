@@ -1,5 +1,5 @@
 import { PIPELINES } from '@agent-lcars/work';
-import { Anchor, Group, Text } from '@mantine/core';
+import { Anchor, Button, Group, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -185,6 +185,11 @@ function WorkViewContent({
                 maxLength={128}
                 placeholder="All principals"
               />
+              {/* A native submit: filters apply before hydration, and Enter in
+                  either text field submits the form. */}
+              <Button type="submit" variant="light" size="compact-sm">
+                Apply
+              </Button>
               <Anchor href="/work" size="sm">
                 Clear filters
               </Anchor>

@@ -60,6 +60,13 @@ function priorityOf(item: ItemView): NonNullable<Priority> {
   return item.spec.priority ?? 'normal';
 }
 
+/** When the item's current run was admitted. A replied-to or redispatched
+ * item is re-admitted by a new run, so its place in the queue and its
+ * waiting age come from that run, not from the item's first creation. */
+export function admittedAt(item: ItemView): string {
+  return latestRun(item.runs)?.createdAt ?? item.createdAt;
+}
+
 function WorkExecution({ item }: { item: ItemView }) {
   const run = latestRun(item.runs);
   return run ? <ExecutionStatus run={run} /> : null;
@@ -119,7 +126,7 @@ function WorkCard({ item, admitted }: { item: ItemView; admitted: boolean }) {
         <Text size="xs" c="dimmed" className="work-mobile-row__meta">
           <PriorityMark item={item} /> · {admitted ? 'waiting ' : 'updated '}
           <RelativeTime
-            iso={admitted ? item.createdAt : item.updatedAt}
+            iso={admitted ? admittedAt(item) : item.updatedAt}
             variant="compact"
           />
         </Text>
@@ -174,7 +181,7 @@ function WorkTable({
               </TableTd>
               <TableTd className="work-table__num">
                 <RelativeTime
-                  iso={admitted ? item.createdAt : item.updatedAt}
+                  iso={admitted ? admittedAt(item) : item.updatedAt}
                   variant="compact"
                 />
               </TableTd>
@@ -231,7 +238,7 @@ export function admittedQueue(items: ItemView[]): ItemView[] {
     .sort(
       (a, b) =>
         PRIORITY_ORDER[priorityOf(a)] - PRIORITY_ORDER[priorityOf(b)] ||
-        a.createdAt.localeCompare(b.createdAt),
+        admittedAt(a).localeCompare(admittedAt(b)),
     );
 }
 
@@ -263,11 +270,13 @@ export function WorkList({ items }: { items: ItemView[] }) {
 
   const queue = admittedQueue(items);
   const recent = recentWork(items);
-  const oldest = queue.reduce<string | undefined>(
-    (min, item) =>
-      min === undefined || item.createdAt < min ? item.createdAt : min,
-    undefined,
-  );
+  // Oldest across priorities, not the head of the queue.
+  const oldest = queue
+    .map(admittedAt)
+    .reduce<string | undefined>(
+      (min, at) => (min === undefined || at < min ? at : min),
+      undefined,
+    );
 
   return (
     <>

@@ -3,7 +3,7 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { admittedQueue, WorkList } from './work-list';
+import { admittedAt, admittedQueue, WorkList } from './work-list';
 
 const item: ItemView = {
   id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -119,6 +119,36 @@ describe('WorkList', () => {
         .getAllByText(/^P[123]$/)
         .map((cell) => cell.textContent),
     ).toEqual(['P1', 'P2', 'P2', 'P3']);
+  });
+
+  it('queues re-admitted work by its current run, not its first creation', () => {
+    const readmitted: ItemView = {
+      ...item,
+      id: 'old',
+      state: 'running',
+      createdAt: '2026-08-26T09:00:00.000Z',
+      spec: { ...item.spec, title: 'old item, new run' },
+      runs: [
+        {
+          runId: 'work:old/r2',
+          state: 'running',
+          pipeline: 'claude',
+          createdAt: '2026-08-26T11:00:00.000Z',
+          updatedAt: '2026-08-26T11:00:00.000Z',
+        },
+      ],
+    };
+    const waiting: ItemView = {
+      ...item,
+      id: 'new',
+      state: 'running',
+      createdAt: '2026-08-26T10:00:00.000Z',
+      spec: { ...item.spec, title: 'queued earlier' },
+    };
+    expect(
+      admittedQueue([readmitted, waiting]).map((entry) => entry.id),
+    ).toEqual(['new', 'old']);
+    expect(admittedAt(readmitted)).toBe('2026-08-26T11:00:00.000Z');
   });
 
   it('links a title to its item detail page in both the card and table views', () => {
