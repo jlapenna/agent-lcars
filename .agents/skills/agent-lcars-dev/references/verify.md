@@ -271,7 +271,10 @@ If the selected cache fails that trust check, use the supported
 `SWC_NATIVE_BINDING_CACHE` override with a phase-specific, user-owned mode `0700`
 directory directly beneath a verified trusted sticky directory (such as
 root-owned mode `01777` `/tmp`), with the remaining ancestors trusted. Pass its absolute path through the
-supervisor's explicit child environment, as with PATH above. Include this cache
+supervisor's explicit child environment, as with PATH above. The selected cache filesystem must be writable and executable; Linux `noexec`
+is rejected. Choose another ancestor-trusted executable location if needed. See
+[SWC's native-addon cache contract](https://github.com/swc-project/swc/blob/main/docs/native-addon-carriers.md#first-load-and-cache).
+Include this cache
 in the phase's storage sizing/accounting. Preserve the existing `HOME`, worktree,
 Nx cache receipt/helper, other native-cache guards and normal hooks; do not
 change shared directory permissions, reset caches or disable a plugin to make
