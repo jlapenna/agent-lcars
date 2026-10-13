@@ -5,7 +5,7 @@ import { toItemView } from '@agent-lcars/work/derive';
 import type { z } from 'zod';
 
 import { sessionReferencesItemNumber } from './claimed-idle';
-import type { CliSession, CliSessionsResult } from './cli-sessions';
+import type { CliSession } from './cli-sessions';
 import type { WorkContext } from './work-mint';
 
 /** The handler's side of the contract: `z.input`, because oRPC validates the
@@ -44,7 +44,7 @@ function toOwnerSession(
  */
 export async function readAnchorOwner(
   context: Pick<WorkContext, 'runtime' | 'sessionsFor' | 'now'> & {
-    cliSessions: () => Promise<CliSessionsResult>;
+    cliSessions: WorkContext['cliSessions'];
   },
   anchor: { repo: string; issue: number },
 ): Promise<AnchorOwner> {
@@ -52,7 +52,7 @@ export async function readAnchorOwner(
   const taskId = { repo: anchor.repo, issue: anchor.issue };
   const [versioned, cli] = await Promise.all([
     context.runtime.store.readTask(taskId),
-    context.cliSessions(),
+    context.cliSessions({ owner, name }),
   ]);
 
   let task: AnchorOwner['task'];

@@ -153,6 +153,24 @@ describe('listSessionDocs', () => {
     expect(mockWhere).toHaveBeenCalledWith('source', '==', 'cli');
   });
 
+  it('applies repo as equality filters on the persisted repo map fields', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: issueAgentSession.sessionId, ...issueAgentSession },
+      ],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore, {
+      source: 'cli',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      activeSince: '2026-07-11T12:00:00.000Z',
+    });
+
+    expect(mockWhere).toHaveBeenCalledWith('source', '==', 'cli');
+    expect(mockWhere).toHaveBeenCalledWith('repo.owner', '==', 'jlapenna');
+    expect(mockWhere).toHaveBeenCalledWith('repo.name', '==', 'agent-lcars');
+  });
+
   it('applies issueNumber as an equality filter', async () => {
     const firestore = new FakeFirestore({
       [SESSIONS_COLLECTION]: [
