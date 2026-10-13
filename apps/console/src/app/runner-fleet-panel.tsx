@@ -178,8 +178,8 @@ export function RunnerFleetPanel({
               </div>
               <div className="ops-telemetry__detail">
                 {ciWait.jobs === 0
-                  ? `no job started · ${CI_WAIT_MINUTES}m`
-                  : `${ciWait.jobs} ${ciWait.jobs === 1 ? 'job' : 'jobs'} · ${CI_WAIT_MINUTES}m`}
+                  ? `no job started · ${ciWait.coveredMinutes}m`
+                  : `${ciWait.jobs} ${ciWait.jobs === 1 ? 'job' : 'jobs'} · ${ciWait.coveredMinutes}m`}
                 {(ciWait.partial || lanesIncomplete) && ' · partial'}
               </div>
               <Sparkline

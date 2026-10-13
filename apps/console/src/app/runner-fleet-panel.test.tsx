@@ -54,6 +54,7 @@ describe('RunnerFleetPanel', () => {
               ...lane,
               jobStartup: {
                 bounds: [10, 60],
+                startedAt: '2026-10-13T14:48:00.000Z',
                 endedAt,
                 minutes: [{ endedAt, jobs: [[1, 3]] }],
               },
@@ -64,7 +65,7 @@ describe('RunnerFleetPanel', () => {
     );
     const ciWait = screen.getByTestId('fleet-ci-wait');
     expect(ciWait.textContent).toContain('35s');
-    expect(ciWait.textContent).toContain('3 jobs · 30m');
+    expect(ciWait.textContent).toContain('3 jobs · 12m');
     expect(ciWait.querySelectorAll('rect')).toHaveLength(1);
     expect(
       screen

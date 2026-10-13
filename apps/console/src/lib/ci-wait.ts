@@ -13,6 +13,9 @@ export const CI_WAIT_MINUTES = 30;
 export interface JobStartupWindow {
   /** Finite bucket upper bounds in seconds, ascending. */
   bounds: number[];
+  /** When the oldest interval began: under 30 minutes ago after the
+   * autoscaler starts or the window resets. */
+  startedAt: string;
   /** The newest interval's end, whether or not a job started in it. */
   endedAt: string;
   minutes: {
@@ -34,7 +37,10 @@ export function parseJobStartupWindow(
   const record = value as Record<string, unknown>;
   const bounds = record['bounds'];
   const intervals = record['intervals'];
+  const startedAt = record['startedAt'];
   if (
+    typeof startedAt !== 'string' ||
+    !Number.isFinite(Date.parse(startedAt)) ||
     !Array.isArray(bounds) ||
     bounds.length === 0 ||
     bounds.length > 64 ||
@@ -51,14 +57,14 @@ export function parseJobStartupWindow(
   )
     return undefined;
   const minutes: JobStartupWindow['minutes'] = [];
-  let newest: string | undefined;
+  let newest = startedAt;
   for (const interval of intervals) {
     if (interval === null || typeof interval !== 'object') return undefined;
     const { endedAt, counts } = interval as Record<string, unknown>;
     if (
       typeof endedAt !== 'string' ||
       !Number.isFinite(Date.parse(endedAt)) ||
-      (newest !== undefined && Date.parse(endedAt) <= Date.parse(newest)) ||
+      Date.parse(endedAt) <= Date.parse(newest) ||
       !Array.isArray(counts) ||
       counts.length !== bounds.length + 1 ||
       !counts.every(
@@ -77,7 +83,7 @@ export function parseJobStartupWindow(
     });
     if (jobs.length > 0) minutes.push({ endedAt, jobs });
   }
-  return { bounds: bounds as number[], endedAt: newest as string, minutes };
+  return { bounds: bounds as number[], startedAt, endedAt: newest, minutes };
 }
 
 /**
@@ -109,9 +115,12 @@ export interface CiWait {
   /** Undefined when no job started in the window. */
   p50Seconds?: number;
   jobs: number;
+  /** How much of the last 30 minutes the windows actually cover. */
+  coveredMinutes: number;
   /** Oldest first, one per minute; undefined where no job started. */
   series: (number | undefined)[];
-  /** Some lanes reported no window or a different bucket layout. */
+  /** Some lanes reported no window, a different bucket layout, or a
+   * shorter window than the others. */
   partial: boolean;
 }
 
@@ -135,13 +144,20 @@ export function fleetCiWait(
       window.bounds.every((bound, i) => bound === bounds[i]),
   );
   const newest = Math.max(...same.map((window) => Date.parse(window.endedAt)));
+  const starts = same.map((window) => Date.parse(window.startedAt));
+  const coveredMinutes = Math.min(
+    CI_WAIT_MINUTES,
+    Math.max(1, Math.round((newest - Math.min(...starts)) / 60_000)),
+  );
   const minutes = Array.from({ length: CI_WAIT_MINUTES }, () =>
     Array<number>(bounds.length + 1).fill(0),
   );
   const total = Array<number>(bounds.length + 1).fill(0);
   for (const window of same) {
     for (const minute of window.minutes) {
-      const age = Math.floor((newest - Date.parse(minute.endedAt)) / 60_000);
+      // Nearest, not floor: scrape jitter puts snapshots a little under or
+      // over a minute apart, and each must keep its own bar.
+      const age = Math.round((newest - Date.parse(minute.endedAt)) / 60_000);
       const slot = minutes[CI_WAIT_MINUTES - 1 - age];
       if (!slot) continue;
       for (const [bucket, jobs] of minute.jobs) {
@@ -156,8 +172,12 @@ export function fleetCiWait(
   return {
     ...(p50Seconds === undefined ? {} : { p50Seconds }),
     jobs: total.reduce((sum, jobs) => sum + jobs, 0),
+    coveredMinutes,
     series: minutes.map(p50),
-    partial: windows.length !== lanes.length || same.length !== windows.length,
+    partial:
+      windows.length !== lanes.length ||
+      same.length !== windows.length ||
+      Math.max(...starts) - Math.min(...starts) > 60_000,
   };
 }
 

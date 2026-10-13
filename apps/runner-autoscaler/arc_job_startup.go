@@ -38,7 +38,10 @@ type jobStartupHistogram struct {
 // 30 minutes, one entry per recorded interval. The console sums lanes per
 // interval to draw the fleet's CI wait p50 and its sparkline.
 type consoleJobStartupWindow struct {
-	Bounds    []float64                   `firestore:"bounds"`
+	Bounds []float64 `firestore:"bounds"`
+	// When the oldest interval began. After a start or reset the window
+	// covers less than 30 minutes, and the console says so.
+	StartedAt string                      `firestore:"startedAt"`
 	Intervals []consoleJobStartupInterval `firestore:"intervals"`
 }
 
@@ -198,7 +201,10 @@ func (w *jobStartupWindow) observe(now time.Time, hist *jobStartupHistogram) *co
 	if latest == nil || len(w.snapshots) < 2 {
 		return nil
 	}
-	window := &consoleJobStartupWindow{Bounds: append([]float64(nil), latest.bounds...)}
+	window := &consoleJobStartupWindow{
+		Bounds:    append([]float64(nil), latest.bounds...),
+		StartedAt: w.snapshots[0].at.UTC().Format(time.RFC3339Nano),
+	}
 	for i := 1; i < len(w.snapshots); i++ {
 		before, after := w.snapshots[i-1].hist, w.snapshots[i].hist
 		counts := make([]int64, len(latest.counts))

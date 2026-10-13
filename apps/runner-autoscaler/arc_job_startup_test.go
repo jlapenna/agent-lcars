@@ -48,6 +48,7 @@ func TestARCLaneStatusSumsJobStartupHistogramAcrossLabelSets(t *testing.T) {
 	}
 	want := &consoleJobStartupWindow{
 		Bounds:    []float64{1, 10},
+		StartedAt: "2026-10-13T12:00:00Z",
 		Intervals: []consoleJobStartupInterval{{EndedAt: "2026-10-13T12:01:00Z", Counts: []int64{1, 3, 6}}},
 	}
 	if !reflect.DeepEqual(status.JobStartup, want) {

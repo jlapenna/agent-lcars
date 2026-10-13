@@ -291,6 +291,7 @@ async function seedRunnerStatus() {
       // wait p50 renders a value and a sparkline bar.
       jobStartup: {
         bounds: [10, 60, 300],
+        startedAt: minutesAgo(30),
         intervals: [
           { endedAt: minutesAgo(1), counts: [0, 0, 0, 0] },
           { endedAt: minutesAgo(0), counts: [1, 3, 3, 3] },

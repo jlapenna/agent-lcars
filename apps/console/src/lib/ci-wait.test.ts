@@ -9,6 +9,7 @@ import {
 
 const raw = {
   bounds: [1, 10, 60],
+  startedAt: '2026-10-13T12:00:00Z',
   intervals: [
     { endedAt: '2026-10-13T12:01:00Z', counts: [0, 0, 0, 0] },
     { endedAt: '2026-10-13T12:02:00Z', counts: [1, 3, 4, 4] },
@@ -19,6 +20,7 @@ describe('parseJobStartupWindow', () => {
   it('keeps only minutes with a job start, as nonzero buckets', () => {
     expect(parseJobStartupWindow(raw)).toEqual({
       bounds: [1, 10, 60],
+      startedAt: '2026-10-13T12:00:00Z',
       endedAt: '2026-10-13T12:02:00Z',
       minutes: [
         {
@@ -51,6 +53,8 @@ describe('parseJobStartupWindow', () => {
       },
     ],
     ['out of order', { ...raw, intervals: [...raw.intervals].reverse() }],
+    ['no start', { ...raw, startedAt: undefined }],
+    ['start after an interval', { ...raw, startedAt: '2026-10-13T12:01:30Z' }],
     ['missing', undefined],
   ])('rejects %s', (_, value) => {
     expect(parseJobStartupWindow(value)).toBeUndefined();
@@ -76,8 +80,12 @@ describe('histogramQuantile', () => {
   });
 });
 
-function window(endedAt: string, minutes: JobStartupWindow['minutes']) {
-  return { jobStartup: { bounds: [1, 10, 60], endedAt, minutes } };
+function window(
+  endedAt: string,
+  minutes: JobStartupWindow['minutes'],
+  startedAt = new Date(Date.parse(endedAt) - 30 * 60_000).toISOString(),
+) {
+  return { jobStartup: { bounds: [1, 10, 60], startedAt, endedAt, minutes } };
 }
 
 describe('fleetCiWait', () => {
@@ -92,19 +100,49 @@ describe('fleetCiWait', () => {
         // 31 minutes before the newest interval: outside the window.
         { endedAt: '2026-10-13T11:59:00Z', jobs: [[3, 9]] },
       ]),
-      window('2026-10-13T12:29:40Z', [
-        { endedAt: '2026-10-13T12:29:40Z', jobs: [[1, 1]] },
-        { endedAt: '2026-10-13T12:20:10Z', jobs: [[0, 2]] },
-      ]),
+      window(
+        '2026-10-13T12:29:40Z',
+        [
+          { endedAt: '2026-10-13T12:29:40Z', jobs: [[1, 1]] },
+          { endedAt: '2026-10-13T12:20:10Z', jobs: [[0, 2]] },
+        ],
+        '2026-10-13T11:59:40Z',
+      ),
     ]);
     expect(wait?.jobs).toBe(4);
     // Jobs in buckets (0,1] x2 and (1,10] x2: rank 2 is the top of (0,1].
     expect(wait?.p50Seconds).toBe(1);
     expect(wait?.series).toHaveLength(30);
     expect(wait?.series[29]).toBe(5.5);
-    expect(wait?.series[20]).toBe(0.5);
+    // 9m50s before the newest interval is the 10th minute back.
+    expect(wait?.series[19]).toBe(0.5);
     expect(wait?.series.filter((p50) => p50 !== undefined)).toHaveLength(2);
+    expect(wait?.coveredMinutes).toBe(30);
     expect(wait?.partial).toBe(false);
+  });
+
+  it('keeps jittered intervals a little under a minute apart in their own bars', () => {
+    const wait = fleetCiWait([
+      window('2026-10-13T12:30:00.000Z', [
+        { endedAt: '2026-10-13T12:30:00.000Z', jobs: [[1, 1]] },
+        { endedAt: '2026-10-13T12:29:00.004Z', jobs: [[1, 1]] },
+        { endedAt: '2026-10-13T12:28:00.009Z', jobs: [[1, 1]] },
+      ]),
+    ]);
+    expect(wait?.series.slice(-3)).toEqual([5.5, 5.5, 5.5]);
+  });
+
+  it('reports a warming-up window as the minutes it covers, not 30', () => {
+    const wait = fleetCiWait([
+      window('2026-10-13T12:30:00Z', [], '2026-10-13T12:28:00Z'),
+    ]);
+    expect(wait).toMatchObject({ jobs: 0, coveredMinutes: 2, partial: false });
+    expect(
+      fleetCiWait([
+        window('2026-10-13T12:30:00Z', []),
+        window('2026-10-13T12:30:00Z', [], '2026-10-13T12:28:00Z'),
+      ])?.partial,
+    ).toBe(true);
   });
 
   it('reports a known quiet window as zero jobs with no p50', () => {
@@ -117,6 +155,7 @@ describe('fleetCiWait', () => {
     const other = {
       jobStartup: {
         bounds: [5],
+        startedAt: '2026-10-13T12:00:00Z',
         endedAt: '2026-10-13T12:30:00Z',
         minutes: [{ endedAt: '2026-10-13T12:30:00Z', jobs: [[0, 7]] }],
       },

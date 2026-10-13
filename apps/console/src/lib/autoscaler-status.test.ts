@@ -94,6 +94,7 @@ describe('getAutoscalerStatuses', () => {
         updatedAt,
         jobStartup: {
           bounds: [1, 10],
+          startedAt: '2026-01-01T00:00:00.000Z',
           intervals: [{ endedAt: updatedAt, counts: [0, 2, 3] }],
         },
       },
@@ -112,6 +113,7 @@ describe('getAutoscalerStatuses', () => {
     expect(result.lanes?.map((arc) => arc.jobStartup)).toEqual([
       {
         bounds: [1, 10],
+        startedAt: '2026-01-01T00:00:00.000Z',
         endedAt: updatedAt,
         minutes: [
           {

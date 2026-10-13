@@ -380,7 +380,8 @@ the work that has stopped, and the work in flight.
   per-minute sparkline. The data comes from each listener's
   `gha_job_startup_duration_seconds` histogram, windowed by the autoscaler. It
   is unavailable until a lane reports a window, and partial when some lanes
-  do not. A quiet window reads "no job started", never 0s. Tokens/min and
+  do not. Its label names the minutes actually covered, which are fewer than 30
+  after an autoscaler start or reset. A quiet window reads "no job started", never 0s. Tokens/min and
   Work API p95 have no console data source and render as unavailable.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
