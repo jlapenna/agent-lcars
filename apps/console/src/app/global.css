@@ -1174,6 +1174,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
+/* Phone touch targets for the toolbar on the Work, Sessions and Costs
+   routes (44px, as every other phone control). Belongs in the shared
+   toolbar block once it lands there for every route. */
+@media (max-width: 47.99em) {
+  :is(.work-workspace, .sessions-workspace, .costs-workspace)
+    :is(.console-toolbar__field, .console-toolbar__segmented label) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* A workspace's content divides into stacked sections separated by the same
    hairline the frame uses. Routes that are a list of blocks (Shuttlebay's
    scale sets, Costs' ledgers) get this instead of inventing their own card
@@ -1486,6 +1497,120 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   left: 0;
   width: var(--lcars-spine-width);
   background: var(--lcars-accent);
+}
+
+/* The mockup's Work view (design/fleet-console.html#work): an admitted
+   queue panel and recent work in Pri · Item · Agent · State · Waiting
+   columns, with filters, window and the primary action in the toolbar. */
+.work-panels {
+  padding: 6px 4px 12px;
+}
+
+.work-panel__head .mantine-Title-root {
+  flex: 0 0 auto;
+}
+
+.work-panel__count {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.work-panel__meta {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-priority {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+}
+
+.work-item-ref {
+  display: block;
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.work-item-title {
+  display: block;
+  margin-top: 2px;
+  color: var(--lcars-ink);
+}
+
+.work-table__item {
+  width: 46%;
+}
+
+.work-table__num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+td.work-table__num {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+}
+
+/* State: a square of the status colour beside the label (mockup `.state`).
+   Each hue is mixed with the scheme's ink so the label clears AA on both
+   grounds: darker on light, lighter on dark. */
+.work-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.work-state::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: currentColor;
+}
+
+.work-state[data-tone='ok'] {
+  color: color-mix(in srgb, var(--mantine-color-green-6) 55%, var(--lcars-ink));
+}
+
+.work-state[data-tone='fail'] {
+  color: color-mix(in srgb, var(--mantine-color-red-6) 55%, var(--lcars-ink));
+}
+
+.work-state[data-tone='warn'] {
+  color: color-mix(in srgb, var(--lcars-warning) 55%, var(--lcars-ink));
+}
+
+.work-state[data-tone='busy'] {
+  color: var(--lcars-ink);
+}
+
+.work-state[data-tone='idle'] {
+  color: var(--lcars-ink-dim);
+}
+
+.work-principal-filter {
+  width: 11rem;
+  max-width: 100%;
+}
+
+.work-cards__group {
+  padding: 14px 16px 6px;
+}
+
+.work-mobile-row__meta {
+  font-family: var(--font-mono), monospace;
 }
 
 /* ---- Costs ledger workspace (#255) ---- */
@@ -3472,10 +3597,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .console-repository-selector {
   flex: 0 1 auto;
-  min-width: 0;
-}
-.work-list-filters {
-  flex: 1 1 100%;
   min-width: 0;
 }
 .work-workspace__toolbar {

@@ -35,15 +35,13 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await seedWorkPagination();
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto('/work');
+  // Toolbar selects submit on change and carry the typed principal with them.
   await page
     .getByLabel('Principal', { exact: true })
     .fill('user:pagination-fixture');
   await page
     .getByLabel('Repository', { exact: true })
     .selectOption(E2E_FIXTURE_REPOSITORY);
-  await page
-    .getByRole('button', { name: 'Apply filters', exact: true })
-    .click();
   await expect(page).toHaveURL(/principal=user%3Apagination-fixture/);
   const links = page
     .getByTestId('work-cards')
@@ -68,9 +66,6 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await page.reload();
   await expect(links).toHaveCount(6);
   await page.getByLabel('State', { exact: true }).selectOption('parked');
-  await page
-    .getByRole('button', { name: 'Apply filters', exact: true })
-    .click();
   await expect(page).not.toHaveURL(/cursor=/);
   await expect(
     page.getByText('No matching work items on this page.'),
@@ -173,7 +168,7 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
     page.getByText('Your GitHub login has no work grant.'),
   ).toBeVisible();
   await expect(
-    page.getByRole('button', { name: 'Apply filters', exact: true }),
+    page.getByRole('search', { name: 'Filters', exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByRole('link', { name: /^Pagination fixture / }),
