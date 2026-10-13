@@ -133,11 +133,7 @@ function sourceDecision(
   }));
   writeFileSync(
     path.join(dir, 'runs'),
-    JSON.stringify({
-      rows,
-      newer,
-      total,
-    }),
+    JSON.stringify({ rows, newer, total, race: concurrent?.race }),
   );
   writeFileSync(output, '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
@@ -159,6 +155,24 @@ elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
     with open(os.environ['FIXTURE_RUNS']) as f: runs=json.load(f)
     query=dict(p.split('=',1) for p in route.split('?',1)[1].split('&'))
     created=query.get('created')
+    if runs.get('race'):
+        # Review race on #2641. Until the world settles, unfiltered pages miss
+        # the oldest row (a run created mid-scan shifted it), the total grows
+        # by one after the first read, and the newer count already includes a
+        # second run, so total minus newer still equals the rows seen.
+        state_path=os.environ['FIXTURE_RUNS']+'.state'
+        state=json.load(open(state_path)) if os.path.exists(state_path) else {'calls': 0, 'stable': False}
+        if not state['stable']:
+            if created is not None:
+                state['stable']=True
+                rows, total = runs['newer'], len(runs['newer'])
+            else:
+                rows, total = runs['rows'][1:], runs['total'] + min(state['calls'], 1)
+                state['calls']+=1
+                state['stable']=state['calls']>=3
+            json.dump(state, open(state_path,'w'))
+            print(json.dumps({'total_count': total, 'workflow_runs': rows}))
+            sys.exit(0)
     if created is None:
         rows = runs['newer'] + runs['rows']
         total = runs['total'] + len(runs['newer'])
@@ -413,6 +427,22 @@ describe('serialized automatic deployment source fence', () => {
     );
     expect(call).toMatchObject({ status: 0, output: 'false' });
   });
+
+  it('retries a scan whose total changed, even when total minus newer still matches', () => {
+    // Without the before/after total bracket, the first scan admits OLD
+    // because it never saw the newer NEW rollout.
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 2, race: true },
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+  }, 20000);
 
   it('reads complete history beyond the 1,000-result cap of a filtered listing', () => {
     // Run 38438235710: `created=<=` returned 1,000 of 2,500 runs, so every
