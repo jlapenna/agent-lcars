@@ -11,7 +11,9 @@ outputFiles:
 runConfig:
   minInstances: 0
   cpu: 1
-  memoryMiB: 1024
+  # Bridge requests exceeded 1 GiB in production (#2617). Keep the same CPU
+  # and scaling/concurrency policy while providing supported runtime headroom.
+  memoryMiB: 2048
 env:
   # Defined Values
   - variable: CI
