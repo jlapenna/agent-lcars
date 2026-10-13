@@ -123,6 +123,19 @@ describe('lcars hook claude', () => {
     });
   });
 
+  it('resolves the repository against the allowlist so it is stored canonically', async () => {
+    const home = tempHome();
+    const resolveGitRepo = vi.fn(async () => ({
+      owner: 'jlapenna',
+      name: 'agent-lcars',
+    }));
+    const d = deps(home, payload('PostToolUse'), { resolveGitRepo });
+    expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
+    expect(resolveGitRepo).toHaveBeenCalledWith('/home/dev/project', [
+      'jlapenna/*',
+    ]);
+  });
+
   it('skips sessions whose repository is not allowlisted, without touching state', async () => {
     const home = tempHome();
     const d = deps(home, payload('PostToolUse'), {
