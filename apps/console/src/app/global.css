@@ -107,7 +107,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .lcars-data-warnings {
   border-left: 4px solid var(--lcars-warning);
-  background: color-mix(in srgb, var(--lcars-warning) 8%, var(--lcars-surface));
+  background: var(--lcars-surface);
+}
+
+/* A route passes its `DataWarnings` element whether or not it has warnings;
+   with none, the band would be an empty status edge. */
+.console-workspace__warnings:empty {
+  display: none;
+}
+
+/* Inside a workspace the warning band already draws the status edge. */
+.console-workspace__warnings .lcars-data-warnings {
+  border-left: 0;
+  padding: 0;
 }
 
 .lcars-data-warnings > .lcars-disclosure__summary {
@@ -520,6 +532,81 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-accent);
 }
 
+/* ---- Panels, tables and tags ----
+   The block language of design/fleet-console.html. A panel is its spine and
+   its content, with no box drawn around it: the workspace frame is already
+   the box. Its first heading is the panel head, a display-face caption over a
+   hairline. Tables and tags are drawn in the same hairlines, and status keeps
+   its hue in the text rather than in a tinted chip. */
+
+/* 4px on the top and trailing edges keeps the 2px focus ring and its 2px
+   offset inside the panel's `overflow: hidden`. The Agents columns and fleet
+   strip keep their own insets: they tile a grid with 1px dividers. */
+.lcars-panel.mantine-Card-root:not(.agents-panel, .agents-fleet-strip) {
+  padding: 4px 4px 4px calc(var(--lcars-spine-width) + 16px);
+  border: 0;
+}
+
+/* The hairline goes under the whole head. A heading followed by its own
+   description line (SectionHeading) draws it under that line instead. A
+   panel whose content is wrapped in a Stack (Operations, the Agents columns)
+   has its head as that Stack's first child. */
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child:not(:has(+ .mantine-Text-root)),
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child
+  + .mantine-Text-root,
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child:has(> .mantine-Title-root),
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child:has(> * > .mantine-Title-root) {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Title-root:first-child,
+:is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
+  > .mantine-Group-root:first-child
+  .mantine-Title-root {
+  font-size: 1.1875rem;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+:root .mantine-Table-table {
+  --table-border-color: var(--lcars-hairline);
+  --table-striped-color: transparent;
+  --table-hover-color: var(--lcars-surface-raised);
+}
+
+.mantine-Table-th {
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.mantine-Badge-root {
+  font-family: var(--font-mono), monospace;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.mantine-Badge-root:is(
+  [data-variant='light'],
+  [data-variant='outline'],
+  [data-variant='default']
+) {
+  border: 1px solid var(--lcars-hairline);
+  background: transparent;
+}
+
 /* ---- Console surface system ----
    THE rule this file is organized around: the console has exactly ONE
    ground. Header, page, workspace, panel and card all paint
@@ -874,11 +961,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     [data-variant='default']
   ) {
   color: color-mix(in srgb, var(--badge-color) 60%, black);
-}
-
-:root[data-mantine-color-scheme='light']
-  .mantine-Badge-root[data-variant='outline'] {
-  border-color: color-mix(in srgb, var(--badge-color) 60%, black);
 }
 
 /* Small unfilled tags need body-text contrast, including violet source
