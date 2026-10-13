@@ -4159,7 +4159,8 @@ td.costs-repo-spend__num {
   font-size: 0.75rem;
 }
 
-.ops-unavailable {
+.ops-unavailable,
+.ops-telemetry__detail {
   color: var(--lcars-ink-dim);
   font-size: 0.6875rem;
 }
@@ -4400,6 +4401,23 @@ td.costs-repo-spend__num {
   font-family: var(--font-mono), monospace;
   font-size: 1.125rem;
   font-weight: 500;
+}
+
+/* The mockup's bar sparkline, in the meters' quiet data colour with the
+   newest bar in the accent. */
+.ops-spark {
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin-top: 6px;
+}
+
+.ops-spark rect {
+  fill: color-mix(in srgb, var(--lcars-ink-dim) 60%, var(--lcars-surface));
+}
+
+.ops-spark rect[data-now] {
+  fill: var(--lcars-accent);
 }
 
 .ops-rows > * + * {

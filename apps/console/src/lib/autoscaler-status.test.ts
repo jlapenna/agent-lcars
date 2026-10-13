@@ -86,6 +86,47 @@ describe('getAutoscalerStatuses', () => {
     expect(fleetCapacity([{ maxRunners: 4 }, { maxRunners: 2 }])).toBe(6);
   });
 
+  it('streams a compact job-startup window and drops only a malformed one', async () => {
+    const updatedAt = new Date().toISOString();
+    mockStore([
+      {
+        ...lane,
+        updatedAt,
+        jobStartup: {
+          bounds: [1, 10],
+          intervals: [{ endedAt: updatedAt, counts: [0, 2, 3] }],
+        },
+      },
+      {
+        ...lane,
+        lane: 'lcars-e2e',
+        updatedAt,
+        jobStartup: { bounds: [1, 10], intervals: [{ endedAt: updatedAt }] },
+      },
+    ]);
+    const result = await getAutoscalerStatuses();
+    expect(result.lanes?.map((arc) => arc.lane)).toEqual([
+      'lcars-ci',
+      'lcars-e2e',
+    ]);
+    expect(result.lanes?.map((arc) => arc.jobStartup)).toEqual([
+      {
+        bounds: [1, 10],
+        endedAt: updatedAt,
+        minutes: [
+          {
+            endedAt: updatedAt,
+            jobs: [
+              [1, 2],
+              [2, 1],
+            ],
+          },
+        ],
+      },
+      undefined,
+    ]);
+  });
+
   it('ignores retired scale-set records instead of publishing obsolete capacity', async () => {
     mockStore([
       {

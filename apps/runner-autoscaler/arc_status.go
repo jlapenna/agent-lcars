@@ -32,18 +32,21 @@ type consoleARCLaneStatus struct {
 	// Sorted, comma-separated DNS-label names from authoritative deployment
 	// configuration. A surviving producer still identifies a missing lane
 	// after its document has expired or before its first successful scrape.
-	ExpectedLanes     string    `firestore:"expectedLanes"`
-	RegistrationURL   string    `firestore:"registrationUrl"`
-	AssignedJobs      int       `firestore:"assignedJobs"`
-	RunningJobs       int       `firestore:"runningJobs"`
-	PendingJobs       int       `firestore:"pendingJobs"`
-	IdleRunners       int       `firestore:"idleRunners"`
-	RegisteredRunners int       `firestore:"registeredRunners"`
-	DesiredRunners    int       `firestore:"desiredRunners"`
-	MinRunners        int       `firestore:"minRunners"`
-	MaxRunners        int       `firestore:"maxRunners"`
-	UpdatedAt         string    `firestore:"updatedAt"`
-	ExpireAt          time.Time `firestore:"expireAt"`
+	ExpectedLanes     string `firestore:"expectedLanes"`
+	RegistrationURL   string `firestore:"registrationUrl"`
+	AssignedJobs      int    `firestore:"assignedJobs"`
+	RunningJobs       int    `firestore:"runningJobs"`
+	PendingJobs       int    `firestore:"pendingJobs"`
+	IdleRunners       int    `firestore:"idleRunners"`
+	RegisteredRunners int    `firestore:"registeredRunners"`
+	DesiredRunners    int    `firestore:"desiredRunners"`
+	MinRunners        int    `firestore:"minRunners"`
+	MaxRunners        int    `firestore:"maxRunners"`
+	// Absent until the lane has a known startup interval; see
+	// jobStartupWindow.observe. A pointer keeps the document comparable.
+	JobStartup *consoleJobStartupWindow `firestore:"jobStartup,omitempty"`
+	UpdatedAt  string                   `firestore:"updatedAt"`
+	ExpireAt   time.Time                `firestore:"expireAt"`
 }
 
 func validateARCLanes(lanes []arcLaneConfig) error {
@@ -69,7 +72,9 @@ func validateARCLanes(lanes []arcLaneConfig) error {
 
 // A failed, incomplete, or ambiguous scrape never refreshes a lane's timestamp.
 // Its last good document therefore expires instead of showing a plausible zero.
-func fetchARCLaneStatus(ctx context.Context, client *http.Client, lane arcLaneConfig, now time.Time) (consoleARCLaneStatus, error) {
+// Only a successful scrape advances startup, the lane's job-startup window;
+// nil skips it.
+func fetchARCLaneStatus(ctx context.Context, client *http.Client, lane arcLaneConfig, now time.Time, startup *jobStartupWindow) (consoleARCLaneStatus, error) {
 	var status consoleARCLaneStatus
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lane.MetricsURL, nil)
 	if err != nil {
@@ -96,6 +101,10 @@ func fetchARCLaneStatus(ctx context.Context, client *http.Client, lane arcLaneCo
 	for _, name := range []string{"assigned_jobs", "running_jobs", "idle_runners", "registered_runners", "desired_runners", "min_runners", "max_runners"} {
 		wanted["gha_"+name] = true
 	}
+	startupSums := map[string]int64{}
+	// A bad startup histogram costs only the CI wait readout, never the
+	// lane's capacity snapshot.
+	var startupErr error
 	scanner := bufio.NewScanner(strings.NewReader(string(body)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -103,7 +112,16 @@ func fetchARCLaneStatus(ctx context.Context, client *http.Client, lane arcLaneCo
 			continue
 		}
 		name, rest, ok := splitPrometheusSample(line)
-		if !ok || !wanted[name] {
+		if !ok {
+			continue
+		}
+		if isStartup, err := parseJobStartupSample(line, name, rest, startupSums); isStartup {
+			if startupErr == nil {
+				startupErr = err
+			}
+			continue
+		}
+		if !wanted[name] {
 			continue
 		}
 		if _, duplicate := values[name]; duplicate {
@@ -126,13 +144,26 @@ func fetchARCLaneStatus(ctx context.Context, client *http.Client, lane arcLaneCo
 		return status, fmt.Errorf("ARC listener has incomplete capacity metrics")
 	}
 	pending := max(0, values["gha_assigned_jobs"]-values["gha_running_jobs"])
-	return consoleARCLaneStatus{
+	status = consoleARCLaneStatus{
 		SchemaVersion: 3, Kind: "arc-lane", Lane: lane.Name, RegistrationURL: lane.RegistrationURL,
 		AssignedJobs: values["gha_assigned_jobs"], RunningJobs: values["gha_running_jobs"], PendingJobs: pending,
 		IdleRunners: values["gha_idle_runners"], RegisteredRunners: values["gha_registered_runners"], DesiredRunners: values["gha_desired_runners"],
 		MinRunners: values["gha_min_runners"], MaxRunners: values["gha_max_runners"],
 		UpdatedAt: now.UTC().Format(time.RFC3339Nano), ExpireAt: now.Add(consoleStatusTTL),
-	}, nil
+	}
+	if startup != nil {
+		hist, err := jobStartupFromSums(startupSums)
+		if startupErr != nil {
+			err = startupErr
+		}
+		if err != nil {
+			slog.Warn("ARC job startup histogram unusable", slog.String("lane", lane.Name), slog.Any("error", err))
+			startup.reset()
+		} else {
+			status.JobStartup = startup.observe(now, hist)
+		}
+	}
+	return status, nil
 }
 
 func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPublisher, lanes []arcLaneConfig, logger *slog.Logger) {
@@ -141,6 +172,11 @@ func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPubli
 	}
 	client := &http.Client{Timeout: consoleStatusTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	expectedLanes := configuredARCLaneNames(lanes)
+	// Created up front: each lane's goroutine then only reads this map.
+	startup := make(map[string]*jobStartupWindow, len(lanes))
+	for _, lane := range lanes {
+		startup[lane.Name] = &jobStartupWindow{}
+	}
 	publish := func() {
 		var wg sync.WaitGroup
 		// Configuration caps this fan-out, with one bounded fetch per lane.
@@ -148,7 +184,7 @@ func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPubli
 			wg.Go(func() {
 				fetchCtx, cancel := context.WithTimeout(ctx, consoleStatusTimeout)
 				defer cancel()
-				status, err := fetchARCLaneStatus(fetchCtx, client, lane, time.Now())
+				status, err := fetchARCLaneStatus(fetchCtx, client, lane, time.Now(), startup[lane.Name])
 				if err != nil {
 					logger.Warn("ARC lane status unavailable", slog.String("lane", lane.Name), slog.Any("error", err))
 					return
