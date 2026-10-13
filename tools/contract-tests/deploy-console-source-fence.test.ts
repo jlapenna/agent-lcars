@@ -38,6 +38,8 @@ const guard = workflow.jobs.deploy.steps.find((step) => step.id === 'source');
 
 interface Rollout {
   source?: string;
+  created?: string;
+  start?: string;
   updated?: string;
   end?: string;
   conclusion?: string;
@@ -57,6 +59,7 @@ function sourceDecision(
   incomplete = false,
   concurrent: { newer: number; race?: boolean } | undefined = undefined,
   history = 0,
+  clock: { local: string; server: string } | undefined = undefined,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
@@ -81,9 +84,10 @@ function sourceDecision(
                 conclusion: attempt.conclusion ?? 'success',
                 started_at: attempt.missingStart
                   ? undefined
-                  : new Date(
+                  : (attempt.start ??
+                    new Date(
                       new Date(attempt.end ?? time).getTime() - 60000,
-                    ).toISOString(),
+                    ).toISOString()),
                 completed_at: attempt.end ?? time,
               },
               {
@@ -100,7 +104,7 @@ function sourceDecision(
     };
     return {
       id: i + 1,
-      created_at: '2026-10-13T00:30:00Z',
+      created_at: run.created ?? '2026-10-13T00:30:00Z',
       updated_at: run.updated ?? time,
       // Displayed workflow SHA intentionally differs from effect source.
       head_sha: main,
@@ -140,12 +144,17 @@ function sourceDecision(
   writeFileSync(
     path.join(dir, 'gh'),
     `#!/usr/bin/env python3
-import json, os, sys
+import datetime, json, os, sys, time
+from email.utils import formatdate
+from urllib.parse import unquote
 args=sys.argv[1:]
 with open(os.environ['FIXTURE_CALLS'], 'a') as f: f.write(' '.join(args)+'\\n')
 if os.environ['FIXTURE_FAIL']=='true': sys.exit(1)
 route=args[1].removeprefix('repos/jlapenna/agent-lcars/')
 with open(os.environ['FIXTURE_ROUTES']) as f: routes=json.load(f)
+if '--include' in sys.argv:
+    epoch=float(os.environ['FIXTURE_SERVER_EPOCH'])+int(time.time()-float(os.environ['FIXTURE_SERVER_REAL_START']))
+    print('HTTP/2.0 200 OK\\nDate: '+formatdate(epoch, usegmt=True)+'\\nAge: 0\\n')
 if route.startswith('compare/'):
     base, head = route.removeprefix('compare/').split('...')
     order=[os.environ['FIXTURE_BASE'], os.environ['FIXTURE_OLD'], os.environ['FIXTURE_NEW']]
@@ -173,25 +182,47 @@ elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
             json.dump(state, open(state_path,'w'))
             print(json.dumps({'total_count': total, 'workflow_runs': rows}))
             sys.exit(0)
+    all_rows = runs['newer'] + runs['rows']
     if created is None:
-        rows = runs['newer'] + runs['rows']
+        rows = all_rows
         total = runs['total'] + len(runs['newer'])
-    elif created.startswith('%3E'):
-        rows, total = runs['newer'], len(runs['newer'])
     else:
-        # GitHub's search-filter behavior: total_count reports every match,
-        # but only the first 1,000 results are ever returned.
-        rows = runs['rows'] if created.startswith('%3C') else []
-        total = len(rows) if created.startswith('%3C') else 0
-        rows = rows[:1000]
+        expression=unquote(created)
+        def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+        if expression.startswith('>'):
+            rows=[row for row in all_rows if stamp(row['created_at']) > stamp(expression[1:])]
+        else:
+            rows=[row for row in all_rows if stamp(row['created_at']) <= stamp(expression[2:])]
+        total=len(rows)
+        rows=rows[:1000]
     page=int(query.get('page','1'))
     print(json.dumps({'total_count': total, 'workflow_runs': rows[(page-1)*100:page*100]}))
 else: print(json.dumps(routes[route]))
 `,
     { mode: 0o755 },
   );
+  let program = guard.run!;
+  if (clock) {
+    const entry = "python3 - <<'PY_SOURCE'\n";
+    if (!program.includes(entry))
+      throw new Error('Missing guard clock boundary');
+    program = program.replace(
+      entry,
+      entry +
+        `import time as _fixture_time
+import datetime as _fixture_datetime
+_fixture_real_time = _fixture_time.time
+_fixture_origin = _fixture_real_time()
+class _FixtureDateTime(_fixture_datetime.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls.fromtimestamp(${Date.parse(clock.local) / 1000} + _fixture_real_time() - _fixture_origin, tz)
+_fixture_datetime.datetime = _FixtureDateTime
+`,
+    );
+  }
   try {
-    const result = spawnSync('bash', ['-c', guard.run!], {
+    const result = spawnSync('bash', ['-c', program], {
       encoding: 'utf8',
       timeout: 5000,
       env: {
@@ -208,6 +239,12 @@ else: print(json.dumps(routes[route]))
         FIXTURE_ROUTES: path.join(dir, 'routes'),
         FIXTURE_RUNS: path.join(dir, 'runs'),
         FIXTURE_FAIL: String(fail),
+        FIXTURE_SERVER_EPOCH: String(
+          clock
+            ? Date.parse(clock.server) / 1000
+            : Math.floor(Date.now() / 1000),
+        ),
+        FIXTURE_SERVER_REAL_START: String(Date.now() / 1000),
         FIXTURE_BASE: BASE,
         FIXTURE_OLD: OLD,
         FIXTURE_NEW: NEW,
@@ -413,6 +450,42 @@ describe('serialized automatic deployment source fence', () => {
     ).not.toBe(0);
     expect(sourceDecision('c'.repeat(40), NEW).status).not.toBe(0);
   }, 20000);
+
+  it.each([
+    [
+      'inclusive entry second',
+      '2026-10-13T16:00:01.250Z',
+      '2026-10-13T16:00:01.250Z',
+    ],
+    [
+      'local wall clock behind GitHub',
+      '2026-10-13T16:00:00Z',
+      '2026-10-13T16:00:03Z',
+    ],
+  ])('retains a completed newer rollout at the %s', (_name, local, server) => {
+    expect(
+      sourceDecision(
+        OLD,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [
+          {
+            source: NEW,
+            created: '2026-10-13T16:00:01Z',
+            start: '2026-10-13T16:00:01Z',
+            updated: '2026-10-13T16:00:01.100Z',
+            end: '2026-10-13T16:00:01.100Z',
+          },
+        ],
+        false,
+        undefined,
+        0,
+        { local, server },
+      ),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
 
   it('reads history at a creation ceiling so concurrent new runs cannot change the scan', () => {
     const call = sourceDecision(
