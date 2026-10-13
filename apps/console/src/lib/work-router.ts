@@ -12,6 +12,7 @@ import {
 import {
   itemsContract,
   type MaintenanceTickOutput,
+  type WorkSpec,
   workPayloadSchema,
 } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
@@ -130,7 +131,10 @@ export const workRouter = os.router({
       if (
         run === undefined ||
         !payload.success ||
-        forbiddenReason(context.principal, payload.data.spec) !== undefined ||
+        forbiddenReason(context.principal, {
+          ...payload.data.spec,
+          pipeline: run.pipeline as WorkSpec['pipeline'],
+        }) !== undefined ||
         (context.principal.sourceRepository !== undefined &&
           context.principal.sourceRepository !== payload.data.spec.target.repo)
       )
@@ -149,8 +153,10 @@ export const workRouter = os.router({
           if (
             !currentWork.success ||
             currentTask.delivery?.repo !== currentWork.data.spec.target.repo ||
-            forbiddenReason(context.principal, currentWork.data.spec) !==
-              undefined ||
+            forbiddenReason(context.principal, {
+              ...currentWork.data.spec,
+              pipeline: currentRun.pipeline as WorkSpec['pipeline'],
+            }) !== undefined ||
             (context.principal.sourceRepository !== undefined &&
               context.principal.sourceRepository !==
                 currentWork.data.spec.target.repo)

@@ -12,11 +12,12 @@ import {
   type ItemsContract,
   itemsContract,
   WORK_DESCRIPTION_MAX,
+  workPayloadSchema,
 } from '@agent-lcars/work';
 import { createORPCClient } from '@orpc/client';
 import type { RouterContractClient } from '@orpc/contract';
 import { OpenAPILink } from '@orpc/openapi/fetch';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CliSession } from './cli-sessions';
 import { controlPlaneRepository } from './deployment';
@@ -2279,4 +2280,185 @@ describe('GET /anchors/github/owner', () => {
       warnings: ['CLI sessions unavailable (agent-telemetry store failed).'],
     });
   });
+});
+
+describe('runtime evidence authorization after accepted provider handoff', () => {
+  const HEAD = 'a'.repeat(40);
+  const MERGE = 'b'.repeat(40);
+  const CLAIM = 'c'.repeat(64);
+  const NOW = '2026-08-26T10:00:00.000Z';
+  const currentOperator = { ...operator, pipelines: ['codex'] };
+  const evidence = {
+    head: HEAD,
+    mergeCommit: MERGE,
+    ref: 'https://evidence.test/runtime',
+  };
+  afterEach(() => vi.unstubAllEnvs());
+  function currentGrant(pipelines = ['codex'], scopes = ['work.operator']) {
+    vi.stubEnv(
+      'AGENT_LCARS_WORK_GRANTS',
+      JSON.stringify([
+        {
+          principal: operator.principal,
+          subjects: [operator.subject],
+          pipelines,
+          scopes,
+        },
+      ]),
+    );
+  }
+  async function handedOff() {
+    const ctx = context({ principal: currentOperator });
+    const anchor = { repo: spec.target.repo, issue: 42 };
+    const first = decidedRun(
+      await ctx.runtime.orchestrator.request({
+        taskId: anchor,
+        requestId: 'original-claude',
+        pipeline: 'claude',
+        work: workPayloadSchema.parse({
+          origin: { principal: 'github:maintainer', channel: 'github' },
+          spec,
+        }),
+        labelProviderRequest: {
+          requestedAt: NOW,
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
+        params: { mode: 'implement' },
+      }),
+    );
+    await ctx.runtime.store.enqueueRun({ runId: first.runId, now: NOW });
+    await ctx.runtime.orchestrator.confirmDispatch(first.runId);
+    const current = decidedRun(
+      await ctx.runtime.orchestrator.request({
+        taskId: anchor,
+        requestId: 'accepted-codex',
+        pipeline: 'codex',
+        labelProviderRequest: {
+          requestedAt: '2026-08-26T10:00:01.000Z',
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
+        params: { mode: 'implement' },
+      }),
+    );
+    await ctx.runtime.store.enqueueRun({ runId: current.runId, now: NOW });
+    await ctx.runtime.orchestrator.confirmDispatch(current.runId);
+    await ctx.runtime.store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner',
+      tokenHash: CLAIM,
+    });
+    const binding = {
+      runId: current.runId,
+      repo: spec.target.repo,
+      number: 99,
+      baseRef: 'main',
+      head: HEAD,
+      state: 'waiting' as const,
+      runtimeGate: 'required' as const,
+      observedAt: NOW,
+    };
+    expect(
+      isRefusal(
+        await ctx.runtime.orchestrator.report(
+          current.runId,
+          {
+            ok: true,
+            summary: 'pull-request',
+            ref: `https://github.com/${spec.target.repo}/pull/99`,
+          },
+          CLAIM,
+          undefined,
+          undefined,
+          binding,
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isRefusal(
+        await ctx.runtime.orchestrator.observeDelivery(
+          current.runId,
+          { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+          () => true,
+        ),
+      ),
+    ).toBe(false);
+    const task = (await ctx.runtime.store.readTask(anchor))!.task;
+    expect(task.work?.spec.pipeline).toBe('claude');
+    expect(task.providerRouting?.acceptedGeneration?.pipeline).toBe('codex');
+    return { ctx, anchor, runId: current.runId, initial: first.runId, task };
+  }
+  function path(runId: string) {
+    return `/delivery/${encodeURIComponent(runId)}/evidence`;
+  }
+  it('accepts exact runtime receipt with only current Codex access, preserving immutable Claude Work', async () => {
+    currentGrant();
+    const f = await handedOff();
+    expect(await call(f.ctx, 'POST', path(f.runId), evidence)).toMatchObject({
+      status: 200,
+      json: { runId: f.runId, state: 'complete' },
+    });
+    const task = (await f.ctx.runtime.store.readTask(f.anchor))!.task;
+    expect(task.work).toEqual(f.task.work);
+    expect(task.delivery).toMatchObject({
+      state: 'complete',
+      runtimeEvidence: { principal: operator.principal },
+    });
+  });
+  it.each([
+    'wrong-provider',
+    'revoked',
+    'grant-provider-removed',
+    'source-repository',
+    'stale-run',
+    'stale-head',
+    'wrong-merge',
+  ] as const)(
+    'refuses %s and retains the exact runtime gate',
+    async (cause) => {
+      currentGrant();
+      const f = await handedOff();
+      const ctx =
+        cause === 'wrong-provider'
+          ? { ...f.ctx, principal: operator }
+          : cause === 'source-repository'
+            ? {
+                ...f.ctx,
+                principal: {
+                  ...currentOperator,
+                  sourceRepository: 'octo/foreign',
+                },
+              }
+            : f.ctx;
+      if (cause === 'revoked') currentGrant(['codex'], ['work.reader']);
+      if (cause === 'grant-provider-removed') currentGrant(['claude']);
+      const receipt =
+        cause === 'stale-head'
+          ? { ...evidence, head: 'd'.repeat(40) }
+          : cause === 'wrong-merge'
+            ? { ...evidence, mergeCommit: 'e'.repeat(40) }
+            : evidence;
+      const response = await call(
+        ctx,
+        'POST',
+        path(cause === 'stale-run' ? f.initial : f.runId),
+        receipt,
+      );
+      expect(response.status).toBe(
+        cause === 'wrong-provider' ||
+          cause === 'source-repository' ||
+          cause === 'stale-run'
+          ? 403
+          : 409,
+      );
+      expect(
+        (await f.ctx.runtime.store.readTask(f.anchor))!.task.delivery,
+      ).toEqual(f.task.delivery);
+      expect((await f.ctx.runtime.store.readTask(f.anchor))!.task.work).toEqual(
+        f.task.work,
+      );
+    },
+  );
 });
