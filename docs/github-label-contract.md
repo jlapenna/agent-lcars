@@ -79,8 +79,9 @@ state remain their respective artifact facts.
 Repository profiles deliberately share names without requiring every
 repository to install every label. Every watched repository uses the same
 canonical Claude, Codex, and OpenCode integrations unless it explicitly opts
-out with `agents: false`. An agent choice is immutable once the Work record is
-admitted; the console does not offer a parallel reassignment path.
+out with `agents: false`. The admitted Work pipeline remains historical intent. An authorized sole
+`agent:*` replacement requests a fresh execution-provider handoff through the
+controller; the console does not rewrite historical provider facts.
 
 ## State boundaries
 
@@ -94,10 +95,25 @@ a label conflict, although both still share the anchor's busy and immutable
 Work gates. A conflict in the other namespace does not block an otherwise
 unambiguous trigger.
 
-Once Work exists, retain its admitted pipeline. Removing or replacing labels
-does not change it; requesting a different executor requires explicitly
-authorized new Work on a separate anchor, not an implicit reassignment. No
-outcome removes routing intent or the monotonic bot assignment.
+Once Work exists, its admitted specification stays immutable. An administrator
+(from the existing Console administrator allowlist) may replace the sole
+`agent:*` label to request a different execution provider. The signed delivery
+must carry a source timestamp newer than the last admitted/refused label
+request; equal or older source clocks fail closed. Missing source evidence
+cannot authorize a handoff. Review-label requests retain immutable admission.
+Future replies and retries use the last accepted label generation’s pipeline.
+Historical or fallback executions do not change that routing intent.
+
+Only an unclaimed queued attempt can be atomically canceled and replaced. Its
+provider and history remain intact; the successor uses the requested provider.
+Claimed/running attempts and terminal attempts retaining physical claims refuse
+handoff until settlement, credential cleanup and physical retirement complete.
+Parked/terminal tasks with no retained owner may start a fresh provider attempt.
+A delayed label cannot replace a newer reply, retry or other non-label generation;
+it records `run-newer-than-label` and requires a new label application.
+Refused requests are recorded, never silently deferred: reapply the intended
+label after the gates pass. Task history shows requested/effective providers
+and refusal. No outcome removes unrelated labels or monotonic bot assignment.
 
 The gate uses the complete snapshot in the signed GitHub delivery, not a
 later GitHub API read. Missing snapshots (`routing-labels-unavailable`) and
@@ -106,7 +122,7 @@ fail closed. These permanent refusals return HTTP 200 from webhook processing
 so Cloud Tasks does not retry unresolved human intent. Projection refresh
 failures still retry. Delivery replay cannot create work from an ambiguous
 snapshot; overlapping earlier single-choice snapshots remain fenced by the
-transactional immutable Work comparison. Explicit console/API and tagged
+transactional source-order, immutable Work and queue-claim fences. Explicit console/API and tagged
 reply requests retain their own authorization and immutable Work gates;
 they are not label-triggered admission.
 

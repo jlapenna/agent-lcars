@@ -34,6 +34,20 @@ available through Git history.
    drain. Expiry alone is not deletion authority. Both perform bounded retry; an exhausted retry budget parks the
    task for manual action.
 
+## Authorized label provider handoff
+
+A sole `agent:*` replacement from the Console administrator allowlist uses
+`github-work-admission.ts` and the authoritative request transaction. Its signed
+source clock must advance past the latest label request. The transaction reads
+the active attempt, latest attempt and retained physical claims before deciding.
+It cancels only unclaimed queued work and mints one fresh requested-provider
+attempt; Work and predecessor provider facts remain unchanged. Claimed/running
+owners, unresolved credential operations and retained physical claims refuse.
+Parked and terminal tasks may start fresh only with those gates clear. Refused
+requests are visible in task history and require a new label application; they
+never become automatic deferred execution. Ordinary provider claim and capacity
+fences still apply to the successor.
+
 ## Worker startup acknowledgement
 
 The direct-runner installs its best-effort EXIT failure reporter after reading

@@ -149,6 +149,25 @@ The registry is `PIPELINE_CONTRACTS` in `libs/dispatch-contracts/src/pipelines.t
 
 ## 5. Domain model and state machines
 
+### Authorized label provider handoff
+
+**FL-IN-7 [Implemented; runtime qualification pending]** Replacing the sole
+canonical `agent:*` label by a Console administrator requests a source-ordered
+handoff through the controller. Delivered full-set validation and immutable
+non-provider Work comparison remain mandatory. Original Work and every Run's
+provider attribution remain historical facts. The exact unclaimed queued
+predecessor is canceled atomically with one fresh successor. Transactional
+claim/label races admit at most one useful executor.
+
+Claimed/running attempts refuse handoff; settled/parked attempts also refuse
+while any physical claim or credential operation is retained. With those gates
+clear, terminal and parked work may start fresh on the requested provider.
+Refusal is visible with requested/effective provider, actor and source clock;
+it is never an automatically deferred execution request. Reapply after gates
+clear. Stale/equal-clock deliveries and unauthorized changes cannot reroute.
+Same-provider requests keep ordinary redispatch behavior. Source coverage, CI,
+protected delivery and eventual supported runtime proof are separate gates.
+
 ### 5.1 Entities
 
 These are stored in the `dispatch-controller` Firestore database.
