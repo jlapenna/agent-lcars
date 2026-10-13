@@ -3484,16 +3484,6 @@ td.costs-repo-spend__num {
     max-width: none;
   }
 
-  .queue-search-input .mantine-Input-wrapper {
-    --input-height: 44px !important;
-    --input-right-section-width: 44px !important;
-  }
-
-  .queue-search-input:has([aria-label='Clear search text'])
-    .mantine-Input-wrapper {
-    --input-right-section-width: 88px !important;
-  }
-
   .queue-search-input .queue-refine-control {
     min-width: 44px;
     min-height: 44px;

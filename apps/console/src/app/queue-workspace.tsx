@@ -7,13 +7,11 @@ import {
   Group,
   Menu,
   Modal,
-  NativeSelect,
   Stack,
   Text,
-  TextInput,
   Title,
 } from '@mantine/core';
-import { IconAdjustments, IconSearch, IconX } from '@tabler/icons-react';
+import { IconAdjustments, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -69,6 +67,16 @@ const REASON_PARAM = 'reason';
 const SORT_PARAM = 'sort';
 const SEARCH_PARAM = 'q';
 const AGENT_PARAM = 'agent';
+const WINDOW_PARAM = 'window';
+/** The toolbar's activity window (design/fleet-console.html). It defaults to
+ * all, so no pending decision is ever hidden unless asked. */
+const INBOX_WINDOWS = [
+  { value: '1h', ms: 3_600_000 },
+  { value: '24h', ms: 86_400_000 },
+  { value: '7d', ms: 7 * 86_400_000 },
+] as const;
+const windowMs = (value: string) =>
+  INBOX_WINDOWS.find((option) => option.value === value)?.ms;
 
 export function parseQueueFilter(value: string | null): QueueFilter {
   return FILTER_OPTIONS.some((option) => option.value === value)
@@ -130,6 +138,9 @@ export function QueueWorkspace({
     () => searchParams.get(SEARCH_PARAM) ?? '',
   );
   const [agent, setAgent] = useState(() => searchParams.get(AGENT_PARAM) ?? '');
+  const [activityWindow, setActivityWindow] = useState(
+    () => searchParams.get(WINDOW_PARAM) ?? '',
+  );
   const [replyConfirmation, setReplyConfirmation] = useState<{
     workId: string;
     title: string;
@@ -166,6 +177,7 @@ export function QueueWorkspace({
     setSort(parseQueueSort(searchParams.get(SORT_PARAM)));
     setSearch(searchParams.get(SEARCH_PARAM) ?? '');
     setAgent(searchParams.get(AGENT_PARAM) ?? '');
+    setActivityWindow(searchParams.get(WINDOW_PARAM) ?? '');
   }, [searchParams]);
 
   // Mirror the controls into the URL without a server round-trip -
@@ -176,10 +188,13 @@ export function QueueWorkspace({
     nextSort: QueueSort,
     nextSearch: string,
     nextAgent: string = agent,
+    nextWindow: string = activityWindow,
   ) => {
     const params = new URLSearchParams(window.location.search);
     if (nextAgent) params.set(AGENT_PARAM, nextAgent);
     else params.delete(AGENT_PARAM);
+    if (windowMs(nextWindow)) params.set(WINDOW_PARAM, nextWindow);
+    else params.delete(WINDOW_PARAM);
     if (nextFilter === 'all') params.delete(REASON_PARAM);
     else params.set(REASON_PARAM, nextFilter);
     if (nextSort === 'priority') params.delete(SORT_PARAM);
@@ -206,6 +221,10 @@ export function QueueWorkspace({
     setAgent(next);
     syncControlsToUrl(filter, sort, search.trim(), next);
   };
+  const applyWindow = (next: string) => {
+    setActivityWindow(next);
+    syncControlsToUrl(filter, sort, search.trim(), agent, next);
+  };
   // A selected agent stays an option even when none of its decisions remain
   // (a live refresh, a stale bookmark), so the filter can always be cleared.
   const agentOptions = useMemo(
@@ -218,11 +237,19 @@ export function QueueWorkspace({
 
   const visibleCards = useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const windowLimit = windowMs(activityWindow);
+    const windowStart =
+      windowLimit === undefined ? undefined : Date.now() - windowLimit;
     const filtered = cards.filter((card) => {
       const meta = inboxCardMetadata(card);
       if (isSnoozed(inboxCardKey(card), inboxCardSignature(card))) return false;
       if (needle && !meta.search.toLowerCase().includes(needle)) return false;
       if (agent && inboxCardAgent(card) !== agent) return false;
+      if (
+        windowStart !== undefined &&
+        new Date(meta.updatedAt).getTime() < windowStart
+      )
+        return false;
       return (
         filter === 'all' || meta.actionTypes.some((type) => type === filter)
       );
@@ -237,7 +264,7 @@ export function QueueWorkspace({
       }
       return inboxCardMetadata(a).rank - inboxCardMetadata(b).rank;
     });
-  }, [agent, cards, filter, isSnoozed, search, sort]);
+  }, [activityWindow, agent, cards, filter, isSnoozed, search, sort]);
 
   const cardsByKey = new Map(cards.map((card) => [inboxCardKey(card), card]));
   const snoozedItems = Object.entries(entries).filter(([key, entry]) => {
@@ -378,91 +405,108 @@ export function QueueWorkspace({
       <div className="console-workspace__toolbar inbox-toolbar">
         {toolbarStart}
         {agentOptions.length > 0 && (
-          <NativeSelect
-            size="xs"
+          <select
             aria-label="Agent"
-            className="inbox-agent-select"
+            className="console-toolbar__field console-toolbar__select inbox-agent-select"
             value={agent}
             onChange={(event) => applyAgent(event.currentTarget.value)}
-            data={[
-              { value: '', label: 'All agents' },
-              ...agentOptions.map((value) => ({ value, label: value })),
-            ]}
-          />
+          >
+            <option value="">All agents</option>
+            {agentOptions.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
         )}
-        <TextInput
-          ref={searchInputRef}
-          size="xs"
-          rightSectionWidth={search ? 52 : 28}
-          rightSectionPointerEvents="all"
-          value={search}
-          onChange={(event) => applySearch(event.currentTarget.value)}
-          placeholder="Search title, #, author, label"
-          aria-label="Search the Inbox"
-          leftSection={<IconSearch aria-hidden="true" size={13} />}
-          rightSection={
-            <Group gap={0} wrap="nowrap" justify="flex-end">
-              {search && (
-                <ActionIcon
-                  variant="subtle"
-                  color="gray"
-                  size="xs"
-                  aria-label="Clear search text"
-                  onClick={() => applySearch('')}
+        <div
+          className="console-toolbar__segmented"
+          role="radiogroup"
+          aria-label="Window"
+        >
+          {[...INBOX_WINDOWS, { value: '' }].map((option) => (
+            <label key={option.value}>
+              <input
+                type="radio"
+                name="inbox-window"
+                value={option.value}
+                checked={
+                  (windowMs(activityWindow) ? activityWindow : '') ===
+                  option.value
+                }
+                onChange={() => applyWindow(option.value)}
+              />
+              {option.value || 'all'}
+            </label>
+          ))}
+        </div>
+        {/* The mockup's FIND field; the refine menu rides at its end. */}
+        <div className="console-toolbar__field console-toolbar__search queue-search-input">
+          <span className="lcars-eyebrow" aria-hidden="true">
+            Find
+          </span>
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={search}
+            onChange={(event) => applySearch(event.currentTarget.value)}
+            placeholder="title, #, author, label"
+            aria-label="Search the Inbox"
+          />
+          {search && (
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="xs"
+              aria-label="Clear search text"
+              onClick={() => applySearch('')}
+            >
+              <IconX aria-hidden="true" size={12} />
+            </ActionIcon>
+          )}
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon
+                variant={
+                  filter === 'all' && sort === 'priority' ? 'subtle' : 'light'
+                }
+                color={
+                  filter === 'all' && sort === 'priority' ? 'gray' : 'blue'
+                }
+                size="xs"
+                aria-label="Filter and sort"
+                className="queue-refine-control"
+              >
+                <IconAdjustments aria-hidden="true" size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>Filter</Menu.Label>
+              {FILTER_OPTIONS.map((option) => (
+                <Menu.Item
+                  key={option.value}
+                  aria-current={filter === option.value ? 'true' : undefined}
+                  onClick={() => applyQueueControls(option.value, sort)}
+                  data-active={filter === option.value ? '' : undefined}
                 >
-                  <IconX aria-hidden="true" size={12} />
-                </ActionIcon>
-              )}
-              <Menu position="bottom-end" withinPortal>
-                <Menu.Target>
-                  <ActionIcon
-                    variant={
-                      filter === 'all' && sort === 'priority'
-                        ? 'subtle'
-                        : 'light'
-                    }
-                    color={
-                      filter === 'all' && sort === 'priority' ? 'gray' : 'blue'
-                    }
-                    size="xs"
-                    aria-label="Filter and sort"
-                    className="queue-refine-control"
-                  >
-                    <IconAdjustments aria-hidden="true" size={14} />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <Menu.Label>Filter</Menu.Label>
-                  {FILTER_OPTIONS.map((option) => (
-                    <Menu.Item
-                      key={option.value}
-                      aria-current={
-                        filter === option.value ? 'true' : undefined
-                      }
-                      onClick={() => applyQueueControls(option.value, sort)}
-                      data-active={filter === option.value ? '' : undefined}
-                    >
-                      {option.label}
-                    </Menu.Item>
-                  ))}
-                  <Menu.Divider />
-                  <Menu.Label>Sort</Menu.Label>
-                  {SORT_OPTIONS.map((option) => (
-                    <Menu.Item
-                      key={option.value}
-                      aria-current={sort === option.value ? 'true' : undefined}
-                      onClick={() => applyQueueControls(filter, option.value)}
-                      data-active={sort === option.value ? '' : undefined}
-                    >
-                      {option.label}
-                    </Menu.Item>
-                  ))}
-                </Menu.Dropdown>
-              </Menu>
-            </Group>
-          }
-          className="queue-search-input"
-        />
+                  {option.label}
+                </Menu.Item>
+              ))}
+              <Menu.Divider />
+              <Menu.Label>Sort</Menu.Label>
+              {SORT_OPTIONS.map((option) => (
+                <Menu.Item
+                  key={option.value}
+                  aria-current={sort === option.value ? 'true' : undefined}
+                  onClick={() => applyQueueControls(filter, option.value)}
+                  data-active={sort === option.value ? '' : undefined}
+                >
+                  {option.label}
+                </Menu.Item>
+              ))}
+            </Menu.Dropdown>
+          </Menu>
+        </div>
         {toolbarEnd}
         {oldestCard && (
           <Link
@@ -545,12 +589,17 @@ export function QueueWorkspace({
                 <Text fw={600}>
                   {search.trim()
                     ? `No matches for “${search.trim()}”.`
-                    : filter === 'all'
-                      ? 'Nothing needs you right now.'
-                      : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
+                    : windowMs(activityWindow) && filter === 'all'
+                      ? `No decisions with activity in the last ${activityWindow}.`
+                      : filter === 'all'
+                        ? 'Nothing needs you right now.'
+                        : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
                 </Text>
                 <Text size="sm" c="dimmed">
-                  {search.trim() || filter !== 'all' || agent
+                  {search.trim() ||
+                  filter !== 'all' ||
+                  agent ||
+                  windowMs(activityWindow)
                     ? 'Other items may be hidden by the search or active filter.'
                     : 'Check back after the next refresh.'}
                 </Text>
@@ -580,6 +629,15 @@ export function QueueWorkspace({
                       onClick={() => applyAgent('')}
                     >
                       Show all agents
+                    </Button>
+                  )}
+                  {windowMs(activityWindow) && (
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      onClick={() => applyWindow('')}
+                    >
+                      Show all activity
                     </Button>
                   )}
                 </Group>

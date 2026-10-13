@@ -287,6 +287,7 @@ const SessionsPageView = withConsolePageShell(
     title: 'Session Archive',
     subtitle: (
       <>
+        Durable session records ·{' '}
         {query.repo && `${repoDisplayName(query.repo)} — `}
         {describeArchiveWindow(query)} ·{' '}
         <Suspense fallback="…">
