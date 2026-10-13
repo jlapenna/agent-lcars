@@ -14,7 +14,7 @@ import {
 
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
-import { getCliSessions } from '../lib/cli-sessions';
+import { getCliSessions, MAX_SESSIONS } from '../lib/cli-sessions';
 import {
   getCachedAgentActivity,
   getCachedQueueItems,
@@ -42,11 +42,12 @@ import {
   type RunItemRef,
 } from './agent-activity-panel';
 import { BridgeDetail } from './bridge-detail';
+import { bridgeReadouts } from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
 import { parseBridgeSelection } from './bridge-selection';
 import { DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
-import { type ConsoleReadout, ConsoleReadouts } from './console-readouts';
+import { ConsoleReadouts } from './console-readouts';
 import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
@@ -265,46 +266,27 @@ async function IndexBody({
     nativeInbox.cards.filter((card) =>
       matchesFilter(inboxCardMetadata(card).repo),
     ).length;
-  const activeCliSessionCount =
-    filteredCliSessions.filter(isActiveCliSession).length;
-  const runsByPipeline = new Map<string, number>();
-  for (const run of filteredActivity.liveRuns) {
-    runsByPipeline.set(
-      run.pipeline,
-      (runsByPipeline.get(run.pipeline) ?? 0) + 1,
-    );
-  }
-  const readouts: ConsoleReadout[] = [
-    {
-      id: 'stopped',
-      label: 'Stopped work',
-      value: stoppedError
-        ? '—'
-        : `${parkedWorkItems.length}${hasMoreParkedTasks ? '+' : ''}`,
-      detail: stoppedError ? 'unavailable' : 'parked or failed',
+  const cliSessionsAvailable = !cliSessionWarnings.some((warning) =>
+    warning.startsWith('CLI sessions unavailable'),
+  );
+  // The unscoped list is capped with active sessions first: a full list of
+  // active sessions means more may exist than were returned.
+  const cliSessionsTruncated =
+    cliSessions.length >= MAX_SESSIONS && cliSessions.every(isActiveCliSession);
+  const readouts = bridgeReadouts({
+    liveRuns: filteredActivity.liveRuns,
+    liveRunsAvailable: activity.queue !== undefined,
+    activeCliSessions: filteredCliSessions.filter(isActiveCliSession).length,
+    cliSessionsAvailable,
+    cliSessionsTruncated,
+    stopped: {
+      count: parkedWorkItems.length,
+      hasMore: hasMoreParkedTasks,
+      error: stoppedError,
     },
-    {
-      id: 'running',
-      label: 'Agents running',
-      value: filteredActivity.liveRuns.length,
-      detail:
-        [...runsByPipeline]
-          .map(([pipeline, count]) => `${pipeline} ${count}`)
-          .join(' · ') || undefined,
-    },
-    {
-      id: 'cli',
-      label: 'Active CLI sessions',
-      value: activeCliSessionCount,
-      detail: 'live or idle',
-    },
-    {
-      id: 'waiting',
-      label: 'Waiting',
-      value: deployCards.length + blockedCards.length,
-      detail: `deploy ${deployCards.length} · blocked ${blockedCards.length}`,
-    },
-  ];
+    waitingOnDeploy: deployCards.length,
+    blocked: blockedCards.length,
+  });
 
   return (
     <ConsoleWorkspace
