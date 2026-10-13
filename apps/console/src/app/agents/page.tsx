@@ -246,7 +246,7 @@ async function AgentsPageBody({
               backHref={
                 repoScopedConsoleHrefs(
                   repoFilter ? repoKey(repoFilter) : undefined,
-                ).agents
+                )?.agents ?? '/agents'
               }
               repoFilterKey={repoFilter ? repoKey(repoFilter) : undefined}
             />
