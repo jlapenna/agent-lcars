@@ -162,7 +162,9 @@ export function DataWarnings({
         <span className="lcars-eyebrow lcars-data-warnings__count">
           {warnings.length} data warning{warnings.length === 1 ? '' : 's'}
         </span>
-        <span className="lcars-data-warnings__inline">
+        {/* A visual preview; the expanded list is what assistive technology
+            reads, so the summary's name stays the count. */}
+        <span className="lcars-data-warnings__inline" aria-hidden="true">
           {warnings.join(' | ')}
         </span>
         <span className="lcars-data-warnings__details">Details</span>

@@ -27,9 +27,12 @@ export interface ShellReadouts {
   liveRuns?: number;
   decisions?: number;
   tokens24h?: number;
-  /** The archive reported partial coverage: tokens are a lower bound. */
+  /** Lifetime tokens of sessions active in the last 24h. Partial when the
+   * archive hit its session cap: a lower bound. */
   tokens24hPartial?: boolean;
   merged24h?: number;
+  /** Capped sessions or unknown merge evidence: a lower bound. */
+  merged24hPartial?: boolean;
   observedAt: string;
 }
 
@@ -37,8 +40,13 @@ interface RecentSpend {
   tokens24h?: number;
   tokens24hPartial?: boolean;
   merged24h?: number;
+  merged24hPartial?: boolean;
 }
 
+const STORE_FAILED = 'Session archive unavailable';
+
+/** Throws when either archive read failed, so a failure is never cached as
+ * a zero; the caller then reports both figures unavailable. */
 async function readRecentSpend(): Promise<RecentSpend> {
   const now = Date.now();
   // Merges are attributed through session deliverables, so read a week of
@@ -47,22 +55,30 @@ async function readRecentSpend(): Promise<RecentSpend> {
     getSessionArchive({ days: 1 }, { includeSpend: true }),
     getSessionArchive({ days: 7 }, { includeSpend: true }),
   ]);
+  const failed = (warnings: string[]) =>
+    warnings.some((warning) => warning.startsWith(STORE_FAILED));
+  if (
+    !day.spend ||
+    !week.spend ||
+    failed(day.warnings) ||
+    failed(week.warnings)
+  )
+    throw new Error('Session archive unavailable');
   return {
-    ...(day.spend
-      ? {
-          tokens24h: day.spend.totals.tokens,
-          tokens24hPartial: day.warnings.length > 0,
-        }
-      : {}),
-    ...(week.spend
-      ? {
-          merged24h: week.spend.deliverables.filter(
-            (deliverable) =>
-              deliverable.mergedAt !== undefined &&
-              now - Date.parse(deliverable.mergedAt) <= DAY_MS,
-          ).length,
-        }
-      : {}),
+    tokens24h: day.spend.totals.tokens,
+    // The archive hit its session cap: more sessions exist than were summed.
+    tokens24hPartial: day.spend.coverageLimited,
+    merged24h: week.spend.deliverables.filter(
+      (deliverable) =>
+        deliverable.mergedAt !== undefined &&
+        now - Date.parse(deliverable.mergedAt) <= DAY_MS,
+    ).length,
+    // Capped sessions or missing merge evidence can hide merges.
+    merged24hPartial:
+      week.spend.coverageLimited ||
+      week.spend.deliverables.some(
+        (deliverable) => deliverable.status === 'unknown',
+      ),
   };
 }
 

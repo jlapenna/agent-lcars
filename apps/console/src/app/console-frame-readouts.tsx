@@ -54,7 +54,7 @@ export function RailReadouts() {
     {
       key: 'tokens',
       modifier: 'tall',
-      label: 'Tokens · 24h',
+      label: 'Tokens · 24h sessions',
       value: value(
         readouts?.tokens24h === undefined
           ? undefined
@@ -68,7 +68,7 @@ export function RailReadouts() {
       value: value(
         readouts?.merged24h === undefined
           ? undefined
-          : String(readouts.merged24h),
+          : `${readouts.merged24h}${readouts.merged24hPartial ? '+' : ''}`,
       ),
     },
   ];

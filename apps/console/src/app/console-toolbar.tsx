@@ -26,23 +26,26 @@ export function ConsoleToolbar({
   primary?: ReactNode;
 }) {
   return (
-    <form
-      method="get"
-      action={action}
-      className="console-toolbar"
-      role="search"
-      aria-label="Filters"
-    >
-      {Object.entries(preserve).map(([name, value]) =>
-        value === undefined ? null : (
-          <input key={name} type="hidden" name={name} value={value} />
-        ),
-      )}
-      {children}
+    <div className="console-toolbar">
+      <form
+        method="get"
+        action={action}
+        className="console-toolbar__filters"
+        role="search"
+        aria-label="Filters"
+      >
+        {Object.entries(preserve).map(([name, value]) =>
+          value === undefined ? null : (
+            <input key={name} type="hidden" name={name} value={value} />
+          ),
+        )}
+        {children}
+      </form>
+      {/* Outside the form: a route's action button never submits filters. */}
       {primary ? (
         <div className="console-toolbar__primary">{primary}</div>
       ) : null}
-    </form>
+    </div>
   );
 }
 
@@ -78,6 +81,8 @@ export function ToolbarSelect({
   );
 }
 
+/** Radio inputs, not submit buttons: the checked window travels with every
+ * submission, so Enter in the search field keeps it. */
 export function ToolbarWindow({
   name,
   label,
@@ -90,17 +95,22 @@ export function ToolbarWindow({
   options: readonly { value: string; label: string }[];
 }) {
   return (
-    <div className="console-toolbar__segmented" role="group" aria-label={label}>
+    <div
+      className="console-toolbar__segmented"
+      role="radiogroup"
+      aria-label={label}
+    >
       {options.map((option) => (
-        <button
-          key={option.value}
-          type="submit"
-          name={name}
-          value={option.value}
-          aria-pressed={option.value === value}
-        >
-          {option.label}
-        </button>
+        <label key={option.value}>
+          <input
+            type="radio"
+            name={name}
+            value={option.value}
+            defaultChecked={option.value === value}
+            onChange={(event) => submitClosestForm(event.currentTarget)}
+          />
+          <span>{option.label}</span>
+        </label>
       ))}
     </div>
   );

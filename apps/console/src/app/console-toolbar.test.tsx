@@ -48,20 +48,20 @@ describe('ConsoleToolbar', () => {
     );
 
     const form = screen.getByRole('search', { name: 'Filters' });
+    // The primary action lives outside the filter form.
+    expect(
+      form.contains(screen.getByRole('button', { name: 'Respond to oldest' })),
+    ).toBe(false);
     expect(form).toHaveAttribute('method', 'get');
     expect(form).toHaveAttribute('action', '/inbox');
     expect(form.querySelector('input[name="item"]')).toHaveValue(
       'owner/repo#1',
     );
     expect(form.querySelector('input[name="empty"]')).toBeNull();
-    expect(screen.getByRole('button', { name: '24h' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    );
+    // The checked window submits with every request, including Enter in Find.
+    expect(screen.getByRole('radio', { name: '24h' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: '1h' })).not.toBeChecked();
+    expect(new FormData(form as HTMLFormElement).get('window')).toBe('24h');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Repository' }), {
       target: { value: 'owner/repo' },

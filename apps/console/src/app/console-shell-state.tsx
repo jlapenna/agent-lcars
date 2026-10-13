@@ -42,8 +42,9 @@ export function useLiveState(): LiveState | undefined {
 
 /* ---- Frame readouts ----
    One request per page load for the rail, the destination counts and the
-   identity block, refreshed every 30s and whenever the live stream applies
-   new data. Absent figures render as unavailable, never zero. */
+   identity block, refreshed every 30s. Absent figures render as
+   unavailable, never zero. (Not on every live-stream refresh: each read
+   rebuilds the decision snapshot, and the stream can refresh every 5s.) */
 
 const READOUTS_URL = '/api/console/shell-readouts';
 const READOUTS_REFRESH_MS = 30_000;
@@ -53,7 +54,8 @@ type ReadoutsState =
   | { status: 'ready'; readouts: ShellReadouts }
   | { status: 'unavailable' };
 
-let readoutsState: ReadoutsState = { status: 'loading' };
+const LOADING: ReadoutsState = { status: 'loading' };
+let readoutsState: ReadoutsState = LOADING;
 let inFlight: Promise<void> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 let subscribers = 0;
@@ -100,21 +102,16 @@ function subscribeReadouts(listener: () => void) {
 }
 
 export function useShellReadouts(): ReadoutsState {
-  const state = useSyncExternalStore(
+  return useSyncExternalStore(
     subscribeReadouts,
     () => readoutsState,
-    () => ({ status: 'loading' }) as const,
+    () => LOADING,
   );
-  const synced = useLiveState()?.syncedAt;
-  useEffect(() => {
-    if (synced !== undefined) void refreshShellReadouts();
-  }, [synced]);
-  return state;
 }
 
 /** For tests: forget cached figures and live state between renders. */
 export function resetShellStateForTests() {
-  readoutsState = { status: 'loading' };
+  readoutsState = LOADING;
   inFlight = undefined;
   liveState = undefined;
 }
