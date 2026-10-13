@@ -172,6 +172,13 @@ test.describe('Inbox phone measurement artifact', () => {
       );
       expect(pending).not.toHaveProperty('responseMs');
       expect(pending).not.toHaveProperty('finishedMs');
+      expect(pending).not.toHaveProperty('failedMs');
+      expect(pending).not.toHaveProperty('failure');
+      expect(failure.failureDiagnostics.browserErrors).toEqual({
+        page: 0,
+        console: 0,
+        crashed: false,
+      });
       expect(JSON.stringify(failure.failureDiagnostics)).not.toContain(
         'private-query-sentinel',
       );

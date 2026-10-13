@@ -403,6 +403,10 @@ export async function measure(options) {
         } catch (error) {
           // Collect while the failing renderer still exists. Queries, origins,
           // credentials, headers, bodies and arbitrary console text stay out.
+          const browserErrorsAtFailure = { ...browserErrors };
+          const requestsAtFailure = [...requests.values()].map((record) => ({
+            ...record,
+          }));
           const observation = await failedPageObservation(page);
           report.failureDiagnostics = {
             ...active,
@@ -411,8 +415,8 @@ export async function measure(options) {
               ? diagnosticPath(page.url(), options.origin)
               : '<unavailable>',
             browserConnected: browser.isConnected(),
-            browserErrors,
-            requests: [...requests.values()],
+            browserErrors: browserErrorsAtFailure,
+            requests: requestsAtFailure,
             droppedRequests,
             observation,
           };
