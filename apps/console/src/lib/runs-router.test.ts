@@ -4169,10 +4169,26 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
             claimFingerprint: f.fingerprint,
           });
           if (ordering !== 'healthy') await retireBroker(f);
+          let releaseFailure: unknown;
           if (ordering === 'release-before-cleanup') {
-            await expect(releaseBroker(f)).rejects.toThrow('physical');
-            expect(await f.store.readRun(f.runId)).toEqual(accepted);
+            try {
+              await releaseBroker(f);
+            } catch (error) {
+              releaseFailure = error;
+            }
           }
+          const expectedReleaseFailure = {
+            healthy: undefined,
+            'retire-before-cleanup': undefined,
+            'release-before-cleanup': expect.objectContaining({
+              message: expect.stringContaining('physical'),
+            }),
+          }[ordering];
+          expect(releaseFailure instanceof Error).toBe(
+            ordering === 'release-before-cleanup',
+          );
+          expect(releaseFailure).toEqual(expectedReleaseFailure);
+          expect(await f.store.readRun(f.runId)).toEqual(accepted);
           const successor = await f.orchestrator.request({
             taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
             requestId: `after-pr-cleanup-${ordering}`,
