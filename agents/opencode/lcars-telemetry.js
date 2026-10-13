@@ -1,13 +1,15 @@
 /**
  * Reports this OpenCode session to Agent LCARS through the `lcars hook
- * opencode` client (docs/hooks-telemetry-design.md). On lifecycle and tool
- * events it hands the client an export-shaped snapshot of the session
+ * opencode` client (docs/hooks-telemetry-design.md). On start, prompt, tool,
+ * and idle events it hands the client an export-shaped snapshot of the session
  * (`{ info, messages }`, the shape `opencode export` writes), which the shared
  * OpenCode reducer turns into a summary-only event; message bodies never
  * leave this host. The snapshot is a private temp file that the detached
  * client deletes once it has read it, so a report survives OpenCode exiting
  * (an `opencode run` ends on its last idle); a sweep at startup removes any
- * snapshot an interrupted client left behind.
+ * snapshot an interrupted client left behind. session.deleted arrives after
+ * OpenCode removed the session, so its SessionEnd is lifecycle-only (no
+ * snapshot, no summary).
  *
  * Work happens off the session's critical path: every report is
  * fire-and-forget, writes are asynchronous, and any failure is swallowed.
@@ -96,8 +98,24 @@ export default async function lcarsTelemetry({ client, directory }) {
   const childSessions = new Set();
   const inFlight = new Set();
   const queued = new Map();
+  // session.deleted fires after OpenCode removed the session and its
+  // messages, so its end report is lifecycle-only, built from the event.
+  const deletedInfo = new Map();
 
   async function snapshotAndReport(hookEventName, sessionID) {
+    if (hookEventName === 'SessionEnd' && deletedInfo.has(sessionID)) {
+      const info = deletedInfo.get(sessionID);
+      deletedInfo.delete(sessionID);
+      // No transcript: the client ships an end event without a summary.
+      await runHook(
+        JSON.stringify({
+          hook_event_name: 'SessionEnd',
+          session_id: sessionID,
+          cwd: info?.directory ?? directory,
+        }),
+      ).catch(() => undefined);
+      return;
+    }
     let scratch;
     try {
       const session = await client.session.get({ path: { id: sessionID } });
@@ -203,12 +221,18 @@ export default async function lcarsTelemetry({ client, directory }) {
         case 'session.idle':
           void report('Stop', properties.sessionID);
           return;
-        case 'session.deleted':
-          void report(
-            'SessionEnd',
-            properties.info?.id ?? properties.sessionID,
-          );
+        case 'session.deleted': {
+          const id = properties.info?.id ?? properties.sessionID;
+          if (properties.info?.parentID) {
+            childSessions.add(id);
+            return;
+          }
+          if (typeof id === 'string') {
+            deletedInfo.set(id, properties.info ?? {});
+          }
+          void report('SessionEnd', id);
           return;
+        }
         default:
           return;
       }
