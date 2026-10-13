@@ -1174,12 +1174,39 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
-/* Phone touch targets for the toolbar on the Work, Sessions and Costs
-   routes (44px, as every other phone control). Belongs in the shared
-   toolbar block once it lands there for every route. */
+/* The pre-hydration Apply (console-toolbar.tsx): a plain submit while the
+   controls cannot yet submit on change. Once they can it is hidden but keeps
+   its box, so hydrating reflows nothing a pointer may already be aimed at. */
+.console-toolbar__apply {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--lcars-hairline);
+  color: var(--lcars-ink);
+  background: var(--lcars-surface);
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+form[data-hydrated] .console-toolbar__apply {
+  visibility: hidden;
+}
+
+/* A form's default button kept only for Enter-to-submit; never shown. */
+.console-toolbar__implicit-submit {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Phone touch targets for every toolbar control (44px, as every other
+   phone control). */
 @media (max-width: 47.99em) {
-  :is(.work-workspace, .sessions-workspace, .costs-workspace)
-    :is(.console-toolbar__field, .console-toolbar__segmented label) {
+  :is(.console-toolbar__field, .console-toolbar__segmented label) {
     min-width: 44px;
     min-height: 44px;
   }

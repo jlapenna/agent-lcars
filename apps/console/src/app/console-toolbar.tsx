@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 
 /**
  * The workspace toolbar band's controls (design/fleet-console.html): a
@@ -53,6 +53,26 @@ function submitClosestForm(element: HTMLElement) {
   element.closest('form')?.requestSubmit();
 }
 
+/** Marks the control's form as hydrated: from then on changes submit
+ * themselves and the form's pre-hydration Apply button is hidden. */
+function useMarkFormHydrated<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    ref.current?.closest('form')?.setAttribute('data-hydrated', '');
+  }, []);
+  return ref;
+}
+
+/** A native submit for the moments before hydration (or if it fails), when
+ * the controls cannot submit on change; hidden once they can. */
+export function ToolbarApply({ label = 'Apply' }: { label?: string }) {
+  return (
+    <button type="submit" className="console-toolbar__apply">
+      {label}
+    </button>
+  );
+}
+
 export function ToolbarSelect({
   name,
   label,
@@ -64,8 +84,10 @@ export function ToolbarSelect({
   value?: string;
   options: readonly { value: string; label: string }[];
 }) {
+  const ref = useMarkFormHydrated<HTMLSelectElement>();
   return (
     <select
+      ref={ref}
       className="console-toolbar__field console-toolbar__select"
       name={name}
       aria-label={label}
@@ -94,8 +116,10 @@ export function ToolbarWindow({
   value: string;
   options: readonly { value: string; label: string }[];
 }) {
+  const ref = useMarkFormHydrated<HTMLDivElement>();
   return (
     <div
+      ref={ref}
       className="console-toolbar__segmented"
       role="radiogroup"
       aria-label={label}

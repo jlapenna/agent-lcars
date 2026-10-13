@@ -26,6 +26,8 @@ export interface RepositorySpendRow {
 export interface RepositorySpend {
   rows: RepositorySpendRow[];
   todayUsd: number;
+  /** Some of `todayUsd` is estimated from model rates. */
+  todayEstimated: boolean;
   sevenDayUsd: number;
   /** The archive window is shorter than seven days, so the seven-day
    * figures would undercount and are withheld. */
@@ -55,6 +57,7 @@ export function aggregateSpendByRepository(
   const sevenDayUnavailable = windowDays < 7;
   const byRepo = new Map<string, RepositorySpendRow>();
   let todayUsd = 0;
+  let todayEstimated = false;
   let sevenDayUsd = 0;
 
   for (const doc of docs) {
@@ -79,6 +82,7 @@ export function aggregateSpendByRepository(
       if (activity >= todayStart) {
         row.todayUsd += cost.costUsd;
         todayUsd += cost.costUsd;
+        if (cost.estimated) todayEstimated = true;
       }
     }
     byRepo.set(key, row);
@@ -94,5 +98,5 @@ export function aggregateSpendByRepository(
     .sort(
       (a, b) => b.sevenDayUsd - a.sevenDayUsd || a.repo.localeCompare(b.repo),
     );
-  return { rows, todayUsd, sevenDayUsd, sevenDayUnavailable };
+  return { rows, todayUsd, todayEstimated, sevenDayUsd, sevenDayUnavailable };
 }

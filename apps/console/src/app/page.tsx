@@ -15,7 +15,7 @@ import {
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
 import type { AgentRun } from '../lib/agent-activity';
-import { fleetCapacity, getAutoscalerStatuses } from '../lib/autoscaler-status';
+import { getAutoscalerStatuses } from '../lib/autoscaler-status';
 import { getCliSessions } from '../lib/cli-sessions';
 import {
   getCachedAgentActivity,
@@ -40,7 +40,6 @@ import {
   parseSessionArchiveQuery,
 } from '../lib/session-archive';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
-import { parseCostBudget } from '../lib/session-spend';
 import { type BoardCard, BridgeSections } from './action-items-board';
 import {
   FleetChip,
@@ -49,7 +48,7 @@ import {
   type RunItemRef,
 } from './agent-activity-panel';
 import { BridgeDetail } from './bridge-detail';
-import { bridgeReadouts } from './bridge-readouts';
+import { bridgeReadouts, fleetReadoutInput } from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
 import {
   bridgeSelectionHref,
@@ -304,43 +303,14 @@ async function IndexBody({
     ),
   ];
   const decisionCount = decisionCards.length;
-  const capacity = autoscaler.lanes && fleetCapacity(autoscaler.lanes);
-  const budget = parseCostBudget(
-    process.env['AGENT_LCARS_COST_BUDGET_USD'],
-    process.env['AGENT_LCARS_COST_WARNING_PERCENT'],
+  const readouts = bridgeReadouts(
+    fleetReadoutInput({
+      activity,
+      liveRuns: filteredActivity.liveRuns,
+      autoscaler,
+      spendArchive,
+    }),
   );
-  const readouts = bridgeReadouts({
-    fleet: {
-      online: activity.fleet?.online,
-      busy: activity.fleet?.busy,
-      capacity:
-        autoscaler.lanesIncomplete || !autoscaler.lanes?.length
-          ? undefined
-          : capacity,
-    },
-    liveRuns: filteredActivity.liveRuns,
-    liveRunsAvailable: activity.queue !== undefined,
-    // Same scope as the runs: a repository filter narrows the counts too.
-    queue: activity.queue && {
-      queued: filteredActivity.liveRuns.filter(
-        (run) => run.status === 'queued' && run.queue?.state !== 'claimed',
-      ).length,
-      claimed: filteredActivity.liveRuns.filter(
-        (run) => run.status === 'queued' && run.queue?.state === 'claimed',
-      ).length,
-      running: filteredActivity.liveRuns.filter(
-        (run) => run.status === 'running',
-      ).length,
-    },
-    spendToday: spendArchive?.spend
-      ? {
-          costUsd: spendArchive.spend.totals.costUsd,
-          estimated: spendArchive.spend.totals.costEstimated ?? false,
-          partial: spendArchive.spend.coverageLimited,
-        }
-      : undefined,
-    budgetUsd: budget.state === 'configured' ? budget.limitUsd : undefined,
-  });
   const selectRun = (run: AgentRun) =>
     bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor);
   const outcomesHref = repoFilterKey
