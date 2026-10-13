@@ -1,9 +1,11 @@
 import {
+  cancelRun,
   decidedRun,
   type DeliveryBinding,
   isRefusal,
   MemoryStore,
   Orchestrator,
+  reserveCredentialOperation,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
@@ -21,6 +23,7 @@ async function handedOff(
   pipeline = 'claude',
   taskId: TaskId = TASK,
   state: 'waiting' | 'complete' = 'waiting',
+  reportReady = true,
 ) {
   const store = new MemoryStore();
   const orchestrator = new Orchestrator(store, { now: () => NOW });
@@ -41,6 +44,7 @@ async function handedOff(
     claimedBy: 'runner',
     tokenHash: CLAIM,
   });
+  if (!reportReady) return { store, orchestrator, runId: first.runId };
   const binding: DeliveryBinding = {
     runId: first.runId,
     repo: TASK.repo,
@@ -362,5 +366,137 @@ describe('native delivery terminal authority', () => {
       ),
     ).toMatchObject({ refused: true, reason: 'task-closed' });
     expect((await f.store.readTask(native))!.task.delivery).toEqual(binding);
+  });
+});
+
+describe('native item cancellation intent preserves run-only semantics', () => {
+  const native = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4H' };
+  async function activeRecovery(kind: 'correction' | 'reply') {
+    const f = await handedOff('none', 'claude', native);
+    const correction = await f.orchestrator.observeDelivery(
+      f.runId,
+      { kind: 'correction', head: HEAD, reason: 'review change' },
+      () => true,
+    );
+    if (isRefusal(correction)) throw Error(correction.reason);
+    let recovery = correction.additionalRuns![0]!;
+    if (kind === 'reply') {
+      const parked = await f.orchestrator.report(recovery.runId, {
+        ok: true,
+        summary: 'park',
+      });
+      if (isRefusal(parked)) throw Error(parked.reason);
+      const reply = await f.orchestrator.request({
+        taskId: native,
+        requestId: 'human-reply',
+        pipeline: 'claude',
+        params: { mode: 'reply', replyPrincipal: 'user:operator' },
+      });
+      if (isRefusal(reply)) throw Error(reply.reason);
+      recovery = decidedRun(reply);
+    }
+    return { ...f, recovery };
+  }
+  it.each(['correction', 'reply'] as const)(
+    'native item cancellation closes owned %s delivery recovery atomically',
+    async (kind) => {
+      const f = await activeRecovery(kind);
+      const before = (await f.store.readTask(native))!.task;
+      const original = (await f.store.readRun(f.runId))!;
+      const canceled = await f.orchestrator.cancel(
+        f.recovery.runId,
+        'item canceled',
+        native,
+      );
+      if (isRefusal(canceled)) throw Error(canceled.reason);
+      expect(canceled.task.closedAt).toBe(NOW);
+      expect(canceled.task.activeRunId).toBeUndefined();
+      expect(canceled.run?.state).toBe('canceled');
+      expect(canceled.task.delivery).toEqual(before.delivery);
+      expect(
+        await f.orchestrator.observeDelivery(
+          f.runId,
+          { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+          () => true,
+        ),
+      ).toMatchObject({ refused: true, reason: 'task-closed' });
+      expect((await f.store.readRun(f.runId))!.result).toEqual(original.result);
+      expect(
+        deriveItemState(
+          (await f.store.readTask(native))!.task,
+          await f.store.listRuns(native),
+        ),
+      ).toBe('canceled');
+      expect(canceled.outbox.map((entry) => entry.entryId)).toContain(
+        `outcome/${f.recovery.runId}`,
+      );
+      expect(
+        canceled.outbox.some((entry) =>
+          entry.entryId.startsWith('delivery-outcome/'),
+        ),
+      ).toBe(false);
+    },
+  );
+  it('direct run cancellation remains run-only during incomplete native delivery', async () => {
+    const f = await activeRecovery('correction');
+    const before = (await f.store.readTask(native))!.task.delivery;
+    expect(
+      isRefusal(await f.orchestrator.cancel(f.recovery.runId, 'run only')),
+    ).toBe(false);
+    expect((await f.store.readTask(native))!.task.closedAt).toBeUndefined();
+    expect((await f.store.readTask(native))!.task.delivery).toEqual(before);
+    expect((await f.store.readRun(f.recovery.runId))!.state).toBe('canceled');
+  });
+  it('native cancellation credential operation remains blocked by the existing reservation', async () => {
+    const f = await handedOff('none', 'codex', native, 'waiting', false);
+    const reservation = await f.store.transactRun({
+      runId: f.runId,
+      decide: ({ task, run }) => {
+        if (task === undefined || run === undefined)
+          throw Error('missing live run');
+        return reserveCredentialOperation({
+          now: NOW,
+          task: task.task,
+          run,
+          id: 'native-cancel-operation',
+          kind: 'persist',
+          claimFingerprint: CLAIM,
+        });
+      },
+    });
+    expect(isRefusal(reservation)).toBe(false);
+    expect((await f.store.readRun(f.runId))!.credentialOperation?.kind).toBe(
+      'persist',
+    );
+    expect(
+      await f.orchestrator.cancel(f.runId, 'item canceled', native),
+    ).toMatchObject({ refused: true, reason: 'credential-operation-pending' });
+    expect((await f.store.readTask(native))!.task.closedAt).toBeUndefined();
+  });
+  it('refuses native item intent bound to another item without canceling the owned run', async () => {
+    const f = await activeRecovery('correction');
+    expect(
+      await f.orchestrator.cancel(f.recovery.runId, 'wrong item', {
+        workId: '01J5Z3K9QX8F0N2B4V6C8D1E4J',
+      }),
+    ).toMatchObject({ refused: true, reason: 'task-busy' });
+    expect((await f.store.readTask(native))!.task.activeRunId).toBe(
+      f.recovery.runId,
+    );
+    expect((await f.store.readTask(native))!.task.closedAt).toBeUndefined();
+  });
+  it('refuses native item intent against a historical non-owning live run', async () => {
+    const f = await activeRecovery('correction');
+    const task = (await f.store.readTask(native))!.task;
+    const run = (await f.store.readRun(f.recovery.runId))!;
+    expect(
+      cancelRun({
+        now: NOW,
+        task: { ...task, activeRunId: `work:${native.workId}/r999` },
+        run,
+        nativeTask: native,
+      }),
+    ).toMatchObject({ refused: true, reason: 'task-busy' });
+    expect((await f.store.readTask(native))!.task.closedAt).toBeUndefined();
   });
 });

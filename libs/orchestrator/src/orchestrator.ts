@@ -34,6 +34,7 @@ import {
   type RunResult,
   type Task,
   type TaskId,
+  type WorkAnchor,
   type WorkPayload,
 } from './model';
 import {
@@ -612,13 +613,18 @@ export class Orchestrator {
     return rerouted;
   }
 
-  async cancel(runId: string, note?: string): Promise<Decision | Refusal> {
+  async cancel(
+    runId: string,
+    note?: string,
+    nativeTask?: WorkAnchor,
+  ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
       cancelRun({
         now: this.clock.now(),
         task,
         run,
         ...(note === undefined ? {} : { note }),
+        ...(nativeTask === undefined ? {} : { nativeTask }),
       }),
     );
   }

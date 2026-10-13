@@ -17,6 +17,7 @@ import {
   type Task,
   type TaskId,
   taskKey,
+  type WorkAnchor,
   type WorkPayload,
 } from './model';
 
@@ -578,11 +579,21 @@ export function cancelRun(input: {
   task: Task;
   run: Run;
   note?: string;
+  /** Server-only native item cancellation, distinct from canceling a run. */
+  nativeTask?: WorkAnchor;
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (!isLive(run.state)) return refused('run-not-live');
   if (run.credentialOperation !== undefined)
     return refused('credential-operation-pending');
+  if (input.nativeTask !== undefined) {
+    if (!isWorkAnchor(task.task)) return refused('not-native');
+    if (
+      task.task.workId !== input.nativeTask.workId ||
+      task.activeRunId !== run.runId
+    )
+      return refused('task-busy');
+  }
   const settled: Run = {
     ...run,
     state: 'canceled',
@@ -597,8 +608,13 @@ export function cancelRun(input: {
     ],
     updatedAt: now,
   };
+  const released = resetLossBudgets(releaseLock(task, run.runId, now));
+  const closeDelivery =
+    input.nativeTask !== undefined &&
+    task.delivery !== undefined &&
+    task.delivery.state !== 'complete';
   return settle(
-    resetLossBudgets(releaseLock(task, run.runId, now)),
+    closeDelivery ? { ...released, closedAt: now } : released,
     settled,
     now,
   );

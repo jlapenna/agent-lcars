@@ -1133,4 +1133,225 @@ describe('native delivery finalization reuses terminal outcome and session expir
     expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('deliveryStage');
     expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
   });
+  it('native item cancellation retires monitoring during an active correction', async () => {
+    const f = await waiting();
+    const correction = await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'correction', head: HEAD, reason: 'review change' },
+      () => true,
+    );
+    if (isRefusal(correction)) throw Error(correction.reason);
+    const active = correction.additionalRuns![0]!;
+    const canceled = await f.orchestrator.cancel(
+      active.runId,
+      'native item canceled',
+      { workId: WORK_ID },
+    );
+    if (isRefusal(canceled)) throw Error(canceled.reason);
+    expect(canceled.task.closedAt).toBe(NOW);
+    expect(
+      (await drainOutbox({ ...f.deps, now: () => '2026-08-29T12:01:00.000Z' }))
+        .failed,
+    ).toEqual([]);
+    expect(
+      vi
+        .mocked(f.fetchImpl)
+        .mock.calls.some(([input]) => String(input).includes('/pulls/')),
+    ).toBe(false);
+    expect(
+      f.deliver.mock.calls
+        .map((call) => call[1])
+        .filter((payload) => payload.deliveryStage === 'complete'),
+    ).toEqual([]);
+    expect(f.deliver.mock.calls.at(-1)?.[1]).toMatchObject({
+      runId: active.runId,
+      state: 'canceled',
+    });
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    expect(
+      await f.orchestrator.observeDelivery(
+        f.run.runId,
+        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+        () => true,
+      ),
+    ).toMatchObject({ refused: true, reason: 'task-closed' });
+  });
+
+  it('delayed native final survives a later ready handoff with its immutable identity', async () => {
+    const f = await waiting();
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => true,
+    );
+    const originalBinding = (await f.store.readRun(f.run.runId))!.delivery;
+    f.deliver.mockRejectedValueOnce(Error('temporary lost response'));
+    expect((await drainOutbox(f.deps)).failed).toHaveLength(1);
+    const request = await f.orchestrator.request({
+      taskId: f.run.task,
+      requestId: 'later-ready-reply',
+      pipeline: 'claude',
+      params: { mode: 'reply', replyPrincipal: 'user:operator' },
+    });
+    if (isRefusal(request)) throw Error(request.reason);
+    const later = decidedRun(request);
+    await f.orchestrator.confirmDispatch(later.runId);
+    const head = 'd'.repeat(40);
+    const laterResult = {
+      ok: true,
+      summary: 'pull-request',
+      ref: 'https://github.com/octo/example/pull/13',
+      message: 'Later ready PR',
+    };
+    const report = await f.orchestrator.report(
+      later.runId,
+      laterResult,
+      undefined,
+      undefined,
+      undefined,
+      {
+        runId: later.runId,
+        repo: 'octo/example',
+        number: 13,
+        baseRef: 'main',
+        head,
+        state: 'waiting',
+        runtimeGate: 'none',
+        observedAt: NOW,
+      },
+    );
+    if (isRefusal(report)) throw Error(report.reason);
+    await drainOutbox(f.deps);
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/pulls/13'))
+          return Response.json({
+            number: 13,
+            body: `<!-- attempt-claim:g2:${later.runId} -->`,
+            state: 'open',
+            draft: false,
+            head: { sha: head },
+            base: { ref: 'main' },
+            user: { login: 'author' },
+            merged: false,
+            merge_commit_sha: null,
+            auto_merge: { merge_method: 'squash' },
+          });
+        if (url.endsWith('/graphql'))
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  headRefOid: head,
+                  reviews: {
+                    pageInfo: { hasPreviousPage: false },
+                    nodes: [
+                      {
+                        state: 'APPROVED',
+                        author: { login: 'reviewer' },
+                        commit: { oid: head },
+                      },
+                    ],
+                  },
+                  reviewThreads: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: [],
+                  },
+                },
+              },
+            },
+          });
+        if (url.includes('/rules/branches/'))
+          return Response.json([
+            { type: 'pull_request' },
+            {
+              type: 'required_status_checks',
+              parameters: { required_status_checks: [{ context: 'Verify' }] },
+            },
+          ]);
+        if (url.includes(`/commits/${head}/check-runs`))
+          return Response.json({
+            total_count: 1,
+            check_runs: [
+              {
+                name: 'Verify',
+                head_sha: head,
+                status: 'queued',
+                conclusion: null,
+              },
+            ],
+          });
+        return f.fetchImpl(input, init);
+      },
+    );
+    const retry = await drainOutbox({
+      ...f.deps,
+      fetchImpl,
+      now: () => '2026-08-29T12:02:00.000Z',
+    });
+    expect(retry.failed).toEqual([]);
+    expect(retry.reported).toContain(f.run.runId);
+    const originalFinals = f.deliver.mock.calls
+      .map((call) => call[1])
+      .filter(
+        (payload) => payload.eventId === `delivery-outcome/${f.run.runId}`,
+      );
+    expect(originalFinals).toHaveLength(2);
+    expect(originalFinals[1]).toEqual(originalFinals[0]);
+    expect(originalFinals[1]).toMatchObject({
+      runId: f.run.runId,
+      deliveryStage: 'complete',
+      ref: f.original.ref,
+    });
+    expect(
+      f.deliver.mock.calls
+        .map((call) => call[1])
+        .filter(
+          (payload) =>
+            payload.runId === f.run.runId &&
+            payload.deliveryStage === undefined,
+        ),
+    ).toHaveLength(1);
+    expect((await f.store.readTask(f.run.task))!.task.delivery).toMatchObject({
+      runId: later.runId,
+      head,
+      state: 'waiting',
+    });
+    expect((await f.store.readRun(f.run.runId))!.delivery).toEqual(
+      originalBinding,
+    );
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    expect((await f.store.readRun(later.runId))!.result).toEqual(laterResult);
+  });
+
+  it.each(['wrong-run', 'waiting', 'missing-merge'] as const)(
+    'suppresses a final event without its own complete immutable %s binding',
+    async (cause) => {
+      const f = await waiting();
+      await f.orchestrator.observeDelivery(
+        f.run.runId,
+        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+        () => true,
+      );
+      const task = (await f.store.readTask(f.run.task))!;
+      const original = (await f.store.readRun(f.run.runId))!;
+      const delivery = { ...original.delivery! };
+      if (cause === 'wrong-run') delivery.runId = `${f.run.runId}-wrong`;
+      if (cause === 'waiting') delivery.state = 'waiting';
+      if (cause === 'missing-merge') delete delivery.mergeCommit;
+      await f.store.apply({
+        expectedRevision: task.revision,
+        decision: {
+          task: task.task,
+          run: { ...original, delivery },
+          outbox: [],
+        },
+      });
+      await drainOutbox(f.deps);
+      expect(f.deliver).toHaveBeenCalledOnce();
+      expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('deliveryStage');
+      expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    },
+  );
 });

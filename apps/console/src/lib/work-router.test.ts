@@ -2569,3 +2569,115 @@ describe('exhausted delivery correction recovery', () => {
     expect(await f.ctx.runtime.store.readRun(`work:${ID}/r3`)).toBeUndefined();
   });
 });
+
+describe('native cancel retires incomplete delivery recovery', () => {
+  async function recovery(kind: 'correction' | 'reply') {
+    const ctx = context();
+    expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    const anchor = { workId: ID };
+    const original = (await ctx.runtime.store.readRun(`work:${ID}/r1`))!;
+    const dispatch = await ctx.runtime.orchestrator.confirmDispatch(
+      original.runId,
+    );
+    if (isRefusal(dispatch)) throw Error(dispatch.reason);
+    const result = {
+      ok: true,
+      summary: 'pull-request',
+      ref: `https://github.com/${spec.target.repo}/pull/12`,
+    };
+    const binding = {
+      runId: original.runId,
+      repo: spec.target.repo,
+      number: 12,
+      baseRef: 'main',
+      head: 'a'.repeat(40),
+      state: 'waiting' as const,
+      runtimeGate: 'none' as const,
+      observedAt: original.createdAt,
+    };
+    const report = await ctx.runtime.orchestrator.report(
+      original.runId,
+      result,
+      undefined,
+      undefined,
+      undefined,
+      binding,
+    );
+    if (isRefusal(report)) throw Error(report.reason);
+    const correction = await ctx.runtime.orchestrator.observeDelivery(
+      original.runId,
+      { kind: 'correction', head: binding.head, reason: 'review change' },
+      () => true,
+    );
+    if (isRefusal(correction)) throw Error(correction.reason);
+    let runId = correction.additionalRuns![0]!.runId;
+    if (kind === 'reply') {
+      const parked = await ctx.runtime.orchestrator.report(runId, {
+        ok: true,
+        summary: 'park',
+      });
+      if (isRefusal(parked)) throw Error(parked.reason);
+      const reply = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'Recover.',
+        requestId: 'cancel-recovery-reply',
+      });
+      if (reply.status !== 200) throw Error(`Reply refused: ${reply.status}`);
+      runId = reply.json.admittedRunId;
+    }
+    return { ctx, anchor, original, result, runId };
+  }
+  it.each(['correction', 'reply'] as const)(
+    'API native cancel retires active %s delivery ownership',
+    async (kind) => {
+      const f = await recovery(kind);
+      const before = (await f.ctx.runtime.store.readTask(f.anchor))!.task
+        .delivery;
+      expect(await call(f.ctx, 'POST', `/items/${ID}/cancel`)).toMatchObject({
+        status: 200,
+        json: { state: 'canceled' },
+      });
+      const after = (await f.ctx.runtime.store.readTask(f.anchor))!.task;
+      expect(after.closedAt).toBe(f.original.createdAt);
+      expect(after.activeRunId).toBeUndefined();
+      expect(after.delivery).toEqual(before);
+      expect((await f.ctx.runtime.store.readRun(f.runId))!.state).toBe(
+        'canceled',
+      );
+      expect(
+        await f.ctx.runtime.orchestrator.observeDelivery(
+          f.original.runId,
+          {
+            kind: 'protected-merge',
+            head: before!.head,
+            mergeCommit: 'b'.repeat(40),
+          },
+          () => true,
+        ),
+      ).toMatchObject({ refused: true, reason: 'task-closed' });
+      expect(
+        (await f.ctx.runtime.store.readRun(f.original.runId))!.result,
+      ).toEqual(f.result);
+      expect((await call(f.ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(
+        409,
+      );
+    },
+  );
+  it('refuses native cancellation without current operator scope and retains recovery', async () => {
+    const f = await recovery('correction');
+    expect(
+      (
+        await call(
+          { ...f.ctx, principal: readerOnly },
+          'POST',
+          `/items/${ID}/cancel`,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (await f.ctx.runtime.store.readTask(f.anchor))!.task.activeRunId,
+    ).toBe(f.runId);
+    expect(
+      (await f.ctx.runtime.store.readTask(f.anchor))!.task.closedAt,
+    ).toBeUndefined();
+  });
+});

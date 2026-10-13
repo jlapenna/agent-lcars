@@ -343,6 +343,7 @@ export const workRouter = os.router({
         : await context.runtime.orchestrator.cancel(
             live.runId,
             `canceled by ${context.principal.principal}`,
+            { workId: input.id },
           );
     if (isRefusal(outcome)) {
       throw errors.CONFLICT({ message: outcome.reason });

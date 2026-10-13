@@ -1,6 +1,7 @@
 import { parseRunGeneration } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
+  deliveryBindingSchema,
   isWorkAnchor,
   type LeasedOutboxEntry,
   MAX_AUTO_RETRIES,
@@ -664,13 +665,19 @@ async function deliverNativeOutcome(
   }
 
   const finalDelivery = entry.entryId === `delivery-outcome/${run.runId}`;
+  const completedBinding = finalDelivery
+    ? deliveryBindingSchema.safeParse(run.delivery)
+    : undefined;
   if (
     finalDelivery &&
     (task.closedAt !== undefined ||
-      task.delivery?.runId !== run.runId ||
-      task.delivery.state !== 'complete' ||
-      run.delivery?.state !== 'complete' ||
-      run.delivery.head !== task.delivery.head)
+      completedBinding === undefined ||
+      !completedBinding.success ||
+      completedBinding.data.runId !== run.runId ||
+      completedBinding.data.state !== 'complete' ||
+      completedBinding.data.mergeCommit === undefined ||
+      run.state !== 'finished' ||
+      run.result?.ok !== true)
   ) {
     await settleClaim(deps, entry, 'done');
     return;
