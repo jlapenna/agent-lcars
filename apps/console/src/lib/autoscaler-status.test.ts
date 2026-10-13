@@ -265,6 +265,123 @@ describe('authoritative ARC inventory', () => {
   );
 });
 
+describe('retired ARC snapshots under a unanimous fresh inventory', () => {
+  const now = Date.parse('2026-10-13T09:51:00Z');
+  const fresh = new Date(now).toISOString();
+  const expired = new Date(now - 181_000).toISOString();
+  const currentLanes = Array.from({ length: 12 }, (_, i) => `lane-${i}`);
+  const currentInventory = currentLanes.join(',');
+  const retiredInventory = `${currentInventory},ci-light,e2e-light,lcars-default`;
+  const base = {
+    schemaVersion: 3,
+    kind: 'arc-lane',
+    registrationUrl: 'https://github.com/jlapenna/agent-lcars',
+    assignedJobs: 1,
+    runningJobs: 1,
+    pendingJobs: 0,
+    idleRunners: 0,
+    registeredRunners: 2,
+    desiredRunners: 1,
+    minRunners: 0,
+    maxRunners: 3,
+  };
+  const freshLane = (name: string) => ({
+    ...base,
+    lane: name,
+    expectedLanes: currentInventory,
+    updatedAt: fresh,
+  });
+  const retiredLane = (name: string) => ({
+    ...base,
+    lane: name,
+    expectedLanes: retiredInventory,
+    updatedAt: expired,
+  });
+  const fleet = () => [
+    ...currentLanes.map(freshLane),
+    ...['ci-light', 'e2e-light', 'lcars-default', 'wait'].map(retiredLane),
+  ];
+
+  it('publishes complete totals despite expired retired-lane snapshots', () => {
+    const result = projectAutoscalerStatuses(fleet(), now);
+    expect(result.lanes).toHaveLength(12);
+    expect(result.lanesIncomplete).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+    expect(fleetFromAutoscalerStatuses(result)).toMatchObject({
+      online: 24,
+      busy: 12,
+    });
+  });
+
+  it('negative control: a fresh, non-configured snapshot still suppresses', () => {
+    // Identical to the published case; the only change is the retired `wait`
+    // snapshot being fresh rather than expired — a live unexpected producer
+    // that must keep failing closed.
+    const result = projectAutoscalerStatuses(
+      fleet().map((record) =>
+        record.lane === 'wait' ? { ...record, updatedAt: fresh } : record,
+      ),
+      now,
+    );
+    expect(result.lanes).toHaveLength(13);
+    expect(result.lanesIncomplete).toBe(true);
+    expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('online');
+    expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('busy');
+  });
+
+  it('fails closed on a configured-lane outage and republishes on restoration', () => {
+    const outageRecords = fleet().map((record) =>
+      record.lane === 'lane-3' ? { ...record, updatedAt: expired } : record,
+    );
+    const outage = projectAutoscalerStatuses(outageRecords, now);
+    expect(outage.lanesIncomplete).toBe(true);
+    expect(outage.warnings).toContain('Configured ARC lane status is missing.');
+    expect(fleetFromAutoscalerStatuses(outage)).not.toHaveProperty('online');
+    expect(fleetFromAutoscalerStatuses(outage)).not.toHaveProperty('busy');
+
+    const restored = projectAutoscalerStatuses(
+      outageRecords.map((record) =>
+        record.lane === 'lane-3' ? { ...record, updatedAt: fresh } : record,
+      ),
+      now,
+    );
+    expect(restored.lanesIncomplete).toBeUndefined();
+    expect(fleetFromAutoscalerStatuses(restored)).toMatchObject({ online: 24 });
+  });
+
+  it('keeps honest unknown inventory when fresh producers disagree beside retired snapshots', () => {
+    const result = projectAutoscalerStatuses(
+      fleet().map((record) =>
+        record.lane === 'lane-0'
+          ? { ...record, expectedLanes: 'lane-0,lane-1' }
+          : record,
+      ),
+      now,
+    );
+    expect(result.lanesIncomplete).toBe(true);
+    expect(result.warnings).toContain(
+      'ARC lane inventory is unavailable or inconsistent.',
+    );
+    expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('online');
+  });
+
+  it('publishes a genuine zero for the configured inventory despite retired snapshots', () => {
+    const result = projectAutoscalerStatuses(
+      fleet().map((record) =>
+        record.expectedLanes === currentInventory
+          ? { ...record, registeredRunners: 0, runningJobs: 0 }
+          : record,
+      ),
+      now,
+    );
+    expect(result.lanesIncomplete).toBeUndefined();
+    expect(fleetFromAutoscalerStatuses(result)).toMatchObject({
+      online: 0,
+      busy: 0,
+    });
+  });
+});
+
 describe('subscribeAutoscalerStatuses', () => {
   afterEach(() => vi.resetAllMocks());
 

@@ -210,7 +210,6 @@ export function projectAutoscalerStatuses(
       'kind' in record &&
       record.kind === 'arc-lane',
   ).length;
-  const stale = laneRecords.length > lanes.length;
   const invalid = arcRecordCount > laneRecords.length;
   // Do not infer configured capacity from the documents that happened to
   // survive. Every fresh lane must attest the same bounded inventory, with
@@ -229,6 +228,19 @@ export function projectAutoscalerStatuses(
     inventoryValid &&
     (expected.length !== lanes.length ||
       expected.some((name) => !lanes.some((lane) => lane.lane === name)));
+  // A stored lane record older than its freshness window is stale evidence.
+  // When every fresh producer attests one valid inventory, expiry is judged
+  // against that configured inventory only: an expired document for a lane
+  // the inventory no longer lists is a retired snapshot, not a completeness
+  // gap, and must not suppress complete totals until it is deleted. Without
+  // a unanimously attested inventory we cannot tell a retired record from a
+  // configured outage, so every non-fresh record stays stale (fail closed).
+  const stale = inventoryValid
+    ? laneRecords.some(
+        (status) =>
+          expected.includes(status.lane) && !isFresh(status.updatedAt, now),
+      )
+    : laneRecords.length > lanes.length;
   const inventoryUnknown = lanes.length > 0 && !inventoryValid;
   return {
     lanes,
