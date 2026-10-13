@@ -145,7 +145,7 @@ it('carries both exact PR and blocker links on the agent turn', () => {
   });
   expect(
     screen
-      .getAllByRole('link', { name: 'ref' })
+      .getAllByRole('link', { name: /^(GitHub ref ↗|ref)$/ })
       .map((link) => link.getAttribute('href')),
   ).toEqual([ref, blocker]);
 });
@@ -208,7 +208,7 @@ it('keeps fallback provenance and exact result links when session access is with
   ).toBeInTheDocument();
   expect(
     screen
-      .getAllByRole('link', { name: 'ref' })
+      .getAllByRole('link', { name: /^(GitHub ref ↗|ref)$/ })
       .map((link) => link.getAttribute('href')),
   ).toEqual([ref, blocker]);
   expect(screen.queryByRole('link', { name: 'session' })).toBeNull();

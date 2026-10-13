@@ -28,12 +28,15 @@ export function BridgeDetail({
   detail,
   repoFilterKey,
   stoppedCursor,
+  backHref: suppliedBackHref,
   cancel = async () => [null, undefined] as const,
   redispatch = async () => [null, undefined] as const,
 }: {
   detail: BridgeDetailDescriptor;
   repoFilterKey?: string;
   stoppedCursor?: string;
+  /** The owning surface can clear its selection without leaving that page. */
+  backHref?: string;
   /** Only ever invoked for the `parkedWork` kind; every other kind renders
    *  without them, so tests exercising those kinds need not supply either -
    *  the no-op defaults keep this pane's own contract self-sufficient. */
@@ -54,7 +57,9 @@ export function BridgeDetail({
     );
   }
 
-  const backHref = bridgeSelectionHref(undefined, repoFilterKey, stoppedCursor);
+  const backHref =
+    suppliedBackHref ??
+    bridgeSelectionHref(undefined, repoFilterKey, stoppedCursor);
   const eyebrow =
     detail.kind === 'item'
       ? 'Waiting on deploy'

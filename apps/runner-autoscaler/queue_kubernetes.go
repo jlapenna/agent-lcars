@@ -115,9 +115,6 @@ func validateKubernetesQueueEnvironment(c *queueKubernetesConfig) error {
 	if _, err := directRunnerWorkerPolicyProviders(); err != nil {
 		return err
 	}
-	if _, err := directRunnerHookTelemetryProviders(); err != nil {
-		return err
-	}
 	_, err = queueKubernetesRESTConfig(c)
 	return err
 }
@@ -141,13 +138,6 @@ func queueKubernetesRESTConfig(c *queueKubernetesConfig) (*rest.Config, error) {
 // brief. An empty value explicitly keeps even image-provided defaults disabled.
 func directRunnerWorkerPolicyProviders() (string, error) {
 	return directRunnerProviderSelection("LCARS_WORKER_POLICY_PROVIDERS")
-}
-
-// Pipelines whose workers report telemetry through runtime hooks instead of
-// the polling sidecar (docs/hooks-telemetry-design.md, phase 2). Same trust
-// and empty-means-disabled contract as the worker-policy selector.
-func directRunnerHookTelemetryProviders() (string, error) {
-	return directRunnerProviderSelection("LCARS_HOOK_TELEMETRY_PROVIDERS")
 }
 
 func directRunnerProviderSelection(name string) (string, error) {
@@ -177,7 +167,6 @@ type kubernetesQueue struct {
 	config                  queueKubernetesConfig
 	client                  kubernetes.Interface
 	workerPolicyProviders   string
-	hookTelemetryProviders  string
 	image                   string
 	logger                  *slog.Logger
 	mu                      sync.Mutex
@@ -221,11 +210,7 @@ func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *sl
 	if err != nil {
 		return nil, err
 	}
-	hookTelemetry, err := directRunnerHookTelemetryProviders()
-	if err != nil {
-		return nil, err
-	}
-	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers, hookTelemetryProviders: hookTelemetry,
+	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers,
 		verifyRun: queueRunFence(strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL")))}
 	if err := q.preflight(ctx); err != nil {
 		return nil, err
@@ -655,7 +640,6 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	one := int32(1)
 	env := []core.EnvVar{{Name: "RUNNER_MODE", Value: "direct"}, {Name: "LCARS_RUN_ID", Value: l.runID}, {Name: "LCARS_CONSOLE_URL", Value: l.consoleURL}, {Name: "LCARS_RUN_TOKEN", ValueFrom: &core.EnvVarSource{SecretKeyRef: &core.SecretKeySelector{LocalObjectReference: core.LocalObjectReference{Name: name}, Key: "run-token"}}}}
 	env = append(env, core.EnvVar{Name: "LCARS_WORKER_POLICY_PROVIDERS", Value: q.workerPolicyProviders})
-	env = append(env, core.EnvVar{Name: "LCARS_HOOK_TELEMETRY_PROVIDERS", Value: q.hookTelemetryProviders})
 	volumes := []core.Volume{{Name: "credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: items, DefaultMode: &mode}}}, {Name: "work", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}}
 	mounts := []core.VolumeMount{{Name: "credentials", MountPath: "/run/secrets", ReadOnly: true}, {Name: "work", MountPath: "/home/runner/_work"}}
 	if l.pipeline == "codex" {
