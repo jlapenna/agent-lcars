@@ -539,12 +539,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
    hairline. Tables and tags are drawn in the same hairlines, and status keeps
    its hue in the text rather than in a tinted chip. */
 
-.lcars-panel.mantine-Card-root {
-  padding: 2px 0 4px calc(var(--lcars-spine-width) + 16px);
+/* 4px on the top and trailing edges keeps the 2px focus ring and its 2px
+   offset inside the panel's `overflow: hidden`. The Agents columns and fleet
+   strip keep their own insets: they tile a grid with 1px dividers. */
+.lcars-panel.mantine-Card-root:not(.agents-panel, .agents-fleet-strip) {
+  padding: 4px 4px 4px calc(var(--lcars-spine-width) + 16px);
   border: 0;
 }
 
-.lcars-panel > .mantine-Title-root:first-child,
+/* The hairline goes under the whole head. A heading followed by its own
+   description line (SectionHeading) draws it under that line instead. */
+.lcars-panel > .mantine-Title-root:first-child:not(:has(+ .mantine-Text-root)),
+.lcars-panel > .mantine-Title-root:first-child + .mantine-Text-root,
 .lcars-panel > .mantine-Group-root:first-child:has(> .mantine-Title-root),
 .lcars-panel > .mantine-Group-root:first-child:has(> * > .mantine-Title-root),
 .lcars-panel
@@ -2141,6 +2147,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     font-size: 2.875rem;
     font-weight: 700;
     line-height: 0.95;
+  }
+
+  .console-page-shell[data-frame='rail']
+    .console-header[data-long-title]
+    .lcars-header-title {
+    font-size: 1.75rem;
+    line-height: 1.05;
   }
 
   .console-page-shell[data-frame='rail']

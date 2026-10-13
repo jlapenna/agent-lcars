@@ -9,6 +9,9 @@ import type { NavKey } from './console-navigation';
 export { ConsoleNavRail } from './console-nav-rail';
 export type { NavKey } from './console-navigation';
 
+/** Longer than any destination name, shorter than a typical issue title. */
+const LONG_TITLE_LENGTH = 32;
+
 export interface ConsoleHeaderProps {
   current: NavKey;
   title: string;
@@ -77,6 +80,9 @@ export function ConsoleHeader({
       className="console-header"
       data-current={current}
       data-has-utilities={utilities ? '' : undefined}
+      // Destination names take the full marquee size; a drill-down's content
+      // title (a session or issue title) steps down so it can fit.
+      data-long-title={title.length > LONG_TITLE_LENGTH ? '' : undefined}
       data-streaming-fallback={streamingFallback ? '' : undefined}
     >
       <div className="lcars-header-arm" aria-hidden="true">
