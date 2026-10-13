@@ -96,7 +96,7 @@ export function IssueGroupedSessions({
         ))}
       </Box>
       <MobileHistoryDisclosure
-        gap="xl"
+        gap={0}
         hiddenCount={Math.max(
           0,
           groups.length - MOBILE_INITIAL_ISSUE_GROUP_COUNT,
@@ -108,7 +108,7 @@ export function IssueGroupedSessions({
         {groups.map((group, index) => (
           <Stack
             key={groupKey(group)}
-            gap="xs"
+            gap={0}
             data-testid={`issue-group-${groupKey(group)}`}
             data-mobile-history-extra={
               index >= MOBILE_INITIAL_ISSUE_GROUP_COUNT || undefined
