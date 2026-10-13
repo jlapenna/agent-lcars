@@ -1175,9 +1175,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 /* Compact desktops (to 1440px): the toolbar band keeps the mockup's single
-   row. Native selects size to their widest option, so they are capped;
-   segments and the find field tighten; the Inbox's freshness line (the
-   header already shows sync status) steps aside. */
+   row. Native selects size to their widest option, so they are capped, and
+   segments and the find field tighten. (The Inbox's own search is narrowed
+   beside its base rule below.) */
 @media (min-width: 48em) and (max-width: 89.99em) {
   .console-toolbar__select {
     max-width: 12rem;
@@ -1189,20 +1189,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-toolbar__search {
     width: 12rem;
-  }
-
-  .inbox-toolbar .queue-search-input {
-    flex: 1 1 12rem;
-    max-width: 14rem;
-  }
-
-  .inbox-data-freshness {
-    display: none;
-  }
-
-  /* Freshness carried the trailing push; the primary action takes it. */
-  .inbox-respond-oldest {
-    margin-left: auto;
   }
 }
 
@@ -4567,6 +4553,14 @@ td.costs-repo-spend__num {
 .inbox-toolbar .queue-search-input {
   flex: 1 1 14rem;
   max-width: 18rem;
+}
+
+/* Compact desktops: a smaller basis keeps search, the data-age line and
+   Respond to oldest on the toolbar's one row. */
+@media (min-width: 48em) and (max-width: 89.99em) {
+  .inbox-toolbar .queue-search-input {
+    flex-basis: 10rem;
+  }
 }
 
 .inbox-agent-select {
