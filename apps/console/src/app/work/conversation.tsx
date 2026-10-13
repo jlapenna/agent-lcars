@@ -13,7 +13,7 @@ function TurnRef({ value }: { value: string | undefined }) {
   if (!href) return null;
   return (
     <Anchor href={href} target="_blank" rel="noreferrer" size="xs">
-      ref
+      {new URL(href).hostname === 'github.com' ? 'GitHub ref ↗' : 'ref'}
     </Anchor>
   );
 }

@@ -26,6 +26,54 @@ useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
 test.describe('populated dashboard', () => {
+  for (const width of [390, 1280]) {
+    test(`keeps Agents task titles onsite at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      for (const testId of ['live-run-issue-link', 'recent-run-issue-link']) {
+        await page.goto('/agents');
+        const workspace = page.getByRole('region', {
+          name: 'Agent operations',
+        });
+        const title = workspace.getByTestId(testId).first();
+        await expect(title).toBeVisible();
+        await expect(title).toHaveAttribute(
+          'href',
+          /^\/agents\?repo=.+&sel=run%3A.+$/,
+        );
+        await expect(title).not.toHaveAttribute('target', '_blank');
+        for (const link of await workspace
+          .locator('a[href^="https://github.com/"]')
+          .all()) {
+          await expect(link).toContainText('GitHub');
+        }
+        const href = await title.getAttribute('href');
+        await title.click();
+        await expect(page).toHaveURL(
+          (url) => `${url.pathname}${url.search}` === href,
+        );
+        {
+          const detail = page.getByTestId('bridge-detail');
+          await expect(detail).toBeVisible();
+          await expect(
+            detail.getByTestId(
+              testId === 'live-run-issue-link'
+                ? 'current-run-row'
+                : 'finished-run-row',
+            ),
+          ).toBeVisible();
+          const back = detail.getByRole('link', { name: '← All activity' });
+          const backHref = await back.getAttribute('href');
+          await expect(back).toHaveAttribute('href', /^\/agents\?repo=.+$/);
+          await back.click();
+          await expect(page).toHaveURL(
+            (url) => `${url.pathname}${url.search}` === backHref,
+          );
+          await expect(page.getByTestId('bridge-detail')).toHaveCount(0);
+        }
+      }
+    });
+  }
+
   for (const path of ['/', '/agents']) {
     test(`expires projected fleet capacity locally on ${path} while dashboard streaming is denied`, async ({
       page,
@@ -378,7 +426,7 @@ test.describe('populated dashboard', () => {
     await expect(header.getByText('Cost', { exact: true })).toBeVisible();
     await expect(
       header.getByRole('link', {
-        name: `#${E2E_ITEM_NUMBERS.silentError}`,
+        name: `GitHub #${E2E_ITEM_NUMBERS.silentError}`,
         exact: true,
       }),
     ).toBeVisible();

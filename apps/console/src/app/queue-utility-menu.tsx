@@ -81,7 +81,7 @@ export function QueueUtilityMenu({
           c="dimmed"
           className="queue-utility-menu__control"
         >
-          Open repository ↗
+          Open repository on GitHub ↗
         </Anchor>
       </Menu.Dropdown>
       {itemActions.modal}
