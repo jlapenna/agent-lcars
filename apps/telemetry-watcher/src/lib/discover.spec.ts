@@ -1,10 +1,10 @@
+import { type WatchRootConfig } from '@agent-lcars/telemetry';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
-import { WatchRootConfig } from './watch-roots';
 
 describe('discoverTranscriptFiles', () => {
   let root: string;

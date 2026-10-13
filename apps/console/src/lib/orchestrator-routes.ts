@@ -299,6 +299,19 @@ export async function handleWebhookDelivery(
       };
     }
     if (outcome.kind === 'conflict') {
+      if (
+        'providerRouting' in outcome &&
+        outcome.providerRouting !== undefined
+      ) {
+        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+        return {
+          status: 200,
+          body: {
+            refused: outcome.providerRouting.reason,
+            providerRouting: outcome.providerRouting,
+          },
+        };
+      }
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
       return {
         status: 200,
@@ -310,7 +323,12 @@ export async function handleWebhookDelivery(
                 labels: outcome.labels,
                 message: outcome.message,
               }
-            : { refused: 'work-spec-mismatch' },
+            : {
+                refused:
+                  outcome.message === 'stale-provider-request'
+                    ? outcome.message
+                    : 'work-spec-mismatch',
+              },
       };
     }
     if (outcome.kind === 'invalid' || outcome.kind === 'forbidden') {

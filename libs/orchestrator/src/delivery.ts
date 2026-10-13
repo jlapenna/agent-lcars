@@ -6,7 +6,13 @@ import {
   type Decision,
   type Refusal,
 } from './decide';
-import type { DeliveryBinding, Run, Task } from './model';
+import {
+  isWorkAnchor,
+  type DeliveryBinding,
+  type OutboxEntry,
+  type Run,
+  type Task,
+} from './model';
 
 /** Exact server observation; partial GitHub/projection data has no authority. */
 export type DeliveryObservation =
@@ -62,7 +68,7 @@ export function advanceDelivery(input: {
     return {
       task: { ...task, delivery, updatedAt: now },
       run: { ...run, delivery, updatedAt: now },
-      outbox: [],
+      outbox: finalDeliveryOutbox(task, run, delivery, now),
     };
   }
   if (observation.kind === 'revision' && binding.state === 'waiting') {
@@ -85,7 +91,7 @@ export function advanceDelivery(input: {
     return {
       task: { ...task, delivery, updatedAt: now },
       run: { ...run, delivery, updatedAt: now },
-      outbox: [],
+      outbox: finalDeliveryOutbox(task, run, delivery, now),
     };
   }
   if (!input.correctionAuthorized) return refused('not-claimant');
@@ -122,4 +128,27 @@ export function advanceDelivery(input: {
     run,
     additionalRuns: [correction],
   };
+}
+
+/** The original execution outcome is immutable and already delivered. Native
+ * logical completion owns a distinct durable event through the same dispatcher. */
+function finalDeliveryOutbox(
+  task: Task,
+  run: Run,
+  delivery: DeliveryBinding,
+  now: string,
+): OutboxEntry[] {
+  if (!isWorkAnchor(task.task) || delivery.state !== 'complete') return [];
+  return [
+    {
+      entryId: `delivery-outcome/${run.runId}`,
+      kind: 'report-outcome',
+      task: run.task,
+      runId: run.runId,
+      state: 'pending',
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
 }

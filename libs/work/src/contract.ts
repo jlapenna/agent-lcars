@@ -1,4 +1,7 @@
-import { runPlacementSchema } from '@agent-lcars/dispatch-contracts';
+import {
+  providerRoutingSchema,
+  runPlacementSchema,
+} from '@agent-lcars/dispatch-contracts';
 import { oc } from '@orpc/contract';
 import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
@@ -164,6 +167,7 @@ export const itemViewSchema = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   closedAt: z.string().optional(),
+  providerRouting: providerRoutingSchema.optional(),
   runs: z.array(itemRunViewSchema),
   sessions: z.array(itemSessionViewSchema),
 });

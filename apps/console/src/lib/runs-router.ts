@@ -914,8 +914,9 @@ export const runsRouter = os.router({
     if (
       run.params?.deliveryPredecessor !== undefined &&
       result.ok &&
-      result.summary !== 'pull-request' &&
-      result.summary !== 'park'
+      result.summary !== 'park' &&
+      (!['pull-request', 'merged-deliverable'].includes(result.summary ?? '') ||
+        !/\/pull\/\d+$/u.test(result.ref ?? ''))
     )
       throw new ORPCError('CONFLICT', {
         message:

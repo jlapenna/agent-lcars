@@ -197,6 +197,7 @@ export class MemoryStore implements OrchestratorStore {
     requestId: string;
     requestSource: RequestSource;
     requestBinding?: RequestBinding;
+    readProviderRouting?: boolean;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     // Do not await while this snapshot and its accepted write are in flight:
@@ -228,7 +229,28 @@ export class MemoryStore implements OrchestratorStore {
       previousRunId === undefined
         ? undefined
         : structuredClone(this.#runs.get(previousRunId));
-    const outcome = input.decide({ task, activeRun, requestId, previousRun });
+    const outcome = input.decide({
+      task,
+      activeRun,
+      requestId,
+      previousRun,
+      ...(input.readProviderRouting
+        ? {
+            latestRun:
+              task === undefined
+                ? undefined
+                : structuredClone(
+                    this.#runs.get(`${key}/r${task.task.runCount}`),
+                  ),
+            retainedClaims: structuredClone(
+              [...this.#runs.values()].filter(
+                (run) =>
+                  taskKey(run.task) === key && run.queue?.state === 'claimed',
+              ),
+            ),
+          }
+        : {}),
+    });
     if (nextBinding !== undefined && input.requestBinding !== undefined) {
       this.#requestBindings.set(
         this.#bindingKey(input.taskId, input.requestBinding.bindingKey),

@@ -112,3 +112,109 @@ it('shows both exact artifacts in deliverables and run history', () => {
       .filter((link) => link.getAttribute('href') === blocker),
   ).toHaveLength(3);
 });
+
+it('shows requested versus effective provider and refused handoff without implying success', () => {
+  render(
+    <MantineProvider>
+      <TaskDetailHistory
+        anchor={{ repo: 'jlapenna/agent-lcars', issue: 42 }}
+        item={{
+          ...item,
+          providerRouting: {
+            requestId: 'switch',
+            requestedAt: '2026-10-09T01:00:00Z',
+            actor: 'jlapenna',
+            requestedPipeline: 'opencode',
+            effectivePipeline: 'codex',
+            status: 'refused',
+            reason: 'physical-retirement-required',
+          },
+        }}
+      />
+    </MantineProvider>,
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Requested provider opencode · effective provider codex · handoff refused (physical-retirement-required)',
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Reapply the intended label',
+  );
+});
+
+for (const status of ['accepted', 'refused'] as const) {
+  it(`shows accepted routing intent separately from incidental execution after a ${status} handoff`, () => {
+    render(
+      <MantineProvider>
+        <TaskDetailHistory
+          anchor={{ repo: 'jlapenna/agent-lcars', issue: 42 }}
+          item={{
+            ...item,
+            runs: [item.runs[0], { ...item.runs[1], pipeline: 'opencode' }],
+            providerRouting: {
+              requestId: 'saved-route',
+              requestedAt: '2026-10-09T01:00:00Z',
+              actor: 'jlapenna',
+              requestedPipeline: status === 'accepted' ? 'codex' : 'claude',
+              effectivePipeline: 'codex',
+              status,
+              acceptedGeneration: {
+                runId: 'r1',
+                requestedAt: '2026-10-09T00:00:00Z',
+                pipeline: 'codex',
+              },
+            },
+          }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('task-detail-provenance')).toHaveTextContent(
+      'effective provider codex',
+    );
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'effective provider codex',
+    );
+    expect(screen.getByText('Queue executor · opencode')).toBeInTheDocument();
+  });
+}
+
+it('uses immutable Work routing before any accepted label handoff', () => {
+  render(
+    <MantineProvider>
+      <TaskDetailHistory
+        anchor={{ repo: 'jlapenna/agent-lcars', issue: 42 }}
+        item={{ ...item, runs: [{ ...item.runs[0], pipeline: 'opencode' }] }}
+      />
+    </MantineProvider>,
+  );
+  expect(screen.getByTestId('task-detail-provenance')).toHaveTextContent(
+    'effective provider codex',
+  );
+});
+
+it('uses persisted effective routing for older records without an accepted generation', () => {
+  render(
+    <MantineProvider>
+      <TaskDetailHistory
+        anchor={{ repo: 'jlapenna/agent-lcars', issue: 42 }}
+        item={{
+          ...item,
+          runs: [{ ...item.runs[0], pipeline: 'opencode' }],
+          providerRouting: {
+            requestId: 'legacy-route',
+            requestedAt: '2026-10-09T01:00:00Z',
+            actor: 'jlapenna',
+            requestedPipeline: 'claude',
+            effectivePipeline: 'codex',
+            status: 'refused',
+          },
+        }}
+      />
+    </MantineProvider>,
+  );
+  expect(screen.getByTestId('task-detail-provenance')).toHaveTextContent(
+    'effective provider codex',
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'effective provider codex',
+  );
+});

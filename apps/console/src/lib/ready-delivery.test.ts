@@ -1,5 +1,5 @@
 import type { DeliveryBinding, Run, Task } from '@agent-lcars/orchestrator';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   deliveryCorrectionAuthorized,
@@ -350,5 +350,137 @@ describe('trusted GitHub intake correction authority', () => {
         pipeline: 'claude',
       }),
     ).toBeUndefined();
+  });
+});
+
+describe('delivery correction composes accepted routing and temporary fallback', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  function routedTask(): Task {
+    return {
+      ...TASK,
+      task: RUN.task,
+      delivery: { ...BINDING, runId: 'octo/example#7/r2' },
+      work: {
+        ...TASK.work,
+        origin: { principal: 'github:collaborator', channel: 'github' },
+      },
+      providerRouting: {
+        requestId: 'later-refused',
+        requestedAt: NOW,
+        actor: 'maintainer',
+        requestedPipeline: 'opencode',
+        effectivePipeline: 'codex',
+        status: 'refused',
+        acceptedGeneration: {
+          runId: 'octo/example#7/r2',
+          requestedAt: NOW,
+          pipeline: 'codex',
+        },
+      },
+    } as Task;
+  }
+  function actorPermission(permission = 'write') {
+    return {
+      tokens: { tokenFor: async () => 'test-token' },
+      fetchImpl: vi.fn(async () =>
+        Response.json({
+          permission,
+          role_name: permission,
+          user: { login: 'collaborator' },
+        }),
+      ) as unknown as typeof fetch,
+    };
+  }
+  it('authorizes current collaborator on accepted Codex intent while immutable Work remains Claude; current revocation refuses', async () => {
+    vi.stubEnv('AGENT_LCARS_WORK_GRANTS', '[]');
+    const task = routedTask();
+    const run = { ...RUN, runId: 'octo/example#7/r2', pipeline: 'codex' };
+    const current = await readGithubIntakePermission(
+      actorPermission(),
+      task,
+      run,
+    );
+    expect(current).toBeDefined();
+    expect(deliveryCorrectionAuthorized(task, run, current)).toBe(true);
+    const revoked = await readGithubIntakePermission(
+      actorPermission('read'),
+      task,
+      run,
+    );
+    expect(revoked).toBeUndefined();
+    expect(deliveryCorrectionAuthorized(task, run, revoked)).toBe(false);
+    expect(
+      deliveryCorrectionAuthorized(
+        {
+          ...task,
+          providerRouting: {
+            ...task.providerRouting!,
+            acceptedGeneration: {
+              ...task.providerRouting!.acceptedGeneration!,
+              runId: 'octo/example#7/r3',
+            },
+          },
+        },
+        run,
+        current,
+      ),
+    ).toBe(false);
+    expect(task.work).toEqual(routedTask().work);
+  });
+  it('allows temporary Claude execution only through its exact current fallback grant, leaving Codex intent unchanged', () => {
+    const task = routedTask();
+    const run = {
+      ...RUN,
+      runId: 'octo/example#7/r3',
+      pipeline: 'claude',
+      providerFallback: {
+        principal: 'user:fallback',
+        sourceRepository: 'octo/example',
+        allowedPipelines: ['claude'],
+        attemptedPipelines: ['codex', 'claude'],
+        originalRunId: 'octo/example#7/r2',
+        fromRunId: 'octo/example#7/r2',
+        trigger: {
+          reason: 'provider-limit' as const,
+          failureRunId: 'octo/example#7/r2',
+          limitedPipeline: 'codex',
+        },
+      },
+    };
+    const grant = {
+      principal: 'user:fallback',
+      subjects: ['github:maintainer'],
+      pipelines: ['codex', 'claude'],
+      scopes: ['work.operator'],
+    };
+    vi.stubEnv('AGENT_LCARS_WORK_GRANTS', JSON.stringify([grant]));
+    expect(deliveryCorrectionAuthorized(task, run)).toBe(true);
+    expect(
+      deliveryCorrectionAuthorized(task, {
+        ...run,
+        providerFallback: {
+          ...run.providerFallback,
+          sourceRepository: 'octo/other',
+        },
+      }),
+    ).toBe(false);
+    expect(
+      deliveryCorrectionAuthorized(task, {
+        ...run,
+        providerFallback: undefined,
+      }),
+    ).toBe(false);
+    vi.stubEnv(
+      'AGENT_LCARS_WORK_GRANTS',
+      JSON.stringify([{ ...grant, scopes: ['work.reader'] }]),
+    );
+    expect(deliveryCorrectionAuthorized(task, run)).toBe(false);
+    vi.stubEnv(
+      'AGENT_LCARS_WORK_GRANTS',
+      JSON.stringify([{ ...grant, pipelines: ['codex'] }]),
+    );
+    expect(deliveryCorrectionAuthorized(task, run)).toBe(false);
+    expect(task.providerRouting?.acceptedGeneration?.pipeline).toBe('codex');
+    expect((task.work.spec as { pipeline: string }).pipeline).toBe('claude');
   });
 });

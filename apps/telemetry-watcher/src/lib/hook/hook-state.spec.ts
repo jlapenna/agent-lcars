@@ -5,7 +5,6 @@ import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  isHookReported,
   markHookSessionDelivered,
   readHookSessionState,
   shouldShipEvent,
@@ -66,7 +65,7 @@ describe('hook session state', () => {
     );
   });
 
-  it('tells the daemon a session is hook-reported only after a real delivery, within the window', () => {
+  it('records a delivery while keeping the seq and other fields', () => {
     const dir = tempState();
     writeHookSessionState(dir, {
       version: 1,
@@ -74,18 +73,11 @@ describe('hook session state', () => {
       seq: 1,
       updatedAt: '2026-10-10T12:00:00.000Z',
     });
-    // Spooled but never delivered (no token, console down): the daemon keeps the session.
-    expect(isHookReported(dir, 's1', '2026-10-10T12:05:00.000Z')).toBe(false);
+    expect(readHookSessionState(dir, 's1')?.lastDeliveredAt).toBeUndefined();
     markHookSessionDelivered(dir, 's1', '2026-10-10T12:00:00.000Z');
     expect(readHookSessionState(dir, 's1')).toMatchObject({
       seq: 1,
       lastDeliveredAt: '2026-10-10T12:00:00.000Z',
     });
-    expect(isHookReported(dir, 's1', '2026-10-10T12:05:00.000Z')).toBe(true);
-    expect(isHookReported(dir, 's1', '2026-10-10T12:11:00.000Z')).toBe(false);
-    expect(isHookReported(dir, 's1', '2026-10-10T11:59:00.000Z')).toBe(false);
-    expect(isHookReported(dir, 'unknown', '2026-10-10T12:05:00.000Z')).toBe(
-      false,
-    );
   });
 });

@@ -662,6 +662,18 @@ async function deliverNativeOutcome(
     return;
   }
 
+  const finalDelivery = entry.entryId === `delivery-outcome/${run.runId}`;
+  if (
+    finalDelivery &&
+    (task.delivery?.runId !== run.runId ||
+      task.delivery.state !== 'complete' ||
+      run.delivery?.state !== 'complete' ||
+      run.delivery.head !== task.delivery.head)
+  ) {
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+
   // A settle that closes the item (done, failed, or canceled -- not a park,
   // and not a lost run that will be retried) is when its telemetry sessions
   // start to expire. Best effort and deliberately not retried through this
@@ -707,15 +719,22 @@ async function deliverNativeOutcome(
   }
 
   const payload: OutcomeWebhookPayload = {
+    ...(finalDelivery
+      ? { eventId: entry.entryId, deliveryStage: 'complete' as const }
+      : {}),
     itemId: run.task.workId,
     runId: run.runId,
     state: run.state,
     ok: run.result?.ok ?? false,
     parked:
       run.state === 'finished' && run.result?.summary === PARK_OUTCOME_SUMMARY,
-    ...(run.result?.message === undefined
-      ? {}
-      : { message: run.result.message }),
+    ...(finalDelivery
+      ? {
+          message: `Delivery complete: protected merge ${run.delivery?.mergeCommit}.${run.delivery?.runtimeEvidence === undefined ? '' : ` Runtime receipt: ${run.delivery.runtimeEvidence.ref}.`}`,
+        }
+      : run.result?.message === undefined
+        ? {}
+        : { message: run.result.message }),
     ...(run.result?.ref === undefined ? {} : { ref: run.result.ref }),
     thread: origin.thread,
     consoleUrl: `${consoleUrl()}/work/${run.task.workId}`,

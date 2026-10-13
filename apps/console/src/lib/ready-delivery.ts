@@ -15,7 +15,8 @@ import { z } from 'zod';
 
 import { isControlPlaneRepository } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { grantForPrincipal, resolvePrincipal } from './work-grants';
+import { grantForPrincipal, resolvePrincipal, workGrants } from './work-grants';
+import { currentFallbackPipelines } from './work-provider-fallback';
 
 export interface DeliveryGithubDeps {
   tokens: DispatchTokenProvider;
@@ -235,6 +236,18 @@ export async function readyDeliveryBinding(
   return binding;
 }
 
+/** Accepted label intent survives later refusals and temporary execution
+ * fallback. Historical Run.pipeline never establishes durable provider intent. */
+function deliveryIntentPipeline(task: Task): string | undefined {
+  const payload = workPayloadSchema.safeParse(task.work);
+  if (!payload.success) return undefined;
+  return (
+    task.providerRouting?.acceptedGeneration?.pipeline ??
+    task.providerRouting?.effectivePipeline ??
+    payload.data.spec.pipeline
+  );
+}
+
 interface GithubIntakePermission {
   runId: string;
   head: string;
@@ -242,6 +255,7 @@ interface GithubIntakePermission {
   principal: string;
   pipeline: string;
   observedAt: number;
+  intentRunId?: string;
 }
 
 /** The webhook intake class is distinct from Work API grants. Current metadata
@@ -256,7 +270,7 @@ export async function readGithubIntakePermission(
     !payload.success ||
     payload.data.origin.channel !== 'github' ||
     task.delivery === undefined ||
-    payload.data.spec.pipeline !== run.pipeline ||
+    deliveryIntentPipeline(task) !== run.pipeline ||
     task.delivery.repo !== payload.data.spec.target.repo ||
     !isControlPlaneRepository(task.delivery.repo)
   )
@@ -292,6 +306,7 @@ export async function readGithubIntakePermission(
     repo: task.delivery.repo,
     principal: payload.data.origin.principal,
     pipeline: run.pipeline,
+    intentRunId: task.providerRouting?.acceptedGeneration?.runId,
     observedAt: Date.now(),
   };
 }
@@ -309,6 +324,20 @@ export function deliveryCorrectionAuthorized(
     ('repo' in task.task && task.task.repo !== payload.data.spec.target.repo)
   )
     return false;
+  // A temporary fallback remains a fallback. Only the existing policy's
+  // current source grant can authorize its same-provider correction; an
+  // actor permission or incidental execution must not replace that grant.
+  if (run.pipeline !== deliveryIntentPipeline(task))
+    return (
+      run.providerFallback?.fromRunId !== undefined &&
+      run.providerFallback.attemptedPipelines.includes(run.pipeline) &&
+      currentFallbackPipelines(
+        task,
+        run,
+        workGrants(),
+        isControlPlaneRepository,
+      ).includes(run.pipeline)
+    );
   const grant =
     grantForPrincipal(payload.data.origin.principal) ??
     resolvePrincipal(payload.data.origin.principal);
@@ -319,12 +348,14 @@ export function deliveryCorrectionAuthorized(
     return true;
   return (
     payload.data.origin.channel === 'github' &&
-    payload.data.spec.pipeline === run.pipeline &&
+    deliveryIntentPipeline(task) === run.pipeline &&
     permission?.runId === run.runId &&
     permission.head === task.delivery.head &&
     permission.repo === task.delivery.repo &&
     permission.pipeline === run.pipeline &&
     permission.principal === payload.data.origin.principal &&
+    permission.intentRunId ===
+      task.providerRouting?.acceptedGeneration?.runId &&
     Date.now() - permission.observedAt <= 30_000
   );
 }

@@ -360,6 +360,11 @@ the work that has stopped, and the work in flight.
   render explicit unavailable states rather than implying zero capacity.
 - **FE-SB-3 [Shipped]** The data is live over SSE, and a staleness banner
   appears after 180s.
+- **FE-SB-3a [Implemented; runtime qualification pending]** Task history shows
+  requested and effective execution providers and the latest label handoff
+  outcome. A refused handoff names the owner/retirement gate and asks the
+  administrator to reapply after it clears. Original admitted Work remains
+  historical intent; each run shows its own provider.
 - **FE-SB-4 [Shipped]** Shuttlebay shows claim throughput and provider
   cooldowns (#2291): pipeline X is cooling down until T after a
   `provider-limit` failure. It includes the authoritative provider queue, deferred and live-claim counts,
@@ -471,12 +476,11 @@ CLI sessions and dispatched runs.
   `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex, and OpenCode (archived
   OpenCode exports, #2253). An archive that is neither shows "Session archive
   stored ({agent} format) — not yet renderable". CLI Claude Code/Codex
-  sessions use the same timeline only after
-  explicit per-session host archive consent, within the existing privacy
-  allowlists and 5 MiB / 30-day bounds; otherwise detail shows not-enabled or
-  unavailable. See [CLI archive policy](../../apps/telemetry-watcher/README.md#opt-in-cli-transcript-archives).
-  Production activation of CLI archives is a separate operator-approved
-  operation and is not verified here.
+  sessions use the same timeline only when their doc already carries an
+  unexpired CLI archive pointer within the 5 MiB bound; otherwise detail shows
+  not-enabled or unavailable. The host writer that created these archives was
+  deleted with the watcher daemon, so no new CLI archives are produced. See
+  [archived CLI transcripts](../../apps/telemetry-watcher/README.md#archived-cli-transcripts-reader-only).
 - **FE-SE-5 [Shipped]** A session's title is the transcript's own title
   (Claude Code's `aiTitle`) unless `lcars session title` sets an override, and
   `lcars session status` adds a status line. A session that drifts from its

@@ -4219,6 +4219,199 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       },
     );
 
+    it.each([
+      'healthy',
+      'retire-before-cleanup',
+      'release-before-cleanup',
+    ] as const)(
+      'accepted PR completion keeps cleanup and successor restore with ordering=%s',
+      async (ordering) => {
+        const f = await brokerFixture(true, false, true);
+        expect((await request(f, 'restore')).status).toBe(200);
+        const report = f.orchestrator.report.bind(f.orchestrator);
+        let accepted: Awaited<ReturnType<typeof f.store.readRun>>;
+        let successorId = '';
+        f.orchestrator.report = async (...args) => {
+          const outcome = await report(...args);
+          expect(isRefusal(outcome)).toBe(false);
+          accepted = await f.store.readRun(f.runId);
+          expect(accepted?.result).toMatchObject({
+            ok: true,
+            summary: 'pull-request',
+            ref: 'https://github.com/jlapenna/agent-lcars/pull/99',
+          });
+          expect(accepted?.credentialOperation).toMatchObject({
+            kind: 'cleanup',
+            claimFingerprint: f.fingerprint,
+          });
+          if (ordering !== 'healthy') await retireBroker(f);
+          let releaseFailure: unknown;
+          if (ordering === 'release-before-cleanup') {
+            try {
+              await releaseBroker(f);
+            } catch (error) {
+              releaseFailure = error;
+            }
+          }
+          const expectedReleaseFailure = {
+            healthy: undefined,
+            'retire-before-cleanup': undefined,
+            'release-before-cleanup': expect.objectContaining({
+              message: expect.stringContaining('physical'),
+            }),
+          }[ordering];
+          expect(releaseFailure instanceof Error).toBe(
+            ordering === 'release-before-cleanup',
+          );
+          expect(releaseFailure).toEqual(expectedReleaseFailure);
+          expect(await f.store.readRun(f.runId)).toEqual(accepted);
+          const successor = await f.orchestrator.request({
+            taskId: { repo: 'jlapenna/agent-lcars', issue: 43 },
+            requestId: `after-pr-cleanup-${ordering}`,
+            pipeline: 'codex',
+            params: { mode: 'implement' },
+            work: {
+              spec: {
+                title: 'Useful successor after completed PR',
+                description: 'Verify the next exact claim can restore.',
+                pipeline: 'codex',
+                target: { repo: 'jlapenna/agent-lcars' },
+              },
+            },
+          });
+          if (isRefusal(successor) || successor.run === undefined)
+            throw new Error('successor admission failed');
+          successorId = successor.run.runId;
+          expect(successorId).not.toBe(f.runId);
+          await f.store.enqueueRun({ runId: successorId, now: NOW });
+          await f.orchestrator.confirmDispatch(successorId);
+          await f.protocol.register(f.capacityOwner, 'pr-successor', NOW);
+          return outcome;
+        };
+        let cleanupReached = false;
+        f.fake.beforeSave = async (attempt) => {
+          if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
+          cleanupReached = true;
+          expect(
+            (await f.store.readRun(f.runId))?.credentialOperation?.kind,
+          ).toBe('cleanup');
+          expect((await f.protocol.read(NOW)).receipts).toHaveLength(1);
+          const waiting = await call(f.ctx, 'POST', '/runs/claim', {
+            runner: 'same-runner',
+            capacityVersion: 1,
+            producerId: 'pr-successor',
+            claimRequestId: 'before-pr-cleanup',
+          });
+          expect(waiting.status).toBe(200);
+          expect(waiting.json).toMatchObject({ kind: 'wait' });
+        };
+        expect(
+          await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+            outcome: 'pull-request',
+            outcomeReference: { kind: 'pull-request', number: 99 },
+            message: 'immutable PR before physical cleanup',
+          }),
+        ).toEqual({ status: 200, json: { runId: f.runId, state: 'finished' } });
+        expect(cleanupReached).toBe(true);
+        expect((await f.store.readRun(f.runId))?.result).toEqual(
+          accepted?.result,
+        );
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation,
+        ).toBeUndefined();
+        expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+          '1970-01-01T00:00:00.000Z',
+        );
+        const outbox = await f.store.claimPendingOutbox({
+          limit: 30,
+          now: NOW,
+          leaseExpiresAt: '2026-08-26T10:05:00.000Z',
+        });
+        expect(
+          outbox.filter((entry) => entry.kind === 'report-outcome'),
+        ).toHaveLength(1);
+        if (ordering === 'healthy') await retireBroker(f);
+        expect(await releaseBroker(f)).toEqual({
+          released: true,
+          retainBarrier: false,
+        });
+        f.fake.beforeSave = undefined;
+        const next = await call(f.ctx, 'POST', '/runs/claim', {
+          runner: 'same-runner',
+          capacityVersion: 1,
+          producerId: 'pr-successor',
+          claimRequestId: 'after-pr-cleanup',
+        });
+        expect(next.status).toBe(200);
+        expect(next.json).toMatchObject({
+          runId: successorId,
+          pipeline: 'codex',
+        });
+        const nextToken = (next.json as { token: string }).token;
+        const nextReceipt = (await f.protocol.read(NOW)).receipts[0];
+        const nextFence = {
+          poolId: nextReceipt.poolId,
+          slot: nextReceipt.slot,
+          revision: nextReceipt.revision,
+          runId: nextReceipt.runId,
+          nonce: nextReceipt.nonce,
+        };
+        const nextFingerprint = hashRunToken(nextToken);
+        await f.protocol.recover(f.capacityOwner, nextFence, {
+          nonce: 'pr-successor-recovery',
+          now: NOW,
+          expiresAt: '2026-08-26T10:01:00.000Z',
+        });
+        await f.protocol.bind(f.capacityOwner, nextFence, {
+          recoveryNonce: 'pr-successor-recovery',
+          jobUid: 'next-job',
+          jobName: nextReceipt.jobName,
+          podUid: 'next-pod',
+          secretUid: 'next-secret',
+          secretTokenHash: nextFingerprint,
+          placed: true,
+          deleting: false,
+          owned: true,
+          now: NOW,
+        });
+        await f.protocol.attest(f.capacityOwner, nextFence, {
+          recoveryNonce: 'pr-successor-recovery',
+          jobUid: 'next-job',
+          podUid: 'next-pod',
+          generation: 1,
+          owned: true,
+          now: NOW,
+        });
+        await f.protocol.activate({
+          fence: nextFence,
+          jobUid: 'next-job',
+          podUid: 'next-pod',
+          tokenHash: nextFingerprint,
+          now: NOW,
+        });
+        const restored = await call(
+          {
+            ...f.ctx,
+            bearerToken: nextToken,
+            verifyWorkerIdentity: async () => ({
+              podUid: 'next-pod',
+              namespace: 'broker-ns',
+            }),
+          },
+          'GET',
+          runPath(successorId, '/codex-auth'),
+        );
+        expect(restored.status).toBe(200);
+        expect(await f.codexAuth.readLease()).toMatchObject({
+          runId: successorId,
+          claimFingerprint: nextFingerprint,
+        });
+        expect((await f.store.readRun(f.runId))?.result).toEqual(
+          accepted?.result,
+        );
+      },
+    );
+
     it('capacity release progresses after healthy auth persistence and completed HTTP cleanup', async () => {
       const f = await brokerFixture(true, false, true);
       expect(await request(f, 'persist')).toMatchObject({
@@ -5575,3 +5768,116 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
     });
   });
 }
+
+describe('merged delivery corrections cross the authenticated PR gate', () => {
+  async function correction() {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('merged-delivery-correction'),
+      now: NOW,
+      spec: {
+        title: 't',
+        description: 'd',
+        pipeline: 'claude',
+        deliveryRuntime: 'none',
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+      params: { mode: 'implement', deliveryPredecessor: 'prior-run' },
+    });
+    const claimed = await call(
+      {
+        ...f,
+        ...context,
+        principal: {
+          principal: 'svc:runner',
+          subject: 'runner@test',
+          scopes: new Set(['work.executor'] as const),
+          pipelines: ['claude'],
+          via: 'google' as const,
+        },
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'test-runner' },
+    );
+    expect(claimed.status).toBe(200);
+    const ready = vi.fn(
+      async (
+        _deps: unknown,
+        input: { run: Run; repo: string; number: number; now: string },
+      ) => ({
+        runId: input.run.runId,
+        repo: input.repo,
+        number: input.number,
+        baseRef: 'main',
+        head: 'a'.repeat(40),
+        mergeCommit: 'b'.repeat(40),
+        state: 'complete' as const,
+        runtimeGate: 'none' as const,
+        observedAt: input.now,
+      }),
+    );
+    return {
+      ...f,
+      runId,
+      ready,
+      ctx: {
+        ...f,
+        ...context,
+        bearerToken: (claimed.json as { token: string }).token,
+        loadReadyDeliveryBinding: ready,
+      },
+    };
+  }
+  it('accepts merged-deliverable only after exact server PR proof, preserving the merged result', async () => {
+    const f = await correction();
+    const result = await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+      outcome: 'merged-deliverable',
+      outcomeReference: { kind: 'pull-request', number: 99 },
+    });
+    expect(result).toEqual({
+      status: 200,
+      json: { runId: f.runId, state: 'finished' },
+    });
+    expect(f.ready).toHaveBeenCalledOnce();
+    expect(f.ready.mock.calls[0]?.[1]).toMatchObject({
+      run: { runId: f.runId },
+      repo: 'jlapenna/agent-lcars',
+      number: 99,
+    });
+    expect((await f.store.readRun(f.runId))?.result).toMatchObject({
+      ok: true,
+      summary: 'merged-deliverable',
+      ref: 'https://github.com/jlapenna/agent-lcars/pull/99',
+    });
+    const run = (await f.store.readRun(f.runId))!;
+    expect(
+      deriveItemState((await f.store.readTask(run.task))!.task, [run]),
+    ).toBe('done');
+  });
+  it.each(['comment', 'no-op', 'merged-deliverable'])(
+    'refuses %s without a valid PR reference and retains the live correction',
+    async (outcome) => {
+      const f = await correction();
+      expect(
+        (await call(f.ctx, 'POST', runPath(f.runId, '/complete'), { outcome }))
+          .status,
+      ).toBe(409);
+      expect(f.ready).not.toHaveBeenCalled();
+      expect((await f.store.readRun(f.runId))?.state).toBe('running');
+    },
+  );
+  it('refuses a merged result when its server protected-evidence read fails', async () => {
+    const f = await correction();
+    f.ready.mockRejectedValueOnce(new Error('protected merge unavailable'));
+    expect(
+      (
+        await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+          outcome: 'merged-deliverable',
+          outcomeReference: { kind: 'pull-request', number: 99 },
+        })
+      ).status,
+    ).toBe(409);
+    expect((await f.store.readRun(f.runId))?.result).toBeUndefined();
+  });
+});

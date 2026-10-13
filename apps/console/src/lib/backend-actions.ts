@@ -303,17 +303,16 @@ async function dispatchPostedReply(
       // webhook remains responsible for first Work admission.
       if (existingTask !== undefined) {
         const work = workPayloadSchema.parse(existingTask.task.work);
-        // Assignment labels are an explicit present-tense handoff, whereas
-        // Work's pipeline is immutable. A rejected label-change webhook can
-        // therefore leave a new label beside older Work. Do not revive that
-        // older Work on a reply: all three sources must agree before a run can
-        // begin or the human handoff can be cleared.
-        if (work.spec.pipeline !== assignedPipeline) {
-          return { dispatched: false };
-        }
+        // Only an accepted label handoff changes future admission. An older
+        // or fallback run's provider is historical execution, not routing intent.
+        const effective =
+          existingTask.task.providerRouting?.acceptedGeneration?.pipeline ??
+          work.spec.pipeline;
+        if (effective !== assignedPipeline) return { dispatched: false };
         const outcome = await admitGithubWork(runtime, {
           anchor: taskId,
           requestId: `console-reply:${randomUUID()}`,
+          expectedEffectivePipeline: assignedPipeline,
           params: {
             mode: 'reply',
             reply: body,
@@ -725,6 +724,7 @@ export async function retriggerIssue(
   const outcome = await admitGithubWork(runtime, {
     anchor: taskId,
     requestId: `console-retry:${randomUUID()}`,
+    followEffectivePipeline: true,
     params: { mode: 'implement' },
     work: existingWork,
   });

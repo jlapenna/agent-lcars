@@ -119,3 +119,21 @@ items.
 Do not redispatch obsolete work to clear the list. GitHub-anchored tasks are
 separate from native `/items`; use their supported console workflow and
 verify the linked issue/PR state before changing them.
+
+## Changing a GitHub task's provider
+
+An administrator may remove the current canonical `agent:*` label and apply
+one supported replacement. Apply it only after the complete label set has one
+choice. The signed delivery's actor and source clock authorize and order this
+request; missing clocks, conflicting labels and out-of-order deliveries fail
+closed. Same-provider requests preserve ordinary redispatch semantics.
+
+The controller replaces only an unclaimed queued attempt. Work stays immutable;
+the canceled predecessor retains its provider and the successor is a fresh run.
+No production-data repair or direct queue manipulation is needed. Task history
+shows the requested provider, effective provider and handoff refusal. A claimed
+or physically retained attempt must settle, resolve credential cleanup and
+complete physical retirement first. A refusal never schedules a competing
+executor: reapply the chosen label after those gates pass (and after GitHub's
+source clock advances). Parked and terminal tasks follow those same gates and
+start fresh across providers; provider-specific sessions are never resumed.

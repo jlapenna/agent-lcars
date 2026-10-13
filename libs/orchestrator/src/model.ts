@@ -1,4 +1,5 @@
 import {
+  providerRoutingSchema,
   QUEUE_PRIORITIES,
   runPlacementSchema,
 } from '@agent-lcars/dispatch-contracts';
@@ -15,6 +16,8 @@ import { z } from 'zod';
  * A task may be worked any number of times, sequentially. A request while a
  * run is live is refused, preserving the mutex invariant.
  */
+
+export { providerRoutingSchema } from '@agent-lcars/dispatch-contracts';
 
 const isoUtc = z.iso.datetime({ offset: false });
 
@@ -177,7 +180,8 @@ export const RUN_ID_MAX_LENGTH =
 
 /** Orchestrator-generated dependent IDs must admit the longest run ID too. */
 const DEPENDENT_REQUEST_ID_MAX_LENGTH = 'fallback:'.length + RUN_ID_MAX_LENGTH;
-const OUTBOX_ENTRY_ID_MAX_LENGTH = 'dispatch/'.length + RUN_ID_MAX_LENGTH;
+const OUTBOX_ENTRY_ID_MAX_LENGTH =
+  'delivery-outcome/'.length + RUN_ID_MAX_LENGTH;
 
 /**
  * A run's lifecycle. `lost` is the orchestrator's own verdict, reached when
@@ -519,6 +523,7 @@ export const taskSchema = z.strictObject({
    *  its first request and never modified by the orchestrator afterward.
    *  A native anchor and a GitHub anchor both carry one. */
   work: workPayloadSchema,
+  providerRouting: providerRoutingSchema.optional(),
   /** Native anchors only: set by `closeTask` when an operator closes an
    *  item that has no live run. A closed task refuses further requests. */
   closedAt: isoUtc.optional(),

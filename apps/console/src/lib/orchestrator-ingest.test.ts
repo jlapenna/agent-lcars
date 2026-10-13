@@ -126,9 +126,6 @@ describe('interpretDelivery', () => {
             reason: 'routing-label-conflict',
             namespace,
             labels: [...labels].sort(),
-            message: expect.stringContaining(
-              'Existing Work keeps its admitted pipeline',
-            ),
           });
           expect(
             interpretDelivery({ event, deliveryId: DELIVERY_ID, payload }),

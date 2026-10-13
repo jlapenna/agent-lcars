@@ -731,6 +731,50 @@ describe('postComment (direct Work admission)', () => {
     expect(removeLabel).not.toHaveBeenCalled();
   });
 
+  it('replies on the effective provider after an admitted label handoff', async () => {
+    mockOctokit(['agent:opencode']);
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const first = await orchestrator.request({
+      taskId,
+      requestId: 'original',
+      pipeline: 'codex',
+      work: testWork('codex'),
+    });
+    if ('refused' in first || first.run === undefined)
+      throw new Error('seed refused');
+    await orchestrator.report(first.run.runId, { ok: true });
+    const handoff = await orchestrator.request({
+      taskId,
+      requestId: 'handoff',
+      pipeline: 'opencode',
+      labelProviderRequest: {
+        requestedAt: '2026-08-15T12:01:00.000Z',
+        actor: 'jlapenna',
+        allowProviderChange: true,
+      },
+    });
+    if ('refused' in handoff || handoff.run === undefined)
+      throw new Error('handoff refused');
+    await orchestrator.report(handoff.run.runId, { ok: true });
+    await expect(
+      postComment(
+        DEFAULT_REPO,
+        2709,
+        'Continue the work',
+        'jlapenna',
+        'opencode',
+      ),
+    ).resolves.toMatchObject({ dispatched: true });
+    expect((await store.listRuns(taskId)).at(-1)).toMatchObject({
+      pipeline: 'opencode',
+      params: { mode: 'reply' },
+    });
+    expect((await store.readTask(taskId))?.task.work).toMatchObject({
+      spec: { pipeline: 'codex' },
+    });
+  });
+
   it('treats a stale client assignment removed after render as a plain comment', async () => {
     const { createComment, removeLabel } = mockOctokit([]);
     const { orchestrator, store } = fixtureOrchestratorRuntime();
@@ -1383,49 +1427,65 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     expect(requestSpy).not.toHaveBeenCalled();
   });
 
-  it("reuses the task's durable Work payload without re-reading GitHub", async () => {
-    const { orchestrator } = fixtureOrchestratorRuntime();
-    mockOctokit();
-    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
-    const seeded = await orchestrator.request({
-      taskId,
-      requestId: 'seed',
-      pipeline: 'claude',
-      work: {
-        origin: { principal: 'github:someone-else', channel: 'github' },
-        spec: {
-          title: 'Seed title',
-          description: 'Seed body',
-          pipeline: 'claude',
-          target: { repo: 'supersprinklesracing/sprinkles' },
-        },
-      },
-    });
-    if ('refused' in seeded) throw new Error('seed request was refused');
-    // Settle the seeded run so the task's lock is free for retriggerIssue's
-    // own request below - only the pre-existing `work` should matter here.
-    await orchestrator.report(seeded.run.runId, { ok: true });
-    const { get } = mockOctokit();
-    const requestSpy = vi.spyOn(orchestrator, 'request');
-
-    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, undefined);
-
-    expect(get).not.toHaveBeenCalled();
-    expect(requestSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
+  it.each([
+    [undefined, 'normal'],
+    ['normal', 'normal'],
+    ['urgent', 'urgent'],
+    ['background', 'background'],
+  ] as const)(
+    'retries durable priority %s as %s without changing Work or re-reading GitHub',
+    async (priority, expectedPriority) => {
+      const { orchestrator, store } = fixtureOrchestratorRuntime();
+      mockOctokit();
+      const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+      const seeded = await orchestrator.request({
+        taskId,
+        requestId: 'seed',
+        pipeline: 'claude',
         work: {
           origin: { principal: 'github:someone-else', channel: 'github' },
           spec: {
             title: 'Seed title',
             description: 'Seed body',
             pipeline: 'claude',
-            priority: 'normal',
+            ...(priority === undefined ? {} : { priority }),
             target: { repo: 'supersprinklesracing/sprinkles' },
           },
         },
-      }),
-    );
-  });
+      });
+      if ('refused' in seeded) throw new Error('seed request was refused');
+      // Settle the seeded run so the task's lock is free for retriggerIssue's
+      // own request below - only the pre-existing `work` should matter here.
+      await orchestrator.report(seeded.run.runId, { ok: true });
+      const { get } = mockOctokit();
+      const durableWork = structuredClone(
+        (await store.readTask(taskId))!.task.work,
+      );
+      const requestSpy = vi.spyOn(orchestrator, 'request');
+
+      await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, undefined);
+
+      expect(get).not.toHaveBeenCalled();
+      expect(requestSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          work: {
+            origin: { principal: 'github:someone-else', channel: 'github' },
+            spec: {
+              title: 'Seed title',
+              description: 'Seed body',
+              pipeline: 'claude',
+              priority: expectedPriority,
+              target: { repo: 'supersprinklesracing/sprinkles' },
+            },
+          },
+        }),
+      );
+      expect((await store.readTask(taskId))!.task.work).toEqual(durableWork);
+      expect(await store.readActiveRun(taskId)).toMatchObject({
+        priority: expectedPriority,
+      });
+    },
+  );
 });
 
 describe('assignPipeline', () => {

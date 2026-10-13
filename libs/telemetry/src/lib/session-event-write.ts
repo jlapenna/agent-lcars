@@ -8,8 +8,8 @@ import {
 } from './types';
 
 /**
- * Turns one hook `SessionEventV1` into the same `SessionWrite` the watcher
- * daemon produces (docs/hooks-telemetry-design.md §4). The `lcars hook
+ * Turns one hook `SessionEventV1` into the same `SessionWrite` shape
+ * `runner finalize` produces (docs/hooks-telemetry-design.md §4). The `lcars hook
  * flush` client applies it to Firestore as the `telemetry-writer` account,
  * inside a transaction that re-reads the stored doc first.
  */
@@ -83,8 +83,9 @@ export function sessionWriteForEvent(
     event.summary ?? (existing ? summaryFromSessionDoc(existing) : undefined);
   if (!summary) return undefined;
   const liveness = livenessForSessionEvent(event.kind);
-  // The daemon archives CLI transcripts and records the pointer on the doc.
-  // A hook write must carry it forward, or buildSessionWrite would clear it.
+  // The retired host daemon archived CLI transcripts and recorded the
+  // pointer on the doc. A hook write must carry an existing pointer forward,
+  // or buildSessionWrite would clear it.
   const archive =
     !event.runner && existing?.source === 'cli'
       ? {
