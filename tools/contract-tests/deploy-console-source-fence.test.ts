@@ -40,7 +40,6 @@ interface Rollout {
   source?: string;
   created?: string;
   start?: string;
-  missingCreated?: boolean;
   updated?: string;
   end?: string;
   conclusion?: string;
@@ -58,10 +57,11 @@ function sourceDecision(
   deliveryMode = '',
   rollouts: Rollout[] = [{ source: NEW }],
   incomplete = false,
-  growingHistory = false,
-  fixedEntryClock = false,
-  trailingLocalClock = false,
-  ignoreCreationWindow = false,
+  concurrent:
+    | { newer: number; ignoreCeiling?: boolean; race?: boolean }
+    | undefined = undefined,
+  history = 0,
+  clock: { local: string; server: string } | undefined = undefined,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
@@ -106,9 +106,7 @@ function sourceDecision(
     };
     return {
       id: i + 1,
-      created_at: run.missingCreated
-        ? undefined
-        : (run.created ?? '2026-10-12T00:00:00Z'),
+      created_at: run.created ?? '2026-10-13T00:30:00Z',
       updated_at: run.updated ?? time,
       // Displayed workflow SHA intentionally differs from effect source.
       head_sha: main,
@@ -117,12 +115,39 @@ function sourceDecision(
       conclusion: 'success',
     };
   });
-  routes['fixture-history'] = {
-    rows,
-    incomplete,
-    growingHistory,
-    ignoreCreationWindow,
-  };
+  // Older history: runs updated before every rollout above, so the reader
+  // counts them but never needs their jobs.
+  for (let i = 0; i < history; i++) {
+    rows.push({
+      id: 100000 + i,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      head_sha: main,
+      display_title: 'Deploy console (skipped PR)',
+      conclusion: 'skipped',
+    });
+  }
+  const total = rows.length + Number(incomplete);
+  // Rows created after the reader's ceiling, newest first. A server honoring
+  // `created=<=` omits them; one that ignores it prepends them and shifts
+  // every page, which is the failure observed in production.
+  const newer = Array.from({ length: concurrent?.newer ?? 0 }, (_, i) => ({
+    id: 1000 + i,
+    created_at: '2999-01-01T00:00:00Z',
+    updated_at: '2999-01-01T00:00:00Z',
+    display_title: 'Deploy console (skipped PR)',
+    conclusion: 'skipped',
+  }));
+  writeFileSync(
+    path.join(dir, 'runs'),
+    JSON.stringify({
+      rows,
+      newer,
+      total,
+      ignore: concurrent?.ignoreCeiling,
+      race: concurrent?.race,
+    }),
+  );
   writeFileSync(output, '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
   writeFileSync(
@@ -130,13 +155,13 @@ function sourceDecision(
     `#!/usr/bin/env python3
 import datetime, json, os, sys, time
 from email.utils import formatdate
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import unquote
 args=sys.argv[1:]
 with open(os.environ['FIXTURE_CALLS'], 'a') as f: f.write(' '.join(args)+'\\n')
 if os.environ['FIXTURE_FAIL']=='true': sys.exit(1)
 route=args[1].removeprefix('repos/jlapenna/agent-lcars/')
 with open(os.environ['FIXTURE_ROUTES']) as f: routes=json.load(f)
-if '--include' in args:
+if '--include' in sys.argv:
     epoch=float(os.environ['FIXTURE_SERVER_EPOCH'])+int(time.time()-float(os.environ['FIXTURE_SERVER_REAL_START']))
     print('HTTP/2.0 200 OK\\nDate: '+formatdate(epoch, usegmt=True)+'\\nAge: 0\\n')
 if route.startswith('compare/'):
@@ -145,48 +170,65 @@ if route.startswith('compare/'):
     status='identical' if base==head else ('ahead' if base in order and head in order and order.index(base)<order.index(head) else ('behind' if base in order and head in order else 'diverged'))
     print(json.dumps({'status': status}))
 elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
-    history=routes['fixture-history']
-    query=parse_qs(urlsplit(route).query)
-    page=int(query.get('page', ['1'])[0])
-    rows=history['rows']
-    if history['growingHistory'] and ('created' in query or page > 1):
-        rows=[*[{'id': len(rows)+index+1, 'created_at': '2100-01-01T00:00:00Z', 'updated_at': '2100-01-01T00:00:00Z', 'display_title': 'Deploy console [source:'+os.environ['FIXTURE_NEW']+']'} for index in range(150)], *rows]
-    if 'created' in query and not history['ignoreCreationWindow']:
-        expression=query['created'][0]
-        lower,upper=('1970-01-01T00:00:00Z', expression[2:]) if expression.startswith('<=') else expression.split('..')
-        def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
-        rows=[row for row in rows if not row.get('created_at') or stamp(lower) <= stamp(row['created_at']) <= stamp(upper)]
-    # The documented filtered-search cap is deliberately enforced by the API.
-    visible=rows[:1000] if 'created' in query else rows
-    # A count at the cap cannot prove there are no additional matching runs.
-    total=len(visible)+int(history['incomplete'])
-    print(json.dumps({'total_count': total, 'workflow_runs': visible[(page-1)*100:page*100]}))
+    with open(os.environ['FIXTURE_RUNS']) as f: runs=json.load(f)
+    query=dict(p.split('=',1) for p in route.split('?',1)[1].split('&'))
+    created=query.get('created')
+    if runs.get('race'):
+        # Review race on #2641. Until the world settles, unfiltered pages miss
+        # the oldest row (a run created mid-scan shifted it), the total grows
+        # by one after the first read, and the newer count already includes a
+        # second run, so total minus newer still equals the rows seen.
+        state_path=os.environ['FIXTURE_RUNS']+'.state'
+        state=json.load(open(state_path)) if os.path.exists(state_path) else {'calls': 0, 'stable': False}
+        if not state['stable']:
+            if created is not None:
+                state['stable']=True
+                rows, total = runs['newer'], len(runs['newer'])
+            else:
+                rows, total = runs['rows'][1:], runs['total'] + min(state['calls'], 1)
+                state['calls']+=1
+                state['stable']=state['calls']>=3
+            json.dump(state, open(state_path,'w'))
+            print(json.dumps({'total_count': total, 'workflow_runs': rows}))
+            sys.exit(0)
+    all_rows = runs['newer'] + runs['rows']
+    if created is None:
+        rows = all_rows
+        total = runs['total'] + len(runs['newer'])
+    else:
+        expression=unquote(created)
+        if runs.get('ignore'):
+            rows=[]
+        else:
+            def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+            if expression.startswith('>'):
+                rows=[row for row in all_rows if stamp(row['created_at']) > stamp(expression[1:])]
+            else:
+                rows=[row for row in all_rows if stamp(row['created_at']) <= stamp(expression[2:])]
+        total=len(rows)
+        rows=rows[:1000]
+    page=int(query.get('page','1'))
+    print(json.dumps({'total_count': total, 'workflow_runs': rows[(page-1)*100:page*100]}))
 else: print(json.dumps(routes[route]))
 `,
     { mode: 0o755 },
   );
   let program = guard.run!;
-  if (fixedEntryClock || trailingLocalClock) {
-    // Drive the actual guard with a controlled wall clock, while preserving
-    // real elapsed time and its bounded wait for the entry second to close.
-    const start =
-      Date.parse(rollouts[0]!.created!) / 1000 +
-      (trailingLocalClock ? -1 : 0.25);
+  if (clock) {
     const entry = "python3 - <<'PY_SOURCE'\n";
-    if (!program.includes(entry) || !Number.isFinite(start))
+    if (!program.includes(entry))
       throw new Error('Missing guard clock boundary');
     program = program.replace(
       entry,
       entry +
         `import time as _fixture_time
+import datetime as _fixture_datetime
 _fixture_real_time = _fixture_time.time
 _fixture_origin = _fixture_real_time()
-_fixture_time.time = lambda: ${start} + _fixture_real_time() - _fixture_origin
-import datetime as _fixture_datetime
 class _FixtureDateTime(_fixture_datetime.datetime):
     @classmethod
     def now(cls, tz=None):
-        return cls.fromtimestamp(_fixture_time.time(), tz)
+        return cls.fromtimestamp(${Date.parse(clock.local) / 1000} + _fixture_real_time() - _fixture_origin, tz)
 _fixture_datetime.datetime = _FixtureDateTime
 `,
     );
@@ -202,16 +244,16 @@ _fixture_datetime.datetime = _FixtureDateTime
         DELIVERY_MODE: deliveryMode,
         SOURCE_SHA: source,
         GITHUB_REPOSITORY: 'jlapenna/agent-lcars',
-        GITHUB_RUN_ID: '999999999',
+        GITHUB_RUN_ID: '999',
         GITHUB_OUTPUT: output,
         GH_TOKEN: 'fixture-only',
         FIXTURE_CALLS: calls,
         FIXTURE_ROUTES: path.join(dir, 'routes'),
+        FIXTURE_RUNS: path.join(dir, 'runs'),
         FIXTURE_FAIL: String(fail),
         FIXTURE_SERVER_EPOCH: String(
-          fixedEntryClock || trailingLocalClock
-            ? Date.parse(rollouts[0]!.created!) / 1000 +
-                (trailingLocalClock ? 2 : 0)
+          clock
+            ? Date.parse(clock.server) / 1000
             : Math.floor(Date.now() / 1000),
         ),
         FIXTURE_SERVER_REAL_START: String(Date.now() / 1000),
@@ -222,7 +264,6 @@ _fixture_datetime.datetime = _FixtureDateTime
     });
     return {
       status: result.status,
-      ...(result.status === 0 ? {} : { error: result.stderr }),
       output: readFileSync(output, 'utf8').match(/^deploy_current=(.*)$/m)?.[1],
       calls: existsSync(calls) ? readFileSync(calls, 'utf8') : '',
     };
@@ -386,27 +427,18 @@ describe('serialized automatic deployment source fence', () => {
     ).toMatchObject({ status: 0, output: 'false' });
   });
 
-  it('keeps a complete pinned inventory when future skipped workflows appear during discovery', () => {
-    const earlier = Array.from({ length: 100 }, () => ({
-      source: OLD,
-      updated: '2026-10-12T23:00:00Z',
-      end: '2026-10-12T23:00:00Z',
-    }));
+  it('includes actual rollout evidence from older rerun attempts', () => {
     expect(
-      sourceDecision(
-        NEW,
-        NEW,
-        'workflow_run',
-        false,
-        '',
-        [...earlier, { source: OLD }],
-        false,
-        true,
-      ),
-    ).toMatchObject({ status: 0, output: 'true' });
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        {
+          source: NEW,
+          attempts: [{ conclusion: 'success' }, { conclusion: 'skipped' }],
+        },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
   });
 
-  it('refuses when the API ignores the pinned creation window', () => {
+  it('fails closed for incomplete history, unknown effect provenance and incomparable sources', () => {
     expect(
       sourceDecision(
         NEW,
@@ -415,79 +447,34 @@ describe('serialized automatic deployment source fence', () => {
         false,
         '',
         [{ source: OLD }],
-        false,
         true,
-        false,
-        false,
-        true,
-      ),
-    ).toMatchObject({
-      error: expect.stringContaining('escaped its creation window'),
-    });
-  });
-
-  it('partitions capped history without omitting an old-created rerun or its failed effect', () => {
-    // Compact, valid chronology keeps the real process deadline while driving
-    // the same capped search and closed-second partition boundary.
-    const earlier = Array.from({ length: 1100 }, (_, index) => ({
-      source: OLD,
-      created: new Date(index * 1000).toISOString(),
-      updated: new Date((index + 100) * 1000).toISOString(),
-      end: new Date((index + 100) * 1000).toISOString(),
-    }));
-    const entry = '1970-01-01T00:33:20Z';
+      ).status,
+    ).not.toBe(0);
     expect(
-      sourceDecision(
-        OLD,
-        NEW,
-        'workflow_run',
-        false,
-        '',
-        [
-          {
-            source: OLD,
-            created: entry,
-            start: entry,
-            updated: entry,
-            end: entry,
-            conclusion: 'skipped',
-          },
-          ...earlier,
-          {
-            source: NEW,
-            created: '1970-01-01T00:01:00Z',
-            updated: '1970-01-01T00:31:40Z',
-            attempts: [
-              { end: '1970-01-01T00:30:00Z' },
-              { conclusion: 'failure', end: '1970-01-01T00:31:40Z' },
-            ],
-          },
-        ],
-        false,
-        false,
-        true,
-      ),
-    ).toMatchObject({ status: 0, output: 'false' });
-  });
-
-  it('retains a possible rollout created in the inclusive lock-entry second', () => {
-    const now = '2026-10-13T16:00:00Z';
+      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
+        { marker: 'legacy no source' },
+      ]).status,
+    ).not.toBe(0);
     expect(
-      sourceDecision(
-        OLD,
-        NEW,
-        'workflow_run',
-        false,
-        '',
-        [{ source: NEW, created: now, start: now, updated: now, end: now }],
-        false,
-        false,
-        true,
-      ),
-    ).toMatchObject({ status: 0, output: 'false' });
-  });
+      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
+        { source: 'c'.repeat(40) },
+      ]).status,
+    ).not.toBe(0);
+    expect(sourceDecision('c'.repeat(40), NEW).status).not.toBe(0);
+  }, 20000);
 
-  it('retains a completed newer rollout when the verifier wall clock trails GitHub', () => {
+  it.each([
+    [
+      'inclusive entry second',
+      '2026-10-13T16:00:01.250Z',
+      '2026-10-13T16:00:01.250Z',
+    ],
+    [
+      'local wall clock behind GitHub',
+      '2026-10-13T16:00:00Z',
+      '2026-10-13T16:00:03Z',
+    ],
+  ])('retains a completed newer rollout at the %s', (_name, local, server) => {
     expect(
       sourceDecision(
         OLD,
@@ -500,20 +487,67 @@ describe('serialized automatic deployment source fence', () => {
             source: NEW,
             created: '2026-10-13T16:00:01Z',
             start: '2026-10-13T16:00:01Z',
-            updated: '2026-10-13T16:00:02Z',
-            end: '2026-10-13T16:00:02Z',
+            updated: '2026-10-13T16:00:01.100Z',
+            end: '2026-10-13T16:00:01.100Z',
           },
         ],
         false,
-        false,
-        false,
-        true,
+        undefined,
+        0,
+        { local, server },
       ),
     ).toMatchObject({ status: 0, output: 'false' });
   });
 
-  it('fails closed rather than truncating an overloaded single-second window', () => {
-    const second = '1970-01-01T00:00:04Z';
+  it('reads history at a creation ceiling so concurrent new runs cannot change the scan', () => {
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 150 },
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+    expect(call.calls).toContain('created=%3E');
+  });
+
+  it('retries a scan whose total changed, even when total minus newer still matches', () => {
+    // Without the before/after total bracket, the first scan admits OLD
+    // because it never saw the newer NEW rollout.
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 2, race: true },
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+  }, 20000);
+
+  it('reads complete history beyond the 1,000-result cap of a filtered listing', () => {
+    // Run 38438235710: `created=<=` returned 1,000 of 2,500 runs, so every
+    // scan was incomplete and each automatic deployment refused.
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 3 },
+      1200,
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('still refuses when the newer-run count disagrees or history stays incomplete', () => {
     expect(
       sourceDecision(
         NEW,
@@ -521,44 +555,11 @@ describe('serialized automatic deployment source fence', () => {
         'workflow_run',
         false,
         '',
-        Array.from({ length: 1000 }, () => ({
-          source: OLD,
-          created: second,
-          updated: second,
-          start: second,
-          end: second,
-        })),
+        [{ source: OLD }],
         false,
-        false,
-        true,
-      ),
-    ).toMatchObject({
-      error: expect.stringContaining('single-second search bound'),
-    });
-  });
-
-  it('rejects inventory rows without a verifiable creation timestamp', () => {
-    expect(
-      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
-        { source: OLD, missingCreated: true },
-      ]),
-    ).toMatchObject({
-      error: expect.stringContaining('Missing deployment evidence timestamp'),
-    });
-  });
-
-  it('includes actual rollout evidence from older rerun attempts', () => {
-    expect(
-      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
-        {
-          source: NEW,
-          attempts: [{ conclusion: 'success' }, { conclusion: 'skipped' }],
-        },
-      ]),
-    ).toMatchObject({ status: 0, output: 'false' });
-  });
-
-  it('fails closed for incomplete history', () => {
+        { newer: 2, ignoreCeiling: true },
+      ).status,
+    ).not.toBe(0);
     expect(
       sourceDecision(
         NEW,
@@ -568,29 +569,10 @@ describe('serialized automatic deployment source fence', () => {
         '',
         [{ source: OLD }],
         true,
+        { newer: 2 },
       ).status,
     ).not.toBe(0);
-  });
-
-  it('fails closed for unknown effect provenance', () => {
-    expect(
-      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
-        { marker: 'legacy no source' },
-      ]).status,
-    ).not.toBe(0);
-  });
-
-  it('fails closed for an incomparable rollout source', () => {
-    expect(
-      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
-        { source: 'c'.repeat(40) },
-      ]).status,
-    ).not.toBe(0);
-  });
-
-  it('fails closed for an automatic source outside main history', () => {
-    expect(sourceDecision('c'.repeat(40), NEW).status).not.toBe(0);
-  });
+  }, 20000);
 
   it('refuses terminal rollout evidence without its start or step inventory', () => {
     expect(

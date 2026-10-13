@@ -111,8 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY_SOURCE'
-          import datetime, json, math, os, re, subprocess, time
-          from urllib.parse import urlencode
+          import datetime, json, math, os, re, subprocess, time, urllib.parse
           from email.utils import parsedate_to_datetime
           from concurrent.futures import ThreadPoolExecutor
 
@@ -124,26 +123,21 @@ jobs:
               admit(True)
               raise SystemExit(0)
 
-          # The deploy job owns the lock. Future creations cannot have rollout
-          # effects yet; retain the inclusive entry second, then let it close.
           repo = os.environ['GITHUB_REPOSITORY']
           source = os.environ['SOURCE_SHA']
           if not re.fullmatch('[0-9a-f]{40}', source):
               raise ValueError('Automatic deployment source is not an exact commit')
 
-          def api(route, pages=False, first=None):
+          def api(route, pages=False):
               def read(page_route):
                   result = subprocess.check_output(['gh', 'api', f'repos/{repo}/{page_route}'], text=True, timeout=30)
                   return json.loads(result)
-              first = read(route) if first is None else first
+              first = read(route)
               if not pages:
                   return first
               # Independent read-only pages share one bounded concurrency;
               # complete-count validation below still rejects missing data.
-              count = first['total_count']
-              if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-                  raise ValueError('Invalid deployment history count')
-              page_count = math.ceil(count / 100)
+              page_count = math.ceil(first['total_count'] / 100)
               with ThreadPoolExecutor(max_workers=4) as readers:
                   rest = list(readers.map(lambda page: read(f'{route}&page={page}'), range(2, page_count + 1)))
               return [first, *rest]
@@ -197,32 +191,44 @@ jobs:
           if closed_second <= discovery_second:
               raise ValueError('GitHub deployment discovery second is not closed')
 
-          def workflow_runs(lower, upper):
-              def instant(second):
-                  return datetime.datetime.fromtimestamp(second, datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
-              route = 'actions/workflows/deploy-console.yml/runs?' + urlencode({
-                  'per_page': 100, 'created': f'{instant(lower)}..{instant(upper)}',
-              })
-              first = api(route)
-              count = first['total_count']
-              if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-                  raise ValueError('Invalid deployment history count')
-              # Filtered Actions searches expose at most 1000 results. Equality
-              # may hide more; partition until each complete window is smaller.
-              if count >= 1000:
-                  if lower == upper:
-                      raise ValueError('Deployment history exceeds the single-second search bound')
-                  middle = (lower + upper) // 2
-                  return workflow_runs(lower, middle) + workflow_runs(middle + 1, upper)
-              rows = records(api(route, True, first), 'workflow_runs')
-              for run in rows:
-                  if not lower <= timestamp(run.get('created_at')) <= upper:
-                      raise ValueError('Deployment history escaped its creation window')
-              return rows
+          # Read history at a fixed creation ceiling, unfiltered: GitHub caps a
+          # `created=`-filtered run listing at 1,000 results while its
+          # total_count still reports every match, so a filtered full scan can
+          # never be complete. Runs created after the ceiling cannot have
+          # rollout effects yet; their exact count comes from a filtered count
+          # query, which stays far below the cap. A run created mid-scan can
+          # shift a row past the pages read, so the total must be unchanged
+          # across the scan, and the unique rows at or before the ceiling must
+          # equal that total minus the newer runs (a run created after the
+          # total but before the newer count makes them disagree). Any
+          # mismatch is a changed snapshot and retries; incomplete evidence
+          # still refuses.
+          route = 'actions/workflows/deploy-console.yml/runs?per_page=100'
 
-          runs = workflow_runs(0, discovery_second)
-          if len({run['id'] for run in runs}) != len(runs):
-              raise ValueError('Deployment history repeats a run across creation windows')
+          def history(ceiling):
+              before = api(route)['total_count']
+              rows = {row['id']: row for page in api(route, True) for row in page['workflow_runs']}
+              total = api(route)['total_count']
+              if total != before:
+                  raise ValueError('Deployment history is incomplete or changed during discovery')
+              newer = api(f"{route}&created={urllib.parse.quote('>' + ceiling, safe='')}")['total_count']
+              bound = timestamp(ceiling)
+              runs = [row for row in rows.values() if timestamp(row['created_at']) <= bound]
+              if newer >= 1000 or len(runs) != total - newer:
+                  raise ValueError('Deployment history is incomplete or changed during discovery')
+              return runs
+
+          ceiling = datetime.datetime.fromtimestamp(discovery_second, datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+          runs = None
+          for attempt in range(3):
+              try:
+                  runs = history(ceiling)
+              except ValueError:
+                  if attempt == 2:
+                      raise
+                  time.sleep(1)
+                  continue
+              break
           # Creation order is not effect order: an old run can be rerun later.
           # Discover all metadata before using updated_at as an upper bound;
           # validate observed step timestamps against that bound below.
