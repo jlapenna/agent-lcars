@@ -114,6 +114,45 @@ describe('resolveGitRepo', () => {
     );
   });
 
+  it('writes a watched repository under its canonical spelling for a mixed-case remote', async () => {
+    mockExecFileResult('git@github.com:JLapenna/Agent-LCARS.git\n');
+
+    await expect(
+      resolveGitRepo(cwd, ['supersprinklesracing/*', 'jlapenna/agent-lcars']),
+    ).resolves.toEqual({ owner: 'jlapenna', name: 'agent-lcars' });
+    await expect(resolveGitRepo(cwd, ['jlapenna/*'])).resolves.toEqual({
+      owner: 'jlapenna',
+      name: 'agent-lcars',
+    });
+  });
+
+  it('keeps the remote spelling for an unwatched repository', async () => {
+    mockExecFileResult('git@github.com:SomeOne/Private-Repo.git\n');
+
+    await expect(resolveGitRepo(cwd, ['jlapenna/*'])).resolves.toEqual({
+      owner: 'SomeOne',
+      name: 'Private-Repo',
+    });
+    await expect(resolveGitRepo(cwd)).resolves.toEqual({
+      owner: 'SomeOne',
+      name: 'Private-Repo',
+    });
+  });
+
+  it('lets a rename alias win over allowlist canonicalization, matching case-insensitively', async () => {
+    process.env['AGENT_TELEMETRY_REPO_ALIASES'] = JSON.stringify({
+      'supersprinklesracing/members': {
+        owner: 'SuperSprinklesRacing',
+        name: 'Sprinkles',
+      },
+    });
+    mockExecFileResult('git@github.com:SuperSprinklesRacing/Members.git\n');
+
+    await expect(
+      resolveGitRepo(cwd, ['supersprinklesracing/*']),
+    ).resolves.toEqual({ owner: 'SuperSprinklesRacing', name: 'Sprinkles' });
+  });
+
   it('returns undefined for a non-GitHub remote', async () => {
     mockExecFileResult('git@gitlab.com:supersprinklesracing/sprinkles.git\n');
 

@@ -84,8 +84,11 @@ export interface HookCommandDependencies {
     codexHome: string,
     sessionId: string,
   ) => string | undefined;
+  /** Resolves the checkout's repository, canonicalized against the
+   * allowlist patterns passed as `watchedRepos` (see `resolveGitRepo`). */
   resolveGitRepo: (
     cwd: string,
+    watchedRepos: readonly string[],
   ) => Promise<{ owner: string; name: string } | undefined>;
   resolveGitBranch: (cwd: string) => Promise<string | undefined>;
   /** Starts the flusher detached from the hook process. */
@@ -340,7 +343,9 @@ async function handleRuntimeHook(
   if (config.runner) {
     repo = config.runner.repo;
   } else {
-    repo = payload.cwd ? await deps.resolveGitRepo(payload.cwd) : undefined;
+    repo = payload.cwd
+      ? await deps.resolveGitRepo(payload.cwd, config.repos)
+      : undefined;
     if (!repo || !matchesRepoAllowlist(repo, config.repos)) {
       log(
         'skipped-unlisted',
