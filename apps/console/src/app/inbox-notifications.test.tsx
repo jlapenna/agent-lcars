@@ -176,6 +176,15 @@ describe('opt-in Inbox notification delivery', () => {
     expect(showNotification).not.toHaveBeenCalled();
   });
 
+  it('fails closed on corrupt storage away from the Inbox', async () => {
+    localStorage.setItem(storageKey, 'broken');
+    render(withWatch(false));
+    await tick();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Notification delivery or preferences unavailable',
+    );
+  });
+
   it('delivers nothing from an observation still in flight when the Inbox closes', async () => {
     const view = render(withWatch(true));
     await click('Enable Inbox notifications');

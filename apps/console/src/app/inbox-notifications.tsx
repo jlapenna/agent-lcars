@@ -102,10 +102,15 @@ function useInboxNotificationsController(
     const observe = async () => {
       if (running || stopped.current || latest.current !== principalId) return;
       if (!watchingRef.current) {
-        // Away from the Inbox the preference is shown, never acted on.
-        const stored = read();
-        setEnabled(stored.enabled);
-        setStatus(stored.enabled ? OFF_INBOX_STATUS : 'Notifications off');
+        // Away from the Inbox the preference is shown, never acted on. Corrupt
+        // storage fails closed here too.
+        try {
+          const stored = read();
+          setEnabled(stored.enabled);
+          setStatus(stored.enabled ? OFF_INBOX_STATUS : 'Notifications off');
+        } catch {
+          setStatus('Notification delivery or preferences unavailable');
+        }
         return;
       }
       const generation = epoch.current;
