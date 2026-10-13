@@ -180,16 +180,25 @@ async function SessionsBody({
             placeholder="issue, PR, session id"
             value={filters.q}
           />
-          <ToolbarSelect
-            name="source"
-            label="Source"
-            value={query.source ?? ''}
-            options={[
-              { value: '', label: 'All sources' },
-              { value: 'cli', label: 'CLI' },
-              { value: 'issue-agent', label: 'Dispatched agent' },
-            ]}
-          />
+          {/* A filter the mockup's toolbar does not draw, kept one click
+              away so the band stays one row. */}
+          <details className="console-toolbar__more">
+            <summary className="console-toolbar__field">
+              More filters{query.source ? ' · 1' : ''}
+            </summary>
+            <div className="console-toolbar__more-panel">
+              <ToolbarSelect
+                name="source"
+                label="Source"
+                value={query.source ?? ''}
+                options={[
+                  { value: '', label: 'All sources' },
+                  { value: 'cli', label: 'CLI' },
+                  { value: 'issue-agent', label: 'Dispatched agent' },
+                ]}
+              />
+            </div>
+          </details>
           {/* Selects and the window submit on change; Apply shows only
               until they hydrate (the mockup's toolbar has none), then keeps
               its box so hydrating moves nothing. */}
