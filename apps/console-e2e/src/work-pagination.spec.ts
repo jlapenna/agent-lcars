@@ -305,12 +305,10 @@ test('repository selection and clearing remain reachable on phones across Bridge
   ]) {
     await page.goto(route);
     await revealInboxRepositoryFilter(page);
+    // The toolbar select navigates on change (no Apply step).
     await page
       .getByRole('combobox', { name: 'Repository', exact: true })
       .selectOption(E2E_FIXTURE_REPOSITORY);
-    await page
-      .getByRole('button', { name: 'Apply repository', exact: true })
-      .click();
     await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
     await revealInboxRepositoryFilter(page);
     await expect(

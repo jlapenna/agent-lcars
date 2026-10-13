@@ -3471,7 +3471,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .console-repository-selector {
-  margin-bottom: 16px;
+  flex: 0 1 auto;
   min-width: 0;
 }
 .work-list-filters {
