@@ -429,25 +429,27 @@ describe('AgentActivityPanel recent runs', () => {
     expect(badge.textContent).toBe('success');
   });
 
-  it('links a finished result action to the canonical task route', () => {
+  it('inspects a finished run without requiring a task projection', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       recentRuns: [makeAgentRun({ issueNumber: 42 })],
     });
     const link = screen.getByTestId('outcome-primary-action');
     expect(link.getAttribute('href')).toBe(
-      '/task/supersprinklesracing/sprinkles/42',
+      '/agents?repo=supersprinklesracing%2Fsprinkles&sel=run%3Arun-1',
     );
     expect(link.textContent).toBe('View result');
   });
 
-  it('falls back to the run URL when a legacy run has no parsed issueNumber (#3012)', () => {
+  it('inspects a legacy run with no parsed issueNumber (#3012)', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       recentRuns: [makeAgentRun({ issueNumber: undefined })],
     });
     const link = screen.getByTestId('outcome-primary-action');
-    expect(link.getAttribute('href')).toBe('/runs/run-1');
+    expect(link.getAttribute('href')).toBe(
+      '/agents?repo=supersprinklesracing%2Fsprinkles&sel=run%3Arun-1',
+    );
   });
 
   it('shows the latest outcomes by default with no disclosure', () => {
@@ -624,18 +626,18 @@ describe('AgentActivityPanel live run links (#176)', () => {
     expect(link.textContent).toBe('Open task');
   });
 
-  it('opens the canonical task when issueNumber parses without a joined item', () => {
+  it('inspects a live run when its task projection is unavailable', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [makeAgentRun({ id: 31, status: 'running', issueNumber: 99 })],
     });
     const link = screen.getByTestId('current-run-primary-action');
     expect(link.getAttribute('href')).toBe(
-      '/task/supersprinklesracing/sprinkles/99',
+      '/agents?repo=supersprinklesracing%2Fsprinkles&sel=run%3A31',
     );
   });
 
-  it('falls back to the raw run URL only when issueNumber cannot be parsed either', () => {
+  it('inspects an unanchored live run onsite', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [
@@ -643,7 +645,9 @@ describe('AgentActivityPanel live run links (#176)', () => {
       ],
     });
     const link = screen.getByTestId('current-run-primary-action');
-    expect(link.getAttribute('href')).toBe('/runs/run-1');
+    expect(link.getAttribute('href')).toBe(
+      '/agents?repo=supersprinklesracing%2Fsprinkles&sel=run%3A32',
+    );
   });
 
   // A native Run carries its authoritative workId directly, so its UI link
@@ -715,7 +719,7 @@ describe('LiveRunRow detail variant (used by the /agents Active Agents section) 
     expect(link.textContent).toBe('Native work: fix console model');
   });
 
-  it('falls back to an unanchored Run URL when no task target is available', () => {
+  it('inspects an unanchored run onsite when no task target is available', () => {
     render(
       <MantineProvider>
         <LiveRunRow
@@ -729,7 +733,9 @@ describe('LiveRunRow detail variant (used by the /agents Active Agents section) 
     );
 
     const link = screen.getByTestId('live-run-issue-link');
-    expect(link.getAttribute('href')).toBe('/runs/run-1');
+    expect(link.getAttribute('href')).toBe(
+      '/agents?repo=supersprinklesracing%2Fsprinkles&sel=run%3A41',
+    );
   });
 });
 
@@ -1152,33 +1158,74 @@ describe('SourceBadge', () => {
 });
 
 describe('Agents title navigation', () => {
-  it.each([
-    ['live', LiveRunRow, 'live-run-issue-link'],
-    ['finished', FinishedRunRow, 'recent-run-issue-link'],
-  ] as const)('keeps %s GitHub task titles onsite', (_name, Row, testId) => {
-    const run = makeAgentRun({
-      issueNumber: 42,
-      url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
-    });
+  it('opens a known projected task title on its task page', () => {
     render(
       <MantineProvider>
-        <Row run={run} />
+        <LiveRunRow
+          run={makeAgentRun({ issueNumber: 42 })}
+          item={{
+            number: 42,
+            title: 'Fix the thing',
+            url: 'https://github.com/o/r/issues/42',
+          }}
+        />
       </MantineProvider>,
     );
-    const title = screen.getByTestId(testId);
-    expect(title).toHaveAttribute(
+    expect(screen.getByTestId('live-run-issue-link')).toHaveAttribute(
       'href',
       '/task/supersprinklesracing/sprinkles/42',
     );
-    expect(title).not.toHaveAttribute('target');
-    const githubLinks = screen
-      .getAllByRole('link')
-      .filter((link) =>
-        link.getAttribute('href')?.startsWith('https://github.com/'),
-      );
-    expect(githubLinks).toHaveLength(1);
-    for (const link of githubLinks) {
-      expect(link).toHaveTextContent('GitHub');
-    }
   });
+
+  it('keeps authoritative native Work identity even if an item is supplied', () => {
+    render(
+      <MantineProvider>
+        <LiveRunRow
+          run={makeAgentRun({ workId: '01M107KR3X6VDH7NZ4JDXZNSS2' })}
+          item={{
+            number: 42,
+            title: 'Fix the thing',
+            url: 'https://github.com/o/r/issues/42',
+          }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('live-run-issue-link')).toHaveAttribute(
+      'href',
+      '/work/01M107KR3X6VDH7NZ4JDXZNSS2',
+    );
+  });
+
+  it.each([
+    ['live', LiveRunRow, 'live-run-issue-link'],
+    ['finished', FinishedRunRow, 'recent-run-issue-link'],
+  ] as const)(
+    'inspects %s GitHub runs onsite without a task projection',
+    (_name, Row, testId) => {
+      const run = makeAgentRun({
+        issueNumber: 42,
+        url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
+      });
+      render(
+        <MantineProvider>
+          <Row run={run} />
+        </MantineProvider>,
+      );
+      const title = screen.getByTestId(testId);
+      expect(title).toHaveAttribute(
+        'href',
+        '/agents?repo=supersprinklesracing%2Fsprinkles&sel=run%3Arun-1',
+      );
+      expect(title).not.toHaveAttribute('target');
+      const githubLinks = screen
+        .getAllByRole('link')
+        .filter((link) =>
+          link.getAttribute('href')?.startsWith('https://github.com/'),
+        );
+      expect(githubLinks).toHaveLength(1);
+      for (const link of githubLinks) {
+        expect(link).toHaveTextContent('GitHub');
+      }
+    },
+  );
 });

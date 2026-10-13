@@ -149,7 +149,9 @@ function RowTitle({
 }
 
 function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
-  const issueNumber = item?.number ?? run.issueNumber;
+  if (run.workId) return workHrefForRun(run);
+  // A run's issue number does not prove its task projection exists.
+  const issueNumber = item?.number;
   if (issueNumber === undefined) return workHrefForRun(run);
   return `/task/${run.repo.owner}/${run.repo.name}/${issueNumber}`;
 }
@@ -163,11 +165,9 @@ function workHrefForRun(run: AgentRun): string | undefined {
   return run.workId ? `/work/${run.workId}` : undefined;
 }
 
-/** Unattributed legacy runs still keep title navigation inside the console. */
+/** Inspect the existing run record without requiring a GitHub projection. */
 function internalRunHref(run: AgentRun): string {
-  return run.url.startsWith('/') && !run.url.startsWith('//')
-    ? run.url
-    : '/agents';
+  return `/agents?${new URLSearchParams({ repo: repoKey(run.repo), sel: runKey(run) })}`;
 }
 
 function operationsRunTitle(run: AgentRun): string {

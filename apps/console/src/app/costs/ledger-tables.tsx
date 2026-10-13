@@ -98,10 +98,12 @@ function IssueCell({ row }: { row: IssueLedgerRow }) {
       title={`${repo.owner}/${repo.name}`}
     >
       <Anchor
-        href={`/task/${repo.owner}/${repo.name}/${row.issueNumber}`}
+        href={`https://github.com/${repo.owner}/${repo.name}/issues/${row.issueNumber}`}
+        target="_blank"
+        rel="noreferrer"
         size="sm"
       >
-        #{row.issueNumber}
+        GitHub #{row.issueNumber}
       </Anchor>
       <RepoBadge repo={repo} />
     </Group>
