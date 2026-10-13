@@ -150,8 +150,7 @@ function RowTitle({
 
 function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
   if (run.workId) return workHrefForRun(run);
-  // A run's issue number does not prove its task projection exists.
-  const issueNumber = item?.number;
+  const issueNumber = item?.number ?? run.issueNumber;
   if (issueNumber === undefined) return workHrefForRun(run);
   return `/task/${run.repo.owner}/${run.repo.name}/${issueNumber}`;
 }
@@ -163,6 +162,13 @@ function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
  */
 function workHrefForRun(run: AgentRun): string | undefined {
   return run.workId ? `/work/${run.workId}` : undefined;
+}
+
+/** New title links need a known projection; existing explicit task actions
+ * retain their task-history navigation contract. */
+function titleHrefForRun(run: AgentRun, item?: RunItemRef): string {
+  if (run.workId || item) return taskHrefForRun(run, item)!;
+  return internalRunHref(run);
 }
 
 /** Inspect the existing run record without requiring a GitHub projection. */
@@ -362,7 +368,7 @@ export function LiveRunRow({
             text={
               item ? `#${item.number} ${item.title}` : operationsRunTitle(run)
             }
-            mobileHref={actionHref}
+            mobileHref={titleHrefForRun(run, item)}
             selectHref={selectHref}
           />
           <Group gap="xs" wrap="wrap">
@@ -422,7 +428,7 @@ export function LiveRunRow({
   return (
     <Stack gap={4} data-testid="current-run-row">
       <Anchor
-        href={taskHrefForRun(run, item) ?? internalRunHref(run)}
+        href={titleHrefForRun(run, item)}
         size="sm"
         fw={600}
         c="inherit"
@@ -670,7 +676,7 @@ export function FinishedRunRow({
         <Stack gap={5} style={{ minWidth: 0 }}>
           <RowTitle
             text={operationsRunTitle(run)}
-            mobileHref={actionHref}
+            mobileHref={titleHrefForRun(run)}
             selectHref={selectHref}
           />
           <Group gap="xs" wrap="wrap">
@@ -707,7 +713,7 @@ export function FinishedRunRow({
   return (
     <Stack gap={2} data-testid="finished-run-row">
       <Anchor
-        href={taskHrefForRun(run) ?? internalRunHref(run)}
+        href={titleHrefForRun(run)}
         size="sm"
         fw={600}
         c="inherit"

@@ -429,14 +429,14 @@ describe('AgentActivityPanel recent runs', () => {
     expect(badge.textContent).toBe('success');
   });
 
-  it('inspects a finished run without requiring a task projection', () => {
+  it('links the existing finished result action to its task history', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       recentRuns: [makeAgentRun({ issueNumber: 42 })],
     });
     const link = screen.getByTestId('outcome-primary-action');
     expect(link.getAttribute('href')).toBe(
-      '/agents?repo=supersprinklesracing%2Fsprinkles&sel=run%3Arun-1',
+      '/task/supersprinklesracing/sprinkles/42',
     );
     expect(link.textContent).toBe('View result');
   });
@@ -626,14 +626,14 @@ describe('AgentActivityPanel live run links (#176)', () => {
     expect(link.textContent).toBe('Open task');
   });
 
-  it('inspects a live run when its task projection is unavailable', () => {
+  it('keeps the existing task action when issueNumber parses without a joined item', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [makeAgentRun({ id: 31, status: 'running', issueNumber: 99 })],
     });
     const link = screen.getByTestId('current-run-primary-action');
     expect(link.getAttribute('href')).toBe(
-      '/agents?repo=supersprinklesracing%2Fsprinkles&sel=run%3A31',
+      '/task/supersprinklesracing/sprinkles/99',
     );
   });
 

@@ -38,9 +38,7 @@ test.describe('populated dashboard', () => {
         await expect(title).toBeVisible();
         await expect(title).toHaveAttribute(
           'href',
-          testId === 'live-run-issue-link'
-            ? /^\/task\/[^/]+\/[^/]+\/\d+$/
-            : /^\/agents\?repo=.+&sel=run%3A.+$/,
+          /^\/agents\?repo=.+&sel=run%3A.+$/,
         );
         await expect(title).not.toHaveAttribute('target', '_blank');
         for (const link of await workspace
@@ -53,12 +51,16 @@ test.describe('populated dashboard', () => {
         await expect(page).toHaveURL(
           (url) => `${url.pathname}${url.search}` === href,
         );
-        if (testId === 'live-run-issue-link') {
-          await expect(page.getByTestId('logical-work-card')).toBeVisible();
-        } else {
+        {
           const detail = page.getByTestId('bridge-detail');
           await expect(detail).toBeVisible();
-          await expect(detail.getByTestId('finished-run-row')).toBeVisible();
+          await expect(
+            detail.getByTestId(
+              testId === 'live-run-issue-link'
+                ? 'current-run-row'
+                : 'finished-run-row',
+            ),
+          ).toBeVisible();
           const back = detail.getByRole('link', { name: '← All activity' });
           const backHref = await back.getAttribute('href');
           await expect(back).toHaveAttribute('href', /^\/agents\?repo=.+$/);
