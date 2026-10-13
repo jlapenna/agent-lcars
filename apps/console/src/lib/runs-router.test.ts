@@ -3135,17 +3135,79 @@ describe('codexAuth', () => {
 });
 
 describe('startup deadline run-token fence', () => {
-  it.each([false, true])(
-    'rejects late bootstrap, heartbeat and completion (swept=%s)',
-    async (swept) => {
+  it.each(['claude', 'codex', 'opencode'])(
+    'acknowledges delayed %s bootstrap before the original deadline without claiming provider spawn',
+    async (pipeline) => {
       const { store, orchestrator, now, setNow } = fixture();
       const runId = await seedQueuedRun(store, orchestrator, {
-        workId: wid('launch-no-callback'),
+        workId: wid(`startup-handshake-${pipeline}`),
+        pipeline,
+        now: NOW,
+      });
+      const token = mintRunToken();
+      const tokenHash = hashRunToken(token);
+      await store.claimQueuedRun({
+        pipelines: [pipeline],
+        now: NOW,
+        claimedBy: 'runner-1',
+        tokenHash,
+      });
+      const before = (await store.readRun(runId))!;
+      const ctx = { store, orchestrator, now, ...context, bearerToken: token };
+      // Observed placement leaves 148s, less than the 300s periodic interval.
+      setNow('2026-08-26T10:12:32.000Z');
+      expect((await call(ctx, 'GET', runPath(runId, '/brief'))).status).toBe(
+        200,
+      );
+      expect(
+        (await store.readRun(runId))!.queue!.firstHeartbeatAt,
+      ).toBeUndefined();
+      const heartbeat = await call(ctx, 'POST', runPath(runId, '/heartbeat'));
+      expect(heartbeat.status).toBe(200);
+      const accepted = (await store.readRun(runId))!;
+      expect(heartbeat.json).toEqual({
+        runId,
+        expiresAt: accepted.leaseExpiresAt,
+      });
+      expect(accepted.queue).toEqual({
+        ...before.queue,
+        firstHeartbeatAt: '2026-08-26T10:12:32.000Z',
+      });
+      // Neither authority nor the original startup deadline is rewritten.
+      expect(accepted.queue!.tokenHash).toBe(tokenHash);
+      expect(accepted.queue!.providerProcessStartedAt).toBeUndefined();
+      setNow('2026-08-26T10:17:32.000Z');
+      expect(
+        (await call(ctx, 'POST', runPath(runId, '/heartbeat'))).status,
+      ).toBe(200);
+      expect((await store.readRun(runId))!.queue!.firstHeartbeatAt).toBe(
+        '2026-08-26T10:12:32.000Z',
+      );
+      const completion = await call(ctx, 'POST', runPath(runId, '/complete'), {
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 1 },
+      });
+      expect(completion.status).toBe(200);
+      expect((await store.readRun(runId))!.state).toBe('finished');
+    },
+  );
+
+  it.each(
+    ['claude', 'codex', 'opencode'].flatMap((pipeline) =>
+      [false, true].map((swept) => ({ pipeline, swept })),
+    ),
+  )(
+    'rejects late $pipeline bootstrap, heartbeat and completion (swept=$swept)',
+    async ({ pipeline, swept }) => {
+      const { store, orchestrator, now, setNow } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid(`launch-no-callback-${pipeline}`),
+        pipeline,
         now: NOW,
       });
       const token = mintRunToken();
       await store.claimQueuedRun({
-        pipelines: ['claude'],
+        pipelines: [pipeline],
         now: NOW,
         claimedBy: 'runner-1',
         tokenHash: hashRunToken(token),

@@ -235,6 +235,8 @@ if $config_stdin; then
   esac
 fi
 
+printf '%s\n' "${url##*/}" >> "$API_SEQUENCE_LOG"
+
 case "$url" in
   */activate)
     [ -n "${FIXTURE_ACTIVATION_LOG:-}" ] || exit 22
@@ -322,10 +324,16 @@ JSON
     ;;
   */heartbeat)
     echo heartbeat >> "$HEARTBEAT_LOG"
-    if [ "${FAKE_HEARTBEAT_FAIL:-}" = 1 ]; then
-      exit 22
+    if grep -q '^write-out = ' <<<"$config_body"; then
+      [ "${FAKE_STARTUP_TRANSPORT_FAIL:-}" != 1 ] || exit 7
+      # The existing {runId, expiresAt} response is the compatibility surface;
+      # a legacy Console with that acknowledged route remains supported.
+      startup_body='{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
+      printf '%s\n%s' "${FAKE_STARTUP_BODY-$startup_body}" "${FAKE_STARTUP_STATUS:-200}"
+    else
+      [ "${FAKE_HEARTBEAT_FAIL:-}" != 1 ] || exit 22
+      echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
     fi
-    echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
     ;;
   */complete)
     {
@@ -848,6 +856,7 @@ run_scenario() {
   export GIT_PUSH_TOKEN_LOG="$dir/git-push-token.log"
   export GH_INVOCATION_TOKEN_LOG="$dir/gh-invocation-token.log"
   export HEARTBEAT_LOG="$dir/heartbeats.log"
+  export API_SEQUENCE_LOG="$dir/api-sequence.log"
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
   export OPENCODE_ENV_LOG="$dir/opencode-env.log"
   export OPENCODE_LAST_MESSAGE_PRECHECK_LOG="$dir/opencode-last-message-precheck.log"
@@ -1003,6 +1012,47 @@ workloads = [row for row in rows if row["event"] == "workload-exit"]
 assert len(workloads) == 2 and all(row["exitStatus"] == 0 and row["durationMonotonicNs"] >= 0 for row in workloads), workloads
 PY
 }
+
+# A placement-delayed worker must acknowledge startup before any expensive
+# boundary. These are producer fixtures: the Console deadline tests below the
+# HTTP boundary own actual acceptance/expiry, not this fake HTTP server.
+for provider in claude codex opencode; do
+  run_scenario "$provider-startup-accepted" "$provider"
+  [ "$rc" -eq 0 ] || fail "$provider startup: expected accepted legacy acknowledgement"
+  [ "$(head -n2 "$API_SEQUENCE_LOG" | tr '\n' ' ')" = 'brief heartbeat ' ] ||
+    fail "$provider startup: checkout or credentials preceded acknowledgement"
+  jq -e 'select(.event == "workload-start")' "$FIXTURE_TIMING_LOG" >/dev/null ||
+    fail "$provider startup: accepted worker never executed"
+  [ -s "$COMPLETE_LOG" ] || fail "$provider startup: accepted worker never reported completion"
+
+  for failure in expired unsupported unavailable transport malformed missing-status wrong-run missing-expiry invalid-expiry extra-document; do
+    case "$failure" in
+      expired) export FAKE_STARTUP_STATUS=401 ;;
+      unsupported) export FAKE_STARTUP_STATUS=404 ;;
+      unavailable) export FAKE_STARTUP_STATUS=503 ;;
+      transport) export FAKE_STARTUP_TRANSPORT_FAIL=1 ;;
+      malformed) export FAKE_STARTUP_BODY='private-body-must-not-be-logged' ;;
+      missing-status) export FAKE_STARTUP_STATUS=000 ;;
+      wrong-run) export FAKE_STARTUP_BODY='{"runId":"foreign-run","expiresAt":"2026-08-27T01:00:00Z"}' ;;
+      missing-expiry) export FAKE_STARTUP_BODY='{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}' ;;
+      invalid-expiry) export FAKE_STARTUP_BODY='{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"unknown"}' ;;
+      extra-document) export FAKE_STARTUP_BODY='{} {"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00Z"}' ;;
+    esac
+    run_scenario "$provider-startup-$failure" "$provider"
+    unset FAKE_STARTUP_STATUS FAKE_STARTUP_TRANSPORT_FAIL FAKE_STARTUP_BODY
+    [ "$rc" -ne 0 ] || fail "$provider startup: continued after $failure"
+    [ ! -s "$CHECKOUT_TOKEN_REQUEST_LOG" ] || fail "$provider startup: checkout after $failure"
+    [ ! -s "$GIT_CLONE_ARGV_LOG" ] || fail "$provider startup: clone after $failure"
+    [ ! -s "$CODEX_AUTH_REQUEST_LOG" ] || fail "$provider startup: credentials restored after $failure"
+    [ ! -s "$CLAUDE_ARGS_LOG" ] && [ ! -s "$CODEX_ARGS_LOG" ] && [ ! -s "$OPENCODE_ARGS_LOG" ] ||
+      fail "$provider startup: provider executed after $failure"
+    [ "$(wc -l < "$HEARTBEAT_LOG")" -eq 1 ] || fail "$provider startup: retried an unknown acknowledgement"
+    jq -e '.outcome == "runner-failed" and (.message | contains("startup heartbeat was not acknowledged"))' \
+      < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "$provider startup: missing failure callback"
+    ! grep -q 'private-body-must-not-be-logged' "$scenario_log" || fail 'startup response body leaked'
+  done
+  echo "scenario $provider-startup-handshake: OK"
+done
 
 # Invalid workload input used to report provider success and permit a second
 # round. Exercise the actual fake executables through the production runner,
@@ -2130,7 +2180,12 @@ run_scenario codex-auth-busy-then-success codex
 [ "$rc" = 0 ] || fail "codex-auth-busy-then-success: exit $rc ($(cat "$scenario_log"))"
 [ "$(cat "$CODEX_AUTH_REQUEST_LOG")" = 2 ] || fail 'busy credential was not retried once'
 [ -s "$CODEX_ARGS_LOG" ] || fail 'Codex never started after credential release'
-[ -s "$HEARTBEAT_LOG" ] || fail 'run heartbeat stopped while waiting for credentials'
+python3 - "$API_SEQUENCE_LOG" <<'PYWAIT'
+import sys
+calls = open(sys.argv[1]).read().splitlines()
+restores = [i for i, call in enumerate(calls) if call == "codex-auth"]
+assert len(restores) >= 2 and "heartbeat" in calls[restores[0] + 1:restores[1]], calls
+PYWAIT
 ! grep -q 'private-body-must-not-be-logged' "$scenario_log" || fail 'broker error body leaked'
 echo 'scenario codex-auth-busy-then-success: OK'
 
