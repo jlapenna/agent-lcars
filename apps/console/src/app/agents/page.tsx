@@ -53,6 +53,7 @@ import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
 import {
   AGENTS_WINDOWS,
+  agentsViewHref,
   type AgentsViewFilters,
   matchesAgentsRun,
   matchesAgentsSession,
@@ -311,6 +312,11 @@ async function AgentsPageBody({
             placeholder="issue, PR, run id"
             value={filters.q}
           />
+          {repoFilter ? (
+            <Anchor href={agentsViewHref(filters)} size="sm">
+              Clear repository
+            </Anchor>
+          ) : null}
           {/* Selects and the window submit on change; Apply shows only
               until they hydrate, then keeps its box. */}
           <ToolbarApply label="Apply" />

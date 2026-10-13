@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentsViewHref,
   matchesAgentsRun,
   matchesAgentsSession,
   matchesClaimedAgent,
@@ -100,5 +101,14 @@ describe('matchesAgentsSession', () => {
     expect(matchesAgentsSession(session, { agent: 'codex' })).toBe(false);
     expect(matchesAgentsSession(session, { q: 'restyle' })).toBe(true);
     expect(matchesAgentsSession(session, { q: 'deploy' })).toBe(false);
+  });
+});
+
+describe('agentsViewHref', () => {
+  it('keeps the view filters and drops the repository', () => {
+    expect(agentsViewHref({})).toBe('/agents');
+    expect(agentsViewHref({ agent: 'codex', window: '24h', q: 'oom' })).toBe(
+      '/agents?agent=codex&window=24h&q=oom',
+    );
   });
 });

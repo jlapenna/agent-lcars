@@ -135,3 +135,12 @@ export function matchesAgentsSession(
     filters.q,
   );
 }
+
+/** `/agents` with these view filters and no repository scope. */
+export function agentsViewHref(filters: AgentsViewFilters): string {
+  const query = new URLSearchParams();
+  if (filters.agent) query.set('agent', filters.agent);
+  if (filters.window) query.set('window', filters.window);
+  if (filters.q) query.set('q', filters.q);
+  return query.size ? `/agents?${query}` : '/agents';
+}
