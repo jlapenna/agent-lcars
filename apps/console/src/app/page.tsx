@@ -294,7 +294,7 @@ async function IndexBody({
     },
     {
       id: 'cli',
-      label: 'CLI sessions',
+      label: 'Active CLI sessions',
       value: activeCliSessionCount,
       detail: 'live or idle',
     },
