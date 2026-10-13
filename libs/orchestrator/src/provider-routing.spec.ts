@@ -278,6 +278,102 @@ describe('source-ordered label provider handoff', () => {
     },
   );
 
+  it.each([false, true])(
+    'changes routing intent when queued execution already uses the requested provider (administrator=%s)',
+    async (allowProviderChange) => {
+      const { store, orchestrator, run } = await fixture();
+      await orchestrator.report(run.runId, { ok: true });
+      const explicit = await orchestrator.request({
+        taskId,
+        requestId: 'explicit-other-provider',
+        pipeline: 'opencode',
+      });
+      if (isRefusal(explicit)) throw new Error(explicit.reason);
+      const queued = decidedRun(explicit);
+      await store.enqueueRun({ runId: queued.runId, now: T0 });
+      const before = await store.readRun(queued.runId);
+      const outcome = await orchestrator.request({
+        taskId,
+        requestId: 'adopt-queued-provider',
+        pipeline: 'opencode',
+        labelProviderRequest: {
+          requestedAt: T1,
+          actor: allowProviderChange ? 'maintainer' : 'ordinary',
+          allowProviderChange,
+        },
+      });
+      if (!allowProviderChange) {
+        expect(outcome).toMatchObject({
+          task: {
+            activeRunId: queued.runId,
+            runCount: 2,
+            providerRouting: {
+              status: 'refused',
+              reason: 'unauthorized-provider-switch',
+              acceptedGeneration: { pipeline: 'codex' },
+            },
+          },
+          outbox: [],
+        });
+        expect(await store.readRun(queued.runId)).toEqual(before);
+        expect(await store.listRuns(taskId)).toHaveLength(2);
+        return;
+      }
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      const successor = decidedRun(outcome);
+      expect(successor.runId).not.toBe(queued.runId);
+      expect(successor.pipeline).toBe('opencode');
+      expect(outcome).toMatchObject({
+        task: {
+          work,
+          activeRunId: successor.runId,
+          runCount: 3,
+          providerRouting: {
+            status: 'accepted',
+            effectivePipeline: 'opencode',
+            acceptedGeneration: {
+              runId: successor.runId,
+              pipeline: 'opencode',
+            },
+          },
+        },
+      });
+      expect(await store.readRun(queued.runId)).toMatchObject({
+        state: 'canceled',
+      });
+      expect(
+        await orchestrator.request({
+          taskId,
+          requestId: 'adopt-queued-provider',
+          pipeline: 'opencode',
+          labelProviderRequest: {
+            requestedAt: T1,
+            actor: 'maintainer',
+            allowProviderChange: true,
+          },
+        }),
+      ).toMatchObject({ refused: true, reason: 'duplicate-request' });
+      expect(await store.listRuns(taskId)).toHaveLength(3);
+      expect(
+        await store.claimQueuedRun({
+          pipelines: ['opencode'],
+          now: T1,
+          claimedBy: 'old-queue-claim',
+          tokenHash: 'a'.repeat(64),
+        }),
+      ).toBeUndefined();
+      await store.enqueueRun({ runId: successor.runId, now: T1 });
+      expect(
+        await store.claimQueuedRun({
+          pipelines: ['opencode'],
+          now: T1,
+          claimedBy: 'new-intent-claim',
+          tokenHash: 'b'.repeat(64),
+        }),
+      ).toMatchObject({ runId: successor.runId, pipeline: 'opencode' });
+    },
+  );
+
   it('equal-clock requests cannot erase a busy refusal and admit it on replay', async () => {
     const { store, orchestrator, run } = await fixture();
     const request = (requestId: string) =>
