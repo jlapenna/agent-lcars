@@ -254,8 +254,61 @@ describe('AppInstallationTokenProvider', () => {
         contents: 'write',
         pull_requests: 'write',
         issues: 'write',
+        workflows: 'write',
       },
     });
+  });
+
+  it('retries a 422 mint without optional permissions the installation has not approved', async () => {
+    const calls: { body?: unknown }[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/installation')) {
+        return new Response(JSON.stringify({ id: 987 }), { status: 200 });
+      }
+      const body = JSON.parse(String(init?.body)) as {
+        permissions: Record<string, string>;
+      };
+      calls.push({ body });
+      if ('workflows' in body.permissions) {
+        return new Response(
+          JSON.stringify({
+            message:
+              'The permissions requested are not granted to this installation.',
+          }),
+          { status: 422 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          token: 'ghs_minted-token',
+          expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        }),
+        { status: 201 },
+      );
+    }) as typeof fetch;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const provider = new AppInstallationTokenProvider({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+      permissions: DIRECT_RUNNER_PERMISSIONS,
+    });
+
+    await expect(provider.tokenFor(REPO)).resolves.toBe('ghs_minted-token');
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.body).toEqual({
+      repositories: ['example'],
+      permissions: {
+        actions: 'write',
+        contents: 'write',
+        pull_requests: 'write',
+        issues: 'write',
+      },
+    });
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 
   it('caches the minted token: a second call within its expiry window does not re-fetch', async () => {

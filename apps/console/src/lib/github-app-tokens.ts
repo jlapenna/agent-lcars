@@ -146,7 +146,20 @@ export const DIRECT_RUNNER_PERMISSIONS: Record<string, string> = {
   contents: 'write',
   pull_requests: 'write',
   issues: 'write',
+  // Lets a dispatched agent push `.github/workflows/*` changes its task
+  // calls for (homelab#2397 parked on "refusing to allow a GitHub App to
+  // create or update workflow without `workflows` permission"). The
+  // agent-protocol rule against editing workflows without owner permission
+  // still governs *whether* it should; this only removes the token as the
+  // obstacle. Optional: see OPTIONAL_PERMISSIONS.
+  workflows: 'write',
 };
+
+/** Permissions an installation may not have approved yet. GitHub rejects a
+ *  mint that requests any unapproved permission with a 422, so a mint that
+ *  fails that way is retried once without these rather than failing every
+ *  run on that installation. */
+const OPTIONAL_PERMISSIONS = ['workflows'] as const;
 
 export interface AppInstallationTokenProviderOptions {
   /** The GitHub App's client ID -- used as the JWT `iss` claim. */
@@ -526,6 +539,65 @@ async function mintInstallationAccessToken(
   logLabel: string,
   permissions: Record<string, string>,
 ): Promise<CachedInstallationToken> {
+  const required = Object.fromEntries(
+    Object.entries(permissions).filter(
+      ([name]) => !(OPTIONAL_PERMISSIONS as readonly string[]).includes(name),
+    ),
+  );
+  if (Object.keys(required).length === Object.keys(permissions).length) {
+    return mintOnce(
+      fetchImpl,
+      jwt,
+      installationId,
+      repositories,
+      logLabel,
+      permissions,
+    );
+  }
+  try {
+    return await mintOnce(
+      fetchImpl,
+      jwt,
+      installationId,
+      repositories,
+      logLabel,
+      permissions,
+    );
+  } catch (error) {
+    if (!(error instanceof MintStatusError) || error.status !== 422) {
+      throw error;
+    }
+    console.warn(
+      `GitHub App installation token for ${logLabel} minted without optional permissions (${OPTIONAL_PERMISSIONS.join(', ')}): ${error.message}`,
+    );
+    return mintOnce(
+      fetchImpl,
+      jwt,
+      installationId,
+      repositories,
+      logLabel,
+      required,
+    );
+  }
+}
+
+class MintStatusError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function mintOnce(
+  fetchImpl: typeof fetch,
+  jwt: string,
+  installationId: number,
+  repositories: string[],
+  logLabel: string,
+  permissions: Record<string, string>,
+): Promise<CachedInstallationToken> {
   let response: Response;
   try {
     response = await fetchImpl(
@@ -547,8 +619,9 @@ async function mintInstallationAccessToken(
   }
   if (!response.ok) {
     const detail = await githubErrorDetail(response);
-    throw new Error(
+    throw new MintStatusError(
       `failed to mint GitHub App installation access token for ${logLabel}: GitHub returned ${response.status}${detail === '' ? '' : `: ${detail}`}`,
+      response.status,
     );
   }
 
