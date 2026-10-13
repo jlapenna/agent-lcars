@@ -1,6 +1,8 @@
 import { optional } from '@agent-lcars/env';
 import { execFile } from 'child_process';
 
+import { canonicalRepoSpelling } from './hook/repo-allowlist';
+
 function runGit(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -111,12 +113,39 @@ function loadRepoAliases(): Record<string, { owner: string; name: string }> {
 }
 
 /**
+ * Looks up a rename alias for `owner/name`, case-insensitively like GitHub,
+ * so a stale remote that also differs in capitals still finds its alias.
+ */
+function findRepoAlias(
+  repoAliases: Record<string, { owner: string; name: string }>,
+  repo: { owner: string; name: string },
+): { owner: string; name: string } | undefined {
+  const key = `${repo.owner}/${repo.name}`;
+  if (repoAliases[key]) return repoAliases[key];
+  const lowerKey = key.toLowerCase();
+  for (const [aliasKey, target] of Object.entries(repoAliases)) {
+    if (aliasKey.toLowerCase() === lowerKey) return target;
+  }
+  return undefined;
+}
+
+/**
  * Resolves the `owner/name` of `cwd`'s GitHub `origin` remote, via
  * `git -C <cwd> remote get-url origin`. Fails soft (returns `undefined`)
  * for a non-git dir, a missing `origin` remote, a non-GitHub remote, or any
  * other `git` failure — same shape as `resolveGitBranch`'s error handling,
  * so a resolution hiccup degrades to an unrepoed doc rather than crashing a
  * tick. Async for the same reason as `resolveGitBranch`.
+ *
+ * The result is the spelling a session is stored under, so it is
+ * canonicalized here, at write time (#2583): a configured rename alias wins
+ * and is returned verbatim; otherwise, when `watchedRepos` (the hook
+ * client's `owner/name` allowlist patterns) matches, the remote's capitals
+ * are replaced by the allowlist's canonical spelling (see
+ * `canonicalRepoSpelling`); an unwatched repository keeps the remote's own
+ * spelling. Only the hook client passes `watchedRepos`: the retired polling
+ * daemon is not deployed, and the runner's finalize pass resolves a checkout
+ * cloned from its canonical `GITHUB_REPOSITORY`.
  *
  * A malformed `AGENT_TELEMETRY_REPO_ALIASES` is deliberately NOT part of
  * that fail-soft behavior: it is parsed before the fail-soft `try`, so a
@@ -125,12 +154,17 @@ function loadRepoAliases(): Record<string, { owner: string; name: string }> {
  */
 export async function resolveGitRepo(
   cwd: string,
+  watchedRepos: readonly string[] = [],
 ): Promise<{ owner: string; name: string } | undefined> {
   const repoAliases = loadRepoAliases();
   try {
     const stdout = await runGit(cwd, ['remote', 'get-url', 'origin']);
     const repo = parseGitHubRemote(stdout.trim());
-    return repo && (repoAliases[`${repo.owner}/${repo.name}`] ?? repo);
+    if (!repo) return undefined;
+    return (
+      findRepoAlias(repoAliases, repo) ??
+      canonicalRepoSpelling(repo, watchedRepos)
+    );
   } catch {
     return undefined;
   }
