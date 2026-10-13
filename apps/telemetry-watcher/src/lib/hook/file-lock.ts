@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 
 /**
@@ -45,48 +44,63 @@ function holderIsGone(pid: number): boolean {
   }
 }
 
+/** A takeover guard left by a waiter killed mid-takeover. Taking over is a
+ * few file operations, so anything this old is abandoned. */
+const TAKEOVER_STALE_MS = 5_000;
+
+/** True when the lock file still holds what was read: same file, untouched
+ * since, same holder. */
+function unchanged(
+  lockPath: string,
+  before: fs.Stats,
+  holder: string,
+): boolean {
+  try {
+    const now = fs.statSync(lockPath);
+    return (
+      now.ino === before.ino &&
+      now.mtimeMs === before.mtimeMs &&
+      fs.readFileSync(lockPath, 'utf8') === holder
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Removes a lock whose holder has exited or that is older than `staleMs`.
  * Agent runtimes kill async hooks when they exit (`claude -p` does so right
  * before its SessionEnd hook), and that hook's short budget cannot wait out
  * `staleMs`.
  *
- * The lock is renamed aside before it is removed, so only the file that was
- * judged stale is removed. If the holder released it and another process
- * created a new lock in between (possibly reusing the inode number), the
- * moved file no longer matches what was read and is linked back. */
+ * Takeovers are serialized by an `O_EXCL` guard file, and the lock is read
+ * again inside it, so concurrent waiters never remove a lock another waiter
+ * has just taken. A lock whose holder has exited cannot be released, so
+ * under the guard it can only disappear here. */
 function removeIfStale(lockPath: string, now: number, staleMs: number): void {
-  let before: fs.Stats;
-  let holder: string;
-  try {
-    before = fs.statSync(lockPath);
-    holder = fs.readFileSync(lockPath, 'utf8');
-  } catch {
-    return; // Already gone.
-  }
-  if (now - before.mtimeMs <= staleMs && !holderIsGone(Number(holder))) return;
-  const aside = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
-  try {
-    fs.renameSync(lockPath, aside);
-  } catch {
-    return; // Another waiter took it first.
-  }
-  try {
-    const moved = fs.statSync(aside);
-    const same =
-      moved.ino === before.ino &&
-      moved.mtimeMs === before.mtimeMs &&
-      fs.readFileSync(aside, 'utf8') === holder;
-    if (!same) {
-      // Fails only if yet another lock was created meanwhile; that one wins.
-      fs.linkSync(aside, lockPath);
+  const guard = `${lockPath}.takeover`;
+  if (!tryCreate(guard)) {
+    try {
+      if (now - fs.statSync(guard).mtimeMs > TAKEOVER_STALE_MS) {
+        fs.unlinkSync(guard);
+      }
+    } catch {
+      // Released meanwhile.
     }
+    return;
+  }
+  try {
+    const before = fs.statSync(lockPath);
+    const holder = fs.readFileSync(lockPath, 'utf8');
+    const stale =
+      now - before.mtimeMs > staleMs || holderIsGone(Number(holder));
+    if (stale && unchanged(lockPath, before, holder)) fs.unlinkSync(lockPath);
   } catch {
-    // Restored by another waiter, or replaced; nothing left to undo.
+    // Already gone.
   } finally {
     try {
-      fs.unlinkSync(aside);
+      fs.unlinkSync(guard);
     } catch {
-      // Already removed.
+      // Cleared as abandoned by another waiter.
     }
   }
 }
