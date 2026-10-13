@@ -32,9 +32,32 @@ function tryCreate(lockPath: string): boolean {
   }
 }
 
+/** True when `pid` names no process on this host. Locks live in the host's
+ * own state directory, so the recorded pid is local. */
+function holderIsGone(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
+/** Removes a lock whose holder has exited or that is older than `staleMs`.
+ * Agent runtimes kill async hooks when they exit (`claude -p` does so right
+ * before its SessionEnd hook), and that hook's short budget cannot wait out
+ * `staleMs`. The inode check keeps a lock that was replaced since it was read
+ * from being removed. */
 function removeIfStale(lockPath: string, now: number, staleMs: number): void {
   try {
-    if (now - fs.statSync(lockPath).mtimeMs > staleMs) fs.unlinkSync(lockPath);
+    const before = fs.statSync(lockPath);
+    const stale =
+      now - before.mtimeMs > staleMs ||
+      holderIsGone(Number(fs.readFileSync(lockPath, 'utf8')));
+    if (stale && fs.statSync(lockPath).ino === before.ino) {
+      fs.unlinkSync(lockPath);
+    }
   } catch {
     // Already gone.
   }

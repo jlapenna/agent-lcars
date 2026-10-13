@@ -422,6 +422,13 @@ jobs:
       - name: Smoke test telemetry-watcher bundle
         run: ./tools/telemetry-watcher-standalone-smoke.sh
 
+      # The real Claude Code, Codex and OpenCode CLIs on this runner image
+      # drive this checkout's hook client through a localhost provider. Fork
+      # PRs run on ubuntu-latest, which has none of those CLIs.
+      - name: Hook telemetry through the real agent CLIs
+        if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+        run: ./tools/hook-telemetry-runtime-smoke.sh
+
       - name: Stop live CI log stream
         if: always()
         continue-on-error: true
