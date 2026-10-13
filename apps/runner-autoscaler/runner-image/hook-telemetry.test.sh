@@ -163,41 +163,31 @@ check_events() {
 }
 
 # --- Claude Code ------------------------------------------------------------
-# Claude Code 2.1 sometimes exits print mode without running SessionEnd hooks
-# at all, from none to two runs in three depending on the run; the skip is in
-# its own shutdown, with or without our hooks. A marker hook beside ours shows
-# whether it ran, and a run that skipped it is retried in a fresh home. A
-# release that never runs SessionEnd hooks fails here, and whenever they ran,
-# our end event must be there too.
-claude_attempt() {
-  local home="$1" marker="$2"
-  mkdir -p "$home"
-  run_env "$home" lcars integration install claude > /dev/null ||
-    fail "lcars integration install claude failed"
-  jq --arg marker "$marker" \
-    '.hooks.SessionEnd += [{ hooks: [{ type: "command", command: "touch \($marker)" }] }]' \
-    "$home/.claude/settings.json" > "$tmp/settings.json"
-  mv "$tmp/settings.json" "$home/.claude/settings.json"
-  (
-    cd "$tmp/work"
-    run_env "$home" ANTHROPIC_BASE_URL="${base_url%/v1}" ANTHROPIC_API_KEY=hook-test \
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 "${claude_end_budget[@]}" \
-      timeout -k 2s "${run_timeout_seconds}s" "$claude_bin" -p "say ok" < /dev/null
-  ) > "$tmp/claude.out" 2>&1 || {
-    status=$?
-    cat "$tmp/claude.out" >&2
-    fail "claude -p exited $status against the localhost provider"
-  }
+claude_home="$tmp/claude-home"
+mkdir -p "$claude_home"
+run_env "$claude_home" lcars integration install claude > /dev/null ||
+  fail "lcars integration install claude failed"
+# A marker hook beside ours tells "Claude Code skipped SessionEnd hooks"
+# apart from "our end hook failed". `claude -p` skips them entirely when it
+# exits with an async Stop hook still running, which on a 2-CPU runner was
+# every run until our Stop entry became synchronous.
+jq --arg marker "$tmp/claude-session-end-ran" \
+  '.hooks.SessionEnd += [{ hooks: [{ type: "command", command: "touch \($marker)" }] }]' \
+  "$claude_home/.claude/settings.json" > "$tmp/settings.json"
+mv "$tmp/settings.json" "$claude_home/.claude/settings.json"
+(
+  cd "$tmp/work"
+  run_env "$claude_home" ANTHROPIC_BASE_URL="${base_url%/v1}" ANTHROPIC_API_KEY=hook-test \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 "${claude_end_budget[@]}" \
+    timeout -k 2s "${run_timeout_seconds}s" "$claude_bin" -p "say ok" < /dev/null
+) > "$tmp/claude.out" 2>&1 || {
+  status=$?
+  cat "$tmp/claude.out" >&2
+  fail "claude -p exited $status against the localhost provider"
 }
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
-  claude_home="$tmp/claude-home-$attempt"
-  claude_attempt "$claude_home" "$tmp/claude-session-end-$attempt"
-  [ -e "$tmp/claude-session-end-$attempt" ] && break
-  echo "note: claude ran no SessionEnd hooks on attempt $attempt"
-done
-[ -e "$tmp/claude-session-end-$attempt" ] ||
-  fail "claude ran no SessionEnd hooks in $attempt attempts"
-await_kinds "$claude_home" claude-code start end
+[ -e "$tmp/claude-session-end-ran" ] ||
+  fail "claude -p ran no SessionEnd hooks (an async hook still running at exit?)"
+await_kinds "$claude_home" claude-code start stop end
 check_events "$claude_home" claude-code
 
 # --- Codex ------------------------------------------------------------------
