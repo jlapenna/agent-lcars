@@ -1246,6 +1246,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   padding: 18px 16px;
 }
 
+/* The written summary under the readouts keeps the frame's inset rather than
+   running into its edge. */
+.costs-workspace__content
+  > [data-testid='spend-breakdowns']
+  > section:first-child {
+  padding: 16px 16px 0;
+}
+
 .costs-ledger-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

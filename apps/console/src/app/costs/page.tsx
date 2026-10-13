@@ -12,9 +12,16 @@ import {
   parseSessionArchiveQuery,
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
-import { parseCostBudget } from '../../lib/session-spend';
+import {
+  assessCostBudget,
+  type CostBudget,
+  parseCostBudget,
+  type SessionSpend,
+} from '../../lib/session-spend';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
+import { type ConsoleReadout, ConsoleReadouts } from '../console-readouts';
+import { formatCost } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { CostsWorkspace } from './costs-workspace';
@@ -49,9 +56,59 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
   );
 }
 
+const money = (value: number | undefined) =>
+  value === undefined ? '—' : formatCost(value);
+
+/** The headline figures from the same spend aggregate the breakdowns below
+ * explain; every caveat stays in that summary. */
+function spendReadouts(
+  spend: SessionSpend,
+  budget: CostBudget,
+): ConsoleReadout[] {
+  const estimated = spend.totals.costEstimated
+    ? 'includes estimates'
+    : undefined;
+  return [
+    {
+      id: 'known-spend',
+      label: 'Known spend',
+      value: money(spend.totals.costUsd),
+      detail: estimated,
+    },
+    {
+      id: 'per-deliverable',
+      label: 'Per merged PR',
+      value: money(spend.costPerMergedDeliverableUsd),
+      detail: estimated,
+    },
+    {
+      id: 'merged',
+      label: 'Merged PRs',
+      value: spend.mergedPRs,
+      detail: `${spend.unmergedPRs} unmerged · ${spend.unknownPRs} unknown`,
+    },
+    {
+      id: 'unpriced',
+      label: 'Unpriced sessions',
+      value: spend.totals.unpricedSessions,
+      detail: spend.coverageLimited ? 'incomplete archive' : undefined,
+    },
+    {
+      id: 'budget',
+      label: 'Budget',
+      value: budget.state === 'configured' ? money(budget.limitUsd) : '—',
+      detail: assessCostBudget(spend, budget),
+    },
+  ];
+}
+
 async function CostsBody({ query }: { query: SessionArchiveQuery }) {
   const { ledger, warnings, spend } = await getArchive(query);
   const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
+  const budget = parseCostBudget(
+    process.env['AGENT_LCARS_COST_BUDGET_USD'],
+    process.env['AGENT_LCARS_COST_WARNING_PERCENT'],
+  );
 
   return (
     <CostsWorkspace
@@ -60,14 +117,12 @@ async function CostsBody({ query }: { query: SessionArchiveQuery }) {
       }
     >
       {spend && (
-        <SpendBreakdowns
-          spend={spend}
-          budget={parseCostBudget(
-            process.env['AGENT_LCARS_COST_BUDGET_USD'],
-            process.env['AGENT_LCARS_COST_WARNING_PERCENT'],
-          )}
+        <ConsoleReadouts
+          label="Spend readouts"
+          readouts={spendReadouts(spend, budget)}
         />
       )}
+      {spend && <SpendBreakdowns spend={spend} budget={budget} />}
       {hasLedgerData ? (
         <LedgerTables ledger={ledger} />
       ) : (
