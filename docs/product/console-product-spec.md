@@ -388,8 +388,14 @@ the work that has stopped, and the work in flight.
   source is each session's `tokenMinutes`, recorded by hook telemetry. It
   follows the page's repository and agent filters. It is unavailable when the
   session store fails or no active session is measured, partial when some
-  are not, and a known zero when no session is active. Work API p95 has no
-  console data source and renders as unavailable.
+  are not, and a known zero when no session is active.
+- **FE-SB-7 [Implemented]** The same panel shows Work API p95: the 95th
+  percentile response time (request sent to response headers) of the queue
+  executor's own Work API calls (claims, placements, fences, exits and
+  schedule ticks) over the last 30 minutes, with a per-minute sparkline. The
+  executor windows the samples itself and publishes them on its status
+  document. It is unavailable without that window, reads "no calls" for a
+  quiet one, and names the minutes covered.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 

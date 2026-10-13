@@ -77,6 +77,13 @@ the reset. A malformed histogram drops only `jobStartup`; the lane's capacity
 snapshot is still written. A listener that has reported no job
 start since it began exposes no histogram, so it publishes no window.
 
+The executor's own status document carries `workApiLatency` in the same
+window shape: the response times (request sent to response headers) of
+every Work API call this process makes, timed by a wrapper around Go's
+default HTTP transport, which all of its Work API clients use. A call that
+fails without a response is not recorded. The console reads it for Work API
+p95.
+
 Each successful lane snapshot repeats `expectedLanes`: the sorted,
 comma-separated DNS-label names from the validated `arc_lanes` configuration.
 This bounded inventory uses the existing change/heartbeat write gate, with no
