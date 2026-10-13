@@ -143,7 +143,9 @@ function findRepoAlias(
  * client's `owner/name` allowlist patterns) matches, the remote's capitals
  * are replaced by the pattern's canonical spelling (see
  * `canonicalRepoSpelling`); an unwatched repository keeps the remote's own
- * spelling.
+ * spelling. Only the hook client passes `watchedRepos`: the retired polling
+ * daemon is not deployed, and the runner's finalize pass resolves a checkout
+ * cloned from its canonical `GITHUB_REPOSITORY`.
  *
  * A malformed `AGENT_TELEMETRY_REPO_ALIASES` is deliberately NOT part of
  * that fail-soft behavior: it is parsed before the fail-soft `try`, so a
