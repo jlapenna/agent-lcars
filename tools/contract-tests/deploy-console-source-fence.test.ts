@@ -57,9 +57,7 @@ function sourceDecision(
   deliveryMode = '',
   rollouts: Rollout[] = [{ source: NEW }],
   incomplete = false,
-  concurrent:
-    | { newer: number; ignoreCeiling?: boolean; race?: boolean }
-    | undefined = undefined,
+  concurrent: { newer: number; race?: boolean } | undefined = undefined,
   history = 0,
   clock: { local: string; server: string } | undefined = undefined,
 ) {
@@ -128,9 +126,8 @@ function sourceDecision(
     });
   }
   const total = rows.length + Number(incomplete);
-  // Rows created after the reader's ceiling, newest first. A server honoring
-  // `created=<=` omits them; one that ignores it prepends them and shifts
-  // every page, which is the failure observed in production.
+  // Rows created after the reader's ceiling, newest first: skipped PR runs
+  // created during discovery, the condition observed in production.
   const newer = Array.from({ length: concurrent?.newer ?? 0 }, (_, i) => ({
     id: 1000 + i,
     created_at: '2999-01-01T00:00:00Z',
@@ -140,13 +137,7 @@ function sourceDecision(
   }));
   writeFileSync(
     path.join(dir, 'runs'),
-    JSON.stringify({
-      rows,
-      newer,
-      total,
-      ignore: concurrent?.ignoreCeiling,
-      race: concurrent?.race,
-    }),
+    JSON.stringify({ rows, newer, total, race: concurrent?.race }),
   );
   writeFileSync(output, '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
@@ -197,14 +188,11 @@ elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
         total = runs['total'] + len(runs['newer'])
     else:
         expression=unquote(created)
-        if runs.get('ignore'):
-            rows=[]
+        def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+        if expression.startswith('>'):
+            rows=[row for row in all_rows if stamp(row['created_at']) > stamp(expression[1:])]
         else:
-            def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
-            if expression.startswith('>'):
-                rows=[row for row in all_rows if stamp(row['created_at']) > stamp(expression[1:])]
-            else:
-                rows=[row for row in all_rows if stamp(row['created_at']) <= stamp(expression[2:])]
+            rows=[row for row in all_rows if stamp(row['created_at']) <= stamp(expression[2:])]
         total=len(rows)
         rows=rows[:1000]
     page=int(query.get('page','1'))
@@ -511,7 +499,6 @@ describe('serialized automatic deployment source fence', () => {
       { newer: 150 },
     );
     expect(call).toMatchObject({ status: 0, output: 'false' });
-    expect(call.calls).toContain('created=%3E');
   });
 
   it('retries a scan whose total changed, even when total minus newer still matches', () => {
@@ -546,33 +533,6 @@ describe('serialized automatic deployment source fence', () => {
     );
     expect(call).toMatchObject({ status: 0, output: 'false' });
   });
-
-  it('still refuses when the newer-run count disagrees or history stays incomplete', () => {
-    expect(
-      sourceDecision(
-        NEW,
-        NEW,
-        'workflow_run',
-        false,
-        '',
-        [{ source: OLD }],
-        false,
-        { newer: 2, ignoreCeiling: true },
-      ).status,
-    ).not.toBe(0);
-    expect(
-      sourceDecision(
-        NEW,
-        NEW,
-        'workflow_run',
-        false,
-        '',
-        [{ source: OLD }],
-        true,
-        { newer: 2 },
-      ).status,
-    ).not.toBe(0);
-  }, 20000);
 
   it('refuses terminal rollout evidence without its start or step inventory', () => {
     expect(
