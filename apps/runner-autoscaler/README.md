@@ -63,6 +63,20 @@ snapshot expires after three minutes. Pending jobs mean
 runners retain ARC's own semantics. They are separate from Kubernetes Pending
 pods and from QueueExecutor's native Work capacity.
 
+A snapshot may also carry `jobStartup`: the listener's
+`gha_job_startup_duration_seconds` histogram, summed across label sets, as
+one cumulative-count vector per recorded minute over the last 30 minutes
+(`bounds` are the finite bucket bounds in seconds, and each interval's last
+count is the `+Inf` bucket), plus `startedAt`, when the oldest interval
+began. The console's Bridge and Shuttlebay sum lanes
+per minute for CI wait p50. Each autoscaler replica keeps the window in
+memory. It is absent until two snapshots are known. A listener restart, a
+vanished histogram, a bucket-layout change or a gap of more than two minutes
+in successful scrapes starts it again rather than publishing a delta across
+the reset. A malformed histogram drops only `jobStartup`; the lane's capacity
+snapshot is still written. A listener that has reported no job
+start since it began exposes no histogram, so it publishes no window.
+
 Each successful lane snapshot repeats `expectedLanes`: the sorted,
 comma-separated DNS-label names from the validated `arc_lanes` configuration.
 This bounded inventory uses the existing change/heartbeat write gate, with no
