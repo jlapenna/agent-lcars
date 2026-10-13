@@ -280,10 +280,17 @@ Nx cache receipt/helper, other native-cache guards and normal hooks; do not
 change shared directory permissions, reset caches or disable a plugin to make
 the loader succeed.
 
-From the normally installed worktree and qualified child environment, prove the
-actual module loads, for example `node -e "console.log(require('@swc/core').version)"`.
-That readiness result does not replace the normal affected lint/typechecks,
-Console build/standalone smoke when selected, or actual publication.
+From the normally installed worktree and qualified child environment, load SWC
+and verify its materialized native entry is beneath the canonical requested
+override. In that same Node process, inspect the loaded native image path
+(on Linux, `/proc/self/maps`) and correlate it with that entry; a preexisting
+cache file or version output alone is not placement proof. An absolute override
+can fall back to the default user cache. Fallback, an out-of-root image or an
+unobservable loaded path fails readiness: choose another qualified location and
+observe it before proceeding, rather than silently accounting only for the
+private cache. Retain only the selected native path, not a full process report
+or environment. This readiness does not replace the normal affected
+lint/typechecks, Console build/standalone smoke when selected, or publication.
 
 Recorded [#2662](https://github.com/jlapenna/agent-lcars/issues/2662): SWC
 `1.16.18` rejected the verifier's XDG/TMP locations beneath a mode `0775`
