@@ -1,13 +1,15 @@
 /**
  * Reports this OpenCode session to Agent LCARS through the `lcars hook
- * opencode` client (docs/hooks-telemetry-design.md). On lifecycle and tool
- * events it hands the client an export-shaped snapshot of the session
+ * opencode` client (docs/hooks-telemetry-design.md). On start, prompt, tool,
+ * and idle events it hands the client an export-shaped snapshot of the session
  * (`{ info, messages }`, the shape `opencode export` writes), which the shared
  * OpenCode reducer turns into a summary-only event; message bodies never
  * leave this host. The snapshot is a private temp file that the detached
  * client deletes once it has read it, so a report survives OpenCode exiting
  * (an `opencode run` ends on its last idle); a sweep at startup removes any
- * snapshot an interrupted client left behind.
+ * snapshot an interrupted client left behind. session.deleted arrives after
+ * OpenCode removed the session, so its SessionEnd is lifecycle-only (no
+ * snapshot, no summary).
  *
  * Work happens off the session's critical path: every report is
  * fire-and-forget, writes are asynchronous, and any failure is swallowed.
