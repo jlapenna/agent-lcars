@@ -7,6 +7,7 @@ import {
   getAgentTelemetryReaderFirestore,
 } from '@agent-lcars/telemetry/server';
 
+import { type JobStartupWindow, parseJobStartupWindow } from './ci-wait';
 import {
   ARC_UNBOUNDED_MAX_RUNNERS,
   RUNNER_STATUS_STALENESS_MS,
@@ -62,6 +63,8 @@ export interface ArcLaneStatus {
   minRunners: number;
   /** Absent when the scale set configures no maximum. */
   maxRunners?: number;
+  /** The listener's last 30 minutes of job-startup latency, when known. */
+  jobStartup?: JobStartupWindow;
   updatedAt: string;
 }
 
@@ -91,6 +94,7 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     )
   )
     return undefined;
+  const jobStartup = parseJobStartupWindow(status['jobStartup']);
   return {
     schemaVersion: 3,
     kind: 'arc-lane',
@@ -109,6 +113,7 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     ...((status['maxRunners'] as number) < ARC_UNBOUNDED_MAX_RUNNERS
       ? { maxRunners: status['maxRunners'] as number }
       : {}),
+    ...(jobStartup === undefined ? {} : { jobStartup }),
     updatedAt: status['updatedAt'],
   };
 }

@@ -4,8 +4,10 @@ import type {
   ArcLaneStatus,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
+import { CI_WAIT_MINUTES, fleetCiWait } from '../lib/ci-wait';
 import { fleetCapacity } from '../lib/runner-status-contract';
-import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
+import { formatDuration } from './format';
+import { OpsPanel, Sparkline, StateMark, UNAVAILABLE } from './ops-primitives';
 
 /** Squares drawn per lane; a larger lane is still described in full by its
  * label. */
@@ -64,6 +66,7 @@ export function RunnerFleetPanel({
     (lanes !== undefined && lanes.length > 0 && !lanesIncomplete);
   const online = lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
   const max = lanes && fleetCapacity(lanes);
+  const ciWait = lanes && fleetCiWait(lanes);
   return (
     <OpsPanel
       title="Runner fleet"
@@ -158,14 +161,52 @@ export function RunnerFleetPanel({
         </tbody>
       </table>
       <div className="ops-telemetry" data-testid="fleet-telemetry">
-        {['Tokens / min', 'CI wait p50', 'Work API p95'].map((label) => (
-          <div key={label}>
-            <div className="lcars-eyebrow">{label}</div>
-            <div className="ops-telemetry__value">{UNAVAILABLE}</div>
-            <div className="ops-unavailable">no metrics source</div>
-          </div>
-        ))}
+        <UnavailableTelemetry label="Tokens / min" />
+        <div data-testid="fleet-ci-wait">
+          <div className="lcars-eyebrow">CI wait p50</div>
+          {ciWait === undefined ? (
+            <>
+              <div className="ops-telemetry__value">{UNAVAILABLE}</div>
+              <div className="ops-unavailable">no job-startup data</div>
+            </>
+          ) : (
+            <>
+              <div className="ops-telemetry__value">
+                {ciWait.p50Seconds === undefined
+                  ? UNAVAILABLE
+                  : formatWait(ciWait.p50Seconds)}
+              </div>
+              <div className="ops-telemetry__detail">
+                {ciWait.jobs === 0
+                  ? `no job started · ${ciWait.coveredMinutes}m`
+                  : `${ciWait.jobs} ${ciWait.jobs === 1 ? 'job' : 'jobs'} · ${ciWait.coveredMinutes}m`}
+                {(ciWait.partial || lanesIncomplete) && ' · partial'}
+              </div>
+              <Sparkline
+                values={ciWait.series}
+                label={`CI queue wait p50 per minute, last ${CI_WAIT_MINUTES} minutes`}
+              />
+            </>
+          )}
+        </div>
+        <UnavailableTelemetry label="Work API p95" />
       </div>
     </OpsPanel>
+  );
+}
+
+/** ARC's smallest startup buckets are fractions of a second; "0s" would read
+ * as no wait at all. */
+function formatWait(seconds: number): string {
+  return seconds < 1 ? '<1s' : formatDuration(seconds);
+}
+
+function UnavailableTelemetry({ label }: { label: string }) {
+  return (
+    <div>
+      <div className="lcars-eyebrow">{label}</div>
+      <div className="ops-telemetry__value">{UNAVAILABLE}</div>
+      <div className="ops-unavailable">no metrics source</div>
+    </div>
   );
 }

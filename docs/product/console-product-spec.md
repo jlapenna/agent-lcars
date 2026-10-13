@@ -374,6 +374,15 @@ the work that has stopped, and the work in flight.
   sample, failed read or stale/reset-crossing observation is unavailable,
   never an inferred zero. Eligibility does not prove worker placement or
   successful execution.
+- **FE-SB-5 [Implemented]** The Runner fleet panel on the Bridge and Shuttlebay
+  shows CI wait p50: the median time from an ARC job being assigned to a
+  runner until that runner starts it, over the last 30 minutes, with a
+  per-minute sparkline. The data comes from each listener's
+  `gha_job_startup_duration_seconds` histogram, windowed by the autoscaler. It
+  is unavailable until a lane reports a window, and partial when some lanes
+  do not. Its label names the minutes actually covered, which are fewer than 30
+  after an autoscaler start or reset. A quiet window reads "no job started", never 0s. Tokens/min and
+  Work API p95 have no console data source and render as unavailable.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 
