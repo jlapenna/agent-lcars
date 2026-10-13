@@ -31,7 +31,7 @@ test.describe('/agents page @smoke', () => {
     await page.waitForURL('/agents');
 
     await expect(
-      page.getByRole('heading', { name: 'Agent Status' }),
+      page.getByRole('heading', { level: 1, name: 'Agents', exact: true }),
     ).toBeVisible();
     await expect(page.getByTestId('fleet-snapshot-bar')).toBeVisible();
     await expect(

@@ -34,7 +34,7 @@ const ShuttlebayView = withConsolePageShell(
     className: 'shuttlebay-page-shell',
     current: 'shuttlebay',
     title: 'Shuttlebay',
-    subtitle: 'Live runner fleet and queue status',
+    subtitle: 'Runner fleet · live runners and queue status',
     utilities: (
       <>
         <div className="shuttlebay-utilities shuttlebay-utilities--desktop console-utilities--desktop">

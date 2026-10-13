@@ -24,7 +24,7 @@ test.describe('authoritative queue projection', () => {
     await page.goto('/agents');
     await expect(page.getByTestId('data-warnings')).toHaveCount(0);
     await expect(
-      page.getByRole('heading', { name: 'Agent Status' }),
+      page.getByRole('heading', { level: 1, name: 'Agents', exact: true }),
     ).toBeVisible();
     await expect(
       page.getByText(`#${E2E_ITEM_NUMBERS.humanNeeded}`).first(),
