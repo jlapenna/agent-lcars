@@ -94,6 +94,23 @@ test.describe('/shuttlebay workspace', () => {
 test.describe('Shuttlebay live stream', () => {
   usePopulatedFixtures();
 
+  test('narrows runners by find and admission by agent from the toolbar', async ({
+    page,
+  }) => {
+    await page.goto('/shuttlebay?q=no-such-lane&agent=codex');
+
+    const toolbar = page.getByRole('search', { name: 'Filters' });
+    await expect(toolbar.getByLabel('Agent', { exact: true })).toHaveValue(
+      'codex',
+    );
+    await expect(
+      page.getByText('No runner lane matches these filters.'),
+    ).toBeVisible();
+    const admission = page.getByTestId('shuttlebay-admission');
+    await expect(admission.getByText('codex', { exact: true })).toBeVisible();
+    await expect(admission.getByText('claude', { exact: true })).toHaveCount(0);
+  });
+
   test('shows cooldown/reset provenance, normal claims, drain and unavailable provider evidence', async ({
     page,
   }) => {
