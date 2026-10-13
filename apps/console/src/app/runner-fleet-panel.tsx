@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 
-import {
-  type ArcLaneStatus,
-  fleetCapacity,
-  type QueueExecutorStatus,
+import type {
+  ArcLaneStatus,
+  QueueExecutorStatus,
 } from '../lib/autoscaler-status';
+import { fleetCapacity } from '../lib/runner-status-contract';
 import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
 
 /** Squares drawn per lane; a larger lane is still described in full by its

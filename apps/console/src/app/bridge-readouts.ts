@@ -1,8 +1,6 @@
 import type { AgentActivity } from '../lib/agent-activity';
-import {
-  type AutoscalerStatusResult,
-  fleetCapacity,
-} from '../lib/autoscaler-status';
+import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
+import { fleetCapacity } from '../lib/runner-status-contract';
 import type { SessionArchiveResult } from '../lib/session-archive';
 import type { ConsoleReadout } from './console-readouts';
 import { formatCost, formatDuration } from './format';

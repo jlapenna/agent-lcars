@@ -7,7 +7,10 @@ import {
   getAgentTelemetryReaderFirestore,
 } from '@agent-lcars/telemetry/server';
 
-import { RUNNER_STATUS_STALENESS_MS } from './runner-status-contract';
+import {
+  ARC_UNBOUNDED_MAX_RUNNERS,
+  RUNNER_STATUS_STALENESS_MS,
+} from './runner-status-contract';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
 
@@ -60,23 +63,6 @@ export interface ArcLaneStatus {
   /** Absent when the scale set configures no maximum. */
   maxRunners?: number;
   updatedAt: string;
-}
-
-/** What ARC's `gha_max_runners` reports for a scale set with no maximum
- * (int32's maximum), not a runner count. */
-export const ARC_UNBOUNDED_MAX_RUNNERS = 2_147_483_647;
-
-/** The lanes' summed maximum runners; undefined when any lane has none, so
- * one unbounded lane never reads as billions of runners. */
-export function fleetCapacity(
-  lanes: readonly Pick<ArcLaneStatus, 'maxRunners'>[],
-): number | undefined {
-  let total = 0;
-  for (const lane of lanes) {
-    if (lane.maxRunners === undefined) return undefined;
-    total += lane.maxRunners;
-  }
-  return total;
 }
 
 function parseArcLane(value: unknown): ArcLaneStatus | undefined {

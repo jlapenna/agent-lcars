@@ -4,12 +4,14 @@ import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { fleetFromAutoscalerStatuses } from './agent-activity';
 import {
-  ARC_UNBOUNDED_MAX_RUNNERS,
-  fleetCapacity,
   getAutoscalerStatuses,
   projectAutoscalerStatuses,
   subscribeAutoscalerStatuses,
 } from './autoscaler-status';
+import {
+  ARC_UNBOUNDED_MAX_RUNNERS,
+  fleetCapacity,
+} from './runner-status-contract';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   forClient: vi.fn((value: unknown) => value),

@@ -8,12 +8,14 @@ import { workSpecSchema } from '@agent-lcars/work';
 
 import {
   type AutoscalerStatusResult,
-  fleetCapacity,
   getAutoscalerStatuses,
 } from './autoscaler-status';
 import { repoItemKey, type WatchedRepo } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
-import { RUNNER_STATUS_STALENESS_MS } from './runner-status-contract';
+import {
+  fleetCapacity,
+  RUNNER_STATUS_STALENESS_MS,
+} from './runner-status-contract';
 
 // Re-exported from github-client.ts, which owns the server-side watched-repo
 // boundary; the pure integration shape itself lives in watched-repo.ts.
