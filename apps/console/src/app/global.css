@@ -931,6 +931,116 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-surface);
 }
 
+/* The toolbar band's controls (console-toolbar.tsx): hairline fields on the
+   one ground, a segmented window control, FIND search, and the route's
+   primary action docked to the trailing edge. */
+.console-toolbar {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.console-toolbar__field {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--lcars-hairline);
+  border-radius: 0;
+  color: var(--lcars-ink);
+  background: var(--lcars-surface);
+  font-family: var(--font-body), sans-serif;
+  font-size: 0.8125rem;
+}
+
+.console-toolbar__select {
+  min-width: 10rem;
+  padding-right: 28px;
+  appearance: none;
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--lcars-ink-dim) 50%),
+    linear-gradient(-45deg, transparent 50%, var(--lcars-ink-dim) 50%);
+  background-position:
+    right 14px center,
+    right 9px center;
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+}
+
+.console-toolbar__segmented {
+  display: inline-flex;
+  border: 1px solid var(--lcars-hairline);
+}
+
+.console-toolbar__segmented button {
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  color: var(--lcars-ink-dim);
+  background: transparent;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.console-toolbar__segmented button + button {
+  border-left: 1px solid var(--lcars-hairline);
+}
+
+.console-toolbar__segmented button:hover {
+  color: var(--lcars-ink);
+  background: var(--lcars-surface-raised);
+}
+
+.console-toolbar__segmented button[aria-pressed='true'] {
+  color: var(--lcars-ink-on-muted);
+  background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
+}
+
+.console-toolbar__search {
+  width: 15rem;
+  max-width: 100%;
+}
+
+.console-toolbar__search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--lcars-ink);
+  background: transparent;
+  font: inherit;
+}
+
+.console-toolbar__search input::placeholder {
+  color: var(--lcars-ink-dim);
+}
+
+.console-toolbar__search:focus-within {
+  outline: 2px solid var(--lcars-amber);
+  outline-offset: 2px;
+}
+
+.console-toolbar__primary {
+  margin-left: auto;
+}
+
+/* Phone touch targets for the toolbar on the Work, Sessions and Costs
+   routes (44px, as every other phone control). Belongs in the shared
+   toolbar block once it lands there for every route. */
+@media (max-width: 47.99em) {
+  :is(.work-workspace, .sessions-workspace, .costs-workspace)
+    :is(.console-toolbar__field, .console-toolbar__segmented button) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* A workspace's content divides into stacked sections separated by the same
    hairline the frame uses. Routes that are a list of blocks (Shuttlebay's
    scale sets, Costs' ledgers) get this instead of inventing their own card
@@ -1176,7 +1286,151 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 .sessions-issue-groups {
-  padding: 16px;
+  padding: 4px 0;
+}
+
+/* By-issue view: the group tables share fixed column widths and one visual
+   header strip, so the groups read as one table divided by issue headings. */
+.sessions-group-header {
+  display: grid;
+  grid-template-columns: 34% 13% 12% 15% 9% 8% 9%;
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--lcars-hairline);
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sessions-group-header > span {
+  padding: 0 10px;
+}
+
+.sessions-group-header > span:nth-child(n + 5) {
+  text-align: right;
+}
+
+.sessions-issue-groups .sessions-table {
+  table-layout: fixed;
+}
+
+.sessions-issue-groups .sessions-table col:nth-child(1) {
+  width: 34%;
+}
+
+.sessions-issue-groups .sessions-table col:nth-child(2) {
+  width: 13%;
+}
+
+.sessions-issue-groups .sessions-table col:nth-child(3) {
+  width: 12%;
+}
+
+.sessions-issue-groups .sessions-table col:nth-child(4) {
+  width: 15%;
+}
+
+.sessions-issue-groups .sessions-table col:nth-child(5),
+.sessions-issue-groups .sessions-table col:nth-child(7) {
+  width: 9%;
+}
+
+.sessions-issue-groups .sessions-table col:nth-child(6) {
+  width: 8%;
+}
+
+/* Kept for assistive technology; the strip above is the visual header. */
+.sessions-issue-groups .sessions-table thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The spec's Sessions panel (design/fleet-console.html#sessions): one panel
+   head over the archive, mono refs, status-coloured outcome marks. */
+.sessions-panel.mantine-Card-root {
+  margin: 20px;
+}
+
+.sessions-panel__count {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.sessions-panel__meta {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-ref {
+  color: var(--lcars-accent-ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.sessions-table__session {
+  max-width: 22rem;
+}
+
+.sessions-table__num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+td.sessions-table__num {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8125rem;
+}
+
+.session-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.session-outcome::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: currentColor;
+}
+
+/* Each hue mixes with the scheme's ink so it clears AA on both grounds. */
+.session-outcome[data-tone='ok'] {
+  color: color-mix(in srgb, var(--mantine-color-green-6) 55%, var(--lcars-ink));
+}
+
+.session-outcome[data-tone='warn'] {
+  color: color-mix(in srgb, var(--lcars-warning) 55%, var(--lcars-ink));
+}
+
+.session-outcome[data-tone='busy'] {
+  color: var(--lcars-ink);
+}
+
+.session-outcome[data-tone='idle'] {
+  color: var(--lcars-ink-dim);
+}
+
+.session-prs {
+  margin-top: 2px;
 }
 
 .session-mobile-row {

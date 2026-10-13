@@ -24,25 +24,15 @@ import {
   RepoBadge,
   SourceBadge,
 } from '../agent-activity-panel';
-import { formatCost, formatDuration } from '../format';
+import { formatDuration } from '../format';
 import { RelativeTime } from '../relative-time';
 import { SessionStatusLine } from '../session-status-line';
 
 /**
- * The archive's dense session table - unlike the dashboard's In
- * Flight panel (agent-activity-panel.tsx), this route is explicitly a
- * history/search surface (#2694/#3019's "archive can be denser" carve-out),
- * so every session gets one row with every column rather than a curated
- * card. Reuses the same liveness badge styling as CliSessionRow for visual
- * consistency between the dashboard and the archive.
- *
- * Below `sm` (#3107), the 12-column table is unreadable without endless
- * horizontal swiping, so it's replaced entirely by one card per session
- * (`SessionCard` below) - same underlying rows, just re-laid-out for a
- * phone rather than truncated. Both branches render unconditionally (CSS
- * media queries via Mantine's visibleFrom/hiddenFrom, not JS).
+ * One session laid out for a phone (below `sm`): the same row the table
+ * shows, re-laid-out rather than truncated. Both branches render
+ * unconditionally (CSS media queries via Mantine's visibleFrom/hiddenFrom).
  */
-
 function SessionCard({ row }: { row: SessionRow }) {
   const latestPr = row.prUrls.at(-1);
   const earlierPrCount = Math.max(0, row.prUrls.length - 1);
@@ -106,7 +96,7 @@ function SessionCard({ row }: { row: SessionRow }) {
                   rel="noreferrer"
                   size="xs"
                 >
-                  GitHub #{row.issueNumber}
+                  {issueRef(row)}
                 </Anchor>
               </Group>
             )}
@@ -121,7 +111,7 @@ function SessionCard({ row }: { row: SessionRow }) {
                   rel="noreferrer"
                   size="xs"
                 >
-                  GitHub #{latestPr.number}
+                  PR #{latestPr.number}
                 </Anchor>
                 {earlierPrCount > 0 && (
                   <Text size="xs" c="dimmed">
@@ -145,6 +135,65 @@ function SessionCard({ row }: { row: SessionRow }) {
   );
 }
 
+/** The archive's columns, in order (design/fleet-console.html#sessions). */
+export const SESSION_COLUMNS = [
+  'Session',
+  'Issue',
+  'Agent',
+  'Outcome',
+  'Duration',
+  'Tokens',
+  'Started',
+] as const;
+
+/** Status tone for a session's liveness (status colour, never the accent). */
+const LIVENESS_TONE: Record<SessionRow['liveness'], string> = {
+  live: 'busy',
+  idle: 'idle',
+  ended: 'ok',
+  stale: 'warn',
+};
+
+/** Compact token count for the archive's Tokens column ("1.11M", "88.2k"). */
+export function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
+  return String(tokens);
+}
+
+function issueRef(row: SessionRow): string {
+  return `${row.repo ? row.repo.name : ''}#${row.issueNumber}`;
+}
+
+/** The Session column's mono identifier: the run for a dispatched session,
+ * the host for a CLI one, else the session id. */
+function SessionRef({ row }: { row: SessionRow }) {
+  if (row.source === 'issue-agent' && row.runId) {
+    return row.runUrl ? (
+      <Anchor
+        href={row.runUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="session-ref"
+      >
+        run {row.runId} ↗
+      </Anchor>
+    ) : (
+      <span className="session-ref">{row.runId}</span>
+    );
+  }
+  if (row.source === 'cli' && row.host) {
+    return <span className="session-ref">{row.host}</span>;
+  }
+  return <span className="session-ref">{row.sessionId.slice(0, 12)}</span>;
+}
+
+/**
+ * The archive table as design/fleet-console.html#sessions draws it:
+ * Session · Issue · Agent · Outcome · Duration · Tokens · Started. Model,
+ * route, backend, turns and cost are the session's detail (FE-SE-3), one
+ * click away on its row title. Below `sm` the same rows become cards.
+ */
 export function SessionTable({ rows }: { rows: SessionRow[] }) {
   if (rows.length === 0) {
     return (
@@ -163,33 +212,32 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
       </Stack>
 
       <TableScrollContainer
-        minWidth={1080}
+        minWidth={820}
         visibleFrom="sm"
         className="sessions-table-scroll"
       >
         <Table
-          striped
           highlightOnHover
           verticalSpacing="xs"
           fz="sm"
           className="sessions-table"
           style={{ width: '100%' }}
         >
+          <colgroup>
+            {SESSION_COLUMNS.map((column) => (
+              <col key={column} />
+            ))}
+          </colgroup>
           <TableThead>
             <TableTr>
-              <TableTh>Source</TableTh>
-              <TableTh>Session</TableTh>
-              <TableTh>Issue</TableTh>
-              <TableTh>PRs</TableTh>
-              <TableTh>Host / Run</TableTh>
-              <TableTh>Requested model / route</TableTh>
-              <TableTh>Resolved backend</TableTh>
-              <TableTh>Turns</TableTh>
-              <TableTh>Cost-weighted tokens</TableTh>
-              <TableTh>Cost</TableTh>
-              <TableTh>Started</TableTh>
-              <TableTh>Duration</TableTh>
-              <TableTh>Status</TableTh>
+              {SESSION_COLUMNS.map((column, index) => (
+                <TableTh
+                  key={column}
+                  className={index >= 4 ? 'sessions-table__num' : undefined}
+                >
+                  {column}
+                </TableTh>
+              ))}
             </TableTr>
           </TableThead>
           <TableTbody>
@@ -198,30 +246,25 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                 key={row.sessionId}
                 data-testid={`session-row-${row.sessionId}`}
               >
-                <TableTd>
-                  <SourceBadge source={row.source} size="xs" />
-                </TableTd>
-                <TableTd style={{ maxWidth: 280 }}>
-                  <Stack gap={2}>
-                    <Group gap={6} wrap="nowrap">
-                      <Anchor
-                        href={`/sessions/${row.sessionId}`}
-                        size="sm"
-                        truncate
-                        className="session-title-link"
-                        style={{ maxWidth: 280, display: 'block' }}
-                      >
-                        {row.title}
-                      </Anchor>
-                      <AgentBadge agent={row.agent} />
-                      {row.repo && <RepoBadge repo={row.repo} />}
-                    </Group>
-                    <SessionStatusLine
-                      status={row.status}
-                      statusUpdatedAt={row.statusUpdatedAt}
-                      liveness={row.liveness}
-                    />
-                  </Stack>
+                <TableTd className="sessions-table__session">
+                  <Group gap={6} wrap="nowrap" className="session-ref-line">
+                    <SourceBadge source={row.source} size="xs" />
+                    <SessionRef row={row} />
+                  </Group>
+                  <Anchor
+                    href={`/sessions/${row.sessionId}`}
+                    size="sm"
+                    truncate
+                    className="session-title-link"
+                    style={{ display: 'block' }}
+                  >
+                    {row.title}
+                  </Anchor>
+                  <SessionStatusLine
+                    status={row.status}
+                    statusUpdatedAt={row.statusUpdatedAt}
+                    liveness={row.liveness}
+                  />
                 </TableTd>
                 <TableTd>
                   {row.issueNumber !== undefined && row.issueUrl && (
@@ -229,81 +272,53 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                       href={row.issueUrl}
                       target="_blank"
                       rel="noreferrer"
-                      size="xs"
+                      className="session-ref"
+                      title="Open the issue on GitHub"
                     >
-                      GitHub #{row.issueNumber}
+                      {issueRef(row)}
                     </Anchor>
                   )}
                 </TableTd>
                 <TableTd>
-                  {row.prUrls.map((pr) => (
-                    <Anchor
-                      key={pr.number}
-                      href={pr.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="xs"
-                      mr={6}
-                    >
-                      GitHub #{pr.number}
-                    </Anchor>
-                  ))}
+                  <AgentBadge agent={row.agent} />
                 </TableTd>
                 <TableTd>
-                  {row.source === 'cli' && row.host && (
-                    <Text size="xs">{row.host}</Text>
+                  <span
+                    className="session-outcome"
+                    data-tone={LIVENESS_TONE[row.liveness]}
+                    data-testid="session-row-liveness"
+                  >
+                    {LIVENESS_LABELS[row.liveness]}
+                  </span>
+                  {row.prUrls.length > 0 && (
+                    <Group gap={6} wrap="wrap" className="session-prs">
+                      {row.prUrls.map((pr) => (
+                        <Anchor
+                          key={pr.number}
+                          href={pr.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="session-ref"
+                        >
+                          PR #{pr.number}
+                        </Anchor>
+                      ))}
+                    </Group>
                   )}
-                  {row.source === 'issue-agent' &&
-                    row.runId &&
-                    (row.runUrl ? (
-                      <Anchor
-                        href={row.runUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        size="xs"
-                      >
-                        GitHub run ↗
-                      </Anchor>
-                    ) : (
-                      <Text size="xs">{row.runId}</Text>
-                    ))}
                 </TableTd>
-                <TableTd>
-                  <Text size="xs" c="dimmed">
-                    {row.model ?? '—'}
-                  </Text>
-                </TableTd>
-                <TableTd>
-                  <Text size="xs" c="dimmed">
-                    {row.resolvedModel ?? '—'}
-                  </Text>
-                </TableTd>
-                <TableTd>{row.turns}</TableTd>
-                <TableTd>{row.totalTokens.toLocaleString('en-US')}</TableTd>
-                <TableTd>
-                  {row.totalCostUsd !== undefined
-                    ? formatCost(row.totalCostUsd)
-                    : '—'}
-                </TableTd>
-                <TableTd>
-                  <Text size="xs">
-                    <RelativeTime iso={row.startedAt} />
-                  </Text>
-                </TableTd>
-                <TableTd>
+                <TableTd className="sessions-table__num">
                   {formatDuration(
                     sessionDurationSeconds(row.startedAt, row.lastActivityAt),
                   )}
                 </TableTd>
-                <TableTd>
-                  <Badge
-                    variant="light"
-                    size="xs"
-                    color={LIVENESS_COLORS[row.liveness]}
-                    data-testid="session-row-liveness"
-                  >
-                    {LIVENESS_LABELS[row.liveness]}
-                  </Badge>
+                <TableTd
+                  className="sessions-table__num"
+                  title={`${row.totalTokens.toLocaleString('en-US')} cost-weighted tokens`}
+                >
+                  {formatTokenCount(row.totalTokens)}
+                </TableTd>
+                <TableTd className="sessions-table__num">
+                  <RelativeTime iso={row.startedAt} variant="compact" />
                 </TableTd>
               </TableTr>
             ))}

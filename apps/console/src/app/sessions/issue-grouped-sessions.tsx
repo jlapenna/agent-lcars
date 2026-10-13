@@ -1,11 +1,11 @@
-import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Box, Group, Stack, Text, Title } from '@mantine/core';
 
 import { repoItemKey } from '../../lib/github-client';
 import type { IssueSessionGroup } from '../../lib/session-issue-groups';
 import { RepoBadge } from '../agent-activity-panel';
 import { MobileHistoryDisclosure } from '../mobile-history-disclosure';
 import { NoIssueSessionGroup } from './no-issue-session-group';
-import { SessionTable } from './session-table';
+import { SESSION_COLUMNS, SessionTable } from './session-table';
 
 const MOBILE_INITIAL_ISSUE_GROUP_COUNT = 5;
 
@@ -82,39 +82,53 @@ export function IssueGroupedSessions({
   }
 
   return (
-    <MobileHistoryDisclosure
-      gap="xl"
-      hiddenCount={Math.max(
-        0,
-        groups.length - MOBILE_INITIAL_ISSUE_GROUP_COUNT,
-      )}
-      itemLabel="issue group"
-      testId="issue-grouped-sessions"
-      className="sessions-issue-groups"
-    >
-      {groups.map((group, index) => (
-        <Stack
-          key={groupKey(group)}
-          gap="xs"
-          data-testid={`issue-group-${groupKey(group)}`}
-          data-mobile-history-extra={
-            index >= MOBILE_INITIAL_ISSUE_GROUP_COUNT || undefined
-          }
-        >
-          {group.issueNumber === 'no-issue' ? (
-            <NoIssueSessionGroup
-              sessionCount={<SessionCountLabel group={group} />}
-            >
-              <SessionTable rows={group.sessions} />
-            </NoIssueSessionGroup>
-          ) : (
-            <>
-              <GroupHeading group={group} />
-              <SessionTable rows={group.sessions} />
-            </>
-          )}
-        </Stack>
-      ))}
-    </MobileHistoryDisclosure>
+    <>
+      {/* One visual column header for every group's table (each keeps its
+          own header for assistive technology); the group tables share a
+          fixed layout so their columns line up as one table. */}
+      <Box
+        visibleFrom="sm"
+        className="sessions-group-header"
+        aria-hidden="true"
+      >
+        {SESSION_COLUMNS.map((column) => (
+          <span key={column}>{column}</span>
+        ))}
+      </Box>
+      <MobileHistoryDisclosure
+        gap="xl"
+        hiddenCount={Math.max(
+          0,
+          groups.length - MOBILE_INITIAL_ISSUE_GROUP_COUNT,
+        )}
+        itemLabel="issue group"
+        testId="issue-grouped-sessions"
+        className="sessions-issue-groups"
+      >
+        {groups.map((group, index) => (
+          <Stack
+            key={groupKey(group)}
+            gap="xs"
+            data-testid={`issue-group-${groupKey(group)}`}
+            data-mobile-history-extra={
+              index >= MOBILE_INITIAL_ISSUE_GROUP_COUNT || undefined
+            }
+          >
+            {group.issueNumber === 'no-issue' ? (
+              <NoIssueSessionGroup
+                sessionCount={<SessionCountLabel group={group} />}
+              >
+                <SessionTable rows={group.sessions} />
+              </NoIssueSessionGroup>
+            ) : (
+              <>
+                <GroupHeading group={group} />
+                <SessionTable rows={group.sessions} />
+              </>
+            )}
+          </Stack>
+        ))}
+      </MobileHistoryDisclosure>
+    </>
   );
 }
