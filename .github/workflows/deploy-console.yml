@@ -96,13 +96,12 @@ jobs:
     environment: production
 
     steps:
-      # Gate completion and CI completion can both arrive out of source order.
-      # Check only after acquiring the deployment lock, before any credentials
-      # or rollout effects. A newer tip may wait for CI; stale automatic runs
-      # do not deploy it or roll production backward while it waits.
-      - name: Check automatic source is still the main tip
+      # A green source may trail an unverified main tip. Admit forward
+      # movement from the last actual rollout, not exact equality with tip.
+      # Keep this inside the lock, before credentials or rollout effects.
+      - name: Check automatic source cannot roll production backward
         id: source
-        timeout-minutes: 1
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
@@ -111,25 +110,115 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$DELIVERY_MODE" != "recovered-ci" ]; then
-            echo "deploy_current=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Automatic deployment source is not an exact commit."
-            exit 1
-          fi
-          MAIN_SHA=$(timeout 30s gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
-          if ! [[ "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Could not verify the current main tip."
-            exit 1
-          fi
-          if [ "$SOURCE_SHA" != "$MAIN_SHA" ]; then
-            echo "::notice::Skipping superseded automatic source $SOURCE_SHA; main is $MAIN_SHA."
-            echo "deploy_current=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "deploy_current=true" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY_SOURCE'
+          import datetime, json, math, os, re, subprocess
+          from concurrent.futures import ThreadPoolExecutor
+
+          def admit(value):
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                  output.write(f'deploy_current={str(value).lower()}\n')
+
+          if os.environ['EVENT_NAME'] == 'workflow_dispatch' and os.environ.get('DELIVERY_MODE') != 'recovered-ci':
+              admit(True)
+              raise SystemExit(0)
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          source = os.environ['SOURCE_SHA']
+          if not re.fullmatch('[0-9a-f]{40}', source):
+              raise ValueError('Automatic deployment source is not an exact commit')
+
+          def api(route, pages=False):
+              def read(page_route):
+                  result = subprocess.check_output(['gh', 'api', f'repos/{repo}/{page_route}'], text=True, timeout=30)
+                  return json.loads(result)
+              first = read(route)
+              if not pages:
+                  return first
+              # Independent read-only pages share one bounded concurrency;
+              # complete-count validation below still rejects missing data.
+              page_count = math.ceil(first['total_count'] / 100)
+              with ThreadPoolExecutor(max_workers=4) as readers:
+                  rest = list(readers.map(lambda page: read(f'{route}&page={page}'), range(2, page_count + 1)))
+              return [first, *rest]
+
+          def timestamp(value):
+              if not isinstance(value, str):
+                  raise ValueError('Missing deployment evidence timestamp')
+              date = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+              if date.tzinfo is None:
+                  raise ValueError('Deployment evidence timestamp has no timezone')
+              return date.timestamp()
+
+          def records(pages, field):
+              counts = {page['total_count'] for page in pages}
+              rows = {row['id']: row for page in pages for row in page[field]}
+              if len(counts) != 1 or len(rows) != next(iter(counts)):
+                  raise ValueError('Deployment history is incomplete or changed during discovery')
+              return list(rows.values())
+
+          main = api('git/ref/heads/main')['object']['sha']
+          if not isinstance(main, str) or not re.fullmatch('[0-9a-f]{40}', main):
+              raise ValueError('Could not verify the current main tip')
+          if api(f'compare/{source}...{main}')['status'] not in ('ahead', 'identical'):
+              raise ValueError('Automatic source is not on current main history')
+
+          runs = records(api('actions/workflows/deploy-console.yml/runs?per_page=100', True), 'workflow_runs')
+          # Creation order is not effect order: an old run can be rerun later.
+          # Discover all metadata before using updated_at as an upper bound;
+          # validate observed step timestamps against that bound below.
+          ordered = sorted(((timestamp(run['updated_at']), run) for run in runs), key=lambda pair: pair[0], reverse=True)
+          completed_rollout = float('-inf')
+          effects = []
+          rollout_names = {'Build locally and deploy App Hosting backend', 'Deploy with managed App Hosting build'}
+          for updated, run in ordered:
+              if updated < completed_rollout:
+                  break
+              if str(run['id']) == os.environ.get('GITHUB_RUN_ID'):
+                  continue
+              jobs = records(api(f"actions/runs/{run['id']}/jobs?filter=all&per_page=100", True), 'jobs')
+              markers = re.findall(r'\[source:([0-9a-f]{40})\]', run.get('display_title', ''))
+              effect_source = markers[0] if len(markers) == 1 else None
+              for job in jobs:
+                  if job.get('name') != 'deploy':
+                      continue
+                  steps = job.get('steps')
+                  if not isinstance(steps, list):
+                      raise ValueError('Deployment job has no step inventory')
+                  if not steps and job.get('started_at') and job.get('conclusion') != 'skipped':
+                      raise ValueError('Started deployment job has empty step evidence')
+                  for step in steps:
+                      if step['name'] not in rollout_names or step.get('conclusion') == 'skipped':
+                          continue
+                      if not step.get('started_at'):
+                          if step.get('conclusion') is None and step.get('status') in ('queued', 'pending'):
+                              continue
+                          raise ValueError('Possible rollout is missing start evidence')
+                      started = timestamp(step['started_at'])
+                      ended = timestamp(step['completed_at']) if step.get('completed_at') else updated
+                      if ended < started or ended > updated:
+                          raise ValueError('Run timestamp does not bound its rollout evidence')
+                      effects.append((ended, effect_source))
+                      if step.get('conclusion') == 'success':
+                          if step.get('status') != 'completed' or not step.get('completed_at'):
+                              raise ValueError('Successful rollout is missing completion evidence')
+                          completed_rollout = max(completed_rollout, ended)
+
+          for ended, deployed in effects:
+              if ended < completed_rollout:
+                  continue
+              if deployed is None:
+                  raise ValueError('Possible rollout has no immutable source marker')
+              # Failed/cancelled rollout commands can have effects; a failed
+              # later serving check also does not erase an earlier rollout.
+              status = api(f'compare/{deployed}...{source}')['status']
+              if status == 'behind':
+                  print(f'::notice::Skipping automatic source {source}; newer rollout source is {deployed}.')
+                  admit(False)
+                  raise SystemExit(0)
+              if status not in ('ahead', 'identical'):
+                  raise ValueError('Cannot order automatic source against rollout source')
+          admit(True)
+          PY_SOURCE
 
       - uses: actions/checkout@v7
         if: steps.source.outputs.deploy_current == 'true'
