@@ -65,6 +65,7 @@ function fixture(
     rules?: unknown;
     review?: object;
     suites?: unknown;
+    suitePages?: Record<number, unknown>;
     suite?: unknown;
   } = {},
 ) {
@@ -184,9 +185,12 @@ function fixture(
       );
     if (path.includes('/rule-suites?'))
       return Response.json(
-        overrides.suites ?? [
-          { id: 5, after_sha: MERGE, ref: 'refs/heads/main', result: 'pass' },
-        ],
+        overrides.suitePages?.[
+          Number(new URL(path).searchParams.get('page') ?? '1')
+        ] ??
+          overrides.suites ?? [
+            { id: 5, after_sha: MERGE, ref: 'refs/heads/main', result: 'pass' },
+          ],
       );
     throw Error(`Unexpected fixture request: ${path}`);
   });
@@ -919,5 +923,187 @@ describe('maintainer withdrawal of ready delivery', () => {
       head: HEAD,
     });
     expect(vi.mocked(deps.fetchImpl).mock.calls).toHaveLength(1);
+  });
+});
+
+describe('current review and paginated protected landing evidence', () => {
+  const merged = { merged: true, state: 'closed', merge_commit_sha: MERGE };
+  const approved = {
+    state: 'APPROVED',
+    author: { login: 'reviewer' },
+    commit: { oid: HEAD },
+  };
+  const fullPage = Array.from({ length: 100 }, (_, index) => ({
+    id: 1000 + index,
+    after_sha: index.toString(16).padStart(40, '0'),
+    ref: 'refs/heads/main',
+    result: 'pass',
+  }));
+
+  it('revalidates a dismissed sole review after handoff before unchanged-head landing', async () => {
+    const review = {
+      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [approved] },
+    };
+    const binding = await readyDeliveryBinding(fixture({ review }), {
+      run: RUN,
+      task: TASK,
+      repo: BINDING.repo,
+      number: BINDING.number,
+      now: NOW,
+    });
+    review.reviews.nodes = [{ ...approved, state: 'DISMISSED' }];
+    const deps = fixture({ pr: merged, review });
+    expect(await observeGithubDelivery(deps, binding)).toEqual({
+      kind: 'waiting',
+      head: HEAD,
+    });
+    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining('/rule-suites'),
+      expect.anything(),
+    );
+    review.reviews.nodes = [approved];
+    expect(await observeGithubDelivery(deps, binding)).toEqual({
+      kind: 'protected-merge',
+      head: HEAD,
+      mergeCommit: MERGE,
+    });
+  });
+
+  it.each([
+    ['missing', []],
+    ['self', [{ ...approved, author: { login: 'author' } }]],
+    ['stale', [{ ...approved, commit: { oid: MERGE } }]],
+  ] as const)(
+    'retains unchanged-head merged delivery without current %s independent review',
+    async (_cause, nodes) => {
+      const deps = fixture({
+        pr: merged,
+        review: { reviews: { pageInfo: { hasPreviousPage: false }, nodes } },
+      });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'waiting',
+        head: HEAD,
+      });
+      expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+        expect.stringContaining('/rule-suites'),
+        expect.anything(),
+      );
+    },
+  );
+
+  it.each([
+    {
+      reviews: {
+        pageInfo: { hasPreviousPage: false },
+        nodes: [{ ...approved, state: 'CHANGES_REQUESTED' }],
+      },
+    },
+    {
+      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+      reviewThreads: {
+        pageInfo: { hasNextPage: false },
+        nodes: [{ isResolved: false }],
+      },
+    },
+  ])(
+    'retains actionable same-head negative feedback without an independent approval: %j',
+    async (review) => {
+      expect(await observeGithubDelivery(fixture({ review }), BINDING)).toEqual(
+        {
+          kind: 'correction',
+          head: HEAD,
+          reason: 'Review feedback requires correction',
+        },
+      );
+    },
+  );
+
+  it('finds the exact protected landing on a later rule-suite page', async () => {
+    const deps = fixture({
+      pr: merged,
+      suitePages: {
+        1: fullPage,
+        2: [
+          { id: 5, after_sha: MERGE, ref: 'refs/heads/main', result: 'pass' },
+        ],
+      },
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'protected-merge',
+      head: HEAD,
+      mergeCommit: MERGE,
+    });
+    expect(deps.fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'ref=refs%2Fheads%2Fmain&rule_suite_result=pass&evaluate_status=active&time_period=month&per_page=100&page=2',
+      ),
+      expect.anything(),
+    );
+    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining('page=3'),
+      expect.anything(),
+    );
+  });
+
+  it('retains unknown when a short final page has no exact protected landing', async () => {
+    const deps = fixture({ pr: merged, suitePages: { 1: fullPage, 2: [] } });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow(
+      'Protected merge evidence unavailable',
+    );
+    expect(deps.fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('page=2'),
+      expect.anything(),
+    );
+    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining('page=3'),
+      expect.anything(),
+    );
+  });
+
+  it('retains unknown after the bounded ten full rule-suite pages', async () => {
+    const deps = fixture({ pr: merged, suites: fullPage });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow(
+      'Protected merge evidence exceeds bounded read',
+    );
+    expect(deps.fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('page=10'),
+      expect.anything(),
+    );
+    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining('page=11'),
+      expect.anything(),
+    );
+  });
+
+  it('retains unknown when a later rule-suite page read is refused', async () => {
+    const deps = fixture({ pr: merged, suitePages: { 1: fullPage } });
+    const original = deps.fetchImpl;
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('page=2'))
+          return new Response('', { status: 503 });
+        return original(input, init);
+      },
+    );
+    await expect(
+      observeGithubDelivery({ ...deps, fetchImpl }, BINDING),
+    ).rejects.toThrow('Delivery read refused (503)');
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('page=2'),
+      expect.anything(),
+    );
+    expect(fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining('page=3'),
+      expect.anything(),
+    );
+  });
+
+  it('retains unknown for malformed later-page evidence', async () => {
+    const deps = fixture({ pr: merged, suitePages: { 1: fullPage, 2: [{}] } });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow();
+    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining('/rule-suites/5'),
+      expect.anything(),
+    );
   });
 });

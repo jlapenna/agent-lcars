@@ -1008,7 +1008,28 @@ describe('native delivery finalization reuses terminal outcome and session expir
           auto_merge: null,
         });
       }
-      if (url.endsWith('/rulesets/rule-suites?per_page=100'))
+      if (url.endsWith('/graphql'))
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: HEAD,
+                reviews: {
+                  pageInfo: { hasPreviousPage: false },
+                  nodes: [
+                    {
+                      state: 'APPROVED',
+                      author: { login: 'reviewer' },
+                      commit: { oid: HEAD },
+                    },
+                  ],
+                },
+                reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
+              },
+            },
+          },
+        });
+      if (url.includes('/rulesets/rule-suites?'))
         return Response.json([
           { id: 1, after_sha: MERGE, result: 'pass', ref: 'refs/heads/main' },
         ]);
@@ -1032,7 +1053,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
         })
       ).failed,
     ).toEqual([]);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     const task = (await f.store.readTask(f.run.task))!.task;
     expect(task.closedAt).toBe(NOW);
     expect(task.delivery).toMatchObject({ head: HEAD, state: 'waiting' });

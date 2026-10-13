@@ -390,38 +390,51 @@ export async function observeGithubDelivery(
       pr.auto_merge?.merge_method !== 'squash')
   )
     return { kind: 'waiting', head: binding.head };
+  const review = await reviews(deps, binding.repo, binding.number, pr.head.sha);
   if (pr.head.sha !== binding.head) {
-    const review = await reviews(
-      deps,
-      binding.repo,
-      binding.number,
-      pr.head.sha,
-    );
     if (!hasIndependentReview(review, pr.user.login))
       return { kind: 'waiting', head: binding.head };
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
   }
   if (pr.merged && pr.merge_commit_sha !== null) {
-    const suites = z
-      .array(
-        z.object({
-          id: z.number(),
-          after_sha: sha,
-          result: z.string(),
-          ref: z.string(),
-        }),
-      )
-      .parse(
-        await github(deps, binding.repo, 'rulesets/rule-suites?per_page=100'),
+    if (!hasIndependentReview(review, pr.user.login))
+      return { kind: 'waiting', head: binding.head };
+    const suiteSchema = z.object({
+      id: z.number(),
+      after_sha: sha,
+      result: z.string(),
+      ref: z.string(),
+    });
+    let suite: z.infer<typeof suiteSchema> | undefined;
+    // The longest documented window is one month. Missing older evidence and
+    // more than ten full pages retain ownership; they never qualify landing.
+    for (let page = 1; page <= 10; page++) {
+      const query = new URLSearchParams({
+        ref: `refs/heads/${binding.baseRef}`,
+        rule_suite_result: 'pass',
+        evaluate_status: 'active',
+        time_period: 'month',
+        per_page: '100',
+        page: String(page),
+      });
+      const suites = z
+        .array(suiteSchema)
+        .max(100)
+        .parse(
+          await github(deps, binding.repo, `rulesets/rule-suites?${query}`),
+        );
+      suite = suites.find(
+        (candidate) =>
+          candidate.after_sha === pr.merge_commit_sha &&
+          candidate.ref === `refs/heads/${binding.baseRef}` &&
+          candidate.result === 'pass',
       );
-    const suite = suites.find(
-      (candidate) =>
-        candidate.after_sha === pr.merge_commit_sha &&
-        candidate.ref === `refs/heads/${binding.baseRef}` &&
-        candidate.result === 'pass',
-    );
+      if (suite !== undefined) break;
+      if (suites.length < 100)
+        throw new Error('Protected merge evidence unavailable');
+    }
     if (suite === undefined)
-      throw new Error('Protected merge evidence unavailable');
+      throw new Error('Protected merge evidence exceeds bounded read');
     const details = z
       .object({
         result: z.literal('pass'),
@@ -494,12 +507,6 @@ export async function observeGithubDelivery(
   // The declared App can read Checks, not private-repository commit statuses.
   // Uncovered legacy required contexts remain unknown until protected landing;
   // available exact-head check failures and independent review stay actionable.
-  const review = await reviews(
-    deps,
-    binding.repo,
-    binding.number,
-    binding.head,
-  );
   if (failed.length || review.changesRequested || review.unresolved)
     return {
       kind: 'correction',
