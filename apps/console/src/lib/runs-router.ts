@@ -11,6 +11,7 @@ import {
   assertCapacityWorkerPermit,
   CapacityProtocol,
   type CapacityWorkerPermit,
+  type DeliveryBinding,
   isLive,
   isRefusal,
   isWorkAnchor,
@@ -922,7 +923,7 @@ export const runsRouter = os.router({
         message:
           'A delivery correction must publish its freshly marked PR or explicitly park',
       });
-    let delivery;
+    let delivery: DeliveryBinding | undefined;
     if (
       result.ok &&
       result.ref?.match(/\/pull\/\d+$/u) &&

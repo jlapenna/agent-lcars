@@ -94,6 +94,7 @@ export function advanceDelivery(input: {
       outbox: finalDeliveryOutbox(task, run, delivery, now),
     };
   }
+  if (observation.kind !== 'correction') return { task, run, outbox: [] };
   if (!input.correctionAuthorized) return refused('not-claimant');
   if (binding.correctionRunId !== undefined) return refused('run-not-live');
   // Credential debt and physical retirement remain on the original Run. The
@@ -103,6 +104,7 @@ export function advanceDelivery(input: {
     now,
     taskId: task.task,
     task: withoutDelivery,
+    activeRun: undefined,
     requestId: `delivery:${run.runId}`,
     requestSource: 'delivery-correction',
     pipeline: run.pipeline,
