@@ -185,6 +185,15 @@ async function prepareContrastState(page: Page, name: string) {
     await expect(
       page.getByRole('button', { name: 'Reply', exact: true }),
     ).toBeEnabled();
+  } else if (name === 'Inbox') {
+    // The repository selector sits in a collapsed disclosure. Measure it
+    // open, as a user sees it: Chrome does not render a closed <details>
+    // body, and its computed colour can lag a scheme change.
+    const filter = page.getByTestId('inbox-repository-filter');
+    await filter.locator('summary').click();
+    await expect(
+      filter.getByRole('combobox', { name: 'Repository', exact: true }),
+    ).toBeVisible();
   } else if (name === 'Sessions') {
     await page
       .getByRole('button', { name: 'Expand No issue sessions' })

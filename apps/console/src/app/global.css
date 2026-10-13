@@ -1353,6 +1353,25 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .inbox-data-freshness {
   min-height: 20px;
+  margin-left: auto;
+}
+
+/* Inbox notifications: the Preferences entry in the console menu
+   (inbox-notifications.tsx). The status line wraps under the toggle. */
+.queue-utility-menu__control.inbox-notifications {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  max-width: 18rem;
+}
+
+.inbox-notifications__toggle {
+  min-height: 44px;
+  justify-content: flex-start;
+}
+
+.inbox-frame > .queue-workspace {
+  padding: 12px 16px 16px;
 }
 
 .lcars-command-row {
@@ -2749,6 +2768,20 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 
   .inbox-data-freshness {
+    display: none;
+  }
+
+  .inbox-frame {
+    border: 0;
+  }
+
+  .inbox-frame > .queue-workspace {
+    padding: 0;
+  }
+
+  /* Freshness is hidden on phones and the delivery watch renders nothing,
+     so the band would be empty height above the full-height queue. */
+  .inbox-frame__toolbar {
     display: none;
   }
 

@@ -16,6 +16,7 @@ import { auth } from '../auth';
 import { consoleDescription } from '../lib/deployment';
 import { ConsoleNavigationProvider } from './console-navigation-context';
 import { bodyFont, displayFont, monoFont } from './fonts';
+import { InboxNotificationsProvider } from './inbox-notifications';
 import { Providers } from './providers';
 
 export const viewport: Viewport = {
@@ -89,7 +90,13 @@ async function DynamicShell({ children }: { children: React.ReactNode }) {
             session?.user.isAdmin ? undefined : session ? ['work'] : []
           }
         >
-          {children}
+          {session?.user.isAdmin && session.user.id ? (
+            <InboxNotificationsProvider principalId={session.user.id}>
+              {children}
+            </InboxNotificationsProvider>
+          ) : (
+            children
+          )}
         </ConsoleNavigationProvider>
       </Providers>
     </>
