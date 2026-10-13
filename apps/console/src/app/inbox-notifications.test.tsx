@@ -17,7 +17,11 @@ import {
   notificationStorageKey,
   parseNotificationState,
 } from '../lib/inbox-notifications';
-import { InboxNotifications } from './inbox-notifications';
+import {
+  InboxNotificationsProvider,
+  InboxNotificationsToggle,
+  InboxNotificationsWatch,
+} from './inbox-notifications';
 
 let now: number;
 const first = { id: 'owner/repo#1', generation: 'needs-human' };
@@ -46,7 +50,10 @@ const storageKey = notificationStorageKey('viewer');
 function tree(snapshot: InboxNotificationSnapshot) {
   return (
     <MantineProvider>
-      <InboxNotifications principalId={snapshot.principalId} />
+      <InboxNotificationsProvider principalId={snapshot.principalId}>
+        <InboxNotificationsWatch />
+        <InboxNotificationsToggle />
+      </InboxNotificationsProvider>
     </MantineProvider>
   );
 }
@@ -125,6 +132,37 @@ describe('opt-in Inbox notification delivery', () => {
     expect(
       screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeVisible();
+  });
+  it('completes an opt-in started from the menu before the Inbox watch mounts', async () => {
+    // The console menu is usable while the Inbox body is still streaming;
+    // the watch arriving mid-activation must not cancel the opt-in.
+    let grant: (permission: string) => void = () => undefined;
+    requestPermission.mockImplementation(
+      () => new Promise<string>((resolve) => (grant = resolve)),
+    );
+    const menuOnly = (watching: boolean) => (
+      <MantineProvider>
+        <InboxNotificationsProvider principalId="viewer">
+          {watching && <InboxNotificationsWatch />}
+          <InboxNotificationsToggle />
+        </InboxNotificationsProvider>
+      </MantineProvider>
+    );
+    const view = render(menuOnly(false));
+    expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+    await click('Enable Inbox notifications');
+    view.rerender(menuOnly(true));
+    await act(async () => {
+      grant('granted');
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(register).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+    ).toBeVisible();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Watching for new human decisions',
+    );
   });
   it.each(['failed read', 'degraded data', 'stale data'])(
     'retains opt-in across remounts after %s and quietly recovers',

@@ -1350,10 +1350,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
-/* Inside the workspace frame the notification controls are a toolbar
-   item; their standalone bottom margin would only pad the band. */
-.inbox-frame__toolbar [data-testid='inbox-notifications'] {
-  margin-bottom: 0 !important;
+/* Inbox notifications: the Preferences entry in the console menu
+   (inbox-notifications.tsx). The status line wraps under the toggle. */
+.queue-utility-menu__control.inbox-notifications {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  max-width: 18rem;
+}
+
+.inbox-notifications__toggle {
+  min-height: 44px;
+  justify-content: flex-start;
 }
 
 .inbox-frame > .queue-workspace {

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 import { usePopulatedFixtures } from './seed';
 import {
@@ -8,6 +8,18 @@ import {
 
 useE2eAdminBeforeEach();
 usePopulatedFixtures();
+
+/** The opt-in lives under Preferences in the console menu; delivery runs
+ * while the Inbox page is open. */
+async function openPreferences(page: Page) {
+  await page
+    .locator('button[aria-label="More console options"]:visible')
+    .first()
+    .click();
+  const control = page.getByTestId('inbox-notifications');
+  await expect(control).toBeVisible();
+  return control;
+}
 
 /** Actual authenticated RSC/GET read, fake browser delivery. Never send
  * OS notifications from CI or mint a real notification subscription. */
@@ -48,7 +60,7 @@ for (const width of [390, 768, 1280]) {
       });
     });
     await page.goto('/inbox');
-    const control = page.getByTestId('inbox-notifications');
+    let control = await openPreferences(page);
     const counters = () =>
       page.evaluate(
         () =>
@@ -84,6 +96,7 @@ for (const width of [390, 768, 1280]) {
     });
     await page.unroute('**/api/inbox-notifications');
     await page.reload();
+    control = await openPreferences(page);
     await expect(control.getByRole('status')).toHaveText(
       'Watching for new human decisions',
     );

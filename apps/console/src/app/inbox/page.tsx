@@ -27,7 +27,7 @@ import { ConsoleWorkspace } from '../console-workspace';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { inboxCardKey, inboxCardMetadata } from '../inbox-card';
-import { InboxNotifications } from '../inbox-notifications';
+import { InboxNotificationsWatch } from '../inbox-notifications';
 import { LiveDashboard } from '../live-dashboard';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
@@ -51,12 +51,10 @@ async function InboxBody({
   repoFilter,
   selectedItemKey,
   mobileScopeLabel,
-  principalId,
 }: {
   repoFilter: WatchedRepo | undefined;
   selectedItemKey?: string;
   mobileScopeLabel: string;
-  principalId: string;
 }) {
   const [
     {
@@ -106,7 +104,7 @@ async function InboxBody({
       warnings={<DataWarnings warnings={warnings} />}
       toolbar={
         <>
-          <InboxNotifications principalId={principalId} />
+          <InboxNotificationsWatch />
           <div className="inbox-data-freshness">
             <DataFreshness
               fetchedAt={dataAsOf}
@@ -141,7 +139,6 @@ interface InboxViewProps {
   repoFilterKey?: string;
   selectedItemKey?: string;
   subtitle: string;
-  principalId: string;
 }
 
 function InboxViewContent({
@@ -149,7 +146,6 @@ function InboxViewContent({
   repoFilter,
   selectedItemKey,
   subtitle,
-  principalId,
 }: InboxViewProps) {
   return (
     <>
@@ -164,7 +160,6 @@ function InboxViewContent({
           repoFilter={repoFilter}
           selectedItemKey={selectedItemKey}
           mobileScopeLabel={subtitle}
-          principalId={principalId}
         />
       </Suspense>
     </>
@@ -233,7 +228,6 @@ async function InboxPageShell({ searchParams }: PageProps) {
       repoFilterKey={repoFilterKey}
       selectedItemKey={params.item || undefined}
       subtitle={subtitle}
-      principalId={session.user.id}
     />
   );
 }

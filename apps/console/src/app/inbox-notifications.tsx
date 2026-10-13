@@ -1,7 +1,16 @@
 'use client';
 
-import { Button, Group, Stack, Text } from '@mantine/core';
-import { useEffect, useRef, useState } from 'react';
+import { Button, Text, VisuallyHidden } from '@mantine/core';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   advanceNotificationState,
@@ -44,7 +53,21 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
-export function InboxNotifications({ principalId }: { principalId: string }) {
+interface InboxNotificationsController {
+  enabled: boolean;
+  busy: boolean;
+  status: string;
+  enable: () => Promise<void>;
+  disable: () => Promise<void>;
+}
+
+/** Delivery state for one signed-in principal. The observer that reads the
+ * decision snapshot and asks the worker to notify runs only while `watching`
+ * (an Inbox page is open); the opt-in itself works from anywhere. */
+function useInboxNotificationsController(
+  principalId: string,
+  watching: boolean,
+): InboxNotificationsController {
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Notifications off');
@@ -52,6 +75,10 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
   const stopped = useRef(false);
   const epoch = useRef(0);
   const baseline = useRef(true);
+  // Read through a ref: an Inbox page mounting or unmounting must not restart
+  // the observer, which would bump the epoch and cancel an opt-in in flight.
+  const watchingRef = useRef(watching);
+  const observeRef = useRef<() => void>(undefined);
   const key = notificationStorageKey(principalId);
   const tag = `inbox:${encodeURIComponent(principalId)}`;
   useEffect(() => {
@@ -71,6 +98,17 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
       localStorage.setItem(key, JSON.stringify(state));
     const observe = async () => {
       if (running || stopped.current || latest.current !== principalId) return;
+      if (!watchingRef.current) {
+        // Away from the Inbox the preference is shown, never acted on.
+        const stored = read();
+        setEnabled(stored.enabled);
+        setStatus(
+          stored.enabled
+            ? 'Notifications on — delivered while an Inbox tab is open'
+            : 'Notifications off',
+        );
+        return;
+      }
       const generation = epoch.current;
       const current = () =>
         !stopped.current &&
@@ -193,6 +231,7 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
         running = false;
       }
     };
+    observeRef.current = () => void observe();
     void observe();
     const timer = setInterval(() => {
       void observe();
@@ -208,6 +247,11 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
       window.removeEventListener('storage', changed);
     };
   }, [key, tag, principalId]);
+
+  useEffect(() => {
+    watchingRef.current = watching;
+    observeRef.current?.();
+  }, [watching]);
 
   async function enable() {
     const identity = principalId;
@@ -351,30 +395,81 @@ export function InboxNotifications({ principalId }: { principalId: string }) {
     }
   }
 
+  return { enabled, busy, status, enable, disable };
+}
+
+const InboxNotificationsContext = createContext<{
+  controller: InboxNotificationsController;
+  watch: () => () => void;
+} | null>(null);
+
+/**
+ * Owns Inbox notification delivery for the signed-in maintainer. It sits at
+ * the root so the preference can be changed from the console menu on any
+ * page, while delivery itself stays scoped to an open Inbox tab: the Inbox
+ * mounts `InboxNotificationsWatch`, and only then does the observer run.
+ */
+export function InboxNotificationsProvider({
+  principalId,
+  children,
+}: {
+  principalId: string;
+  children: ReactNode;
+}) {
+  const [watchers, setWatchers] = useState(0);
+  const controller = useInboxNotificationsController(principalId, watchers > 0);
+  const watch = useCallback(() => {
+    setWatchers((count) => count + 1);
+    return () => setWatchers((count) => count - 1);
+  }, []);
+  const value = useMemo(() => ({ controller, watch }), [controller, watch]);
   return (
-    <Stack gap="xs" mb="md" data-testid="inbox-notifications">
-      <Group>
-        <Button
-          variant="outline"
-          size="compact-md"
-          mih={44}
-          disabled={busy}
-          onClick={() => {
-            void (enabled ? disable() : enable());
-          }}
-        >
-          {enabled
-            ? 'Disable Inbox notifications'
-            : 'Enable Inbox notifications'}
-        </Button>
-        <Text size="xs" c="dimmed" role="status">
-          {status}
-        </Text>
-      </Group>
-      <Text size="xs" c="dimmed">
-        This browser, all repositories. Keep an Inbox tab open. Previews contain
-        no decision details. Closed-tab delivery is unavailable.
+    <InboxNotificationsContext.Provider value={value}>
+      {children}
+    </InboxNotificationsContext.Provider>
+  );
+}
+
+/** Marks this page as an open Inbox, which is when notifications deliver. */
+export function InboxNotificationsWatch() {
+  const watch = useContext(InboxNotificationsContext)?.watch;
+  useEffect(() => watch?.(), [watch]);
+  return null;
+}
+
+const SCOPE =
+  'This browser, all repositories. Keep an Inbox tab open. Previews contain no decision details. Closed-tab delivery is unavailable.';
+
+/** The opt-in control, shown under Preferences in the console menu. */
+export function InboxNotificationsToggle() {
+  const controller = useContext(InboxNotificationsContext)?.controller;
+  if (!controller) return null;
+  const { enabled, busy, status, enable, disable } = controller;
+  return (
+    <div
+      className="queue-utility-menu__control inbox-notifications"
+      data-testid="inbox-notifications"
+    >
+      <Button
+        variant="subtle"
+        size="compact-sm"
+        className="inbox-notifications__toggle"
+        disabled={busy}
+        aria-label={
+          enabled ? 'Disable Inbox notifications' : 'Enable Inbox notifications'
+        }
+        aria-describedby="inbox-notifications-scope"
+        title={SCOPE}
+        onClick={() => {
+          void (enabled ? disable() : enable());
+        }}
+      >
+        {enabled ? 'Disable notifications' : 'Enable notifications'}
+      </Button>
+      <Text size="xs" c="dimmed" role="status">
+        {status}
       </Text>
-    </Stack>
+      <VisuallyHidden id="inbox-notifications-scope">{SCOPE}</VisuallyHidden>
+    </div>
   );
 }
