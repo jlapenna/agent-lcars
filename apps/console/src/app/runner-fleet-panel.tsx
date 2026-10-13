@@ -47,15 +47,21 @@ export function RunnerFleetPanel({
   lanesIncomplete,
   executor,
   chip,
+  filteredOut = false,
 }: {
   lanes?: ArcLaneStatus[];
   lanesIncomplete?: boolean;
   executor?: QueueExecutorStatus;
   /** The fleet chip: the authoritative one-line fleet summary. */
   chip?: ReactNode;
+  /** A page filter, not missing data, left no lane to show. */
+  filteredOut?: boolean;
 }) {
-  // No lane records is unknown capacity, not zero capacity.
-  const known = lanes !== undefined && lanes.length > 0 && !lanesIncomplete;
+  // No lane records is unknown capacity, not zero capacity - unless a filter
+  // emptied a known fleet.
+  const known =
+    filteredOut ||
+    (lanes !== undefined && lanes.length > 0 && !lanesIncomplete);
   const online = lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
   const max = lanes && fleetCapacity(lanes);
   return (
@@ -143,7 +149,9 @@ export function RunnerFleetPanel({
           {(lanes === undefined || lanes.length === 0) && !executor && (
             <tr>
               <td colSpan={3} className="ops-dim">
-                Runner status unavailable
+                {filteredOut
+                  ? 'No runner lane matches these filters.'
+                  : 'Runner status unavailable'}
               </td>
             </tr>
           )}
