@@ -60,25 +60,41 @@ async function protectedChecks(
   repo: string,
   base: string,
 ) {
-  const rules = z
+  const rulesSchema = z
     .array(z.object({ type: z.string(), parameters: z.unknown().optional() }))
-    .parse(
-      await github(deps, repo, `rules/branches/${encodeURIComponent(base)}`),
+    .max(100);
+  const rules: z.infer<typeof rulesSchema> = [];
+  for (let page = 1; page <= 10; page++) {
+    const batch = rulesSchema.parse(
+      await github(
+        deps,
+        repo,
+        `rules/branches/${encodeURIComponent(base)}?per_page=100&page=${page}`,
+      ),
     );
-  const checkRule = rules.find(
-    (rule) => rule.type === 'required_status_checks',
-  );
-  if (
-    !rules.some((rule) => rule.type === 'pull_request') ||
-    checkRule === undefined
-  )
-    throw new Error('Protected delivery policy could not be established');
-  return z
-    .object({
-      required_status_checks: z.array(z.object({ context: z.string() })).min(1),
-    })
-    .parse(checkRule.parameters)
-    .required_status_checks.map((check) => check.context);
+    rules.push(...batch);
+    if (batch.length === 100) continue;
+    const checkRules = rules.filter(
+      (rule) => rule.type === 'required_status_checks',
+    );
+    if (
+      !rules.some((rule) => rule.type === 'pull_request') ||
+      checkRules.length === 0
+    )
+      throw new Error('Protected delivery policy could not be established');
+    const required = checkRules.flatMap((rule) =>
+      z
+        .object({
+          required_status_checks: z.array(z.object({ context: z.string() })),
+        })
+        .parse(rule.parameters)
+        .required_status_checks.map((check) => check.context),
+    );
+    if (required.length === 0)
+      throw new Error('Protected delivery policy could not be established');
+    return [...new Set(required)];
+  }
+  throw new Error('Protected delivery policy read was truncated');
 }
 
 async function reviews(

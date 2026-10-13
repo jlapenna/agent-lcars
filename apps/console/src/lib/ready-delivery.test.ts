@@ -63,6 +63,7 @@ function fixture(
     workflows?: object;
     jobs?: object;
     rules?: unknown;
+    rulePages?: Record<number, unknown>;
     review?: object;
     suites?: unknown;
     suitePages?: Record<number, unknown>;
@@ -128,16 +129,23 @@ function fixture(
         },
       });
     if (path.endsWith('/pulls/12')) return Response.json(pr);
-    if (path.includes('/rules/branches/'))
-      return Response.json(
+    if (path.includes('/rules/branches/')) {
+      const query = new URL(path).searchParams;
+      const rules = overrides.rulePages?.[Number(query.get('page') ?? '1')] ??
         overrides.rules ?? [
           { type: 'pull_request' },
           {
             type: 'required_status_checks',
             parameters: { required_status_checks: [{ context: 'Verify' }] },
           },
-        ],
+        ];
+      if (rules instanceof Response) return rules;
+      return Response.json(
+        Array.isArray(rules)
+          ? rules.slice(0, Number(query.get('per_page') ?? '30'))
+          : rules,
       );
+    }
     if (path.includes('/check-runs')) return Response.json(checks);
     if (path.includes('/actions/runs?'))
       return Response.json(
@@ -1105,5 +1113,138 @@ describe('current review and paginated protected landing evidence', () => {
       expect.stringContaining('/rule-suites/5'),
       expect.anything(),
     );
+  });
+});
+
+describe('complete applicable protected-check policy', () => {
+  const rule = (context: string) => ({
+    type: 'required_status_checks',
+    parameters: { required_status_checks: [{ context }] },
+  });
+  const checks = {
+    total_count: 2,
+    check_runs: [
+      {
+        name: 'Verify',
+        head_sha: HEAD,
+        status: 'completed',
+        conclusion: 'success',
+      },
+      {
+        name: 'Browser',
+        head_sha: HEAD,
+        status: 'completed',
+        conclusion: 'failure',
+      },
+    ],
+  };
+  const fullPage = (required: string) => [
+    { type: 'pull_request' },
+    rule(required),
+    ...Array.from({ length: 98 }, () => ({ type: 'required_linear_history' })),
+  ];
+  it('requests correction for failure from a second applicable required-check rule', async () => {
+    expect(
+      await observeGithubDelivery(
+        fixture({
+          rules: [{ type: 'pull_request' }, rule('Verify'), rule('Browser')],
+          checks,
+        }),
+        BINDING,
+      ),
+    ).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Required checks failed: Browser',
+    });
+  });
+  it('reads later branch-rule pages before requesting the current required-check correction', async () => {
+    const deps = fixture({
+      rulePages: { 1: fullPage('Verify'), 2: [rule('Browser')] },
+      checks,
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Required checks failed: Browser',
+    });
+    const paths = vi
+      .mocked(deps.fetchImpl)
+      .mock.calls.map(([input]) => String(input))
+      .filter((path) => path.includes('/rules/branches/'));
+    expect(paths).toEqual([
+      'https://api.github.com/repos/octo/example/rules/branches/main?per_page=100&page=1',
+      'https://api.github.com/repos/octo/example/rules/branches/main?per_page=100&page=2',
+    ]);
+  });
+  it('reports one current failure when multiple applicable rules require the same context', async () => {
+    expect(
+      await observeGithubDelivery(
+        fixture({
+          rules: [
+            { type: 'pull_request' },
+            rule('Verify'),
+            rule('Browser'),
+            rule('Browser'),
+          ],
+          checks,
+        }),
+        BINDING,
+      ),
+    ).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Required checks failed: Browser',
+    });
+  });
+  it('retains unknown when ten full branch-rule pages do not establish exhaustion', async () => {
+    const rulePages = Object.fromEntries(
+      Array.from({ length: 10 }, (_, index) => [
+        index + 1,
+        fullPage('Browser'),
+      ]),
+    );
+    const deps = fixture({ rulePages, checks });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow(
+      'truncated',
+    );
+    const paths = vi
+      .mocked(deps.fetchImpl)
+      .mock.calls.map(([input]) => String(input))
+      .filter((path) => path.includes('/rules/branches/'));
+    expect(paths).toHaveLength(10);
+    expect(paths.at(-1)).toContain('per_page=100&page=10');
+  });
+  it('retains unknown instead of correcting with malformed later-page policy', async () => {
+    const deps = fixture({
+      rulePages: { 1: fullPage('Browser'), 2: { invalid: true } },
+      checks,
+    });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow();
+  });
+  it('retains unknown instead of correcting after a later policy read is refused', async () => {
+    const deps = fixture({
+      rulePages: {
+        1: fullPage('Browser'),
+        2: new Response('refused', { status: 403 }),
+      },
+      checks,
+    });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow(
+      'Delivery read refused (403)',
+    );
+  });
+  it('retains unknown for a complete policy without required contexts', async () => {
+    const deps = fixture({
+      rules: [
+        { type: 'pull_request' },
+        {
+          type: 'required_status_checks',
+          parameters: { required_status_checks: [] },
+        },
+      ],
+      checks,
+    });
+    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow();
   });
 });
