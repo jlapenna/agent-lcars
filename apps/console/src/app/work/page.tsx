@@ -164,27 +164,42 @@ function WorkViewContent({
                 placeholder="title, repo, work id"
                 value={query.q}
               />
-              <ToolbarSelect
-                name="state"
-                label="State"
-                value={query.state}
-                options={[
-                  '',
-                  'running',
-                  'done',
-                  'parked',
-                  'failed',
-                  'canceled',
-                ].map((value) => ({ value, label: value || 'All states' }))}
-              />
-              <input
-                className="console-toolbar__field work-principal-filter"
-                name="principal"
-                aria-label="Principal"
-                defaultValue={query.principal ?? ''}
-                maxLength={128}
-                placeholder="All principals"
-              />
+              {/* Filters the mockup's toolbar does not draw, kept one click
+                  away so the band stays one row. */}
+              <details className="console-toolbar__more">
+                <summary className="console-toolbar__field">
+                  More filters
+                  {query.state || query.principal
+                    ? ` · ${[query.state, query.principal].filter(Boolean).length}`
+                    : ''}
+                </summary>
+                <div className="console-toolbar__more-panel">
+                  <ToolbarSelect
+                    name="state"
+                    label="State"
+                    value={query.state}
+                    options={[
+                      '',
+                      'running',
+                      'done',
+                      'parked',
+                      'failed',
+                      'canceled',
+                    ].map((value) => ({ value, label: value || 'All states' }))}
+                  />
+                  <input
+                    className="console-toolbar__field work-principal-filter"
+                    name="principal"
+                    aria-label="Principal"
+                    defaultValue={query.principal ?? ''}
+                    maxLength={128}
+                    placeholder="All principals"
+                  />
+                  <Anchor href="/work" size="sm">
+                    Clear filters
+                  </Anchor>
+                </div>
+              </details>
               {/* The form's default button, so Enter in either text field
                   submits (two text fields block implicit submission without
                   one). Hidden: the mockup's toolbar shows no Apply step. */}
@@ -196,18 +211,8 @@ function WorkViewContent({
               >
                 Apply
               </button>
-              <Anchor href="/work" size="sm">
-                Clear filters
-              </Anchor>
-              <Anchor href="/work/schedules" size="sm">
-                Schedules →
-              </Anchor>
             </ConsoleToolbar>
-          ) : (
-            <Anchor href="/work/schedules" size="sm">
-              Schedules →
-            </Anchor>
-          )}
+          ) : null}
         </>
       }
     >
@@ -233,7 +238,14 @@ const WorkView = withConsolePageShell(
     className: 'work-page-shell',
     current: 'work',
     title: 'Work',
-    subtitle: 'Admitted queue, capacity holds and schedules',
+    subtitle: (
+      <>
+        Admitted queue, capacity holds and{' '}
+        <a href="/work/schedules" className="console-subtitle-link">
+          schedules
+        </a>
+      </>
+    ),
     // Work was the one destination with no utility cluster at all, so create
     // and refresh were unreachable from it and the mobile overflow menu
     // - the only way to reach the other destinations on a phone - was too

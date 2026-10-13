@@ -190,11 +190,6 @@ async function SessionsBody({
               { value: 'issue-agent', label: 'Dispatched agent' },
             ]}
           />
-          <ViewToggle
-            view={view}
-            flatHref={displayHref(query, { view: 'flat', filters })}
-            byIssueHref={displayHref(query, { view: 'by-issue', filters })}
-          />
           {/* Selects and the window submit on change; Apply shows only
               until they hydrate (the mockup's toolbar has none), then keeps
               its box so hydrating moves nothing. */}
@@ -215,6 +210,12 @@ async function SessionsBody({
             {view === 'by-issue' ? 'grouped by issue' : 'flat'} ·{' '}
             {describeArchiveWindow(query)}
           </span>
+          {/* The panel's own layout control, beside the meta it names. */}
+          <ViewToggle
+            view={view}
+            flatHref={displayHref(query, { view: 'flat', filters })}
+            byIssueHref={displayHref(query, { view: 'by-issue', filters })}
+          />
         </Group>
         <div data-testid="sessions-archive-content">
           {view === 'by-issue' ? (
@@ -228,7 +229,7 @@ async function SessionsBody({
   );
 }
 
-/** The flat/by-issue toggle rendered above the session table. The cost
+/** The flat/by-issue toggle, in the Sessions panel's header. The cost
  * ledger has no equivalent view, and since #192 it isn't on this page at
  * all - it's the top-level /costs destination. */
 
