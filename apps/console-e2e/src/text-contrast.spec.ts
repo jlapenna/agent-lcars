@@ -186,13 +186,12 @@ async function prepareContrastState(page: Page, name: string) {
       page.getByRole('button', { name: 'Reply', exact: true }),
     ).toBeEnabled();
   } else if (name === 'Inbox') {
-    // The repository selector sits in a collapsed disclosure. Measure it
-    // open, as a user sees it: Chrome does not render a closed <details>
-    // body, and its computed colour can lag a scheme change.
-    const filter = page.getByTestId('inbox-repository-filter');
-    await filter.locator('summary').click();
+    // Measure the toolbar controls and decision rows once they render.
     await expect(
-      filter.getByRole('combobox', { name: 'Repository', exact: true }),
+      page.getByRole('combobox', { name: 'Repository', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('heading', { level: 2, name: 'Decision inbox' }),
     ).toBeVisible();
   } else if (name === 'Sessions') {
     await page

@@ -282,9 +282,22 @@ describe('QueueWorkspace', () => {
     renderWorkspace([makeCard()]);
 
     expect(
-      screen.getByText(/1 item · needs your decision or response/),
+      screen.getByRole('heading', { level: 2, name: 'Decision inbox' }),
     ).toBeTruthy();
     expect(screen.queryByTestId('inbox-mobile-command-deck')).toBeNull();
+  });
+
+  it('keeps a stale agent filter visible and clearable', () => {
+    // No decision belongs to codex any more (a live refresh, a bookmark).
+    mockSearch = 'agent=codex';
+    renderWorkspace([makeCard({ labels: ['agent:claude'] })]);
+
+    const select = screen.getByRole('combobox', { name: 'Agent' });
+    expect(select).toHaveValue('codex');
+    expect(screen.queryByTestId('queue-row-249')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all agents' }));
+    expect(select).toHaveValue('');
+    expect(screen.getByTestId('queue-row-249')).toBeTruthy();
   });
 
   it('keeps a running CI state secondary to the one actionable row reason', () => {

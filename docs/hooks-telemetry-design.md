@@ -648,6 +648,14 @@ reverting those changes, since no polling writer remains.
    summary.
 6. **Missed `SessionEnd`.** Tolerated by `displayLiveness` ageing (4.3);
    the only visible effect is `idle` instead of `ended` for up to 10 min.
+   A QueueExecutor worker that dies (node reboot, OOM, eviction) never runs
+   `runner finalize` either. When the executor's exit report gets `lost`
+   back from the Work API, it sets `liveness: ended` on that run's
+   `live`/`idle` session docs, each in a transaction that re-reads the doc and
+   skips one that is already terminal or now carries another `runId` (a
+   resumed retry). A late flush from the dying worker keeps the lost run's
+   `runId`, so it is still ended (`apps/runner-autoscaler/lost_run_sessions.go`). Best effort, and
+   only when executor status publication is enabled.
 
 ## 9. Decisions
 

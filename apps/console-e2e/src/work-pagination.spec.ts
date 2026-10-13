@@ -180,18 +180,13 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   ).toHaveCount(0);
 });
 
+/** The Inbox's repository select is in its toolbar band, which streams in
+ * with the decision queue; wait for it rather than sampling once. */
 async function revealInboxRepositoryFilter(page: Page) {
   if (new URL(page.url()).pathname !== '/inbox') return;
-  const repository = page.getByRole('combobox', {
-    name: 'Repository',
-    exact: true,
-  });
-  if (await repository.isVisible()) return;
-  await page
-    .getByTestId('inbox-repository-filter')
-    .getByText('Repository filter', { exact: true })
-    .click();
-  await expect(repository).toBeVisible();
+  await expect(
+    page.getByRole('combobox', { name: 'Repository', exact: true }),
+  ).toBeVisible();
 }
 
 async function clearRepository(page: Page, destination: string) {
@@ -309,11 +304,6 @@ test('repository selection and clearing remain reachable on phones across Bridge
     ['/agents', 'Bridge', '/'],
   ]) {
     await page.goto(route);
-    if (route === '/inbox') {
-      await expect(
-        page.getByRole('button', { name: 'Apply repository', exact: true }),
-      ).toBeHidden();
-    }
     await revealInboxRepositoryFilter(page);
     await page
       .getByRole('combobox', { name: 'Repository', exact: true })

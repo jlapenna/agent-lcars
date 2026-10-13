@@ -209,7 +209,10 @@ selector. Claude and Codex workers install `lcars` hook entries after their
 own config exists; for OpenCode the image's `lcars-telemetry.js` plugin
 activates once the writer credentials path is exported. The worker fences
 and drains the hook flusher before `runner finalize`, which writes the
-authoritative final session doc. A missing credentials file or failed
+authoritative final session doc. A worker that dies first never finalizes;
+when the Work API settles that run `lost`, the executor marks the run's
+still-`live`/`idle` session docs `ended` (best effort, only with status
+publication enabled; `lost_run_sessions.go`). A missing credentials file or failed
 install prints a `::warning::` and the run continues without live
 telemetry; there is no polling sidecar fallback. The executor ignores the
 retired `LCARS_HOOK_TELEMETRY_PROVIDERS` variable if a deployment still sets
