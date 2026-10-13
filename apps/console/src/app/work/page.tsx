@@ -1,5 +1,5 @@
 import { PIPELINES } from '@agent-lcars/work';
-import { Anchor, Button, Group, Text } from '@mantine/core';
+import { Anchor, Group, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -185,11 +185,17 @@ function WorkViewContent({
                 maxLength={128}
                 placeholder="All principals"
               />
-              {/* A native submit: filters apply before hydration, and Enter in
-                  either text field submits the form. */}
-              <Button type="submit" variant="light" size="compact-sm">
+              {/* The form's default button, so Enter in either text field
+                  submits (two text fields block implicit submission without
+                  one). Hidden: the mockup's toolbar shows no Apply step. */}
+              <button
+                type="submit"
+                className="console-toolbar__implicit-submit"
+                tabIndex={-1}
+                aria-hidden="true"
+              >
                 Apply
-              </Button>
+              </button>
               <Anchor href="/work" size="sm">
                 Clear filters
               </Anchor>
