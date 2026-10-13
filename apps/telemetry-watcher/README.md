@@ -242,6 +242,15 @@ always exits 0. Every decision is one line in
    { "repos": ["jlapenna/*", "supersprinklesracing/*"] }
    ```
 
+   Matching ignores case, and the session is not stored under the `origin`
+   remote's spelling: a matching literal `owner/name` entry supplies its own
+   spelling, and a match through a `*` pattern stores the full lowercase
+   `owner/name`, so Console's repo lookups find a checkout cloned as
+   `JLapenna/Agent-LCARS`. List a repository whose canonical name has
+   capitals as a literal `Owner/Name` entry.
+   `AGENT_TELEMETRY_REPO_ALIASES` rename entries apply first and are stored
+   verbatim.
+
 2. `~/.config/agent-lcars/writer-key.json` (mode 0600) holds the
    `telemetry-writer` key, the value of `AGENT_TELEMETRY_WRITER_KEY_JSON`.
    The environment variable of that name overrides the file; on a runner,

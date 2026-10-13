@@ -149,11 +149,21 @@ function InboxViewContent({
 }: InboxViewProps) {
   return (
     <>
-      <RepositorySelector
-        repos={watchedRepos}
-        selected={repoFilter ? repoKey(repoFilter) : undefined}
-        action="/inbox"
-      />
+      <details
+        className="lcars-disclosure"
+        data-testid="inbox-repository-filter"
+      >
+        <summary className="lcars-disclosure__summary">
+          Repository filter
+        </summary>
+        <div className="lcars-disclosure__content">
+          <RepositorySelector
+            repos={watchedRepos}
+            selected={repoFilter ? repoKey(repoFilter) : undefined}
+            action="/inbox"
+          />
+        </div>
+      </details>
       <LiveDashboard />
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <InboxBody
