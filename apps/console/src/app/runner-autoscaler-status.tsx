@@ -234,7 +234,7 @@ function ArcLaneRow({ status }: { status: ArcLaneStatus }) {
       <td className="ops-mono-dim">
         {status.runningJobs} running · {status.idleRunners} idle ·{' '}
         {status.registeredRunners} registered · {status.desiredRunners} desired
-        · {status.maxRunners} max
+        · {status.maxRunners ?? 'no'} max
       </td>
       <td className="ops-num ops-dim">
         <RelativeTime iso={status.updatedAt} variant="compact" />

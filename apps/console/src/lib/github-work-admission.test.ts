@@ -2,7 +2,7 @@ import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import type { WorkPayload } from '@agent-lcars/work';
 import { describe, expect, it, vi } from 'vitest';
 
-import { admitGithubWork } from './github-work-admission';
+import { admitGithubWork, redispatchGithubWork } from './github-work-admission';
 
 const REPO = 'jlapenna/agent-lcars';
 const ANCHOR = { repo: REPO, issue: 1630 };
@@ -240,5 +240,124 @@ describe('admitGithubWork', () => {
     const run = await runtime.store.readRun(accepted.runId);
     expect(run?.pipeline).toBe((task?.task.work as WorkPayload).spec.pipeline);
     expect(await runtime.store.listRuns(ANCHOR)).toHaveLength(1);
+  });
+});
+
+it('filters explicit redispatch fallback against the effective handoff provider', async () => {
+  const store = new MemoryStore();
+  const orchestrator = new Orchestrator(
+    store,
+    { now: () => '2026-08-31T00:00:00.000Z' },
+    {
+      pipelines: ['codex', 'opencode'],
+      allowedPipelines: () => ['codex', 'opencode'],
+    },
+  );
+  const runtime = {
+    store,
+    orchestrator,
+    drain: vi
+      .fn()
+      .mockResolvedValue({ dispatched: [], reported: [], failed: [] }),
+  };
+  const first = await admitGithubWork(runtime, {
+    anchor: ANCHOR,
+    requestId: 'original-provider',
+    params: { mode: 'implement' },
+    work: work('codex'),
+  });
+  if (first.kind !== 'accepted') throw new Error('first admission failed');
+  await orchestrator.report(first.runId, { ok: true });
+  const switched = await admitGithubWork(runtime, {
+    anchor: ANCHOR,
+    requestId: 'switch-provider',
+    params: { mode: 'implement' },
+    work: work('opencode'),
+    labelRouting: {
+      mode: 'implement',
+      trigger: 'agent:opencode',
+      labels: [{ name: 'agent:opencode' }],
+      actor: 'jlapenna',
+      requestedAt: '2026-08-31T00:01:00.000Z',
+    },
+  });
+  if (switched.kind !== 'accepted') throw new Error('handoff failed');
+  await orchestrator.report(switched.runId, { ok: true });
+  const next = await redispatchGithubWork(runtime, {
+    anchor: ANCHOR,
+    requestId: 'fallback-redispatch',
+    params: { mode: 'implement' },
+    fallbackPipelines: ['codex'],
+    authorization: {
+      grantsPrincipal: {
+        principal: 'operator',
+        pipelines: ['codex', 'opencode'],
+      },
+    },
+  });
+  if (next.kind !== 'accepted') throw new Error('redispatch failed');
+  expect(await store.readRun(next.runId)).toMatchObject({
+    pipeline: 'opencode',
+    providerFallback: { allowedPipelines: ['codex'] },
+  });
+  const failure = await orchestrator.report(next.runId, {
+    ok: false,
+    summary: 'provider-limit',
+  });
+  expect(failure).toMatchObject({
+    additionalRuns: [expect.objectContaining({ pipeline: 'codex' })],
+  });
+  expect((await store.readTask(ANCHOR))?.task.work).toMatchObject({
+    spec: { pipeline: 'codex' },
+  });
+});
+
+it('preserves an explicit reply provider after handoff while a retry follows effective intent', async () => {
+  const runtime = fixture();
+  const first = await admitGithubWork(runtime, {
+    anchor: ANCHOR,
+    requestId: 'explicit-first',
+    params: { mode: 'implement' },
+    work: work('codex'),
+  });
+  if (first.kind !== 'accepted') throw new Error('first admission failed');
+  await runtime.orchestrator.report(first.runId, { ok: true });
+  const handoff = await runtime.orchestrator.request({
+    taskId: ANCHOR,
+    requestId: 'explicit-handoff',
+    pipeline: 'opencode',
+    labelProviderRequest: {
+      requestedAt: '2026-08-31T00:01:00.000Z',
+      actor: 'jlapenna',
+      allowProviderChange: true,
+    },
+  });
+  if ('refused' in handoff || handoff.run === undefined)
+    throw new Error('handoff failed');
+  await runtime.orchestrator.cancel(handoff.run.runId);
+  const retry = await admitGithubWork(runtime, {
+    anchor: ANCHOR,
+    requestId: 'effective-retry',
+    params: { mode: 'implement' },
+    work: work('codex'),
+    followEffectivePipeline: true,
+  });
+  if (retry.kind !== 'accepted') throw new Error('retry failed');
+  expect(await runtime.store.readRun(retry.runId)).toMatchObject({
+    pipeline: 'opencode',
+  });
+  await runtime.orchestrator.cancel(retry.runId);
+  const reply = await admitGithubWork(runtime, {
+    anchor: ANCHOR,
+    requestId: 'explicit-reply',
+    params: { mode: 'reply', reply: '/codex recover' },
+    work: work('codex'),
+  });
+  if (reply.kind !== 'accepted') throw new Error('reply failed');
+  expect(await runtime.store.readRun(reply.runId)).toMatchObject({
+    pipeline: 'codex',
+  });
+  expect((await runtime.store.readTask(ANCHOR))?.task.work).toMatchObject({
+    spec: { pipeline: 'codex' },
   });
 });

@@ -7,7 +7,10 @@ import {
   getAgentTelemetryReaderFirestore,
 } from '@agent-lcars/telemetry/server';
 
-import { RUNNER_STATUS_STALENESS_MS } from './runner-status-contract';
+import {
+  ARC_UNBOUNDED_MAX_RUNNERS,
+  RUNNER_STATUS_STALENESS_MS,
+} from './runner-status-contract';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
 
@@ -57,7 +60,8 @@ export interface ArcLaneStatus {
   registeredRunners: number;
   desiredRunners: number;
   minRunners: number;
-  maxRunners: number;
+  /** Absent when the scale set configures no maximum. */
+  maxRunners?: number;
   updatedAt: string;
 }
 
@@ -102,7 +106,9 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     registeredRunners: status['registeredRunners'] as number,
     desiredRunners: status['desiredRunners'] as number,
     minRunners: status['minRunners'] as number,
-    maxRunners: status['maxRunners'] as number,
+    ...((status['maxRunners'] as number) < ARC_UNBOUNDED_MAX_RUNNERS
+      ? { maxRunners: status['maxRunners'] as number }
+      : {}),
     updatedAt: status['updatedAt'],
   };
 }

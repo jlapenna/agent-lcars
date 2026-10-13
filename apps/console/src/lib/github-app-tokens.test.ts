@@ -254,6 +254,7 @@ describe('AppInstallationTokenProvider', () => {
         contents: 'write',
         pull_requests: 'write',
         issues: 'write',
+        workflows: 'write',
       },
     });
   });
