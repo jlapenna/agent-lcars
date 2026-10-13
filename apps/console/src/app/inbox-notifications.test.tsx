@@ -133,6 +133,62 @@ describe('opt-in Inbox notification delivery', () => {
       screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeVisible();
   });
+  const withWatch = (watching: boolean, snapshot = sample()) => (
+    <MantineProvider>
+      <InboxNotificationsProvider principalId={snapshot.principalId}>
+        {watching && <InboxNotificationsWatch />}
+        <InboxNotificationsToggle />
+      </InboxNotificationsProvider>
+    </MantineProvider>
+  );
+  const third = { id: 'owner/repo#3', generation: 'review-requested' };
+
+  it('re-baselines quietly when the maintainer returns to the Inbox', async () => {
+    // The provider outlives client navigation, so leaving and returning must
+    // not replay what arrived while the Inbox was closed.
+    const view = render(withWatch(true));
+    await click('Enable Inbox notifications');
+    await tick();
+    view.rerender(withWatch(false));
+    mocks.read.mockImplementation(async () => sample([first, second]));
+    await tick();
+    await tick();
+    await tick();
+    view.rerender(withWatch(true));
+    await tick();
+    expect(showNotification).not.toHaveBeenCalled();
+    // A decision arriving after the return still notifies.
+    mocks.read.mockImplementation(async () => sample([first, second, third]));
+    await tick();
+    expect(showNotification).toHaveBeenCalledOnce();
+  });
+
+  it('delivers nothing from an observation still in flight when the Inbox closes', async () => {
+    const view = render(withWatch(true));
+    await click('Enable Inbox notifications');
+    await tick();
+    let release: () => void = () => undefined;
+    mocks.read.mockImplementation(
+      () =>
+        new Promise<InboxNotificationSnapshot>((resolve) => {
+          release = () => resolve(sample([first, second]));
+        }),
+    );
+    await act(async () => {
+      now += 30_000;
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    view.rerender(withWatch(false));
+    await act(async () => {
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)).pending,
+    ).toEqual([]);
+  });
+
   it('completes an opt-in started from the menu before the Inbox watch mounts', async () => {
     // The console menu is usable while the Inbox body is still streaming;
     // the watch arriving mid-activation must not cancel the opt-in.

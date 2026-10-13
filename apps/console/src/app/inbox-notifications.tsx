@@ -110,8 +110,11 @@ function useInboxNotificationsController(
         return;
       }
       const generation = epoch.current;
+      // Leaving the Inbox ends delivery for an observation already in flight:
+      // it may not write the ledger or ask the worker to notify afterwards.
       const current = () =>
         !stopped.current &&
+        watchingRef.current &&
         generation === epoch.current &&
         latest.current === principalId;
       try {
@@ -249,6 +252,10 @@ function useInboxNotificationsController(
   }, [key, tag, principalId]);
 
   useEffect(() => {
+    // Each return to the Inbox re-baselines, as a fresh mount used to: a
+    // stale prior observation resumes quietly instead of replaying what
+    // arrived while the Inbox was closed.
+    if (watching && !watchingRef.current) baseline.current = true;
     watchingRef.current = watching;
     observeRef.current?.();
   }, [watching]);
