@@ -1,22 +1,15 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
-import { Stack, Text } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import type { AgentRun } from '../../lib/agent-activity';
 import type { CliSession } from '../../lib/cli-sessions';
-import {
-  CliSessionRow,
-  LiveRunGroupList,
-  type RunItemRef,
-} from '../agent-activity-panel';
-import { AgentOperationsPanel } from './agent-operations-panel';
+import type { RunItemRef } from '../agent-activity-panel';
+import { ActiveDispatchesPanel, CliSessionsPanel } from '../ops-panels';
 
 /**
- * One row per actor currently working something, agent by agent - the
- * fleet-focused counterpart to the home page's maintainer-focused "In
- * Flight" panel (see agent-activity-panel.tsx). Reuses the exact same
- * grouped-run/session rendering (LiveRunGroupList, CliSessionRow) for
- * visual consistency.
+ * Every actor currently working something (design/fleet-console.html
+ * #agents): the active dispatches table with its Runner column, then the
+ * interactive CLI sessions in the same panel language.
  */
 export function ActiveAgentsSection({
   liveRuns,
@@ -33,36 +26,20 @@ export function ActiveAgentsSection({
    * `indexSessionsByRunId` in run-classification.ts. */
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
 }) {
-  const hasActivity = liveRuns.length > 0 || activeSessions.length > 0;
-
   return (
-    <AgentOperationsPanel
-      title="Active Agents"
-      className="agents-panel--active"
-      testId="active-agents-section"
-      separated
-    >
-      {!hasActivity && (
-        <Text size="sm" c="dimmed">
-          No agent runs or CLI sessions in flight.
-        </Text>
-      )}
-
-      {liveRuns.length > 0 && (
-        <LiveRunGroupList
-          liveRuns={liveRuns}
-          itemsByRunId={itemsByRunId}
-          sessionsByRunId={sessionsByRunId}
-        />
-      )}
-
+    <div className="agents-active" data-testid="active-agents-section">
+      <ActiveDispatchesPanel
+        liveRuns={liveRuns}
+        itemsByRunId={itemsByRunId}
+        sessionsByRunId={sessionsByRunId}
+        showRunner
+        // The fleet snapshot bar above already carries the alert.
+        showQueueHealth={false}
+        testId="active-dispatches"
+      />
       {activeSessions.length > 0 && (
-        <Stack gap="xs">
-          {activeSessions.map((session) => (
-            <CliSessionRow key={session.sessionId} session={session} />
-          ))}
-        </Stack>
+        <CliSessionsPanel sessions={activeSessions} />
       )}
-    </AgentOperationsPanel>
+    </div>
   );
 }

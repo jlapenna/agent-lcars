@@ -1,159 +1,73 @@
-import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRun } from '../../lib/agent-activity';
 import type { CliSession } from '../../lib/cli-sessions';
-import type { RunItemRef } from '../agent-activity-panel';
 import { ActiveAgentsSection } from './active-agents-section';
 
-// Same isolation strategy as fleet-snapshot-bar.test.tsx: this section's own
-// job is choosing WHICH runs/sessions render and what gets passed to them
-// (the takeover-command join in particular) - the row components' own
-// rendering is covered by agent-activity-panel.test.tsx.
-vi.mock('../agent-activity-panel', () => ({
-  LiveRunGroupList: ({
+// This section's own job is choosing WHICH runs and sessions reach the
+// shared panels, and asking for the Runner column; the panels' rendering is
+// covered by ops-panels.test.tsx.
+vi.mock('../ops-panels', () => ({
+  ActiveDispatchesPanel: ({
     liveRuns,
-    itemsByRunId = {},
+    showRunner,
     sessionsByRunId = {},
   }: {
     liveRuns: AgentRun[];
-    itemsByRunId?: Record<number, RunItemRef>;
-    sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+    showRunner?: boolean;
+    sessionsByRunId?: Record<string, { sessionId: string }>;
   }) => (
-    <>
-      {liveRuns.map((run) => (
-        <div key={run.id} data-testid={`live-run-${run.id}`}>
-          {itemsByRunId[run.id] ? `#${itemsByRunId[run.id].number}` : ''}
-          {sessionsByRunId[run.id]
-            ? ` (${sessionsByRunId[run.id].sessionId})`
-            : ''}
-        </div>
-      ))}
-    </>
+    <div data-testid="dispatches" data-runner={showRunner ? '' : undefined}>
+      {liveRuns
+        .map((run) => `${run.id}${sessionsByRunId[run.id] ? ':s' : ''}`)
+        .join(',')}
+    </div>
   ),
-  CliSessionRow: ({
-    session,
-    takeoverCommand,
-  }: {
-    session: CliSession;
-    takeoverCommand?: string;
-  }) => (
-    <div data-testid={`cli-session-${session.sessionId}`}>
-      {takeoverCommand ?? ''}
+  CliSessionsPanel: ({ sessions }: { sessions: CliSession[] }) => (
+    <div data-testid="cli-panel">
+      {sessions.map((session) => session.sessionId).join(',')}
     </div>
   ),
 }));
 
-function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
-  return {
-    id: 1,
-    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
-    pipeline: 'claude',
-    status: 'running',
-    event: 'issues',
-    url: 'https://github.com/o/r/actions/runs/1',
-    displayTitle: '#1: A run',
-    createdAt: '2026-07-18T00:00:00.000Z',
-    updatedAt: '2026-07-18T00:00:00.000Z',
-    elapsedSeconds: 60,
-    ...overrides,
-  };
-}
-
-function makeSession(overrides: Partial<CliSession> = {}): CliSession {
-  return {
-    sessionId: 'session-1',
-    liveness: 'live',
-    agent: 'claude-code',
-    turns: 1,
-    totalTokens: 10,
-    startedAt: '2026-07-18T00:00:00.000Z',
-    lastActivityAt: '2026-07-18T00:00:00.000Z',
-    ...overrides,
-  };
-}
+const run = (id: string) =>
+  ({ id, pipeline: 'claude', status: 'running' }) as unknown as AgentRun;
+const session = (sessionId: string) =>
+  ({ sessionId, liveness: 'live' }) as unknown as CliSession;
 
 describe('ActiveAgentsSection', () => {
-  it('shows the empty state when nothing is in flight', () => {
+  it('renders the dispatch table with its Runner column', () => {
+    render(
+      <MantineProvider>
+        <ActiveAgentsSection
+          liveRuns={[run('42')]}
+          itemsByRunId={{}}
+          activeSessions={[]}
+          items={[]}
+          sessionsByRunId={{ 42: { sessionId: 's-1' } as never }}
+        />
+      </MantineProvider>,
+    );
+    const dispatches = screen.getByTestId('dispatches');
+    expect(dispatches).toHaveAttribute('data-runner', '');
+    expect(dispatches).toHaveTextContent('42:s');
+    expect(screen.queryByTestId('cli-panel')).toBeNull();
+    expect(screen.getByTestId('active-agents-section')).toBeTruthy();
+  });
+
+  it('adds the CLI sessions panel only when sessions are active', () => {
     render(
       <MantineProvider>
         <ActiveAgentsSection
           liveRuns={[]}
           itemsByRunId={{}}
-          activeSessions={[]}
+          activeSessions={[session('abc')]}
           items={[]}
         />
       </MantineProvider>,
     );
-    expect(
-      screen.getByText('No agent runs or CLI sessions in flight.'),
-    ).toBeTruthy();
-  });
-
-  it('renders one row per live run, joined to its item when known', () => {
-    render(
-      <MantineProvider>
-        <ActiveAgentsSection
-          liveRuns={[makeAgentRun({ id: 42 })]}
-          itemsByRunId={{
-            42: { number: 7, title: 'Fix it', url: 'u' },
-          }}
-          activeSessions={[]}
-          items={[]}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.getByTestId('live-run-42')).toHaveTextContent('#7');
-  });
-
-  it('forwards the joined session doc to LiveRunRow when one exists', () => {
-    render(
-      <MantineProvider>
-        <ActiveAgentsSection
-          liveRuns={[makeAgentRun({ id: 42 })]}
-          itemsByRunId={{}}
-          activeSessions={[]}
-          items={[]}
-          sessionsByRunId={{
-            42: {
-              sessionId: 'runner-session-1',
-              source: 'issue-agent',
-              liveness: 'live',
-              startedAt: '2026-07-18T00:00:00.000Z',
-              lastActivityAt: '2026-07-18T00:00:00.000Z',
-              turns: 3,
-              toolCallCounts: {},
-              tokens: {
-                inputTokens: 0,
-                outputTokens: 0,
-                cacheCreationTokens: 0,
-                cacheReadTokens: 0,
-              },
-              deliverables: { prNumbers: [], commitShas: [] },
-              runId: '42',
-            },
-          }}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.getByTestId('live-run-42')).toHaveTextContent(
-      '(runner-session-1)',
-    );
-  });
-
-  it('renders one row per active CLI session', () => {
-    render(
-      <MantineProvider>
-        <ActiveAgentsSection
-          liveRuns={[]}
-          itemsByRunId={{}}
-          activeSessions={[makeSession({ sessionId: 'abc' })]}
-          items={[]}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.getByTestId('cli-session-abc')).toBeTruthy();
+    expect(screen.getByTestId('cli-panel')).toHaveTextContent('abc');
   });
 });

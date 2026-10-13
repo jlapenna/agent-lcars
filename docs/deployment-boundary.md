@@ -68,28 +68,16 @@ Server-only. `@agent-lcars/util-server` must never reach a client bundle, which 
 why `shareArtifactUrl` lives here rather than in `format.ts` — that module
 is imported by client components.
 
-### 2. `apps/telemetry-watcher/src/lib/default-checkout.ts`
+### 2. Telemetry privacy scope (`~/.config/agent-lcars/config.json`)
 
-`checkoutRoots()` is the list of checkouts the host watcher is scoped to. All three
-sources' default privacy allowlists derive from it — Claude project-dir
-slugs (`allowlist.ts`), the Codex cwd allowlist (`config.ts`), and
-Antigravity workspace prefixes — so their different encodings cannot drift
-apart.
-
-| Value          | Env var                          | This deployment                                      |
-| -------------- | -------------------------------- | ---------------------------------------------------- |
-| checkout roots | `AGENT_TELEMETRY_CHECKOUT_ROOTS` | derived from the watched account home in `deploy.sh` |
-
-Runner mode deliberately ignores it — see `runner.ts`'s `RUNNER_ALLOWLIST` /
-`RUNNER_CODEX_CWD_ALLOWLIST`, where a wildcard is correct because the
+The retired host watcher's `AGENT_TELEMETRY_CHECKOUT_ROOTS` scope is
+deleted along with the daemon. Workstation telemetry now comes from the
+`lcars hook` client, whose privacy boundary is the per-host
+`~/.config/agent-lcars/config.json` `repos` allowlist (see
+`apps/telemetry-watcher/README.md`, "Host setup"), delivered by Homelab's
+homegit. `runner finalize` uses the wildcard runner roots from
+`@agent-lcars/telemetry`'s `runnerWatchRoots`, which is correct because the
 container is single-purpose.
-
-**This is why it matters that it's config and not a buried constant.** A
-personal-home path stayed pointed at the pre-rename checkout long after the
-repository moved. The exact-prefix allowlist then silently recorded nothing
-from the live checkout. Host mode now requires explicit roots and the deploy
-script derives the account home from its UID; runner mode deliberately avoids
-evaluating this host-only privacy scope.
 
 ### 3. `apps/console/src/lib/work-grants.ts`
 
@@ -433,8 +421,8 @@ Agent LCARS-specific deployment and infrastructure policy stays in
 ## If you fork this
 
 1. `apps/console/src/lib/deployment.ts` — or just set the env vars.
-2. `AGENT_TELEMETRY_CHECKOUT_ROOTS` — host mode requires explicit absolute
-   roots; there is no developer-home fallback.
+2. `~/.config/agent-lcars/config.json` on each host — the `lcars hook`
+   repository allowlist; there is no default.
 3. `infra/terraform/variables.tf` — project id, owner, repo.
 4. The repo variables in §3 (`gh variable set …`) — no workflow edits needed.
 5. `apps/console/apphosting.yaml` — backend id and the env block.

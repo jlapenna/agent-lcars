@@ -1,15 +1,11 @@
 import { SessionAgent } from './types';
 
 /**
- * One filesystem root a telemetry watcher pass discovers transcripts under,
+ * One filesystem root a `runner finalize` pass discovers transcripts under,
  * plus which agent's format they're in and which project dirs within the
- * root are in scope. Canonical home for this shape (#645) — it used to be
- * declared independently in `apps/telemetry-watcher/src/lib/watch-roots.ts`,
- * which now just re-exports this type so that app's existing `./watch-roots`
- * imports (`config.ts`, `discover.ts`, `daemon.ts`, `runner.ts`,
- * `finalize.ts`) don't all need to change. See {@link runnerWatchRoots}
- * below for the one runner-mode watch-root *list*, moved for the same
- * reason.
+ * root are in scope. Canonical home for this shape (#645), imported by
+ * `apps/telemetry-watcher`'s `discover.ts` and `finalize.ts`. See
+ * {@link runnerWatchRoots} below for the one runner-mode watch-root *list*.
  */
 export interface WatchRootConfig {
   /** Directory containing one subdirectory per project (Claude Code's own
@@ -65,9 +61,9 @@ export const RUNNER_CAPTURE_AGENTS: readonly SessionAgent[] = [
  * adding one entry here (plus a `TranscriptAdapter`, see
  * `transcript-adapter.ts`), not editing two call sites in lockstep.
  *
- * A runner container has no privacy-scoping concept the way the host
- * watcher does (see `allowlist.ts`'s `defaultProjectDirAllowlist` comment):
- * it is single-purpose and destroyed after one job, so the `*` wildcard
+ * A runner container has no privacy-scoping concept the way a workstation
+ * does (host hook clients scope by repository allowlist instead): it is
+ * single-purpose and destroyed after one job, so the `*` wildcard
  * allowlists below are a no-op here, not a scoping gap.
  */
 export function runnerWatchRoots(config: {
@@ -145,18 +141,9 @@ export function resumeObjectPath(options: {
  * too, so replacing it with `-` is a no-op either way `-` is or isn't in
  * the allowed set.)
  *
- * Deliberately DIFFERENT from and NOT a drop-in replacement for
- * `apps/telemetry-watcher/src/lib/default-checkout.ts`'s
- * `checkoutSlugGlobs` (`root.replace(/\//g, '-')` plus a trailing `*`
- * wildcard): that function builds a discovery GLOB for the host watcher's
- * privacy allowlist, where slash-only substitution plus a wildcard tail
- * already matches every real project dir prefixed by the checkout root
- * regardless of what Claude Code does to characters after the root's own
- * path — correctness there never depended on getting the encoding
- * byte-exact. This function instead has to name the exact directory a
- * `claude --resume` will look in, so it has to reproduce Claude Code's
- * real encoding, not the glob's looser one. `checkoutSlugGlobs` is
- * unchanged and stays on its own, narrower rule.
+ * This has to name the exact directory a `claude --resume` will look in,
+ * so it reproduces Claude Code's real encoding rather than a looser
+ * slash-only glob.
  *
  * Inverted by `resume-transcript.ts` (sub-project 6): given a checkout
  * directory, this names the subdirectory under `~/.claude/projects/` a

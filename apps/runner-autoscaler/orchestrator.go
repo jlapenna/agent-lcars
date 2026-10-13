@@ -120,6 +120,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					queue.exits = newRunExitReporter(consoleURL, runnerName, func() (string, error) {
 						return idTokenFromSource(tokenSource)
 					}, logger.With("component", "run-exit-reporter"))
+					queue.exits.sessions = newLostRunSessionEnder(statusPublisher, logger.With("component", "lost-run-sessions"))
 					queue.reportStartupPlacement = queueStartupPlacementReporter(consoleURL, func() (string, error) { return idTokenFromSource(tokenSource) })
 					queue.claimSettled = queueClaimStatus(consoleURL, func() (string, error) {
 						return idTokenFromSource(tokenSource)

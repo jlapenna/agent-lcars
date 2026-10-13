@@ -1,8 +1,8 @@
+import { type WatchRootConfig } from '@agent-lcars/telemetry';
 import * as fs from 'fs';
 import * as path from 'path';
 
 import { isAllowedProjectDir } from './allowlist';
-import { WatchRootConfig } from './watch-roots';
 
 /**
  * Lists every `*.jsonl` transcript file under allowlisted project dirs in

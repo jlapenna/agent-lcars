@@ -14,6 +14,9 @@ import {
   RUNNER_STATUS_STALENESS_MS,
 } from '../lib/runner-status-contract';
 import { DataWarnings } from './console-header';
+import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
+import { RelativeTime } from './relative-time';
+import { RunnerFleetPanel } from './runner-fleet-panel';
 import { ShuttlebayWorkspace } from './shuttlebay/shuttlebay-workspace';
 
 export const RUNNER_STATUS_STREAM_URL = '/api/runner-status/stream';
@@ -200,63 +203,72 @@ function ProviderAdmissionRows({ result }: { result: AutoscalerStatusResult }) {
   );
 }
 
+function laneState(status: ArcLaneStatus) {
+  if (status.pendingJobs > 0)
+    return { tone: 'warn' as const, label: 'Pending' };
+  if (status.runningJobs > 0) return { tone: 'busy' as const, label: 'Busy' };
+  return { tone: 'idle' as const, label: 'Idle' };
+}
+
 function ArcLaneRow({ status }: { status: ArcLaneStatus }) {
+  const state = laneState(status);
   return (
-    <div
-      className="console-workspace__section shuttlebay-scale-set"
-      data-testid={`arc-lane-${status.lane}`}
-    >
-      <Group gap="xs" wrap="wrap">
+    <tr data-testid={`arc-lane-${status.lane}`}>
+      <td>
         <Anchor
           href={status.registrationUrl}
           target="_blank"
           rel="noreferrer"
-          size="sm"
-          fw={700}
+          className="ops-host"
         >
           {status.lane} on GitHub ↗
         </Anchor>
-        {status.pendingJobs > 0 && (
-          <Badge color="yellow" size="xs">
-            {status.pendingJobs} pending
-          </Badge>
-        )}
-        <Text size="xs" c="dimmed">
-          {status.runningJobs} running · {status.idleRunners} idle ·{' '}
-          {status.registeredRunners} registered · {status.desiredRunners}{' '}
-          desired · {status.maxRunners} max
-        </Text>
-      </Group>
-    </div>
+        <span className="ops-host-spec">ARC runner lane</span>
+      </td>
+      <td>
+        <StateMark tone={state.tone}>{state.label}</StateMark>
+      </td>
+      <td className="ops-mono-dim">
+        {status.pendingJobs > 0 ? `${status.pendingJobs} pending` : UNAVAILABLE}
+      </td>
+      <td className="ops-mono-dim">
+        {status.runningJobs} running · {status.idleRunners} idle ·{' '}
+        {status.registeredRunners} registered · {status.desiredRunners} desired
+        · {status.maxRunners} max
+      </td>
+      <td className="ops-num ops-dim">
+        <RelativeTime iso={status.updatedAt} variant="compact" />
+      </td>
+    </tr>
   );
 }
 
 function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
   return (
-    <div
-      className="console-workspace__section shuttlebay-scale-set"
-      data-testid="queue-executor-status"
-    >
-      <Group gap="xs" wrap="wrap">
-        <Text size="sm" fw={700}>
-          Direct agent executor
-        </Text>
-        <Badge color={status.ready ? 'green' : 'red'} size="xs">
+    <tr data-testid="queue-executor-status">
+      <td>
+        <span className="ops-host">Direct agent executor</span>
+        <span className="ops-host-spec">QueueExecutor</span>
+      </td>
+      <td>
+        <StateMark
+          tone={!status.ready ? 'fail' : status.draining ? 'warn' : 'ok'}
+        >
           {status.ready ? 'ready' : 'not ready'}
-        </Badge>
-        {status.draining && (
-          <Badge color="yellow" size="xs">
-            draining
-          </Badge>
-        )}
-        <Text size="xs" c="dimmed">
-          {status.activeRuns === undefined
-            ? 'active unknown'
-            : `${status.activeRuns} active`}{' '}
-          · {status.maxConcurrent} max
-        </Text>
-      </Group>
-    </div>
+          {status.draining ? ' · draining' : ''}
+        </StateMark>
+      </td>
+      <td className="ops-mono-dim">{UNAVAILABLE}</td>
+      <td className="ops-mono-dim">
+        {status.activeRuns === undefined
+          ? 'active unknown'
+          : `${status.activeRuns} active`}{' '}
+        · {status.maxConcurrent} max
+      </td>
+      <td className="ops-num ops-dim">
+        <RelativeTime iso={status.updatedAt} variant="compact" />
+      </td>
+    </tr>
   );
 }
 
@@ -332,24 +344,62 @@ export function RunnerAutoscalerStatus({
         </Text>
       }
     >
-      <div data-testid="runner-autoscaler-status">
-        <ProviderAdmissionRows result={result} />
-        {(result.lanes?.length ?? 0) === 0 && (
-          <Text size="sm" c="dimmed">
-            GitHub runner status unavailable.
-          </Text>
-        )}
-        {result.lanes?.map((status) => (
-          <ArcLaneRow key={status.lane} status={status} />
-        ))}
-        {result.queueExecutor && (
-          <QueueExecutorRow status={result.queueExecutor} />
-        )}
-        {!result.queueExecutor && (
-          <Text size="sm" c="dimmed">
-            Direct executor status unavailable.
-          </Text>
-        )}
+      <div data-testid="runner-autoscaler-status" className="shuttlebay-cols">
+        <div className="shuttlebay-stack">
+          <OpsPanel
+            title="Runners"
+            count={(result.lanes?.length ?? 0) + (result.queueExecutor ? 1 : 0)}
+            meta="pool totals · per-runner status unavailable"
+            data-testid="shuttlebay-runners"
+          >
+            <table className="ops-table">
+              <thead>
+                <tr>
+                  <th>Runner</th>
+                  <th>State</th>
+                  <th>Job</th>
+                  <th>Capacity</th>
+                  <th className="ops-num">For</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.lanes?.map((status) => (
+                  <ArcLaneRow key={status.lane} status={status} />
+                ))}
+                {(result.lanes?.length ?? 0) === 0 && (
+                  <tr>
+                    <td colSpan={5} className="ops-dim">
+                      GitHub runner status unavailable.
+                    </td>
+                  </tr>
+                )}
+                {result.queueExecutor ? (
+                  <QueueExecutorRow status={result.queueExecutor} />
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="ops-dim">
+                      Direct executor status unavailable.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </OpsPanel>
+          <OpsPanel
+            title="Provider admission"
+            meta="cooldowns, queues and claims"
+            data-testid="shuttlebay-admission"
+          >
+            <ProviderAdmissionRows result={result} />
+          </OpsPanel>
+        </div>
+        <div className="shuttlebay-stack">
+          <RunnerFleetPanel
+            lanes={result.lanes}
+            lanesIncomplete={result.lanesIncomplete}
+            executor={result.queueExecutor}
+          />
+        </div>
       </div>
     </ShuttlebayWorkspace>
   );

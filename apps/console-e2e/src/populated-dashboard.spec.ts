@@ -315,8 +315,10 @@ test.describe('populated dashboard', () => {
     await expect(recent.getByText('success').first()).toBeVisible();
     await expect(recent.getByText('failed').first()).toBeVisible();
     await expect(recent.getByText('timeout').first()).toBeVisible();
-    // Pipeline source tags stay on the deeper Agents evidence view.
-    await expect(recent.getByText('opencode', { exact: true })).toHaveCount(0);
+    // The completions table carries the agent column (design/fleet-console.html).
+    await expect(
+      recent.getByText('opencode', { exact: true }).first(),
+    ).toBeVisible();
   });
 
   test('the primary Open task action opens the selected run in the desktop Bridge pane', async ({
@@ -330,7 +332,10 @@ test.describe('populated dashboard', () => {
     const primaryAction = duplicateGroup
       .getByTestId('current-run-primary-action')
       .first();
-    await expect(primaryAction).toHaveText('Open task');
+    // The run's reference is its primary action (design/fleet-console.html).
+    await expect(primaryAction).toHaveText(
+      `sprinkles#${E2E_ITEM_NUMBERS.duplicateDispatch}`,
+    );
     await primaryAction.click();
 
     await expect(page).toHaveURL(/\bsel=run%3A/);
@@ -492,12 +497,15 @@ test.describe('responsive decision inbox', () => {
       header.getByRole('heading', { level: 1, name: 'Decision Inbox' }),
     ).toBeVisible();
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
-    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+    // The decision list is full width until a decision is selected
+    // (design/fleet-console.html).
+    await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
 
     await workspace
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
       .getByRole('link')
       .click();
+    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
 
     await expect(page).toHaveURL(
       new RegExp(`\\bitem=[^&]*${E2E_ITEM_NUMBERS.reviewRequested}`),
@@ -574,6 +582,11 @@ test.describe('responsive decision inbox', () => {
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
+    // The detail column opens beside the list once a decision is selected.
+    await workspace
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
     expect(
       await page.evaluate(
@@ -872,11 +885,13 @@ test.describe('responsive agent operations', () => {
 
       const operations = workspace.locator('.agents-workspace__operations');
       await expect(operations).toHaveCSS('display', 'block');
+      // design/fleet-console.html #agents order: dispatches, then
+      // completions; claimed-but-idle work follows.
       const sections = [
         workspace.getByTestId('fleet-snapshot-bar'),
         workspace.getByTestId('active-agents-section'),
-        workspace.getByTestId('claimed-idle-section'),
         workspace.getByTestId('recent-outcomes'),
+        workspace.getByTestId('claimed-idle-section'),
       ];
       const sectionBounds = await Promise.all(
         sections.map(async (section) => section.boundingBox()),
@@ -935,24 +950,26 @@ test.describe('responsive agent operations', () => {
     });
   }
 
-  test('keeps populated agent columns balanced on tablet @agents-mobile', async ({
+  test('stacks populated agent panels full width on tablet @agents-mobile', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 820, height: 1180 });
     await page.goto('/agents');
 
+    // design/fleet-console.html stacks the panels: dispatches above
+    // completions and claimed work, each the workspace's full width.
     const workspace = page.getByRole('region', { name: 'Agent operations' });
     const operations = workspace.locator('.agents-workspace__operations');
-    await expect(operations).toHaveCSS('display', 'grid');
+    await expect(operations).toHaveCSS('display', 'block');
     const primary = await workspace
       .locator('.agents-workspace__primary')
       .boundingBox();
     const secondary = await workspace
       .locator('.agents-workspace__secondary')
       .boundingBox();
-    expect(primary?.width).toBeGreaterThan(400);
-    expect(secondary?.width).toBeGreaterThanOrEqual(320);
-    expect(primary?.x).toBeLessThan(secondary?.x ?? 0);
+    expect(primary?.width).toBeGreaterThan(600);
+    expect(secondary?.width).toBe(primary?.width);
+    expect(primary?.y ?? 0).toBeLessThan(secondary?.y ?? 0);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

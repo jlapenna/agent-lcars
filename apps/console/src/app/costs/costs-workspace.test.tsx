@@ -18,13 +18,16 @@ describe('CostsWorkspace', () => {
     ).toBe('Ledger rows');
   });
 
-  it('does not render warning chrome when there are no warnings', () => {
+  it('shows a quiet warning band when there are no warnings', () => {
     const { container } = render(
       <CostsWorkspace>
         <p>Ledger rows</p>
       </CostsWorkspace>,
     );
 
-    expect(container.querySelector('.costs-workspace__warnings')).toBeNull();
+    expect(
+      container.querySelector('.costs-workspace__warnings'),
+    ).toHaveTextContent('No data warnings');
+    expect(container.querySelector('[data-testid="data-warnings"]')).toBeNull();
   });
 });

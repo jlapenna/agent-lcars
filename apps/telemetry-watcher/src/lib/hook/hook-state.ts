@@ -6,9 +6,7 @@ import { type SessionEventKind } from '@agent-lcars/telemetry';
 
 /**
  * Per-session client state under `~/.local/state/agent-lcars/hook-sessions/`
- * (docs/hooks-telemetry-design.md §4.1 step 3). The file doubles as the
- * coexistence marker the polling daemon checks during the rollout: a
- * fresh marker means "a hook is reporting this session, skip it".
+ * (docs/hooks-telemetry-design.md §4.1 step 3).
  */
 export const HOOK_SESSIONS_SUBDIRECTORY = 'hook-sessions';
 
@@ -20,8 +18,7 @@ export interface HookSessionState {
   /** When an event was last appended to the spool, ISO. */
   readonly lastShippedAt?: string;
   /** When the flusher last got a 2xx for one of this session's events, ISO.
-   * This, not `updatedAt`, is what tells the daemon the hook path is really
-   * delivering for the session. */
+   * Unlike `updatedAt`, this records that the hook path really delivered. */
   readonly lastDeliveredAt?: string;
   readonly lastKind?: SessionEventKind;
   readonly updatedAt: string;
@@ -123,27 +120,6 @@ export function shouldShipEvent(
   if (!state?.lastShippedAt) return true;
   const elapsed = Date.parse(now) - Date.parse(state.lastShippedAt);
   return !Number.isFinite(elapsed) || elapsed >= throttleMs;
-}
-
-/** How recently a hook must have reported a session for the polling daemon
- * to leave it alone (docs/hooks-telemetry-design.md §4.1 step 8). Twice the
- * console's 5-minute display tolerance, so a hook client that dies hands
- * the session back to the daemon before the console shows it as ended. */
-export const HOOK_REPORTED_WINDOW_MS = 10 * 60 * 1000;
-
-/** Whether a hook client reported this session within the window. The
- * daemon uses this to skip sessions the hook path already covers, so the
- * two writers never race on one doc during the rollout. */
-export function isHookReported(
-  stateDirectory: string,
-  sessionId: string,
-  now: string,
-  windowMs = HOOK_REPORTED_WINDOW_MS,
-): boolean {
-  const state = readHookSessionState(stateDirectory, sessionId);
-  if (!state?.lastDeliveredAt) return false;
-  const age = Date.parse(now) - Date.parse(state.lastDeliveredAt);
-  return Number.isFinite(age) && age >= 0 && age <= windowMs;
 }
 
 /** Lock file guarding one session's read-modify-write of its state, so two
