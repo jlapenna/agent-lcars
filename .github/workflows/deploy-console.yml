@@ -111,7 +111,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY_SOURCE'
-          import datetime, json, math, os, re, subprocess
+          import datetime, json, math, os, re, subprocess, time
+          from urllib.parse import urlencode
           from concurrent.futures import ThreadPoolExecutor
 
           def admit(value):
@@ -122,21 +123,27 @@ jobs:
               admit(True)
               raise SystemExit(0)
 
+          # The deploy job owns the lock. Future creations cannot have rollout
+          # effects yet; retain the inclusive entry second, then let it close.
+          discovery_second = int(time.time())
           repo = os.environ['GITHUB_REPOSITORY']
           source = os.environ['SOURCE_SHA']
           if not re.fullmatch('[0-9a-f]{40}', source):
               raise ValueError('Automatic deployment source is not an exact commit')
 
-          def api(route, pages=False):
+          def api(route, pages=False, first=None):
               def read(page_route):
                   result = subprocess.check_output(['gh', 'api', f'repos/{repo}/{page_route}'], text=True, timeout=30)
                   return json.loads(result)
-              first = read(route)
+              first = read(route) if first is None else first
               if not pages:
                   return first
               # Independent read-only pages share one bounded concurrency;
               # complete-count validation below still rejects missing data.
-              page_count = math.ceil(first['total_count'] / 100)
+              count = first['total_count']
+              if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                  raise ValueError('Invalid deployment history count')
+              page_count = math.ceil(count / 100)
               with ThreadPoolExecutor(max_workers=4) as readers:
                   rest = list(readers.map(lambda page: read(f'{route}&page={page}'), range(2, page_count + 1)))
               return [first, *rest]
@@ -162,7 +169,40 @@ jobs:
           if api(f'compare/{source}...{main}')['status'] not in ('ahead', 'identical'):
               raise ValueError('Automatic source is not on current main history')
 
-          runs = records(api('actions/workflows/deploy-console.yml/runs?per_page=100', True), 'workflow_runs')
+          remaining = discovery_second + 1 - time.time()
+          if remaining > 1:
+              raise ValueError('Deployment discovery clock moved backward')
+          if remaining > 0:
+              time.sleep(remaining)
+          if time.time() < discovery_second + 1:
+              raise ValueError('Deployment discovery second is not closed')
+
+          def workflow_runs(lower, upper):
+              def instant(second):
+                  return datetime.datetime.fromtimestamp(second, datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+              route = 'actions/workflows/deploy-console.yml/runs?' + urlencode({
+                  'per_page': 100, 'created': f'{instant(lower)}..{instant(upper)}',
+              })
+              first = api(route)
+              count = first['total_count']
+              if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                  raise ValueError('Invalid deployment history count')
+              # Filtered Actions searches expose at most 1000 results. Equality
+              # may hide more; partition until each complete window is smaller.
+              if count >= 1000:
+                  if lower == upper:
+                      raise ValueError('Deployment history exceeds the single-second search bound')
+                  middle = (lower + upper) // 2
+                  return workflow_runs(lower, middle) + workflow_runs(middle + 1, upper)
+              rows = records(api(route, True, first), 'workflow_runs')
+              for run in rows:
+                  if not lower <= timestamp(run.get('created_at')) <= upper:
+                      raise ValueError('Deployment history escaped its creation window')
+              return rows
+
+          runs = workflow_runs(0, discovery_second)
+          if len({run['id'] for run in runs}) != len(runs):
+              raise ValueError('Deployment history repeats a run across creation windows')
           # Creation order is not effect order: an old run can be rerun later.
           # Discover all metadata before using updated_at as an upper bound;
           # validate observed step timestamps against that bound below.

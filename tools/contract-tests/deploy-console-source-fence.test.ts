@@ -38,6 +38,9 @@ const guard = workflow.jobs.deploy.steps.find((step) => step.id === 'source');
 
 interface Rollout {
   source?: string;
+  created?: string;
+  start?: string;
+  missingCreated?: boolean;
   updated?: string;
   end?: string;
   conclusion?: string;
@@ -55,6 +58,8 @@ function sourceDecision(
   deliveryMode = '',
   rollouts: Rollout[] = [{ source: NEW }],
   incomplete = false,
+  growingHistory = false,
+  fixedEntryClock = false,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
@@ -79,9 +84,10 @@ function sourceDecision(
                 conclusion: attempt.conclusion ?? 'success',
                 started_at: attempt.missingStart
                   ? undefined
-                  : new Date(
+                  : (attempt.start ??
+                    new Date(
                       new Date(attempt.end ?? time).getTime() - 60000,
-                    ).toISOString(),
+                    ).toISOString()),
                 completed_at: attempt.end ?? time,
               },
               {
@@ -98,6 +104,9 @@ function sourceDecision(
     };
     return {
       id: i + 1,
+      created_at: run.missingCreated
+        ? undefined
+        : (run.created ?? '2026-10-12T00:00:00Z'),
       updated_at: run.updated ?? time,
       // Displayed workflow SHA intentionally differs from effect source.
       head_sha: main,
@@ -106,22 +115,14 @@ function sourceDecision(
       conclusion: 'success',
     };
   });
-  const total = rows.length + Number(incomplete);
-  for (let page = 1; page <= Math.max(1, Math.ceil(total / 100)); page++) {
-    const route =
-      'actions/workflows/deploy-console.yml/runs?per_page=100' +
-      (page === 1 ? '' : `&page=${page}`);
-    routes[route] = {
-      total_count: total,
-      workflow_runs: rows.slice((page - 1) * 100, page * 100),
-    };
-  }
+  routes['fixture-history'] = { rows, incomplete, growingHistory };
   writeFileSync(output, '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
   writeFileSync(
     path.join(dir, 'gh'),
     `#!/usr/bin/env python3
-import json, os, sys
+import datetime, json, os, sys
+from urllib.parse import parse_qs, urlsplit
 args=sys.argv[1:]
 with open(os.environ['FIXTURE_CALLS'], 'a') as f: f.write(' '.join(args)+'\\n')
 if os.environ['FIXTURE_FAIL']=='true': sys.exit(1)
@@ -132,12 +133,45 @@ if route.startswith('compare/'):
     order=[os.environ['FIXTURE_BASE'], os.environ['FIXTURE_OLD'], os.environ['FIXTURE_NEW']]
     status='identical' if base==head else ('ahead' if base in order and head in order and order.index(base)<order.index(head) else ('behind' if base in order and head in order else 'diverged'))
     print(json.dumps({'status': status}))
+elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
+    history=routes['fixture-history']
+    query=parse_qs(urlsplit(route).query)
+    page=int(query.get('page', ['1'])[0])
+    rows=history['rows']
+    if history['growingHistory'] and ('created' in query or page > 1):
+        rows=[{'id': len(rows)+1, 'created_at': '2100-01-01T00:00:00Z', 'updated_at': '2100-01-01T00:00:00Z', 'display_title': 'Deploy console [source:'+os.environ['FIXTURE_NEW']+']'}, *rows]
+    if 'created' in query:
+        lower,upper=query['created'][0].split('..')
+        def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+        rows=[row for row in rows if not row.get('created_at') or stamp(lower) <= stamp(row['created_at']) <= stamp(upper)]
+    total=len(rows)+int(history['incomplete'])
+    # The documented filtered-search cap is deliberately enforced by the API.
+    visible=rows[:1000] if 'created' in query else rows
+    print(json.dumps({'total_count': total, 'workflow_runs': visible[(page-1)*100:page*100]}))
 else: print(json.dumps(routes[route]))
 `,
     { mode: 0o755 },
   );
+  let program = guard.run!;
+  if (fixedEntryClock) {
+    // Drive the actual guard with a controlled wall clock, while preserving
+    // real elapsed time and its bounded wait for the entry second to close.
+    const start = Date.parse(rollouts[0]!.created!) / 1000 + 0.25;
+    const entry = "python3 - <<'PY_SOURCE'\n";
+    if (!program.includes(entry) || !Number.isFinite(start))
+      throw new Error('Missing guard clock boundary');
+    program = program.replace(
+      entry,
+      entry +
+        `import time as _fixture_time
+_fixture_real_time = _fixture_time.time
+_fixture_origin = _fixture_real_time()
+_fixture_time.time = lambda: ${start} + _fixture_real_time() - _fixture_origin
+`,
+    );
+  }
   try {
-    const result = spawnSync('bash', ['-c', guard.run!], {
+    const result = spawnSync('bash', ['-c', program], {
       encoding: 'utf8',
       timeout: 5000,
       env: {
@@ -147,7 +181,7 @@ else: print(json.dumps(routes[route]))
         DELIVERY_MODE: deliveryMode,
         SOURCE_SHA: source,
         GITHUB_REPOSITORY: 'jlapenna/agent-lcars',
-        GITHUB_RUN_ID: '999',
+        GITHUB_RUN_ID: '999999999',
         GITHUB_OUTPUT: output,
         GH_TOKEN: 'fixture-only',
         FIXTURE_CALLS: calls,
@@ -160,6 +194,7 @@ else: print(json.dumps(routes[route]))
     });
     return {
       status: result.status,
+      ...(result.status === 0 ? {} : { error: result.stderr }),
       output: readFileSync(output, 'utf8').match(/^deploy_current=(.*)$/m)?.[1],
       calls: existsSync(calls) ? readFileSync(calls, 'utf8') : '',
     };
@@ -321,6 +356,122 @@ describe('serialized automatic deployment source fence', () => {
         { source: NEW },
       ]),
     ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('keeps a complete pinned inventory when future skipped workflows appear during discovery', () => {
+    const earlier = Array.from({ length: 100 }, () => ({
+      source: OLD,
+      updated: '2026-10-12T23:00:00Z',
+      end: '2026-10-12T23:00:00Z',
+    }));
+    expect(
+      sourceDecision(
+        NEW,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [...earlier, { source: OLD }],
+        false,
+        true,
+      ),
+    ).toMatchObject({ status: 0, output: 'true' });
+  });
+
+  it('partitions capped history without omitting an old-created rerun or its failed effect', () => {
+    // Compact, valid chronology keeps the real process deadline while driving
+    // the same capped search and closed-second partition boundary.
+    const earlier = Array.from({ length: 1100 }, (_, index) => ({
+      source: OLD,
+      created: new Date(index * 1000).toISOString(),
+      updated: '1970-01-01T00:20:00Z',
+      end: '1970-01-01T00:20:00Z',
+    }));
+    const entry = '1970-01-01T00:33:20Z';
+    expect(
+      sourceDecision(
+        OLD,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [
+          {
+            source: OLD,
+            created: entry,
+            start: entry,
+            updated: entry,
+            end: entry,
+            conclusion: 'skipped',
+          },
+          ...earlier,
+          {
+            source: NEW,
+            created: '1970-01-01T00:01:00Z',
+            updated: '1970-01-01T00:31:40Z',
+            attempts: [
+              { end: '1970-01-01T00:30:00Z' },
+              { conclusion: 'failure', end: '1970-01-01T00:31:40Z' },
+            ],
+          },
+        ],
+        false,
+        false,
+        true,
+      ),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('retains a possible rollout created in the inclusive lock-entry second', () => {
+    const now = '2026-10-13T16:00:00Z';
+    expect(
+      sourceDecision(
+        OLD,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [{ source: NEW, created: now, start: now, updated: now, end: now }],
+        false,
+        false,
+        true,
+      ),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('fails closed rather than truncating an overloaded single-second window', () => {
+    const second = '1970-01-01T00:00:04Z';
+    expect(
+      sourceDecision(
+        NEW,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        Array.from({ length: 1000 }, () => ({
+          source: OLD,
+          created: second,
+          updated: second,
+          start: second,
+          end: second,
+        })),
+        false,
+        false,
+        true,
+      ),
+    ).toMatchObject({
+      error: expect.stringContaining('single-second search bound'),
+    });
+  });
+
+  it('rejects inventory rows without a verifiable creation timestamp', () => {
+    expect(
+      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
+        { source: OLD, missingCreated: true },
+      ]),
+    ).toMatchObject({
+      error: expect.stringContaining('Missing deployment evidence timestamp'),
+    });
   });
 
   it('includes actual rollout evidence from older rerun attempts', () => {
