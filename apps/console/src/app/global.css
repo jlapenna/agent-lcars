@@ -3985,8 +3985,71 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     min-height: 44px;
   }
 
+  /* Secondary row links (session, Task/run) keep a full touch target. */
+  .ops-table :is(.ops-subtle-link, .ops-budget a, .ops-group-head a) {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
   .ops-panel__meta {
     margin-left: 0;
+  }
+}
+
+/* ---- Agents (design/fleet-console.html #agents) ----
+   The mockup stacks the panels full width: active dispatches (with CLI
+   sessions), recent completions, then claimed-but-idle work. */
+.agents-workspace__operations,
+.agents-workspace__operations:has(.agents-workspace__secondary) {
+  display: block;
+  padding: 20px;
+  background: none;
+}
+
+.agents-workspace__secondary {
+  display: block;
+  background: none;
+}
+
+.agents-workspace__operations > * + *,
+.agents-workspace__secondary > * + *,
+.agents-active > * + * {
+  margin-top: 28px;
+}
+
+@media (max-width: 47.99em) {
+  .agents-workspace__operations,
+  .agents-workspace__operations:has(.agents-workspace__secondary) {
+    padding: 4px;
+  }
+}
+
+/* ---- Shuttlebay (design/fleet-console.html #shuttlebay) ----
+   Runners and provider admission beside the runner fleet panel. */
+.shuttlebay-cols {
+  display: grid;
+  align-items: start;
+  gap: 28px;
+  padding: 20px;
+}
+
+.shuttlebay-stack {
+  display: grid;
+  min-width: 0;
+  gap: 28px;
+}
+
+@media (min-width: 82.5em) {
+  .shuttlebay-cols {
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 47.99em) {
+  .shuttlebay-cols {
+    padding: 12px;
   }
 }
 

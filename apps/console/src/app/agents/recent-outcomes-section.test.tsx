@@ -6,23 +6,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentRun } from '../../lib/agent-activity';
 import { RecentOutcomesSection } from './recent-outcomes-section';
 
-// Same isolation strategy as the other /agents section tests: this
-// component's own job is grouping recentRuns by pipeline, not rendering a
-// row - FinishedRunRow's own rendering is covered by
-// agent-activity-panel.test.tsx.
-vi.mock('../agent-activity-panel', () => ({
-  FinishedRunRow: ({
-    run,
-    session,
-  }: {
-    run: AgentRun;
-    session?: IssueAgentSessionDoc;
-  }) => (
-    <div data-testid={`finished-run-${run.id}`}>
-      {run.pipeline}
-      {session ? ` (${session.sessionId})` : ''}
-    </div>
-  ),
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/agents',
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
@@ -52,27 +39,27 @@ describe('RecentOutcomesSection', () => {
     expect(screen.queryByTestId('recent-outcomes')).toBeNull();
   });
 
-  it('groups runs under their own pipeline heading', () => {
+  it('lists every run with its agent in one completions table', () => {
     render(
       <MantineProvider>
         <RecentOutcomesSection
           recentRuns={[
             makeAgentRun({ id: 1, pipeline: 'claude' }),
-            makeAgentRun({ id: 2, pipeline: 'claude' }),
-            makeAgentRun({ id: 3, pipeline: 'opencode' }),
+            makeAgentRun({ id: 2, pipeline: 'opencode' }),
           ]}
         />
       </MantineProvider>,
     );
-
-    expect(screen.getByText('claude (2)')).toBeTruthy();
-    expect(screen.getByText('opencode (1)')).toBeTruthy();
-    expect(screen.getByTestId('finished-run-1')).toBeTruthy();
-    expect(screen.getByTestId('finished-run-2')).toBeTruthy();
-    expect(screen.getByTestId('finished-run-3')).toBeTruthy();
+    const panel = screen.getByTestId('recent-outcomes');
+    expect(within(panel).getAllByTestId('finished-run-row')).toHaveLength(2);
+    expect(within(panel).getByText('claude')).toBeTruthy();
+    expect(within(panel).getByText('opencode')).toBeTruthy();
+    expect(
+      within(panel).getByRole('columnheader', { name: 'Agent' }),
+    ).toBeTruthy();
   });
 
-  it('forwards the joined session doc to FinishedRunRow when one exists', () => {
+  it('links a run to its joined session when one exists', () => {
     render(
       <MantineProvider>
         <RecentOutcomesSection
@@ -94,41 +81,14 @@ describe('RecentOutcomesSection', () => {
               },
               deliverables: { prNumbers: [], commitShas: [] },
               runId: '1',
-            },
+            } as unknown as IssueAgentSessionDoc,
           }}
         />
       </MantineProvider>,
     );
-    expect(screen.getByTestId('finished-run-1')).toHaveTextContent(
-      '(runner-session-1)',
-    );
-  });
-
-  it('omits a pipeline heading entirely when that pipeline has no recent runs', () => {
-    render(
-      <MantineProvider>
-        <RecentOutcomesSection
-          recentRuns={[makeAgentRun({ id: 1, pipeline: 'claude' })]}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.queryByText(/^opencode/)).toBeNull();
-  });
-
-  it('scopes each finished-run row under its own pipeline group', () => {
-    render(
-      <MantineProvider>
-        <RecentOutcomesSection
-          recentRuns={[
-            makeAgentRun({ id: 1, pipeline: 'claude' }),
-            makeAgentRun({ id: 3, pipeline: 'opencode' }),
-          ]}
-        />
-      </MantineProvider>,
-    );
-    const container = screen.getByTestId('recent-outcomes');
-    expect(within(container).getAllByText(/^(claude|opencode)$/)).toHaveLength(
-      2,
+    expect(screen.getByTestId('finished-run-session-link')).toHaveAttribute(
+      'href',
+      '/sessions/runner-session-1',
     );
   });
 
@@ -149,7 +109,7 @@ describe('RecentOutcomesSection', () => {
     const disclosure = screen.getByTestId('recent-outcomes-disclosure');
     expect(
       disclosure.querySelectorAll('[data-mobile-history-extra="true"]'),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
 
     const toggle = screen.getByRole('button', {
       name: 'Show 2 older outcomes',

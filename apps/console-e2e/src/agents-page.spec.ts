@@ -35,7 +35,7 @@ test.describe('/agents page @smoke', () => {
     ).toBeVisible();
     await expect(page.getByTestId('fleet-snapshot-bar')).toBeVisible();
     await expect(
-      page.getByRole('heading', { name: 'Active Agents' }),
+      page.getByRole('heading', { name: 'Active dispatches' }),
     ).toBeVisible();
     await expect(page.getByTestId('claimed-idle-section')).toHaveCount(0);
     await expect(page.getByTestId('recent-outcomes')).toHaveCount(0);

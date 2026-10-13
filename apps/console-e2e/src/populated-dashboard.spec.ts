@@ -885,11 +885,13 @@ test.describe('responsive agent operations', () => {
 
       const operations = workspace.locator('.agents-workspace__operations');
       await expect(operations).toHaveCSS('display', 'block');
+      // design/fleet-console.html #agents order: dispatches, then
+      // completions; claimed-but-idle work follows.
       const sections = [
         workspace.getByTestId('fleet-snapshot-bar'),
         workspace.getByTestId('active-agents-section'),
-        workspace.getByTestId('claimed-idle-section'),
         workspace.getByTestId('recent-outcomes'),
+        workspace.getByTestId('claimed-idle-section'),
       ];
       const sectionBounds = await Promise.all(
         sections.map(async (section) => section.boundingBox()),
@@ -948,24 +950,26 @@ test.describe('responsive agent operations', () => {
     });
   }
 
-  test('keeps populated agent columns balanced on tablet @agents-mobile', async ({
+  test('stacks populated agent panels full width on tablet @agents-mobile', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 820, height: 1180 });
     await page.goto('/agents');
 
+    // design/fleet-console.html stacks the panels: dispatches above
+    // completions and claimed work, each the workspace's full width.
     const workspace = page.getByRole('region', { name: 'Agent operations' });
     const operations = workspace.locator('.agents-workspace__operations');
-    await expect(operations).toHaveCSS('display', 'grid');
+    await expect(operations).toHaveCSS('display', 'block');
     const primary = await workspace
       .locator('.agents-workspace__primary')
       .boundingBox();
     const secondary = await workspace
       .locator('.agents-workspace__secondary')
       .boundingBox();
-    expect(primary?.width).toBeGreaterThan(400);
-    expect(secondary?.width).toBeGreaterThanOrEqual(320);
-    expect(primary?.x).toBeLessThan(secondary?.x ?? 0);
+    expect(primary?.width).toBeGreaterThan(600);
+    expect(secondary?.width).toBe(primary?.width);
+    expect(primary?.y ?? 0).toBeLessThan(secondary?.y ?? 0);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
