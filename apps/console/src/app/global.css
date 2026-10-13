@@ -1089,26 +1089,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 .agents-panel {
   min-height: 100%;
-}
-
-.agents-panel--active {
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-violet-9) 8%,
-    var(--lcars-surface)
-  );
-}
-
-.agents-panel--claimed {
-  background: color-mix(in srgb, var(--lcars-accent) 7%, var(--lcars-surface));
-}
-
-.agents-panel--recent {
-  background: color-mix(
-    in srgb,
-    var(--mantine-color-blue-9) 7%,
-    var(--lcars-surface)
-  );
+  background: var(--lcars-surface);
 }
 
 .agents-panel h2 {
@@ -1168,7 +1149,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--lcars-surface-raised);
 }
 
 .sessions-table th,
@@ -1176,16 +1156,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   border-color: var(--mantine-color-default-border);
 }
 
-.sessions-table tbody tr:nth-of-type(odd) {
-  background: color-mix(in srgb, var(--lcars-accent) 5%, var(--lcars-surface));
-}
-
 .sessions-table tbody tr:hover {
-  background: color-mix(
-    in srgb,
-    var(--lcars-accent) 15%,
-    var(--lcars-surface)
-  ) !important;
+  background: var(--lcars-surface-raised) !important;
 }
 
 .sessions-workspace .session-title-link {
@@ -1244,7 +1216,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--lcars-surface-raised);
 }
 
 .work-table th,
@@ -1297,7 +1268,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   gap: 12px;
   padding: 0 16px;
   border-bottom: 1px solid var(--mantine-color-default-border);
-  background: color-mix(in srgb, var(--lcars-accent) 8%, var(--lcars-surface));
+  background: var(--lcars-surface);
 }
 
 .costs-ledger-section__heading::before {
@@ -1328,28 +1299,16 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-size: 0.6875rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--lcars-surface-raised);
 }
 
 .costs-ledger-table th,
 .costs-ledger-table td {
   border: 0;
-}
-
-.costs-ledger-table tbody tr:nth-of-type(odd) {
-  background: color-mix(in srgb, var(--lcars-accent) 7%, var(--lcars-surface));
+  border-bottom: 1px solid var(--lcars-hairline);
 }
 
 .costs-ledger-table tbody tr:hover {
-  background: color-mix(
-    in srgb,
-    var(--lcars-accent) 16%,
-    var(--lcars-surface)
-  ) !important;
-}
-
-.costs-ledger-table tbody td:first-child {
-  border-left: 3px solid var(--lcars-accent);
+  background: var(--lcars-surface-raised) !important;
 }
 
 .costs-ledger-mobile-list {
@@ -2625,11 +2584,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     justify-content: space-between;
     gap: 16px;
     padding: 10px 16px;
-    background: color-mix(
-      in srgb,
-      var(--lcars-accent) 6%,
-      var(--lcars-surface)
-    );
+    border-bottom: 1px solid var(--lcars-hairline);
+    background: var(--lcars-surface);
   }
 
   .costs-ledger-mobile-row:nth-child(even) {
