@@ -134,6 +134,16 @@ run "renders_exact_repository_authorization" {
     error_message = "Both Homelab grants must use roles/iam.workloadIdentityUser."
   }
 
+  assert {
+    condition     = google_firestore_index.sessions_source_last_activity.database == "(default)" && google_firestore_index.sessions_source_last_activity.collection == "sessions" && [for field in google_firestore_index.sessions_source_last_activity.fields : "${field.field_path}:${field.order}"] == ["source:ASCENDING", "lastActivityAt:ASCENDING"]
+    error_message = "The owner query's CLI-session listing needs the sessions source+lastActivityAt composite index."
+  }
+
+  assert {
+    condition     = google_firestore_index.sessions_source_repo_last_activity.database == "(default)" && google_firestore_index.sessions_source_repo_last_activity.collection == "sessions" && [for field in google_firestore_index.sessions_source_repo_last_activity.fields : "${field.field_path}:${field.order}"] == ["source:ASCENDING", "repo.owner:ASCENDING", "repo.name:ASCENDING", "lastActivityAt:ASCENDING"]
+    error_message = "The owner query's per-repository CLI-session listing needs the sessions source+repo+lastActivityAt composite index."
+  }
+
   # #2502: interactive sessions ask Console who owns an issue through a
   # dedicated reader identity. Only the maintainer's Google account may mint
   # its tokens, and nothing here may widen that to another principal.

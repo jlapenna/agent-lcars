@@ -42,10 +42,14 @@ export interface WorkContext {
    *  drops `source`/`agent`/`intentId` -- exactly the fields resume
    *  ownership and pipeline matching need. */
   sessionDocsForRuns: (runIds: string[]) => Promise<SessionDoc[]>;
-  /** Recent CLI session telemetry (`getCliSessions({ exhaustive: true })`)
-   *  for the read-only anchor-owner query (`anchor-owner.ts`). A failed or
-   *  possibly truncated read is reported in `warnings`. */
-  cliSessions: () => Promise<CliSessionsResult>;
+  /** One repository's recent CLI session telemetry
+   *  (`getCliSessions({ repo })`) for the read-only anchor-owner query
+   *  (`anchor-owner.ts`). A failed or possibly truncated read is reported in
+   *  `warnings`. */
+  cliSessions: (repo: {
+    owner: string;
+    name: string;
+  }) => Promise<CliSessionsResult>;
   /** Schedule storage -- separate from `OrchestratorRouteDeps` on purpose:
    *  a schedule is not a `Task` (see `schedule-store.ts`). */
   scheduleStore: ScheduleStore;

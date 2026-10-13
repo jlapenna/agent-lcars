@@ -419,49 +419,32 @@ func TestKubernetesWorkerPolicySelection(t *testing.T) {
 	}
 }
 
-// The hook-telemetry selector follows the worker-policy contract: validated,
-// normalized, and emitted exactly once on every Job, empty included.
-func TestKubernetesHookTelemetrySelection(t *testing.T) {
-	for _, selection := range []struct {
-		raw, want string
-		invalid   bool
-	}{
-		{"", "", false}, {"claude", "claude", false},
-		{" codex,claude,codex ", "claude,codex", false},
-		{"all", "", true}, {"codex,", "", true},
-	} {
-		t.Run(selection.raw, func(t *testing.T) {
-			t.Setenv("LCARS_HOOK_TELEMETRY_PROVIDERS", selection.raw)
-			selected, err := directRunnerHookTelemetryProviders()
-			if (err != nil) != selection.invalid || selected != selection.want {
-				t.Fatalf("selected=%q err=%v", selected, err)
-			}
-			if selection.invalid {
-				return
-			}
-			q, c := kubeQueueFixture()
-			q.hookTelemetryProviders = selected
-			launch := directRunnerLaunch{runID: "work:hooks/r1", pipeline: "claude", runToken: "fixture-token"}
-			if err := q.launch(context.Background(), launch); err != nil {
-				t.Fatal(err)
-			}
-			job, err := c.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), queueJobName(launch.runID), meta.GetOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			found := 0
-			for _, env := range job.Spec.Template.Spec.Containers[0].Env {
-				if env.Name == "LCARS_HOOK_TELEMETRY_PROVIDERS" {
-					found++
-					if env.Value != selection.want || env.ValueFrom != nil {
-						t.Fatal("hook telemetry selection changed at launch")
-					}
-				}
-			}
-			if found != 1 {
-				t.Fatal("hook telemetry selector must explicitly override image defaults")
-			}
-		})
+// Hook telemetry is unconditional for every pipeline
+// (docs/hooks-telemetry-design.md, phase 3), so the retired
+// LCARS_HOOK_TELEMETRY_PROVIDERS selector is ignored: a deployment that still
+// sets it, even to a value the old validator rejected, must neither fail
+// startup nor reach a worker Job.
+func TestKubernetesIgnoresRetiredHookTelemetrySelector(t *testing.T) {
+	t.Setenv("LCARS_HOOK_TELEMETRY_PROVIDERS", "unqualified-provider")
+	t.Setenv("LCARS_CONSOLE_URL", "https://console.example")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google.json")
+	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
+	if err := validateQueueExecutorEnvironment(testKubernetesResolved(t)); err != nil {
+		t.Fatalf("retired selector rejected: %v", err)
+	}
+	q, c := kubeQueueFixture()
+	launch := directRunnerLaunch{runID: "work:hooks/r1", pipeline: "claude", runToken: "fixture-token"}
+	if err := q.launch(context.Background(), launch); err != nil {
+		t.Fatal(err)
+	}
+	job, err := c.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), queueJobName(launch.runID), meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "LCARS_HOOK_TELEMETRY_PROVIDERS" {
+			t.Fatal("retired hook telemetry selector forwarded to a worker Job")
+		}
 	}
 }
 

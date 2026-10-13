@@ -180,6 +180,8 @@ export async function admitGithubWork(
       ? {}
       : { requestBinding: input.requestBinding }),
     labelProviderRequest,
+    pipelineForStoredTask: (task) =>
+      workPayloadSchema.parse(task.work).spec.pipeline,
     useEffectivePipeline:
       input.followEffectivePipeline === true ||
       input.expectedEffectivePipeline !== undefined,
@@ -313,6 +315,8 @@ export async function redispatchGithubWork(
     taskId: anchor,
     requestId: input.requestId,
     useEffectivePipeline: true,
+    pipelineForStoredTask: (task) =>
+      workPayloadSchema.parse(task.work).spec.pipeline,
     isPipelineAuthorized: (pipeline) =>
       forbiddenReason(input.authorization.grantsPrincipal, {
         ...work.spec,

@@ -207,28 +207,23 @@ when a caller omits or empties the legacy override variables.
 | `NX_CACHE_URL`                    | homelab Nx cache                                                                 | CI jobs                                                                                         |
 
 `deploy-console.yml` runs its GitHub-only Verify admission check on
-`ubuntu-latest`. Only admitted main/manual deployments enter the shared
-deployment lock. Inside that lock, an automatic source must still equal the
-current main tip before checkout, credential setup, build or rollout. This
-also applies to automatic `recovered-ci` dispatches.
-Superseded sources skip every subsequent step; failed or unreadable main
-lookups fail closed. Explicit manual source requests retain their existing
-semantics and use the same lock.
+`ubuntu-latest`; only admitted runs enter the shared deployment lock. Inside
+that lock, automatic sources must belong to current main history and move
+forward from the last actual rollout. A validated ancestor can deploy while a
+newer tip waits for CI. The same fence applies to `recovered-ci`; explicit
+manual source pins retain their intentional override.
 
-The admitted deployment queue retains up to 100 waiting jobs with GitHub's
-`queue: max`, so a delayed older eligible source cannot replace a waiting
-newer source. Jobs acquire the lock in order of queue arrival; the in-lock
-source check still prevents stale rollout. If the queue is full, GitHub
-cancels additional jobs. Active deployments are never canceled by this
-queue policy. The pinned actionlint predates this supported queue property;
-a diagnostic exception is restricted to this workflow and this key, and
-required source-fence contracts validate its values and cancellation rules.
-
-An older green source can therefore be skipped while a newer main tip waits
-for CI or has failed CI. The workflow does not deploy that unverified tip or
-fall back to the older source. A successful superseded workflow performed no
-rollout: delivery evidence must include the actual rollout and serving
-verification, rather than only its aggregate workflow conclusion.
+The fence reads paginated deployment history and all job attempts. Immutable
+`[source:<SHA>]` markers identify the source; workflow `head_sha`, aggregate
+success and creation order do not prove rollout. A started failed/cancelled
+rollout remains a possible effect, and a failed serving check does not undo a
+successful rollout. Unknown provenance, incomplete history, incomparable
+commits or API errors fail closed. History scanning treats run `updated_at` as
+an upper bound on its steps, rejects observed violations, and excludes earlier
+records only after a proved later successful rollout. This contract covers the
+owning workflow's retained history; deleted history or out-of-band production
+changes require operator reconciliation. Actual rollout and serving evidence
+remain necessary for completion.
 
 `DISPATCH_FIRESTORE_DATABASE_ID` is deliberately absent from this table: it
 is not a repo variable. It is an App Hosting environment value
@@ -298,10 +293,10 @@ submission or Console deployment success as delivery evidence.
 The `lcars` CLI is built from telemetry-watcher source, but its consumers have
 independent delivery paths:
 
-| Consumer                      | Delivery owner and existing contract                                                                                                                                                                                                                                                                                                                        | Adoption evidence                                                                                                                        |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Workstation CLI               | The maintainer explicitly reruns the supported [installer](../apps/telemetry-watcher/deploy/install-session-title-cli.sh), which copies the bundle and launcher to stable locations outside the checkout. It does not update automatically after a merge.                                                                                                   | Invoke the actually installed launcher and record its resolved path and copied bundle hash.                                              |
-| Runner CLI and watcher daemon | Homelab owns publication and reconciliation under the [image-publish routing contract](image-publish-routing.md). The [runner Dockerfile](../apps/runner-autoscaler/runner-image/Dockerfile) bakes the CLI bundle and launcher; the [watcher Dockerfile](../apps/telemetry-watcher/Dockerfile) ships the daemon bundle, not a workstation CLI installation. | Record the running image digest and source revision; test the CLI baked into that runner digest separately from watcher daemon adoption. |
+| Consumer        | Delivery owner and existing contract                                                                                                                                                                                                                                                                  | Adoption evidence                                                                                |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Workstation CLI | The maintainer explicitly reruns the supported [installer](../apps/telemetry-watcher/bin/install-session-title-cli.sh), which copies the bundle and launcher to stable locations outside the checkout. It does not update automatically after a merge.                                                | Invoke the actually installed launcher and record its resolved path and copied bundle hash.      |
+| Runner CLI      | Homelab owns publication and reconciliation under the [image-publish routing contract](image-publish-routing.md). The [runner Dockerfile](../apps/runner-autoscaler/runner-image/Dockerfile) bakes the CLI bundle and launcher. The former watcher-daemon image is retired (hooks telemetry phase 3). | Record the running image digest and source revision; test the CLI baked into that runner digest. |
 
 For a CLI source change, hand the maintainer the reviewed main SHA and CI
 receipt, affected workstation installation targets and image consumers, the

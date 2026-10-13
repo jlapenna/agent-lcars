@@ -214,7 +214,7 @@ function ArcLaneRow({ status }: { status: ArcLaneStatus }) {
           size="sm"
           fw={700}
         >
-          {status.lane}
+          {status.lane} on GitHub ↗
         </Anchor>
         {status.pendingJobs > 0 && (
           <Badge color="yellow" size="xs">

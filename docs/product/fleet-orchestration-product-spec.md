@@ -253,6 +253,44 @@ files and failed verification have no invented link. Agent final-message
 URLs are never promoted to verified references. `message` is the agent's
 final turn, shown in the console Conversation.
 
+### 5.5 Claims and ownership
+
+"Claim" means three different things in this system. Console decides which
+executor is working an issue; a human assignee owns it regardless.
+
+| Term              | What it is                                                                                                         | Recorded where                                                                                                      | Defined in        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| **Anchor claim**  | The fleet has taken an issue or PR.                                                                                | The orchestrator task for the anchor, projected to GitHub as the `agent-lcars-bot` assignee and an `eyes` reaction. | FL-AD-2           |
+| **Run claim**     | An executor's lease on one queued run. It schedules execution; it does not tell other executors who owns an issue. | The run's lease and claimant.                                                                                       | §6.2              |
+| **Session match** | An interactive or cloud CLI session working the anchor.                                                            | Console's CLI-session telemetry, matched by repository plus branch or recorded PR.                                  | FE-AG-3, FE-CLI-1 |
+
+- **FL-OWN-1 [Shipped]** Console is the single source of truth for which
+  executor (a fleet run or a CLI session) is working an anchor. That answer is
+  derived only from state Console already holds: the anchor's orchestrator
+  task and its live run, and live or idle CLI sessions matched to the anchor.
+  A human assignee owns the issue regardless of Console's verdict; Console
+  does not report human assignment, so executors check the issue's assignees
+  as well.
+- **FL-OWN-2 [Shipped]** `lcars work owner <owner/repo>#<n>` (FE-CLI-1) is the
+  one query for that answer. Its verdict is `fleet-run`, `interactive-session`,
+  or `none`. An incomplete answer (exit 1) means `none` is unproven, not that
+  the anchor is free.
+- **FL-OWN-3 [Partial]** Every executor asks Console, and checks the issue's
+  human assignees, before starting work on an anchor. Dispatched fleet runs are single-flight per task, so admission
+  refuses a second run (FL-AD-1). Interactive and cloud sessions run
+  `lcars work owner` as the read-only `work-reader` identity and do not start
+  when the verdict names someone else. Partial: this is repository guidance,
+  not enforced, and the session read's completeness fix is in flight.
+- **FL-OWN-4 [Shipped]** Nothing outside Console establishes, refreshes, or
+  expires ownership: takeover or "implementing this now" comments, occupied
+  local worktrees, draft pull requests, and elapsed time since assignment are
+  not claims. An executor never overrides a live claim on its own judgment.
+  Executor ownership ends only when the state Console reads ends: the run
+  settles (finished, parked, failed, or canceled) or the matching CLI session
+  ends or falls outside the 72-hour window. Removing the GitHub assignment
+  does not change the verdict, and redispatch starts a new run rather than
+  releasing ownership.
+
 ## 6. Admission, queueing, and execution
 
 ### 6.1 Admission and outbox
@@ -353,9 +391,10 @@ final turn, shown in the console Conversation.
   5. Verify the outcome.
   6. Call `/complete`.
 
-  Hook telemetry replaces the polling telemetry sidecar for Claude and Codex
-  only when `LCARS_HOOK_TELEMETRY_PROVIDERS` names the pipeline; it is empty by
-  default.
+  Every pipeline (Claude, Codex, OpenCode) reports live telemetry through
+  provider hooks, with no selector. A failed hook install warns and continues
+  without live telemetry; `runner finalize` still writes the final session
+  doc.
 
   If the agent exits 0 with no deliverable, it gets one completion-correction
   round.
@@ -522,17 +561,18 @@ consumed by every dispatched run in every member repository.
   - A run-status classifier: `running`, `timeout`, `cancelled`, `failed`,
     `silent-error`, or `succeeded`.
   - Cost from the provider's `costUSD`, or estimated from `MODEL_RATES`.
-- **FL-OB-2 [Shipped]** `apps/telemetry-watcher` runs in two places:
-  - As a host daemon for interactive sessions, with an allowlist privacy
-    boundary.
-  - As a runner sidecar with `sidecar`, `finalize`, and `resume` modes. The
-    `finalize` mode uploads transcripts to
-    `gs://…/runs/<runId>/<agent>/<session>.jsonl`.
-  - Through provider hooks: `lcars hook claude|codex|flush` writes sessions
-    directly to Firestore as the telemetry writer, installed with
+- **FL-OB-2 [Shipped]** `apps/telemetry-watcher` reports sessions in two ways:
+  - Through provider hooks, on workstations and dispatched workers alike:
+    `lcars hook claude|codex|opencode|flush` writes sessions directly to
+    Firestore as the telemetry writer, installed with
     `lcars integration install`
-    ([hooks telemetry](../hooks-telemetry-design.md)). Dispatched workers use
-    hooks only when selected (FL-EX-5).
+    ([hooks telemetry](../hooks-telemetry-design.md)). Dispatched workers
+    always use hooks (FL-EX-5).
+  - As a runner bundle with `finalize` and `resume` modes. The `finalize`
+    mode writes the authoritative ended doc and uploads transcripts to
+    `gs://…/runs/<runId>/<agent>/<session>.jsonl`.
+  - The polling host daemon and the runner's live polling sidecar are
+    retired (hooks telemetry phase 3).
 - **FL-OB-3 [Shipped]** `apps/github-actions-exporter` exports Prometheus
   metrics for workflow runs, jobs, durations, queue time, oldest queued job,
   and consecutive failures. Label cardinality is bounded.

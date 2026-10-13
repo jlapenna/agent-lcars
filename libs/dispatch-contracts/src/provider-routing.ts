@@ -16,6 +16,7 @@ export const providerRoutingSchema = z.strictObject({
     .strictObject({
       runId: z.string().min(1).max(1_024),
       requestedAt: z.iso.datetime({ offset: false }),
+      pipeline: z.string().min(1).max(128),
     })
     .optional(),
   successorRunId: z.string().min(1).max(1_024).optional(),

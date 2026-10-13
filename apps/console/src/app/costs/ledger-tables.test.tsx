@@ -58,7 +58,7 @@ describe('LedgerTables', () => {
     expect(screen.queryByText(/^Showing \d+ of \d+$/)).toBeNull();
   });
 
-  it('links a real issue number and labels the no-issue bucket in plain text, in both the full and compact tables', () => {
+  it('labels telemetry-only issue buckets as GitHub links without requiring a task projection, in both tables', () => {
     renderLedger({
       byIssue: [
         {
@@ -74,13 +74,15 @@ describe('LedgerTables', () => {
       byWeek: [],
     });
 
-    const links = screen.getAllByRole('link', { name: '#42' });
+    const links = screen.getAllByRole('link', { name: 'GitHub #42' });
     expect(links).toHaveLength(2);
     for (const link of links) {
       expect(link.getAttribute('href')).toBe(
         'https://github.com/supersprinklesracing/sprinkles/issues/42',
       );
+      expect(link).toHaveAttribute('target', '_blank');
     }
+    expect(screen.queryByRole('link', { name: '#42' })).toBeNull();
     expect(screen.getAllByText('no issue')).toHaveLength(2);
   });
 

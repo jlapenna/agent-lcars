@@ -25,10 +25,12 @@ const {
   sessionsForRuns: vi.fn(async () => []),
   sessionForResume: vi.fn(async () => undefined),
   sessionDocsForRuns: vi.fn(async () => []),
-  getCliSessions: vi.fn(async (_options?: { exhaustive?: boolean }) => ({
-    sessions: [],
-    warnings: [],
-  })),
+  getCliSessions: vi.fn(
+    async (_options?: { repo?: { owner: string; name: string } }) => ({
+      sessions: [],
+      warnings: [],
+    }),
+  ),
 }));
 
 vi.mock('@/auth', () => ({ auth }));
@@ -116,7 +118,7 @@ describe('GET /api/work/v1/items', () => {
 });
 
 describe('GET /api/work/v1/anchors/github/owner', () => {
-  it('answers from exhaustive CLI session telemetry, uncached', async () => {
+  it("answers from the anchor repository's CLI session telemetry, uncached", async () => {
     const response = await GET(
       new Request(
         'https://lcars.test/api/work/v1/anchors/github/owner?repo=jlapenna/agent-lcars&issue=2502',
@@ -130,7 +132,9 @@ describe('GET /api/work/v1/anchors/github/owner', () => {
       complete: true,
       cliSessions: [],
     });
-    expect(getCliSessions).toHaveBeenCalledWith({ exhaustive: true });
+    expect(getCliSessions).toHaveBeenCalledWith({
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+    });
   });
 });
 

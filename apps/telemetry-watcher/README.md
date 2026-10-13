@@ -1,15 +1,28 @@
 # Agent LCARS Telemetry Watcher
 
-Per-host daemon (issue #2540) that watches interactive Claude Code and Codex
-CLI sessions on a workstation and reports summary telemetry to the
-`agent-telemetry` Firestore store the [Agent LCARS](../console)
-reads from.
+Session telemetry tooling for the `agent-telemetry` Firestore store the
+[Agent LCARS](../console) reads from. Live session telemetry comes from each
+coding agent's own hooks through the `lcars hook` client
+([Hook client](#hook-client-lcars-hook) below,
+[docs/hooks-telemetry-design.md](../../docs/hooks-telemetry-design.md)).
+This app ships:
+
+- the `lcars` CLI bundle (`session-title-cli` target): session titles and the
+  hook client, installed on workstations and baked into the runner image;
+- the hook spool flusher (`hook-flush-cli` target);
+- the runner bundle (`bundle` target, `sidecar.cjs`): QueueExecutor's
+  `runner finalize` and `runner resume` passes.
+
+The polling host watcher daemon (issue #2540) and the runner's live polling
+sidecar are retired (hooks telemetry phase 3). The daemon's source and its
+`serve` target remain in `src/main.ts` and `src/lib/daemon.ts`, but nothing
+in this repository builds, publishes, or deploys it any more; see
+[Legacy host watcher](#legacy-host-watcher-not-deployed).
 
 ## QueueExecutor issue-agent telemetry paths
 
-Interactive (`source: 'cli'`) telemetry is this daemon's normal host-watcher
-mode, described below. CI issue-agent (`source: 'issue-agent'`) telemetry is
-provided by the standalone runner bundle (this app's `bundle` Nx target,
+CI issue-agent (`source: 'issue-agent'`) telemetry is provided by provider
+hooks plus the standalone runner bundle (this app's `bundle` Nx target,
 esbuild-bundled with every dependency inlined including
 `@google-cloud/firestore`), baked into the self-hosted runner image at
 `/usr/local/lib/agent-lcars/sidecar.cjs`
@@ -21,31 +34,26 @@ served). No download, no version pin to keep in
 sync: the image build is the only "release" step, replacing a
 publish-then-pin scheme whose pin silently went stale for months (#29).
 
-1. **Mid-run, live (`runner sidecar` — issue #3107 follow-up 5):**
-   `direct-runner.sh` backgrounds it —
-   `node sidecar.cjs runner sidecar --run-id <id>
---issue-number <n> --projects-dir "$HOME/.claude/projects"` — for the
-   duration of the provider invocation. It reuses `WatcherDaemon` wholesale (see
-   `src/lib/runner.ts`'s `startSidecar`) on a ~10s tick with **no
-   allowlist restriction** (`@agent-lcars/telemetry`'s `runnerWatchRoots`
-   allowlists both roots with `['*']`) — a runner container
-   is single-purpose and destroyed after one job, unlike a workstation with
-   many unrelated Claude Code projects under the same
-   `~/.claude/projects` root, so there's no privacy boundary to enforce the
-   way `DEFAULT_PROJECT_DIR_ALLOWLIST` enforces one for interactive hosts.
-   This lights up Agent LCARS's In-Flight UI (#3092) with live turns and
-   tokens while the job is running.
+1. **Mid-run, live (provider hooks — hooks telemetry phase 3):**
+   `direct-runner.sh` installs the provider's hook entries for every
+   pipeline (Claude Code and Codex through `lcars integration install`;
+   OpenCode through the `lcars-telemetry.js` plugin already in the image's
+   OpenCode config) and exports the run context the hook client stamps on
+   each event. There is no selector and no polling fallback: if the hook
+   install fails (for example, unreadable writer credentials) the run prints
+   a `::warning::` and continues without live telemetry. This lights up
+   Agent LCARS's In-Flight UI (#3092) with live turns and tokens while the
+   job is running.
 
 2. **Finalize, authoritative (`runner finalize` — issue #24):**
-   `direct-runner.sh` finalizes once the provider exits: it stops the
-   sidecar process above (waiting, bounded, for it
-   to actually stop first — see that step's comments), then does one last
+   `direct-runner.sh` finalizes once the provider exits: it first fences and
+   drains the hook spool (so no late hook event can reopen an ended
+   session), then runs `sidecar-lifecycle.sh finalize`, which does one last
    reduce pass with liveness hardcoded to `'ended'`, uploads the raw
    transcript to `AGENT_TELEMETRY_TRANSCRIPTS_BUCKET`, and upserts the
    authoritative final doc with `transcriptGcsUri` attached — see
-   `src/lib/finalize.ts`. Without this, a session doc just freezes at
-   whichever `live`/`idle` snapshot the sidecar above last wrote, and
-   never gets a browsable archived transcript.
+   `src/lib/finalize.ts`. It runs whether or not live hooks were active, so
+   every run still gets an ended doc and a browsable archived transcript.
 
 3. **Resume, pre-run (`runner resume` — native work items sub-project 6):**
    `direct-runner.sh` runs it before the provider when the dispatched work
@@ -53,12 +61,20 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
    `node sidecar.cjs runner resume --session-id <id> --transcript-uri
 <gcsUri> --cwd <dir>` — to download a prior session's archived
    transcript into the provider's local session store. See `src/main.ts`'s
-   `_runRunnerResumeForTesting`. Fail-soft like the two modes above:
+   `_runRunnerResumeForTesting`. Fail-soft like finalize:
    prints nothing and never exits nonzero on a missing flag, an unsafe
    session id, or a failed download — a broken resume degrades to a fresh
    run rather than failing the dispatch.
 
-## What it does
+## Legacy host watcher (not deployed)
+
+> [!NOTE]
+> This section and [Opt-in CLI transcript archives](#opt-in-cli-transcript-archives)
+> describe the retired polling daemon (`node sidecar.cjs` with no
+> subcommand). Its Docker image, Compose deploy bundle and Homelab
+> deployment are removed; workstations report through
+> [`lcars hook`](#hook-client-lcars-hook) instead. The code remains until a
+> follow-up deletes it.
 
 On an interval (`AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`, default 10s, with
 an immediate first tick on start and an `fs.watch`-driven nudge on file
@@ -95,6 +111,8 @@ transcript, reducer error, or store write failure never takes down
 telemetry for the daemon's other tracked sessions.
 
 ## Opt-in CLI transcript archives
+
+Host-watcher only (see the note above); no deployment enables it.
 
 CLI archival is **off by default**. Summary discovery and its existing project-dir
 and cwd allowlists remain the privacy owner. No production upload policy is set
@@ -190,8 +208,8 @@ and `src/lib/session-title-selection.ts` for the rank.
   runtime's session. The CLI writes
   `~/.local/state/agent-lcars/session-metadata/<sessionId>.json` directly
   (crash-safe rename-into-place, mode 0700); it never goes through this
-  daemon. Nothing installs the `lcars` binary automatically — see
-  [`deploy/README.md`](deploy/README.md#installing-the-cli).
+  daemon. Nothing installs the `lcars` binary automatically on a
+  workstation — see [Installing the `lcars` CLI](#installing-the-lcars-cli).
 
 For Codex, the watcher derives its inferred title from the first real user
 input in watched rollout JSONL. Claude's `aiTitle` remains a transcript-derived
@@ -199,14 +217,15 @@ generated title.
 
 ## Hook client (`lcars hook`)
 
-The daemon above polls disk. The hook client is the replacement path
-described in [docs/hooks-telemetry-design.md](../../docs/hooks-telemetry-design.md):
+The hook client is the live telemetry path for workstations and dispatched
+workers, described in
+[docs/hooks-telemetry-design.md](../../docs/hooks-telemetry-design.md):
 each coding agent's own hooks run `lcars hook <runtime>` (Claude Code and
-Codex today), which reads one hook payload on stdin, reduces the session's
+Codex; OpenCode reports through its `lcars-telemetry.js` plugin), which reads one hook payload on stdin, reduces the session's
 transcript with the same summary-only reducer, and appends a
 `SessionEventV1` to a local spool. A detached `lcars hook flush` then writes
 each event to the `sessions` collection as the `telemetry-writer` service
-account, the same identity this daemon uses, in one Firestore transaction
+account, in one Firestore transaction
 that refuses an event older than what is stored.
 
 The hook process never touches the network, never prints to stdout, and
@@ -222,6 +241,15 @@ always exits 0. Every decision is one line in
    ```json
    { "repos": ["jlapenna/*", "supersprinklesracing/*"] }
    ```
+
+   Matching ignores case, and the session is not stored under the `origin`
+   remote's spelling: a matching literal `owner/name` entry supplies its own
+   spelling, and a match through a `*` pattern stores the full lowercase
+   `owner/name`, so Console's repo lookups find a checkout cloned as
+   `JLapenna/Agent-LCARS`. List a repository whose canonical name has
+   capitals as a literal `Owner/Name` entry.
+   `AGENT_TELEMETRY_REPO_ALIASES` rename entries apply first and are stored
+   verbatim.
 
 2. `~/.config/agent-lcars/writer-key.json` (mode 0600) holds the
    `telemetry-writer` key, the value of `AGENT_TELEMETRY_WRITER_KEY_JSON`.
@@ -245,10 +273,11 @@ always exits 0. Every decision is one line in
    what `install` added.
 
 `lcars hook flush` drains the spool by hand (`~/.local/state/agent-lcars/spool/`),
-and `lcars hook <runtime> --inline` posts synchronously for debugging. While
-the daemon still runs, it skips any session whose
+and `lcars hook <runtime> --inline` posts synchronously for debugging. The
+legacy daemon code still skips any session whose
 `~/.local/state/agent-lcars/hook-sessions/<sessionId>.json` marker is
-younger than ten minutes, so the two writers never race on one doc.
+younger than ten minutes, so a host still running an old daemon never races
+the hook client on one doc.
 
 ## Configuration
 
@@ -285,7 +314,7 @@ If neither the emulator host nor both of `AGENT_TELEMETRY_PROJECT_ID` /
 `AGENT_TELEMETRY_WRITER_KEY_JSON` are set, the daemon falls back to a
 log-only store — this is what lets `docker run` demonstrate the daemon
 end-to-end without live GCP access (issue #2540's CI-only verification
-scope). `runner sidecar` mode (above) adds a third path,
+scope). Runner mode (`runner finalize`, above) adds a third path,
 **tried after the writer-key-JSON path**: if `AGENT_TELEMETRY_PROJECT_ID`
 is set but `AGENT_TELEMETRY_WRITER_KEY_JSON` is not, the store falls back to
 ambient Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`,
@@ -299,7 +328,7 @@ short-lived credentials file) instead of a key JSON blob — see
 ./tools/nx run @agent-lcars/telemetry-watcher:serve
 ```
 
-## Bundle (runner sidecar)
+## Bundle (runner finalize/resume)
 
 The `bundle` Nx target produces the single self-contained file the
 runner image bakes in and `direct-runner.sh` runs — esbuild with
@@ -325,51 +354,37 @@ can break only at runtime. QueueExecutor direct runners consume the bundle
 only from the runner image; there is no separately published or downloaded
 telemetry-tool runtime path.
 
-## Deployment
+## Installing the `lcars` CLI
 
-Packaged as a Docker image (`apps/telemetry-watcher/Dockerfile` — see the
-image comments for why `COPY . .` is cache-invalidated on every build and
-how the cache mounts compensate; note the build context is the **repo
-root**, not this directory).
-
-**Canonical homelab publishes it.** After the reviewed source revision has
-passed repository validation, run
-`bin/publish-agent-lcars-images.sh telemetry-watcher` from the canonical
-`jlapenna/homelab` checkout. It builds
-`agent-lcars/telemetry-watcher` for linux/amd64, stages a commit-SHA tag,
-scans it, and promotes `:latest` only after the scan passes.
-
-That was not always true, and its absence caused a real outage: nothing in
-the image was never built, so it only reached the registry when someone ran
-`docker build` by hand. The `members` → `sprinkles` allowlist fix landed in
-#137 and then sat unpublished for weeks while pike kept running a pre-fix
-image, reporting 0 active CLI sessions while ~10 were live (homelab#202;
-postmortem in homelab's `docs/incidents.md`). The trap was that
-`apps/telemetry-watcher/**` _did_ already trigger a publish — of the runner
-image's baked-in sidecar, a different artifact.
-
-For a local image without pushing:
+The `lcars session title "..."` and `lcars hook` commands depend on a
+`lcars` launcher existing on the workstation — nothing installs it
+automatically. From the primary `~/p/agent-lcars` checkout (the one that
+persists on the host long-term; this builds an Nx target, so it needs a real
+checkout, and the checkout's own `dist/` is never referenced directly — see
+the script's header for why):
 
 ```bash
-./tools/nx run @agent-lcars/telemetry-watcher:docker-build
+apps/telemetry-watcher/bin/install-session-title-cli.sh
 ```
 
-Deployed to the `pike`, `laforge`, and `janeway` homelab hosts via Docker
-Compose — chosen over the PRD's original "bundled systemd unit" plan to match
-how the rest of the homelab fleet is managed. The compose file and deploy
-script live in this repo, at [`deploy/`](deploy/README.md) — moved from `jlapenna/homelab` in
-homelab#218 Phase 6, on the reasoning that the deployment config should
-live with the image that builds it and the semantics (allowlists,
-entrypoint, uid) it depends on. `jlapenna/homelab` owns the Prometheus scrape
-and alerts for the deployment, including both the cAdvisor crash-loop signal
-and this app's `/metrics` dead-man signal — see
-`deploy/README.md`'s "Monitoring" section.
+This builds the `session-title-cli` Nx target and copies its bundle to
+`~/.local/lib/agent-lcars/lcars-session-title.cjs` (override with
+`AGENT_LCARS_SESSION_TITLE_CLI_LIB_DIR`), then generates a `lcars` launcher
+at `~/.local/bin/lcars` (override with
+`AGENT_LCARS_SESSION_TITLE_CLI_BIN_DIR`) that resolves `node` itself —
+covering this fleet's fnm-managed installs, where the CLI shim isn't
+reliably on PATH for every caller. Add `~/.local/bin` to the account's PATH
+for interactive use. Re-run this script after any change to the CLI lands on
+that checkout's `main`. Then follow [Host setup](#host-setup) to install the
+hook entries.
 
-**Publishing does not deploy:** the compose file pins this image as
-`tag@digest`, and Renovate is disabled for that LAN registry in this repo's
-own `renovate.json` (its runner can't reach
-`docker-registry.lan.jlapenna.net`), so moving the pin is still a human
-step. Run [`deploy/sync-deploy.sh`](deploy/sync-deploy.sh) from a checkout on
-each watcher host, then
-[`deploy.sh`](deploy/README.md#deploying) from the synced homelab-readable
-directory — the deploy is never run from the checkout itself (issue #1304).
+The runner image bakes its own copy (`apps/runner-autoscaler/runner-image/lcars.sh`).
+
+## Deployment
+
+There is no host deployment. The former per-host daemon image
+(`apps/telemetry-watcher/Dockerfile`), its `docker-build` target and the
+`deploy/` Compose bundle were removed with hooks telemetry phase 3; Homelab
+retires its deploy play, image publish, scrape and alerts separately
+(jlapenna/homelab#2405). The runner image builds this app's bundles from
+source in its own `telemetry-watcher-build` stage.

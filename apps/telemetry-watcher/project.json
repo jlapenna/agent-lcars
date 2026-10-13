@@ -107,14 +107,6 @@
         }
       }
     },
-    "docker-build": {
-      "executor": "nx:run-commands",
-      "dependsOn": ["build"],
-      "options": {
-        "command": "docker build -f apps/telemetry-watcher/Dockerfile -t agent-lcars-telemetry-watcher:local .",
-        "cwd": "{workspaceRoot}"
-      }
-    },
     "test": {
       "options": {
         "passWithNoTests": true

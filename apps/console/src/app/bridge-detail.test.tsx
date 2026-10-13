@@ -67,6 +67,21 @@ describe('BridgeDetail', () => {
     );
   });
 
+  it('clears an Agents selection on its owning page with the repository scope', () => {
+    render(
+      <MantineProvider>
+        <BridgeDetail
+          detail={renderItem(30)}
+          repoFilterKey="o/r"
+          backHref="/agents?repo=o%2Fr"
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getByRole('link', { name: '← All activity' }),
+    ).toHaveAttribute('href', '/agents?repo=o%2Fr');
+  });
+
   it('clears a selected row while keeping the older stopped page and repo scope (#2236)', () => {
     const cursor = JSON.stringify({
       taskKey: 'work:older',

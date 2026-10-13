@@ -1730,8 +1730,7 @@ describe('WatcherDaemon', () => {
         watchRoots: [
           { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
         ],
-        // An issue-agent-shaped daemon (forceSource set, shareDir unset) —
-        // NOT what runner.ts's startSidecar actually configures since
+        // NOT what the retired runner sidecar (runner.ts) configured since
         // issue #1289 (it now always passes a real sessionStateDir). This
         // pins the daemon's own generic contract instead: whatever the
         // caller is, an omitted sessionStateDir must skip the overlay

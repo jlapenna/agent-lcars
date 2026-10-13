@@ -112,7 +112,9 @@ export interface RequestInput {
     actor: string;
     allowProviderChange: boolean;
   };
-  /** GitHub replies/retries follow execution history rather than historical Work. */
+  /** The Work owner decodes its pipeline inside the request transaction. */
+  pipelineForStoredTask?: (task: Task) => string;
+  /** GitHub replies/retries follow an accepted handoff, not incidental run history. */
   useEffectivePipeline?: boolean;
   expectedEffectivePipeline?: string;
   isPipelineAuthorized?: (pipeline: string) => boolean;
@@ -172,8 +174,15 @@ export class Orchestrator {
         ) {
           return refused('work-spec-mismatch');
         }
+        const storedPipeline =
+          task === undefined
+            ? input.pipeline
+            : (input.pipelineForStoredTask?.(task.task) ?? input.pipeline);
+        const admittedPipeline =
+          task?.task.providerRouting?.acceptedGeneration?.pipeline ??
+          storedPipeline;
         const pipeline = input.useEffectivePipeline
-          ? (activeRun?.pipeline ?? latestRun?.pipeline ?? input.pipeline)
+          ? admittedPipeline
           : input.pipeline;
         if (
           input.expectedEffectivePipeline !== undefined &&
@@ -211,6 +220,7 @@ export class Orchestrator {
         };
         if (input.labelProviderRequest !== undefined) {
           return decideLabelProviderRequest({
+            admittedPipeline,
             ...requestArgs,
             task: task?.task,
             activeRun,

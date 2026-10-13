@@ -1,7 +1,11 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["~/.config/opencode/instructions.md"],
-  "plugin": ["./lcars-session.js", "./context-lifecycle.js"],
+  "plugin": [
+    "./lcars-session.js",
+    "./context-lifecycle.js",
+    "./lcars-telemetry.js"
+  ],
   "skills": ["/opt/repo-tools/plugins/repo-tools/skills"],
   "permission": {
     "external_directory": "allow",

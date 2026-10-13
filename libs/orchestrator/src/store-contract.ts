@@ -2318,10 +2318,12 @@ export function runOrchestratorStoreContract(
             clock.advanceMinutes(1);
           }
         }
-        // Race pairs, not seven writers against Firestore's bounded
-        // transaction retry budget; all seven committed turns still matter.
+        // Race the normal/background boundary after five committed turns.
+        // A stale concurrent cursor must not serve another normal run and
+        // starve background work. One pair exercises that atomic contract
+        // without paying three independent SDK conflict/backoff rounds.
         const claims = [];
-        for (const count of [2, 2, 2, 1]) {
+        for (const count of [1, 1, 1, 1, 1, 2]) {
           claims.push(
             ...(await Promise.all(
               Array.from({ length: count }, (_, index) =>

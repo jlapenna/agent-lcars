@@ -159,8 +159,9 @@ async function handle(request: Request): Promise<Response> {
       sessionsFor: sessionsForRuns,
       getSessionDoc: sessionForResume,
       sessionDocsForRuns,
-      // Exhaustive: the anchor-owner query must see every recent session.
-      cliSessions: () => getCliSessions({ exhaustive: true }),
+      // Repository-scoped: the anchor-owner query must see every recent
+      // session for the anchor's repository.
+      cliSessions: (repo) => getCliSessions({ repo }),
       scheduleStore: createScheduleStore(),
       grants: workGrants,
       now: () => new Date(),

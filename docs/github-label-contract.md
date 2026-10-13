@@ -101,6 +101,8 @@ Once Work exists, its admitted specification stays immutable. An administrator
 must carry a source timestamp newer than the last admitted/refused label
 request; equal or older source clocks fail closed. Missing source evidence
 cannot authorize a handoff. Review-label requests retain immutable admission.
+Future replies and retries use the last accepted label generation’s pipeline.
+Historical or fallback executions do not change that routing intent.
 
 Only an unclaimed queued attempt can be atomically canceled and replaced. Its
 provider and history remain intact; the successor uses the requested provider.

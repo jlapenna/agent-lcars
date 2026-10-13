@@ -41,6 +41,87 @@ async function fixture() {
 }
 
 describe('source-ordered label provider handoff', () => {
+  it('does not adopt a historical provider as routing without an accepted handoff', async () => {
+    const store = new MemoryStore();
+    const controller = new Orchestrator(store, { now: () => T0 });
+    const first = await controller.request({
+      taskId,
+      requestId: 'legacy-first',
+      pipeline: 'claude',
+      work,
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    const run = decidedRun(first);
+    await controller.report(run.runId, { ok: true });
+    const task = (await store.readTask(taskId))!;
+    await store.apply({
+      expectedRevision: task.revision,
+      decision: {
+        task: task.task,
+        run: { ...(await store.readRun(run.runId))!, pipeline: 'opencode' },
+        outbox: [],
+      },
+    });
+    expect(
+      await controller.request({
+        taskId,
+        requestId: 'legacy-reply',
+        pipeline: 'claude',
+        pipelineForStoredTask: () => 'claude',
+        useEffectivePipeline: true,
+      }),
+    ).toMatchObject({ run: { pipeline: 'claude' }, task: { work } });
+    expect(await store.readRun(run.runId)).toMatchObject({
+      pipeline: 'opencode',
+    });
+  });
+
+  it('retains the accepted admission provider after another provider ran and a later handoff was refused', async () => {
+    const { store, orchestrator, run } = await fixture();
+    await orchestrator.report(run.runId, { ok: true });
+    const task = (await store.readTask(taskId))!;
+    await store.apply({
+      expectedRevision: task.revision,
+      decision: {
+        task: task.task,
+        run: { ...(await store.readRun(run.runId))!, pipeline: 'opencode' },
+        outbox: [],
+      },
+    });
+    expect(
+      await orchestrator.request({
+        taskId,
+        requestId: 'refused-route',
+        pipeline: 'claude',
+        pipelineForStoredTask: () => 'claude',
+        labelProviderRequest: {
+          requestedAt: T1,
+          actor: 'ordinary',
+          allowProviderChange: false,
+        },
+      }),
+    ).toMatchObject({
+      task: {
+        providerRouting: {
+          status: 'refused',
+          acceptedGeneration: { pipeline: 'codex' },
+        },
+      },
+    });
+    expect(
+      await orchestrator.request({
+        taskId,
+        requestId: 'accepted-route-reply',
+        pipeline: 'claude',
+        pipelineForStoredTask: () => 'claude',
+        useEffectivePipeline: true,
+      }),
+    ).toMatchObject({ run: { pipeline: 'codex' }, task: { work } });
+    expect(await store.readRun(run.runId)).toMatchObject({
+      pipeline: 'opencode',
+    });
+  });
+
   it('atomically replaces queued work and fences the original claim and delivery replay', async () => {
     const { store, run, switchProvider } = await fixture();
     const result = await switchProvider();

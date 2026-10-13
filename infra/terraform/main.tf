@@ -56,6 +56,58 @@ resource "google_firestore_database" "default" {
   depends_on              = [google_firebase_project.this]
 }
 
+# The issue-owner query (#2502, apps/console/src/lib/cli-sessions.ts with
+# `exhaustive`) lists `sessions` with `source == "cli"` and a
+# `lastActivityAt >=` cutoff -- an equality+range compound query Firestore
+# refuses without this composite index (libs/telemetry/src/server/store.ts's
+# ListSessionDocsOptions.source). Without it every owner answer degrades to
+# "CLI sessions unavailable".
+resource "google_firestore_index" "sessions_source_last_activity" {
+  project     = var.project_id
+  database    = google_firestore_database.default.name
+  collection  = "sessions"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "source"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "lastActivityAt"
+    order      = "ASCENDING"
+  }
+}
+
+# The issue-owner query (#2502) reads only the anchor repository's CLI
+# sessions: `source == "cli"`, `repo.owner ==`, `repo.name ==` and a
+# `lastActivityAt >=` cutoff (libs/telemetry/src/server/store.ts's
+# ListSessionDocsOptions.repo). Filtering by repository in Firestore keeps the
+# page from filling with other repositories' and host-scoped sessions, which
+# made every owner answer incomplete.
+resource "google_firestore_index" "sessions_source_repo_last_activity" {
+  project     = var.project_id
+  database    = google_firestore_database.default.name
+  collection  = "sessions"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "source"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "repo.owner"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "repo.name"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "lastActivityAt"
+    order      = "ASCENDING"
+  }
+}
+
 # Controller state is isolated from worker telemetry at the Firestore database
 # boundary. IAM Conditions below grant every runtime identity access to exactly
 # one database; a worker-held telemetry credential can therefore never mutate

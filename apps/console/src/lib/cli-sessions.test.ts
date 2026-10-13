@@ -187,32 +187,72 @@ describe('getCliSessions', () => {
     expect(sessions.map((session) => session.sessionId)).toContain('live-tail');
   });
 
-  it('reads only CLI docs over the wider window, uncapped, in exhaustive mode', async () => {
+  const REPO = { owner: 'jlapenna', name: 'agent-lcars' };
+
+  it("reads one repository's CLI docs over the wider window, uncapped, complete under the limit", async () => {
     (listSessionDocs as Mock).mockResolvedValue(
       Array.from({ length: MAX_SESSIONS + 5 }, (_, index) =>
-        makeCliDoc({ sessionId: `live-${index}` }),
+        makeCliDoc({ sessionId: `live-${index}`, repo: REPO }),
       ),
     );
 
-    const { sessions, warnings } = await getCliSessions({ exhaustive: true });
+    const { sessions, warnings } = await getCliSessions({ repo: REPO });
 
     expect(sessions).toHaveLength(MAX_SESSIONS + 5);
     expect(warnings).toEqual([]);
+    // A canonical lowercase spelling needs exactly one query.
+    expect(listSessionDocs).toHaveBeenCalledTimes(1);
     const options = (listSessionDocs as Mock).mock.calls[0][1];
-    expect(options).toMatchObject({ source: 'cli', limit: MAX_LIST_LIMIT });
+    // Exactly the indexed shape: source + repo equality, lastActivityAt cutoff.
+    expect(Object.keys(options).sort()).toEqual([
+      'activeSince',
+      'limit',
+      'repo',
+      'source',
+    ]);
+    expect(options).toMatchObject({
+      source: 'cli',
+      repo: REPO,
+      limit: MAX_LIST_LIMIT,
+    });
     const windowHours =
       (Date.now() - new Date(options.activeSince).getTime()) / 3_600_000;
     expect(windowHours).toBeCloseTo(OWNER_WINDOW_HOURS, 1);
   });
 
-  it('warns when an exhaustive read fills the store page', async () => {
+  it('also reads the lowercase spelling of a mixed-case repository and merges by session', async () => {
+    (listSessionDocs as Mock).mockImplementation(
+      async (_db: unknown, options: { repo: { owner: string } }) =>
+        options.repo.owner === 'JLapenna'
+          ? [makeCliDoc({ sessionId: 'mixed', repo: options.repo })]
+          : [
+              makeCliDoc({ sessionId: 'lower', repo: REPO }),
+              makeCliDoc({ sessionId: 'mixed', repo: REPO }),
+            ],
+    );
+
+    const { sessions, warnings } = await getCliSessions({
+      repo: { owner: 'JLapenna', name: 'Agent-LCARS' },
+    });
+
+    expect(
+      (listSessionDocs as Mock).mock.calls.map(([, options]) => options.repo),
+    ).toEqual([{ owner: 'JLapenna', name: 'Agent-LCARS' }, REPO]);
+    expect(sessions.map((session) => session.sessionId).sort()).toEqual([
+      'lower',
+      'mixed',
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('warns when a repository read fills the store page', async () => {
     (listSessionDocs as Mock).mockResolvedValue(
       Array.from({ length: MAX_LIST_LIMIT }, (_, index) =>
-        makeCliDoc({ sessionId: `live-${index}` }),
+        makeCliDoc({ sessionId: `live-${index}`, repo: REPO }),
       ),
     );
 
-    const { warnings } = await getCliSessions({ exhaustive: true });
+    const { warnings } = await getCliSessions({ repo: REPO });
 
     expect(warnings).toEqual([
       `CLI session listing hit the ${MAX_LIST_LIMIT}-session page limit and may be incomplete.`,

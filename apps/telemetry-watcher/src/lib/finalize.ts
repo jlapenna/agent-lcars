@@ -94,8 +94,7 @@ export interface FinalizeSidecarOptions {
 
 /**
  * One-shot finalize pass for a runner (issue-agent) session (issue #24),
- * run once the provider has exited: unlike `startSidecar`'s
- * long-lived tick loop, this reduces each discovered transcript exactly
+ * run once the provider has exited: this reduces each discovered transcript exactly
  * once, archives its raw content to `config.transcriptsBucket` (the runner
  * container is destroyed on job exit, so this is the session's only chance
  * to survive as more than a Firestore summary), and upserts a final
@@ -179,10 +178,9 @@ export async function finalizeSidecar(
     }
   }
   // The single runner-mode watch-root contract (@agent-lcars/telemetry,
-  // #645) — the same function `startSidecar` (runner.ts) calls. Before
-  // #645 this was a second, hand-copied array with a comment admitting it
-  // "must mirror startSidecar's roots exactly"; finalize is the
-  // authoritative last write, so a root the sidecar watched but this pass
+  // #645). Before #645 this was a second, hand-copied array that had to
+  // mirror the (since retired) live sidecar's roots; finalize is the
+  // authoritative last write, so a root a live writer saw but this pass
   // didn't would leave that session stuck on its final `live`/`idle`
   // snapshot, never marked `ended` and never given a transcriptGcsUri —
   // importing one definition instead of two hand-copies makes that drift

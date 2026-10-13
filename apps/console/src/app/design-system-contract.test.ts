@@ -230,11 +230,11 @@ describe('LCARS design system contract', () => {
       // silently opts back out, which is how six panels kept rounded corners
       // inside the square frame after #1827 (#1836).
       //
-      // Scoped to Card/Paper openings on purpose. The square rule is about
-      // PANELS; capsule ends are the correct idiom for a control or a tag,
-      // and `theme.ts` deliberately gives Badge `radius: 'xl'`. An app-wide
-      // scan for `radius=` would fail Verify on a legitimate rounded Badge,
-      // Avatar or Skeleton (Codex review on #1842).
+      // Scoped to Card/Paper openings on purpose: this guard is about
+      // PANELS. Controls and tags are square through the theme's
+      // `defaultRadius: 0`, but an app-wide scan for `radius=` would also
+      // fail Verify on a legitimately round Avatar or Skeleton (Codex review
+      // on #1842).
       const offenders: string[] = [];
       for (const file of componentFiles(APP_DIRECTORY)) {
         const contents = readFileSync(file, 'utf8');
@@ -265,9 +265,10 @@ describe('LCARS design system contract', () => {
       expect(elbowRules).not.toEqual([]);
       for (const rule of elbowRules) {
         // `.lcars-header::before` is the same elbow at the base breakpoint;
-        // the desktop and mobile blocks replace it with the tapered build.
+        // the tablet and mobile blocks replace it with the tapered build, and
+        // the desktop frame draws it as the rail head turning into the arm.
         expect(rule).toMatch(
-          /\.lcars-header::before|\.console-header\[data-current\]::before/,
+          /\.lcars-header::before|\.console-header\[data-current\]::before|> \.lcars-rail-head \{/,
         );
       }
     });

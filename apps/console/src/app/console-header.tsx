@@ -9,6 +9,9 @@ import type { NavKey } from './console-navigation';
 export { ConsoleNavRail } from './console-nav-rail';
 export type { NavKey } from './console-navigation';
 
+/** Longer than any destination name, shorter than a typical issue title. */
+const LONG_TITLE_LENGTH = 32;
+
 export interface ConsoleHeaderProps {
   current: NavKey;
   title: string;
@@ -77,8 +80,16 @@ export function ConsoleHeader({
       className="console-header"
       data-current={current}
       data-has-utilities={utilities ? '' : undefined}
+      // Destination names take the full marquee size; a drill-down's content
+      // title (a session or issue title) steps down so it can fit.
+      data-long-title={title.length > LONG_TITLE_LENGTH ? '' : undefined}
       data-streaming-fallback={streamingFallback ? '' : undefined}
     >
+      <div className="lcars-header-arm" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
       <div className="lcars-header">
         <Group justify="space-between" align="flex-start" gap="sm">
           <div className="lcars-header-copy">
@@ -92,10 +103,10 @@ export function ConsoleHeader({
         </Group>
 
         <div className="lcars-header-bar" aria-hidden="true">
-          <span className="lcars-header-bar-segment" data-accent="amber" />
           <span className="lcars-header-bar-segment" data-accent="blue" />
-          <span className="lcars-header-bar-segment" data-accent="periwinkle" />
+          <span className="lcars-header-bar-segment" data-accent="violet" />
           <span className="lcars-header-bar-segment" data-accent="gold" />
+          <span className="lcars-header-bar-segment" data-accent="amber" />
           <span className="lcars-header-bar-segment" data-accent="teal" />
         </div>
       </div>

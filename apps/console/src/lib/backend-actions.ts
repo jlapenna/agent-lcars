@@ -7,7 +7,6 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import { workPayloadSchema } from '@agent-lcars/work';
-import { latestRun } from '@agent-lcars/work/derive';
 
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
@@ -304,10 +303,10 @@ async function dispatchPostedReply(
       // webhook remains responsible for first Work admission.
       if (existingTask !== undefined) {
         const work = workPayloadSchema.parse(existingTask.task.work);
-        // A label is requested intent. Dispatch a reply only when it agrees
-        // with the actual provider; historical Work can name the predecessor.
+        // Only an accepted label handoff changes future admission. An older
+        // or fallback run's provider is historical execution, not routing intent.
         const effective =
-          latestRun(await runtime.store.listRuns(taskId))?.pipeline ??
+          existingTask.task.providerRouting?.acceptedGeneration?.pipeline ??
           work.spec.pipeline;
         if (effective !== assignedPipeline) return { dispatched: false };
         const outcome = await admitGithubWork(runtime, {

@@ -13,7 +13,12 @@ import {
 } from 'firebase-admin/firestore';
 
 import { parseSessionDoc } from '../lib/session-doc';
-import { SessionDoc, SessionSource, SessionWrite } from '../lib/types';
+import {
+  SessionDoc,
+  SessionRepository,
+  SessionSource,
+  SessionWrite,
+} from '../lib/types';
 import { AGENT_TELEMETRY_DATABASE_ID } from './firestore-client';
 
 export const SESSIONS_COLLECTION = 'sessions';
@@ -190,6 +195,12 @@ export interface ListSessionDocsOptions {
    * range+equality compound query, requiring a source+lastActivityAt
    * composite index on `sessions`. */
   source?: SessionSource;
+  /** Narrows to one repository through the persisted canonical
+   * `repo.owner`/`repo.name` map fields (exact match: the writer stores the
+   * canonical spelling). Combined with `source` and `activeSince` it needs
+   * the source+repo.owner+repo.name+lastActivityAt composite index
+   * (`sessions_source_repo_last_activity` in infra/terraform/main.tf). */
+  repo?: SessionRepository;
   /** Narrows to one issue-agent session's issue. Combined with
    * `activeSince` this is also a compound query - see the
    * issueNumber+lastActivityAt (and source+issueNumber+lastActivityAt)
@@ -231,6 +242,11 @@ export async function listSessionDocs(
   }
   if (options.source) {
     query = query.where('source', '==', options.source);
+  }
+  if (options.repo !== undefined) {
+    query = query
+      .where('repo.owner', '==', options.repo.owner)
+      .where('repo.name', '==', options.repo.name);
   }
   if (options.issueNumber !== undefined) {
     query = query.where('issueNumber', '==', options.issueNumber);

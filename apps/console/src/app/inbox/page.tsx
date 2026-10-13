@@ -1,4 +1,4 @@
-import { Anchor, Box } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -23,10 +23,11 @@ import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
 import { DataWarnings } from '../console-header';
+import { ConsoleWorkspace } from '../console-workspace';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { inboxCardKey, inboxCardMetadata } from '../inbox-card';
-import { InboxNotifications } from '../inbox-notifications';
+import { InboxNotificationsWatch } from '../inbox-notifications';
 import { LiveDashboard } from '../live-dashboard';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
@@ -50,12 +51,10 @@ async function InboxBody({
   repoFilter,
   selectedItemKey,
   mobileScopeLabel,
-  principalId,
 }: {
   repoFilter: WatchedRepo | undefined;
   selectedItemKey?: string;
   mobileScopeLabel: string;
-  principalId: string;
 }) {
   const [
     {
@@ -99,19 +98,22 @@ async function InboxBody({
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 
   return (
-    <>
-      <div className="inbox-data-freshness">
-        <DataFreshness
-          fetchedAt={dataAsOf}
-          initialLabel={formatRelativeTime(dataAsOf)}
-        />
-      </div>
-      {warnings.length > 0 && (
-        <Box mb="xl">
-          <DataWarnings warnings={warnings} />
-        </Box>
-      )}
-      <InboxNotifications principalId={principalId} />
+    <ConsoleWorkspace
+      ariaLabel="Inbox workspace"
+      className="inbox-frame"
+      warnings={<DataWarnings warnings={warnings} />}
+      toolbar={
+        <>
+          <InboxNotificationsWatch />
+          <div className="inbox-data-freshness">
+            <DataFreshness
+              fetchedAt={dataAsOf}
+              initialLabel={formatRelativeTime(dataAsOf)}
+            />
+          </div>
+        </>
+      }
+    >
       <DecisionInbox
         yourQueue={decisionCards}
         replyToWorkItem={replyToWorkItem}
@@ -127,7 +129,7 @@ async function InboxBody({
         }
         mobileScopeLabel={mobileScopeLabel}
       />
-    </>
+    </ConsoleWorkspace>
   );
 }
 
@@ -137,7 +139,6 @@ interface InboxViewProps {
   repoFilterKey?: string;
   selectedItemKey?: string;
   subtitle: string;
-  principalId: string;
 }
 
 function InboxViewContent({
@@ -145,22 +146,30 @@ function InboxViewContent({
   repoFilter,
   selectedItemKey,
   subtitle,
-  principalId,
 }: InboxViewProps) {
   return (
     <>
-      <RepositorySelector
-        repos={watchedRepos}
-        selected={repoFilter ? repoKey(repoFilter) : undefined}
-        action="/inbox"
-      />
+      <details
+        className="lcars-disclosure"
+        data-testid="inbox-repository-filter"
+      >
+        <summary className="lcars-disclosure__summary">
+          Repository filter
+        </summary>
+        <div className="lcars-disclosure__content">
+          <RepositorySelector
+            repos={watchedRepos}
+            selected={repoFilter ? repoKey(repoFilter) : undefined}
+            action="/inbox"
+          />
+        </div>
+      </details>
       <LiveDashboard />
       <Suspense fallback={<PageLoading rows={6} header={false} />}>
         <InboxBody
           repoFilter={repoFilter}
           selectedItemKey={selectedItemKey}
           mobileScopeLabel={subtitle}
-          principalId={principalId}
         />
       </Suspense>
     </>
@@ -229,7 +238,6 @@ async function InboxPageShell({ searchParams }: PageProps) {
       repoFilterKey={repoFilterKey}
       selectedItemKey={params.item || undefined}
       subtitle={subtitle}
-      principalId={session.user.id}
     />
   );
 }

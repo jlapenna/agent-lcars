@@ -15,6 +15,7 @@ import { isLive, isWorkAnchor, providerRoutingSchema, type Run } from './model';
  * the same transaction that cancels and mints. */
 export function decideLabelProviderRequest(
   input: RequestRunInput & {
+    admittedPipeline: string;
     label: { requestedAt: string; actor: string; allowProviderChange: boolean };
     latestRun?: Run;
     retainedClaims?: readonly Run[];
@@ -27,8 +28,12 @@ export function decideLabelProviderRequest(
     previous?.acceptedGeneration ??
     (previous?.successorRunId === undefined
       ? undefined
-      : { runId: previous.successorRunId, requestedAt: previous.requestedAt });
-  const effective = activeRun?.pipeline ?? latestRun?.pipeline ?? pipeline;
+      : {
+          runId: previous.successorRunId,
+          requestedAt: previous.requestedAt,
+          pipeline: previous.effectivePipeline,
+        });
+  const effective = input.admittedPipeline;
   const request = providerRoutingSchema.parse({
     requestId: input.requestId,
     requestedAt: label.requestedAt,
@@ -143,6 +148,7 @@ export function decideLabelProviderRequest(
         acceptedGeneration: {
           runId: successor.runId,
           requestedAt: label.requestedAt,
+          pipeline: successor.pipeline,
         },
       },
     },

@@ -487,7 +487,7 @@ RESUME_FLAG=()
 if [ "$PIPELINE" = "claude" ] && [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
   # GOOGLE_APPLICATION_CREDENTIALS and AGENT_TELEMETRY_PROJECT_ID are
   # exported inline exactly as sidecar-lifecycle.sh already does for
-  # `runner sidecar`/`runner finalize` -- the same telemetry-writer
+  # `runner finalize` -- the same telemetry-writer
   # credential and GCS project the transcript was uploaded to/from.
   if ! resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
     AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
@@ -597,12 +597,12 @@ PROMPT
 )"
 fi
 
-# OpenCode and the telemetry sidecar share its SQLite store. On a fresh home,
-# either process can otherwise race schema migration. The published image
-# carries an empty, version-matched store (#2040), so fresh runs can use an
-# empty baseline. Resumes, nonempty/missing stores, and a different CLI keep
-# synchronous migration/listing before the sidecar starts. The baseline lets
-# continuation select only one unambiguous newly-created workspace session.
+# OpenCode's SQLite store needs schema migration on a fresh home. The
+# published image carries an empty, version-matched store (#2040), so fresh
+# runs can use an empty baseline. Resumes, nonempty/missing stores, and a
+# different CLI keep synchronous migration/listing before the agent starts.
+# The baseline lets continuation select only one unambiguous newly-created
+# workspace session.
 OPENCODE_BASELINE_SESSIONS=''
 if [ "$PIPELINE" = "opencode" ]; then
   OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
@@ -666,10 +666,10 @@ if [ "$PIPELINE" = "opencode" ]; then
 fi
 
 if [ "$PIPELINE" = "codex" ]; then
-  # The sidecar starts before the agent invocation so it can emit live state.
-  # Allocate the per-run tmpfs home first, then pass its eventual session root
-  # to both sidecar phases. Auth is restored below, after this setup but before
-  # Codex executes; nothing from a previous run is visible in this directory.
+  # Allocate the per-run tmpfs home before hook telemetry installs into it;
+  # finalize later archives its session root. Auth is restored below, after
+  # this setup but before Codex executes; nothing from a previous run is
+  # visible in this directory.
   : "${LCARS_CODEX_VOLATILE_DIR:?LCARS_CODEX_VOLATILE_DIR is required for Codex runs}"
   if [ ! -d "$LCARS_CODEX_VOLATILE_DIR" ]; then
     echo "FATAL: Codex volatile directory is missing" >&2
@@ -688,32 +688,21 @@ if [ "$PIPELINE" = "codex" ]; then
   worker_policy_bootstrap "$CODEX_HOME/hooks.json"
 fi
 
-start_telemetry_sidecar() {
-  WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
-    RUN_ID="$LCARS_RUN_ID" \
-    INTENT_ID="$INTENT_ID" \
-    CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
-    "$SIDECAR_LIFECYCLE" start
-}
-
-# Selected pipelines report through provider hooks instead of the polling
-# sidecar. The hooks install after the provider's own config (worker policy
-# included) exists; any failure there starts the sidecar instead.
-HOOK_TELEMETRY_STATE=off
-if hook_telemetry_selected; then
-  HOOK_TELEMETRY_STATE=pending
-else
-  start_telemetry_sidecar
-fi
+# Every pipeline reports live telemetry through its provider's own hooks
+# (docs/hooks-telemetry-design.md, phase 3). The hooks install after the
+# provider's own config (worker policy included) exists. A failed install
+# only loses live telemetry: there is no polling fallback, and the
+# `"$SIDECAR_LIFECYCLE" finalize` pass below still writes the authoritative
+# final session doc either way. Telemetry never fails a dispatch.
+HOOK_TELEMETRY_STATE=pending
 
 activate_hook_telemetry() {
   [ "$HOOK_TELEMETRY_STATE" = pending ] || return 0
   if hook_telemetry_bootstrap; then
     HOOK_TELEMETRY_STATE=on
   else
-    echo "::warning::hook telemetry install failed; falling back to the telemetry sidecar"
+    echo "::warning::hook telemetry install failed; this run has no live telemetry (finalize still records the session)"
     HOOK_TELEMETRY_STATE=off
-    start_telemetry_sidecar
   fi
 }
 if [ "$PIPELINE" = codex ]; then
@@ -1129,6 +1118,7 @@ else
   mv "$opencode_proxy_config" "$OPENCODE_CONFIG_DIR/opencode.json"
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
   worker_policy_bootstrap "$OPENCODE_CONFIG"
+  activate_hook_telemetry
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
   # leave the surrounding direct runner alive to finalize telemetry and
