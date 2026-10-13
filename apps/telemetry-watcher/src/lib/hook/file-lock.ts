@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 
 /**
@@ -47,19 +48,46 @@ function holderIsGone(pid: number): boolean {
 /** Removes a lock whose holder has exited or that is older than `staleMs`.
  * Agent runtimes kill async hooks when they exit (`claude -p` does so right
  * before its SessionEnd hook), and that hook's short budget cannot wait out
- * `staleMs`. The inode check keeps a lock that was replaced since it was read
- * from being removed. */
+ * `staleMs`.
+ *
+ * The lock is renamed aside before it is removed, so only the file that was
+ * judged stale is removed. If the holder released it and another process
+ * created a new lock in between (possibly reusing the inode number), the
+ * moved file no longer matches what was read and is linked back. */
 function removeIfStale(lockPath: string, now: number, staleMs: number): void {
+  let before: fs.Stats;
+  let holder: string;
   try {
-    const before = fs.statSync(lockPath);
-    const stale =
-      now - before.mtimeMs > staleMs ||
-      holderIsGone(Number(fs.readFileSync(lockPath, 'utf8')));
-    if (stale && fs.statSync(lockPath).ino === before.ino) {
-      fs.unlinkSync(lockPath);
+    before = fs.statSync(lockPath);
+    holder = fs.readFileSync(lockPath, 'utf8');
+  } catch {
+    return; // Already gone.
+  }
+  if (now - before.mtimeMs <= staleMs && !holderIsGone(Number(holder))) return;
+  const aside = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    fs.renameSync(lockPath, aside);
+  } catch {
+    return; // Another waiter took it first.
+  }
+  try {
+    const moved = fs.statSync(aside);
+    const same =
+      moved.ino === before.ino &&
+      moved.mtimeMs === before.mtimeMs &&
+      fs.readFileSync(aside, 'utf8') === holder;
+    if (!same) {
+      // Fails only if yet another lock was created meanwhile; that one wins.
+      fs.linkSync(aside, lockPath);
     }
   } catch {
-    // Already gone.
+    // Restored by another waiter, or replaced; nothing left to undo.
+  } finally {
+    try {
+      fs.unlinkSync(aside);
+    } catch {
+      // Already removed.
+    }
   }
 }
 

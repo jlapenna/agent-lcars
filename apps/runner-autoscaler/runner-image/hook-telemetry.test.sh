@@ -19,14 +19,16 @@ codex_bin="${CODEX_BIN:-$(command -v codex)}"
 opencode_bin="${OPENCODE_BIN:-/usr/local/bin/opencode}"
 opencode_config_dir="${HOOK_TEST_OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 run_timeout_seconds=60
+event_timeout_seconds=30
 # Claude Code gives SessionEnd hooks 1.5s by default. The arm64 image is
-# built under QEMU, where starting node alone can exceed that; a native arm64
-# runner does not. Widen it only for the emulated build so the contract under
+# built under QEMU, where starting node alone can exceed that. Widen it on
+# arm64 (native arm64 runners only get a looser bound) so the contract under
 # test stays "the hook runs and records the end", not emulator speed.
 claude_end_budget=()
 case "$(uname -m)" in
   aarch64 | arm64)
     run_timeout_seconds=180
+    event_timeout_seconds=90
     claude_end_budget=(CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=15000)
     ;;
 esac
@@ -127,7 +129,7 @@ spooled() {
 await_kinds() {
   local home="$1" agent="$2"
   shift 2
-  local deadline=$((SECONDS + 30)) kind missing
+  local deadline=$((SECONDS + event_timeout_seconds)) kind missing
   while :; do
     missing=""
     for kind in "$@"; do
@@ -162,9 +164,11 @@ check_events() {
 
 # --- Claude Code ------------------------------------------------------------
 # Claude Code 2.1 sometimes exits print mode without running SessionEnd hooks
-# at all. A marker hook beside ours shows whether it ran, and a run that
-# skipped it is retried in a fresh home, so the end event (the part this
-# image controls) is checked on nearly every build.
+# at all, from none to two runs in three depending on the run; the skip is in
+# its own shutdown, with or without our hooks. A marker hook beside ours shows
+# whether it ran, and a run that skipped it is retried in a fresh home. A
+# release that never runs SessionEnd hooks fails here, and whenever they ran,
+# our end event must be there too.
 claude_attempt() {
   local home="$1" marker="$2"
   mkdir -p "$home"
@@ -185,17 +189,15 @@ claude_attempt() {
     fail "claude -p exited $status against the localhost provider"
   }
 }
-for attempt in 1 2 3; do
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
   claude_home="$tmp/claude-home-$attempt"
   claude_attempt "$claude_home" "$tmp/claude-session-end-$attempt"
   [ -e "$tmp/claude-session-end-$attempt" ] && break
   echo "note: claude ran no SessionEnd hooks on attempt $attempt"
 done
-if [ -e "$tmp/claude-session-end-$attempt" ]; then
-  await_kinds "$claude_home" claude-code start end
-else
-  await_kinds "$claude_home" claude-code start
-fi
+[ -e "$tmp/claude-session-end-$attempt" ] ||
+  fail "claude ran no SessionEnd hooks in $attempt attempts"
+await_kinds "$claude_home" claude-code start end
 check_events "$claude_home" claude-code
 
 # --- Codex ------------------------------------------------------------------
