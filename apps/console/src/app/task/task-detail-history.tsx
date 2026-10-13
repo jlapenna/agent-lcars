@@ -222,6 +222,12 @@ export function TaskDetailHistory({
           {item.providerRouting.reason
             ? ` (${item.providerRouting.reason})`
             : ''}
+          {' · requested by '}
+          {item.providerRouting.actor}
+          {' at '}
+          <time dateTime={item.providerRouting.requestedAt}>
+            {item.providerRouting.requestedAt}
+          </time>
           {item.providerRouting.status === 'refused' &&
             (item.providerRouting.reason === 'run-newer-than-label'
               ? ' · Reapply the intended label to confirm this change for the current work.'
