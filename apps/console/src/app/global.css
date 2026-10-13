@@ -1174,6 +1174,38 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
+/* Compact desktops (to 1440px): the toolbar band keeps the mockup's single
+   row. Native selects size to their widest option, so they are capped;
+   segments and the find field tighten; the Inbox's freshness line (the
+   header already shows sync status) steps aside. */
+@media (min-width: 48em) and (max-width: 89.99em) {
+  .console-toolbar__select {
+    max-width: 12rem;
+  }
+
+  .console-toolbar__segmented label {
+    padding: 0 10px;
+  }
+
+  .console-toolbar__search {
+    width: 12rem;
+  }
+
+  .inbox-toolbar .queue-search-input {
+    flex: 1 1 12rem;
+    max-width: 14rem;
+  }
+
+  .inbox-data-freshness {
+    display: none;
+  }
+
+  /* Freshness carried the trailing push; the primary action takes it. */
+  .inbox-respond-oldest {
+    margin-left: auto;
+  }
+}
+
 /* An inline link inside a header subtitle (Work's "schedules"): keeps the
    subtitle's single line and size. */
 .console-subtitle-link {
