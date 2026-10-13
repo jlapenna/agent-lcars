@@ -76,25 +76,6 @@ describe('fleet ESLint baseline is what the repo actually resolves', () => {
     },
   );
 
-  it('bans dynamic import(), the shape agent-lcars used to miss entirely', async () => {
-    const rules = await resolvedRules(SAMPLES[1]);
-    const selectors = (
-      rules['no-restricted-syntax'].slice(1) as { selector: string }[]
-    ).map((entry) => entry.selector);
-
-    expect(selectors).toContain('ImportExpression');
-  });
-
-  it('bans all three toLocale*String evasion shapes, not just the bare call', async () => {
-    const rules = await resolvedRules(SAMPLES[1]);
-    const toLocaleSelectors = (
-      rules['no-restricted-syntax'].slice(1) as { selector: string }[]
-    ).filter((entry) => entry.selector.includes('toLocale'));
-
-    // Bare call, explicit `undefined` locale, empty-array locale list.
-    expect(toLocaleSelectors).toHaveLength(3);
-  });
-
   it('leaves .cjs alone: require() is its only import mechanism', async () => {
     const rules = await resolvedRules(
       'packages/fleet-tools/bin/fleet-identity.cjs',

@@ -1,10 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -35,16 +33,17 @@ import {
   readMembership,
   renderAgentsSection,
   renderPlan,
-  renderRulesetRootTest,
   resolveSpec,
   workflowRunNames,
 } from '../fleet-onboard.mjs';
+import { assertVariables, auditRepository } from '../verify-onboarding.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 const PROJECTIONS = [
   'config/github-labels.json',
   'apps/console/apphosting.yaml',
   '.github/workflows/label-contract-audit.yml',
+  'config/github-variables.json',
 ];
 const REV = 'dfa52a3f412126186b0466e83b2fe13cfce3c513';
 
@@ -113,6 +112,7 @@ describe('fleet membership projections', () => {
         controlPlane: ['a/b'],
         watched: ['a/b'],
         audit: ['a/b', 'c/d'],
+        variables: ['a/b', 'c/d'],
       }),
     ).toEqual({ controlPlane: ['c/d'], watched: ['c/d'] });
   });
@@ -125,15 +125,12 @@ describe('admit', () => {
     return root;
   }
 
-  it('adds a repository to every projection once', () => {
+  it('admits a repository that the onboarding audit recognizes, once', async () => {
     const root = copyProjections();
     const edits = planAdmit(
       root,
       spec({ alias: 'proj' }),
       'jlapenna/sync-padd',
-    );
-    expect(edits.map((edit) => edit.file).sort()).toEqual(
-      [...PROJECTIONS].sort(),
     );
     applyAdmit(root, edits, {});
 
@@ -155,6 +152,25 @@ describe('admit', () => {
     });
 
     expect(planAdmit(root, spec(), 'jlapenna/sync-padd')).toEqual([]);
+    const facts = await auditRepository({
+      repo: 'example/project',
+      token: 'fixture-token',
+      fleetLogin: 'fleet',
+      labels: JSON.parse(read(root, 'config/github-labels.json')),
+      profiles: JSON.parse(read(root, 'config/github-variables.json')).profiles,
+      checkVariables: assertVariables,
+      api: async (route: string) => {
+        if (route.includes('/actions/variables?'))
+          return { variables: [{ name: 'AGENT_FLEET_LOGIN', value: 'fleet' }] };
+        throw new Error('Unrelated fact unavailable in this metadata fixture');
+      },
+    });
+    expect(
+      facts.find((fact: { fact: string }) => fact.fact === 'variables'),
+    ).toMatchObject({
+      status: 'PASS',
+      detail: 'required fleet-member variables present',
+    });
     const log: string[] = [];
     expect(main(['check'], { root, log: (line) => log.push(line) })).toBe(0);
   });
@@ -214,7 +230,12 @@ describe('admit', () => {
       spec({ repo: 'jlapenna/www', alias: 'jl-www' }),
       'jlapenna/sync-padd',
     );
-    expect(edits).toHaveLength(3);
+    applyAdmit(root, edits, {});
+    expect(readMembership(root).watchedEntries).toContainEqual({
+      owner: 'jlapenna',
+      name: 'www',
+      alias: 'jl-www',
+    });
   });
 
   it('completes a repository present in only some projections', () => {
@@ -223,9 +244,6 @@ describe('admit', () => {
     const labelsOnly = all.filter((edit) => edit.file === PROJECTIONS[0]);
     applyAdmit(root, labelsOnly, {});
     const rest = planAdmit(root, spec(), 'jlapenna/sync-padd');
-    expect(rest.map((edit) => edit.file).sort()).toEqual(
-      [PROJECTIONS[1], PROJECTIONS[2]].sort(),
-    );
     applyAdmit(root, rest, {});
     expect(membershipGaps(readMembership(root))).toEqual({});
     expect(planAdmit(root, spec(), 'jlapenna/sync-padd')).toEqual([]);
@@ -260,7 +278,7 @@ describe('admit', () => {
         log: (line) => log.push(line),
       }),
     ).toBe(1);
-    expect(log.filter((line) => line.startsWith('missing\t'))).toHaveLength(3);
+    expect(log).toContain('missing\tconfig/github-variables.json');
     expect(PROJECTIONS.map((file) => read(root, file))).toEqual(before);
   });
 });
@@ -593,9 +611,6 @@ describe('scaffold', () => {
     expect(read(target, 'infra/github-ruleset/main.tf')).toContain(
       'context = "Bob\'s build"',
     );
-    expect(read(target, 'tools/github-ruleset-root.test.sh')).toContain(
-      "'Bob'\\''s build'",
-    );
     for (const bad of ['say "hi"', 'back\\slash', 'tab\there', 'x ${y}'])
       expect(() =>
         resolveSpec({ repo: 'a/b', 'ci-workflow': 'ci.yml', 'ci-checks': bad }),
@@ -766,10 +781,6 @@ describe('scaffold', () => {
   it('generates workflow names and check contexts that match the reusable contract', () => {
     const target = scratch('fleet-onboard-target');
     scaffold(target);
-    const names = GENERATED_WORKFLOW_NAMES.map(
-      (name) => parseYaml(read(target, `.github/workflows/${name}.yml`)).name,
-    );
-    expect(names).toEqual([...GENERATED_WORKFLOW_NAMES]);
     const validate = parseYaml(read(target, '.github/workflows/validate.yml'));
     const reusable = parseYaml(
       read(repoRoot, '.github/workflows/repo-validation.yml'),
@@ -792,24 +803,6 @@ describe('scaffold', () => {
     const tf = read(target, 'infra/github-ruleset/main.tf');
     const contexts = [...tf.matchAll(/context = "([^"]+)"/g)].map((m) => m[1]);
     expect(contexts).toEqual(required);
-    const script = read(target, 'tools/github-ruleset-root.test.sh');
-    for (const context of required) expect(script).toContain(`'${context}'`);
-    expect(script).toBe(renderRulesetRootTest(spec()));
-  });
-
-  it('keeps the ruleset test executable when refreshing it', () => {
-    const target = scratch('fleet-onboard-target');
-    write(
-      target,
-      'tools/github-ruleset-root.test.sh',
-      `# ${MANAGED_MARKER}\nstale\n`,
-    );
-    chmodSync(path.join(target, 'tools/github-ruleset-root.test.sh'), 0o644);
-    scaffold(target);
-    expect(
-      statSync(path.join(target, 'tools/github-ruleset-root.test.sh')).mode &
-        0o111,
-    ).toBe(0o111);
   });
 
   it('reports guarded Husky hooks as unchanged and trusts an existing prepare script', () => {

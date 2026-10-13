@@ -2,17 +2,26 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { acquireFileLock, releaseFileLock, touchLock } from './file-lock';
+
 /**
  * Append-only NDJSON spool the hook process writes to and the detached
  * flusher drains (docs/hooks-telemetry-design.md §4.1 step 6). The hook
  * never touches the network itself, so a slow or offline console can only
  * ever delay a doc update, never block the agent.
+ *
+ * Two files: hooks append to `events.ndjson`; a drain atomically renames it
+ * to `events.pending.ndjson`, which only the lock-holding drainer touches.
+ * Appends that land during a drain therefore start a fresh live file and
+ * are never lost or re-sent, and leftovers from an interrupted drain are
+ * processed first next time, preserving order.
  */
 export const SPOOL_SUBDIRECTORY = 'spool';
 export const SPOOL_FILE = 'events.ndjson';
+export const SPOOL_PENDING_FILE = 'events.pending.ndjson';
 export const SPOOL_LOCK_FILE = 'events.lock';
 export const SPOOL_MAX_BYTES = 5 * 1024 * 1024;
-const LOCK_STALE_MS = 60_000;
+export const SPOOL_LOCK_STALE_MS = 5 * 60_000;
 
 export function spoolPath(stateDirectory: string): string {
   return path.join(stateDirectory, SPOOL_SUBDIRECTORY, SPOOL_FILE);
@@ -32,15 +41,22 @@ function writeLinesAtomically(
   filePath: string,
   lines: readonly string[],
 ): void {
+  if (lines.length === 0) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // Already absent.
+    }
+    return;
+  }
   const temporaryPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-  const body = lines.length === 0 ? '' : `${lines.join('\n')}\n`;
-  fs.writeFileSync(temporaryPath, body, { mode: 0o600 });
+  fs.writeFileSync(temporaryPath, `${lines.join('\n')}\n`, { mode: 0o600 });
   fs.renameSync(temporaryPath, filePath);
 }
 
-/** Appends one event, dropping the oldest lines first when the file would
- * exceed `maxBytes`. A dropped event only delays a doc update: the next
- * event for that session carries the full summary again. */
+/** Appends one event, dropping the oldest lines first when the live file
+ * would exceed `maxBytes`. A dropped event only delays a doc update: the
+ * next event for that session carries the full summary again. */
 export function appendToSpool(
   filePath: string,
   event: unknown,
@@ -75,36 +91,14 @@ export interface SpoolDrainResult {
   readonly locked: boolean;
   readonly sent: number;
   readonly dropped: number;
+  /** Events still waiting (pending leftovers plus the live file). */
   readonly remaining: number;
-}
-
-function acquireLock(lockPath: string, now: number): boolean {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(lockPath, String(process.pid), {
-        flag: 'wx',
-        mode: 0o600,
-      });
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return false;
-      try {
-        const age = now - fs.statSync(lockPath).mtimeMs;
-        if (age < LOCK_STALE_MS) return false;
-        fs.unlinkSync(lockPath);
-      } catch {
-        return false;
-      }
-    }
-  }
-  return false;
 }
 
 /**
  * Sends spooled events oldest-first, at most `maxEvents` per drain, and
- * stops at the first `retry` so ordering per session is preserved. One
- * flusher at a time per spool via an `O_EXCL` lock file that is treated as
- * stale after a minute (a flusher killed mid-drain must not wedge the spool).
+ * stops at the first `retry` so per-session ordering is preserved. One
+ * drainer at a time per spool.
  */
 export async function drainSpool(
   filePath: string,
@@ -112,50 +106,68 @@ export async function drainSpool(
   maxEvents = 20,
   now: () => number = Date.now,
 ): Promise<SpoolDrainResult> {
-  const lockPath = path.join(path.dirname(filePath), SPOOL_LOCK_FILE);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  if (!acquireLock(lockPath, now())) {
+  const directory = path.dirname(filePath);
+  const lockPath = path.join(directory, SPOOL_LOCK_FILE);
+  const pendingPath = path.join(directory, SPOOL_PENDING_FILE);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const locked = await acquireFileLock(lockPath, {
+    waitMs: 0,
+    staleMs: SPOOL_LOCK_STALE_MS,
+    now,
+  });
+  if (!locked) {
     return {
       locked: true,
       sent: 0,
       dropped: 0,
-      remaining: readLines(filePath).length,
+      remaining: readLines(pendingPath).length + readLines(filePath).length,
     };
   }
   try {
-    const lines = readLines(filePath);
     let sent = 0;
     let dropped = 0;
-    let index = 0;
-    while (index < lines.length && sent + dropped < maxEvents) {
-      let event: unknown;
-      try {
-        event = JSON.parse(lines[index]);
-      } catch {
-        dropped++;
-        index++;
-        continue;
+    let stopped = false;
+    for (let round = 0; round < 2 && !stopped; round++) {
+      if (!fs.existsSync(pendingPath)) {
+        // Take ownership of everything appended so far; hooks keep writing
+        // to a fresh live file from here on.
+        try {
+          fs.renameSync(filePath, pendingPath);
+        } catch {
+          break;
+        }
       }
-      const outcome = await send(event);
-      if (outcome === 'retry') break;
-      if (outcome === 'sent') sent++;
-      else dropped++;
-      index++;
+      const lines = readLines(pendingPath);
+      let index = 0;
+      while (index < lines.length && sent + dropped < maxEvents) {
+        let event: unknown;
+        try {
+          event = JSON.parse(lines[index]);
+        } catch {
+          dropped++;
+          index++;
+          continue;
+        }
+        const outcome = await send(event);
+        touchLock(lockPath);
+        if (outcome === 'retry') {
+          stopped = true;
+          break;
+        }
+        if (outcome === 'sent') sent++;
+        else dropped++;
+        index++;
+      }
+      writeLinesAtomically(pendingPath, lines.slice(index));
+      if (index < lines.length) stopped = true;
     }
-    // Re-read so events appended during the drain are kept, then remove
-    // exactly the prefix this drain consumed.
-    const current = readLines(filePath);
-    const consumed = lines.slice(0, index);
-    const remaining = current.slice(
-      consumed.every((line, i) => current[i] === line) ? consumed.length : 0,
-    );
-    writeLinesAtomically(filePath, remaining);
-    return { locked: false, sent, dropped, remaining: remaining.length };
+    return {
+      locked: false,
+      sent,
+      dropped,
+      remaining: readLines(pendingPath).length + readLines(filePath).length,
+    };
   } finally {
-    try {
-      fs.unlinkSync(lockPath);
-    } catch {
-      // Lock already removed as stale by a later flusher.
-    }
+    releaseFileLock(lockPath);
   }
 }

@@ -63,8 +63,8 @@ ARG TERRAFORM_VERSION=1.16.5
 # --platform=$BUILDPLATFORM pins this stage to the machine doing the
 # building instead of letting it be rebuilt once per *target* platform.
 # Everything it produces -- sidecar.cjs and lcars-session-title.cjs (both
-# JavaScript bundles) and the job-daemon.sh/sidecar-lifecycle.sh shell
-# scripts -- is architecture-independent, so the arm64 rebuild recomputed a
+# JavaScript bundles) and the sidecar-lifecycle.sh shell script -- is
+# architecture-independent, so the arm64 rebuild recomputed a
 # byte-identical artifact while running the whole `pnpm install` + nx
 # dependency chain under QEMU emulation.
 #
@@ -123,7 +123,8 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 # disk audit is the reason to default to not adding one anyway when
 # combining is this cheap).
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
-    ./tools/nx session-title-cli @agent-lcars/telemetry-watcher
+    ./tools/nx session-title-cli @agent-lcars/telemetry-watcher && \
+    ./tools/nx hook-flush-cli @agent-lcars/telemetry-watcher
 
 # Action archives are immutable repository tarballs, never extracted or executed
 # during preparation. Download them on the existing builder-platform stage;
@@ -377,8 +378,32 @@ ENV TF_PLUGIN_CACHE_DIR=/opt/terraform-plugin-cache
 COPY --from=telemetry-watcher-build /repo/infra/terraform/.terraform.lock.hcl /tmp/ci-providers/terraform.lock.hcl
 COPY --from=telemetry-watcher-build /repo/infra/github-ruleset/.terraform.lock.hcl /tmp/ci-providers/github-ruleset.lock.hcl
 COPY cache-terraform-providers.py /usr/local/lib/agent-lcars/cache-terraform-providers.py
+# uv's archive extractor fails under the QEMU emulation that builds this
+# image's linux/arm64 variant (Homelab has no native arm64 builder,
+# docs/buildkit-builder.md): "failed to inspect python/lib/libpython3.14.so:
+# Invalid argument (os error 22)" for every CPython release and uv setting
+# tried, which is why the 3.14.7 pin (#2522) did not help. On arm64, unpack
+# the same python-build-standalone archive with GNU tar into uv's managed
+# layout instead; `uv python find --managed-python 3.14` (asserted below)
+# resolves it exactly as if uv had installed it. The checksum is the
+# release's published SHA256SUMS entry. amd64 builds natively and keeps uv.
+ARG UV_PYTHON_ARM64_ARCHIVE=cpython-3.14.7%2B20260929-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz
+ARG UV_PYTHON_ARM64_SHA256=9b8bd45d06fc3fcdc56f2713a62535fe1c019816461ae87c170dd56184dd3f4d
 RUN test "$(terraform version -json | jq -r .terraform_version)" = "$TERRAFORM_VERSION" && \
-    uv python install 3.14 && \
+    if [ "$TARGETARCH" = arm64 ]; then \
+      archive="$(mktemp)" && unpacked="$(mktemp -d)" && \
+      curl -fsSL --retry 3 -o "$archive" \
+        "https://releases.astral.sh/github/python-build-standalone/releases/download/20260929/$UV_PYTHON_ARM64_ARCHIVE" && \
+      echo "$UV_PYTHON_ARM64_SHA256  $archive" | sha256sum -c - && \
+      tar -xzf "$archive" -C "$unpacked" && \
+      mkdir -p "$UV_PYTHON_INSTALL_DIR/cpython-3.14.7-linux-aarch64-gnu" && \
+      cp -a "$unpacked/python/." "$UV_PYTHON_INSTALL_DIR/cpython-3.14.7-linux-aarch64-gnu/" && \
+      rm -rf "$archive" "$unpacked" && \
+      "$UV_PYTHON_INSTALL_DIR/cpython-3.14.7-linux-aarch64-gnu/bin/python3" --version; \
+    else \
+      uv python install 3.14.7; \
+    fi && \
+    test -x "$(uv python find --managed-python 3.14)" && \
     python3 /usr/local/lib/agent-lcars/cache-terraform-providers.py /tmp/ci-providers/*.lock.hcl && \
     chown -R runner:runner /opt/terraform-plugin-cache /opt/uv-python && \
     rm -rf /tmp/ci-providers
@@ -419,42 +444,30 @@ COPY repo-tools-bins.test.mjs /usr/local/lib/agent-lcars/repo-tools-bins.test.mj
 RUN chmod +r /usr/local/lib/agent-lcars/toolchain-health.sh \
     /usr/local/lib/agent-lcars/verify-image-invariants.sh
 
-# agent-lcars#30: baked-in telemetry sidecar/finalize tool (built above).
-# Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
-# start|finalize — a thin telemetry-specific wrapper (credential/RUN_ID
-# guards, sidecar.cjs argument assembly) baked in alongside the binary
-# itself, so QueueExecutor invokes the telemetry lifecycle directly
-# instead of duplicating that ~30-60 lines of bash inline. That
-# duplication is exactly how members drifted out of sync with agent-lcars
-# for an unknown stretch of time (it was missing the finalize half
-# entirely) — see apps/telemetry-watcher's own runner-config.ts for the
+# agent-lcars#30: baked-in telemetry finalize/resume tool (built above).
+# Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh finalize — a
+# thin telemetry-specific wrapper (credential/RUN_ID guards, sidecar.cjs
+# argument assembly) baked in alongside the binary itself, so QueueExecutor
+# invokes the telemetry lifecycle directly instead of duplicating that bash
+# inline. That duplication is exactly how members drifted out of sync with
+# agent-lcars for an unknown stretch of time (it was missing the finalize
+# half entirely) — see apps/telemetry-watcher's own runner-config.ts for the
 # underlying CLI's flags, and apps/telemetry-watcher/bin/sidecar-lifecycle.sh
-# for the wrapper's own source. No legacy ride-along.cjs fallback here
-# (retired — the agent-lcars#49 rename is old enough that every live image
-# has been rebuilt with the new name since).
-#
-# agent-lcars#1246: the actual process-management mechanics (background +
-# PID-file for start, kill + bounded-wait for stop, never-fail-exit-0)
-# used to live inside sidecar-lifecycle.sh itself. They're now factored out
-# into the generic job-daemon.sh <start|stop> <name>, installed here
-# alongside it with the same ownership/permissions, so a second in-job
-# daemon (agent-lcars#1240's log shipper) can reuse that lifecycle instead
-# of hand-copying it a second time. sidecar-lifecycle.sh calls job-daemon.sh
-# rather than managing its own PID file now — see job-daemon.sh's own
-# header for why its --log defaults to /dev/null (fleet disk headroom).
+# for the wrapper's own source. direct-runner.sh also calls sidecar.cjs's
+# `runner resume` directly. Live mid-run telemetry comes from provider hooks
+# (lcars-session-title.cjs + lcars-hook-flush.cjs below); the polling
+# `runner sidecar` mode and its job-daemon.sh wrapper are retired
+# (docs/hooks-telemetry-design.md, phase 3).
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/dist/apps/telemetry-watcher/sidecar.cjs \
     /usr/local/lib/agent-lcars/sidecar.cjs
 COPY --from=telemetry-watcher-build --chown=runner:runner \
-    /repo/apps/telemetry-watcher/bin/job-daemon.sh \
-    /usr/local/lib/agent-lcars/job-daemon.sh
-COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/apps/telemetry-watcher/bin/sidecar-lifecycle.sh \
     /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
-RUN chmod +x /usr/local/lib/agent-lcars/job-daemon.sh /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+RUN chmod +x /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
 # QueueExecutor's native runtime helpers are baked beside direct-runner.sh.
-# Same fresh-`main`-checkout stage as sidecar.cjs/job-daemon.sh above.
+# Same fresh-`main`-checkout stage as sidecar.cjs/sidecar-lifecycle.sh above.
 # The separate action-archive stage copies only its tarball cache into the
 # final image; native helpers still come from this exact source checkout.
 #
@@ -492,13 +505,18 @@ RUN chmod +x /usr/local/lib/agent-lcars/direct-runner.sh
 # annotation read/write only -- no Firestore/GCS client, unlike sidecar.cjs
 # and finalize's watch-root/adapter code), so its bundle is small: measured
 # at 16 KB from the equivalent host-side build
-# (apps/telemetry-watcher/deploy/install-session-title-cli.sh's own output
+# (apps/telemetry-watcher/bin/install-session-title-cli.sh's own output
 # on this checkout's watcher host), a few hundred bytes to BuildKit's
 # layer/manifest bookkeeping on top of that. Negligible against the
 # per-host disk budget #1246 tightened.
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs \
     /usr/local/lib/agent-lcars/lcars-session-title.cjs
+# The hook flusher bundle: `lcars hook` spawns it from beside the CLI bundle
+# so hook invocations never load the Firestore client.
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/dist/apps/telemetry-watcher-hook-flush/lcars-hook-flush.cjs \
+    /usr/local/lib/agent-lcars/lcars-hook-flush.cjs
 
 # Agent-runtime commands are single-sourced from packages/fleet-tools and
 # installed globally from the same fresh-`main` checkout the telemetry stage
@@ -593,6 +611,9 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/lcars-session.js \
     /home/runner/.config/opencode/lcars-session.js
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/agents/opencode/lcars-telemetry.js \
+    /home/runner/.config/opencode/lcars-telemetry.js
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/context-lifecycle.js \
     /home/runner/.config/opencode/context-lifecycle.js

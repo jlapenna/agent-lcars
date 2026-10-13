@@ -90,6 +90,9 @@ describe('LogicalWorkCard', () => {
     renderCard();
     expect(
       screen.getByRole('link', { name: '#42 Fix the thing' }),
+    ).toHaveAttribute('href', '/task/supersprinklesracing/sprinkles/42');
+    expect(
+      screen.getByRole('link', { name: 'View on GitHub ↗' }),
     ).toHaveAttribute('href', work.url);
     expect(screen.getByText('authoritative state rev 3')).toBeInTheDocument();
   });

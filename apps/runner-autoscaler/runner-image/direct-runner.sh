@@ -46,6 +46,8 @@ source "${WORKER_ACTIVATION_HELPER:-$RUNTIME_HELPERS_DIR/worker-activation.sh}"
 # shellcheck source=runtime/worker-policy-bootstrap.sh
 source "${WORKER_POLICY_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/worker-policy-bootstrap.sh}"
 CODEX_HOOK_ARGS=()
+# shellcheck source=runtime/hook-telemetry-bootstrap.sh
+source "${HOOK_TELEMETRY_HELPER:-$RUNTIME_HELPERS_DIR/hook-telemetry-bootstrap.sh}"
 # This supervisor observes successful OS spawn, not a bootstrap heartbeat.
 PROVIDER_PROCESS_NODE="${PROVIDER_PROCESS_NODE:-/usr/bin/node}"
 PROVIDER_PROCESS_HELPER="${PROVIDER_PROCESS_HELPER:-$RUNTIME_HELPERS_DIR/provider-process.mjs}"
@@ -485,7 +487,7 @@ RESUME_FLAG=()
 if [ "$PIPELINE" = "claude" ] && [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
   # GOOGLE_APPLICATION_CREDENTIALS and AGENT_TELEMETRY_PROJECT_ID are
   # exported inline exactly as sidecar-lifecycle.sh already does for
-  # `runner sidecar`/`runner finalize` -- the same telemetry-writer
+  # `runner finalize` -- the same telemetry-writer
   # credential and GCS project the transcript was uploaded to/from.
   if ! resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
     AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
@@ -595,12 +597,12 @@ PROMPT
 )"
 fi
 
-# OpenCode and the telemetry sidecar share its SQLite store. On a fresh home,
-# either process can otherwise race schema migration. The published image
-# carries an empty, version-matched store (#2040), so fresh runs can use an
-# empty baseline. Resumes, nonempty/missing stores, and a different CLI keep
-# synchronous migration/listing before the sidecar starts. The baseline lets
-# continuation select only one unambiguous newly-created workspace session.
+# OpenCode's SQLite store needs schema migration on a fresh home. The
+# published image carries an empty, version-matched store (#2040), so fresh
+# runs can use an empty baseline. Resumes, nonempty/missing stores, and a
+# different CLI keep synchronous migration/listing before the agent starts.
+# The baseline lets continuation select only one unambiguous newly-created
+# workspace session.
 OPENCODE_BASELINE_SESSIONS=''
 if [ "$PIPELINE" = "opencode" ]; then
   OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
@@ -664,10 +666,10 @@ if [ "$PIPELINE" = "opencode" ]; then
 fi
 
 if [ "$PIPELINE" = "codex" ]; then
-  # The sidecar starts before the agent invocation so it can emit live state.
-  # Allocate the per-run tmpfs home first, then pass its eventual session root
-  # to both sidecar phases. Auth is restored below, after this setup but before
-  # Codex executes; nothing from a previous run is visible in this directory.
+  # Allocate the per-run tmpfs home before hook telemetry installs into it;
+  # finalize later archives its session root. Auth is restored below, after
+  # this setup but before Codex executes; nothing from a previous run is
+  # visible in this directory.
   : "${LCARS_CODEX_VOLATILE_DIR:?LCARS_CODEX_VOLATILE_DIR is required for Codex runs}"
   if [ ! -d "$LCARS_CODEX_VOLATILE_DIR" ]; then
     echo "FATAL: Codex volatile directory is missing" >&2
@@ -686,11 +688,26 @@ if [ "$PIPELINE" = "codex" ]; then
   worker_policy_bootstrap "$CODEX_HOME/hooks.json"
 fi
 
-WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
-  RUN_ID="$LCARS_RUN_ID" \
-  INTENT_ID="$INTENT_ID" \
-  CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
-  "$SIDECAR_LIFECYCLE" start
+# Every pipeline reports live telemetry through its provider's own hooks
+# (docs/hooks-telemetry-design.md, phase 3). The hooks install after the
+# provider's own config (worker policy included) exists. A failed install
+# only loses live telemetry: there is no polling fallback, and the
+# `"$SIDECAR_LIFECYCLE" finalize` pass below still writes the authoritative
+# final session doc either way. Telemetry never fails a dispatch.
+HOOK_TELEMETRY_STATE=pending
+
+activate_hook_telemetry() {
+  [ "$HOOK_TELEMETRY_STATE" = pending ] || return 0
+  if hook_telemetry_bootstrap; then
+    HOOK_TELEMETRY_STATE=on
+  else
+    echo "::warning::hook telemetry install failed; this run has no live telemetry (finalize still records the session)"
+    HOOK_TELEMETRY_STATE=off
+  fi
+}
+if [ "$PIPELINE" = codex ]; then
+  activate_hook_telemetry
+fi
 
 # Best-effort lease renewal for the duration of the agent's own run. A
 # claimed run's lease is minted for a fixed window (2h -- see
@@ -735,6 +752,7 @@ if [ "$PIPELINE" = "claude" ]; then
   fi
   export LCARS_WORKER_SESSION_ID="$CLAUDE_WORKER_SESSION"
   worker_policy_bootstrap "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  activate_hook_telemetry
   # The Claude CLI reads its long-lived subscription credential straight
   # from its own process environment. The autoscaler bind-mounts the value
   # as a file only for Claude runs, keeping it out of docker inspect.
@@ -990,6 +1008,19 @@ CURLCFG
     AGENT_EXIT=1
   fi
 
+  # #2537: a provider that stops on structured stream events never writes its
+  # --output-last-message file, so the completion classifier below would read
+  # an empty message and report a generic agent failure for what is really a
+  # provider-availability stop. Retain a bounded copy of the provider's own
+  # failure events, outside $CODEX_RUNTIME_DIR for the same reason
+  # CODEX_LAST_MESSAGE_FILE is (cleanup_codex_material runs first). An
+  # credential fence already owns this round's diagnosis, so it is not
+  # re-reported as a capacity stop.
+  if [ -z "$CODEX_AUTH_FAILURE" ] && [ -s "$CODEX_FAILURE_MESSAGES" ]; then
+    PROVIDER_FAILURE_FILE="$RUNNER_TEMP/provider-failures.txt"
+    tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
+  fi
+
   if [ ! -s "$CODEX_AUTH_FILE" ]; then
     echo "FATAL: Codex auth.json is missing or empty after the run; refusing to persist" >&2
     AGENT_EXIT=1
@@ -1087,6 +1118,7 @@ else
   mv "$opencode_proxy_config" "$OPENCODE_CONFIG_DIR/opencode.json"
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
   worker_policy_bootstrap "$OPENCODE_CONFIG"
+  activate_hook_telemetry
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
   # leave the surrounding direct runner alive to finalize telemetry and
@@ -1185,6 +1217,10 @@ fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
 
+if [ "$HOOK_TELEMETRY_STATE" = on ]; then
+  hook_telemetry_drain
+fi
+
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \
@@ -1250,11 +1286,29 @@ payload_file="$RUNNER_TEMP/complete-payload.json"
 # pipeline today; no message captured) is not an error -- the round still
 # has a real outcome, it just renders without a turn.
 AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || true)"
+# The provider's own structured failure events, when it emitted any. These are
+# the only honest provider cause for a round that stopped before its final
+# message (#2537); they are never task or tool output, so quoted text in a
+# transcript cannot forge them.
+PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
 # Capacity exhaustion is a provider failure, never a request for a human
 # task decision. Keep this narrow and only classify unsuccessful outcomes.
-if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]] &&
-  [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]]; then
-  OUTCOME=provider-limit
+# A published deliverable has already settled the outcome above, so work the
+# agent finished and pushed is never reclassified.
+if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]]; then
+  if [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]] ||
+    [[ "$PROVIDER_FAILURES" == *"You've hit your weekly limit"* ]]; then
+    OUTCOME=provider-limit
+  elif [[ "$PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
+    # Distinct from the weekly quota window: the control plane holds this
+    # provider for one bounded probe instead of a reported reset, and only an
+    # already-authorized fallback policy may create a cross-provider successor.
+    OUTCOME=provider-capacity
+    if [[ "$AGENT_MESSAGE" != *'model is at capacity'* ]]; then
+      AGENT_MESSAGE="Selected model is at capacity. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
+    fi
+    AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
+  fi
 fi
 if worker_control_failed; then
   case "$OUTCOME" in

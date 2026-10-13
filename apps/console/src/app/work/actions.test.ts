@@ -111,6 +111,27 @@ beforeEach(() => {
 });
 
 describe('createItemWithEvidence', () => {
+  it.each(['urgent', 'background', undefined])(
+    'preserves evidence priority %s with a normal default',
+    async (priority) => {
+      await createItemWithEvidence(form({ ...intent, priority }));
+      expect(mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          spec: expect.objectContaining({ priority: priority ?? 'normal' }),
+        }),
+      );
+    },
+  );
+
+  it('rejects unknown priority before evidence storage or native creation', async () => {
+    expect(
+      (
+        await createItemWithEvidence(form({ ...intent, priority: 'immediate' }))
+      )[0],
+    ).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mocks.createLifecycle).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
   it('rejects malformed or unauthorized input before image or storage work', async () => {
     expect((await createItemWithEvidence(form(null)))[0]).toMatchObject({
       code: 'BAD_REQUEST',

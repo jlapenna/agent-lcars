@@ -435,9 +435,7 @@ export function ActionItemCard({
               </Text>
             )}
             <Anchor
-              href={item.url}
-              target="_blank"
-              rel="noreferrer"
+              href={`/task/${item.repo.owner}/${item.repo.name}/${item.number}`}
               fw={600}
               c="inherit"
               className={workspace ? 'queue-detail-title' : undefined}
@@ -559,7 +557,7 @@ export function ActionItemCard({
                 c="dimmed"
                 inherit
               >
-                part of #{item.parentNumber}
+                part of #{item.parentNumber} on GitHub
               </Anchor>
             </>
           )}
@@ -632,7 +630,7 @@ export function ActionItemCard({
                   c="red"
                   inherit
                 >
-                  {check.name}
+                  {check.name} on GitHub
                 </Anchor>
               </span>
             ))}
@@ -813,7 +811,7 @@ export function ActionItemCard({
               variant="light"
               className={workspace ? 'queue-primary-action' : undefined}
             >
-              Open failing check ↗
+              Open failing check on GitHub ↗
             </Button>
           )}
           {!replyOpen && (

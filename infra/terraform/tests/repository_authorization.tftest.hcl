@@ -53,6 +53,15 @@ run "renders_exact_repository_authorization" {
   }
 
   override_resource {
+    target          = google_service_account.work_reader
+    override_during = plan
+    values = {
+      email = "work-reader@agent-lcars.iam.gserviceaccount.com"
+      name  = "projects/agent-lcars/serviceAccounts/work-reader@agent-lcars.iam.gserviceaccount.com"
+    }
+  }
+
+  override_resource {
     target          = google_project_iam_custom_role.quick_task_evidence_runtime
     override_during = plan
     values = {
@@ -123,6 +132,24 @@ run "renders_exact_repository_authorization" {
   assert {
     condition     = google_service_account_iam_member.fleet_writer_impersonation["jlapenna/homelab"].role == "roles/iam.workloadIdentityUser" && google_service_account_iam_member.homelab_codex_agent_impersonation.role == "roles/iam.workloadIdentityUser"
     error_message = "Both Homelab grants must use roles/iam.workloadIdentityUser."
+  }
+
+  assert {
+    condition     = google_firestore_index.sessions_source_last_activity.database == "(default)" && google_firestore_index.sessions_source_last_activity.collection == "sessions" && [for field in google_firestore_index.sessions_source_last_activity.fields : "${field.field_path}:${field.order}"] == ["source:ASCENDING", "lastActivityAt:ASCENDING"]
+    error_message = "The owner query's CLI-session listing needs the sessions source+lastActivityAt composite index."
+  }
+
+  assert {
+    condition     = google_firestore_index.sessions_source_repo_last_activity.database == "(default)" && google_firestore_index.sessions_source_repo_last_activity.collection == "sessions" && [for field in google_firestore_index.sessions_source_repo_last_activity.fields : "${field.field_path}:${field.order}"] == ["source:ASCENDING", "repo.owner:ASCENDING", "repo.name:ASCENDING", "lastActivityAt:ASCENDING"]
+    error_message = "The owner query's per-repository CLI-session listing needs the sessions source+repo+lastActivityAt composite index."
+  }
+
+  # #2502: interactive sessions ask Console who owns an issue through a
+  # dedicated reader identity. Only the maintainer's Google account may mint
+  # its tokens, and nothing here may widen that to another principal.
+  assert {
+    condition     = google_service_account.work_reader.account_id == "work-reader" && google_service_account_iam_member.work_reader_token_creator.service_account_id == google_service_account.work_reader.name && google_service_account_iam_member.work_reader_token_creator.role == "roles/iam.serviceAccountTokenCreator" && google_service_account_iam_member.work_reader_token_creator.member == "user:jlapenna@gmail.com"
+    error_message = "Only the maintainer's Google account may impersonate the read-only work-reader identity."
   }
 
   # #1350: one shared, READ-ONLY Claude subscription token. The absence of a

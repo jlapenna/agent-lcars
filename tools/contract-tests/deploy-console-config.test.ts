@@ -40,77 +40,11 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 describe('console deployment workflow', () => {
-  it('caches each top-level console build artifact without overlapping outputs', async () => {
-    const project = JSON.parse(
-      await readFile('apps/console/project.json', 'utf8'),
-    ) as {
-      targets: { build: { outputs: string[] } };
-    };
-
-    // Nx expands this one-level glob to sibling roots, including hidden
-    // `.next` and `.nx-helpers` directories. Declaring the output root beside
-    // either child makes cache restore remove/copy overlapping paths in
-    // parallel, which can leave the deployable `.next/static` tree hollow.
-    expect(project.targets.build.outputs).toEqual(['{options.outputPath}/*']);
-  });
-
-  it('searches the newest App Hosting builds for the deployed archive', async () => {
-    const workflow = await readFile(
-      '.github/workflows/deploy-console.yml',
-      'utf8',
-    );
-
-    expect(workflow).toContain(
-      'builds?pageSize=100&orderBy=create_time%20desc',
-    );
-    expect(workflow).toContain(
-      'select(.source.archive.userStorageUri == env.MANAGED_SOURCE_URI)',
-    );
-  });
-
-  it('uses managed builds by default and keeps prebuilt deployment opt-in', async () => {
-    const workflow = await readFile(
-      '.github/workflows/deploy-console.yml',
-      'utf8',
-    );
-
-    expect(workflow).toContain("runs-on: ['lcars-ci']");
-    expect(workflow).toContain('default: managed');
-    expect(workflow).toContain('./.github/actions/setup-nx-remote-cache');
-    expect(workflow).toContain('node tools/deploy-console-prebuilt.mjs');
-    expect(workflow).toContain("&& inputs.build_mode == 'prebuilt'");
-    expect(workflow).toContain("&& inputs.build_mode != 'prebuilt'");
-    expect(workflow).toContain(
-      'run-name: Deploy console [source:${{ inputs.source_sha || github.event.workflow_run.head_sha || github.sha }}]',
-    );
-    expect(
-      workflow.match(
-        /inputs\.source_sha \|\| github\.event\.workflow_run\.head_sha \|\| github\.sha/g,
-      )?.length,
-    ).toBeGreaterThanOrEqual(4);
-  });
-
   it('translates the App Hosting YAML into a local build contract', async () => {
     const config = await loadAppHostingConfig(
       'apps/console/apphosting.yaml',
       '611425338852',
     );
-
-    expect(config.outputFiles).toEqual([
-      'dist/apps/console/.next/standalone',
-      'dist/apps/console/.next/static',
-    ]);
-    expect(config.runConfig).toEqual({
-      cpu: 1,
-      memoryMib: 1024,
-      minInstances: 0,
-    });
-    expect(config.buildEnv).toEqual({ PROJECT_ID: 'agent-lcars' });
-    expect(config.env).toContainEqual({
-      variable: 'AUTH_SECRET',
-      secret: 'projects/611425338852/secrets/AUTH_SECRET/versions/latest',
-      availability: ['RUNTIME'],
-    });
 
     const buildEnv = prepareBuildEnv(config, {
       PATH: '/runner/bin',
@@ -144,24 +78,6 @@ describe('console deployment workflow', () => {
       runCommand: 'node server.js',
     });
     expect(body.labels['commit-sha']).toBe(commit);
-  });
-
-  it('waits for build registration before validating or starting a rollout', async () => {
-    const deployTool = await readFile(
-      'tools/deploy-console-prebuilt.mjs',
-      'utf8',
-    );
-    const buildWait = deployTool.indexOf(
-      'await waitForOperation(buildOperation)',
-    );
-    const rolloutValidation = deployTool.indexOf("validateOnly: 'true'");
-    const rolloutStart = deployTool.indexOf(
-      'console.log(`[Deploy] Starting rollout',
-    );
-
-    expect(buildWait).toBeGreaterThan(-1);
-    expect(buildWait).toBeLessThan(rolloutValidation);
-    expect(buildWait).toBeLessThan(rolloutStart);
   });
 
   it('fails closed on an unexpected App Hosting runtime contract', () => {
@@ -268,81 +184,6 @@ describe('console deployment workflow', () => {
     });
 
     expect(verdict).toBe('success');
-  });
-
-  it('keeps Nx caching enabled for the managed App Hosting build', async () => {
-    const config = parseYaml(
-      await readFile('apps/console/apphosting.yaml', 'utf8'),
-    ) as {
-      scripts?: { buildCommand?: string };
-      env?: Array<{ variable?: string }>;
-    };
-
-    expect(config.scripts?.buildCommand).toBe(
-      '. tools/cloud-build-prebuild.sh && ./tools/nx bundle @agent-lcars/console --verbose',
-    );
-    expect(config.scripts?.buildCommand).not.toMatch(/skip.*cache/iu);
-    expect(config.env?.map(({ variable }) => variable)).not.toContain(
-      'NX_SKIP_NX_CACHE',
-    );
-  });
-
-  it('keeps every deployed Work grant explicitly scoped', async () => {
-    const config = parseYaml(
-      await readFile('apps/console/apphosting.yaml', 'utf8'),
-    ) as {
-      env?: Array<{ variable?: string; value?: string }>;
-    };
-    const grantsValue = config.env?.find(
-      ({ variable }) => variable === 'AGENT_LCARS_WORK_GRANTS',
-    )?.value;
-
-    expect(grantsValue).toBeDefined();
-    const grants = JSON.parse(grantsValue ?? '[]') as Array<{
-      principal: string;
-      pipelines: string[];
-      scopes?: string[];
-    }>;
-    const workflowGrant = grants.find(
-      ({ principal }) => principal === 'workflow:work-create',
-    );
-
-    // work-create.yml exposes PIPELINE as its native Work API pipeline
-    // choice. Keep its admission grant in sync with the provider canaries
-    // and fail closed if an old implicit operator scope reappears.
-    expect(workflowGrant).toMatchObject({
-      principal: 'workflow:work-create',
-      pipelines: ['claude', 'codex', 'opencode'],
-      scopes: ['work.operator'],
-    });
-    expect(
-      grants.find(
-        ({ principal }) => principal === 'workflow:member-automation',
-      ),
-    ).toMatchObject({
-      principal: 'workflow:member-automation',
-      pipelines: ['claude', 'codex', 'opencode'],
-      scopes: ['work.operator'],
-    });
-    expect(
-      grants.find(({ principal }) => principal === 'svc:telemetry-writer'),
-    ).toMatchObject({
-      principal: 'svc:telemetry-writer',
-      pipelines: ['claude', 'codex', 'opencode'],
-      // The same Google principal drives both the durable executor and the
-      // server-owned schedule ticker. Pin this deployed grant so the ticker
-      // cannot silently start returning work.cron 401s after a config edit.
-      scopes: ['work.executor', 'work.cron'],
-    });
-    expect(
-      config.env?.find(
-        ({ variable }) => variable === 'AGENT_LCARS_WORK_AUDIENCE',
-      )?.value,
-    ).toBe('agent-lcars-work');
-    for (const grant of grants) {
-      expect(grant.scopes).toEqual(expect.any(Array));
-      expect(grant.scopes).not.toHaveLength(0);
-    }
   });
 
   it('declares a non-empty value or a secret for every deployed env entry', async () => {

@@ -58,6 +58,7 @@ function fixture() {
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
     sessionDocsForRuns: async () => [],
+    cliSessions: async () => ({ sessions: [], warnings: [] }),
     scheduleStore: new MemoryScheduleStore(),
     grants: () => grants,
     now: () => new Date(NOW),
@@ -107,7 +108,7 @@ describe('provider fallback at the authenticated Work boundary', () => {
     const opted = (await f.store.readActiveRun({ workId: ID }))!;
     expect(opted.providerFallback?.allowedPipelines).toEqual(['codex']);
     expect((await f.store.readTask({ workId: ID }))!.task.work['spec']).toEqual(
-      spec,
+      { ...spec, priority: 'normal' },
     );
     await f.orchestrator.report(opted.runId, {
       ok: false,

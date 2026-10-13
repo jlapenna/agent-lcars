@@ -72,7 +72,12 @@ export function ConsoleNavRail({
           data-active={item.key === current ? '' : undefined}
           aria-current={item.key === current ? 'page' : undefined}
         >
-          {item.label}
+          <small className="lcars-nav-index" aria-hidden="true">
+            {String(
+              CONSOLE_DESTINATIONS.findIndex(({ key }) => key === item.key) + 1,
+            ).padStart(2, '0')}
+          </small>
+          <span className="lcars-nav-label">{item.label}</span>
         </Link>
       ))}
     </nav>

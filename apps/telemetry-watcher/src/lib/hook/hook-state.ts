@@ -19,6 +19,10 @@ export interface HookSessionState {
   readonly seq: number;
   /** When an event was last appended to the spool, ISO. */
   readonly lastShippedAt?: string;
+  /** When the flusher last got a 2xx for one of this session's events, ISO.
+   * This, not `updatedAt`, is what tells the daemon the hook path is really
+   * delivering for the session. */
+  readonly lastDeliveredAt?: string;
   readonly lastKind?: SessionEventKind;
   readonly updatedAt: string;
 }
@@ -63,6 +67,7 @@ export function readHookSessionState(
       return undefined;
     }
     const lastShippedAt = record['lastShippedAt'];
+    const lastDeliveredAt = record['lastDeliveredAt'];
     const lastKind = record['lastKind'];
     return {
       version: 1,
@@ -70,6 +75,7 @@ export function readHookSessionState(
       seq,
       updatedAt,
       ...(typeof lastShippedAt === 'string' && { lastShippedAt }),
+      ...(typeof lastDeliveredAt === 'string' && { lastDeliveredAt }),
       ...(typeof lastKind === 'string' && {
         lastKind: lastKind as SessionEventKind,
       }),
@@ -117,4 +123,67 @@ export function shouldShipEvent(
   if (!state?.lastShippedAt) return true;
   const elapsed = Date.parse(now) - Date.parse(state.lastShippedAt);
   return !Number.isFinite(elapsed) || elapsed >= throttleMs;
+}
+
+/** How recently a hook must have reported a session for the polling daemon
+ * to leave it alone (docs/hooks-telemetry-design.md §4.1 step 8). Twice the
+ * console's 5-minute display tolerance, so a hook client that dies hands
+ * the session back to the daemon before the console shows it as ended. */
+export const HOOK_REPORTED_WINDOW_MS = 10 * 60 * 1000;
+
+/** Whether a hook client reported this session within the window. The
+ * daemon uses this to skip sessions the hook path already covers, so the
+ * two writers never race on one doc during the rollout. */
+export function isHookReported(
+  stateDirectory: string,
+  sessionId: string,
+  now: string,
+  windowMs = HOOK_REPORTED_WINDOW_MS,
+): boolean {
+  const state = readHookSessionState(stateDirectory, sessionId);
+  if (!state?.lastDeliveredAt) return false;
+  const age = Date.parse(now) - Date.parse(state.lastDeliveredAt);
+  return Number.isFinite(age) && age >= 0 && age <= windowMs;
+}
+
+/** Lock file guarding one session's read-modify-write of its state, so two
+ * overlapping async hooks never assign the same `seq`. */
+export function hookSessionLockPath(
+  stateDirectory: string,
+  sessionId: string,
+): string {
+  return path.join(
+    hookSessionStateDirectory(stateDirectory),
+    `${sessionId}.lock`,
+  );
+}
+
+/** Records a successful delivery for the session, keeping every other field. */
+export function markHookSessionDelivered(
+  stateDirectory: string,
+  sessionId: string,
+  now: string,
+): void {
+  const state = readHookSessionState(stateDirectory, sessionId);
+  writeHookSessionState(stateDirectory, {
+    version: 1,
+    sessionId,
+    seq: state?.seq ?? 0,
+    ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
+    ...(state?.lastKind && { lastKind: state.lastKind }),
+    lastDeliveredAt: now,
+    updatedAt: now,
+  });
+}
+
+/**
+ * Written by the runner before `runner finalize` (runtime/hook-telemetry-
+ * bootstrap.sh). A hook that takes its session lock after the fence exists
+ * records nothing, so no late event can follow the authoritative final doc
+ * and reopen an ended session.
+ */
+export const HOOK_FENCE_FILE = 'hook-fence';
+
+export function isHookFenced(stateDirectory: string): boolean {
+  return fs.existsSync(path.join(stateDirectory, HOOK_FENCE_FILE));
 }

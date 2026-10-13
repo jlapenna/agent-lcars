@@ -58,9 +58,6 @@ export const publicPrefixes = [
   // permissive one.) Every neighbouring entry ends in '/' for the same
   // reason.
   '/api/work/v1/',
-  // Bearer-only telemetry ingest for the `lcars hook` client; its own 401
-  // lives in telemetry-ingest.ts, same reasoning as the work API above.
-  '/api/telemetry/v1/',
 ];
 
 export default createAuthProxy({

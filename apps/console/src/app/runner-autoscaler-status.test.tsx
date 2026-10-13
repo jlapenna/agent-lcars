@@ -313,10 +313,9 @@ describe('RunnerAutoscalerStatus', () => {
     expect(screen.getByTestId('arc-lane-lcars-ci')).toHaveTextContent(
       '1 running',
     );
-    expect(screen.getByRole('link', { name: 'lcars-ci' })).toHaveAttribute(
-      'href',
-      lane.registrationUrl,
-    );
+    expect(
+      screen.getByRole('link', { name: 'lcars-ci on GitHub ↗' }),
+    ).toHaveAttribute('href', lane.registrationUrl);
     expect(screen.getByTestId('queue-executor-status')).toHaveTextContent(
       'Direct agent executorreadydraining5 active · 3 max',
     );

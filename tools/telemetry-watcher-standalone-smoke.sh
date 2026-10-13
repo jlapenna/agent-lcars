@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Verify the telemetry-watcher sidecar artifact runs without an ambient
-# node_modules tree. The runner image and the standalone daemon both execute
-# this bundle, so a successful image build alone is not sufficient evidence.
+# node_modules tree. The runner image executes this bundle (runner finalize
+# and resume), so a successful image build alone is not sufficient evidence.
+# The probe below boots the bundle's legacy host-watcher mode, the one
+# credential-free path that loads every inlined dependency.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"

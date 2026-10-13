@@ -13,6 +13,7 @@ import {
 import { decidedRun, isRefusal, runStartDeadlineAt } from './decide';
 import { FirestoreStore } from './firestore-store';
 import { MemoryStore } from './memory-store';
+import type { QueuePriority } from './model';
 import { Orchestrator } from './orchestrator';
 import type { OrchestratorStore } from './store';
 
@@ -164,11 +165,13 @@ function contract(
       store: OrchestratorStore,
       orchestrator: Orchestrator,
       pipeline = 'claude',
+      priority: QueuePriority = 'normal',
     ) {
       const result = await orchestrator.request({
         taskId: { repo: 'example/capacity', issue: ++counter },
         requestId: `request-${counter}`,
         pipeline,
+        priority,
         work: { spec: { title: 'Capacity integration contract' } },
       });
       if (isRefusal(result)) throw new Error(result.reason);
@@ -201,6 +204,112 @@ function contract(
         throw new Error(`Expected claim, got ${result.kind}`);
       return result;
     }
+    it('persists weighted priority turns across protocol instances without consuming a turn on waits or receipt replay', async () => {
+      const { store, protocol, a, orchestrator, setNow } = await fixture(8);
+      const runs = [];
+      for (const [index, priority] of (
+        [
+          'background',
+          'normal',
+          'urgent',
+          'urgent',
+          'urgent',
+          'urgent',
+          'normal',
+        ] as const
+      ).entries()) {
+        setNow(new Date(Date.parse(now) - 60_000 + index * 1000).toISOString());
+        runs.push(await enqueue(store, orchestrator, 'claude', priority));
+      }
+      await protocol.register(a, 'producer-wait', now);
+      const first = await claimed(protocol, a, 'priority-first');
+      expect(first.run.runId).toBe(runs[2]?.runId);
+      // The unplaced receipt blocks a fresh request; neither wait nor replay
+      // may spend the second urgent turn.
+      expect(await claim(protocol, a, 'waiting', 'producer-wait')).toEqual({
+        kind: 'wait',
+        reason: 'capacity',
+      });
+      await bind(protocol, a, first.receipt);
+      expect(await claim(protocol, a, 'priority-first')).toMatchObject({
+        kind: 'recover-owned-secret',
+        receipt: { runId: first.run.runId },
+      });
+      const restarted = new CapacityProtocol(store);
+      const second = await claimed(restarted, a);
+      expect(second.run.runId).toBe(runs[3]?.runId);
+      await bind(protocol, a, second.receipt);
+      const third = await claimed(protocol, a);
+      expect(third.run.runId).toBe(runs[1]?.runId);
+      await bind(protocol, a, third.receipt);
+      const fourth = await claimed(protocol, a);
+      expect(fourth.run.runId).toBe(runs[4]?.runId);
+      await bind(protocol, a, fourth.receipt);
+      const fifth = await claimed(protocol, a);
+      expect(fifth.run.runId).toBe(runs[5]?.runId);
+      await bind(protocol, a, fifth.receipt);
+      const sixth = await claimed(protocol, a);
+      expect(sixth.run.runId).toBe(runs[6]?.runId);
+      await bind(protocol, a, sixth.receipt);
+      const seventh = await claimed(protocol, a);
+      expect(seventh.run.runId).toBe(runs[0]?.runId);
+    });
+
+    it('keeps physical provider fairness and domain ceilings ahead of priority class selection', async () => {
+      const { store, protocol, a, orchestrator, setNow } = await fixture(4);
+      const enqueueAt = async (
+        offset: number,
+        pipeline: string,
+        priority: QueuePriority,
+      ) => {
+        setNow(
+          new Date(Date.parse(now) - 60_000 + offset * 1000).toISOString(),
+        );
+        return enqueue(store, orchestrator, pipeline, priority);
+      };
+      const background = await enqueueAt(0, 'claude', 'background');
+      const codexNormal = await enqueueAt(1, 'codex', 'normal');
+      const claudeUrgent = await enqueueAt(2, 'claude', 'urgent');
+      const codexUrgent = await enqueueAt(3, 'codex', 'urgent');
+      const first = await claimed(protocol, a);
+      expect(first.run.runId).toBe(claudeUrgent.runId);
+      await bind(protocol, a, first.receipt);
+      const second = await claimed(protocol, a);
+      expect(second.run.runId).toBe(codexUrgent.runId);
+      await bind(protocol, a, second.receipt);
+      const third = await claimed(protocol, a);
+      expect(third.run.runId).toBe(background.runId);
+      await bind(protocol, a, third.receipt);
+      expect(await claim(protocol, a)).toEqual({
+        kind: 'wait',
+        reason: 'queue',
+      });
+      expect((await store.readRun(codexNormal.runId))?.queue?.state).toBe(
+        'queued',
+      );
+    });
+
+    it('preserves the capacity FIFO run-ID tie-break for normal work', async () => {
+      const { store, protocol, a, orchestrator } = await fixture(2);
+      const runs = [];
+      for (const repo of ['example/a-a', 'example/a_a']) {
+        const result = await orchestrator.request({
+          taskId: { repo, issue: 1 },
+          requestId: `fifo-${repo}`,
+          pipeline: 'claude',
+          work: { spec: { title: 'Capacity FIFO tie regression' } },
+        });
+        if (isRefusal(result)) throw new Error(result.reason);
+        const run = decidedRun(result);
+        await store.enqueueRun({ runId: run.runId, now });
+        runs.push(run);
+      }
+      const first = await claimed(protocol, a);
+      expect(first.run.runId).toBe(runs[1]?.runId);
+      await bind(protocol, a, first.receipt);
+      expect((await claimed(protocol, a)).run.runId).toBe(runs[0]?.runId);
+    });
+
     async function owner(
       protocol: CapacityProtocol,
       a: CapacityAuthority,
@@ -935,6 +1044,59 @@ function contract(
       });
       expect((await protocol.read(now)).receipts[0]?.runId).toBe(
         result.run.runId,
+      );
+    });
+    it('settles the explicit tied issue IDs 99 and 100 by run-ID order', async () => {
+      const { store, protocol, a, orchestrator } = await fixture();
+      const b = authority('pool-b', 'executor-b');
+      await protocol.configure(b, policy('pool-b'), now);
+      await known(protocol, b);
+      await protocol.register(b, 'producer-b', now);
+      const enqueueIssue = async (issue: number) => {
+        const result = await orchestrator.request({
+          taskId: { repo: 'example/capacity', issue },
+          requestId: `tied-boundary-${issue}`,
+          pipeline: 'codex',
+          work: { spec: { title: 'Tied numeric boundary contract' } },
+        });
+        if (isRefusal(result)) throw new Error(result.reason);
+        const run = decidedRun(result);
+        await store.enqueueRun({ runId: run.runId, now });
+        return run;
+      };
+      // #99 is requested first on purpose: insertion order and numeric order
+      // both name it, so only the run-ID tie-break can settle #100. These
+      // issues are literal, so the shared counter cannot move the boundary.
+      const insertedFirst = await enqueueIssue(99);
+      const insertedSecond = await enqueueIssue(100);
+      expect(insertedFirst.createdAt).toBe(insertedSecond.createdAt);
+      expect(insertedFirst.runId).toBe('example/capacity#99/r1');
+      expect(insertedSecond.runId).toBe('example/capacity#100/r1');
+      const settled = await claimed(protocol, a);
+      expect(settled.run.runId).toBe(insertedSecond.runId);
+      // Negative control: the retired insertion-order assumption settles #99,
+      // which is the lexically larger run ID at a tied timestamp, so it cannot
+      // pass this boundary by coincidence with the run-ID tie-break.
+      expect(
+        [insertedFirst.runId, insertedSecond.runId].sort((left, right) =>
+          left.localeCompare(right),
+        ),
+      ).toEqual([insertedSecond.runId, insertedFirst.runId]);
+      expect(settled.run.runId).not.toBe(insertedFirst.runId);
+      await orchestrator.report(settled.run.runId, { ok: true });
+      expect((await store.readRun(settled.run.runId))?.state).toBe('finished');
+      expect(await claim(protocol, b, undefined, 'producer-b')).toMatchObject({
+        kind: 'wait',
+        reason: 'queue',
+      });
+      const receipts = (await protocol.read(now)).receipts;
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        runId: settled.run.runId,
+        domainId: 'codex-global',
+      });
+      expect((await store.readRun(insertedFirst.runId))?.queue?.state).toBe(
+        'queued',
       );
     });
     it('response-loss replay cannot mint another token/run and missing Secret is explicit', async () => {

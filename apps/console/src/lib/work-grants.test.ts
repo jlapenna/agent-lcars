@@ -1,4 +1,8 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 import {
   grantForPrincipal,
@@ -109,6 +113,65 @@ describe('grant scopes', () => {
       ]),
     );
     expect(grants[0]?.scopes).toEqual(['work.cron']);
+  });
+
+  it('accepts work.reader as its own scope, implying nothing else', () => {
+    const grants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'svc:work-reader',
+          subjects: ['work-reader@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['claude', 'codex', 'opencode'],
+          scopes: ['work.reader'],
+        },
+      ]),
+    );
+    expect(grants[0]?.scopes).toEqual(['work.reader']);
+  });
+
+  it('rejects an unknown scope rather than ignoring it', () => {
+    expect(() =>
+      parseWorkGrants(
+        JSON.stringify([
+          {
+            principal: 'svc:work-reader',
+            subjects: ['work-reader@agent-lcars.iam.gserviceaccount.com'],
+            pipelines: ['claude'],
+            scopes: ['work.read'],
+          },
+        ]),
+      ),
+    ).toThrow();
+  });
+
+  it('commits the work-reader grant with work.reader alone (#2502)', () => {
+    const config = parseYaml(
+      readFileSync(
+        path.join(import.meta.dirname, '../../apphosting.yaml'),
+        'utf8',
+      ),
+    ) as { env: { variable: string; value?: string }[] };
+    const grants = parseWorkGrants(
+      config.env.find((entry) => entry.variable === 'AGENT_LCARS_WORK_GRANTS')
+        ?.value,
+    );
+    const subject = 'work-reader@agent-lcars.iam.gserviceaccount.com';
+    expect(resolvePrincipal(subject, grants)).toMatchObject({
+      principal: 'svc:work-reader',
+      subjects: [subject],
+      scopes: ['work.reader'],
+    });
+    // No other grant names the reader, and no other grant uses its scope.
+    expect(
+      grants.filter((grant) =>
+        grant.subjects.some((s) => s.toLowerCase() === subject),
+      ),
+    ).toHaveLength(1);
+    expect(
+      grants
+        .filter((grant) => grant.scopes.includes('work.reader'))
+        .map((grant) => grant.principal),
+    ).toEqual(['svc:work-reader']);
   });
 
   it('rejects an explicit empty scopes list as a config error', () => {

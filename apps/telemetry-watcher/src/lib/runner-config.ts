@@ -31,8 +31,8 @@ export interface RunnerConfig extends Pick<
   /** Root to discover Codex transcripts under, defaulting to
    * `defaultCodexSessionsDir()` (`~/.codex/sessions`, optionally overridden
    * by `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`). Watched alongside
-   * `claudeProjectsDir` rather than instead of it — see `runner.ts`'s
-   * `startSidecar`, which declares both roots unconditionally. */
+   * `claudeProjectsDir` rather than instead of it — `runnerWatchRoots`
+   * declares both roots unconditionally. */
   codexSessionsDir: string;
   /** Scratch root holding bounded `opencode export` materializations. */
   opencodeExportsDir: string;
@@ -43,7 +43,7 @@ export interface RunnerConfig extends Pick<
    * own `$RUNNER_TEMP`, mirroring Claude's and Codex's own last-message
    * files) and passes it through `sidecar-lifecycle.sh` as
    * `--opencode-last-message-file`. Unset for every other invocation
-   * (`runner sidecar`'s live ticks, and any pipeline other than OpenCode),
+   * (any pipeline other than OpenCode),
    * which is exactly when `captureOpenCodeExports` must skip the write. */
   opencodeLastMessageFile?: string;
   /** LiteLLM-selected physical backend captured by the loopback proxy. */
@@ -61,8 +61,7 @@ export interface RunnerConfig extends Pick<
    * this run ships as `repo`. */
   repo?: { owner: string; name: string };
   /** Session-title/status overlay root (issue #1289), threaded into
-   * `WatcherDaemonOptions.sessionStateDir` by `runner.ts`'s `startSidecar`
-   * and read directly by `finalize.ts`. Always `defaultSessionStateDir()`
+   * read directly by `finalize.ts`. Always `defaultSessionStateDir()`
    * (`~/.local/state/agent-lcars` — `$HOME` is `/home/runner` in the
    * runner image) — the same default the host watcher falls back to (see
    * `config.ts`'s `loadConfig`), so a dispatched agent's `lcars session
@@ -155,8 +154,8 @@ function parseOwnerRepo(
 }
 
 /**
- * Parses the runner-mode sidecar's configuration: its own CLI flags
- * (`argv`, everything after `runner sidecar` on the command line) for
+ * Parses the runner-mode (`runner finalize`) configuration: its own CLI flags
+ * (`argv`, everything after `runner finalize` on the command line) for
  * `runId`/`issueNumber`/`claudeProjectsDir`, layered on top of
  * `loadSharedConfig()`'s environment-driven knobs (heartbeat interval,
  * Firestore target, etc.) — the same non-privacy env vars a host watcher

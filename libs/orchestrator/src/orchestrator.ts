@@ -20,11 +20,13 @@ import {
   renewLease,
   reportResult,
   requestRun,
+  type SchedulerDisruptionEvidence,
   updateTaskWork,
 } from './decide';
 import {
   isLive,
   type ProviderFallbackRequest,
+  type QueuePriority,
   type RequestSource,
   type Run,
   type RunResult,
@@ -87,6 +89,7 @@ export interface RequestInput {
   /** Omitted for arbitrary caller-controlled request IDs. */
   requestSource?: RequestSource;
   pipeline: string;
+  priority?: QueuePriority;
   params?: Record<string, string>;
   work?: WorkPayload;
   /** Constructed by the authenticated admission adapter, not a raw API field. */
@@ -157,6 +160,9 @@ export class Orchestrator {
           requestId,
           requestSource,
           pipeline: input.pipeline,
+          priority:
+            input.priority ??
+            (input.replaceQueuedRunId ? activeRun?.priority : undefined),
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
           ...(input.providerFallback === undefined
@@ -628,13 +634,23 @@ export class Orchestrator {
    * instead of holding its task until the two-hour lease runs out. A run
    * that already settled (the usual case: the worker reported, then exited)
    * is refused and left untouched, so reporting every exit is safe.
+   *
+   * `disruption` is the executor's exact scheduler-preemption attestation, when
+   * it has one; see `executorExitedAndRetry` for what it can and cannot change.
    */
   async executorExited(
     runId: string,
     claimant: ExitClaimant,
+    disruption?: SchedulerDisruptionEvidence,
   ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
-      executorExitedAndRetry({ now: this.clock.now(), task, run, claimant }),
+      executorExitedAndRetry({
+        now: this.clock.now(),
+        task,
+        run,
+        claimant,
+        ...(disruption === undefined ? {} : { disruption }),
+      }),
     );
   }
 

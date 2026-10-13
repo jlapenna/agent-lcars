@@ -1419,6 +1419,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
             title: 'Seed title',
             description: 'Seed body',
             pipeline: 'claude',
+            priority: 'normal',
             target: { repo: 'supersprinklesracing/sprinkles' },
           },
         },

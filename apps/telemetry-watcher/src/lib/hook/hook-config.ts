@@ -3,21 +3,33 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 /**
- * Where the `lcars hook` client finds its own configuration on a
- * workstation. Both files are written by homegit (docs/hooks-telemetry-design.md
- * §4.6); environment variables override them for tests and one-off runs.
+ * Where the `lcars hook` client finds its own configuration on a host. Both
+ * files are written by homegit (docs/hooks-telemetry-design.md §4.6);
+ * environment variables override them for tests and one-off runs.
  */
 export const HOOK_CONFIG_DIRECTORY = path.join('.config', 'agent-lcars');
 export const HOOK_CONFIG_FILE = 'config.json';
-export const HOOK_TELEMETRY_ENV_FILE = 'telemetry.env';
+/** The `telemetry-writer` service-account key, mode 0600. */
+export const HOOK_WRITER_KEY_FILE = 'writer-key.json';
+export const DEFAULT_TELEMETRY_PROJECT_ID = 'agent-lcars';
+
+/** How the flusher authenticates to the telemetry store. */
+export interface HookWriterCredentials {
+  readonly projectId: string;
+  /** Service-account key; absent means Application Default Credentials. */
+  readonly credentials?: { client_email: string; private_key: string };
+  /** A Google credentials file of any supported type (the runner's
+   *  short-lived telemetry-writer file), passed only to the Firestore client
+   *  so it never becomes ambient credentials for the agent. */
+  readonly credentialsFile?: string;
+  readonly emulatorHost?: string;
+}
 
 export interface HookClientConfig {
   /** `owner/name` allowlist patterns, see `matchesRepoAllowlist`. */
   readonly repos: readonly string[];
-  /** Console origin the flusher posts to. */
-  readonly origin: string;
-  /** Bearer token for the ingest route; absent means "spool only". */
-  readonly token?: string;
+  /** Where the flusher writes; absent means "spool only". */
+  readonly writer?: HookWriterCredentials;
   /** Host label recorded on each event. */
   readonly host: string;
   /** Present on a QueueExecutor runner: the dispatched run this session
@@ -63,29 +75,6 @@ function parseRepos(raw: string | undefined): string[] {
   }
 }
 
-/** `KEY=VALUE` lines, `#` comments; the same shape homegit writes for
- * `~/.config/opencode/.env`. */
-export function parseEnvFile(raw: string | undefined): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (!raw) return result;
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    result[key] = value;
-  }
-  return result;
-}
-
 function parseRepoSlug(
   raw: string | undefined,
 ): { owner: string; name: string } | undefined {
@@ -105,20 +94,15 @@ export function loadHookClientConfig(
   const fileRepos = parseRepos(
     readOptional(readFile, path.join(configDir, HOOK_CONFIG_FILE)),
   );
-  const fileEnv = parseEnvFile(
-    readOptional(readFile, path.join(configDir, HOOK_TELEMETRY_ENV_FILE)),
-  );
   const envRepos = env['LCARS_TELEMETRY_REPOS']
     ?.split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
-  const token =
-    env['LCARS_TELEMETRY_TOKEN'] ?? fileEnv['LCARS_TELEMETRY_TOKEN'];
   const runId = env['LCARS_RUN_ID'];
   const runnerRepo = parseRepoSlug(
     env['LCARS_REPO'] ?? env['GITHUB_REPOSITORY'],
   );
-  const issueNumber = Number(env['NUM']);
+  const issueNumber = Number(env['LCARS_ISSUE_NUMBER'] ?? env['NUM']);
   const runner =
     runId && runnerRepo
       ? {
@@ -129,14 +113,84 @@ export function loadHookClientConfig(
             issueNumber > 0 && { issueNumber }),
         }
       : undefined;
+  const writer = resolveWriter(env, readFile, configDir, runner !== undefined);
   return {
     repos: envRepos && envRepos.length > 0 ? envRepos : fileRepos,
-    origin:
-      env['LCARS_URL'] ?? fileEnv['LCARS_URL'] ?? 'https://lcars.jlapenna.net',
-    ...(token && { token }),
+    ...(writer && { writer }),
     host:
       env['AGENT_TELEMETRY_HOST'] ??
       (dependencies.hostname ?? os.hostname)().split('.')[0],
     ...(runner && { runner }),
   };
+}
+
+function parseKey(
+  raw: string | undefined,
+):
+  | { projectId?: string; client_email: string; private_key: string }
+  | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const clientEmail = parsed['client_email'];
+    const privateKey = parsed['private_key'];
+    if (typeof clientEmail !== 'string' || typeof privateKey !== 'string') {
+      return undefined;
+    }
+    const projectId = parsed['project_id'];
+    return {
+      client_email: clientEmail,
+      private_key: privateKey,
+      ...(typeof projectId === 'string' && { projectId }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Writer credentials, in order: the emulator; a key from
+ *  `AGENT_TELEMETRY_WRITER_KEY_JSON`; the key file homegit installs; and on
+ *  a runner, the telemetry-writer credentials file named by
+ *  `LCARS_TELEMETRY_CREDENTIALS_FILE` (preferred: the agent never sees it as
+ *  ambient credentials) or `GOOGLE_APPLICATION_CREDENTIALS`. */
+function resolveWriter(
+  env: NodeJS.ProcessEnv,
+  readFile: (filePath: string) => string,
+  configDir: string,
+  isRunner: boolean,
+): HookWriterCredentials | undefined {
+  const configuredProject = env['AGENT_TELEMETRY_PROJECT_ID'];
+  const emulatorHost = env['FIRESTORE_EMULATOR_HOST'];
+  if (emulatorHost) {
+    return {
+      projectId: configuredProject ?? DEFAULT_TELEMETRY_PROJECT_ID,
+      emulatorHost,
+    };
+  }
+  const key =
+    parseKey(env['AGENT_TELEMETRY_WRITER_KEY_JSON']) ??
+    parseKey(
+      readOptional(readFile, path.join(configDir, HOOK_WRITER_KEY_FILE)),
+    );
+  if (key) {
+    return {
+      projectId:
+        configuredProject ?? key.projectId ?? DEFAULT_TELEMETRY_PROJECT_ID,
+      credentials: {
+        client_email: key.client_email,
+        private_key: key.private_key,
+      },
+    };
+  }
+  const credentialsFile = env['LCARS_TELEMETRY_CREDENTIALS_FILE']?.trim();
+  if (isRunner && credentialsFile) {
+    return {
+      projectId: configuredProject ?? DEFAULT_TELEMETRY_PROJECT_ID,
+      credentialsFile,
+    };
+  }
+  if (isRunner && env['GOOGLE_APPLICATION_CREDENTIALS']) {
+    return { projectId: configuredProject ?? DEFAULT_TELEMETRY_PROJECT_ID };
+  }
+  return undefined;
 }

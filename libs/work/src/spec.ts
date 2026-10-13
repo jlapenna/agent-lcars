@@ -1,4 +1,7 @@
-import { PIPELINE_CONTRACTS } from '@agent-lcars/dispatch-contracts';
+import {
+  PIPELINE_CONTRACTS,
+  QUEUE_PRIORITIES,
+} from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 /**
@@ -33,6 +36,8 @@ export const workSpecSchema = z
     description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
     /** Required: invoking a pipeline is a granted capability. */
     pipeline: z.enum(PIPELINES),
+    /** Every operator may select priority; absence preserves historical FIFO. */
+    priority: z.enum(QUEUE_PRIORITIES).default('normal'),
     fallbackPipelines: fallbackPipelinesSchema.optional(),
     target: workTargetSchema,
   })
@@ -40,7 +45,7 @@ export const workSpecSchema = z
     path: ['fallbackPipelines'],
     message: 'Fallback pipelines must differ from the requested pipeline',
   });
-export type WorkSpec = z.infer<typeof workSpecSchema>;
+export type WorkSpec = z.input<typeof workSpecSchema>;
 
 /** The closed set of delivery channels a work item's origin may name.
  *  Exported so `work-grants.ts`'s optional per-grant `channel` is checked

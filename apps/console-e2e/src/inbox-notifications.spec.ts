@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 import { usePopulatedFixtures } from './seed';
 import {
@@ -8,6 +8,26 @@ import {
 
 useE2eAdminBeforeEach();
 usePopulatedFixtures();
+
+/** The opt-in lives under Preferences in the console menu; delivery runs
+ * while the Inbox page is open. */
+async function openPreferences(page: Page) {
+  // Open the menu once the Inbox's delivery watch is live (hydrated, not just
+  // streamed); the menu-before-Inbox race is pinned by the unit tests.
+  // A streamed handoff can briefly hold two copies of the marker.
+  await expect(
+    page
+      .locator('[data-testid="inbox-notifications-watch"][data-active]')
+      .first(),
+  ).toBeAttached();
+  await page
+    .locator('button[aria-label="More console options"]:visible')
+    .first()
+    .click();
+  const control = page.getByTestId('inbox-notifications');
+  await expect(control).toBeVisible();
+  return control;
+}
 
 /** Actual authenticated RSC/GET read, fake browser delivery. Never send
  * OS notifications from CI or mint a real notification subscription. */
@@ -48,7 +68,7 @@ for (const width of [390, 768, 1280]) {
       });
     });
     await page.goto('/inbox');
-    const control = page.getByTestId('inbox-notifications');
+    let control = await openPreferences(page);
     const counters = () =>
       page.evaluate(
         () =>
@@ -67,15 +87,32 @@ for (const width of [390, 768, 1280]) {
       registered: 0,
       delivered: 0,
     });
+    // A temporary read outage must not undo the user's browser opt-in.
+    await page.route('**/api/inbox-notifications', (route) =>
+      route.fulfill({ status: 503, body: '{}' }),
+    );
     await control
       .getByRole('button', { name: 'Enable Inbox notifications' })
       .click();
     await expect(control.getByRole('status')).toHaveText(
-      'Watching for new human decisions',
+      'Authorization or data unavailable — notifications paused',
     );
     expect(await counters()).toEqual({
       permission: 1,
       registered: 1,
+      delivered: 0,
+    });
+    await page.unroute('**/api/inbox-notifications');
+    await page.reload();
+    control = await openPreferences(page);
+    await expect(control.getByRole('status')).toHaveText(
+      'Watching for new human decisions',
+    );
+    // Consent survives a new document without asking permission again or
+    // registering the worker again, and recovery never replays the backlog.
+    expect(await counters()).toEqual({
+      permission: 0,
+      registered: 0,
       delivered: 0,
     });
     const button = control.getByRole('button', {

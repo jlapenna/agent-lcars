@@ -263,6 +263,40 @@ test.describe('overlays inherit the LCARS theme', () => {
     await expect(dialog).toBeHidden();
   });
 
+  test('New work persists urgent priority and resets the next draft to normal', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'New work' }).click();
+    const dialog = page.getByRole('dialog');
+    const priority = dialog.getByRole('combobox', { name: 'Priority' });
+    await expect(priority).toHaveValue('normal');
+    await priority.selectOption('urgent');
+    await dialog.getByLabel('Description').fill('Verify urgent Work priority');
+    await dialog.getByRole('button', { name: 'Create work item' }).click();
+    const receipt = page.getByRole('link', {
+      name: /^Work item created as work:/,
+    });
+    await expect(receipt).toBeVisible();
+    const href = await receipt.getAttribute('href');
+    expect(href).toMatch(/^\/work\/[0-9A-HJKMNP-TV-Z]{26}$/u);
+    // Use the browser's authenticated request path: page.route's E2E
+    // identity adapter does not apply to APIRequestContext requests.
+    const read = await page.evaluate(async (itemId) => {
+      const response = await fetch(`/api/work/v1/items/${itemId}`);
+      return { status: response.status, item: await response.json() };
+    }, href!.split('/').at(-1));
+    expect(read.status).toBe(200);
+    const result = read.item;
+    expect(result.spec.priority).toBe('urgent');
+    expect(result.runs[0].priority).toBe('urgent');
+    await expect(dialog).toBeHidden();
+    await page.getByRole('button', { name: 'New work' }).click();
+    await expect(
+      dialog.getByRole('combobox', { name: 'Priority' }),
+    ).toHaveValue('normal');
+  });
+
   test('New work submits one repository-explicit native item', async ({
     page,
   }) => {

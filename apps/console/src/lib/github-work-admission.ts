@@ -153,6 +153,7 @@ export async function admitGithubWork(
       ? {}
       : { requestBinding: input.requestBinding }),
     pipeline: work.spec.pipeline,
+    priority: work.spec.priority,
     providerFallback:
       input.authorization?.grantsPrincipal === undefined
         ? undefined
@@ -250,6 +251,7 @@ export async function redispatchGithubWork(
     taskId: anchor,
     requestId: input.requestId,
     pipeline: work.spec.pipeline,
+    priority: work.spec.priority,
     providerFallback: authorizeProviderFallback(
       {
         ...input.authorization.grantsPrincipal,

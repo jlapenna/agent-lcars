@@ -66,12 +66,20 @@ export function providerCooldownForRun(
     run.pipeline === 'claude' &&
     run.result.summary === 'no-deliverable' &&
     /^You've hit your weekly limit\s*·\s*resets [^\n]+ \(UTC\)$/u.test(message);
-  if (run.result.summary !== 'provider-limit' && !legacyClaudeQuota)
+  if (
+    run.result.summary !== 'provider-limit' &&
+    run.result.summary !== 'provider-capacity' &&
+    !legacyClaudeQuota
+  )
     return undefined;
   const now = Date.parse(run.updatedAt);
   if (!Number.isFinite(now)) return undefined;
+  // A capacity stop has no reported reset window, so it can only ever get the
+  // bounded probe below.
   const reset =
-    run.pipeline === 'claude' ? claudeReset(message, now) : undefined;
+    run.pipeline === 'claude' && run.result.summary !== 'provider-capacity'
+      ? claudeReset(message, now)
+      : undefined;
   return {
     pipeline: run.pipeline,
     runId: run.runId,

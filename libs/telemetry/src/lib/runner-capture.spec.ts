@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   claudeProjectSlugFor,
   resumeObjectPath,
-  RUNNER_CAPTURE_AGENTS,
   runnerWatchRoots,
   transcriptObjectPath,
 } from './runner-capture';
@@ -45,12 +44,6 @@ describe('runnerWatchRoots', () => {
     expect(roots[0].path).toBe('/tmp/a');
     expect(roots[1].path).toBe('/tmp/b');
     expect(roots[2].path).toBe('/tmp/c');
-  });
-});
-
-describe('RUNNER_CAPTURE_AGENTS', () => {
-  it('names exactly the agents runnerWatchRoots declares a root for', () => {
-    expect(RUNNER_CAPTURE_AGENTS).toEqual(['claude-code', 'codex', 'opencode']);
   });
 });
 

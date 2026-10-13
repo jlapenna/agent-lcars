@@ -5,14 +5,16 @@ import { z } from 'zod';
 
 const workScopeSchema = z.enum([
   'work.operator',
+  /** Read-only: the GitHub anchor-owner query (`anchorOwner`) and nothing
+   *  else. Not `list`/`get` -- item reads are `work.operator`/`work.reaper`
+   *  -- and nothing that mutates. Interactive sessions use it through the
+   *  `svc:work-reader` grant (#2502). */
+  'work.reader',
   'work.executor',
   'work.cron',
   'work.capacity.recover',
   'work.capacity.fence',
   'work.capacity.operator',
-  /** Post hook-sourced session events to `/api/telemetry/v1/` (see
-   *  `telemetry-ingest.ts`). Confers nothing on the Work API. */
-  'telemetry.writer',
 ]);
 
 /** A pipeline name checked against the same closed set `workSpecSchema`

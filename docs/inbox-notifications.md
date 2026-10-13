@@ -7,13 +7,15 @@ provision a delivery service or send Slack, email or SMS.
 
 ## Activate and unsubscribe
 
-On an HTTPS Inbox, select **Enable Inbox notifications** and grant the browser's
-permission prompt. No permission prompt or worker registration runs merely by
-visiting the page. The choice belongs to that signed-in user in that browser.
+Open the console menu (⋮) and, under **Preferences**, select **Enable
+notifications** (accessible name "Enable Inbox notifications"), then grant the
+browser's permission prompt. The preference can be changed from any console
+page, but delivery runs only while an Inbox tab is open. No permission prompt
+or worker registration runs merely by visiting a page. The choice belongs to that signed-in user in that browser.
 All watched repositories participate regardless of the current Inbox filter.
 The initial decision set is a quiet baseline, not a backlog notification.
 
-Select **Disable Inbox notifications** to unsubscribe and close that user's
+Select **Disable notifications** in the same place to unsubscribe and close that user's
 current notifications. Browser site settings separately control the browser's
 permission; revoking it pauses delivery. Async activation and unsubscribe are
 fenced by account and lifecycle, so an earlier account cannot complete opt-in

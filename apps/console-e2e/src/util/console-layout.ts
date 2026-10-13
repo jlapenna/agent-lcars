@@ -13,101 +13,97 @@ export async function expectDesktopBridgeHeader(header: Locator) {
   expect(boxes.bottom - boxes.navBottom).toBeGreaterThanOrEqual(12);
 }
 
-/** The desktop title and destination rail form one continuous LCARS assembly. */
+/**
+ * The desktop frame (design/fleet-console.html): a broad rail down the page's
+ * leading edge whose head turns through a concentric knee into the header's
+ * arm, enclosing the title and the square destination modules.
+ */
 export async function expectDesktopLcarsElbow(header: Locator) {
   const layout = await header.evaluate((element) => {
-    const elbow = getComputedStyle(element, '::before');
-    const headerStyle = getComputedStyle(element);
+    const shell = element.closest('.console-page-shell');
+    const railHead = shell?.querySelector(':scope > .lcars-rail-head');
+    const arm = element.querySelector('.lcars-header-arm');
     const title = element.querySelector('.lcars-header-title');
     const nav = element.querySelector('.lcars-nav');
-    const commandRow = element.querySelector('.lcars-command-row');
+    if (!shell || !railHead) throw new Error('LCARS elbow rail is missing');
+    if (!arm) throw new Error('LCARS header arm is missing');
     if (!title) throw new Error('LCARS header title is missing');
     if (!nav) throw new Error('LCARS destination rail is missing');
-    if (!commandRow) throw new Error('LCARS command row is missing');
 
-    const headerBounds = element.getBoundingClientRect();
-    const titleBayBounds = title
-      .closest('.lcars-header')
-      ?.getBoundingClientRect();
-    if (!titleBayBounds) throw new Error('LCARS title bay is missing');
+    const headStyle = getComputedStyle(railHead);
+    const knee = getComputedStyle(railHead, '::after');
+    const headBounds = railHead.getBoundingClientRect();
+    const armBounds = arm.getBoundingClientRect();
     const titleBounds = title.getBoundingClientRect();
     const navBounds = nav.getBoundingClientRect();
-    const armWidth = Number.parseFloat(
-      headerStyle.getPropertyValue('--lcars-elbow-arm'),
-    );
-    const railWidth = Number.parseFloat(
-      headerStyle.getPropertyValue('--lcars-elbow-rail'),
-    );
-    const innerRadius = Number.parseFloat(
-      headerStyle.getPropertyValue('--lcars-elbow-inner-radius'),
-    );
-    const outerRadius = Number.parseFloat(
-      headerStyle.getPropertyValue('--lcars-elbow-outer-radius'),
-    );
+    const headerBounds = element.getBoundingClientRect();
     const modules = Array.from(nav.querySelectorAll('.lcars-nav-pill')).map(
       (module) => {
         const bounds = module.getBoundingClientRect();
         const style = getComputedStyle(module);
         return {
           top: bounds.top,
-          width: bounds.width,
           background: style.backgroundColor,
-          topLeftRadius: Number.parseFloat(style.borderTopLeftRadius),
-          bottomLeftRadius: Number.parseFloat(style.borderBottomLeftRadius),
+          radius: Number.parseFloat(style.borderTopLeftRadius),
         };
       },
     );
 
     return {
-      armWidth,
-      railWidth,
-      innerRadius,
-      outerRadius,
-      elbowBackground: elbow.backgroundImage,
-      elbowRight: headerBounds.left + Number.parseFloat(elbow.width),
+      frame: shell.getAttribute('data-frame'),
+      headBackground: headStyle.backgroundColor,
+      headRadius: Number.parseFloat(headStyle.borderTopLeftRadius),
+      headTop: headBounds.top,
+      headRight: headBounds.right,
+      headBottom: headBounds.bottom,
+      headerTop: headerBounds.top,
+      headerBottom: headerBounds.bottom,
+      kneeBackground: knee.backgroundColor,
+      kneeMask: knee.maskImage || knee.webkitMaskImage,
+      kneeWidth: Number.parseFloat(knee.width),
+      armTop: armBounds.top,
+      armLeft: armBounds.left,
+      armBottom: armBounds.bottom,
+      armHeight: armBounds.height,
+      armToken: Number.parseFloat(
+        getComputedStyle(element).getPropertyValue('--lcars-elbow-arm'),
+      ),
       titleTop: titleBounds.top,
       titleLeft: titleBounds.left,
-      titleRight: titleBounds.right,
-      titleBayRight: titleBayBounds.right,
-      titleBayWidth: titleBayBounds.width,
       navTop: navBounds.top,
       navLeft: navBounds.left,
-      navRight: navBounds.right,
-      headerRight: headerBounds.right,
-      headerTop: headerBounds.top,
-      innerTop: headerBounds.top + armWidth,
-      innerLeft: headerBounds.left + railWidth,
-      commandRowBackground: getComputedStyle(commandRow).backgroundImage,
       modules,
     };
   });
 
-  expect(layout.armWidth).toBe(16);
-  expect(layout.railWidth).toBe(48);
-  expect(layout.railWidth).toBeGreaterThan(layout.armWidth);
-  expect(layout.innerRadius).toBe(layout.armWidth);
-  expect(layout.outerRadius).toBe(layout.armWidth * 2);
-  expect(layout.elbowBackground).toContain('radial-gradient');
-  expect(layout.elbowBackground.match(/linear-gradient/g)).toHaveLength(2);
-  expect(layout.titleTop).toBeGreaterThanOrEqual(layout.innerTop);
-  expect(layout.titleLeft).toBeGreaterThan(layout.innerLeft);
-  expect(layout.elbowRight).toBeGreaterThanOrEqual(layout.titleRight);
-  expect(layout.titleBayWidth).toBeGreaterThan(272);
-  expect(layout.navTop).toBeGreaterThan(layout.titleTop);
-  expect(layout.navLeft).toBeGreaterThan(layout.innerLeft);
-  expect(layout.elbowRight).toBeGreaterThanOrEqual(layout.navRight);
-  expect(layout.elbowRight).toBe(layout.headerRight);
-  expect(layout.commandRowBackground).toBe('none');
-  expect(layout.modules).toHaveLength(7);
+  expect(layout.frame).toBe('rail');
+  // The rail head and the header share one grid row, flush at the top.
+  expect(Math.abs(layout.headTop - layout.headerTop)).toBeLessThanOrEqual(1);
+  expect(Math.abs(layout.headBottom - layout.headerBottom)).toBeLessThanOrEqual(
+    1,
+  );
+  expect(layout.headBackground).not.toBe('rgba(0, 0, 0, 0)');
+  expect(layout.headRadius).toBeGreaterThan(layout.armHeight * 2);
+  // The knee spans the column gap in the head's colour, cut by a quarter
+  // circle, and the arm continues from it.
+  expect(layout.kneeBackground).toBe(layout.headBackground);
+  expect(layout.kneeMask).toContain('radial-gradient');
   expect(
-    new Set(layout.modules.map((module) => module.width)).size,
-  ).toBeGreaterThan(2);
+    Math.abs(layout.headRight + layout.kneeWidth - layout.armLeft),
+  ).toBeLessThanOrEqual(1);
+  expect(layout.armHeight).toBe(layout.armToken);
+  expect(Math.abs(layout.armTop - layout.headTop)).toBeLessThanOrEqual(1);
+  // Title and navigation sit inside the elbow: below the arm, beside the rail.
+  expect(layout.titleTop).toBeGreaterThan(layout.armBottom);
+  expect(layout.titleLeft).toBeGreaterThan(layout.headRight);
+  expect(layout.navTop).toBeGreaterThan(layout.titleTop);
+  expect(layout.navLeft).toBeGreaterThan(layout.headRight);
+  expect(layout.modules).toHaveLength(7);
   for (const module of layout.modules) {
-    expect(module.top).toBeGreaterThan(layout.innerTop);
+    expect(module.top).toBeGreaterThan(layout.armBottom);
     expect(module.background).not.toBe('rgba(0, 0, 0, 0)');
-    expect(module.topLeftRadius).toBeGreaterThan(0);
-    expect(module.bottomLeftRadius).toBeGreaterThan(0);
-    expect(module.topLeftRadius).toBe(module.bottomLeftRadius);
+    // Square modules: the elbow is the page's only curve.
+    expect(module.radius).toBe(0);
   }
 }
 

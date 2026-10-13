@@ -121,6 +121,58 @@ describe('WatcherDaemon', () => {
     });
   });
 
+  it('skips sessions a hook client reported recently and drops its own copy', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/proj/session-a.jsonl': TRANSCRIPT(
+        'session-a',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+    let hookReported = false;
+    const daemon = new WatcherDaemon({
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      sessionStateDir: '/state',
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      readSessionTitleOverlay: () => ({
+        declared: { available: true, annotations: new Map() },
+      }),
+      readSessionStatusOverlay: () => ({
+        available: true,
+        annotations: new Map(),
+      }),
+      isHookReported: (stateDirectory, sessionId) =>
+        hookReported &&
+        stateDirectory === '/state' &&
+        sessionId === 'session-a',
+    });
+
+    await daemon.tick();
+    expect(upserts).toHaveLength(1);
+
+    hookReported = true;
+    files['/root/proj/session-a.jsonl'] += '\n';
+    await daemon.tick();
+    expect(upserts).toHaveLength(1);
+
+    // The marker lapses without the transcript changing: the daemon must
+    // pick the session back up rather than treating the file as already read.
+    hookReported = false;
+    await daemon.tick();
+    expect(upserts).toHaveLength(2);
+  });
+
   it('publishes completed-tick and successful active-upsert metrics', async () => {
     const { store } = createFakeStore();
     const timestamp = '2026-07-12T10:00:01.000Z';
@@ -1678,8 +1730,7 @@ describe('WatcherDaemon', () => {
         watchRoots: [
           { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
         ],
-        // An issue-agent-shaped daemon (forceSource set, shareDir unset) —
-        // NOT what runner.ts's startSidecar actually configures since
+        // NOT what the retired runner sidecar (runner.ts) configured since
         // issue #1289 (it now always passes a real sessionStateDir). This
         // pins the daemon's own generic contract instead: whatever the
         // caller is, an omitted sessionStateDir must skip the overlay

@@ -6,13 +6,13 @@ import { resolvePrincipal, type WorkGrant } from './work-grants';
 
 export type WorkScope =
   | 'work.operator'
+  | 'work.reader'
   | 'work.executor'
   | 'work.cron'
   | 'work.reaper'
   | 'work.capacity.recover'
   | 'work.capacity.fence'
-  | 'work.capacity.operator'
-  | 'telemetry.writer';
+  | 'work.capacity.operator';
 
 export interface WorkPrincipal {
   principal: string;

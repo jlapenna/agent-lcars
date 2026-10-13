@@ -16,11 +16,11 @@ one place for monitoring. A GitHub Actions workflow polling live IAM would make
 the production identity plane depend on Actions, and would report through a
 channel nobody watches.
 
-| Half                     | Where                                                                                        | What                                                                                                                                                                                                                                                                                                        |
-| ------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The model                | here — `tools/iam-contract/model.json`                                                       | Fleet repositories, both GitHub Apps and their installations, every WIF pool/provider with its byte-exact condition, the per-project user-managed-key allowlist, and `CLAUDE_CODE_OAUTH_TOKEN`'s binding set.                                                                                               |
-| Offline self-consistency | here — `tools/contract-tests/iam-contract-model.test.ts`, in `pnpm check:contracts`          | The model must agree with Terraform's `local.github_repositories`, the modelled shared-pool condition must equal the string Terraform generates, and every exemption must carry a reason. No credentials, so it runs on every PR.                                                                           |
-| Live drift detection     | [jlapenna/homelab](https://github.com/jlapenna/homelab) — `bin/emit-iam-contract-metrics.py` | A scheduled collector on the homelab controller (which already holds `gcloud` and `gh` credentials) reads this file from `main`, diffs it against live state, and publishes `node_homelab_iam_contract_*` through node-exporter. Alerts live in `observability/prometheus/rules.yml`, group `iam-contract`. |
+| Half                     | Where                                                                                        | What                                                                                                                                                                                                                                                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The model                | here — `tools/iam-contract/model.json`                                                       | Fleet repositories, both GitHub Apps and their installations, every WIF pool/provider with its byte-exact condition, the per-project user-managed-key allowlist, `CLAUDE_CODE_OAUTH_TOKEN`'s binding set, and `work-reader`'s impersonation binding set.                                                               |
+| Offline self-consistency | here — `tools/contract-tests/iam-contract-model.test.ts`, in `pnpm check:contracts`          | The model must agree with Terraform's `local.github_repositories`, the modelled shared-pool condition must equal the string Terraform generates, every exemption must carry a reason, and `work-reader`'s modelled binding must equal the Terraform resource that declares it. No credentials, so it runs on every PR. |
+| Live drift detection     | [jlapenna/homelab](https://github.com/jlapenna/homelab) — `bin/emit-iam-contract-metrics.py` | A scheduled collector on the homelab controller (which already holds `gcloud` and `gh` credentials) reads this file from `main`, diffs it against live state, and publishes `node_homelab_iam_contract_*` through node-exporter. Alerts live in `observability/prometheus/rules.yml`, group `iam-contract`.            |
 
 The collector reads the model from `main`, so **this repo's change lands
 first** and the collector picks it up on its next cycle — no pinning, no copy
@@ -35,6 +35,7 @@ to keep in sync.
 | WIF                   | The exact set of pools per project, each pool's state, the exact set of providers, and per provider its state, issuer URI, attribute mapping and **byte-exact** attribute condition.                                                                                                                                                                                                                                                                          |
 | Service account keys  | No service account in either project holds a user-managed key, except the allowlisted ones. The allowlist is a ratchet: an allowlisted account that no longer holds a key is **also** drift, so a retired exemption cannot be inherited by the next key.                                                                                                                                                                                                      |
 | Secret bindings       | `CLAUDE_CODE_OAUTH_TOKEN` carries exactly one binding — `secretAccessor` for `claude-token-reader`. Two speculative grants were added while chasing #1368 and pruned the same night; nothing else stops the next ones from persisting.                                                                                                                                                                                                                        |
+| Service account IAM   | `work-reader@agent-lcars.iam.gserviceaccount.com` carries exactly one binding — `serviceAccountTokenCreator` for `user:jlapenna@gmail.com`. Its Console grant is `work.reader` alone, so any other member would extend Console reads to a principal nobody approved. Modelled and pinned to Terraform offline; the collector does not assert it yet (see Known gaps).                                                                                         |
 
 Every drift series carries `resource`, `expected` and `actual` labels, and the
 alert annotation prints them — so the next incident starts with an answer
@@ -57,9 +58,18 @@ bin/emit-iam-contract-metrics.py --dump
 
 ## Known gaps
 
-None. Both were closed the day they were found, and the check is what closed
-them — each is published as a `node_homelab_iam_contract_unasserted` series
-while it lasts, so a gap cannot quietly become permanent.
+- **`serviceAccountIamPolicies` is modelled before the collector reads it**
+  (#2502). The model and its offline Terraform agreement test land first; the
+  homelab collector does not yet compare that section with
+  `gcloud iam service-accounts get-iam-policy`. Until it does, a hand-added
+  impersonation member on `work-reader` is not reported as drift, and the
+  collector publishes no `node_homelab_iam_contract_unasserted` series for
+  this section either. This gap stays open until the collector gains that
+  assertion.
+
+Earlier gaps were closed the day they were found, and the check is what closed
+them. Each was published as a `node_homelab_iam_contract_unasserted` series
+while it lasted, so it could not quietly become permanent.
 
 - **`supersprinklesracing/www` was not covered by the fleet App installation**
   (#1380). The shared `github` WIF pool trusted it and Terraform provisioned
@@ -76,36 +86,33 @@ while it lasts, so a gap cannot quietly become permanent.
 ## Installation scope and repository onboarding
 
 The autoscaler App holds `administration: write`, so an installation's scope is
-authority over every repository it covers. Its modelled contract is asymmetric:
+authority over every repository it covers. The maintainer confirmed
+"All repositories" for both jlapenna Apps during labels onboarding on
+2026-10-12. Each App's own installation token observed the current scope and
+complete repository list; both temporary tokens were revoked.
 
-| Installation | Account              | Selection  | Repos           |
-| ------------ | -------------------- | ---------- | --------------- |
-| `154210710`  | jlapenna             | `selected` | 6               |
-| `154210731`  | supersprinklesracing | `all`      | 7 (4 non-fleet) |
+| App                      | Installation | Account              | Selection | Observed repositories |
+| ------------------------ | ------------ | -------------------- | --------- | --------------------- |
+| `agent-lcars`            | `150568943`  | jlapenna             | `all`     | 35                    |
+| `agent-lcars-autoscaler` | `154210710`  | jlapenna             | `all`     | 35                    |
+| `agent-lcars-autoscaler` | `154210731`  | supersprinklesracing | `all`     | Existing baseline     |
 
-The jlapenna installation was narrowed from `all` (23 repositories) once this
-check measured it. #1381 is the execution record for narrowing the other one to
-`sprinkles`, `www` and `girosf` — the evidence is there too: none of
-`design`, `ghost-theme-supersprinkles`, `pos` or `preem-machine` holds a self-hosted
-runner, and no workflow in any of them targets a fleet runner label.
+The jlapenna autoscaler installation was previously narrowed under #1381.
+The maintainer's current confirmed scope supersedes that account's selected
+contract. The organization-side `154210731` baseline and its separately owned
+narrowing decision remain unchanged. When that narrowing occurs, update the
+model, credential documentation and genuine consumer verification together.
 
-The existing organization-side `154210731` baseline remains unchanged here.
-When its separately owned narrowing lands, update `repositorySelection` to
-`selected` and retain the three required repositories, together with the
-credential documentation and genuine consumer verification.
+`agent-lcars` installation `150568991` retains selected access to `girosf`,
+`sprinkles` and `www`. Its separate `jlaorg` installation remains unchanged.
+`jlapenna/labels` is covered by both jlapenna installations; its source
+onboarding uses GitHub-hosted CI and adds no ARC lane.
 
-Onboarding `jlapenna/messages-control` (#2436) adds one explicit membership to
-fleet App `150568943` and autoscaler App `154210710`, not an `all` selection.
-The latter also serves the Homelab Actions exporter. Fleet App `150568991`
-continues to require selected access to `girosf`, `sprinkles` and `www`.
-Preserve the other modelled repository grants and leave the separate
-`jlaorg` installation unchanged.
-
-A merged model is not evidence of live installation scope. An unexpected
-`all` selection remains drift until the genuine collector observes the exact
-contract and required consumers still work. Membership here does not widen
-the Terraform-owned WIF `fleetRepositories` list or its provider condition;
-that is a separate authorization boundary.
+The complete observed repository lists remain modelled deliberately: new
+repository access still produces drift for the Homelab IAM monitoring owner
+to reconcile. A model merge alone does not prove live convergence. GitHub App
+membership does not widen the Terraform-owned WIF `fleetRepositories` list
+or its provider condition; that remains a separate authorization boundary.
 
 `jlapenna/homegit` is covered by `154210710` but has no `registrations:` entry
 in homelab's `orchestrator.yml`: covered-but-unregistered, modelled as such

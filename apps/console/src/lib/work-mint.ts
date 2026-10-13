@@ -18,6 +18,7 @@ import {
   toItemView,
 } from '@agent-lcars/work/derive';
 
+import type { CliSessionsResult } from './cli-sessions';
 import { isControlPlaneRepository } from './deployment';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal } from './work-auth';
@@ -41,6 +42,14 @@ export interface WorkContext {
    *  drops `source`/`agent`/`intentId` -- exactly the fields resume
    *  ownership and pipeline matching need. */
   sessionDocsForRuns: (runIds: string[]) => Promise<SessionDoc[]>;
+  /** One repository's recent CLI session telemetry
+   *  (`getCliSessions({ repo })`) for the read-only anchor-owner query
+   *  (`anchor-owner.ts`). A failed or possibly truncated read is reported in
+   *  `warnings`. */
+  cliSessions: (repo: {
+    owner: string;
+    name: string;
+  }) => Promise<CliSessionsResult>;
   /** Schedule storage -- separate from `OrchestratorRouteDeps` on purpose:
    *  a schedule is not a `Task` (see `schedule-store.ts`). */
   scheduleStore: ScheduleStore;
@@ -165,6 +174,7 @@ export async function mintItem(
     taskId: { workId: input.id },
     requestId: input.id,
     pipeline: input.spec.pipeline,
+    priority: input.spec.priority,
     providerFallback: authorizeProviderFallback(
       input.grantsPrincipal,
       input.spec.pipeline,

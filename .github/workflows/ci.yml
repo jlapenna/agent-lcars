@@ -37,7 +37,6 @@ jobs:
 
       - name: Verify repository-owned Terraform
         run: |
-          ./tools/contract-tests/github-ruleset-root.test.sh
           terraform -chdir=infra/github-ruleset init -backend=false -input=false -lockfile=readonly
           terraform -chdir=infra/github-ruleset fmt -check -recursive
           terraform -chdir=infra/github-ruleset validate
@@ -106,7 +105,9 @@ jobs:
     # longer needs the ubuntu-latest carve-out it had between #408 and #410.
     #
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-ci' }}
-    timeout-minutes: 30
+    # The supported cold runner path can reach Go/race verification at 30m
+    # (#2507). Keep the complete gate bounded without changing its resources.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v7
@@ -226,9 +227,6 @@ jobs:
       - name: Test generic OIDC POST transport (#1340)
         run: bash .github/actions/oidc-post/oidc-post.test.sh
 
-      - name: Reject retired control-plane dispatch admission
-        run: bash tools/no-legacy-control-plane-request.test.sh
-
       # The check itself, against this checkout - the #1255 incident's
       # self-referential skill symlink passed CI here and broke every
       # consumer's whole-repo action download at 'Set up job' (#1265).
@@ -250,9 +248,6 @@ jobs:
 
       - name: Test the GitHub attachment download helper
         run: bash agents/shared/skills/agent-protocol/scripts/download-github-attachment.test.sh
-
-      - name: Test generic in-job daemon lifecycle (#1246)
-        run: bash apps/telemetry-watcher/bin/job-daemon.test.sh
 
       - name: Test runner-image toolchain preflight (#468)
         run: bash apps/runner-autoscaler/runner-image/toolchain-health.test.sh
@@ -317,9 +312,6 @@ jobs:
 
       - name: Test shell bare-return lint (jlapenna/homelab#1087)
         run: bash tools/check-shell-bare-return.test.sh
-
-      - name: Test E2E runner node-tar repair (#1435)
-        run: bash tools/e2e-runner/node-tar-health.test.sh
 
       - name: Test probe scratch cleanup (homelab#1542)
         run: node --test tools/probes/scratch.test.mjs
@@ -423,8 +415,8 @@ jobs:
       - name: OpenAPI document is current
         run: ./tools/nx run @agent-lcars/work:openapi-check
 
-      # This bundle is outside the default build graph, but is what both the
-      # telemetry-watcher image and the runner sidecar execute. Keep its
+      # This bundle is outside the default build graph, but is what the
+      # runner image's telemetry finalize/resume steps execute. Keep its
       # isolated startup gate in normal CI now that image publishing is owned
       # by the canonical homelab controller.
       - name: Smoke test telemetry-watcher bundle

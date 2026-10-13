@@ -26,14 +26,37 @@ ambiguous-response failures before retrying. A transport error does not waive
 any verification gate below.
 
 Don't run the full gate above locally before every push — see "Push early"
-in [SKILL.md](../SKILL.md#hard-guardrails). The pre-push hook only runs the
-fast slice (`format:check`, affected `lint`/`typecheck`); `test` and
-`build` — the two steps that scan/compile the whole affected set and take
-the longest — are deliberately left out, because CI's `Verify` job re-runs
-them anyway the moment you push, on its own runner rather than your
+in [SKILL.md](../SKILL.md#hard-guardrails). The pre-push hook runs the fast
+slice (`format:check`, affected `lint`/`typecheck`); the whole-tree `test`
+and `build` targets — the two steps that scan/compile the whole affected set
+and take the longest — are deliberately left out, because CI's `Verify` job
+re-runs them anyway the moment you push, on its own runner rather than your
 workstation. The gate still runs exactly once as far as the merge
 requirement is concerned; running it a second time locally first only adds
 a serialized wait in front of a check that was going to happen regardless.
+
+That fast slice is the entire local gate **only when `apps/console` is not
+affected.** The hook's last step is `tools/console-build-smoke.sh`, which
+builds and probes the deployable Console bundle whenever `apps/console` is
+in the affected set: the real production `@nx/next:build` through
+`@agent-lcars/console:bundle`, then `tools/console-standalone-smoke.sh`
+booting a copy of the standalone bundle from outside the repository, loading
+every external its server chunks traced, and expecting HTTP 401 from the
+webhook route. That is a deliberate, Console-scoped exception to the no
+local build rule — not a local copy of CI's whole-tree `build` target, and
+not a substitute for CI's required `Verify` or `E2E` checks. Describe the
+hook as the affected lint/typecheck slice plus this Console build exception;
+calling it "no local build" is wrong for a Console-affected push.
+
+Plan the publication envelope for the hook path that actually runs. A
+Console-affected publication includes a real `next build`, so qualify its
+CPU, memory and time bounds for that build and give it the supported worker
+control `LCARS_CONSOLE_BUILD_CPUS`
+([apps/console/build-workers.cjs](../../../../apps/console/build-workers.cjs))
+or a qualified cgroup CPU quota, so the page-data worker pool follows the
+phase's own bound instead of the host's visible CPU count. Planning a
+Console-affected publication as "no local build" omits work the normal hook
+will start anyway.
 
 Run the full local gate only when you have a specific reason not to trust
 CI's answer for it — e.g. iterating on a change to the Nx config or task
@@ -48,6 +71,31 @@ record the selected CPU, memory, storage, accelerator and time bounds before
 starting it.
 Use supported supervisors and accounting capabilities; repository verification
 does not authorize changing host delegation or understating requests to fit a run.
+
+Size the publication phase for the hook path the push actually executes, not a
+shorter one you assumed. `.husky/pre-push` adds the affected-Console production
+build and standalone smoke (`tools/console-build-smoke.sh`,
+`tools/console-standalone-smoke.sh`) to every `apps/console`-affected
+publication, so that build's CPU, memory and time belong in the envelope; use
+its supported worker control `LCARS_CONSOLE_BUILD_CPUS` rather than a smaller
+plan that omits the build. "No local build" is a correct plan only when
+`apps/console` is unaffected.
+
+Recorded case: source `bfbd72e8` passed 23 normal lint/typecheck tasks inside a
+publication plan that omitted the affected Console build; the normal hook then
+entered that real production build and the supervisor stopped only its own unit
+`lcars-root-2200-provider-clock-publish-01a11f2d` after 164.612 s wall with
+162.557 CPU seconds and 1.4 GiB peak / no swap, main terminating on SIGTERM 15.
+Systemd's requested-stop result `success` was not publication success and the
+exact remote branch was absent; no OOM kill and no failed application assertion
+was observed. The same change later published through the complete hook — one
+supported build worker, the real production build and the isolated
+seven-externals and HTTP 401 smoke — passing in 138.254 s wall with 133.640 CPU
+seconds and 1.9 GiB peak / no swap. Keep the two receipts distinct: the first
+is an interrupted partial phase, the second the successful complete-hook
+publication ([#2550](https://github.com/jlapenna/agent-lcars/issues/2550)). No
+document-literal test mirrors this guidance; the hook and the two smoke scripts
+stay the executable owners.
 
 Before each local phase, record fresh, read-only host and cluster occupancy for
 that selected host: supported capacity and reserves, systemd/cgroup, container
@@ -156,6 +204,163 @@ disk growth.
 If a required guard failed, preserve that failure and distinguish any valid
 source/test/commit evidence from unproven resource enforcement. Do not rerun a
 completed operation to erase its original receipt.
+
+### Qualify the supervised child environment
+
+Login-shell availability does not qualify a supervised phase. A phase whose
+tools were proven by `command -v` in the launching shell still starts its unit
+in the manager's environment, not that shell's. Recorded case: unit
+`lcars-root-phone-2201-publication-01a11f2d` (invocation
+`bfd6e91e20e946009e4645129bdce868`) exited 127 after 207 ms wall and 29 ms CPU
+with `pnpm: command not found` at
+[`tools/setup-worktree.sh`](../../../../tools/setup-worktree.sh) line 22, having
+completed no dependency, test, commit or push phase; the login shell resolved
+`node` and `pnpm` from version-manager multishell bins a default user unit never
+inherits ([#2525](https://github.com/jlapenna/agent-lcars/issues/2525)). Qualify
+the executable environment the supervisor actually hands the child, then prove
+it from inside that child.
+
+Pass the already-qualified stable Node installation's own `bin` directory ahead
+of ordinary `PATH` through the supervisor's explicit environment control —
+`--setenv=PATH=<qualified-bin>:<rest>` (or `-E`) for `systemd-run`, or
+`Environment=PATH=` in a declared unit — as a literal value, and keep the
+qualified directory ahead of the inherited remainder. Do not rely on the
+launching shell's lookup, on a transient service inheriting that shell's
+environment (it does not), or on `$PATH` expansion inside an environment assignment: `Environment=`
+and `--setenv` preserve a literal `$PATH`. If the caller uses a double-quoted
+shell argument, that shell expands `$PATH` before invoking `systemd-run`;
+this is separate from systemd's command-line expansion in `ExecStart=`.
+Construct and qualify the complete PATH value explicitly. See systemd's
+[Environment= semantics](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml). Keep
+source, tool identity, hooks, isolation and cache behavior unchanged: do not
+install a second toolchain, re-resolve a version-manager shim, or weaken
+isolation to make a lookup succeed.
+
+Set the supervisor's working directory to the qualified source checkout
+(`systemd-run --working-directory=<checkout>` or `WorkingDirectory=`).
+Corepack may select a different pnpm version from the manager's default
+directory even when PATH resolves the same shim. Qualify the directory and
+project-pinned package-manager identity together.
+
+Have the unit report the `node` and `pnpm` paths and versions it actually
+resolved before any setup or dependent work, and record that report with the
+actual numeric child exit. An absent required toolchain must fail in that
+in-child preflight so no setup, install, test, commit or push phase starts, and
+the phase keeps the true nonzero exit and resource receipt. The supervisor's
+default status after unit collection is not workload success. Prove this at the
+real supervisor/environment boundary: under the supported supervisor, a child
+environment without Node, or with Node available but pnpm absent, starts no
+setup witness. A qualified one starts the harmless witness and reports both
+resolved paths and exact versions. Guidance
+text, a login-shell lookup, or a fixture that only re-reads this section proves
+the document, never the boundary.
+[`tools/contract-tests/supervised-child-env-qualification.test.ts`](../../../../tools/contract-tests/supervised-child-env-qualification.test.ts)
+covers those cases through a real transient user unit where a manager is
+reachable, and through a child environment with no inherited PATH everywhere
+else.
+
+### Qualify the workload shape a CPU bound covers
+
+A CPU bound qualified for one workload shape does not qualify a different one.
+Every supervised phase has a finite wall-clock bound, including formatting,
+lint, typecheck and static-hook checks. Qualify the actual workload and its
+deadlines under the selected envelope. Deadline-sensitive DOM waits, lazy
+imports and component transitions also depend on event-loop progress within
+their assertion timeouts; throttling is one possible source of delay. A
+sub-core ceiling is neither automatically adequate for static work nor
+categorically inadequate for DOM work: its measured result qualifies only
+the workload and conditions tested. Recorded case: phase
+`lcars-root-priority-2189-verify-publish-01a11f2d` (invocation
+`2fdcca9e911542e59cb64db2ee98fe41`) was supervised at `CPUQuota=10%` (100m),
+exited 1 after 325.509 s wall with 32.156 CPU seconds and 630.1 MiB/no swap,
+and reported 78 orchestrator, 36 Work and 175 Console cases passing, 45
+connected-Firestore cases skipped, and 3 failures in
+[`apps/console/src/app/quick-task-button.test.tsx`](../../../../apps/console/src/app/quick-task-button.test.tsx):
+two saw the lazily loaded trigger still `aria-busy` with no dialog at the wait
+deadline and one retained the closed modal inside its 200 ms exit transition.
+Source, assertions and timeouts were unchanged
+([#2529](https://github.com/jlapenna/agent-lcars/issues/2529)).
+
+Classify each selected local phase by shape before recording its CPU bound, and
+qualify deadline-sensitive DOM diagnostics as their own shape:
+
+- A phase inherits the most demanding shape it contains, not the least. Either
+  size and run the DOM diagnostics in an envelope measured for that shape, or
+  do not run those specs locally at all and delegate the owning UI behavior to
+  the unchanged required `Verify`/`E2E` checks, which execute the same files on
+  the supported CI pool. Do not resize the selected CI pool, fleet or host
+  controls, and do not add a local lane, to make a delegated result exist.
+- Qualifying a shape by measurement means a supported run of that same workload
+  under the candidate bound. The absence of any other failure mode, a low
+  absolute CPU count, or a shape that passed a static phase is not evidence the
+  bound covers real-time waits.
+- Keep timing/resource evidence separate from a demonstrated source defect. A
+  deadline-sensitive wait that expires under a bound never qualified for its
+  shape is unattributed: preserve the numeric exit, the resource receipt and the
+  zero-commit/zero-push state that followed, and do not rerun the same
+  unqualified envelope to turn it green, raise a timeout, disable a transition,
+  mock away lazy loading or relax an assertion.
+- Record the actual exact-head supported-runner result for the same source and
+  assertions where the failure was: run/job identifiers, executed file, case
+  count, duration and limits of the evidence. Passing under a different runner
+  or envelope qualifies that context and narrows hypotheses; it does not isolate
+  CPU throttling as the cause of the earlier failure. Causal attribution needs
+  a controlled comparison or direct evidence that distinguishes competing
+  causes. A separate failure remains under its own anchor.
+
+The same-source UI checks passed on supported-runner CI run `38218317094` (Full
+verification job `114708282485`), which executed that file at the priority head
+with source, assertions and timeouts unchanged: 8/8 cases passed in 6999 ms and
+the required browser lane passed. The same full run separately failed the
+connected-Firestore fixture tracked under
+[#2536](https://github.com/jlapenna/agent-lcars/issues/2536), so it is exact-file
+evidence for those UI waits, not an overall green claim; the 100m receipt above
+stays as recorded and was not rerun. This supported-context pass does not
+isolate the cause of the earlier 100m failure.
+
+### Return the admission verdict a launch gates on
+
+A composed verification command's aggregate exit status is not an admission
+verdict: whichever command runs last carries it. Recorded case: one shell ran
+the envelope assertion and then a read-only occupancy probe. The assertion
+refused the actual envelope — planned 2 CPU / 2 Gi over 9.1 CPU / 22656 Mi of
+native demand against 23833168 Ki of post-reserve memory, after a new 2 Gi
+control worker arrived — and exited nonzero, while the trailing probe exited 0
+and became the shell's result. The caller read that aggregate zero as approval
+and launched its own normal publication and setup phase from an earlier accepted
+snapshot: unit `lcars-root-inbox-publication-01a11f2d` (invocation
+`4233bb705590459fb47d5d9c7aa5e51d`) ran 19.103 s wall with 18.591 CPU seconds
+and 371.6 MiB/no swap before SIGTERM during dependency setup, and systemd
+reported the requested stop as successful
+([#2511](https://github.com/jlapenna/agent-lcars/issues/2511)).
+
+Capture the admission's numeric result before anything else runs, and return
+that captured value as the composition's own explicit exit. Emit it in
+machine-readable form as well (`admission-exit=<n>`), then have the consumer
+start its owned workload only on the affirmative current result it received in
+that same run: a returned refusal propagates unchanged, and an aggregate status
+that returned no result at all is held under its own explicit nonzero exit —
+never treated as success and never collapsed into the workload's code. A
+read-only observation (probe, sample, status or capacity report) is never
+approval; it may run after the admission, but it cannot overwrite or stand in
+for the verdict. Ordering alone is not the contract either: a refusal that
+reaches the aggregate only because it happened to run last still authorizes
+nothing until the consumer receives it.
+
+A prior accepted receipt qualifies the rows it measured, not this launch. When
+current rows refuse, the current launch is refused even with an accepted receipt
+on disk: do not consult it to recover approval, rewrite it, or rerun the
+completed operation to erase it. Keep hooks, native workers, isolation and
+resource accounting exactly as qualified, and keep the contract in the owning
+composition and its own consumer — do not add a generic wrapper, a shared helper
+lane, or a policy-literal test that only re-reads this section.
+[`tools/contract-tests/refused-admission-fails-closed.test.ts`](../../../../tools/contract-tests/refused-admission-fails-closed.test.ts)
+drives the real composition and its consumer over the recorded rows for an
+accepted envelope, a refusal masked by a trailing read-only probe, a propagated
+refusal, probe-first ordering, and a refusal against an earlier accepted
+receipt, asserting the numeric exit, the gate report, whether the owned setup
+witness exists, the read-only observation, and that the rows and receipt are
+unchanged.
 
 ## Frozen Console test reviews
 
@@ -297,10 +502,16 @@ shared no-op fixture so plain Node/Vite unit tests can import server modules;
 the production Next build does not use that alias and still fails if a marked
 module enters the client graph.
 
-An `apps/console`-affected push also gets a fast production `next build`
-smoke in the pre-push hook (`tools/console-build-smoke.sh`), which catches
-class 1 and prerenderable cases of class 3 in well under a minute. It is
-not a substitute for CI's E2E gate: a build can't see anything that only
+An `apps/console`-affected push also gets a production `next build` smoke in
+the pre-push hook: `tools/console-build-smoke.sh` runs the real
+`@agent-lcars/console:bundle` build, then `tools/console-standalone-smoke.sh`
+boots an isolated copy of the standalone bundle, loads every external its
+server chunks traced, and probes the webhook route for HTTP 401. It catches
+class 1 and prerenderable cases of class 3 before you push, and the isolated
+boot additionally catches a dependency the build traced but did not execute.
+Budget it as the real build it is — see [CI delegation](#ci-delegation) for
+the affected-hook path and the `LCARS_CONSOLE_BUILD_CPUS` worker control. It
+is not a substitute for CI's E2E gate: a build can't see anything that only
 breaks at request time on a non-prerendered route or in a real browser
 (class 4 stays browser-e2e-only). Local E2E remains
 available for focused diagnosis, but is not required to deliver the change.
