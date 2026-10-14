@@ -733,19 +733,22 @@ Two checks cover different things:
 1. **Which lifecycle events arrive.** The runner image's build gate
    (`apps/runner-autoscaler/runner-image/hook-telemetry.test.sh`) runs the
    real `claude -p`, `codex exec`, and `opencode run` against a local fake
-   provider and asserts every event each one spooled. It is the only
-   per-event check.
+   provider. It requires `start`, `stop`, and `end` from Claude Code and
+   Codex and `start` and `stop` from OpenCode, and checks that every spooled
+   event describes the dispatched session. Other kinds (prompt, tool, the
+   OpenCode `end`) are printed when present but not required, so a
+   regression in them passes the gate.
 2. **That hooks write real runner sessions.** A run on real work, read back
    from the `sessions` collection.
 
-Firestore cannot answer the first question. It keeps one doc per session
-with no per-event history, the hook writer stores the event kind only as
-`liveness`, and `runner finalize` then writes `liveness: ended` on top while
-leaving `observer` in place. So `observer.kind == "hook"` plus
-`liveness == "ended"` on a finished run shows that hooks reported during the
-run and finalize ran; it does not show that the `Stop` or `SessionEnd` hook
-itself landed. The runner keeps no hook log after the job, so there is no
-other live record.
+Firestore cannot show which lifecycle events landed. It keeps one doc per
+session with no per-event history, and the stored event kind survives only
+as `liveness`. Both a hook `end` and `runner finalize` write
+`liveness: ended`, and finalize leaves `observer` in place. So
+`observer.kind == "hook"` plus `liveness == "ended"` on a finished run
+proves that hooks reported during the run; it does not show whether the
+hook `SessionEnd` landed, nor that finalize ran. The runner keeps no hook
+log after the job, so there is no other live record.
 
 Real-work runs on the runner image built from `53b55ce1` (hook client
 `0.4.0`), all with `observer.kind == "hook"` and `liveness == "ended"`:
@@ -759,11 +762,12 @@ Real-work runs on the runner image built from `53b55ce1` (hook client
 To repeat it:
 
 1. Pick a real issue per
-   [the real-work proof policy](testing-policy.md#development-proof-uses-real-work).
-   On an anchor whose task already finished, post a tagged reply (`@claude`,
-   `/codex`, or `/oc`; triggers are in
-   `libs/dispatch-contracts/src/pipelines.ts`). Removing and re-adding the
-   same `agent:*` label does not start a new run.
+   [the real-work proof policy](testing-policy.md#development-proof-uses-real-work)
+   and start a run on it: apply an `agent:*` label (removing and re-adding
+   it on a finished task starts a fresh run), or post a tagged reply
+   (`@claude`, `/codex`, or `/oc`; triggers are in
+   `libs/dispatch-contracts/src/pipelines.ts`), which resumes the previous
+   session when one parked or finished.
 2. After the run ends, query `sessions` for its `runId`
    (`<owner>/<repo>#<n>/r<k>`) with Firestore `runQuery`, and check
    `observer.kind`, `observer.clientVersion`, and `observer.seq`.
