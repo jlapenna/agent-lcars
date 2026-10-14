@@ -72,7 +72,10 @@ export const INTEGRATION_TARGETS: Readonly<
       { event: 'SessionStart', timeout: 10 },
       { event: 'UserPromptSubmit', async: true },
       { event: 'PostToolUse', async: true },
-      { event: 'Stop', async: true },
+      // Synchronous for the same reason as Claude's: an async Stop can still
+      // hold the session lock when SessionEnd starts, and Codex kills
+      // SessionEnd hooks at 3 s whatever their timeout, losing the end.
+      { event: 'Stop', timeout: 5 },
       { event: 'SubagentStop', async: true },
       { event: 'Interrupt', timeout: 1 },
       { event: 'SessionEnd', timeout: 3 },

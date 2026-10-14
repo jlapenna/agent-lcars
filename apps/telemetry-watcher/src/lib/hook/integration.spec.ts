@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   executeIntegrationCommand,
   installIntegration,
-  INTEGRATION_TARGETS,
   INTEGRATION_VERSION,
   integrationStatus,
   opencodePluginPath,
@@ -133,64 +132,47 @@ describe('lcars integration', () => {
       path.join(home, '.codex/lcars-hook.sh'),
       'utf8',
     );
-    const target = INTEGRATION_TARGETS.codex;
-    // Exercise the unchanged install/status owner across the reviewed pending
-    // policy transition without adopting PR2686's runtime definition here.
-    Object.defineProperty(INTEGRATION_TARGETS, 'codex', {
-      configurable: true,
-      value: {
-        ...target,
-        entries: target.entries.map((entry) =>
-          entry.event === 'Stop' ? { event: 'Stop', timeout: 5 } : entry,
-        ),
-      },
+    // The persisted legacy Stop must be refreshed to the canonical synchronous
+    // definition without changing unrelated settings, hooks or the stub.
+    expect(integrationStatus('codex', home, env)).toMatchObject({
+      stubCurrent: true,
+      stubVersion: INTEGRATION_VERSION,
+      entriesPresent: 7,
+      installed: false,
     });
-    try {
-      expect(integrationStatus('codex', home, env)).toMatchObject({
-        stubCurrent: true,
-        stubVersion: INTEGRATION_VERSION,
-        entriesPresent: 7,
-        installed: false,
-      });
-      const stdout = vi.fn();
-      expect(
-        executeIntegrationCommand(['status', 'codex'], {
-          homeDirectory: home,
-          env,
-          stdout,
-        }),
-      ).toBe(1);
-      expect(stdout).toHaveBeenCalledWith(
-        expect.stringContaining('codex: not installed'),
-      );
-      expect(installIntegration('codex', home, env).installed).toBe(true);
-      expect(
-        executeIntegrationCommand(['status', 'codex'], {
-          homeDirectory: home,
-          env,
-          stdout,
-        }),
-      ).toBe(0);
-      const refreshed = readJson(settingsPath);
-      const refreshedHooks = refreshed['hooks'] as Groups;
-      expect(refreshed['model']).toBe('preserved-model');
-      expect(refreshedHooks['Notification']).toEqual(hooks['Notification']);
-      expect(refreshedHooks['Stop'][0]).toEqual(hooks['Stop'][0]);
-      expect(refreshedHooks['Stop'][1].matcher).toBe('*');
-      expect(refreshedHooks['Stop'][1].hooks).toEqual([
-        { type: 'command', command: stubCommand('codex'), timeout: 5 },
-        foreign,
-      ]);
-      expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o640);
-      expect(
-        fs.readFileSync(path.join(home, '.codex/lcars-hook.sh'), 'utf8'),
-      ).toBe(stub);
-    } finally {
-      Object.defineProperty(INTEGRATION_TARGETS, 'codex', {
-        configurable: true,
-        value: target,
-      });
-    }
+    const stdout = vi.fn();
+    expect(
+      executeIntegrationCommand(['status', 'codex'], {
+        homeDirectory: home,
+        env,
+        stdout,
+      }),
+    ).toBe(1);
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringContaining('codex: not installed'),
+    );
+    expect(installIntegration('codex', home, env).installed).toBe(true);
+    expect(
+      executeIntegrationCommand(['status', 'codex'], {
+        homeDirectory: home,
+        env,
+        stdout,
+      }),
+    ).toBe(0);
+    const refreshed = readJson(settingsPath);
+    const refreshedHooks = refreshed['hooks'] as Groups;
+    expect(refreshed['model']).toBe('preserved-model');
+    expect(refreshedHooks['Notification']).toEqual(hooks['Notification']);
+    expect(refreshedHooks['Stop'][0]).toEqual(hooks['Stop'][0]);
+    expect(refreshedHooks['Stop'][1].matcher).toBe('*');
+    expect(refreshedHooks['Stop'][1].hooks).toEqual([
+      { type: 'command', command: stubCommand('codex'), timeout: 5 },
+      foreign,
+    ]);
+    expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o640);
+    expect(
+      fs.readFileSync(path.join(home, '.codex/lcars-hook.sh'), 'utf8'),
+    ).toBe(stub);
   });
 
   it.each([

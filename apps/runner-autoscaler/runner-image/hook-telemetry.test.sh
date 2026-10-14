@@ -268,7 +268,7 @@ run_env "$codex_home" lcars integration install codex > /dev/null ||
   fail "codex exec exited $status against the localhost provider"
 }
 printf '0\n' > "$tmp/codex.exit"
-await_kinds "$codex_home" codex start end
+await_kinds "$codex_home" codex start stop end
 check_events "$codex_home" codex
 
 # --- OpenCode ---------------------------------------------------------------

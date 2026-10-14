@@ -13,6 +13,9 @@
  *
  * Work happens off the session's critical path: every report is
  * fire-and-forget, writes are asynchronous, and any failure is swallowed.
+ * OpenCode never awaits event handlers, so an `opencode run` can exit while
+ * the idle report is still snapshotting; it does await `dispose`, which waits
+ * (bounded) for reports in flight so the final Stop reaches the client.
  * Reports for one session never overlap (a report arriving mid-flight runs
  * once the current one finishes, keeping only the latest), tool reports are
  * throttled per session, and subagent sessions are never snapshotted. On a dispatched runner the plugin stays inert unless that runner
@@ -30,6 +33,8 @@ import { join } from 'node:path';
 const TOOL_REPORT_INTERVAL_MS = 15000;
 const SNAPSHOT_PREFIX = 'lcars-opencode-';
 const STALE_SNAPSHOT_MS = 10 * 60 * 1000;
+// Upper bound on how long shutdown waits for in-flight reports.
+const DISPOSE_WAIT_MS = 5000;
 // Lifecycle events outrank tool events when a report is queued behind one
 // already in flight.
 const PRIORITY = {
@@ -98,6 +103,8 @@ export default async function lcarsTelemetry({ client, directory }) {
   const childSessions = new Set();
   const inFlight = new Set();
   const queued = new Map();
+  // Running report() calls; dispose waits for them.
+  const pending = new Set();
   // session.deleted fires after OpenCode removed the session and its
   // messages, so its end report is lifecycle-only, built from the event.
   const deletedInfo = new Map();
@@ -189,7 +196,23 @@ export default async function lcarsTelemetry({ client, directory }) {
     }
   }
 
+  function track(hookEventName, sessionID) {
+    const running = report(hookEventName, sessionID).catch(() => undefined);
+    pending.add(running);
+    void running.finally(() => pending.delete(running));
+  }
+
   return {
+    dispose: async () => {
+      let timer;
+      await Promise.race([
+        Promise.allSettled([...pending]),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, DISPOSE_WAIT_MS);
+        }),
+      ]);
+      clearTimeout(timer);
+    },
     event: async ({ event }) => {
       const properties = event?.properties ?? {};
       switch (event?.type) {
@@ -198,28 +221,25 @@ export default async function lcarsTelemetry({ client, directory }) {
             childSessions.add(properties.info.id);
             return;
           }
-          void report(
-            'SessionStart',
-            properties.info?.id ?? properties.sessionID,
-          );
+          track('SessionStart', properties.info?.id ?? properties.sessionID);
           return;
         case 'message.updated': {
           const message = properties.info;
           if (message?.role === 'user' && !reportedPrompts.has(message.id)) {
             reportedPrompts.add(message.id);
-            void report('UserPromptSubmit', message.sessionID);
+            track('UserPromptSubmit', message.sessionID);
           }
           return;
         }
         case 'message.part.updated': {
           const part = properties.part;
           if (part?.type === 'tool' && part?.state?.status === 'completed') {
-            void report('PostToolUse', part.sessionID ?? properties.sessionID);
+            track('PostToolUse', part.sessionID ?? properties.sessionID);
           }
           return;
         }
         case 'session.idle':
-          void report('Stop', properties.sessionID);
+          track('Stop', properties.sessionID);
           return;
         case 'session.deleted': {
           const id = properties.info?.id ?? properties.sessionID;
@@ -230,7 +250,7 @@ export default async function lcarsTelemetry({ client, directory }) {
           if (typeof id === 'string') {
             deletedInfo.set(id, properties.info ?? {});
           }
-          void report('SessionEnd', id);
+          track('SessionEnd', id);
           return;
         }
         default:
