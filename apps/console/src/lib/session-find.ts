@@ -1,4 +1,14 @@
-import type { SessionRow } from './session-archive';
+/** The fields of a session row FIND reads (session-archive.ts's SessionRow);
+ * declared here so the archive can import this without a cycle. */
+interface FindableSessionRow {
+  sessionId: string;
+  title?: string;
+  runId?: string;
+  host?: string;
+  issueNumber?: number;
+  repo?: { owner: string; name: string };
+  prUrls: readonly { number: number }[];
+}
 
 /**
  * FIND over what a session row shows: session and run ids, title, host,
@@ -6,7 +16,7 @@ import type { SessionRow } from './session-archive';
  * rows) and /costs (narrowing the sessions its ledger sums).
  */
 export function matchesSessionFind(
-  row: SessionRow,
+  row: FindableSessionRow,
   q: string | undefined,
 ): boolean {
   if (!q) return true;
