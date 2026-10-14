@@ -446,7 +446,14 @@ async function handleRuntimeHook(
       !isSafeIdentifier(payload.sessionId) ||
       payload.agentId === payload.sessionId
     ) {
-      log('skipped-subagent', `event=${payload.hookEventName}`);
+      // Name the identities (when safe to print) so a skipped event can be
+      // matched to a session instead of only to a timestamp.
+      const tag = (id: string | undefined) =>
+        id && isSafeIdentifier(id) ? id.slice(0, 8) : 'unsafe';
+      log(
+        'skipped-subagent',
+        `parent=${tag(payload.sessionId)} child=${tag(payload.agentId)} event=${payload.hookEventName}`,
+      );
       return { action: 'skipped-subagent' };
     }
     // Codex hook session_id identifies the parent. Use only the explicit child
