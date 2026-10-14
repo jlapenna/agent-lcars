@@ -110,33 +110,54 @@ export function ToolbarWindow({
   label,
   value,
   options,
+  note,
 }: {
   name: string;
   label: string;
   value: string;
-  options: readonly { value: string; label: string }[];
+  /** A disabled option is drawn but cannot be chosen. */
+  options: readonly {
+    value: string;
+    label: string;
+    disabled?: boolean;
+  }[];
+  /** Shown beside the control and describing it: why some windows are
+   * disabled. Visible, because a disabled radio cannot take focus and a
+   * title or hidden description reaches neither keyboard nor touch users. */
+  note?: string;
 }) {
   const ref = useMarkFormHydrated<HTMLDivElement>();
+  const noteId = note ? `${name}-window-note` : undefined;
   return (
-    <div
-      ref={ref}
-      className="console-toolbar__segmented"
-      role="radiogroup"
-      aria-label={label}
-    >
-      {options.map((option) => (
-        <label key={option.value}>
-          <input
-            type="radio"
-            name={name}
-            value={option.value}
-            defaultChecked={option.value === value}
-            onChange={(event) => submitClosestForm(event.currentTarget)}
-          />
-          <span>{option.label}</span>
-        </label>
-      ))}
-    </div>
+    <>
+      <div
+        ref={ref}
+        className="console-toolbar__segmented"
+        role="radiogroup"
+        aria-label={label}
+        aria-describedby={noteId}
+      >
+        {options.map((option) => (
+          <label key={option.value}>
+            <input
+              type="radio"
+              name={name}
+              value={option.value}
+              disabled={option.disabled}
+              aria-describedby={option.disabled ? noteId : undefined}
+              defaultChecked={option.value === value}
+              onChange={(event) => submitClosestForm(event.currentTarget)}
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+      {note && (
+        <span id={noteId} className="console-toolbar__note">
+          {note}
+        </span>
+      )}
+    </>
   );
 }
 

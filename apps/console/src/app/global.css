@@ -1140,6 +1140,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   border-left: 1px solid var(--lcars-hairline);
 }
 
+.console-toolbar__note {
+  align-self: center;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
 .console-toolbar__segmented input {
   position: absolute;
   opacity: 0;
@@ -1149,6 +1156,15 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 .console-toolbar__segmented label:hover {
   color: var(--lcars-ink);
   background: var(--lcars-surface-raised);
+}
+
+/* Disabled keeps the AA ink (see the disabled-control rule above); the
+   strike-through, not a fainter colour, says it cannot be chosen. */
+.console-toolbar__segmented label:has(input:disabled) {
+  color: var(--lcars-ink-dim);
+  background: transparent;
+  text-decoration: line-through;
+  cursor: not-allowed;
 }
 
 .console-toolbar__segmented label:has(input:checked) {
