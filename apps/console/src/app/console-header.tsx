@@ -27,6 +27,9 @@ export interface ConsoleHeaderProps {
    * move its reachable utilities into the command rail without forcing the
    * other routes into the first responsive-workspace slice. */
   utilities?: ReactNode;
+  /** When a snapshot route's data was read, if it came from a cache: the
+   * sync block then shows the data's age instead of the page's load time. */
+  dataAt?: string;
   /** Suppresses the shared title/nav chrome entirely. The only user is the
    * unauthenticated login route (#1809): its nav rail links to destinations
    * the visitor can't reach yet, so the destination list itself is
@@ -70,6 +73,7 @@ export function ConsoleHeader({
   archiveQuery,
   repoFilter,
   utilities,
+  dataAt,
   hideHeader = false,
 }: ConsoleHeaderProps) {
   if (hideHeader) return null;
@@ -119,7 +123,7 @@ export function ConsoleHeader({
           repoFilter={repoFilter}
         />
         <div className="lcars-command-utilities">
-          <ConsoleLiveStatus />
+          <ConsoleLiveStatus dataAt={dataAt} />
           {utilities}
           <ConsoleIdentity />
         </div>

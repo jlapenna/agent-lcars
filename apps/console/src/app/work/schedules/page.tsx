@@ -1,5 +1,5 @@
 import { PIPELINES } from '@agent-lcars/work';
-import { Text } from '@mantine/core';
+import { Stack, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -9,6 +9,7 @@ import { getWatchedRepos } from '@/lib/github-client';
 import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
+import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading, PageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
 import { WorkWorkspace } from '../work-workspace';
@@ -37,15 +38,19 @@ async function SchedulesBody() {
     );
   }
   return (
-    <>
-      <div className="console-workspace__section work-workspace__create">
+    <Stack gap={28} className="work-panels">
+      <OpsPanel title="New schedule" meta="cron in UTC">
         <ScheduleCreateForm
           create={createSchedule}
           defaultRepo={controlPlaneRepository()}
           pipelines={PIPELINES}
         />
-      </div>
-      <div className="console-workspace__section work-workspace__list">
+      </OpsPanel>
+      <OpsPanel
+        title="Schedules"
+        count={data.schedules.length}
+        meta={`${data.schedules.filter((schedule) => schedule.enabled).length} enabled`}
+      >
         <ScheduleList
           schedules={data.schedules}
           enable={enableSchedule}
@@ -53,8 +58,8 @@ async function SchedulesBody() {
           update={updateSchedule}
           remove={deleteSchedule}
         />
-      </div>
-    </>
+      </OpsPanel>
+    </Stack>
   );
 }
 

@@ -61,7 +61,7 @@ export function ScheduleList({
       minWidth={640}
       className="work-schedules-table-scroll"
     >
-      <Table striped highlightOnHover verticalSpacing="xs" fz="sm">
+      <Table className="ops-table" verticalSpacing="xs" fz="sm">
         <TableThead>
           <TableTr>
             <TableTh>Title</TableTh>

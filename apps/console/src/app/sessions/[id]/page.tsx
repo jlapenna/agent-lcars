@@ -1,5 +1,5 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { Code, Stack, Text, Title } from '@mantine/core';
+import { Code, Stack, Text } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -11,8 +11,9 @@ import type { QuickTaskSourceIdentity } from '../../../lib/quick-task-evidence';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
-import { ConsoleFooter } from '../../console-footer';
 import { repoScopedConsoleHrefs } from '../../console-hrefs';
+import { DetailWorkspace } from '../../detail-workspace';
+import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
 import { SessionHeader } from './session-header';
@@ -69,17 +70,19 @@ export function ArchivedSessionTranscript({
     )
   ) {
     return (
-      <Stack gap={4} data-testid="session-archive-note">
-        <Text size="sm" c="dimmed">
-          Session archive stored ({agent} format) — not yet renderable
-        </Text>
-        <Code
-          data-testid="session-archive-uri"
-          style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}
-        >
-          {doc.transcriptGcsUri}
-        </Code>
-      </Stack>
+      <OpsPanel title="Transcript" meta="not yet renderable">
+        <Stack gap={4} data-testid="session-archive-note">
+          <Text size="sm" c="dimmed">
+            Session archive stored ({agent} format) — not yet renderable
+          </Text>
+          <Code
+            data-testid="session-archive-uri"
+            style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}
+          >
+            {doc.transcriptGcsUri}
+          </Code>
+        </Stack>
+      </OpsPanel>
     );
   }
 
@@ -88,15 +91,12 @@ export function ArchivedSessionTranscript({
   }
 
   return (
-    <Stack gap="sm">
-      <Title order={2} size="h4">
-        Transcript
-      </Title>
+    <OpsPanel title="Transcript" count={transcript.events.length}>
       <TranscriptTimelineView
         events={transcript.events}
         warning={transcript.warning}
       />
-    </Stack>
+    </OpsPanel>
   );
 }
 
@@ -150,7 +150,7 @@ function SessionDetailViewContent({
   generatedAt,
 }: SessionDetailViewProps) {
   return (
-    <>
+    <DetailWorkspace ariaLabel="Session">
       {detail.status === 'error' && (
         <Text size="sm" c="orange" mb="md" data-testid="session-detail-error">
           {detail.warning}
@@ -158,22 +158,24 @@ function SessionDetailViewContent({
       )}
 
       {detail.status === 'ok' && (
-        <>
-          <SessionHeader doc={detail.doc} now={generatedAt} />
+        <Stack gap={28}>
+          <OpsPanel title="Session">
+            <SessionHeader doc={detail.doc} now={generatedAt} />
+          </OpsPanel>
 
           <ArchivedSessionTranscript
             doc={detail.doc}
             transcript={detail.transcript}
           />
-        </>
+        </Stack>
       )}
-    </>
+    </DetailWorkspace>
   );
 }
 
 const SessionDetailView = withConsolePageShell(
   SessionDetailViewContent,
-  ({ detail, generatedAt, title, subtitle }) => ({
+  ({ detail, title, subtitle }) => ({
     current: 'sessions',
     title,
     subtitle,
@@ -184,7 +186,6 @@ const SessionDetailView = withConsolePageShell(
             watchedRepos={getWatchedRepos()}
             initialRepoKey={sessionRepoKey(detail)}
             sourceIdentities={sessionSourceIdentities(detail)}
-            generatedAt={generatedAt}
           />
         </div>
         <div className="session-detail-utilities session-detail-utilities--mobile console-utilities--mobile">
@@ -198,7 +199,6 @@ const SessionDetailView = withConsolePageShell(
         </div>
       </>
     ),
-    footer: <ConsoleFooter />,
   }),
 );
 

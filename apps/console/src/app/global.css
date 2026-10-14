@@ -1443,10 +1443,22 @@ form[data-hydrated] .console-toolbar__apply {
 
 /* ---- Work items (#1814) ---- */
 
-.work-workspace__create,
 .work-workspace__list,
 .work-workspace__empty {
   padding: 14px 16px;
+}
+
+/* Drill-down pages (detail-workspace.tsx): panels inside the frame, with the
+   destinations' panel rhythm. */
+.detail-workspace__content {
+  min-width: 0;
+  padding: 20px;
+}
+
+@media (max-width: 47.99em) {
+  .detail-workspace__content {
+    padding: 12px;
+  }
 }
 
 .agents-fleet-strip,

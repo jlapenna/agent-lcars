@@ -9,6 +9,7 @@ import {
   useMinuteClock,
   useShellReadouts,
 } from './console-shell-state';
+import { formatCompactRelativeTime } from './format';
 
 const UNAVAILABLE = '—';
 
@@ -114,11 +115,18 @@ function clockTime(at: number): string {
 
 /** "■ LIVE · synced 14:32:08" for routes with a live stream; otherwise the
  * time the page was loaded, labelled as a snapshot. */
-export function ConsoleLiveStatus() {
+export function ConsoleLiveStatus({ dataAt }: { dataAt?: string } = {}) {
   const live = useLiveState();
   // The page's own load time, captured once: a snapshot does not advance.
   const [loadedAt, setLoadedAt] = useState<number>();
   useEffect(() => setLoadedAt(Date.now()), []);
+  // A snapshot served from cached sources says how old its data is, not when
+  // the page loaded. Formatted after mount: relative time differs between the
+  // server render and hydration.
+  const [dataAge, setDataAge] = useState<string>();
+  useEffect(() => {
+    if (dataAt) setDataAge(formatCompactRelativeTime(dataAt));
+  }, [dataAt]);
   const mode = live?.mode;
   const tone =
     mode === 'live' || mode === 'updating'
@@ -146,7 +154,11 @@ export function ConsoleLiveStatus() {
       title={live?.label}
     >
       <b>■ {headline}</b>
-      {at !== undefined ? (
+      {mode === undefined && dataAge !== undefined ? (
+        <span>
+          {' · '}data {dataAge}
+        </span>
+      ) : at !== undefined ? (
         <span>
           {' · '}
           {mode === undefined ? 'loaded' : 'synced'} {clockTime(at)}

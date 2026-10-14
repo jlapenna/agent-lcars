@@ -8,6 +8,7 @@ import { getWatchedRepos } from '@/lib/github-client';
 import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
+import { DetailWorkspace } from '../../detail-workspace';
 import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
 import { TaskDetailHistory } from '../../task/task-detail-history';
@@ -62,30 +63,32 @@ export function WorkDetailViewContent({
   const { item } = detail;
 
   return (
-    <Stack gap="md">
-      <EditWork
-        id={item.id}
-        title={item.spec.title}
-        description={item.spec.description}
-        running={item.state === 'running'}
-        update={updateItem}
-      />
-      <TaskDetailHistory
-        anchor={{ workId: item.id }}
-        item={item}
-        canViewSessions={isAdmin}
-        actions={
-          <WorkActions
-            id={item.id}
-            latestRunId={latestRun(item.runs)?.runId}
-            state={item.state}
-            cancel={cancelItem}
-            redispatch={redispatchItem}
-            reply={replyToWorkItem}
-          />
-        }
-      />
-    </Stack>
+    <DetailWorkspace ariaLabel="Work item">
+      <Stack gap={28}>
+        <EditWork
+          id={item.id}
+          title={item.spec.title}
+          description={item.spec.description}
+          running={item.state === 'running'}
+          update={updateItem}
+        />
+        <TaskDetailHistory
+          anchor={{ workId: item.id }}
+          item={item}
+          canViewSessions={isAdmin}
+          actions={
+            <WorkActions
+              id={item.id}
+              latestRunId={latestRun(item.runs)?.runId}
+              state={item.state}
+              cancel={cancelItem}
+              redispatch={redispatchItem}
+              reply={replyToWorkItem}
+            />
+          }
+        />
+      </Stack>
+    </DetailWorkspace>
   );
 }
 

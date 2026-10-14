@@ -387,7 +387,7 @@ test.describe('populated dashboard', () => {
     // anomaly comes from durable Task/Run state, not a hosted-attempt title
     // marker or an Actions API lookup.
     const runs = card.getByTestId('runs-section');
-    await expect(runs).toContainText('Runs (2)');
+    await expect(runs).toContainText('Run timeline (2)');
     await expect(runs.getByText(/pending/).first()).toBeVisible();
     await expect(runs.getByText(/running/).first()).toBeVisible();
 

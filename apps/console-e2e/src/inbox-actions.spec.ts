@@ -697,7 +697,9 @@ test.describe('Inbox authorized action journeys', () => {
     await expect(
       card.getByText('authoritative state rev 2', { exact: true }),
     ).toBeVisible();
-    await expect(card.getByTestId('runs-section')).toContainText('Runs (3)');
+    await expect(card.getByTestId('runs-section')).toContainText(
+      'Run timeline (3)',
+    );
     const completed = card.getByTestId(`audit-run-${REPOSITORY}#9008/r0`);
     await expect(completed.getByTestId('run-state')).toHaveText('finished');
     await expect(

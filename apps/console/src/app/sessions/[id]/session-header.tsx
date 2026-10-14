@@ -77,7 +77,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
     Boolean(doc.deliverables.branch);
 
   return (
-    <Stack gap="md" mb="xl" data-testid="session-header">
+    <Stack gap="md" data-testid="session-header">
       <Group gap="sm" wrap="wrap" align="center">
         <SourceBadge source={doc.source} />
         <Badge
