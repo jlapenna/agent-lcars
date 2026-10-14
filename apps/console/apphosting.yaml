@@ -11,7 +11,9 @@ outputFiles:
 runConfig:
   minInstances: 0
   cpu: 1
-  memoryMiB: 1024
+  # Bridge requests exceeded 1 GiB in production (#2617). Keep the same CPU
+  # and scaling/concurrency policy while providing supported runtime headroom.
+  memoryMiB: 2048
 env:
   # Defined Values
   - variable: CI
@@ -115,8 +117,13 @@ env:
   # principal is the stable audit identity. It replaces the restricted
   # `/lcars` Slack command's direct GitHub issue filing with a native item.
   # Its current grant lists every supported pipeline.
+  #
+  # svc:work-reader (#2502) is the interactive-session identity for the
+  # read-only issue-owner query. It carries work.reader alone, never
+  # work.operator; only the maintainer's Google account may impersonate it
+  # (infra/terraform/main.tf, work_reader_token_creator).
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"],"channel":"slack"},{"principal":"svc:production-verifier","subjects":["github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"],"channel":"slack"},{"principal":"svc:production-verifier","subjects":["github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:work-reader","subjects":["work-reader@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.reader"]}]'
     availability:
       - RUNTIME
 

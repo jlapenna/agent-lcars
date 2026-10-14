@@ -68,6 +68,7 @@ class EvidenceTest(unittest.TestCase):
         output = io.StringIO()
         with patch.object(evidence, 'command', side_effect=command), contextlib.redirect_stdout(output):
             self.assertEqual(evidence.probe_kubernetes(config, deployment), 0)
+        self.assertIn(f'job=job uid=exact run={run_id}', output.getvalue())
         self.assertIn('phase=Failed', output.getvalue())
         self.assertIn('commits=2 dirty=3', output.getvalue())
         self.assertNotIn('unrelated', output.getvalue())

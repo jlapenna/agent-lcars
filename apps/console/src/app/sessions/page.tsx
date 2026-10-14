@@ -1,4 +1,5 @@
-import { Anchor } from '@mantine/core';
+import { SESSION_AGENTS } from '@agent-lcars/telemetry';
+import { Anchor, Card, Group, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
 
@@ -18,12 +19,26 @@ import {
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
 import { groupSessionsByIssue } from '../../lib/session-issue-groups';
+import { windowOptions } from '../archive-window-options';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
+import {
+  ConsoleToolbar,
+  ToolbarApply,
+  ToolbarSearch,
+  ToolbarSelect,
+  ToolbarWindow,
+} from '../console-toolbar';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
+import {
+  matchesSessionView,
+  parseViewFilters,
+  type SessionsViewFilters,
+  setViewFilterParams,
+} from './session-view-filters';
 import { SessionsWorkspace } from './sessions-workspace';
 import { ViewToggle } from './view-toggle';
 
@@ -44,7 +59,11 @@ function parseView(searchParams: { view?: string }): SessionsView {
  * getSessionArchive). */
 function displayHref(
   query: SessionArchiveQuery,
-  { view, path = '' }: { view: SessionsView; path?: string },
+  {
+    view,
+    path = '',
+    filters,
+  }: { view: SessionsView; path?: string; filters?: SessionsViewFilters },
 ): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
@@ -55,7 +74,9 @@ function displayHref(
     params.set('issue', String(query.issueNumber));
   }
   if (query.repo) params.set('repo', repoKey(query.repo));
+  if (query.agent) params.set('agent', query.agent);
   if (path !== '/costs' && view === 'flat') params.set('view', 'flat');
+  if (filters) setViewFilterParams(params, filters);
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path || '?';
 }
@@ -76,6 +97,8 @@ interface PageProps {
     repo?: string;
     view?: string;
     tab?: string;
+    agent?: string;
+    q?: string;
   }>;
 }
 
@@ -94,11 +117,16 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
 async function SessionsBody({
   query,
   view,
+  filters,
+  watchedRepos,
 }: {
   query: SessionArchiveQuery;
   view: SessionsView;
+  filters: SessionsViewFilters;
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
 }) {
-  const { rows, warnings } = await getArchive(query);
+  const { rows: allRows, warnings } = await getArchive(query);
+  const rows = allRows.filter((row) => matchesSessionView(row, filters));
 
   return (
     <SessionsWorkspace
@@ -106,25 +134,111 @@ async function SessionsBody({
         warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
       }
       toolbar={
-        <ViewToggle
-          view={view}
-          flatHref={displayHref(query, { view: 'flat' })}
-          byIssueHref={displayHref(query, { view: 'by-issue' })}
-        />
+        <ConsoleToolbar
+          action="/sessions"
+          preserve={{
+            view: view === 'flat' ? 'flat' : undefined,
+            issue:
+              query.issueNumber === undefined
+                ? undefined
+                : String(query.issueNumber),
+          }}
+        >
+          <ToolbarSelect
+            name="repo"
+            label="Repository"
+            value={query.repo ? repoKey(query.repo) : ''}
+            options={[
+              { value: '', label: `All repositories (${watchedRepos.length})` },
+              ...watchedRepos.map((repo) => ({
+                value: repoKey(repo),
+                label: repoKey(repo),
+              })),
+            ]}
+          />
+          <ToolbarSelect
+            name="agent"
+            label="Agent"
+            value={query.agent ?? ''}
+            options={[
+              { value: '', label: 'All agents' },
+              ...SESSION_AGENTS.map((agent) => ({
+                value: agent,
+                label: agent,
+              })),
+            ]}
+          />
+          <ToolbarWindow
+            name="days"
+            label="Window"
+            value={String(query.days)}
+            options={windowOptions(query.days)}
+          />
+          <ToolbarSearch
+            name="q"
+            label="Search"
+            placeholder="issue, PR, session id"
+            value={filters.q}
+          />
+          {/* A filter the mockup's toolbar does not draw, kept one click
+              away so the band stays one row. */}
+          <details className="console-toolbar__more">
+            <summary className="console-toolbar__field">
+              More filters{query.source ? ' · 1' : ''}
+            </summary>
+            <div className="console-toolbar__more-panel">
+              <ToolbarSelect
+                name="source"
+                label="Source"
+                value={query.source ?? ''}
+                options={[
+                  { value: '', label: 'All sources' },
+                  { value: 'cli', label: 'CLI' },
+                  { value: 'issue-agent', label: 'Dispatched agent' },
+                ]}
+              />
+            </div>
+          </details>
+          {/* Selects and the window submit on change; Apply shows only
+              until they hydrate (the mockup's toolbar has none), then keeps
+              its box so hydrating moves nothing. */}
+          <ToolbarApply label="Apply" />
+        </ConsoleToolbar>
       }
     >
-      <div data-testid="sessions-archive-content">
-        {view === 'by-issue' ? (
-          <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
-        ) : (
-          <SessionTable rows={rows} />
-        )}
-      </div>
+      <Card withBorder className="lcars-panel sessions-panel">
+        <Group
+          gap={10}
+          align="baseline"
+          wrap="nowrap"
+          className="sessions-panel__head"
+        >
+          <Title order={2}>Sessions</Title>
+          <span className="sessions-panel__count">{rows.length}</span>
+          <span className="sessions-panel__meta">
+            {view === 'by-issue' ? 'grouped by issue' : 'flat'} ·{' '}
+            {describeArchiveWindow(query)}
+          </span>
+          {/* The panel's own layout control, beside the meta it names. */}
+          <ViewToggle
+            view={view}
+            flatHref={displayHref(query, { view: 'flat', filters })}
+            byIssueHref={displayHref(query, { view: 'by-issue', filters })}
+          />
+        </Group>
+        <div data-testid="sessions-archive-content">
+          {view === 'by-issue' ? (
+            <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
+          ) : (
+            <SessionTable rows={rows} />
+          )}
+        </div>
+      </Card>
     </SessionsWorkspace>
   );
 }
 
-/** The flat/by-issue toggle rendered above the session table. The cost
+/** The flat/by-issue toggle, in the Sessions panel's header. The cost
  * ledger has no equivalent view, and since #192 it isn't on this page at
  * all - it's the top-level /costs destination. */
 
@@ -151,14 +265,25 @@ async function SessionsBody({
 interface SessionsViewProps {
   query: SessionArchiveQuery;
   view: SessionsView;
+  filters: SessionsViewFilters;
   watchedRepos: ReturnType<typeof getWatchedRepos>;
   mobileNavigationHrefs: { sessions: string; costs: string };
 }
 
-function SessionsViewContent({ query, view }: SessionsViewProps) {
+function SessionsViewContent({
+  query,
+  view,
+  filters,
+  watchedRepos,
+}: SessionsViewProps) {
   return (
     <Suspense fallback={<PageLoading rows={6} header={false} />}>
-      <SessionsBody query={query} view={view} />
+      <SessionsBody
+        query={query}
+        view={view}
+        filters={filters}
+        watchedRepos={watchedRepos}
+      />
     </Suspense>
   );
 }
@@ -172,6 +297,7 @@ const SessionsPageView = withConsolePageShell(
     title: 'Session Archive',
     subtitle: (
       <>
+        Durable session records ·{' '}
         {query.repo && `${repoDisplayName(query.repo)} — `}
         {describeArchiveWindow(query)} ·{' '}
         <Suspense fallback="…">
@@ -243,6 +369,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
     <SessionsPageView
       query={query}
       view={view}
+      filters={parseViewFilters(rawParams)}
       watchedRepos={watchedRepos}
       mobileNavigationHrefs={mobileNavigationHrefs}
     />

@@ -185,6 +185,14 @@ async function prepareContrastState(page: Page, name: string) {
     await expect(
       page.getByRole('button', { name: 'Reply', exact: true }),
     ).toBeEnabled();
+  } else if (name === 'Inbox') {
+    // Measure the toolbar controls and decision rows once they render.
+    await expect(
+      page.getByRole('combobox', { name: 'Repository', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('heading', { level: 2, name: 'Decision inbox' }),
+    ).toBeVisible();
   } else if (name === 'Sessions') {
     await page
       .getByRole('button', { name: 'Expand No issue sessions' })

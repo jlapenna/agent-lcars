@@ -153,8 +153,8 @@ export interface SessionSummary {
   titleSource?: SessionTitleSource;
   /** What the agent says it is doing RIGHT NOW — `lcars session status
    * "<text>"` (issue #1257), joined onto a pristine reducer summary the same
-   * way the daemon joins `title`'s declared/generated overlay (see
-   * `WatcherDaemon.tick`). Unlike `title`, there is only one source (the
+   * way `title`'s declared/generated overlay is joined (see
+   * `applyAnnotationOverlays` in the hook client). Unlike `title`, there is only one source (the
    * declared status annotation) and no precedence to compute: present means
    * "joined this tick", absent means "no current status annotation, clear
    * it" — see `buildSessionWrite`'s `clearFields` derivation, which reads
@@ -216,8 +216,21 @@ export interface SessionObserver {
   clientVersion?: string;
 }
 
+/** Tokens a session spent in one UTC minute: the growth of its
+ * cost-weighted total across the writes that minute. */
+export interface TokenMinute {
+  /** Start of the minute, ISO. */
+  minute: string;
+  tokens: number;
+}
+
 interface BaseSessionDoc {
   sessionId: string;
+  /** Stored lifecycle assertion. Hooks write `live`/`idle`/`ended`;
+   * `runner finalize` writes the authoritative `ended`. When a QueueExecutor
+   * worker dies before finalize and the Work API settles its run `lost`, the
+   * executor sets only this field to `ended` on that run's still-`live`/`idle`
+   * docs (`apps/runner-autoscaler/lost_run_sessions.go`). */
   liveness: SessionLiveness;
   observer?: SessionObserver;
   /** Most recent time a host watcher directly observed this CLI session.
@@ -230,6 +243,13 @@ interface BaseSessionDoc {
   turns: number;
   toolCallCounts: Record<string, number>;
   tokens: TokenUsage;
+  /** The last 30 minutes of token growth, oldest first. Only hook writes,
+   * which re-read the stored doc, maintain it; a session without it is not
+   * measured per minute. See `nextTokenMinutes`. */
+  tokenMinutes?: TokenMinute[];
+  /** The highest total `tokenMinutes` has credited up to, so a total that
+   * dips and recovers is not credited twice. */
+  tokenMinutesBase?: number;
   lastToolCall?: ToolCallDigest;
   /** Persisted client-reported model selection; see SessionSummary.model. */
   model?: string;
@@ -404,8 +424,7 @@ export type ClearableSessionField =
  * performed — `(doc, clearFields)` — and anything in the operation but not
  * in the key becomes a silent no-op by construction. See
  * `buildSessionWrite`'s doc comment (`session-doc.ts`) for the full
- * argument and `WatcherDaemon.tick`'s write cache for where this matters in
- * practice.
+ * argument.
  */
 export interface SessionWrite {
   readonly doc: SessionDoc;

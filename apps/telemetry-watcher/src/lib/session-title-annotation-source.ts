@@ -57,8 +57,7 @@ const defaultFileSystem: SessionTitleAnnotationFileSystem = {
 
 /**
  * One channel directory's read outcome. `available` and "has annotations"
- * are independent axes. Callers that need last-good retention (`daemon.ts`)
- * branch on `available`.
+ * are independent axes.
  */
 export interface SessionTitleDirectoryRead {
   readonly available: boolean;

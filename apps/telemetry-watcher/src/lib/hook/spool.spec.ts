@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -83,6 +84,20 @@ describe('spool', () => {
         )
       ).locked,
     ).toBe(false);
+    expect(lines(file)).toEqual([]);
+  });
+
+  it('takes over at once from a lock whose holder has exited', async () => {
+    // Agent runtimes kill async hooks on exit; the next hook must not wait
+    // out the stale age, which is longer than a SessionEnd hook's budget.
+    const file = tempSpool();
+    appendToSpool(file, { n: 1 });
+    const exited = spawnSync(process.execPath, ['-e', '']).pid;
+    fs.writeFileSync(
+      path.join(path.dirname(file), 'events.lock'),
+      String(exited),
+    );
+    expect((await drainSpool(file, async () => 'sent')).locked).toBe(false);
     expect(lines(file)).toEqual([]);
   });
 });

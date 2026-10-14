@@ -1,3 +1,5 @@
+import type { QueuePriority } from '@agent-lcars/dispatch-contracts';
+
 import type { RepositoryRef } from './watched-repo';
 
 /** The only multipart fields accepted by the future Quick Task upload route. */
@@ -16,6 +18,8 @@ export const QUICK_TASK_EVIDENCE_MAX_INPUT_BYTES = 10 * 1024 * 1024;
 export const QUICK_TASK_EVIDENCE_MAX_PIXELS = 25_000_000;
 export const QUICK_TASK_EVIDENCE_MAX_DIMENSION = 10_000;
 export const QUICK_TASK_EVIDENCE_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+/** Public bearer access expires without deleting the stored evidence. */
+export const QUICK_TASK_EVIDENCE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const QUICK_TASK_EVIDENCE_INPUT_MIME_TYPES = [
   'image/png',
@@ -37,6 +41,7 @@ export interface QuickTaskEvidenceIntent {
   evidenceId?: QuickTaskEvidenceId;
   repository: RepositoryRef;
   pipeline: string;
+  priority?: QueuePriority;
   description: string;
   source: {
     route: string;
@@ -72,6 +77,8 @@ export interface QuickTaskEvidenceObject {
   generation: string;
   /** False when create recovered an exact object written by an earlier call. */
   createdByCall?: boolean;
+  /** GCS-assigned object creation time, distinct from client capture metadata. */
+  uploadedAt?: string;
 }
 
 /** Frozen seam: called only by the winning Quick Task claimant before create. */
@@ -150,6 +157,24 @@ export const QUICK_TASK_EVIDENCE_SUCCESS_RESPONSE: QuickTaskEvidenceReadResponse
 
 export function isQuickTaskEvidenceId(value: string): boolean {
   return UUID_V4.test(value);
+}
+
+/** Only the storage server's creation timestamp can qualify public access. */
+export function isQuickTaskEvidenceFresh(uploadedAt: unknown): boolean {
+  if (
+    typeof uploadedAt !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(uploadedAt)
+  )
+    return false;
+  const created = Date.parse(uploadedAt);
+  const now = Date.now();
+  const finerThanClock = /\.\d{3}\d*[1-9]\d*Z$/u.test(uploadedAt);
+  return (
+    Number.isFinite(created) &&
+    new Date(created).toISOString().slice(0, 19) === uploadedAt.slice(0, 19) &&
+    (created < now || (created === now && !finerThanClock)) &&
+    now - created < QUICK_TASK_EVIDENCE_MAX_AGE_MS
+  );
 }
 
 export function quickTaskEvidenceObjectKey(

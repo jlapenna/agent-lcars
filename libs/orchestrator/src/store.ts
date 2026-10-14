@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import type {
   CapacityPlacementClaim,
   CapacityRecord,
@@ -12,6 +14,7 @@ import type {
 import type {
   GithubAnchorProjection,
   LeasedOutboxEntry,
+  QueuePriority,
   RequestSource,
   Run,
   Task,
@@ -31,6 +34,40 @@ import {
  * second concurrent session. Claude remains bounded by fleet host capacity.
  * This policy is deliberately absent from the claim request contract. */
 export { QUEUE_PIPELINE_MAX_LIVE_CLAIMS } from './queue-admission-status';
+
+/** Successful claim turns, not elapsed time or worker completion: 4:2:1.
+ * Empty classes are skipped; FIFO remains intact inside each class. */
+export const QUEUE_PRIORITY_TURNS: readonly QueuePriority[] = Object.freeze([
+  'urgent',
+  'urgent',
+  'normal',
+  'urgent',
+  'urgent',
+  'normal',
+  'background',
+]);
+export const queuePriorityCursorSchema = z.strictObject({
+  position: z
+    .number()
+    .int()
+    .min(0)
+    .max(QUEUE_PRIORITY_TURNS.length - 1),
+});
+
+/** Advance over skipped empty classes and the exact selected class. The
+ * store commits this cursor with the claim, never on an empty/cooling poll. */
+export function queuePriorityTurnAfter(
+  position: number,
+  priority: QueuePriority,
+): number {
+  for (let step = 0; step < QUEUE_PRIORITY_TURNS.length; step++) {
+    const index = (position + step) % QUEUE_PRIORITY_TURNS.length;
+    if (QUEUE_PRIORITY_TURNS[index] === priority) {
+      return (index + 1) % QUEUE_PRIORITY_TURNS.length;
+    }
+  }
+  throw new Error('Invalid queue priority turn');
+}
 
 /** The same provider cooldowns and admission ceilings used by queue claims. */
 export function availableQueuePipelines(input: {
@@ -67,13 +104,15 @@ export interface RunTransactionState {
   readonly queueEligibility?: QueueEligibilitySnapshot;
 }
 
-/** Selects one provider head using least live occupancy, then FIFO age.
+/** Selects the provider using least live occupancy, then its oldest FIFO age.
+ * Priority influences only the chosen provider's durable 4:2:1 class turn.
  * Callers must pass only server-authorized pipelines. */
 export function selectFairQueuedRun(
   queuedRuns: readonly Run[],
   liveRuns: readonly Run[],
   pipelines: readonly string[],
   now?: string,
+  priorityPositions: ReadonlyMap<string, number> = new Map(),
 ): Run | undefined {
   const granted = new Set(pipelines);
   const pipelineOrder = new Map(
@@ -91,9 +130,13 @@ export function selectFairQueuedRun(
   }
 
   const heads = new Map<string, Run>();
+  const candidates = new Map<string, Run[]>();
   for (const run of queuedRuns) {
     if (!isQueueAdmissionCandidate(run, now) || !granted.has(run.pipeline))
       continue;
+    const providerRuns = candidates.get(run.pipeline) ?? [];
+    providerRuns.push(run);
+    candidates.set(run.pipeline, providerRuns);
     const current = heads.get(run.pipeline);
     if (
       current === undefined ||
@@ -104,7 +147,7 @@ export function selectFairQueuedRun(
     }
   }
 
-  return [...heads.values()]
+  const provider = [...heads.values()]
     .filter((run) => {
       const ceiling = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[run.pipeline];
       return (
@@ -123,6 +166,34 @@ export function selectFairQueuedRun(
         left.runId.localeCompare(right.runId)
       );
     })[0];
+  if (provider === undefined) return undefined;
+  const providerRuns = candidates.get(provider.pipeline) ?? [];
+  return selectPriorityQueuedRun(
+    providerRuns.sort(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        (left.runId < right.runId ? -1 : left.runId > right.runId ? 1 : 0),
+    ),
+    priorityPositions.get(provider.pipeline) ?? 0,
+  );
+}
+
+/** Select a class within an admitted provider's FIFO-ordered candidates.
+ * Each claim owner retains its existing FIFO tie-break, physical/domain
+ * eligibility and provider-fairness decisions. */
+export function selectPriorityQueuedRun(
+  providerRuns: readonly Run[],
+  position: number,
+): Run | undefined {
+  for (let step = 0; step < QUEUE_PRIORITY_TURNS.length; step++) {
+    const priority =
+      QUEUE_PRIORITY_TURNS[(position + step) % QUEUE_PRIORITY_TURNS.length];
+    const head = providerRuns.find(
+      (run) => (run.priority ?? 'normal') === priority,
+    );
+    if (head !== undefined) return head;
+  }
+  return undefined;
 }
 
 /** GitHub delivery normally takes seconds; five minutes tolerates a slow call
@@ -203,6 +274,7 @@ export interface OrchestratorStore {
      * own identities. The store resolves it inside this same transaction as
      * history lookup and any new Run. */
     requestBinding?: RequestBinding;
+    readProviderRouting?: boolean;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
 
@@ -400,7 +472,8 @@ export interface OrchestratorStore {
 
   /** Transactionally claims a provider-fair `queued` run whose `pipeline` is
    *  one of `pipelines`: least live claimed occupancy across providers, then
-   *  the oldest provider head, while preserving FIFO within each provider
+   *  the oldest provider head, then durable 4:2:1 urgent/normal/background
+   *  turns with FIFO within each class (historical absence means normal)
    *  and enforcing server-owned provider ceilings. Sets `queue.state = 'claimed'`
    *  plus `claimedAt`/`startDeadlineAt`/`claimedBy`/`tokenHash` and refreshing the execution
    *  lease in the same transaction. `undefined` when nothing is queued for
@@ -442,12 +515,15 @@ export interface CapacityTransactionSnapshot {
   records: Map<string, CapacityRecord>;
   runs: Run[];
   coolingPipelines: ReadonlySet<string>;
+  priorityPositions: ReadonlyMap<string, number>;
 }
 export interface CapacityTransactionResult<T> {
   value: T;
   state?: CapacityState;
   records?: Map<string, CapacityRecord>;
   run?: Run;
+  /** Committed atomically with a successful capacity claim, never a replay. */
+  priorityTurn?: { pipeline: string; position: number };
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and
@@ -471,6 +547,9 @@ export interface VersionedTask {
 
 /** The single consistent snapshot supplied to a request transaction. */
 export interface RequestTransactionState {
+  /** Read only for source-ordered label handoffs, inside the claim transaction. */
+  readonly latestRun?: Run;
+  readonly retainedClaims?: readonly Run[];
   readonly task: VersionedTask | undefined;
   readonly activeRun: Run | undefined;
   /** The request identity resolved by the store's optional binding. */

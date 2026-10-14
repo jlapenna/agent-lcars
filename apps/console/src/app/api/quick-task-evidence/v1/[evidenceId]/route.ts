@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import {
+  isQuickTaskEvidenceFresh,
   isQuickTaskEvidenceId,
   QUICK_TASK_EVIDENCE_NOT_FOUND_RESPONSE,
   QUICK_TASK_EVIDENCE_RESPONSE_HEADERS,
@@ -20,8 +21,10 @@ async function readEvidence(
       process.env['QUICK_TASK_EVIDENCE_BUCKET'] ?? '',
     );
     if (await store.isRevoked(evidenceId)) return notFound();
+    const object = await store.readObject(evidenceId);
+    if (!object || !isQuickTaskEvidenceFresh(object.uploadedAt))
+      return notFound();
     if (metadataOnly) {
-      if (!(await store.readObject(evidenceId))) return notFound();
       return new NextResponse(null, {
         status: 200,
         headers: QUICK_TASK_EVIDENCE_RESPONSE_HEADERS,

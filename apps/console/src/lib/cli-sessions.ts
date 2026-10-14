@@ -4,12 +4,15 @@ import { logger } from '@agent-lcars/logging';
 import type {
   CliSessionDoc,
   SessionAgent,
+  SessionDoc,
   SessionLiveness,
+  SessionRepository,
 } from '@agent-lcars/telemetry';
 import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
+  MAX_LIST_LIMIT,
 } from '@agent-lcars/telemetry/server';
 
 import type { WatchedRepo } from './watched-repo';
@@ -18,6 +21,10 @@ import type { WatchedRepo } from './watched-repo';
  * telemetry collection keeps one doc per session forever, and the dashboard
  * is a "what's happening" surface, not a session archive. */
 const ACTIVE_WINDOW_HOURS = 24;
+
+/** The anchor-owner query's wider window (see `getCliSessions`'s
+ * `exhaustive`). Exported so its contract can name the bound. */
+export const OWNER_WINDOW_HOURS = 72;
 
 /** Hard cap on rendered sessions even within the window - a busy fleet day
  * produces 40+ session docs in 24h, and rows past this many are archive
@@ -57,6 +64,17 @@ export interface CliSession {
   artifacts?: string[];
   /** Undefined for docs written before Phase 0's `repo` field existed. */
   repo?: WatchedRepo;
+}
+
+/** The given spelling first, then its lowercase form when different. */
+function repoSpellings(repo: SessionRepository): SessionRepository[] {
+  const lower = {
+    owner: repo.owner.toLowerCase(),
+    name: repo.name.toLowerCase(),
+  };
+  return lower.owner === repo.owner && lower.name === repo.name
+    ? [repo]
+    : [repo, lower];
 }
 
 function isActive(liveness: SessionLiveness): boolean {
@@ -124,17 +142,60 @@ export interface CliSessionsResult {
  *
  * A store-level failure (e.g. no telemetry infra reachable) degrades to an
  * empty list rather than crashing the dashboard.
+ *
+ * `repo` is for the anchor-owner query (`anchor-owner.ts`), where a session
+ * missing from the list reads as "nobody is working this". It reads only
+ * that repository's `source: 'cli'` docs, filtered in Firestore on the
+ * persisted `repo.owner`/`repo.name` fields (index
+ * `sessions_source_repo_last_activity` in infra/terraform/main.tf), so other
+ * repositories' and host-scoped sessions cannot fill the page. It covers a
+ * wider {@link OWNER_WINDOW_HOURS} window (a session can stay `live`/`idle`
+ * long after its last turn while it waits on CI or review), at the store's
+ * maximum page, with no render cap, and still reports a full page as a
+ * warning because it may have been truncated. GitHub names are
+ * case-insensitive and the writer persists the spelling its git remote
+ * reported, so the given spelling and its lowercase form are both read.
  */
-export async function getCliSessions(): Promise<CliSessionsResult> {
+export async function getCliSessions({
+  repo,
+}: { repo?: SessionRepository } = {}): Promise<CliSessionsResult> {
   const now = new Date();
+  const windowHours =
+    repo === undefined ? ACTIVE_WINDOW_HOURS : OWNER_WINDOW_HOURS;
   const activeSince = new Date(
-    now.getTime() - ACTIVE_WINDOW_HOURS * 60 * 60 * 1000,
+    now.getTime() - windowHours * 60 * 60 * 1000,
   ).toISOString();
 
   let docs: CliSessionDoc[];
+  const warnings: string[] = [];
   try {
     const firestore = await getAgentTelemetryReaderFirestore();
-    const recentDocs = await listSessionDocs(firestore, { activeSince });
+    let recentDocs: SessionDoc[];
+    if (repo === undefined) {
+      recentDocs = await listSessionDocs(firestore, { activeSince });
+    } else {
+      const pages = await Promise.all(
+        repoSpellings(repo).map((spelling) =>
+          listSessionDocs(firestore, {
+            activeSince,
+            source: 'cli',
+            repo: spelling,
+            limit: MAX_LIST_LIMIT,
+          }),
+        ),
+      );
+      if (pages.some((page) => page.length >= MAX_LIST_LIMIT)) {
+        warnings.push(
+          `CLI session listing hit the ${MAX_LIST_LIMIT}-session page limit and may be incomplete.`,
+        );
+      }
+      const byId = new Map(
+        pages.flat().map((doc) => [doc.sessionId, doc] as const),
+      );
+      recentDocs = [...byId.values()].sort((a, b) =>
+        b.lastActivityAt.localeCompare(a.lastActivityAt),
+      );
+    }
     docs = recentDocs.filter(
       (doc): doc is CliSessionDoc => doc.source === 'cli',
     );
@@ -155,7 +216,7 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   const capped = [
     ...sessionsByDoc.filter(([, session]) => isActive(session.liveness)),
     ...sessionsByDoc.filter(([, session]) => !isActive(session.liveness)),
-  ].slice(0, MAX_SESSIONS);
+  ].slice(0, repo === undefined ? MAX_SESSIONS : undefined);
 
   const sessions = capped.map(([doc, session]) => {
     const pr = prFromDeliverables(doc);
@@ -163,5 +224,5 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   });
 
   sessions.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
-  return { sessions, warnings: [] };
+  return { sessions, warnings };
 }

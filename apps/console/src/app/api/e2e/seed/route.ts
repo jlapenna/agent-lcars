@@ -4,6 +4,7 @@ import {
   type CliSessionDoc,
   type IssueAgentSessionDoc,
   type SessionWrite,
+  tokenMinuteOf,
 } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryWriterFirestore,
@@ -86,6 +87,12 @@ function fixtureSessions(): CliSessionDoc[] {
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
       },
+      // Hook telemetry's per-minute growth, so the Bridge's Tokens / min
+      // renders a value and sparkline bars.
+      tokenMinutes: [3, 2].map((minutes) => ({
+        minute: tokenMinuteOf(minutesAgo(minutes)),
+        tokens: 2_400,
+      })),
       host: 'e2e-fixture-host-1',
       branch: E2E_FIXTURE_BRANCH,
       worktree: 'agent-lcars-e2e-fixture',
@@ -287,6 +294,16 @@ async function seedRunnerStatus() {
       desiredRunners: 2,
       minRunners: 0,
       maxRunners: 2,
+      // Two recorded minutes, one with three job starts, so the Bridge's CI
+      // wait p50 renders a value and a sparkline bar.
+      jobStartup: {
+        bounds: [10, 60, 300],
+        startedAt: minutesAgo(30),
+        intervals: [
+          { endedAt: minutesAgo(1), counts: [0, 0, 0, 0] },
+          { endedAt: minutesAgo(0), counts: [1, 3, 3, 3] },
+        ],
+      },
       updatedAt: new Date().toISOString(),
     });
   await firestore

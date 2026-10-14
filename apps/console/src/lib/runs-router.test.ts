@@ -3135,17 +3135,79 @@ describe('codexAuth', () => {
 });
 
 describe('startup deadline run-token fence', () => {
-  it.each([false, true])(
-    'rejects late bootstrap, heartbeat and completion (swept=%s)',
-    async (swept) => {
+  it.each(['claude', 'codex', 'opencode'])(
+    'acknowledges delayed %s bootstrap before the original deadline without claiming provider spawn',
+    async (pipeline) => {
       const { store, orchestrator, now, setNow } = fixture();
       const runId = await seedQueuedRun(store, orchestrator, {
-        workId: wid('launch-no-callback'),
+        workId: wid(`startup-handshake-${pipeline}`),
+        pipeline,
+        now: NOW,
+      });
+      const token = mintRunToken();
+      const tokenHash = hashRunToken(token);
+      await store.claimQueuedRun({
+        pipelines: [pipeline],
+        now: NOW,
+        claimedBy: 'runner-1',
+        tokenHash,
+      });
+      const before = (await store.readRun(runId))!;
+      const ctx = { store, orchestrator, now, ...context, bearerToken: token };
+      // Observed placement leaves 148s, less than the 300s periodic interval.
+      setNow('2026-08-26T10:12:32.000Z');
+      expect((await call(ctx, 'GET', runPath(runId, '/brief'))).status).toBe(
+        200,
+      );
+      expect(
+        (await store.readRun(runId))!.queue!.firstHeartbeatAt,
+      ).toBeUndefined();
+      const heartbeat = await call(ctx, 'POST', runPath(runId, '/heartbeat'));
+      expect(heartbeat.status).toBe(200);
+      const accepted = (await store.readRun(runId))!;
+      expect(heartbeat.json).toEqual({
+        runId,
+        expiresAt: accepted.leaseExpiresAt,
+      });
+      expect(accepted.queue).toEqual({
+        ...before.queue,
+        firstHeartbeatAt: '2026-08-26T10:12:32.000Z',
+      });
+      // Neither authority nor the original startup deadline is rewritten.
+      expect(accepted.queue!.tokenHash).toBe(tokenHash);
+      expect(accepted.queue!.providerProcessStartedAt).toBeUndefined();
+      setNow('2026-08-26T10:17:32.000Z');
+      expect(
+        (await call(ctx, 'POST', runPath(runId, '/heartbeat'))).status,
+      ).toBe(200);
+      expect((await store.readRun(runId))!.queue!.firstHeartbeatAt).toBe(
+        '2026-08-26T10:12:32.000Z',
+      );
+      const completion = await call(ctx, 'POST', runPath(runId, '/complete'), {
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 1 },
+      });
+      expect(completion.status).toBe(200);
+      expect((await store.readRun(runId))!.state).toBe('finished');
+    },
+  );
+
+  it.each(
+    ['claude', 'codex', 'opencode'].flatMap((pipeline) =>
+      [false, true].map((swept) => ({ pipeline, swept })),
+    ),
+  )(
+    'rejects late $pipeline bootstrap, heartbeat and completion (swept=$swept)',
+    async ({ pipeline, swept }) => {
+      const { store, orchestrator, now, setNow } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid(`launch-no-callback-${pipeline}`),
+        pipeline,
         now: NOW,
       });
       const token = mintRunToken();
       await store.claimQueuedRun({
-        pipelines: ['claude'],
+        pipelines: [pipeline],
         now: NOW,
         claimedBy: 'runner-1',
         tokenHash: hashRunToken(token),
@@ -4140,6 +4202,199 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           delayed.resolve();
           await Promise.all(f.fake.delayedResults);
         }
+      },
+    );
+
+    it.each([
+      'healthy',
+      'retire-before-cleanup',
+      'release-before-cleanup',
+    ] as const)(
+      'accepted PR completion keeps cleanup and successor restore with ordering=%s',
+      async (ordering) => {
+        const f = await brokerFixture(true, false, true);
+        expect((await request(f, 'restore')).status).toBe(200);
+        const report = f.orchestrator.report.bind(f.orchestrator);
+        let accepted: Awaited<ReturnType<typeof f.store.readRun>>;
+        let successorId = '';
+        f.orchestrator.report = async (...args) => {
+          const outcome = await report(...args);
+          expect(isRefusal(outcome)).toBe(false);
+          accepted = await f.store.readRun(f.runId);
+          expect(accepted?.result).toMatchObject({
+            ok: true,
+            summary: 'pull-request',
+            ref: 'https://github.com/jlapenna/agent-lcars/pull/99',
+          });
+          expect(accepted?.credentialOperation).toMatchObject({
+            kind: 'cleanup',
+            claimFingerprint: f.fingerprint,
+          });
+          if (ordering !== 'healthy') await retireBroker(f);
+          let releaseFailure: unknown;
+          if (ordering === 'release-before-cleanup') {
+            try {
+              await releaseBroker(f);
+            } catch (error) {
+              releaseFailure = error;
+            }
+          }
+          const expectedReleaseFailure = {
+            healthy: undefined,
+            'retire-before-cleanup': undefined,
+            'release-before-cleanup': expect.objectContaining({
+              message: expect.stringContaining('physical'),
+            }),
+          }[ordering];
+          expect(releaseFailure instanceof Error).toBe(
+            ordering === 'release-before-cleanup',
+          );
+          expect(releaseFailure).toEqual(expectedReleaseFailure);
+          expect(await f.store.readRun(f.runId)).toEqual(accepted);
+          const successor = await f.orchestrator.request({
+            taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+            requestId: `after-pr-cleanup-${ordering}`,
+            pipeline: 'codex',
+            params: { mode: 'implement' },
+            work: {
+              spec: {
+                title: 'Useful successor after completed PR',
+                description: 'Verify the next exact claim can restore.',
+                pipeline: 'codex',
+                target: { repo: 'jlapenna/agent-lcars' },
+              },
+            },
+          });
+          if (isRefusal(successor) || successor.run === undefined)
+            throw new Error('successor admission failed');
+          successorId = successor.run.runId;
+          expect(successorId).not.toBe(f.runId);
+          await f.store.enqueueRun({ runId: successorId, now: NOW });
+          await f.orchestrator.confirmDispatch(successorId);
+          await f.protocol.register(f.capacityOwner, 'pr-successor', NOW);
+          return outcome;
+        };
+        let cleanupReached = false;
+        f.fake.beforeSave = async (attempt) => {
+          if (attempt.name !== CODEX_GLOBAL_LEASE_OBJECT) return;
+          cleanupReached = true;
+          expect(
+            (await f.store.readRun(f.runId))?.credentialOperation?.kind,
+          ).toBe('cleanup');
+          expect((await f.protocol.read(NOW)).receipts).toHaveLength(1);
+          const waiting = await call(f.ctx, 'POST', '/runs/claim', {
+            runner: 'same-runner',
+            capacityVersion: 1,
+            producerId: 'pr-successor',
+            claimRequestId: 'before-pr-cleanup',
+          });
+          expect(waiting.status).toBe(200);
+          expect(waiting.json).toMatchObject({ kind: 'wait' });
+        };
+        expect(
+          await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+            outcome: 'pull-request',
+            outcomeReference: { kind: 'pull-request', number: 99 },
+            message: 'immutable PR before physical cleanup',
+          }),
+        ).toEqual({ status: 200, json: { runId: f.runId, state: 'finished' } });
+        expect(cleanupReached).toBe(true);
+        expect((await f.store.readRun(f.runId))?.result).toEqual(
+          accepted?.result,
+        );
+        expect(
+          (await f.store.readRun(f.runId))?.credentialOperation,
+        ).toBeUndefined();
+        expect((await f.codexAuth.readLease())?.expiresAt).toBe(
+          '1970-01-01T00:00:00.000Z',
+        );
+        const outbox = await f.store.claimPendingOutbox({
+          limit: 30,
+          now: NOW,
+          leaseExpiresAt: '2026-08-26T10:05:00.000Z',
+        });
+        expect(
+          outbox.filter((entry) => entry.kind === 'report-outcome'),
+        ).toHaveLength(1);
+        if (ordering === 'healthy') await retireBroker(f);
+        expect(await releaseBroker(f)).toEqual({
+          released: true,
+          retainBarrier: false,
+        });
+        f.fake.beforeSave = undefined;
+        const next = await call(f.ctx, 'POST', '/runs/claim', {
+          runner: 'same-runner',
+          capacityVersion: 1,
+          producerId: 'pr-successor',
+          claimRequestId: 'after-pr-cleanup',
+        });
+        expect(next.status).toBe(200);
+        expect(next.json).toMatchObject({
+          runId: successorId,
+          pipeline: 'codex',
+        });
+        const nextToken = (next.json as { token: string }).token;
+        const nextReceipt = (await f.protocol.read(NOW)).receipts[0];
+        const nextFence = {
+          poolId: nextReceipt.poolId,
+          slot: nextReceipt.slot,
+          revision: nextReceipt.revision,
+          runId: nextReceipt.runId,
+          nonce: nextReceipt.nonce,
+        };
+        const nextFingerprint = hashRunToken(nextToken);
+        await f.protocol.recover(f.capacityOwner, nextFence, {
+          nonce: 'pr-successor-recovery',
+          now: NOW,
+          expiresAt: '2026-08-26T10:01:00.000Z',
+        });
+        await f.protocol.bind(f.capacityOwner, nextFence, {
+          recoveryNonce: 'pr-successor-recovery',
+          jobUid: 'next-job',
+          jobName: nextReceipt.jobName,
+          podUid: 'next-pod',
+          secretUid: 'next-secret',
+          secretTokenHash: nextFingerprint,
+          placed: true,
+          deleting: false,
+          owned: true,
+          now: NOW,
+        });
+        await f.protocol.attest(f.capacityOwner, nextFence, {
+          recoveryNonce: 'pr-successor-recovery',
+          jobUid: 'next-job',
+          podUid: 'next-pod',
+          generation: 1,
+          owned: true,
+          now: NOW,
+        });
+        await f.protocol.activate({
+          fence: nextFence,
+          jobUid: 'next-job',
+          podUid: 'next-pod',
+          tokenHash: nextFingerprint,
+          now: NOW,
+        });
+        const restored = await call(
+          {
+            ...f.ctx,
+            bearerToken: nextToken,
+            verifyWorkerIdentity: async () => ({
+              podUid: 'next-pod',
+              namespace: 'broker-ns',
+            }),
+          },
+          'GET',
+          runPath(successorId, '/codex-auth'),
+        );
+        expect(restored.status).toBe(200);
+        expect(await f.codexAuth.readLease()).toMatchObject({
+          runId: successorId,
+          claimFingerprint: nextFingerprint,
+        });
+        expect((await f.store.readRun(f.runId))?.result).toEqual(
+          accepted?.result,
+        );
       },
     );
 

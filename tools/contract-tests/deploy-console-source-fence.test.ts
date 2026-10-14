@@ -31,36 +31,198 @@ const workflow = parse(
   concurrency?: Concurrency;
   jobs: Record<string, { steps: Step[]; concurrency?: Concurrency }>;
 };
+const BASE = '0'.repeat(40);
 const OLD = 'a'.repeat(40),
   NEW = 'b'.repeat(40);
 const guard = workflow.jobs.deploy.steps.find((step) => step.id === 'source');
 
+interface Rollout {
+  source?: string;
+  created?: string;
+  start?: string;
+  updated?: string;
+  end?: string;
+  conclusion?: string;
+  verify?: string;
+  marker?: string;
+  attempts?: Rollout[];
+  missingStart?: boolean;
+  missingSteps?: boolean;
+}
 function sourceDecision(
   source: string,
   main: string,
   event = 'workflow_run',
   fail = false,
   deliveryMode = '',
+  rollouts: Rollout[] = [{ source: NEW }],
+  incomplete = false,
+  concurrent: { newer: number; race?: boolean } | undefined = undefined,
+  history = 0,
+  clock: { local: string; server: string } | undefined = undefined,
 ) {
-  // The old workflow has no source fence and admits every Verify-passed run.
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
   const output = path.join(dir, 'output'),
     calls = path.join(dir, 'calls');
+  const time = '2026-10-13T01:00:00Z';
+  const routes: Record<string, unknown> = {
+    'git/ref/heads/main': { object: { sha: main } },
+  };
+  const rows = rollouts.map((run, i) => {
+    const jobs = (run.attempts ?? [run]).map((attempt, j) => ({
+      id: i * 10 + j + 1,
+      name: 'deploy',
+      started_at: '2026-10-13T00:00:00Z',
+      ...(run.missingSteps
+        ? {}
+        : {
+            steps: [
+              {
+                name: 'Deploy with managed App Hosting build',
+                status: 'completed',
+                conclusion: attempt.conclusion ?? 'success',
+                started_at: attempt.missingStart
+                  ? undefined
+                  : (attempt.start ??
+                    new Date(
+                      new Date(attempt.end ?? time).getTime() - 60000,
+                    ).toISOString()),
+                completed_at: attempt.end ?? time,
+              },
+              {
+                name: 'Verify the deployed console is serving',
+                status: 'completed',
+                conclusion: attempt.verify ?? 'success',
+              },
+            ],
+          }),
+    }));
+    routes[`actions/runs/${i + 1}/jobs?filter=all&per_page=100`] = {
+      total_count: jobs.length,
+      jobs,
+    };
+    return {
+      id: i + 1,
+      created_at: run.created ?? '2026-10-13T00:30:00Z',
+      updated_at: run.updated ?? time,
+      // Displayed workflow SHA intentionally differs from effect source.
+      head_sha: main,
+      display_title:
+        run.marker ?? `Deploy console [source:${run.source ?? NEW}]`,
+      conclusion: 'success',
+    };
+  });
+  // Older history: runs updated before every rollout above, so the reader
+  // counts them but never needs their jobs.
+  for (let i = 0; i < history; i++) {
+    rows.push({
+      id: 100000 + i,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      head_sha: main,
+      display_title: 'Deploy console (skipped PR)',
+      conclusion: 'skipped',
+    });
+  }
+  const total = rows.length + Number(incomplete);
+  // Rows created after the reader's ceiling, newest first: skipped PR runs
+  // created during discovery, the condition observed in production.
+  const newer = Array.from({ length: concurrent?.newer ?? 0 }, (_, i) => ({
+    id: 1000 + i,
+    created_at: '2999-01-01T00:00:00Z',
+    updated_at: '2999-01-01T00:00:00Z',
+    display_title: 'Deploy console (skipped PR)',
+    conclusion: 'skipped',
+  }));
+  writeFileSync(
+    path.join(dir, 'runs'),
+    JSON.stringify({ rows, newer, total, race: concurrent?.race }),
+  );
   writeFileSync(output, '');
+  writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
   writeFileSync(
     path.join(dir, 'gh'),
-    `#!/bin/bash
-set -eu
-printf '%s\\n' "$*" >> "$FIXTURE_CALLS"
-test "$*" = 'api repos/jlapenna/agent-lcars/git/ref/heads/main --jq .object.sha'
-if [ "$FIXTURE_FAIL" = true ]; then exit 1; fi
-printf '%s\\n' "$FIXTURE_MAIN"
+    `#!/usr/bin/env python3
+import datetime, json, os, sys, time
+from email.utils import formatdate
+from urllib.parse import unquote
+args=sys.argv[1:]
+with open(os.environ['FIXTURE_CALLS'], 'a') as f: f.write(' '.join(args)+'\\n')
+if os.environ['FIXTURE_FAIL']=='true': sys.exit(1)
+route=args[1].removeprefix('repos/jlapenna/agent-lcars/')
+with open(os.environ['FIXTURE_ROUTES']) as f: routes=json.load(f)
+if '--include' in sys.argv:
+    epoch=float(os.environ['FIXTURE_SERVER_EPOCH'])+int(time.time()-float(os.environ['FIXTURE_SERVER_REAL_START']))
+    print('HTTP/2.0 200 OK\\nDate: '+formatdate(epoch, usegmt=True)+'\\nAge: 0\\n')
+if route.startswith('compare/'):
+    base, head = route.removeprefix('compare/').split('...')
+    order=[os.environ['FIXTURE_BASE'], os.environ['FIXTURE_OLD'], os.environ['FIXTURE_NEW']]
+    status='identical' if base==head else ('ahead' if base in order and head in order and order.index(base)<order.index(head) else ('behind' if base in order and head in order else 'diverged'))
+    print(json.dumps({'status': status}))
+elif route.startswith('actions/workflows/deploy-console.yml/runs?'):
+    with open(os.environ['FIXTURE_RUNS']) as f: runs=json.load(f)
+    query=dict(p.split('=',1) for p in route.split('?',1)[1].split('&'))
+    created=query.get('created')
+    if runs.get('race'):
+        # Review race on #2641. Until the world settles, unfiltered pages miss
+        # the oldest row (a run created mid-scan shifted it), the total grows
+        # by one after the first read, and the newer count already includes a
+        # second run, so total minus newer still equals the rows seen.
+        state_path=os.environ['FIXTURE_RUNS']+'.state'
+        state=json.load(open(state_path)) if os.path.exists(state_path) else {'calls': 0, 'stable': False}
+        if not state['stable']:
+            if created is not None:
+                state['stable']=True
+                rows, total = runs['newer'], len(runs['newer'])
+            else:
+                rows, total = runs['rows'][1:], runs['total'] + min(state['calls'], 1)
+                state['calls']+=1
+                state['stable']=state['calls']>=3
+            json.dump(state, open(state_path,'w'))
+            print(json.dumps({'total_count': total, 'workflow_runs': rows}))
+            sys.exit(0)
+    all_rows = runs['newer'] + runs['rows']
+    if created is None:
+        rows = all_rows
+        total = runs['total'] + len(runs['newer'])
+    else:
+        expression=unquote(created)
+        def stamp(value): return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+        if expression.startswith('>'):
+            rows=[row for row in all_rows if stamp(row['created_at']) > stamp(expression[1:])]
+        else:
+            rows=[row for row in all_rows if stamp(row['created_at']) <= stamp(expression[2:])]
+        total=len(rows)
+        rows=rows[:1000]
+    page=int(query.get('page','1'))
+    print(json.dumps({'total_count': total, 'workflow_runs': rows[(page-1)*100:page*100]}))
+else: print(json.dumps(routes[route]))
 `,
     { mode: 0o755 },
   );
+  let program = guard.run!;
+  if (clock) {
+    const entry = "python3 - <<'PY_SOURCE'\n";
+    if (!program.includes(entry))
+      throw new Error('Missing guard clock boundary');
+    program = program.replace(
+      entry,
+      entry +
+        `import time as _fixture_time
+import datetime as _fixture_datetime
+_fixture_real_time = _fixture_time.time
+_fixture_origin = _fixture_real_time()
+class _FixtureDateTime(_fixture_datetime.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls.fromtimestamp(${Date.parse(clock.local) / 1000} + _fixture_real_time() - _fixture_origin, tz)
+_fixture_datetime.datetime = _FixtureDateTime
+`,
+    );
+  }
   try {
-    const result = spawnSync('bash', ['-c', guard.run!], {
+    const result = spawnSync('bash', ['-c', program], {
       encoding: 'utf8',
       timeout: 5000,
       env: {
@@ -70,17 +232,27 @@ printf '%s\\n' "$FIXTURE_MAIN"
         DELIVERY_MODE: deliveryMode,
         SOURCE_SHA: source,
         GITHUB_REPOSITORY: 'jlapenna/agent-lcars',
+        GITHUB_RUN_ID: '999',
         GITHUB_OUTPUT: output,
         GH_TOKEN: 'fixture-only',
         FIXTURE_CALLS: calls,
-        FIXTURE_MAIN: main,
+        FIXTURE_ROUTES: path.join(dir, 'routes'),
+        FIXTURE_RUNS: path.join(dir, 'runs'),
         FIXTURE_FAIL: String(fail),
+        FIXTURE_SERVER_EPOCH: String(
+          clock
+            ? Date.parse(clock.server) / 1000
+            : Math.floor(Date.now() / 1000),
+        ),
+        FIXTURE_SERVER_REAL_START: String(Date.now() / 1000),
+        FIXTURE_BASE: BASE,
+        FIXTURE_OLD: OLD,
+        FIXTURE_NEW: NEW,
       },
     });
-    const lines = readFileSync(output, 'utf8');
     return {
       status: result.status,
-      output: lines.match(/^deploy_current=(.*)$/m)?.[1],
+      output: readFileSync(output, 'utf8').match(/^deploy_current=(.*)$/m)?.[1],
       calls: existsSync(calls) ? readFileSync(calls, 'utf8') : '',
     };
   } finally {
@@ -182,6 +354,230 @@ describe('serialized automatic deployment source fence', () => {
       output: 'true',
       calls: '',
     });
+  });
+
+  it('deploys a validated ancestor while newer main is still waiting for CI', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [{ source: BASE }]),
+    ).toMatchObject({ status: 0, output: 'true' });
+  });
+
+  it('rejects an old automatic source after a newer manual rollout even when serving verification failed', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, verify: 'failure' },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('treats a failed rollout command as a possible production effect', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, conclusion: 'failure' },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('retains a newer cancelled possible effect after an older successful rollout', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD },
+        {
+          source: NEW,
+          conclusion: 'cancelled',
+          updated: '2026-10-13T02:00:00Z',
+          end: '2026-10-13T02:00:00Z',
+        },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('ignores successful skipped workflows and their misleading displayed main SHA', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, conclusion: 'skipped' },
+        { source: OLD },
+      ]),
+    ).toMatchObject({ status: 0, output: 'true' });
+  });
+
+  it('reads newer rollback evidence beyond the first 100 history records', () => {
+    const earlier = Array.from({ length: 100 }, () => ({
+      source: OLD,
+      updated: '2026-10-12T23:00:00Z',
+      end: '2026-10-12T23:00:00Z',
+    }));
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        ...earlier,
+        { source: NEW },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('includes actual rollout evidence from older rerun attempts', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        {
+          source: NEW,
+          attempts: [{ conclusion: 'success' }, { conclusion: 'skipped' }],
+        },
+      ]),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('fails closed for incomplete history, unknown effect provenance and incomparable sources', () => {
+    expect(
+      sourceDecision(
+        NEW,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [{ source: OLD }],
+        true,
+      ).status,
+    ).not.toBe(0);
+    expect(
+      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
+        { marker: 'legacy no source' },
+      ]).status,
+    ).not.toBe(0);
+    expect(
+      sourceDecision(NEW, NEW, 'workflow_run', false, '', [
+        { source: 'c'.repeat(40) },
+      ]).status,
+    ).not.toBe(0);
+    expect(sourceDecision('c'.repeat(40), NEW).status).not.toBe(0);
+  }, 20000);
+
+  it.each([
+    [
+      'inclusive entry second',
+      '2026-10-13T16:00:01.250Z',
+      '2026-10-13T16:00:01.250Z',
+    ],
+    [
+      'local wall clock behind GitHub',
+      '2026-10-13T16:00:00Z',
+      '2026-10-13T16:00:03Z',
+    ],
+  ])('retains a completed newer rollout at the %s', (_name, local, server) => {
+    expect(
+      sourceDecision(
+        OLD,
+        NEW,
+        'workflow_run',
+        false,
+        '',
+        [
+          {
+            source: NEW,
+            created: '2026-10-13T16:00:01Z',
+            start: '2026-10-13T16:00:01Z',
+            updated: '2026-10-13T16:00:01.100Z',
+            end: '2026-10-13T16:00:01.100Z',
+          },
+        ],
+        false,
+        undefined,
+        0,
+        { local, server },
+      ),
+    ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('reads history at a creation ceiling so concurrent new runs cannot change the scan', () => {
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 150 },
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('retries a scan whose total changed, even when total minus newer still matches', () => {
+    // Without the before/after total bracket, the first scan admits OLD
+    // because it never saw the newer NEW rollout.
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 2, race: true },
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+  }, 20000);
+
+  it('reads complete history beyond the 1,000-result cap of a filtered listing', () => {
+    // Run 38438235710: `created=<=` returned 1,000 of 2,500 runs, so every
+    // scan was incomplete and each automatic deployment refused.
+    const call = sourceDecision(
+      OLD,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      { newer: 3 },
+      1200,
+    );
+    expect(call).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('refuses terminal rollout evidence without its start or step inventory', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, missingStart: true },
+      ]).status,
+    ).not.toBe(0);
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: NEW, missingSteps: true },
+      ]).status,
+    ).not.toBe(0);
+  });
+
+  it('excludes earlier legacy evidence only after a proved later successful rollout', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD },
+        {
+          marker: 'legacy unknown',
+          updated: '2026-10-12T23:00:00Z',
+          end: '2026-10-12T23:00:00Z',
+        },
+      ]),
+    ).toMatchObject({ status: 0, output: 'true' });
+    // Equality is not an earlier bound: retain unknown evidence at T.
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD },
+        { marker: 'legacy unknown' },
+      ]).status,
+    ).not.toBe(0);
+  });
+
+  it('parses timestamps by instant and refuses a run timestamp older than its effect', () => {
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD, updated: '2026-10-13T03:00:00+02:00' },
+      ]),
+    ).toMatchObject({ status: 0, output: 'true' });
+    expect(
+      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+        { source: OLD, updated: '2026-10-13T00:59:59Z' },
+      ]).status,
+    ).not.toBe(0);
   });
 
   it.each(['', 'not-a-sha', 'c'.repeat(39)])(

@@ -17,7 +17,11 @@ import {
   notificationStorageKey,
   parseNotificationState,
 } from '../lib/inbox-notifications';
-import { InboxNotifications } from './inbox-notifications';
+import {
+  InboxNotificationsProvider,
+  InboxNotificationsToggle,
+  InboxNotificationsWatch,
+} from './inbox-notifications';
 
 let now: number;
 const first = { id: 'owner/repo#1', generation: 'needs-human' };
@@ -46,7 +50,10 @@ const storageKey = notificationStorageKey('viewer');
 function tree(snapshot: InboxNotificationSnapshot) {
   return (
     <MantineProvider>
-      <InboxNotifications principalId={snapshot.principalId} />
+      <InboxNotificationsProvider principalId={snapshot.principalId}>
+        <InboxNotificationsWatch />
+        <InboxNotificationsToggle />
+      </InboxNotificationsProvider>
     </MantineProvider>
   );
 }
@@ -126,6 +133,159 @@ describe('opt-in Inbox notification delivery', () => {
       screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeVisible();
   });
+  const withWatch = (watching: boolean, snapshot = sample()) => (
+    <MantineProvider>
+      <InboxNotificationsProvider principalId={snapshot.principalId}>
+        {watching && <InboxNotificationsWatch />}
+        <InboxNotificationsToggle />
+      </InboxNotificationsProvider>
+    </MantineProvider>
+  );
+  const third = { id: 'owner/repo#3', generation: 'review-requested' };
+
+  it('re-baselines quietly when the maintainer returns to the Inbox', async () => {
+    // The provider outlives client navigation, so leaving and returning must
+    // not replay what arrived while the Inbox was closed.
+    const view = render(withWatch(true));
+    await click('Enable Inbox notifications');
+    await tick();
+    view.rerender(withWatch(false));
+    mocks.read.mockImplementation(async () => sample([first, second]));
+    await tick();
+    await tick();
+    await tick();
+    view.rerender(withWatch(true));
+    await tick();
+    expect(showNotification).not.toHaveBeenCalled();
+    // A decision arriving after the return still notifies.
+    mocks.read.mockImplementation(async () => sample([first, second, third]));
+    await tick();
+    expect(showNotification).toHaveBeenCalledOnce();
+  });
+
+  it('says delivery waits for an Inbox after opting in from another page', async () => {
+    render(withWatch(false));
+    await click('Enable Inbox notifications');
+    expect(
+      screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+    ).toBeVisible();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Notifications on — delivered while an Inbox tab is open',
+    );
+    expect(mocks.read).toHaveBeenCalledOnce();
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on corrupt storage away from the Inbox', async () => {
+    localStorage.setItem(storageKey, 'broken');
+    render(withWatch(false));
+    await tick();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Notification delivery or preferences unavailable',
+    );
+  });
+
+  it('delivers nothing from an observation still in flight when the Inbox closes', async () => {
+    const view = render(withWatch(true));
+    await click('Enable Inbox notifications');
+    await tick();
+    let release: () => void = () => undefined;
+    mocks.read.mockImplementation(
+      () =>
+        new Promise<InboxNotificationSnapshot>((resolve) => {
+          release = () => resolve(sample([first, second]));
+        }),
+    );
+    await act(async () => {
+      now += 30_000;
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    view.rerender(withWatch(false));
+    await act(async () => {
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)).pending,
+    ).toEqual([]);
+  });
+
+  it('completes an opt-in started from the menu before the Inbox watch mounts', async () => {
+    // The console menu is usable while the Inbox body is still streaming;
+    // the watch arriving mid-activation must not cancel the opt-in.
+    let grant: (permission: string) => void = () => undefined;
+    requestPermission.mockImplementation(
+      () => new Promise<string>((resolve) => (grant = resolve)),
+    );
+    const menuOnly = (watching: boolean) => (
+      <MantineProvider>
+        <InboxNotificationsProvider principalId="viewer">
+          {watching && <InboxNotificationsWatch />}
+          <InboxNotificationsToggle />
+        </InboxNotificationsProvider>
+      </MantineProvider>
+    );
+    const view = render(menuOnly(false));
+    expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+    await click('Enable Inbox notifications');
+    view.rerender(menuOnly(true));
+    await act(async () => {
+      grant('granted');
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(register).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+    ).toBeVisible();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Watching for new human decisions',
+    );
+  });
+  it.each(['failed read', 'degraded data', 'stale data'])(
+    'retains opt-in across remounts after %s and quietly recovers',
+    async (failure) => {
+      if (failure === 'failed read')
+        mocks.read.mockRejectedValue(new Error('Source unavailable'));
+      else
+        mocks.read.mockResolvedValue({
+          ...sample(),
+          available: failure !== 'degraded data',
+          observedAt: failure === 'stale data' ? now - 60_000 : now,
+        });
+      const view = render(tree(sample()));
+      await click('Enable Inbox notifications');
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'notifications paused',
+      );
+      expect(
+        screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+      ).toBeEnabled();
+      view.unmount();
+      render(tree(sample()));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(
+        screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+      ).toBeEnabled();
+      expect(showNotification).not.toHaveBeenCalled();
+      mocks.read.mockImplementation(async () => sample([first, second]));
+      await tick();
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Watching for new human decisions',
+      );
+      expect(showNotification).not.toHaveBeenCalled();
+      const third = { id: 'owner/repo#3', generation: 'needs-human' };
+      mocks.read.mockImplementation(async () => sample([first, second, third]));
+      await tick();
+      expect(showNotification).toHaveBeenCalledOnce();
+      await click('Disable Inbox notifications');
+      expect(
+        parseNotificationState(localStorage.getItem(storageKey)).enabled,
+      ).toBe(false);
+    },
+  );
   it('delivers generic text and a safe native deep link after fresh authorization', async () => {
     const view = render(tree(sample()));
     await click('Enable Inbox notifications');
@@ -713,7 +873,7 @@ describe('opt-in Inbox notification delivery', () => {
       expect.objectContaining({ data: { href: '/inbox?item=work%3A01ABC' } }),
     );
   });
-  it('refuses a baseline that expires while acquiring the activation lock', async () => {
+  it('retains opt-in without a baseline that expires while acquiring the activation lock', async () => {
     const sampledAt = now - 59_000;
     mocks.read.mockResolvedValue({
       ...sample(),
@@ -727,15 +887,21 @@ describe('opt-in Inbox notification delivery', () => {
     });
     render(tree(sample()));
     await click('Enable Inbox notifications');
-    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)),
+    ).toMatchObject({
+      enabled: true,
+      active: null,
+      pending: [],
+    });
     expect(screen.getByRole('status')).toHaveTextContent(
-      'activation unavailable',
+      'notifications paused',
     );
     expect(
-      screen.getByRole('button', { name: 'Enable Inbox notifications' }),
+      screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeEnabled();
   });
-  it('refuses a baseline that expires while registration completes', async () => {
+  it('retains opt-in without a baseline that expires while registration completes', async () => {
     const sampledAt = now - 59_000;
     mocks.read.mockImplementation(async () => ({
       ...sample(),
@@ -749,9 +915,15 @@ describe('opt-in Inbox notification delivery', () => {
     });
     render(tree(sample()));
     await click('Enable Inbox notifications');
-    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(
+      parseNotificationState(localStorage.getItem(storageKey)),
+    ).toMatchObject({
+      enabled: true,
+      active: null,
+      pending: [],
+    });
     expect(screen.getByRole('status')).toHaveTextContent(
-      'activation unavailable',
+      'notifications paused',
     );
   });
 });

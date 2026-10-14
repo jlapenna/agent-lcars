@@ -66,8 +66,14 @@ function Breakdown({
                 <TableTd>{money(row.estimatedCostUsd)}</TableTd>
                 <TableTd>{row.unpricedSessions}</TableTd>
                 <TableTd>
-                  {row.mergedPRs} ({row.unknownPRs} unknown;{' '}
-                  {row.unqualifiedPRReferences} unqualified references)
+                  {row.mergedPRs}
+                  {row.unknownPRs || row.unqualifiedPRReferences ? (
+                    <span className="costs-ledger-table__aside">
+                      {' '}
+                      · {row.unknownPRs} unknown · {row.unqualifiedPRReferences}{' '}
+                      unqualified
+                    </span>
+                  ) : null}
                 </TableTd>
                 <TableTd>
                   {money(row.costPerMergedDeliverableUsd)}
@@ -167,7 +173,8 @@ export function SpendBreakdowns({
           from the denominator. PR counts across groups overlap.
         </Text>
       </section>
-      <div className="costs-ledger-grid">
+      {/* One column: seven-column tables need the full panel width. */}
+      <div className="costs-ledger-grid costs-ledger-grid--stacked">
         <Breakdown
           title="By pipeline"
           id="by-pipeline"
@@ -208,7 +215,7 @@ export function SpendBreakdowns({
                 rel="noreferrer"
                 className="costs-spend-identity"
               >
-                {row.key}
+                GitHub {row.key}
               </Anchor>
               <Text size="sm">
                 {row.status} · {row.sessions} sessions · reported{' '}

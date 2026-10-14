@@ -7,7 +7,11 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { browserFailureReason, checkBrowser } from './e2e/check-browser.mjs';
+import {
+  LAUNCH_TIMEOUT_MS,
+  browserFailureReason,
+  checkBrowser,
+} from './e2e/check-browser.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const e2eLocal = path.join(root, 'tools/e2e-local.sh');
@@ -656,7 +660,7 @@ test('browser check launches the selected executable and closes it', async () =>
   const chromium = {
     async launch(options) {
       assert.equal(options.executablePath, '/prepared/chromium');
-      assert.equal(options.timeout, 5000);
+      assert.equal(options.timeout, LAUNCH_TIMEOUT_MS);
       return {
         version: () => '156.0.8078.4',
         async close() {

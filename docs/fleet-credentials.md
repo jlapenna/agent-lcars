@@ -21,6 +21,7 @@ history — move values with pipes, `read -rs`, or files created under
 | `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)                                            | age store + repo Actions secret                                                          | anyone with the LiteLLM master key |
 | `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console                                        | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
 | Autoscaler App key        | runner registration (homelab autoscaler); github-actions-exporter (homelab) | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
+| `work-reader` ID token    | interactive sessions' `lcars work owner` (Console Work API)                 | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
 
 Two GitHub Apps exist and are easy to confuse:
 
@@ -153,6 +154,33 @@ GitHub Actions workflow.
    gcloud secrets versions access latest --secret=CLAUDE_CODE_OAUTH_TOKEN \
      --project=agent-lcars | sha256sum
    ```
+
+## `work-reader` (interactive Work owner query)
+
+Interactive Claude and Codex sessions ask Console who owns an issue before
+starting work (#2502) with `lcars work owner <owner/repo>#<n>`. They
+authenticate as `work-reader@agent-lcars.iam.gserviceaccount.com`, a dedicated
+identity with no stored key and no project role. Its Console Work grant,
+`svc:work-reader`, carries only `work.reader`, which authorizes the owner
+query and nothing that lists, reads items, or mutates.
+
+Only `user:jlapenna@gmail.com`, the Google account interactive hosts sign in
+as, holds `roles/iam.serviceAccountTokenCreator` on it. Do not instead grant
+impersonation of `codex-agent`: that identity's grant carries `work.operator`
+(create, cancel, redispatch, reply, schedules). Terraform declares both the
+account and the binding in `infra/terraform/main.tf`; the binding is modelled
+in [`tools/iam-contract/model.json`](../tools/iam-contract/model.json).
+
+```bash
+gcloud auth list   # the active account must be jlapenna@gmail.com
+LCARS_SERVICE_ACCOUNT=work-reader@agent-lcars.iam.gserviceaccount.com \
+  lcars work owner jlapenna/agent-lcars#2502
+```
+
+Nothing is minted or rotated by hand: each CLI call runs
+`gcloud auth print-identity-token --impersonate-service-account` for the
+`agent-lcars-work` audience. Revoke by removing the Terraform binding or the
+Console grant.
 
 ## Codex `auth.json` lineage (Console QueueExecutor)
 

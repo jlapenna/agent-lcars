@@ -39,24 +39,6 @@
         }
       }
     },
-    "serve": {
-      "continuous": true,
-      "executor": "@nx/js:node",
-      "defaultConfiguration": "development",
-      "dependsOn": ["build"],
-      "options": {
-        "buildTarget": "@agent-lcars/telemetry-watcher:build",
-        "runBuildTargetDependencies": false
-      },
-      "configurations": {
-        "development": {
-          "buildTarget": "@agent-lcars/telemetry-watcher:build:development"
-        },
-        "production": {
-          "buildTarget": "@agent-lcars/telemetry-watcher:build:production"
-        }
-      }
-    },
     "bundle": {
       "executor": "@nx/esbuild:esbuild",
       "outputs": ["{options.outputPath}"],
@@ -105,14 +87,6 @@
             "sourcemap": false
           }
         }
-      }
-    },
-    "docker-build": {
-      "executor": "nx:run-commands",
-      "dependsOn": ["build"],
-      "options": {
-        "command": "docker build -f apps/telemetry-watcher/Dockerfile -t agent-lcars-telemetry-watcher:local .",
-        "cwd": "{workspaceRoot}"
       }
     },
     "test": {

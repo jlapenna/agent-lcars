@@ -1,9 +1,9 @@
 import type { ItemView } from '@agent-lcars/work/derive';
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { WorkList } from './work-list';
+import { admittedAt, admittedQueue, WorkList } from './work-list';
 
 const item: ItemView = {
   id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -67,14 +67,88 @@ describe('WorkList', () => {
       screen.getAllByText(/codex \(fallback; requested claude\)/),
     ).toHaveLength(2);
   });
-  it('renders parked items first with their state and pipeline', () => {
+  it('splits admitted work from recent work, stopped items first', () => {
     renderList([
       { ...item, id: '01J5Z3K9QX8F0N2B4V6C8D1E3H', state: 'running' },
+      { ...item, id: '01J5Z3K9QX8F0N2B4V6C8D1E3J', state: 'done' },
       item,
     ]);
-    const rows = screen.getAllByRole('link', { name: /Add healthz/ });
-    expect(rows[0]).toHaveAttribute('href', `/work/${item.id}`);
+    const queue = screen.getByTestId('work-admitted-queue');
+    expect(within(queue).getByText('Admitted queue')).toBeInTheDocument();
+    expect(
+      within(queue).getAllByRole('link', { name: /Add healthz/ }),
+    ).toHaveLength(1);
+    const recent = within(screen.getByTestId('work-recent')).getAllByRole(
+      'link',
+      { name: /Add healthz/ },
+    );
+    expect(recent[0]).toHaveAttribute('href', `/work/${item.id}`);
     expect(screen.getAllByText('parked')[0]).toBeInTheDocument();
+  });
+
+  it('orders the admitted queue by priority, FIFO within a priority', () => {
+    const at = (minute: number) =>
+      `2026-08-26T10:${String(minute).padStart(2, '0')}:00.000Z`;
+    const running = (
+      id: string,
+      title: string,
+      priority: 'urgent' | 'normal' | 'background',
+      minute: number,
+    ): ItemView => ({
+      ...item,
+      id,
+      state: 'running',
+      createdAt: at(minute),
+      spec: { ...item.spec, title, priority },
+    });
+    const queue = admittedQueue([
+      running('a', 'late normal', 'normal', 30),
+      running('b', 'background', 'background', 1),
+      running('c', 'early normal', 'normal', 10),
+      running('d', 'urgent', 'urgent', 40),
+    ]);
+    expect(queue.map((entry) => entry.spec.title)).toEqual([
+      'urgent',
+      'early normal',
+      'late normal',
+      'background',
+    ]);
+    renderList(queue);
+    expect(
+      within(screen.getByTestId('work-admitted-queue'))
+        .getAllByText(/^P[123]$/)
+        .map((cell) => cell.textContent),
+    ).toEqual(['P1', 'P2', 'P2', 'P3']);
+  });
+
+  it('queues re-admitted work by its current run, not its first creation', () => {
+    const readmitted: ItemView = {
+      ...item,
+      id: 'old',
+      state: 'running',
+      createdAt: '2026-08-26T09:00:00.000Z',
+      spec: { ...item.spec, title: 'old item, new run' },
+      runs: [
+        {
+          runId: 'work:old/r2',
+          state: 'running',
+          pipeline: 'claude',
+          createdAt: '2026-08-26T11:00:00.000Z',
+          updatedAt: '2026-08-26T11:00:00.000Z',
+        },
+      ],
+    };
+    const waiting: ItemView = {
+      ...item,
+      id: 'new',
+      state: 'running',
+      createdAt: '2026-08-26T10:00:00.000Z',
+      spec: { ...item.spec, title: 'queued earlier' },
+    };
+    expect(
+      admittedQueue([readmitted, waiting]).map((entry) => entry.id),
+    ).toEqual(['new', 'old']);
+    expect(admittedAt(readmitted)).toBe('2026-08-26T11:00:00.000Z');
   });
 
   it('links a title to its item detail page in both the card and table views', () => {

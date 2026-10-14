@@ -115,9 +115,6 @@ func validateKubernetesQueueEnvironment(c *queueKubernetesConfig) error {
 	if _, err := directRunnerWorkerPolicyProviders(); err != nil {
 		return err
 	}
-	if _, err := directRunnerHookTelemetryProviders(); err != nil {
-		return err
-	}
 	_, err = queueKubernetesRESTConfig(c)
 	return err
 }
@@ -141,13 +138,6 @@ func queueKubernetesRESTConfig(c *queueKubernetesConfig) (*rest.Config, error) {
 // brief. An empty value explicitly keeps even image-provided defaults disabled.
 func directRunnerWorkerPolicyProviders() (string, error) {
 	return directRunnerProviderSelection("LCARS_WORKER_POLICY_PROVIDERS")
-}
-
-// Pipelines whose workers report telemetry through runtime hooks instead of
-// the polling sidecar (docs/hooks-telemetry-design.md, phase 2). Same trust
-// and empty-means-disabled contract as the worker-policy selector.
-func directRunnerHookTelemetryProviders() (string, error) {
-	return directRunnerProviderSelection("LCARS_HOOK_TELEMETRY_PROVIDERS")
 }
 
 func directRunnerProviderSelection(name string) (string, error) {
@@ -177,7 +167,6 @@ type kubernetesQueue struct {
 	config                  queueKubernetesConfig
 	client                  kubernetes.Interface
 	workerPolicyProviders   string
-	hookTelemetryProviders  string
 	image                   string
 	logger                  *slog.Logger
 	mu                      sync.Mutex
@@ -221,11 +210,7 @@ func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *sl
 	if err != nil {
 		return nil, err
 	}
-	hookTelemetry, err := directRunnerHookTelemetryProviders()
-	if err != nil {
-		return nil, err
-	}
-	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers, hookTelemetryProviders: hookTelemetry,
+	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers,
 		verifyRun: queueRunFence(strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL")))}
 	if err := q.preflight(ctx); err != nil {
 		return nil, err
@@ -285,6 +270,33 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Pod evidence is only needed once a terminal Job shows up, and then read
+	// at most once per pass.
+	var podsByJob map[string][]core.Pod
+	disruptionPods := func() map[string][]core.Pod {
+		if podsByJob != nil {
+			return podsByJob
+		}
+		// The Pod template carries the queue label, so one namespaced list
+		// covers every queue attempt. readyNodes already lists Pods, so this
+		// needs no new API permission.
+		pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
+		podsByJob = map[string][]core.Pod{}
+		if err != nil {
+			// Without Pod evidence an exit is still reported, as the ordinary
+			// loss, so this never fails the count that gates claiming.
+			q.logger.Warn("Reading queue worker Pods for disruption evidence failed; reporting exits without it", slog.String("error", err.Error()))
+			return podsByJob
+		}
+		for _, pod := range pods.Items {
+			for _, ref := range pod.OwnerReferences {
+				if ref.Kind == "Job" && ref.Controller != nil && *ref.Controller {
+					podsByJob[string(ref.UID)] = append(podsByJob[string(ref.UID)], pod)
+				}
+			}
+		}
+		return podsByJob
+	}
 	n := 0
 	for _, j := range jobs.Items {
 		if q.capacity != nil && j.Annotations[queueBarrierAnnotation] != "" {
@@ -304,10 +316,93 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 		// until its lease expires. Only a Job whose name is derived from its
 		// own run annotation identifies a run.
 		if runID := j.Annotations[queueRunAnnotation]; runID != "" && j.Name == queueJobName(runID) {
-			q.exits.observeTerminated(runID, j.Annotations[queueRunnerAnnotation], j.Annotations[queueClaimAnnotation])
+			q.exits.observeTerminatedWithDisruption(
+				runID,
+				j.Annotations[queueRunnerAnnotation],
+				j.Annotations[queueClaimAnnotation],
+				schedulerPreemption(j, disruptionPods()[string(j.UID)]),
+			)
 		}
 	}
 	return n, nil
+}
+
+// directRunnerContainer is the queue worker's only container, and
+// schedulerPreemptionReason is the DisruptionTarget reason the scheduler sets
+// when it preempts a Pod to make room for other work.
+const (
+	directRunnerContainer     = "direct-runner"
+	schedulerPreemptionReason = "PreemptionByScheduler"
+)
+
+// schedulerPreemption attests that this terminal Job's own Pod was preempted by
+// the scheduler before its worker container started, or returns nil when the
+// Pod evidence does not prove exactly that. It is deliberately narrow: a
+// DisruptionTarget for any other reason (eviction, node shutdown, a TTL or
+// active-deadline deletion), a container that ran at all, or a Pod owned by a
+// different Job all answer nil, leaving the ordinary terminal loss.
+func schedulerPreemption(j batch.Job, pods []core.Pod) *exitDisruption {
+	for _, pod := range pods {
+		if !podOwnedByJob(&pod, &j) {
+			continue
+		}
+		cond := podDisruptionCondition(&pod)
+		if cond == nil || cond.Reason != schedulerPreemptionReason {
+			continue
+		}
+		if !containerNeverStarted(&pod, directRunnerContainer) {
+			continue
+		}
+		at := cond.LastTransitionTime
+		if at.IsZero() {
+			at = cond.LastProbeTime
+		}
+		if at.IsZero() {
+			continue
+		}
+		return &exitDisruption{
+			JobUID:     string(j.UID),
+			PodUID:     string(pod.UID),
+			ObservedAt: at.UTC().Format(time.RFC3339),
+			Kind:       schedulerPreemptionKind,
+		}
+	}
+	return nil
+}
+
+// podOwnedByJob is true only for a Pod this exact Job object owns, by UID: Job
+// names are reused across recovery attempts of one run, UIDs are not.
+func podOwnedByJob(pod *core.Pod, j *batch.Job) bool {
+	for _, ref := range pod.OwnerReferences {
+		if ref.Kind == "Job" && ref.Controller != nil && *ref.Controller && string(ref.UID) == string(j.UID) {
+			return true
+		}
+	}
+	return false
+}
+
+func podDisruptionCondition(pod *core.Pod) *core.PodCondition {
+	for i, c := range pod.Status.Conditions {
+		if c.Type == core.DisruptionTarget && c.Status == core.ConditionTrue {
+			return &pod.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+// containerNeverStarted reports whether the kubelet never ran the container. A
+// running or terminated container means a provider process may have started, so
+// the attempt is potentially-executed work and must not be redispatched. No
+// status for the container at all is the ordinary preemption shape: the Pod was
+// removed before its containers were reported.
+func containerNeverStarted(pod *core.Pod, name string) bool {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != name {
+			continue
+		}
+		return cs.State.Terminated == nil && cs.State.Running == nil
+	}
+	return true
 }
 func (q *kubernetesQueue) tolerations() []core.Toleration {
 	out := []core.Toleration{}
@@ -545,7 +640,6 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	one := int32(1)
 	env := []core.EnvVar{{Name: "RUNNER_MODE", Value: "direct"}, {Name: "LCARS_RUN_ID", Value: l.runID}, {Name: "LCARS_CONSOLE_URL", Value: l.consoleURL}, {Name: "LCARS_RUN_TOKEN", ValueFrom: &core.EnvVarSource{SecretKeyRef: &core.SecretKeySelector{LocalObjectReference: core.LocalObjectReference{Name: name}, Key: "run-token"}}}}
 	env = append(env, core.EnvVar{Name: "LCARS_WORKER_POLICY_PROVIDERS", Value: q.workerPolicyProviders})
-	env = append(env, core.EnvVar{Name: "LCARS_HOOK_TELEMETRY_PROVIDERS", Value: q.hookTelemetryProviders})
 	volumes := []core.Volume{{Name: "credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: items, DefaultMode: &mode}}}, {Name: "work", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}}
 	mounts := []core.VolumeMount{{Name: "credentials", MountPath: "/run/secrets", ReadOnly: true}, {Name: "work", MountPath: "/home/runner/_work"}}
 	if l.pipeline == "codex" {

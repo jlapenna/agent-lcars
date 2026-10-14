@@ -1,7 +1,7 @@
 import { type SessionEventKind } from '@agent-lcars/telemetry';
 
 /** Runtimes whose hooks the `lcars hook <runtime>` client understands. */
-export const HOOK_RUNTIMES = ['claude', 'codex'] as const;
+export const HOOK_RUNTIMES = ['claude', 'codex', 'opencode'] as const;
 export type HookRuntime = (typeof HOOK_RUNTIMES)[number];
 
 export function isHookRuntime(value: unknown): value is HookRuntime {

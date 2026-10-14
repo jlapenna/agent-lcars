@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   executeHookCommand,
   type HookCommandDependencies,
+  opencodeSnapshotDirectory,
 } from './hook-command';
 import { readHookSessionState } from './hook-state';
 import { spoolPath } from './spool';
@@ -120,6 +121,19 @@ describe('lcars hook claude', () => {
       seq: 1,
       lastKind: 'tool',
     });
+  });
+
+  it('resolves the repository against the allowlist so it is stored canonically', async () => {
+    const home = tempHome();
+    const resolveGitRepo = vi.fn(async () => ({
+      owner: 'jlapenna',
+      name: 'agent-lcars',
+    }));
+    const d = deps(home, payload('PostToolUse'), { resolveGitRepo });
+    expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
+    expect(resolveGitRepo).toHaveBeenCalledWith('/home/dev/project', [
+      'jlapenna/*',
+    ]);
   });
 
   it('skips sessions whose repository is not allowlisted, without touching state', async () => {
@@ -363,6 +377,96 @@ describe('lcars hook codex', () => {
       model: 'gpt-6.1-sol',
       agent: 'codex',
     });
+  });
+});
+
+describe('lcars hook opencode', () => {
+  const OPENCODE_FIXTURE = path.join(
+    __dirname,
+    '../../../../../libs/telemetry/src/lib/fixtures/opencode-export.json',
+  );
+  const OPENCODE_SESSION = 'ses_opencode_1';
+
+  function opencodePayload(
+    hookEventName: string,
+    overrides: Record<string, unknown> = {},
+  ): string {
+    return JSON.stringify({
+      hook_event_name: hookEventName,
+      session_id: OPENCODE_SESSION,
+      transcript_path: OPENCODE_FIXTURE,
+      cwd: '/home/runner/_work/agent-lcars/agent-lcars',
+      ...overrides,
+    });
+  }
+
+  it('reduces the plugin snapshot with the opencode adapter', async () => {
+    const home = tempHome();
+    const d = deps(home, opencodePayload('Stop'));
+    expect((await executeHookCommand(['opencode'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event).toMatchObject({
+      agent: 'opencode',
+      sessionId: OPENCODE_SESSION,
+      kind: 'stop',
+      runtime: { name: 'opencode', hookEvent: 'Stop' },
+    });
+    expect(event.summary).toMatchObject({
+      agent: 'opencode',
+      sessionId: OPENCODE_SESSION,
+      host: 'laforge',
+    });
+    expect(event.summary?.turns).toBeGreaterThan(0);
+  });
+
+  it('deletes the plugin snapshot after reading it, whatever the outcome', async () => {
+    for (const cwd of ['/home/runner/_work/agent-lcars/agent-lcars', '']) {
+      const home = tempHome();
+      const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-opencode-'));
+      const snapshot = path.join(scratch, 'export.json');
+      fs.copyFileSync(OPENCODE_FIXTURE, snapshot);
+      const d = deps(
+        home,
+        opencodePayload('Stop', { transcript_path: snapshot, cwd }),
+        // An unlisted repo exits before the transcript is read.
+        cwd ? {} : { resolveGitRepo: async () => undefined },
+      );
+      const result = await executeHookCommand(['opencode'], d);
+      expect(result.action).toBe(cwd ? 'spooled' : 'skipped-unlisted');
+      expect(fs.existsSync(scratch)).toBe(false);
+    }
+  });
+
+  it('only ever treats the plugin snapshot shape as deletable', () => {
+    const root = '/tmp';
+    const payload = (transcript: unknown) =>
+      JSON.stringify({ transcript_path: transcript });
+    expect(
+      opencodeSnapshotDirectory(
+        payload('/tmp/lcars-opencode-AbC123/export.json'),
+        root,
+      ),
+    ).toBe('/tmp/lcars-opencode-AbC123');
+    for (const unsafe of [
+      '/tmp/lcars-opencode-AbC123/other.json',
+      '/tmp/lcars-opencode-AbC123/../../etc/export.json',
+      '/var/lcars-opencode-AbC123/export.json',
+      '/tmp/nested/lcars-opencode-AbC123/export.json',
+      '/tmp/lcars-opencode-/export.json',
+      42,
+    ]) {
+      expect(opencodeSnapshotDirectory(payload(unsafe), root)).toBeUndefined();
+    }
+    expect(opencodeSnapshotDirectory('not json', root)).toBeUndefined();
+  });
+
+  it('skips child sessions the plugin reports with a parent id', async () => {
+    const home = tempHome();
+    const d = deps(home, opencodePayload('Stop', { agent_id: 'ses_parent' }));
+    expect((await executeHookCommand(['opencode'], d)).action).not.toBe(
+      'spooled',
+    );
+    expect(spooledEvents(home)).toEqual([]);
   });
 });
 

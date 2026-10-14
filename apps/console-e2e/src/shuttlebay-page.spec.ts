@@ -94,6 +94,28 @@ test.describe('/shuttlebay workspace', () => {
 test.describe('Shuttlebay live stream', () => {
   usePopulatedFixtures();
 
+  test('narrows runners by find and admission by agent from the toolbar', async ({
+    page,
+  }) => {
+    await page.goto('/shuttlebay?q=no-such-lane&agent=codex');
+
+    const toolbar = page.getByRole('search', { name: 'Filters' });
+    await expect(toolbar.getByLabel('Agent', { exact: true })).toHaveValue(
+      'codex',
+    );
+    // Both runner views say a filter, not missing data, emptied them.
+    for (const panel of ['shuttlebay-runners', 'runner-fleet-panel']) {
+      await expect(
+        page
+          .getByTestId(panel)
+          .getByText('No runner lane matches these filters.'),
+      ).toBeVisible();
+    }
+    const admission = page.getByTestId('shuttlebay-admission');
+    await expect(admission.getByText('codex', { exact: true })).toBeVisible();
+    await expect(admission.getByText('claude', { exact: true })).toHaveCount(0);
+  });
+
   test('shows cooldown/reset provenance, normal claims, drain and unavailable provider evidence', async ({
     page,
   }) => {
@@ -257,9 +279,10 @@ test.describe('Shuttlebay live stream', () => {
     const warnings = page.getByTestId('data-warnings');
     await expect(warnings).toBeVisible();
     await warnings.locator('summary').click();
-    await expect(
-      page.getByText('Runner capacity status is stale.'),
-    ).toBeVisible();
+    // The warning shows in the band's inline preview and its expanded list.
+    await expect(warnings.locator('.lcars-disclosure__content')).toContainText(
+      'Runner capacity status is stale.',
+    );
     await expect(executor).toHaveCount(0);
 
     // HTTP denial closes EventSource permanently; the application's bounded

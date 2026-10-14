@@ -282,9 +282,70 @@ describe('QueueWorkspace', () => {
     renderWorkspace([makeCard()]);
 
     expect(
-      screen.getByText(/1 item · needs your decision or response/),
+      screen.getByRole('heading', { level: 2, name: 'Decision inbox' }),
     ).toBeTruthy();
     expect(screen.queryByTestId('inbox-mobile-command-deck')).toBeNull();
+  });
+
+  it('keeps a stale agent filter visible and clearable', () => {
+    // No decision belongs to codex any more (a live refresh, a bookmark).
+    mockSearch = 'agent=codex';
+    renderWorkspace([makeCard({ labels: ['agent:claude'] })]);
+
+    const select = screen.getByRole('combobox', { name: 'Agent' });
+    expect(select).toHaveValue('codex');
+    expect(screen.queryByTestId('queue-row-249')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all agents' }));
+    expect(select).toHaveValue('');
+    expect(screen.getByTestId('queue-row-249')).toBeTruthy();
+  });
+
+  it('narrows to the activity window, defaulting to all and syncing the URL', () => {
+    vi.useFakeTimers({ now: new Date('2026-07-30T03:00:00Z') });
+    try {
+      const replaceState = vi.spyOn(window.history, 'replaceState');
+      renderWorkspace([
+        makeCard({ updatedAt: '2026-07-30T02:30:00Z' }),
+        makeCard({
+          number: 250,
+          title: 'An older decision',
+          updatedAt: '2026-07-28T00:00:00Z',
+        }),
+      ]);
+      const windowGroup = screen.getByRole('radiogroup', { name: 'Window' });
+      expect(
+        within(windowGroup).getByRole('radio', { name: 'all' }),
+      ).toBeChecked();
+      expect(screen.getByText('An older decision')).toBeTruthy();
+
+      fireEvent.click(within(windowGroup).getByRole('radio', { name: '1h' }));
+      expect(screen.queryByText('An older decision')).toBeNull();
+      expect(screen.getByTestId('queue-row-249')).toBeTruthy();
+      expect(replaceState).toHaveBeenLastCalledWith(
+        null,
+        '',
+        expect.stringContaining('window=1h'),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says what an empty activity window hides and offers to show all', () => {
+    vi.useFakeTimers({ now: new Date('2026-07-30T03:00:00Z') });
+    try {
+      mockSearch = 'window=1h';
+      renderWorkspace([makeCard({ updatedAt: '2026-07-28T00:00:00Z' })]);
+      expect(
+        screen.getByText('No decisions with activity in the last 1h.'),
+      ).toBeTruthy();
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Show all activity' }),
+      );
+      expect(screen.getByTestId('queue-row-249')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps a running CI state secondary to the one actionable row reason', () => {

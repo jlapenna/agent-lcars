@@ -3,7 +3,12 @@ import {
   getProjectId,
   isEmulator,
 } from '@agent-lcars/util-server';
-import { Firestore, Query, Timestamp } from '@google-cloud/firestore';
+import {
+  Firestore,
+  Query,
+  type QueryDocumentSnapshot,
+  Timestamp,
+} from '@google-cloud/firestore';
 import { App, getApps, initializeApp } from 'firebase-admin/app';
 import {
   FieldValue as AdminFieldValue,
@@ -13,7 +18,12 @@ import {
 } from 'firebase-admin/firestore';
 
 import { parseSessionDoc } from '../lib/session-doc';
-import { SessionDoc, SessionSource, SessionWrite } from '../lib/types';
+import {
+  SessionDoc,
+  SessionRepository,
+  SessionSource,
+  SessionWrite,
+} from '../lib/types';
 import { AGENT_TELEMETRY_DATABASE_ID } from './firestore-client';
 
 export const SESSIONS_COLLECTION = 'sessions';
@@ -178,7 +188,7 @@ const DEFAULT_LIST_LIMIT = 100;
  * this is a read-only reader path with no auth boundary of its own beyond
  * the console's admin gate, so the cap is enforced here rather than trusted
  * to every caller. */
-const MAX_LIST_LIMIT = 200;
+export const MAX_LIST_LIMIT = 200;
 
 export interface ListSessionDocsOptions {
   /** Only return sessions with `lastActivityAt` at or after this ISO
@@ -190,6 +200,12 @@ export interface ListSessionDocsOptions {
    * range+equality compound query, requiring a source+lastActivityAt
    * composite index on `sessions`. */
   source?: SessionSource;
+  /** Narrows to one repository through the persisted canonical
+   * `repo.owner`/`repo.name` map fields (exact match: the writer stores the
+   * canonical spelling). Combined with `source` and `activeSince` it needs
+   * the source+repo.owner+repo.name+lastActivityAt composite index
+   * (`sessions_source_repo_last_activity` in infra/terraform/main.tf). */
+  repo?: SessionRepository;
   /** Narrows to one issue-agent session's issue. Combined with
    * `activeSince` this is also a compound query - see the
    * issueNumber+lastActivityAt (and source+issueNumber+lastActivityAt)
@@ -232,31 +248,53 @@ export async function listSessionDocs(
   if (options.source) {
     query = query.where('source', '==', options.source);
   }
+  if (options.repo !== undefined) {
+    query = query
+      .where('repo.owner', '==', options.repo.owner)
+      .where('repo.name', '==', options.repo.name);
+  }
   if (options.issueNumber !== undefined) {
     query = query.where('issueNumber', '==', options.issueNumber);
   }
   if (options.intentId !== undefined) {
     query = query.where('intentId', '==', options.intentId);
   }
-  const snapshot = await query.get();
-  const docs = snapshot.docs.map((doc) => {
-    const data = doc.data();
+  const limit = Math.min(
+    Math.max(1, options.limit ?? DEFAULT_LIST_LIMIT),
+    MAX_LIST_LIMIT,
+  );
+  const docs: SessionDoc[] = [];
+  // Keep the existing query and indexes: taking the newest page with a new
+  // orderBy would require new composite indexes for scoped session joins.
+  // The SDK streams QueryDocumentSnapshots, despite its generic Node stream
+  // iterator type. Backpressure avoids retaining an all-document snapshot.
+  const snapshots =
+    query.stream() as unknown as AsyncIterable<QueryDocumentSnapshot>;
+  for await (const snapshot of snapshots) {
+    const data = snapshot.data();
     const expireAt = data['expireAt'];
-    return parseSessionDoc({
+    const doc = parseSessionDoc({
       ...data,
       ...(expireAt instanceof Timestamp && {
         expireAt: expireAt.toDate().toISOString(),
       }),
     });
-  });
-  const sorted = docs.sort((a, b) =>
-    b.lastActivityAt.localeCompare(a.lastActivityAt),
-  );
-  const limit = Math.min(
-    Math.max(1, options.limit ?? DEFAULT_LIST_LIMIT),
-    MAX_LIST_LIMIT,
-  );
-  return sorted.slice(0, limit);
+    // Stable descending insertion keeps at most the requested page. Equal
+    // activity clocks retain query order, matching the previous stable sort.
+    let low = 0;
+    let high = docs.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (docs[middle]!.lastActivityAt.localeCompare(doc.lastActivityAt) >= 0)
+        low = middle + 1;
+      else high = middle;
+    }
+    if (low < limit) {
+      docs.splice(low, 0, doc);
+      if (docs.length > limit) docs.pop();
+    }
+  }
+  return docs;
 }
 
 /**

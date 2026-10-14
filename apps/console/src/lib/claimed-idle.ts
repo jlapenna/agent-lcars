@@ -28,7 +28,12 @@ export function sessionReferencesItemNumber(
   session: Pick<CliSession, 'pr' | 'branch' | 'repo'>,
   item: Pick<ActionItem, 'number' | 'repo'>,
 ): boolean {
-  if (!session.repo || repoKey(session.repo) !== repoKey(item.repo)) {
+  // GitHub repository names are case-insensitive; a session's repo comes
+  // from its git remote, which need not match the canonical spelling.
+  if (
+    !session.repo ||
+    repoKey(session.repo).toLowerCase() !== repoKey(item.repo).toLowerCase()
+  ) {
     return false;
   }
   if (session.pr?.number === item.number) return true;

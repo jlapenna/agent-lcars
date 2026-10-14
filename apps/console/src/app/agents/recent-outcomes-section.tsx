@@ -1,20 +1,14 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
-import { Stack } from '@mantine/core';
 
-import type { AgentPipeline, AgentRun } from '../../lib/agent-activity';
-import { FinishedRunRow } from '../agent-activity-panel';
-import { Eyebrow } from '../eyebrow';
-import { MobileHistoryDisclosure } from '../mobile-history-disclosure';
-import { AgentOperationsPanel } from './agent-operations-panel';
+import type { AgentRun } from '../../lib/agent-activity';
+import { RecentCompletionsPanel } from '../ops-panels';
 
-const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 const MOBILE_INITIAL_OUTCOME_COUNT = 5;
 
 /**
- * Recent conclusions grouped per pipeline - the same merged recent-runs
- * list the home page collapses behind "Recently finished", just always
- * visible here and split by pipeline: this page cares about the fleet's
- * per-pipeline outcomes, not a single maintainer queue.
+ * Recent conclusions across every agent (design/fleet-console.html #agents
+ * "Recent completions"), with the agent as a column. Phones show the five
+ * newest first, the rest behind a disclosure.
  */
 export function RecentOutcomesSection({
   recentRuns,
@@ -30,60 +24,12 @@ export function RecentOutcomesSection({
   // activity and exceptions, without hiding any actionable state.
   if (recentRuns.length === 0) return null;
 
-  const initiallyVisibleRunIds = new Set(
-    recentRuns.slice(0, MOBILE_INITIAL_OUTCOME_COUNT).map((run) => run.id),
-  );
-  const hiddenCount = Math.max(
-    0,
-    recentRuns.length - MOBILE_INITIAL_OUTCOME_COUNT,
-  );
-
   return (
-    <AgentOperationsPanel
-      title="Recent Outcomes"
-      className="agents-panel--recent"
+    <RecentCompletionsPanel
+      runs={recentRuns}
+      sessionsByRunId={sessionsByRunId}
       testId="recent-outcomes"
-    >
-      <MobileHistoryDisclosure
-        hiddenCount={hiddenCount}
-        itemLabel="outcome"
-        gap="sm"
-        testId="recent-outcomes-disclosure"
-      >
-        {PIPELINES.map((pipeline) => {
-          const runs = recentRuns.filter((run) => run.pipeline === pipeline);
-          if (runs.length === 0) return null;
-          const groupStartsHidden = runs.every(
-            (run) => !initiallyVisibleRunIds.has(run.id),
-          );
-          return (
-            <Stack
-              key={pipeline}
-              gap={6}
-              data-mobile-history-extra={groupStartsHidden || undefined}
-            >
-              <Eyebrow>
-                {pipeline} ({runs.length})
-              </Eyebrow>
-              <Stack gap={6}>
-                {runs.map((run) => (
-                  <div
-                    key={run.id}
-                    data-mobile-history-extra={
-                      !initiallyVisibleRunIds.has(run.id) || undefined
-                    }
-                  >
-                    <FinishedRunRow
-                      run={run}
-                      session={sessionsByRunId[run.id]}
-                    />
-                  </div>
-                ))}
-              </Stack>
-            </Stack>
-          );
-        })}
-      </MobileHistoryDisclosure>
-    </AgentOperationsPanel>
+      mobileInitialCount={MOBILE_INITIAL_OUTCOME_COUNT}
+    />
   );
 }

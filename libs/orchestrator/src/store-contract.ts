@@ -15,6 +15,7 @@ import {
 import { lifecycleMetricSnapshot } from './lifecycle-metrics';
 import {
   type LeasedOutboxEntry,
+  type QueuePriority,
   type TaskId,
   taskKey,
   WORK_PAYLOAD_MAX_BYTES,
@@ -426,6 +427,168 @@ export function runOrchestratorStoreContract(
           reason: 'duplicate-request',
           existingRun: { runId: decidedRun(accepted).runId },
         });
+      });
+
+      it('atomically orders label handoffs, preserves Work and prevents the old provider claim', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator);
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        clock.advanceMinutes(1);
+        // This store fixture owns opaque Work admitted on Claude, just as the
+        // GitHub adapter decodes its immutable Work inside the transaction.
+        const switchProvider = () =>
+          orchestrator.request({
+            taskId: TASK,
+            requestId: 'label-switch',
+            pipeline: 'opencode',
+            pipelineForStoredTask: () => 'claude',
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
+          });
+        const outcomes = await Promise.all([
+          switchProvider(),
+          switchProvider(),
+        ]);
+        expect(outcomes.filter(isRefusal)).toEqual([
+          expect.objectContaining({ reason: 'duplicate-request' }),
+        ]);
+        expect(await store.readTask(TASK)).toMatchObject({
+          task: {
+            work: TASK_WORK,
+            runCount: 2,
+            providerRouting: {
+              effectivePipeline: 'opencode',
+              status: 'accepted',
+              fromRunId: run.runId,
+            },
+          },
+        });
+        expect(await store.readRun(run.runId)).toMatchObject({
+          pipeline: 'claude',
+          state: 'canceled',
+        });
+        expect(
+          await store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+          }),
+        ).toBeUndefined();
+        expect(
+          await orchestrator.request({
+            taskId: TASK,
+            requestId: 'older-label',
+            pipeline: 'claude',
+            pipelineForStoredTask: () => 'claude',
+            labelProviderRequest: {
+              requestedAt: T0,
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
+          }),
+        ).toMatchObject({ reason: 'stale-provider-request' });
+        expect(await store.listRuns(TASK)).toHaveLength(2);
+      });
+
+      it('retains an equal-clock label refusal across settlement and replay', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator);
+        clock.advanceMinutes(1);
+        const request = (requestId: string) =>
+          orchestrator.request({
+            taskId: TASK,
+            requestId,
+            pipeline: 'claude',
+            pipelineForStoredTask: () => 'claude',
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
+          });
+        expect(await request('busy-a')).toMatchObject({
+          task: { providerRouting: { requestId: 'busy-a', status: 'refused' } },
+        });
+        expect(await request('busy-b')).toMatchObject({
+          reason: 'stale-provider-request',
+        });
+        await orchestrator.report(run.runId, { ok: true });
+        expect(await request('busy-a')).toMatchObject({
+          task: { providerRouting: { requestId: 'busy-a', status: 'refused' } },
+          outbox: [],
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(1);
+      });
+
+      it('serializes a label handoff against claim and retains refusal after terminal settlement', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator);
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.confirmDispatch(run.runId);
+        clock.advanceMinutes(1);
+        const [claim, handoff] = await Promise.all([
+          store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+          }),
+          orchestrator.request({
+            taskId: TASK,
+            requestId: 'racing-label',
+            pipeline: 'opencode',
+            pipelineForStoredTask: () => 'claude',
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
+          }),
+        ]);
+        if (isRefusal(handoff)) throw new Error(handoff.reason);
+        if (handoff.run === undefined) {
+          expect(claim?.runId).toBe(run.runId);
+          expect(handoff.task.providerRouting).toMatchObject({
+            status: 'refused',
+            reason: 'run-already-claimed',
+          });
+          await orchestrator.report(run.runId, { ok: true, summary: 'park' });
+          clock.advanceMinutes(1);
+          expect(
+            await orchestrator.request({
+              taskId: TASK,
+              requestId: 'retained-label',
+              pipeline: 'opencode',
+              pipelineForStoredTask: () => 'claude',
+              labelProviderRequest: {
+                requestedAt: clock.now(),
+                actor: 'maintainer',
+                allowProviderChange: true,
+              },
+            }),
+          ).toMatchObject({
+            task: {
+              providerRouting: {
+                status: 'refused',
+                reason: 'physical-retirement-required',
+              },
+            },
+            outbox: [],
+          });
+          expect(await store.listRuns(TASK)).toHaveLength(1);
+        } else {
+          expect(claim).toBeUndefined();
+          expect(handoff.run.pipeline).toBe('opencode');
+          expect(await store.readRun(run.runId)).toMatchObject({
+            state: 'canceled',
+          });
+          expect(await store.listRuns(TASK)).toHaveLength(2);
+        }
       });
 
       it('serializes provider replacement against an executor claim', async () => {
@@ -2127,16 +2290,100 @@ export function runOrchestratorStoreContract(
         orchestrator: Orchestrator,
         requestId: string,
         pipeline = 'claude',
+        priority?: QueuePriority,
       ) {
         const outcome = await orchestrator.request({
           taskId: { workId: queueWorkId(requestId) },
           requestId,
           pipeline,
+          priority,
           work: TASK_WORK,
         });
         if (isRefusal(outcome)) throw new Error('unexpected refusal');
         return decidedRun(outcome);
       }
+
+      it('commits priority service turns with concurrent claims, preserving the background bound', async () => {
+        const { store, clock } = await fixture();
+        // Keep every class eligible throughout all seven reservations without
+        // spending emulator time on surplus requests: 4:2:1 service leaves
+        // one queued item in each class after this 5:3:2 initial backlog.
+        // This case exercises claim transactions. Seed the same valid queued
+        // decisions directly, rather than serializing unrelated request-history
+        // queries and enqueue transactions before the shared-cursor race.
+        const backlog: Promise<void>[] = [];
+        for (let index = 0; index < 5; index++) {
+          for (const [offset, priority, count] of [
+            [100, 'urgent', 5],
+            [200, 'normal', 3],
+            [300, 'background', 2],
+          ] as const) {
+            if (index >= count) continue;
+            const requestId = `q${offset + index}`;
+            const decision = requestRun({
+              now: clock.now(),
+              task: undefined,
+              activeRun: undefined,
+              taskId: { workId: queueWorkId(requestId) },
+              requestId,
+              pipeline: 'claude',
+              priority,
+              work: TASK_WORK,
+            });
+            if (isRefusal(decision)) throw new Error('unexpected refusal');
+            backlog.push(
+              store.apply({
+                decision: {
+                  ...decision,
+                  run: { ...decidedRun(decision), queue: { state: 'queued' } },
+                },
+                expectedRevision: undefined,
+              }),
+            );
+            clock.advanceMinutes(1);
+          }
+        }
+        await Promise.all(backlog);
+        // Race the normal/background boundary after five committed turns.
+        // A stale concurrent cursor must not serve another normal run and
+        // starve background work. One pair exercises that atomic contract
+        // without paying three independent SDK conflict/backoff rounds.
+        const claims = [];
+        for (const count of [1, 1, 1, 1, 1, 2]) {
+          claims.push(
+            ...(await Promise.all(
+              Array.from({ length: count }, (_, index) =>
+                store.claimQueuedRun({
+                  pipelines: ['claude'],
+                  now: clock.now(),
+                  claimedBy: `priority-runner-${claims.length + index}`,
+                  tokenHash: 'a'.repeat(64),
+                }),
+              ),
+            )),
+          );
+        }
+        expect(claims.every((run) => run !== undefined)).toBe(true);
+        expect(new Set(claims.map((run) => run?.runId)).size).toBe(7);
+        expect(
+          claims
+            .map((run) => run?.priority)
+            .filter((priority) => priority === 'urgent'),
+        ).toHaveLength(4);
+        expect(
+          claims
+            .map((run) => run?.priority)
+            .filter((priority) => priority === 'normal'),
+        ).toHaveLength(2);
+        expect(
+          claims
+            .map((run) => run?.priority)
+            .filter((priority) => priority === 'background'),
+        ).toHaveLength(1);
+        expect(
+          (await store.listQueuedRuns()).map((run) => run.priority).sort(),
+        ).toEqual(['background', 'normal', 'urgent']);
+      });
 
       it('enqueueRun is idempotent and listQueuedRuns finds it', async () => {
         const { store, orchestrator } = await fixture();
@@ -2456,6 +2703,63 @@ export function runOrchestratorStoreContract(
           ).toBe(held.runId);
         },
       );
+
+      it('reports priority queue eligibility without bypassing provider ceilings or deferral', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const runs = [];
+        for (const [index, priority] of (
+          ['background', 'normal', 'urgent'] as const
+        ).entries()) {
+          const run = await queuedRun(
+            orchestrator,
+            `q${970 + index}`,
+            'codex',
+            priority,
+          );
+          await store.enqueueRun({ runId: run.runId, now: clock.now() });
+          runs.push(run);
+          clock.advanceMinutes(1);
+        }
+        const claim = {
+          pipelines: ['codex'],
+          now: clock.now(),
+          claimedBy: 'priority-status-test',
+          tokenHash: 'a'.repeat(64),
+        };
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 3, deferred: 0, liveClaims: 0, eligible: 3 });
+        const claimed = await store.claimQueuedRun(claim);
+        expect(claimed).toMatchObject({
+          runId: runs[2]?.runId,
+          priority: 'urgent',
+        });
+        if (claimed === undefined) throw new Error('missing priority claim');
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 2, deferred: 0, liveClaims: 1, eligible: 0 });
+        expect(await store.claimQueuedRun(claim)).toBeUndefined();
+        await store.releaseQueuedRunClaim({
+          runId: claimed.runId,
+          claimedBy: claim.claimedBy,
+          tokenHash: claim.tokenHash,
+          now: clock.now(),
+          deferredUntil: new Date(
+            Date.parse(clock.now()) + 60_000,
+          ).toISOString(),
+        });
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 3, deferred: 1, liveClaims: 0, eligible: 2 });
+        const next = await store.claimQueuedRun(claim);
+        expect(next).toMatchObject({
+          runId: runs[1]?.runId,
+          priority: 'normal',
+        });
+        expect(
+          (await store.readQueueAdmissionStatus(claim)).providers[0],
+        ).toMatchObject({ queued: 2, deferred: 1, liveClaims: 1, eligible: 0 });
+      });
 
       it('reports durable queue eligibility with provider ceilings, deferral and terminal claims', async () => {
         const { store, orchestrator, clock } = await fixture();

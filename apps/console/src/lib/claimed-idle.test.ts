@@ -59,6 +59,16 @@ describe('sessionReferencesItemNumber', () => {
     ).toBe(true);
   });
 
+  it('compares repositories case-insensitively, as GitHub does', () => {
+    const session = makeSession({
+      pr: { number: 42, url: 'u' },
+      repo: { owner: 'SuperSprinklesRacing', name: 'Sprinkles' },
+    });
+    expect(sessionReferencesItemNumber(session, makeItem({ number: 42 }))).toBe(
+      true,
+    );
+  });
+
   it('does not false-match a shorter number embedded in a longer one', () => {
     const session = makeSession({ branch: 'fix-primes-backend-oom-2819' });
     expect(

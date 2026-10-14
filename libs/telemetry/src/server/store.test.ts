@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+
 import { Firestore, Timestamp } from '@google-cloud/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
 import { mockWhere } from 'firestore-jest-mock/mocks/firestore';
@@ -48,11 +50,37 @@ const issueAgentSession: IssueAgentSessionDoc = {
   deliverables: { prNumbers: [2579], commitShas: [] },
 };
 
+/** Query-boundary double: the production reader must not request an
+ * all-document snapshot. Single-document tests retain FakeFirestore below. */
+function streamingFirestore(
+  collections: Record<string, Record<string, unknown>[]>,
+  failure?: Error,
+): Firestore {
+  const records = collections[SESSIONS_COLLECTION] ?? [];
+  const query = {
+    where: (...args: unknown[]) => {
+      mockWhere(...args);
+      return query;
+    },
+    get: () => {
+      throw new Error('All-document snapshots are forbidden for session lists');
+    },
+    stream: () =>
+      Readable.from(
+        (async function* () {
+          for (const record of records) yield { data: () => record };
+          if (failure !== undefined) throw failure;
+        })(),
+      ),
+  };
+  return { collection: () => query } as unknown as Firestore;
+}
+
 describe('listSessionDocs', () => {
   afterEach(() => vi.clearAllMocks());
 
   it('returns every doc in the sessions collection, source-agnostic, newest activity first', async () => {
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [
         { id: issueAgentSession.sessionId, ...issueAgentSession },
         { id: cliSession.sessionId, ...cliSession },
@@ -71,7 +99,7 @@ describe('listSessionDocs', () => {
   it('applies activeSince as a lastActivityAt range filter', async () => {
     // FakeFirestore records but does not evaluate query filters, so this
     // asserts the query shape; the range semantics are Firestore's own.
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [
         { id: cliSession.sessionId, ...cliSession },
         { id: issueAgentSession.sessionId, ...issueAgentSession },
@@ -90,7 +118,7 @@ describe('listSessionDocs', () => {
   });
 
   it('does not filter when no activeSince is given', async () => {
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [{ id: cliSession.sessionId, ...cliSession }],
     }) as unknown as Firestore;
 
@@ -100,7 +128,7 @@ describe('listSessionDocs', () => {
   });
 
   it('returns an empty list when the collection has no docs', async () => {
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [],
     }) as unknown as Firestore;
 
@@ -109,7 +137,7 @@ describe('listSessionDocs', () => {
 
   it('converts a stored expireAt Timestamp back into an ISO string', async () => {
     const expireAt = Timestamp.fromDate(new Date('2026-08-11T00:05:00.000Z'));
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [
         { id: cliSession.sessionId, ...cliSession, expireAt },
       ],
@@ -122,7 +150,7 @@ describe('listSessionDocs', () => {
 
   it('leaves a legacy doc missing expireAt as-is rather than throwing', async () => {
     const { expireAt: _expireAt, ...legacyDoc } = cliSession;
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [{ id: legacyDoc.sessionId, ...legacyDoc }],
     }) as unknown as Firestore;
 
@@ -133,7 +161,7 @@ describe('listSessionDocs', () => {
 
   it('rejects retired persisted compatibility shapes at the Firestore reader boundary', async () => {
     const { agent: _agent, ...missingAgent } = cliSession;
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [{ id: missingAgent.sessionId, ...missingAgent }],
     }) as unknown as Firestore;
 
@@ -141,7 +169,7 @@ describe('listSessionDocs', () => {
   });
 
   it('applies source as an equality filter', async () => {
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [
         { id: cliSession.sessionId, ...cliSession },
         { id: issueAgentSession.sessionId, ...issueAgentSession },
@@ -153,8 +181,26 @@ describe('listSessionDocs', () => {
     expect(mockWhere).toHaveBeenCalledWith('source', '==', 'cli');
   });
 
+  it('applies repo as equality filters on the persisted repo map fields', async () => {
+    const firestore = streamingFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: issueAgentSession.sessionId, ...issueAgentSession },
+      ],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore, {
+      source: 'cli',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      activeSince: '2026-07-11T12:00:00.000Z',
+    });
+
+    expect(mockWhere).toHaveBeenCalledWith('source', '==', 'cli');
+    expect(mockWhere).toHaveBeenCalledWith('repo.owner', '==', 'jlapenna');
+    expect(mockWhere).toHaveBeenCalledWith('repo.name', '==', 'agent-lcars');
+  });
+
   it('applies issueNumber as an equality filter', async () => {
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [
         { id: issueAgentSession.sessionId, ...issueAgentSession },
       ],
@@ -166,7 +212,7 @@ describe('listSessionDocs', () => {
   });
 
   it('applies intentId as an equality filter', async () => {
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [
         { id: issueAgentSession.sessionId, ...issueAgentSession },
       ],
@@ -178,7 +224,7 @@ describe('listSessionDocs', () => {
   });
 
   it('composes activeSince, source, and issueNumber filters together', async () => {
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [
         { id: issueAgentSession.sessionId, ...issueAgentSession },
       ],
@@ -206,13 +252,84 @@ describe('listSessionDocs', () => {
       sessionId: `session-${i}`,
       lastActivityAt: new Date(2026, 6, 1, 0, i).toISOString(),
     }));
-    const firestore = new FakeFirestore({
+    const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: manyDocs,
     }) as unknown as Firestore;
 
     expect(await listSessionDocs(firestore)).toHaveLength(100);
     expect(await listSessionDocs(firestore, { limit: 1000 })).toHaveLength(200);
     expect(await listSessionDocs(firestore, { limit: 5 })).toHaveLength(5);
+  });
+
+  it('streams a large unordered match set into the bounded newest page', async () => {
+    const records = Array.from({ length: 1001 }, (_, i) => ({
+      id: `session-${i}`,
+      ...cliSession,
+      sessionId: `session-${i}`,
+      lastActivityAt: new Date(
+        Date.parse(cliSession.lastActivityAt) + i * 1000,
+      ).toISOString(),
+    }));
+    const docs = await listSessionDocs(
+      streamingFirestore({
+        [SESSIONS_COLLECTION]: [
+          ...records.filter((_, index) => index % 2 === 0).reverse(),
+          ...records.filter((_, index) => index % 2 !== 0),
+        ],
+      }),
+      { limit: 5 },
+    );
+    expect(docs.map((doc) => doc.sessionId)).toEqual([
+      'session-1000',
+      'session-999',
+      'session-998',
+      'session-997',
+      'session-996',
+    ]);
+  });
+
+  it('preserves query ordering across equal activity clocks at the cutoff', async () => {
+    const records = ['first', 'second', 'third'].map((sessionId) => ({
+      ...cliSession,
+      sessionId,
+    }));
+    const docs = await listSessionDocs(
+      streamingFirestore({ [SESSIONS_COLLECTION]: records }),
+      { limit: 2 },
+    );
+    expect(docs.map((doc) => doc.sessionId)).toEqual(['first', 'second']);
+  });
+
+  it('still rejects malformed documents beyond the selected page', async () => {
+    const { agent: _agent, ...malformed } = cliSession;
+    await expect(
+      listSessionDocs(
+        streamingFirestore({
+          [SESSIONS_COLLECTION]: [
+            { ...cliSession },
+            {
+              ...malformed,
+              sessionId: 'older',
+              lastActivityAt: '2026-07-01T00:00:00.000Z',
+            },
+          ],
+        }),
+        { limit: 1 },
+      ),
+    ).rejects.toThrow('explicit agent');
+  });
+
+  it('rejects a failed stream instead of presenting its partial page as complete', async () => {
+    await expect(
+      listSessionDocs(
+        streamingFirestore(
+          {
+            [SESSIONS_COLLECTION]: [{ ...cliSession }],
+          },
+          new Error('stream interrupted'),
+        ),
+      ),
+    ).rejects.toThrow('stream interrupted');
   });
 });
 

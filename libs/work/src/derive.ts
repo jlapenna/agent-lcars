@@ -56,6 +56,7 @@ export interface ItemRunView {
   runId: string;
   state: Run['state'];
   pipeline: string;
+  priority?: WorkSpec['priority'];
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
@@ -101,6 +102,7 @@ export interface ItemView {
   createdAt: string;
   updatedAt: string;
   closedAt?: string;
+  providerRouting?: Task['providerRouting'];
   runs: ItemRunView[];
   sessions: ItemSessionView[];
 }
@@ -124,6 +126,7 @@ export interface WorkSummary {
   createdAt: string;
   updatedAt: string;
   closedAt?: string;
+  providerRouting?: Task['providerRouting'];
   runs: ItemRunView[];
 }
 
@@ -140,6 +143,9 @@ export function toItemView(input: {
     state: deriveItemState(input.task, input.runs),
     spec: payload.spec,
     origin: payload.origin,
+    ...(input.task.providerRouting === undefined
+      ? {}
+      : { providerRouting: input.task.providerRouting }),
     createdAt: runs[0]?.createdAt ?? input.task.updatedAt,
     updatedAt: input.task.updatedAt,
     ...(input.task.closedAt === undefined
@@ -149,6 +155,7 @@ export function toItemView(input: {
       runId: r.runId,
       state: r.state,
       pipeline: r.pipeline,
+      priority: r.priority ?? 'normal',
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
@@ -223,6 +230,9 @@ export function toWorkSummary(input: {
     state: deriveItemState(input.task, input.runs),
     spec: payload.spec,
     origin: payload.origin,
+    ...(input.task.providerRouting === undefined
+      ? {}
+      : { providerRouting: input.task.providerRouting }),
     createdAt: runs[0]?.createdAt ?? input.task.updatedAt,
     updatedAt: input.task.updatedAt,
     ...(input.task.closedAt === undefined
@@ -232,6 +242,7 @@ export function toWorkSummary(input: {
       runId: r.runId,
       state: r.state,
       pipeline: r.pipeline,
+      priority: r.priority ?? 'normal',
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),

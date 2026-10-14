@@ -5,6 +5,7 @@ import { FirestoreStore } from './firestore-store';
 import { MemoryStore } from './memory-store';
 import {
   providerFallbackSchema,
+  type QueuePriority,
   type Run,
   RUN_ID_MAX_LENGTH,
   runSchema,
@@ -51,6 +52,7 @@ function runFallbackContract(
         input: {
           task?: TaskId;
           pipeline?: string;
+          priority?: QueuePriority;
           alternatives?: string[];
           params?: Record<string, string>;
         } = {},
@@ -60,6 +62,7 @@ function runFallbackContract(
           taskId: task,
           requestId: 'caller-request',
           pipeline: input.pipeline ?? 'claude',
+          priority: input.priority,
           work: WORK,
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.alternatives === undefined
@@ -84,6 +87,30 @@ function runFallbackContract(
   }
 
   describe(`explicit authorized provider fallback: ${name}`, () => {
+    it.each(['urgent', 'normal', 'background'] as const)(
+      'preserves %s priority across provider-limit and queued-cooldown successors',
+      async (priority) => {
+        const f = fixture();
+        const original = await f.request({ priority, alternatives: ['codex'] });
+        await f.limit(original);
+        expect(await f.store.readActiveRun(TASK)).toMatchObject({
+          pipeline: 'codex',
+          priority,
+        });
+        const otherTask = { repo: 'octo/example', issue: 2199 };
+        const queued = await f.request({
+          task: otherTask,
+          priority,
+          alternatives: ['opencode'],
+        });
+        await f.store.enqueueRun({ runId: queued.runId, now: NOW });
+        expect(await f.orchestrator.rerouteQueued(PIPELINES)).toHaveLength(1);
+        expect(await f.store.readActiveRun(otherTask)).toMatchObject({
+          pipeline: 'opencode',
+          priority,
+        });
+      },
+    );
     it.each([
       { alternatives: undefined, summary: 'provider-limit' },
       { alternatives: ['codex'], summary: 'ordinary-failure' },

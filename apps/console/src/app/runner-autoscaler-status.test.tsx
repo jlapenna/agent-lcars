@@ -48,6 +48,61 @@ describe('RunnerAutoscalerStatus', () => {
     vi.restoreAllMocks();
   });
 
+  it('says a filter, not missing data, emptied the runner views', () => {
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{ warnings: [], lanes: [lane], queueExecutor: executor }}
+          filters={{ q: 'nomatch' }}
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getAllByText('No runner lane matches these filters.'),
+    ).toHaveLength(2);
+    expect(screen.queryByText('Direct agent executor')).toBeNull();
+    expect(screen.queryByText('GitHub runner status unavailable.')).toBeNull();
+    expect(screen.queryByText('Runner status unavailable')).toBeNull();
+  });
+
+  it('does not call an empty filter conclusive while lanes are missing', () => {
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{
+            warnings: [],
+            lanes: [lane],
+            lanesIncomplete: true,
+            queueExecutor: executor,
+          }}
+          filters={{ q: 'nomatch' }}
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getByText(
+        'No reporting lane matches these filters; some lanes are not reporting.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('Runner status unavailable')).toBeTruthy();
+    expect(
+      screen.queryByText('No runner lane matches these filters.'),
+    ).toBeNull();
+  });
+
+  it('narrows admission to the filtered agent', () => {
+    render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{ warnings: [], lanes: [lane], queueExecutor: executor }}
+          filters={{ agent: 'codex' }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('provider-admission-codex')).toBeTruthy();
+    expect(screen.queryByTestId('provider-admission-claude')).toBeNull();
+  });
+
   it('renders quota provenance, exact recent claims, drain and unavailable updates', () => {
     const now = new Date(Date.now()).toISOString();
     const reset = new Date(Date.now() + 60_000).toISOString();
@@ -313,13 +368,13 @@ describe('RunnerAutoscalerStatus', () => {
     expect(screen.getByTestId('arc-lane-lcars-ci')).toHaveTextContent(
       '1 running',
     );
-    expect(screen.getByRole('link', { name: 'lcars-ci' })).toHaveAttribute(
-      'href',
-      lane.registrationUrl,
-    );
-    expect(screen.getByTestId('queue-executor-status')).toHaveTextContent(
-      'Direct agent executorreadydraining5 active · 3 max',
-    );
+    expect(
+      screen.getByRole('link', { name: 'lcars-ci on GitHub ↗' }),
+    ).toHaveAttribute('href', lane.registrationUrl);
+    const executorRow = screen.getByTestId('queue-executor-status');
+    expect(executorRow).toHaveTextContent('Direct agent executor');
+    expect(executorRow).toHaveTextContent('ready · draining');
+    expect(executorRow).toHaveTextContent('5 active · 3 max');
   });
 
   it('distinguishes missing telemetry from fresh zero ARC capacity and unknown Job occupancy', () => {
@@ -428,7 +483,10 @@ describe('RunnerAutoscalerStatus', () => {
       );
       const source = FakeEventSource.only();
       expect(source.url).toBe(RUNNER_STATUS_STREAM_URL);
-      expect(screen.getAllByText(warning)).toHaveLength(1);
+      // One band: the warning appears inline in its summary and in the
+      // expanded list of that same band, never in a second band.
+      expect(screen.getAllByTestId('data-warnings')).toHaveLength(1);
+      expect(screen.getByTestId('data-warnings')).toHaveTextContent(warning);
       expect(
         screen
           .getByTestId('data-warnings')
@@ -441,8 +499,13 @@ describe('RunnerAutoscalerStatus', () => {
           warnings: ['ARC status unavailable.'],
         }),
       );
-      expect(screen.queryByText(warning)).not.toBeInTheDocument();
-      expect(screen.getAllByText('ARC status unavailable.')).toHaveLength(1);
+      expect(screen.getByTestId('data-warnings')).not.toHaveTextContent(
+        warning,
+      );
+      expect(screen.getAllByTestId('data-warnings')).toHaveLength(1);
+      expect(screen.getByTestId('data-warnings')).toHaveTextContent(
+        'ARC status unavailable.',
+      );
       expect(screen.getByTestId('queue-executor-status')).toHaveTextContent(
         '2 active',
       );
@@ -457,9 +520,9 @@ describe('RunnerAutoscalerStatus', () => {
       expect(
         screen.queryByTestId('queue-executor-status'),
       ).not.toBeInTheDocument();
-      expect(
-        screen.getByText('Runner capacity status is stale.'),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId('data-warnings')).toHaveTextContent(
+        'Runner capacity status is stale.',
+      );
 
       unmount();
       expect(source.closed).toBe(true);

@@ -137,6 +137,7 @@ export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
         return undefined;
       return {
         generation: String(data.generation),
+        uploadedAt: data.timeCreated,
         binding: {
           schemaVersion: QUICK_TASK_EVIDENCE_SCHEMA_VERSION,
           evidenceId,

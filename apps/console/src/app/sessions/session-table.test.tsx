@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { SessionRow } from '../../lib/session-archive';
-import { SessionTable } from './session-table';
+import { formatTokenCount, SessionTable } from './session-table';
 
 function makeRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
@@ -60,7 +60,7 @@ describe('SessionTable', () => {
         issueUrl: 'https://github.com/o/r/issues/42',
       }),
     ]);
-    const links = screen.getAllByRole('link', { name: '#42' });
+    const links = screen.getAllByRole('link', { name: 'sprinkles#42' });
     expect(links).toHaveLength(2);
     for (const link of links) {
       expect(link.getAttribute('href')).toBe(
@@ -83,8 +83,8 @@ describe('SessionTable', () => {
         ],
       }),
     ]);
-    const pr10 = screen.getAllByRole('link', { name: '#10' });
-    const pr20 = screen.getAllByRole('link', { name: '#20' });
+    const pr10 = screen.getAllByRole('link', { name: 'PR #10' });
+    const pr20 = screen.getAllByRole('link', { name: 'PR #20' });
     expect(pr10).toHaveLength(1);
     expect(pr20).toHaveLength(2);
     for (const link of pr10) {
@@ -101,19 +101,30 @@ describe('SessionTable', () => {
     expect(screen.getByText('joes-workstation')).toBeTruthy();
   });
 
-  it('identifies the model column as the client-requested model or route', () => {
+  it('uses the UX spec columns and leaves model and cost to session detail', () => {
     renderTable([
       makeRow({
         model: 'homelab/default',
         resolvedModel: 'qwen3.8-flash-next',
+        totalCostUsd: 1.5,
       }),
     ]);
-    expect(screen.getByText('Requested model / route')).toBeTruthy();
-    expect(screen.getByText('Resolved backend')).toBeTruthy();
-    expect(screen.getAllByText(/homelab\/default/)).toHaveLength(2);
-    expect(screen.getAllByText(/qwen3\.8-flash-next/)).toHaveLength(2);
+    expect(
+      screen.getAllByRole('columnheader').map((cell) => cell.textContent),
+    ).toEqual([
+      'Session',
+      'Issue',
+      'Agent',
+      'Outcome',
+      'Duration',
+      'Tokens',
+      'Started',
+    ]);
+    // The phone card still names the model route; the table leaves it to
+    // the detail page.
+    expect(screen.getAllByText(/homelab\/default/)).toHaveLength(1);
+    expect(screen.queryByText('$1.50')).toBeNull();
   });
-
   it('keeps host metadata in the desktop table and out of the phone card', () => {
     renderTable([
       makeRow({
@@ -154,17 +165,6 @@ describe('SessionTable', () => {
     expect(screen.queryByRole('link', { name: /run/ })).toBeNull();
   });
 
-  it('shows a formatted cost when the row has one', () => {
-    renderTable([makeRow({ sessionId: 's-cost', totalCostUsd: 1.5 })]);
-    expect(screen.getAllByText('$1.50').length).toBeGreaterThan(0);
-  });
-
-  it('shows an em-dash for cost when the row has none (table only - the card drops it entirely)', () => {
-    renderTable([makeRow({ sessionId: 's-no-cost' })]);
-    expect(screen.queryByText('$')).toBeNull();
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
-  });
-
   it('renders the liveness badge with its label in both views', () => {
     renderTable([makeRow({ liveness: 'live' })]);
     expect(screen.getByTestId('session-row-liveness').textContent).toBe('live');
@@ -173,12 +173,13 @@ describe('SessionTable', () => {
     );
   });
 
-  it('formats total tokens with thousands separators', () => {
-    renderTable([makeRow({ totalTokens: 12345 })]);
-    expect(screen.getByText('12,345')).toBeTruthy();
-    expect(screen.queryByText(/cw tok/)).toBeNull();
+  it('shows compact cost-weighted tokens with the exact count on hover', () => {
+    renderTable([makeRow({ totalTokens: 1_110_000 })]);
+    const cell = screen.getByText('1.11M');
+    expect(cell.getAttribute('title')).toBe('1,110,000 cost-weighted tokens');
+    expect(formatTokenCount(88_218)).toBe('88.2k');
+    expect(formatTokenCount(160)).toBe('160');
   });
-
   it('renders the explicit claude-code identity in both row views', () => {
     renderTable([makeRow({ agent: 'claude-code' })]);
     expect(screen.getAllByText('claude code')).toHaveLength(2);

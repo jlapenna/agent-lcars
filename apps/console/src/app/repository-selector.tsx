@@ -1,8 +1,14 @@
-import { Anchor, Button, Group, NativeSelect } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 
 import { repoKey, type WatchedRepo } from '@/lib/watched-repo';
 
-/** GET navigation keeps repository scope shareable and works without JS. */
+import { ToolbarSelect } from './console-toolbar';
+
+/**
+ * The workspace toolbar's repository control (design/fleet-console.html):
+ * a select that navigates on change. GET navigation keeps the scope
+ * shareable; without script the fallback Apply button submits it.
+ */
 export function RepositorySelector({
   repos,
   selected,
@@ -13,30 +19,31 @@ export function RepositorySelector({
   action: string;
 }) {
   return (
-    <form action={action} className="console-repository-selector">
-      <Group align="end" gap="xs" wrap="wrap">
-        <NativeSelect
-          label="Repository"
-          name="repo"
-          defaultValue={selected ?? ''}
-          data={[
-            { value: '', label: 'All repositories' },
-            ...repos.map((repo) => ({
-              value: repoKey(repo),
-              label: repoKey(repo),
-            })),
-          ]}
-          style={{ flex: '1 1 180px', minWidth: 0 }}
-        />
-        <Button type="submit" size="sm">
-          Apply repository
-        </Button>
-        {selected && (
-          <Anchor href={action} size="sm">
-            Clear repository
-          </Anchor>
-        )}
-      </Group>
+    <form
+      method="get"
+      action={action}
+      className="console-toolbar__filters console-repository-selector"
+    >
+      <ToolbarSelect
+        name="repo"
+        label="Repository"
+        value={selected ?? ''}
+        options={[
+          { value: '', label: `All repositories (${repos.length})` },
+          ...repos.map((repo) => ({
+            value: repoKey(repo),
+            label: repoKey(repo),
+          })),
+        ]}
+      />
+      <noscript>
+        <button type="submit">Apply repository</button>
+      </noscript>
+      {selected ? (
+        <Anchor href={action} size="sm">
+          Clear repository
+        </Anchor>
+      ) : null}
     </form>
   );
 }

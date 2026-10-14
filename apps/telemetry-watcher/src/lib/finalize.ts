@@ -77,8 +77,8 @@ export interface FinalizeSidecarOptions {
   captureOpenCodeExports?: (
     options: CaptureOpenCodeExportsOptions,
   ) => CaptureOpenCodeExportsResult | Promise<CaptureOpenCodeExportsResult>;
-  /** Test-only injection point, mirrored from `daemon.ts`'s own seam of the
-   * same name — production callers (main.ts) never set this; finalize uses
+  /** Test-only injection point — production callers (main.ts) never set
+   * this; finalize uses
    * the real `readSessionStatusOverlay` (real `fs`) by default. */
   readSessionStatusOverlay?: (
     stateDirectory: string,
@@ -94,8 +94,7 @@ export interface FinalizeSidecarOptions {
 
 /**
  * One-shot finalize pass for a runner (issue-agent) session (issue #24),
- * run once the provider has exited: unlike `startSidecar`'s
- * long-lived tick loop, this reduces each discovered transcript exactly
+ * run once the provider has exited: this reduces each discovered transcript exactly
  * once, archives its raw content to `config.transcriptsBucket` (the runner
  * container is destroyed on job exit, so this is the session's only chance
  * to survive as more than a Firestore summary), and upserts a final
@@ -149,8 +148,7 @@ export async function finalizeSidecar(
   const uploadTranscript = options.uploadTranscript ?? defaultUploadTranscript;
   const readStatusOverlay =
     options.readSessionStatusOverlay ?? defaultReadSessionStatusOverlay;
-  // Unset means skip entirely, same "unset means skip" convention as
-  // `daemon.ts`'s own `sessionStateDir` handling — `config.sessionStateDir`
+  // Unset means skip entirely — `config.sessionStateDir`
   // is always set for real runner-mode callers (see `runner-config.ts`),
   // so this only ever stays `undefined` for a test fixture that
   // deliberately omits it. A configured-but-nonexistent directory (a
@@ -179,10 +177,9 @@ export async function finalizeSidecar(
     }
   }
   // The single runner-mode watch-root contract (@agent-lcars/telemetry,
-  // #645) — the same function `startSidecar` (runner.ts) calls. Before
-  // #645 this was a second, hand-copied array with a comment admitting it
-  // "must mirror startSidecar's roots exactly"; finalize is the
-  // authoritative last write, so a root the sidecar watched but this pass
+  // #645). Before #645 this was a second, hand-copied array that had to
+  // mirror the (since retired) live sidecar's roots; finalize is the
+  // authoritative last write, so a root a live writer saw but this pass
   // didn't would leave that session stuck on its final `live`/`idle`
   // snapshot, never marked `ended` and never given a transcriptGcsUri —
   // importing one definition instead of two hand-copies makes that drift
@@ -370,11 +367,9 @@ async function finalizeSummary(
     }
   }
 
-  // Issue #1289: join the session-status overlay the same way `daemon.ts`
-  // joins it into a live tick's summary, straight onto `finalSummary`
-  // (never back onto `summary` — there is no last-good/pristine distinction
-  // to preserve here the way the daemon's tick loop has, since this is a
-  // one-shot pass with no next tick to fall back on). Absence (no
+  // Issue #1289: join the session-status overlay straight onto
+  // `finalSummary` (never back onto `summary` — this is a one-shot pass
+  // with no last-good/pristine distinction to preserve). Absence (no
   // `config.sessionStateDir`, an unreadable/nonexistent directory, or no
   // final file for this session) leaves `finalSummary` exactly as
   // `applyGitContext` produced it — carrying no `status` — which is what
@@ -383,8 +378,7 @@ async function finalizeSummary(
   // doc comment). That is correct here too: a session that never declared
   // a status, or whose declaration this pass couldn't read, should not
   // retain a stale one in the `ended` doc either.
-  // #1293: apply the title overlay too, exactly as `daemon.ts` does per
-  // tick. This write CARRIES `title` (buildSessionDoc emits it whenever the
+  // #1293: apply the title overlay too. This write CARRIES `title` (buildSessionDoc emits it whenever the
   // summary has one), so leaving it to merge semantics overwrote a declared
   // title with the transcript's generated one. Applied to `finalSummary`,
   // never back onto `summary`, matching the status join below.

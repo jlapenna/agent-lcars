@@ -36,6 +36,7 @@ const evidenceIntentSchema = z.strictObject({
     name: z.string().min(1),
   }),
   pipeline: z.enum(['claude', 'codex', 'opencode']),
+  priority: workSpecSchema.shape.priority,
   fallbackPipelines: fallbackPipelinesSchema.optional(),
   description: z.string().min(1),
   source: z.strictObject({
@@ -113,6 +114,7 @@ export async function createItemWithEvidence(form: FormData) {
       intent.evidenceId,
     ),
     pipeline: intent.pipeline,
+    priority: intent.priority,
     ...(intent.fallbackPipelines === undefined
       ? {}
       : { fallbackPipelines: intent.fallbackPipelines }),

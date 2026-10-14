@@ -11,9 +11,6 @@ import {
 
 export interface RunnerConfig extends Pick<
   SharedWatcherConfig,
-  | 'host'
-  | 'heartbeatIntervalMs'
-  | 'stalenessWindowMs'
   | 'firestoreProjectId'
   | 'firestoreWriterKeyJson'
   | 'firestoreEmulatorHost'
@@ -21,9 +18,7 @@ export interface RunnerConfig extends Pick<
 > {
   /** Root to discover transcripts under. Defaults to
    * `defaultClaudeProjectsDir()` (`~/.claude/projects`, optionally
-   * overridden by `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`) - deliberately NOT
-   * `loadConfig().watchRoots[0].path`, since `AGENT_TELEMETRY_WATCH_ROOTS`
-   * (the host watcher's multi-root override) has no bearing on runner mode.
+   * overridden by `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`).
    * Runner mode has no allowlist concept (see `@agent-lcars/telemetry`'s
    * `runnerWatchRoots` doc comment), so this is the only discovery knob
    * that matters here. */
@@ -31,8 +26,8 @@ export interface RunnerConfig extends Pick<
   /** Root to discover Codex transcripts under, defaulting to
    * `defaultCodexSessionsDir()` (`~/.codex/sessions`, optionally overridden
    * by `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`). Watched alongside
-   * `claudeProjectsDir` rather than instead of it — see `runner.ts`'s
-   * `startSidecar`, which declares both roots unconditionally. */
+   * `claudeProjectsDir` rather than instead of it — `runnerWatchRoots`
+   * declares both roots unconditionally. */
   codexSessionsDir: string;
   /** Scratch root holding bounded `opencode export` materializations. */
   opencodeExportsDir: string;
@@ -43,7 +38,7 @@ export interface RunnerConfig extends Pick<
    * own `$RUNNER_TEMP`, mirroring Claude's and Codex's own last-message
    * files) and passes it through `sidecar-lifecycle.sh` as
    * `--opencode-last-message-file`. Unset for every other invocation
-   * (`runner sidecar`'s live ticks, and any pipeline other than OpenCode),
+   * (any pipeline other than OpenCode),
    * which is exactly when `captureOpenCodeExports` must skip the write. */
   opencodeLastMessageFile?: string;
   /** LiteLLM-selected physical backend captured by the loopback proxy. */
@@ -61,21 +56,18 @@ export interface RunnerConfig extends Pick<
    * this run ships as `repo`. */
   repo?: { owner: string; name: string };
   /** Session-title/status overlay root (issue #1289), threaded into
-   * `WatcherDaemonOptions.sessionStateDir` by `runner.ts`'s `startSidecar`
-   * and read directly by `finalize.ts`. Always `defaultSessionStateDir()`
+   * read directly by `finalize.ts`. Always `defaultSessionStateDir()`
    * (`~/.local/state/agent-lcars` — `$HOME` is `/home/runner` in the
-   * runner image) — the same default the host watcher falls back to (see
-   * `config.ts`'s `loadConfig`), so a dispatched agent's `lcars session
-   * title`/`lcars session status` writes land exactly where this reads
-   * from with zero configuration. Unlike the host, runner mode has no env
-   * var to opt out: the whole point of #1289 was turning this on, and an
+   * runner image) — the same root `lcars session title`/`lcars session
+   * status` write beneath, so a dispatched agent's declarations land exactly
+   * where this reads from with zero configuration. There is no env var to
+   * opt out: the whole point of #1289 was turning this on, and an
    * ephemeral single-purpose container has no operator who'd ever want to
    * flip it back off. A container with nothing written there yet (the CLI
    * never ran, or ran before this issue existed) is not a config error —
    * `readSessionTitleOverlay`/`readSessionStatusOverlay` already treat a
    * missing directory as `available: false` and fail soft (see
-   * `session-title-annotation-source.ts`), the same as an ordinary
-   * workstation host that has never run `lcars session title` either. */
+   * `session-title-annotation-source.ts`). */
   sessionStateDir: string;
 }
 
@@ -155,13 +147,12 @@ function parseOwnerRepo(
 }
 
 /**
- * Parses the runner-mode sidecar's configuration: its own CLI flags
- * (`argv`, everything after `runner sidecar` on the command line) for
+ * Parses the runner-mode (`runner finalize`) configuration: its own CLI flags
+ * (`argv`, everything after `runner finalize` on the command line) for
  * `runId`/`issueNumber`/`claudeProjectsDir`, layered on top of
- * `loadSharedConfig()`'s environment-driven knobs (heartbeat interval,
- * Firestore target, etc.) — the same non-privacy env vars a host watcher
- * reads, so local-testing overrides (e.g.
- * `FIRESTORE_EMULATOR_HOST`) work identically in runner mode without
+ * `loadSharedConfig()`'s environment-driven Firestore target, so
+ * local-testing overrides (e.g.
+ * `FIRESTORE_EMULATOR_HOST`) work in runner mode without
  * requiring a host checkout allowlist inside a single-purpose CI container.
  */
 export function loadRunnerConfig(argv: string[]): RunnerConfig {
@@ -189,9 +180,6 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
     ...(process.env['OPENCODE_RESOLVED_MODEL'] && {
       opencodeResolvedModel: process.env['OPENCODE_RESOLVED_MODEL'],
     }),
-    host: base.host,
-    heartbeatIntervalMs: base.heartbeatIntervalMs,
-    stalenessWindowMs: base.stalenessWindowMs,
     firestoreProjectId: base.firestoreProjectId,
     firestoreWriterKeyJson: base.firestoreWriterKeyJson,
     firestoreEmulatorHost: base.firestoreEmulatorHost,

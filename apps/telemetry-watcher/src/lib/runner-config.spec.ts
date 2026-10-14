@@ -5,13 +5,9 @@ import { loadRunnerConfig } from './runner-config';
 
 const ENV_KEYS = [
   'AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR',
-  'AGENT_TELEMETRY_HOST',
   'AGENT_TELEMETRY_PROJECT_ID',
   'AGENT_TELEMETRY_TRANSCRIPTS_BUCKET',
   'AGENT_TELEMETRY_WRITER_KEY_JSON',
-  'AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS',
-  'AGENT_TELEMETRY_STALENESS_WINDOW_MS',
-  'AGENT_TELEMETRY_SHARE_DIR',
   'FIRESTORE_EMULATOR_HOST',
   'GITHUB_REPOSITORY',
   'OPENCODE_RESOLVED_MODEL',
@@ -52,19 +48,18 @@ describe('loadRunnerConfig', () => {
     expect(config.claudeProjectsDir).toBe('/home/runner/.claude/projects');
   });
 
-  it('falls back to loadConfig defaults when no flags are passed', () => {
+  it('falls back to the shared defaults when no flags are passed', () => {
     const config = loadRunnerConfig([]);
 
     expect(config.runId).toBeUndefined();
     expect(config.issueNumber).toBeUndefined();
-    expect(config.heartbeatIntervalMs).toBe(10_000);
     expect(config.claudeProjectsDir).toContain('.claude/projects');
   });
 
   // Issue #1289: `sessionStateDir` must always be set (never omitted the
-  // way `runId`/`issueNumber` are) — `startSidecar` and `finalizeSidecar`
-  // both key their overlay reads directly off this field, unconditionally.
-  it('always sets sessionStateDir to the same default the host watcher uses', () => {
+  // way `runId`/`issueNumber` are) — `finalizeSidecar` keys its overlay
+  // reads directly off this field, unconditionally.
+  it('always sets sessionStateDir to the default lcars session state root', () => {
     const config = loadRunnerConfig([]);
 
     expect(config.sessionStateDir).toBe(defaultSessionStateDir());
@@ -87,13 +82,11 @@ describe('loadRunnerConfig', () => {
     expect(config.issueNumber).toBeUndefined();
   });
 
-  it('still honors env-driven overrides for the shared watcher knobs', () => {
-    process.env['AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS'] = '7000';
+  it('still honors env-driven overrides for the shared Firestore target', () => {
     process.env['AGENT_TELEMETRY_PROJECT_ID'] = 'supersprinklesracing';
 
     const config = loadRunnerConfig(['--run-id', '1']);
 
-    expect(config.heartbeatIntervalMs).toBe(7000);
     expect(config.firestoreProjectId).toBe('supersprinklesracing');
   });
 
@@ -209,7 +202,7 @@ describe('loadRunnerConfig', () => {
     );
   });
 
-  it('threads the derived transcriptsBucket through from loadConfig (issue #24)', () => {
+  it('threads the derived transcriptsBucket through from loadSharedConfig (issue #24)', () => {
     process.env['AGENT_TELEMETRY_PROJECT_ID'] = 'agent-lcars';
 
     const config = loadRunnerConfig([]);

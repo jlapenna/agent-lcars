@@ -8,6 +8,10 @@ import {
   projectAutoscalerStatuses,
   subscribeAutoscalerStatuses,
 } from './autoscaler-status';
+import {
+  ARC_UNBOUNDED_MAX_RUNNERS,
+  fleetCapacity,
+} from './runner-status-contract';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   forClient: vi.fn((value: unknown) => value),
@@ -67,6 +71,62 @@ describe('getAutoscalerStatuses', () => {
       status({ updatedAt: expect.any(String) }),
     );
     expect(JSON.stringify(result)).not.toContain('expireAt');
+  });
+
+  it('reads an unbounded scale set as having no maximum, never as int32 runners', async () => {
+    const updatedAt = new Date().toISOString();
+    mockStore([
+      { ...lane, updatedAt, maxRunners: ARC_UNBOUNDED_MAX_RUNNERS },
+      { ...lane, lane: 'lcars-e2e', updatedAt },
+    ]);
+    const result = await getAutoscalerStatuses();
+    expect(result.lanes?.[0]).not.toHaveProperty('maxRunners');
+    expect(fleetCapacity(result.lanes ?? [])).toBeUndefined();
+    expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('capacity');
+    expect(fleetCapacity([{ maxRunners: 4 }, { maxRunners: 2 }])).toBe(6);
+  });
+
+  it('streams a compact job-startup window and drops only a malformed one', async () => {
+    const updatedAt = new Date().toISOString();
+    mockStore([
+      {
+        ...lane,
+        updatedAt,
+        jobStartup: {
+          bounds: [1, 10],
+          startedAt: '2026-01-01T00:00:00.000Z',
+          intervals: [{ endedAt: updatedAt, counts: [0, 2, 3] }],
+        },
+      },
+      {
+        ...lane,
+        lane: 'lcars-e2e',
+        updatedAt,
+        jobStartup: { bounds: [1, 10], intervals: [{ endedAt: updatedAt }] },
+      },
+    ]);
+    const result = await getAutoscalerStatuses();
+    expect(result.lanes?.map((arc) => arc.lane)).toEqual([
+      'lcars-ci',
+      'lcars-e2e',
+    ]);
+    expect(result.lanes?.map((arc) => arc.jobStartup)).toEqual([
+      {
+        bounds: [1, 10],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        endedAt: updatedAt,
+        minutes: [
+          {
+            endedAt: updatedAt,
+            jobs: [
+              [1, 2],
+              [2, 1],
+            ],
+          },
+        ],
+      },
+      undefined,
+    ]);
   });
 
   it('ignores retired scale-set records instead of publishing obsolete capacity', async () => {
@@ -133,6 +193,133 @@ describe('authoritative ARC inventory', () => {
     updatedAt: new Date(now).toISOString(),
     expectedLanes: 'lcars-ci,lcars-e2e',
   };
+
+  // The production incident retained four retired snapshots after the fleet
+  // changed from fifteen configured lanes to these twelve surviving producers.
+  const configured = [
+    'build-client',
+    'control',
+    'default',
+    'e2e',
+    'girosf-default',
+    'homelab-ci',
+    'homelab-control',
+    'lcars-ci',
+    'lcars-e2e',
+    'nx-cache-server-default',
+    'sync-padd-default',
+    'www-default',
+  ];
+  const current = configured.map((name) => ({
+    ...fresh,
+    lane: name,
+    expectedLanes: configured.join(','),
+  }));
+  const retired = ['ci-light', 'e2e-light', 'lcars-default', 'wait'].map(
+    (name) => ({
+      ...fresh,
+      lane: name,
+      expectedLanes: [...configured, 'ci-light', 'e2e-light', 'lcars-default']
+        .sort()
+        .join(','),
+      updatedAt: new Date(now - 86_400_000).toISOString(),
+      registeredRunners: 100,
+      runningJobs: 100,
+    }),
+  );
+
+  it('publishes current twelve-lane totals without waiting for retired snapshot TTL deletion', () => {
+    const result = projectAutoscalerStatuses([...current, ...retired], now);
+    expect(result.lanes).toEqual(current);
+    expect(result.lanesIncomplete).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+    expect(fleetFromAutoscalerStatuses(result)).toMatchObject({
+      online: 24,
+      busy: 12,
+    });
+    const zero = projectAutoscalerStatuses(
+      [
+        ...current.map((record) => ({
+          ...record,
+          registeredRunners: 0,
+          runningJobs: 0,
+        })),
+        ...retired,
+      ],
+      now,
+    );
+    expect(fleetFromAutoscalerStatuses(zero)).toMatchObject({
+      online: 0,
+      busy: 0,
+    });
+  });
+
+  it('ignores malformed counters only when fresh inventory proves the expired lane was retired', () => {
+    const result = projectAutoscalerStatuses(
+      [
+        ...current,
+        ...retired.map((record) => ({ ...record, runningJobs: NaN })),
+      ],
+      now,
+    );
+    expect(result.lanesIncomplete).toBeUndefined();
+    expect(fleetFromAutoscalerStatuses(result)).toMatchObject({
+      online: 24,
+      busy: 12,
+    });
+  });
+
+  it.each([
+    'missing',
+    'expired',
+    'malformed',
+    'disagrees',
+    'all-expired',
+    'fresh-unexpected',
+    'unknown-retired-age',
+  ] as const)(
+    'retains unknown totals for %s evidence and restores them after configured producers recover',
+    (failure) => {
+      const first = current[0];
+      const bad = {
+        missing: current.slice(1),
+        expired: [
+          { ...first, updatedAt: new Date(now - 180_001).toISOString() },
+          ...current.slice(1),
+        ],
+        malformed: [{ ...first, runningJobs: NaN }, ...current.slice(1)],
+        disagrees: [
+          { ...first, expectedLanes: `${first.expectedLanes},new-lane` },
+          ...current.slice(1),
+        ],
+        'all-expired': current.map((record) => ({
+          ...record,
+          updatedAt: new Date(now - 180_001).toISOString(),
+        })),
+        'fresh-unexpected': [
+          ...current,
+          {
+            ...retired[0],
+            expectedLanes: first.expectedLanes,
+            updatedAt: new Date(now).toISOString(),
+          },
+        ],
+        'unknown-retired-age': [
+          ...current,
+          { ...retired[0], updatedAt: 'unknown' },
+        ],
+      }[failure];
+      const result = projectAutoscalerStatuses([...bad, ...retired], now);
+      expect(result.lanesIncomplete).toBe(true);
+      expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('online');
+      expect(fleetFromAutoscalerStatuses(result)).not.toHaveProperty('busy');
+      expect(
+        fleetFromAutoscalerStatuses(
+          projectAutoscalerStatuses([...current, ...retired], now),
+        ),
+      ).toMatchObject({ online: 24, busy: 12 });
+    },
+  );
 
   it('suppresses totals when a configured lane never published or disappeared after TTL', () => {
     const result = projectAutoscalerStatuses([fresh], now);
