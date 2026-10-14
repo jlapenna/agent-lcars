@@ -99,13 +99,21 @@ export function parseSessionArchiveQuery(
  * archive through the same three query params, so a divergent wording
  * would just be two ways of describing one window. */
 export function describeArchiveWindow(query: SessionArchiveQuery): string {
-  const parts = [`last ${query.days} day${query.days === 1 ? '' : 's'}`];
+  return [
+    `last ${query.days} day${query.days === 1 ? '' : 's'}`,
+    ...describeArchiveFilters(query),
+  ].join(', ');
+}
+
+/** The archive query's narrowing beyond its window, e.g. `repo=owner/name`. */
+export function describeArchiveFilters(query: SessionArchiveQuery): string[] {
+  const parts: string[] = [];
   if (query.source) parts.push(`source=${query.source}`);
   if (query.issueNumber !== undefined)
     parts.push(`issue #${query.issueNumber}`);
   if (query.repo) parts.push(`repo=${repoKey(query.repo)}`);
   if (query.agent) parts.push(`agent=${query.agent}`);
-  return parts.join(', ');
+  return parts;
 }
 
 /** Wall-clock span of a session's own recorded activity (lastActivityAt

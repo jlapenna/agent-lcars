@@ -1,4 +1,8 @@
-import { SESSION_AGENTS } from '@agent-lcars/telemetry';
+import {
+  CLI_SESSION_RETENTION_DAYS,
+  ISSUE_AGENT_SESSION_RETENTION_DAYS,
+  SESSION_AGENTS,
+} from '@agent-lcars/telemetry';
 import { Anchor, Card, Group, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
@@ -13,6 +17,7 @@ import {
 } from '../../lib/github-client';
 import {
   DEFAULT_ARCHIVE_DAYS,
+  describeArchiveFilters,
   describeArchiveWindow,
   getSessionArchive,
   parseSessionArchiveQuery,
@@ -213,11 +218,17 @@ async function SessionsBody({
           wrap="nowrap"
           className="sessions-panel__head"
         >
-          <Title order={2}>Sessions</Title>
+          {/* The mockup's "Sessions · today": the toolbar's window label. */}
+          <Title order={2}>
+            Sessions · {query.days === 1 ? '24h' : `${query.days}d`}
+          </Title>
           <span className="sessions-panel__count">{rows.length}</span>
           <span className="sessions-panel__meta">
-            {view === 'by-issue' ? 'grouped by issue' : 'flat'} ·{' '}
-            {describeArchiveWindow(query)}
+            {[
+              view === 'by-issue' ? 'grouped by issue' : 'flat',
+              ...describeArchiveFilters(query),
+              `retained ${ISSUE_AGENT_SESSION_RETENTION_DAYS} days · CLI ${CLI_SESSION_RETENTION_DAYS}`,
+            ].join(' · ')}
           </span>
           {/* The panel's own layout control, beside the meta it names. */}
           <ViewToggle
