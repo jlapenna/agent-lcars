@@ -34,6 +34,7 @@ import { E2E_OPENCODE_SESSION_IDS } from '../../../../lib/e2e-transcript-fixture
 const RUNNER_STATUS_COLLECTION = 'runner-status';
 const E2E_RUNNER_STATUS_ID = 'e2e-fixture-arc-lane';
 const E2E_EXECUTOR_STATUS_ID = 'e2e-fixture-queue-executor';
+const E2E_HOSTS_STATUS_ID = 'e2e-fixture-hosts';
 
 export const E2E_CLI_SESSION_IDS = {
   live: 'e2e-cli-session-live',
@@ -308,6 +309,40 @@ async function seedRunnerStatus() {
     });
   await firestore
     .collection(RUNNER_STATUS_COLLECTION)
+    .doc(E2E_HOSTS_STATUS_ID)
+    .set({
+      schemaVersion: 1,
+      kind: 'hosts',
+      inventory: {
+        hosts: [
+          {
+            name: 'e2e-host-spark',
+            ready: true,
+            unschedulable: false,
+            cpuMillis: 20_000,
+            memoryBytes: 128 * 1024 ** 3,
+            requestedCpuMillis: 17_000,
+            requestedMemoryBytes: 40 * 1024 ** 3,
+            runnerPods: 2,
+            queueJobPods: 1,
+          },
+          {
+            name: 'e2e-host-worf',
+            ready: false,
+            unschedulable: false,
+            cpuMillis: 8_000,
+            memoryBytes: 16 * 1024 ** 3,
+            requestedCpuMillis: 0,
+            requestedMemoryBytes: 0,
+            runnerPods: 0,
+            queueJobPods: 0,
+          },
+        ],
+      },
+      updatedAt: new Date().toISOString(),
+    });
+  await firestore
+    .collection(RUNNER_STATUS_COLLECTION)
     .doc(E2E_EXECUTOR_STATUS_ID)
     .set({
       schemaVersion: 2,
@@ -357,6 +392,10 @@ export async function POST(req: NextRequest) {
         telemetry
           .collection(RUNNER_STATUS_COLLECTION)
           .doc(E2E_EXECUTOR_STATUS_ID)
+          .delete(),
+        telemetry
+          .collection(RUNNER_STATUS_COLLECTION)
+          .doc(E2E_HOSTS_STATUS_ID)
           .delete(),
         resetE2eOrchestratorFixtures(),
       ]);

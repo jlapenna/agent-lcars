@@ -145,4 +145,49 @@ describe('RunnerFleetPanel', () => {
     expect(workApi.textContent).toContain('20 calls · 30m');
     expect(workApi.querySelectorAll('rect')).toHaveLength(1);
   });
+
+  it('draws one row per host with requested CPU and memory', () => {
+    const host = {
+      name: 'spark',
+      ready: true,
+      unschedulable: false,
+      cpuMillis: 20_000,
+      memoryBytes: 128 * 1024 ** 3,
+      requestedCpuMillis: 17_000,
+      requestedMemoryBytes: 32 * 1024 ** 3,
+      runnerPods: 2,
+      queueJobPods: 1,
+    };
+    render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          lanes={[lane]}
+          hostInventory={{
+            hosts: [
+              host,
+              {
+                ...host,
+                name: 'worf',
+                ready: false,
+                runnerPods: 0,
+                queueJobPods: 0,
+              },
+            ],
+            updatedAt: '2026-10-13T15:00:00.000Z',
+          }}
+        />
+      </MantineProvider>,
+    );
+    const spark = screen.getByTestId('fleet-host-spark');
+    expect(spark.textContent).toContain('20 vCPU · 128 GiB');
+    expect(spark.textContent).toContain('85%');
+    expect(spark.textContent).toContain('25%');
+    expect(spark.querySelectorAll('.ops-slots i')).toHaveLength(3);
+    expect(spark.querySelector('[data-tone="warn"]')).toBeTruthy();
+    expect(screen.getByTestId('fleet-host-worf').textContent).toContain(
+      'NotReady',
+    );
+    expect(screen.queryByTestId('fleet-lane-lcars-ci')).toBeNull();
+    expect(screen.getByText('Load · requested')).toBeTruthy();
+  });
 });

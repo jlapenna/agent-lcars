@@ -129,6 +129,40 @@ describe('getAutoscalerStatuses', () => {
     ]);
   });
 
+  it('projects a fresh host inventory and drops a stale or malformed one', async () => {
+    const updatedAt = new Date().toISOString();
+    const host = {
+      name: 'spark',
+      ready: true,
+      unschedulable: false,
+      cpuMillis: 20_000,
+      memoryBytes: 128 * 1024 ** 3,
+      requestedCpuMillis: 6_100,
+      requestedMemoryBytes: 12 * 1024 ** 3,
+      runnerPods: 1,
+      queueJobPods: 1,
+    };
+    const doc = (overrides: Record<string, unknown>) => ({
+      schemaVersion: 1,
+      kind: 'hosts',
+      inventory: { hosts: [host] },
+      updatedAt,
+      expireAt: Timestamp.now(),
+      ...overrides,
+    });
+    mockStore([doc({})]);
+    expect((await getAutoscalerStatuses()).hostInventory).toEqual({
+      hosts: [host],
+      updatedAt,
+    });
+    mockStore([
+      doc({ updatedAt: new Date(Date.now() - 600_000).toISOString() }),
+    ]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+    mockStore([doc({ inventory: { hosts: [{ ...host, cpuMillis: -1 }] } })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+  });
+
   it('ignores retired scale-set records instead of publishing obsolete capacity', async () => {
     mockStore([
       {

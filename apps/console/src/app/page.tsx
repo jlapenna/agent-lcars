@@ -409,6 +409,7 @@ async function IndexBody({
                 repo: repoFilterKey,
               })}
               workApiLatency={autoscaler.queueExecutor?.workApiLatency}
+              hostInventory={autoscaler.hostInventory}
             />
             <CliSessionsPanel
               sessions={filteredCliSessions.filter(isActiveCliSession)}

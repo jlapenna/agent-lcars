@@ -85,6 +85,15 @@ hits its deadline is recorded at the time it waited; other failures without
 a response are not. The console reads it for Work API
 p95.
 
+Once the Kubernetes preflight passes, the executor also publishes `hosts`
+(`schemaVersion: 1`, `kind: hosts`): every node with its allocatable CPU and
+memory, Ready and cordon state, the summed requests of pods still occupying
+it (counted like `nodesFit`) and its ARC runner and queue Job pod counts. It
+uses the executor's existing `nodes`/`pods` list grant. A failed read
+publishes nothing, so the document expires. Load changes ride the 60s
+heartbeat; a node joining, leaving, going NotReady or being cordoned writes
+at once.
+
 Each successful lane snapshot repeats `expectedLanes`: the sorted,
 comma-separated DNS-label names from the validated `arc_lanes` configuration.
 This bounded inventory uses the existing change/heartbeat write gate, with no
