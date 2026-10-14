@@ -498,20 +498,28 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       (oldestRecent !== undefined &&
         Date.parse(oldestRecent.updatedAt) < historyStart));
   // A run that ended inside the window was last written inside it.
-  // The two reads are not one snapshot: a run that ended between them is
-  // live in the recent read and absent from the live one, so it is kept
-  // from the recent read rather than dropped from both.
+  // The two reads are not one snapshot. A run the recent read saw live
+  // and the live read did not ended between them, at an unknown instant:
+  // dropping it would undercount the past and keeping its stale state would
+  // overcount now, so the history waits for the next, consistent read.
   const liveRunIds = new Set(authoritativeLiveRuns.map((run) => run.runId));
-  const historyRuns = historyReached
-    ? [
-        ...authoritativeLiveRuns,
-        ...recentWindow.filter(
-          (run) =>
-            !liveRunIds.has(run.runId) &&
-            Date.parse(run.updatedAt) >= historyStart,
-        ),
-      ]
-    : [];
+  const readsAgree = !recentWindow.some(
+    (run) =>
+      (run.state === 'pending' || run.state === 'running') &&
+      !liveRunIds.has(run.runId),
+  );
+  const historyRuns =
+    historyReached && readsAgree
+      ? [
+          ...authoritativeLiveRuns,
+          ...recentWindow.filter(
+            (run) =>
+              run.state !== 'pending' &&
+              run.state !== 'running' &&
+              Date.parse(run.updatedAt) >= historyStart,
+          ),
+        ]
+      : [];
   // Only the live list and outcome feed report invalid task metadata; a
   // history-only run with an unreadable task just withholds the history.
   const feedTaskKeys = new Set(
@@ -555,9 +563,10 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     runs
       .map((run) => project(run, taskByKey.get(taskKey(run.task))))
       .filter((run): run is AgentRun => run !== undefined);
-  const runHistory = historyReached
-    ? historyTimelines(historyRuns, taskByKey)
-    : undefined;
+  const runHistory =
+    historyReached && readsAgree
+      ? historyTimelines(historyRuns, taskByKey)
+      : undefined;
   const liveRuns = projectRuns(authoritativeLiveRuns);
   const recentRuns = projectRuns(terminalRecentRuns).slice(0, RECENT_RUN_LIMIT);
   if (invalidMetadata.value) {

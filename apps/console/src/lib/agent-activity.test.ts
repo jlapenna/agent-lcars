@@ -439,17 +439,13 @@ describe('getAgentActivity run history', () => {
     expect((await getAgentActivity()).runHistory).toBeUndefined();
   });
 
-  it('keeps a run that ended between the live and recent reads', async () => {
+  it('withholds the history when the live and recent reads disagree', async () => {
     // The recent read still saw it running; the live read no longer did.
     const between = run({ updatedAt: minutesAgo(2) });
     store.listRecentRuns.mockResolvedValue([between]);
     store.readTask.mockResolvedValue({ task: githubTask(), revision: 1 });
 
-    const activity = await getAgentActivity();
-
-    expect(activity.runHistory?.map((timeline) => timeline.state)).toEqual([
-      'running',
-    ]);
+    expect((await getAgentActivity()).runHistory).toBeUndefined();
   });
 
   it('withholds only the history when a history-only task is unreadable', async () => {
