@@ -717,6 +717,111 @@ export const runsRouter = os.router({
     };
   }),
 
+  introspect: os.introspect.handler(async ({ input, context }) => {
+    // Only this authentication pass may supply returned worker metadata.
+    delete context.workerPermit;
+    let run = await requireRunToken(context, input.runId);
+    const task = isWorkAnchor(run.task)
+      ? (await context.store.readTask(run.task))?.task
+      : undefined;
+    if (isWorkAnchor(run.task)) {
+      // Native lookup may await cancellation, reclaim or worker retirement.
+      // Authenticate again after it, then finalize Run and permit together.
+      delete context.workerPermit;
+      await requireRunToken(context, input.runId);
+    }
+    // Worker authentication awaits JWT and capacity IO. Read Run liveness and
+    // its worker permit together after those awaits, without writing either.
+    const authenticatedPermit = (context as RunsContext).workerPermit;
+    const verified = await capacityCall(() =>
+      context.store.transactCapacity({
+        now: context.now().toISOString(),
+        runId: input.runId,
+        recordKeys: [retiredKey(input.runId)],
+        decide: (snapshot) => {
+          const current = snapshot.runs.find(
+            (value) => value.runId === input.runId,
+          );
+          const token = context.bearerToken;
+          if (
+            current?.queue?.tokenHash === undefined ||
+            token === undefined ||
+            !runTokenMatches(token, current.queue.tokenHash)
+          )
+            throw new ORPCError('UNAUTHORIZED', {
+              message: 'Invalid run token',
+            });
+          if (!isLive(current.state))
+            throw new ORPCError('UNAUTHORIZED', {
+              message: 'Run is no longer live',
+            });
+          const verifiedAt = context.now().toISOString();
+          if (
+            Date.parse(
+              runRecoveryDeadline(current) ?? current.leaseExpiresAt,
+            ) <= Date.parse(verifiedAt)
+          )
+            throw new ORPCError('UNAUTHORIZED', {
+              message: 'Run token expired',
+            });
+          if (
+            authenticatedPermit === undefined &&
+            (snapshot.state.receipts.some(
+              (value) => value.runId === input.runId,
+            ) ||
+              snapshot.state.policies.some(
+                (policy) =>
+                  policy.enforced &&
+                  policy.domains[current.pipeline] !== undefined,
+              ))
+          )
+            throw new ORPCError('UNAUTHORIZED', {
+              message: 'Bound active worker identity required',
+            });
+          if (authenticatedPermit !== undefined)
+            assertCapacityWorkerPermit(
+              snapshot.state,
+              snapshot.records.get(retiredKey(input.runId)),
+              authenticatedPermit,
+            );
+          return {
+            value: { run: current, permit: authenticatedPermit, verifiedAt },
+          };
+        },
+      }),
+    );
+    run = verified.run;
+    const target = anchorTarget(run, task);
+    const verifiedAt = verified.verifiedAt;
+    const validUntil = runRecoveryDeadline(run) ?? run.leaseExpiresAt;
+    if (Date.parse(validUntil) <= context.now().getTime()) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
+    }
+    const permit = verified.permit;
+    return {
+      version: 1 as const,
+      runId: run.runId,
+      repository: target.repo,
+      anchor: isWorkAnchor(run.task)
+        ? { workId: run.task.workId }
+        : { repo: run.task.repo, issue: run.task.issue },
+      issueUrl:
+        target.issue === undefined
+          ? null
+          : `https://github.com/${target.repo}/issues/${target.issue}`,
+      verifiedAt,
+      validUntil,
+      worker:
+        permit === undefined
+          ? null
+          : {
+              poolId: permit.poolId,
+              podUid: permit.podUid,
+              generation: permit.generation,
+            },
+    };
+  }),
+
   heartbeat: os.heartbeat.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
     // Preserve the token that authenticated this callback through the atomic

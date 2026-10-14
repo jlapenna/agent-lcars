@@ -9836,6 +9836,205 @@
         ]
       }
     },
+    "/runs/{runId}/introspect": {
+      "get": {
+        "operationId": "introspectRun",
+        "summary": "Verify live run identity without renewing or changing it",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 175
+                    },
+                    "repository": {
+                      "type": "string",
+                      "maxLength": 140,
+                      "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                    },
+                    "anchor": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "repo": {
+                              "type": "string",
+                              "maxLength": 140,
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                            },
+                            "issue": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": ["repo", "issue"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "workId": {
+                              "type": "string",
+                              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                            }
+                          },
+                          "required": ["workId"],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "issueUrl": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 256,
+                          "format": "uri"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "verifiedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "validUntil": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "worker": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "poolId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "podUid": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "generation": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": ["poolId", "podUid", "generation"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "runId",
+                    "repository",
+                    "anchor",
+                    "issueUrl",
+                    "verifiedAt",
+                    "validUntil",
+                    "worker"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired run token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Worker generation refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "runToken": []
+          }
+        ]
+      }
+    },
     "/runs/{runId}/heartbeat": {
       "post": {
         "operationId": "heartbeatRun",
