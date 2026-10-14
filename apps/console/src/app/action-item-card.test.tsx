@@ -7,6 +7,7 @@ import { localAgentCommand } from '../lib/local-agent-prompt';
 import type { PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard } from './action-item-card';
 import { replyToItem } from './actions';
+import { renderCardMarkdown } from './render-card-markdown';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
 // out of scope here, matching the pattern in action-items-board.test.tsx.
@@ -60,8 +61,7 @@ function renderCard(
   render(
     <MantineProvider>
       <ActionItemCard
-        item={item}
-        primaryAction={primaryAction}
+        {...renderCardMarkdown({ item, primaryAction })}
         multiRepo={multiRepo}
       />
     </MantineProvider>,
@@ -558,7 +558,10 @@ describe('ActionItemCard', () => {
 
       const { rerender } = render(
         <MantineProvider>
-          <ActionItemCard item={itemA} variant="workspace" />
+          <ActionItemCard
+            {...renderCardMarkdown({ item: itemA })}
+            variant="workspace"
+          />
         </MantineProvider>,
       );
 
@@ -569,7 +572,10 @@ describe('ActionItemCard', () => {
 
       rerender(
         <MantineProvider>
-          <ActionItemCard item={itemB} variant="workspace" />
+          <ActionItemCard
+            {...renderCardMarkdown({ item: itemB })}
+            variant="workspace"
+          />
         </MantineProvider>,
       );
 

@@ -778,6 +778,8 @@ export function QueueWorkspace({
             <ActionItemCard
               item={selectedCard.item}
               primaryAction={selectedCard.primaryAction}
+              description={selectedCard.description}
+              lastComment={selectedCard.lastComment}
               multiRepo={watchedRepos.length > 1}
               muted={isSnoozed(
                 inboxCardKey(selectedCard),
