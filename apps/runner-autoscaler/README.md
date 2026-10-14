@@ -90,9 +90,14 @@ Once the Kubernetes preflight passes, the executor also publishes `hosts`
 memory, Ready and cordon state, the summed requests of pods still occupying
 it (counted like `nodesFit`) and its ARC runner and queue Job pod counts. It
 uses the executor's existing `nodes`/`pods` list grant. A failed read
-publishes nothing, so the document expires. Load changes ride the 60s
-heartbeat; a node joining, leaving, going NotReady or being cordoned writes
-at once.
+publishes nothing, so the document expires. Where metrics-server has sampled
+a node, the host also carries `usedCpuMillis` and `usedMemoryBytes`. That
+read needs `list` on `metrics.k8s.io` `nodes`, granted by Homelab's
+`lcars-queue-capacity-reader` role. Without the grant or metrics-server, or
+when the read fails, hosts publish requests alone: the console's Load column
+then reads "requested", and the executor logs the failure once, when it
+starts or changes. Load and usage changes ride the 60s heartbeat; a node
+joining, leaving, going NotReady or being cordoned writes at once.
 
 Each successful lane snapshot repeats `expectedLanes`: the sorted,
 comma-separated DNS-label names from the validated `arc_lanes` configuration.
