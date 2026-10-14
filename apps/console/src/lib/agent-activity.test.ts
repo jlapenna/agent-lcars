@@ -164,6 +164,7 @@ describe('getAgentActivity', () => {
     ]);
     expect(activity.fleet).toEqual({
       online: 2,
+      registered: 2,
       busy: 1,
       capacity: 2,
       githubExpiresAt: '2026-08-28T12:03:00.000Z',
@@ -282,6 +283,62 @@ describe('fleetFromAutoscalerStatuses', () => {
       }),
     ).toMatchObject({ online: 0, busy: 0 });
   });
+  it('reads online/total from the inventory pods when it lists them', () => {
+    const lane = (name: string, updatedAt: string) => ({
+      schemaVersion: 3 as const,
+      kind: 'arc-lane' as const,
+      lane: name,
+      registrationUrl: 'https://github.com/octo/example',
+      assignedJobs: 1,
+      runningJobs: 1,
+      pendingJobs: 0,
+      idleRunners: 1,
+      registeredRunners: 2,
+      desiredRunners: 2,
+      minRunners: 0,
+      updatedAt,
+    });
+    const runner = (name: string, laneName: string, state: string) => ({
+      name,
+      kind: 'arc' as const,
+      lane: laneName,
+      state: state as 'busy',
+      since: T0,
+      requestedCpuMillis: 2000,
+      requestedMemoryBytes: 1,
+    });
+    const lanes = [lane('ci', T0), lane('e2e', '2026-08-28T10:01:00.000Z')];
+    const withoutRows = fleetFromAutoscalerStatuses({ warnings: [], lanes });
+    // No maximum on either lane and no rows: the bare count, no denominator.
+    expect(withoutRows).toMatchObject({ online: 4, busy: 2 });
+    expect(withoutRows.capacity).toBeUndefined();
+    expect(
+      fleetFromAutoscalerStatuses({
+        warnings: [],
+        lanes,
+        hostInventory: {
+          hosts: [],
+          runners: [
+            runner('a', 'ci', 'busy'),
+            runner('b', 'ci', 'idle'),
+            runner('c', 'e2e', 'busy'),
+            runner('d', 'e2e', 'offline'),
+            { ...runner('e', 'direct', 'busy'), kind: 'direct' as const },
+          ],
+          runnerJobsKnown: true,
+          updatedAt: '2026-08-28T09:59:00.000Z',
+        },
+      }),
+    ).toMatchObject({
+      online: 3,
+      capacity: 4,
+      registered: 4,
+      busy: 2,
+      // The older inventory snapshot expires the figures first.
+      githubExpiresAt: '2026-08-28T10:02:00.000Z',
+    });
+  });
+
   it('keeps absent ARC capacity unknown and direct executor health separate', () => {
     expect(fleetFromAutoscalerStatuses({ warnings: [] })).toEqual({});
     expect(

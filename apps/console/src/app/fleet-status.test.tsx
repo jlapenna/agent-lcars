@@ -139,7 +139,7 @@ describe('producer freshness in Bridge and Agents', () => {
         ),
       );
       expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
-        '5 GitHub runners registered (2 running)',
+        '5 GitHub runners online (2 running)',
       );
       const outage = current.map((record) =>
         record.kind === 'arc-lane' && record.lane === 'standard'
@@ -166,7 +166,7 @@ describe('producer freshness in Bridge and Agents', () => {
         ),
       );
       expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
-        '5 GitHub runners registered (2 running)',
+        '5 GitHub runners online (2 running)',
       );
     },
   );
@@ -187,7 +187,7 @@ describe('producer freshness in Bridge and Agents', () => {
       );
       const rendered = render(view(surface, fleet));
       expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
-        '5 GitHub runners registered (2 running)',
+        '5 GitHub runners online (2 running)',
       );
       expect(
         screen.queryByTestId('metric-runner-occupancy')?.textContent ?? null,
@@ -238,7 +238,7 @@ describe('producer freshness in Bridge and Agents', () => {
         ),
       );
       expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
-        '5 GitHub runners registered (2 running) · Direct executor ready (limit 8)',
+        '5 GitHub runners online (2 running) · Direct executor ready (limit 8)',
       );
     },
   );
@@ -254,7 +254,7 @@ describe('producer freshness in Bridge and Agents', () => {
       await vi.advanceTimersByTimeAsync(120_000);
     });
     expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
-      '0 GitHub runners registered (0 running)',
+      '0 GitHub runners online (0 running)',
     );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
@@ -285,7 +285,7 @@ describe('producer freshness in Bridge and Agents', () => {
       await vi.advanceTimersByTimeAsync(120_001);
     });
     expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
-      '5 GitHub runners registered (2 running) · Direct executor status unavailable',
+      '5 GitHub runners online (2 running) · Direct executor status unavailable',
     );
     expect(screen.getByTestId('metric-runner-occupancy')).toHaveTextContent(
       '2/5 GitHub runners running',

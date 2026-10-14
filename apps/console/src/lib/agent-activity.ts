@@ -18,6 +18,7 @@ import {
   runTimeline,
 } from './run-history';
 import {
+  arcRunnerCount,
   fleetCapacity,
   RUNNER_STATUS_STALENESS_MS,
 } from './runner-status-contract';
@@ -83,11 +84,17 @@ export interface AgentRun {
 /** The server-owned autoscaler telemetry aggregate. Runners are ephemeral,
  * can scale to zero when idle, and have no useful repository affiliation. */
 export interface FleetSummary {
-  /** Fresh ARC GitHub Actions capacity only; absent is not scaled-to-zero. */
+  /** Fresh ARC GitHub Actions runners online; absent is not scaled-to-zero.
+   * Counted from the host inventory's runner pods when it carries them, else
+   * the lanes' registered runners. */
   online?: number;
   busy?: number;
-  /** Sum of the fresh lanes' configured maximum runners; absent when any
-   * lane configures no maximum. */
+  /** The lanes' registered runners: the per-minute runner history's own
+   * measure, which `online` replaces once pods are listed. */
+  registered?: number;
+  /** The denominator of `online`: every ARC runner pod in the inventory, or
+   * without one the lanes' configured maximum; absent when neither is known
+   * (a lane with no maximum). */
   capacity?: number;
   /** Earliest ARC producer expiry; one stale lane invalidates the total. */
   githubExpiresAt?: string;
@@ -134,21 +141,29 @@ export function fleetFromAutoscalerStatuses(
 ): FleetSummary {
   const lanes = status.lanes ?? [];
   const executor = status.queueExecutor;
+  const inventory = status.hostInventory;
+  // One snapshot for both halves of "online/total": the inventory's pods when
+  // it lists them, so the fraction never mixes two producers' counts.
+  const pods = arcRunnerCount(inventory?.runners, lanes);
+  const capacity = pods?.total ?? fleetCapacity(lanes);
+  const registered = lanes.reduce(
+    (count, lane) => count + lane.registeredRunners,
+    0,
+  );
   return {
     ...(lanes.length === 0 || status.lanesIncomplete
       ? {}
       : {
-          online: lanes.reduce(
-            (count, lane) => count + lane.registeredRunners,
-            0,
-          ),
+          online: pods?.online ?? registered,
+          registered,
           busy: lanes.reduce((count, lane) => count + lane.runningJobs, 0),
-          ...(fleetCapacity(lanes) === undefined
-            ? {}
-            : { capacity: fleetCapacity(lanes) }),
+          ...(capacity === undefined ? {} : { capacity }),
+          // The earliest producer behind the figures sets their expiry.
           githubExpiresAt: new Date(
-            Math.min(...lanes.map((lane) => Date.parse(lane.updatedAt))) +
-              RUNNER_STATUS_STALENESS_MS,
+            Math.min(
+              ...lanes.map((lane) => Date.parse(lane.updatedAt)),
+              ...(pods && inventory ? [Date.parse(inventory.updatedAt)] : []),
+            ) + RUNNER_STATUS_STALENESS_MS,
           ).toISOString(),
         }),
     ...(executor === undefined

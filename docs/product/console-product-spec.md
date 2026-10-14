@@ -234,7 +234,7 @@ the work that has stopped, and the work in flight.
     run that used 95% or more of its budget is classified as `timeout`.
   - Recent outcomes.
   - Active CLI sessions.
-  - A fleet chip showing registered/running GitHub Actions runners from
+  - A fleet chip showing online/running GitHub Actions runners from
     fresh ARC lane records separately from direct-executor readiness,
     draining state and concurrency limit. Missing capacity is unavailable,
     not zero; fresh scaled-to-zero capacity remains visible. The earliest
@@ -438,6 +438,15 @@ the work that has stopped, and the work in flight.
   allocatable (already net of reserves), and counts the requests that do not.
   An executor that predates the rows, or a fleet past 128 runners, keeps the
   per-lane totals.
+- **FE-SB-11 [Implemented]** Fleet online reads `online/total` wherever it
+  appears, as the mockup's `11/12`: the rail, the Bridge's Runners online
+  readout and the Runner fleet panel on the Bridge and Shuttlebay. Both halves
+  count ARC runner pods from the same host inventory snapshot (online is any
+  pod not starting or offline); queue executor Job pods are agent work, not
+  GitHub Actions runners, and never count. The panel counts the lanes it
+  shows. Without runner rows the figure falls back to the lanes' registered
+  runners over their configured maximum, or the bare count when a lane has
+  no maximum; it never invents a denominator.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 

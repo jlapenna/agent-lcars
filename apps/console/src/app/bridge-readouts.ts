@@ -2,7 +2,6 @@ import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
 import { runCountHistory } from '../lib/run-history';
 import { fleetRunnerHistory } from '../lib/runner-history';
-import { fleetCapacity } from '../lib/runner-status-contract';
 import type { SessionArchiveResult } from '../lib/session-archive';
 import { repoKey } from '../lib/watched-repo';
 import type { ConsoleReadout } from './console-readouts';
@@ -71,16 +70,13 @@ export function fleetReadoutInput({
   autoscaler: Pick<AutoscalerStatusResult, 'lanes' | 'lanesIncomplete'>;
   spendArchive?: Pick<SessionArchiveResult, 'spend' | 'spendByRepository'>;
 }): BridgeReadoutInput {
-  const capacity = autoscaler.lanes && fleetCapacity(autoscaler.lanes);
   const repoSpend = spendArchive?.spendByRepository;
   return {
     fleet: {
       online: activity.fleet?.online,
       busy: activity.fleet?.busy,
-      capacity:
-        autoscaler.lanesIncomplete || !autoscaler.lanes?.length
-          ? undefined
-          : capacity,
+      // Set only with complete lanes; the same figure the rail shows.
+      capacity: activity.fleet?.capacity,
     },
     liveRuns,
     liveRunsAvailable: activity.queue !== undefined,
@@ -126,16 +122,18 @@ export function fleetReadoutInput({
   };
 }
 
-/** The newest bar is the figure beside it: the lane windows sample once a
- * minute, so their last entry can trail the current counts. */
+/** The newest bar is the lanes' current count: their windows sample once a
+ * minute, so the last entry can trail it. The series stays on the lanes'
+ * registered runners throughout, even where the headline counts runner pods,
+ * so a different measure never lands on its last bar. */
 function withCurrent(
   history: ReturnType<typeof fleetRunnerHistory>,
-  fleet: { online?: number; busy?: number } | undefined,
+  fleet: { registered?: number; busy?: number } | undefined,
 ): ReturnType<typeof fleetRunnerHistory> {
-  if (!history || fleet?.online === undefined || fleet.busy === undefined)
+  if (!history || fleet?.registered === undefined || fleet.busy === undefined)
     return history;
   return {
-    online: [...history.online.slice(0, -1), fleet.online],
+    online: [...history.online.slice(0, -1), fleet.registered],
     busy: [...history.busy.slice(0, -1), fleet.busy],
   };
 }

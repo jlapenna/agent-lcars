@@ -68,7 +68,7 @@ export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
     <Text size="xs" c="dimmed" data-testid="fleet-chip">
       {fresh.online === undefined
         ? 'GitHub runner status unavailable'
-        : `${fresh.online} GitHub runner${fresh.online === 1 ? '' : 's'} registered (${fresh.busy ?? 0} running)`}
+        : `${fresh.online} GitHub runner${fresh.online === 1 ? '' : 's'} online (${fresh.busy ?? 0} running)`}
       {' · '}
       {fresh.directExecutor === undefined
         ? 'Direct executor status unavailable'

@@ -33,6 +33,40 @@ describe('RunnerFleetPanel', () => {
     ).toHaveLength(2);
   });
 
+  it('counts online/total from the inventory pods on the lanes shown', () => {
+    const runner = (name: string, laneName: string, state: string) => ({
+      name,
+      kind: 'arc' as const,
+      lane: laneName,
+      state: state as 'busy',
+      since: '2026-10-13T14:00:00.000Z',
+      requestedCpuMillis: 2000,
+      requestedMemoryBytes: 1,
+    });
+    render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          lanes={[lane]}
+          hostInventory={{
+            hosts: [],
+            runners: [
+              runner('a', 'lcars-ci', 'busy'),
+              runner('b', 'lcars-ci', 'offline'),
+              runner('c', 'other-lane', 'idle'),
+            ],
+            runnerJobsKnown: true,
+            updatedAt: '2026-10-13T15:00:00.000Z',
+          }}
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen
+        .getByTestId('runner-fleet-panel')
+        .querySelector('.ops-panel__count')?.textContent,
+    ).toBe('1/2');
+  });
+
   it('draws a bounded number of slots however large the maximum', () => {
     render(
       <MantineProvider>
