@@ -164,8 +164,10 @@ for weeks behind an "approve an equivalent-workload design" request whose
 baseline no longer existed. A judgement call never relaxes a §11 or
 repository hard limit, an approval gate (§0), a human hold (§6), or a policy
 this protocol says a worker cannot waive. When the evidence is imperfect,
-deliver with `Tracks #N` rather than `Fixes #N` unless your decision is that
-the anchor's acceptance is met, and say which.
+deliver as partial work rather than closing the anchor unless your decision
+is that its acceptance is met, and say which: on an issue anchor use
+`Tracks #N` instead of `Fixes #N`; on a native Work anchor keep the
+`Work: work:<id>` reference (§5) and state what remains.
 
 End your response with `PARK <blocker and resume trigger>`. A park is a
 real outcome, not silence: it must leave the same kind of durable,
@@ -507,8 +509,8 @@ label, and continue through the selected checks. Do not park merely to ask for
 permission the trusted repository policy already grants. A label name alone
 is not authorization: if these conditions do not hold, preserve the evidence
 and ask for the exact broader verification needed per §4 if the PR cannot
-meet its acceptance without it; otherwise deliver with `Tracks #N` and say
-what remains unverified.
+meet its acceptance without it; otherwise deliver it as partial work (§4)
+and say what remains unverified.
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
