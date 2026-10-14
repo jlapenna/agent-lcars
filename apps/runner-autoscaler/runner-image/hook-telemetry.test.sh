@@ -63,7 +63,18 @@ const sse = (res, events) => {
   res.end();
 };
 const usage = { input_tokens: 1, output_tokens: 1 };
+let lifecycleRecords = 0;
+const record = (value) => {
+  if (lifecycleRecords++ < 64) fs.appendFileSync(process.argv[3], JSON.stringify(value) + '\n');
+};
 const server = http.createServer((req, res) => {
+  // Only the mock provider's lifecycle is diagnostic: never retain headers,
+  // model inputs, outputs, or arbitrary request URLs.
+  const route = ['/v1/messages', '/v1/responses', '/v1/chat/completions']
+    .find((path) => req.url.startsWith(path)) ?? 'unknown';
+  record({ route, stage: 'request' });
+  res.on('finish', () => record({ route, stage: 'response', status: res.statusCode, completed: true }));
+  res.on('close', () => record({ route, stage: 'closed', completed: res.writableFinished }));
   req.resume();
   req.on('end', () => {
     if (req.url.startsWith('/v1/messages')) {
@@ -100,7 +111,7 @@ const server = http.createServer((req, res) => {
 });
 server.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[2], String(server.address().port)));
 JS
-node "$tmp/provider.mjs" "$tmp/port" &
+node "$tmp/provider.mjs" "$tmp/port" "$tmp/provider-lifecycle.ndjson" &
 server_pid=$!
 deadline=$((SECONDS + 30))
 while [ ! -s "$tmp/port" ]; do
@@ -125,6 +136,45 @@ spooled() {
   cat "$spool/events.pending.ndjson" "$spool/events.ndjson" 2>/dev/null || true
 }
 
+# Print only bounded metadata from files this smoke owns. CLI output includes
+# model text even against the mock provider, so raw output is never published.
+failure_diagnostics() {
+  local agent="$1"
+  node - "$tmp" "$agent" <<'JS'
+const fs = require('node:fs');
+const path = require('node:path');
+const [root, agent] = process.argv.slice(2);
+const read = (name) => {
+  try {
+    const fd = fs.openSync(path.join(root, name), 'r');
+    try {
+      const bytes = Buffer.alloc(65536);
+      const size = fs.fstatSync(fd).size;
+      const length = fs.readSync(fd, bytes, 0, bytes.length, 0);
+      return { size, text: bytes.subarray(0, length).toString('utf8') };
+    } finally { fs.closeSync(fd); }
+  } catch { return { size: 0, text: '' }; }
+};
+const output = read(`${agent === 'claude-code' ? 'claude' : agent}.out`);
+const cli = read(`${agent}.exit`);
+const provider = read('provider-lifecycle.ndjson');
+const counts = { error: 0, warning: 0, timeout: 0, connection: 0 };
+for (const line of output.text.split('\n')) {
+  for (const key of Object.keys(counts)) {
+    if (new RegExp(`\\b${key === 'warning' ? 'warn(?:ing)?' : key}\\b`, 'i').test(line)) counts[key]++;
+  }
+}
+console.error('hook smoke lifecycle: ' + JSON.stringify({
+  agent, cliExit: /^\d+\s*$/.test(cli.text) ? Number(cli.text) : null,
+  outputBytes: output.size, inspectedBytes: Math.min(output.size, 65536),
+  outputCategories: counts,
+  provider: provider.text.trim().split('\n').filter(Boolean).slice(-64).map((line) => {
+    try { return JSON.parse(line); } catch { return { malformed: true }; }
+  }),
+}));
+JS
+}
+
 # Background hooks finish after their CLI exits; wait for the expected kinds.
 await_kinds() {
   local home="$1" agent="$2"
@@ -137,6 +187,7 @@ await_kinds() {
     done
     [ -z "$missing" ] && return 0
     if [ "$SECONDS" -ge "$deadline" ]; then
+      failure_diagnostics "$agent"
       echo "$agent spool:" >&2
       spooled "$home" >&2
       cat "$home/.local/state/agent-lcars/hook.log" >&2 2>/dev/null || true
@@ -185,6 +236,7 @@ mv "$tmp/settings.json" "$claude_home/.claude/settings.json"
   cat "$tmp/claude.out" >&2
   fail "claude -p exited $status against the localhost provider"
 }
+printf '0\n' > "$tmp/claude-code.exit"
 [ -e "$tmp/claude-session-end-ran" ] ||
   fail "claude -p ran no SessionEnd hooks (an async hook still running at exit?)"
 await_kinds "$claude_home" claude-code start stop end
@@ -215,6 +267,7 @@ run_env "$codex_home" lcars integration install codex > /dev/null ||
   cat "$tmp/codex.out" >&2
   fail "codex exec exited $status against the localhost provider"
 }
+printf '0\n' > "$tmp/codex.exit"
 await_kinds "$codex_home" codex start end
 check_events "$codex_home" codex
 
@@ -250,5 +303,6 @@ printf '{}\n' > "$tmp/not-a-credential.json"
   cat "$tmp/opencode.out" >&2
   fail "opencode run exited $status against the localhost provider"
 }
+printf '0\n' > "$tmp/opencode.exit"
 await_kinds "$opencode_home" opencode start stop
 check_events "$opencode_home" opencode
