@@ -121,11 +121,12 @@ cost-per-distinct-merge denominator is derived from this subset.
   admission cohort, correlate immutable verified park/manual-action events
   to eventual merge, and retain unresolved/censored tasks as unknown. A
   reported park alone is only a reported handoff, not all human activity.
-- `cost`: denominator finished runs. Real cost-per-merged-deliverable needs
-  exact attempt-to-session billing joins (all retries/parks included), actual
-  currency/price basis and independently verified distinct merged PRs. Missing
-  subscription/local-inference prices and unmatched sessions remain unknown,
-  not zero-dollar or token-derived claims.
+- `cost`: denominator finished runs. This series retains unknown Work-attempt
+  billing because exact attempt-to-session invoice joins are absent. The
+  separate canonical session-cost proxy below supplies reported/estimated
+  session cost per known distinct merge, with explicit cohort and coverage;
+  it does not claim an invoice join. Missing subscription/local-inference
+  prices and unmatched sessions remain unknown, not zero-dollar claims.
 
 Webhook-receipt admission latency, console time-to-decision, degradation
 rate, phone decision reach and end-to-end traceability also remain unknown:
@@ -167,7 +168,54 @@ After durable trustworthy events and longitudinal data exist, the suggested
 30-day SLO handoff is a reviewed dual-window budget burn: fast 14.4x on both
 1h/5m and slow 6x on both 6h/30m, with minimum-volume and unknown-data gates.
 The current overlapping 1h gauges cannot implement those independent windows;
-the template deliberately does not pretend to do so. Keep #2200 open for
-those event joins, collection installation and real elapsed qualification.
+the template deliberately does not pretend to do so. The original #2200
+source acceptance requires the definitions, measurements, accounting tests and
+operator handoff. Missing authoritative event producers remain source gaps;
+collection installation and elapsed SLO qualification are separate Homelab
+operational work, not additional original source-closure requirements.
 Prometheus owns the [rule-test format](https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/)
 and [alert `for` semantics](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/).
+
+## Session cost proxy
+
+The same authenticated export appends `lcars_product_session_cost_*` gauges
+from the canonical Costs `SessionSpend` owner. It selects sessions with recorded
+activity in the rolling hour ending at `observedAt`, retains at most 200 newest
+sessions, and uses existing stored GitHub PR projections (at most 200 point
+reads, eight concurrent, five-second shared projection deadline). The session
+reader streams matching recent records with bounded retained memory; 200 is the
+returned-page bound, not a promise of 200 underlying document reads. This is a
+read-only, nontransactional snapshot. Future/invalid activity clocks are excluded
+and make coverage partial. Page saturation also makes coverage partial.
+
+`session_cost_reported_usd` and `session_cost_estimated_usd` remain separate.
+Both are **whole cumulative session costs**, not charges incurred during that
+hour or actual invoice amounts. All selected sessions contribute, including
+retries, failed attempts and sessions without PRs. The denominator is distinct
+repository-qualified, known-merged PRs referenced by that same selected cohort,
+regardless of merge date. The canonical stored-evidence attribution rules apply;
+worker claims and unqualified PR numbers never establish a merge. A PR shared
+by multiple selected sessions counts once within each pipeline; pipeline PR
+counts must not be summed to obtain a globally unique denominator.
+
+Only `claude`, `codex`, `opencode` and `unknown` pipeline labels are exported.
+Other adapters fold into `unknown` before canonical PR deduplication. No session,
+model, repository, principal, URL or error labels are exported. The existing
+Costs page retains its adapter-specific grouping.
+
+`session_cost_read_available=0` suppresses money/cohort samples when the feed
+fails or aggregates are nonfinite. `session_cost_read_complete=0` marks a capped
+or degraded archive/projection read. Those gauges are independent of the
+existing three-durable-feed `snapshot_complete`; cost uncertainty does not hide
+live-run or dead-letter health. Unpriced sessions, unknown PR statuses and
+unqualified reference counts remain explicit. The cost-per-merged-PR proxy is
+omitted if no price or known merge exists; otherwise `coverage=partial` marks
+any missing price, attribution or read coverage. Reported zero is distinct from
+unknown pricing. Do not sum successive rolling-window gauges or treat this
+proxy as actual task/run billing.
+
+This completes the source cost-proxy boundary, not the whole original SLO
+acceptance: broad independently verified evidence and typed human-intervention
+producer facts remain unknown. The operator recording-rule/alert handoff is a
+source deliverable; installation and elapsed SLO qualification remain separate
+Homelab operational work.

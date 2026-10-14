@@ -20,6 +20,13 @@ import { OpenAPILink } from '@orpc/openapi/fetch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CliSession } from './cli-sessions';
+import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
+
+vi.mock('./lifecycle-cost-metrics', () => ({
+  readLifecycleCostMetrics: vi.fn(
+    async () => 'lcars_product_session_cost_read_available 0\n',
+  ),
+}));
 import { controlPlaneRepository } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createWorkHandler, type WorkContext } from './work-router';
@@ -239,6 +246,13 @@ describe('items routes', () => {
       expect(first.status).toBe(200);
       expect(again.json).toEqual(first.json);
       expect(first.json).toMatchObject({ complete: true, windowSeconds: 3600 });
+      expect(first.json.prometheus).toContain(
+        'lcars_product_session_cost_read_available 0',
+      );
+      expect(first.json.prometheus).toContain('lcars_product_silent_loss_runs');
+      expect(readLifecycleCostMetrics).toHaveBeenCalledWith(
+        '2026-08-26T10:00:00.000Z',
+      );
       expect(read).toHaveBeenCalledWith({
         since: '2026-08-26T09:00:00.000Z',
         until: '2026-08-26T10:00:00.000Z',
