@@ -2396,10 +2396,13 @@ describe('runtime evidence authorization after accepted provider handoff', () =>
   it('accepts exact runtime receipt with only current Codex access, preserving immutable Claude Work', async () => {
     currentGrant();
     const f = await handedOff();
+    const drain = vi.fn(f.ctx.runtime.drain);
+    f.ctx.runtime.drain = drain;
     expect(await call(f.ctx, 'POST', path(f.runId), evidence)).toMatchObject({
       status: 200,
       json: { runId: f.runId, state: 'complete' },
     });
+    expect(drain).toHaveBeenCalledOnce();
     const task = (await f.ctx.runtime.store.readTask(f.anchor))!.task;
     expect(task.work).toEqual(f.task.work);
     expect(task.delivery).toMatchObject({
@@ -2407,6 +2410,124 @@ describe('runtime evidence authorization after accepted provider handoff', () =>
       runtimeEvidence: { principal: operator.principal },
     });
   });
+  it('drains the native final event and session expiry before returning accepted runtime evidence', async () => {
+    currentGrant();
+    vi.stubEnv(
+      'AGENT_LCARS_OUTCOME_WEBHOOKS',
+      JSON.stringify({
+        slack: { url: 'https://bot.example/outcome', audience: 'bot' },
+      }),
+    );
+    const ctx = context({ principal: currentOperator });
+    const run = decidedRun(
+      await ctx.runtime.orchestrator.request({
+        taskId: { workId: ID },
+        requestId: 'native-runtime',
+        pipeline: 'codex',
+        work: workPayloadSchema.parse({
+          origin: {
+            principal: operator.principal,
+            channel: 'slack',
+            thread: 'runtime-proof',
+          },
+          spec: { ...spec, pipeline: 'codex' },
+        }),
+        params: { mode: 'implement' },
+      }),
+    );
+    await ctx.runtime.store.enqueueRun({ runId: run.runId, now: NOW });
+    await ctx.runtime.orchestrator.confirmDispatch(run.runId);
+    await ctx.runtime.store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner',
+      tokenHash: CLAIM,
+    });
+    const original = {
+      ok: true,
+      summary: 'pull-request',
+      ref: `https://github.com/${spec.target.repo}/pull/99`,
+    };
+    expect(
+      isRefusal(
+        await ctx.runtime.orchestrator.report(
+          run.runId,
+          original,
+          CLAIM,
+          undefined,
+          undefined,
+          {
+            runId: run.runId,
+            repo: spec.target.repo,
+            number: 99,
+            baseRef: 'main',
+            head: HEAD,
+            state: 'waiting',
+            runtimeGate: 'required',
+            observedAt: NOW,
+          },
+        ),
+      ),
+    ).toBe(false);
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(null, { status: 204 }),
+    );
+    const deliver = vi.fn(
+      async (_target: unknown, _payload: unknown) => undefined,
+    );
+    const drain = vi.fn(() =>
+      drainOutbox({
+        store: ctx.runtime.store,
+        orchestrator: ctx.runtime.orchestrator,
+        tokens: { tokenFor: async () => 'test-token' },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        deliverOutcomeWebhook: deliver,
+        now: () => NOW,
+      }),
+    );
+    ctx.runtime.drain = drain;
+    await drain();
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(deliver.mock.calls[0]?.[1]).not.toHaveProperty('eventId');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    drain.mockClear();
+    expect(
+      isRefusal(
+        await ctx.runtime.orchestrator.observeDelivery(
+          run.runId,
+          { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+          () => true,
+        ),
+      ),
+    ).toBe(false);
+    const response = await call(ctx, 'POST', path(run.runId), evidence);
+    expect(response).toMatchObject({
+      status: 200,
+      json: { runId: run.runId, state: 'complete' },
+    });
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(deliver.mock.calls[1]?.[1]).toMatchObject({
+      eventId: `delivery-outcome/${run.runId}`,
+      deliveryStage: 'complete',
+      runId: run.runId,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain(
+      '/work-session-expiry.yml/dispatches',
+    );
+    expect(drain).toHaveBeenCalledOnce();
+    expect((await ctx.runtime.store.readRun(run.runId))?.result).toEqual(
+      original,
+    );
+    expect((await call(ctx, 'POST', path(run.runId), evidence)).status).toBe(
+      409,
+    );
+    expect(drain).toHaveBeenCalledOnce();
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it.each([
     'wrong-provider',
     'revoked',
@@ -2420,6 +2541,8 @@ describe('runtime evidence authorization after accepted provider handoff', () =>
     async (cause) => {
       currentGrant();
       const f = await handedOff();
+      const drain = vi.fn(f.ctx.runtime.drain);
+      f.ctx.runtime.drain = drain;
       const ctx =
         cause === 'wrong-provider'
           ? { ...f.ctx, principal: operator }
@@ -2453,6 +2576,7 @@ describe('runtime evidence authorization after accepted provider handoff', () =>
           ? 403
           : 409,
       );
+      expect(drain).not.toHaveBeenCalled();
       expect(
         (await f.ctx.runtime.store.readTask(f.anchor))!.task.delivery,
       ).toEqual(f.task.delivery);

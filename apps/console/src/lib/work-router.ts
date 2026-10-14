@@ -172,6 +172,7 @@ export const workRouter = os.router({
         },
       );
       if (isRefusal(decision)) throw errors.CONFLICT();
+      await context.runtime.drain();
       return { runId: run.runId, state: 'complete' as const };
     },
   ),
