@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useRef } from 'react';
+import { Fragment, type ReactNode, useEffect, useRef } from 'react';
 
 /**
  * The workspace toolbar band's controls (design/fleet-console.html): a
@@ -131,17 +131,33 @@ export function ToolbarWindow({
       aria-label={label}
     >
       {options.map((option) => (
-        <label key={option.value} title={option.title}>
-          <input
-            type="radio"
-            name={name}
-            value={option.value}
-            disabled={option.disabled}
-            defaultChecked={option.value === value}
-            onChange={(event) => submitClosestForm(event.currentTarget)}
-          />
-          <span>{option.label}</span>
-        </label>
+        <Fragment key={option.value}>
+          <label title={option.title}>
+            <input
+              type="radio"
+              name={name}
+              value={option.value}
+              disabled={option.disabled}
+              // A label's title reaches neither keyboard, touch nor screen
+              // reader users; the hidden description beside it does. It sits
+              // outside the label so it does not join the option's name.
+              aria-describedby={
+                option.title ? `${name}-${option.value}-why` : undefined
+              }
+              defaultChecked={option.value === value}
+              onChange={(event) => submitClosestForm(event.currentTarget)}
+            />
+            <span>{option.label}</span>
+          </label>
+          {option.title && (
+            <span
+              id={`${name}-${option.value}-why`}
+              className="console-toolbar__description"
+            >
+              {option.title}
+            </span>
+          )}
+        </Fragment>
       ))}
     </div>
   );

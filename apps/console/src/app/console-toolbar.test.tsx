@@ -111,6 +111,9 @@ describe('ConsoleToolbar', () => {
     );
     const day = screen.getByRole('radio', { name: '24h' });
     expect(day).toBeDisabled();
+    expect(day).toHaveAccessibleDescription(
+      'Runner telemetry keeps the last 30 minutes',
+    );
     expect(day.closest('label')).toHaveAttribute(
       'title',
       'Runner telemetry keeps the last 30 minutes',

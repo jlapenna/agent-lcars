@@ -1121,8 +1121,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   cursor: pointer;
 }
 
-.console-toolbar__segmented label + label {
+.console-toolbar__segmented label + label,
+.console-toolbar__segmented .console-toolbar__description + label {
   border-left: 1px solid var(--lcars-hairline);
+}
+
+/* Read by assistive technology through aria-describedby, never drawn. */
+.console-toolbar__description {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .console-toolbar__segmented input {
@@ -1136,9 +1147,12 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-surface-raised);
 }
 
+/* Disabled keeps the AA ink (see the disabled-control rule above); the
+   strike-through, not a fainter colour, says it cannot be chosen. */
 .console-toolbar__segmented label:has(input:disabled) {
-  color: color-mix(in srgb, var(--lcars-ink-dim) 55%, var(--lcars-surface));
+  color: var(--lcars-ink-dim);
   background: transparent;
+  text-decoration: line-through;
   cursor: not-allowed;
 }
 
