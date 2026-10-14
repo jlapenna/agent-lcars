@@ -281,8 +281,11 @@ export function ActiveDispatchesPanel({
   showRunner = false,
   showQueueHealth = true,
   testId = 'current-work',
+  updatedAt,
 }: {
   liveRuns: AgentRun[];
+  /** When these runs were read: the mockup's `updated 4 s ago`. */
+  updatedAt?: string;
   itemsByRunId?: Record<string, RunItemRef>;
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   selectHrefFor?: (run: AgentRun) => string;
@@ -295,12 +298,25 @@ export function ActiveDispatchesPanel({
   for (const run of liveRuns) {
     byPipeline.set(run.pipeline, (byPipeline.get(run.pipeline) ?? 0) + 1);
   }
+  const pipelines = [...byPipeline].map(([p, n]) => `${p} ${n}`).join(' · ');
   const columns = showRunner ? 6 : 5;
   return (
     <OpsPanel
       title="Active dispatches"
       count={liveRuns.length}
-      meta={[...byPipeline].map(([p, n]) => `${p} ${n}`).join(' · ')}
+      meta={
+        pipelines || updatedAt !== undefined ? (
+          <>
+            {pipelines}
+            {updatedAt !== undefined && (
+              <>
+                {pipelines && ' · '}updated{' '}
+                <RelativeTime iso={updatedAt} variant="compact" />
+              </>
+            )}
+          </>
+        ) : undefined
+      }
       data-testid={testId}
     >
       {showQueueHealth && <QueueHealthAlert liveRuns={liveRuns} />}
