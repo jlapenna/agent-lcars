@@ -40,6 +40,8 @@ import {
   parseSessionArchiveQuery,
 } from '../lib/session-archive';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
+import { fleetTokenRate } from '../lib/token-rate';
+import { getTokenRateSnapshot } from '../lib/token-rate-data';
 import { type BoardCard, BridgeSections } from './action-items-board';
 import {
   FleetChip,
@@ -183,6 +185,7 @@ async function IndexBody({
     nativeInbox,
     autoscaler,
     spendArchive,
+    tokenRateSnapshot,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
@@ -203,6 +206,7 @@ async function IndexBody({
       logger.error('agent-lcars: Bridge spend readout unavailable:', error);
       return undefined;
     }),
+    getTokenRateSnapshot(),
   ]);
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
@@ -401,6 +405,9 @@ async function IndexBody({
               lanesIncomplete={autoscaler.lanesIncomplete}
               executor={autoscaler.queueExecutor}
               chip={<FleetChip fleet={activity.fleet} />}
+              tokenRate={fleetTokenRate(tokenRateSnapshot, {
+                repo: repoFilterKey,
+              })}
             />
             <CliSessionsPanel
               sessions={filteredCliSessions.filter(isActiveCliSession)}
