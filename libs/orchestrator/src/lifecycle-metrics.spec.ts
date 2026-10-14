@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import { decidedRun, isRefusal } from './decide';
+import { advanceDelivery } from './delivery';
 import {
   type LifecycleMetricRecords,
   lifecycleMetricSnapshot,
 } from './lifecycle-metrics';
-import { type OutboxEntry, type Run } from './model';
+import { type DeliveryBinding, type OutboxEntry, type Run } from './model';
 
 const NOW = '2026-10-10T12:00:00.000Z';
 const createdAt = '2026-10-10T11:40:00.000Z';
@@ -42,7 +44,255 @@ function snapshot(runs: Run[], over: Partial<LifecycleMetricRecords> = {}) {
   ).prometheus;
 }
 
+const finishedAt = '2026-10-10T11:45:00.000Z';
+const deliveryAt = '2026-10-10T11:50:00.000Z';
+function delivered(
+  over: Partial<DeliveryBinding> = {},
+): Run & { delivery: DeliveryBinding } {
+  const original = run({
+    state: 'finished',
+    result: { ok: true, summary: 'pull-request' },
+    events: [{ at: finishedAt, to: 'finished', by: 'report' }],
+    updatedAt: deliveryAt,
+  });
+  return {
+    ...original,
+    delivery: {
+      runId: original.runId,
+      repo: 'private/repo',
+      number: 99,
+      baseRef: 'main',
+      head: 'a'.repeat(40),
+      mergeCommit: 'b'.repeat(40),
+      state: 'complete',
+      runtimeGate: 'none',
+      observedAt: deliveryAt,
+      ...over,
+    },
+  };
+}
+
+function deliveryMeasurements(original: Run) {
+  const text = snapshot([original]);
+  return {
+    completed: text.match(
+      /lcars_product_completed_pr_delivery_window\{pipeline="claude"\} (\d+)\n/u,
+    )?.[1],
+    unknown: text.match(
+      /lcars_product_measurement_unknown_window\{pipeline="claude",measurement="useful_outcome"\} (\d+)\n/u,
+    )?.[1],
+  };
+}
+
 describe('durable lifecycle metric accounting', () => {
+  it('credits completed protected PR delivery from the canonical delivery state machine', () => {
+    const original = delivered({ state: 'waiting', mergeCommit: undefined });
+    const decision = advanceDelivery({
+      now: deliveryAt,
+      task: {
+        task: original.task,
+        delivery: original.delivery,
+        runCount: 1,
+        consecutiveLost: 0,
+        work: {},
+        updatedAt: finishedAt,
+      },
+      run: original,
+      observation: {
+        kind: 'protected-merge',
+        head: 'a'.repeat(40),
+        mergeCommit: 'b'.repeat(40),
+      },
+      correctionAuthorized: false,
+    });
+    if (isRefusal(decision)) throw new Error(decision.reason);
+    expect(deliveryMeasurements(decidedRun(decision))).toEqual({
+      completed: '1',
+      unknown: '0',
+    });
+    expect(snapshot([decidedRun(decision)])).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="verified_evidence"} 1\n',
+    );
+  });
+  it.each(['required', 'unknown'] as const)(
+    'requires the authorized matching runtime observation for gate %s',
+    (runtimeGate) => {
+      const original = delivered({ state: 'runtime-required', runtimeGate });
+      const task = {
+        task: original.task,
+        delivery: original.delivery,
+        runCount: 1,
+        consecutiveLost: 0,
+        work: {},
+        updatedAt: finishedAt,
+      };
+      expect(deliveryMeasurements(original)).toEqual({
+        completed: '0',
+        unknown: '1',
+      });
+      const decision = advanceDelivery({
+        now: deliveryAt,
+        task,
+        run: original,
+        observation: {
+          kind: 'runtime-evidence',
+          head: 'a'.repeat(40),
+          mergeCommit: 'b'.repeat(40),
+          principal: 'user:operator',
+          ref: 'https://example.test/verified-runtime',
+        },
+        correctionAuthorized: true,
+      });
+      if (isRefusal(decision)) throw new Error(decision.reason);
+      expect(deliveryMeasurements(decidedRun(decision))).toEqual({
+        completed: '1',
+        unknown: '0',
+      });
+    },
+  );
+  it.each([
+    { name: 'wrong run', binding: { runId: 'private/repo#42/r2' } },
+    { name: 'missing merge', binding: { mergeCommit: undefined } },
+    { name: 'invalid head', binding: { head: 'not-a-head' } },
+    { name: 'waiting', binding: { state: 'waiting' as const } },
+    {
+      name: 'runtime pending',
+      binding: { state: 'runtime-required' as const },
+    },
+    {
+      name: 'required without evidence',
+      binding: { runtimeGate: 'required' as const },
+    },
+    {
+      name: 'unknown without evidence',
+      binding: { runtimeGate: 'unknown' as const },
+    },
+    { name: 'invalid observation', binding: { observedAt: 'invalid' } },
+    {
+      name: 'future observation',
+      binding: { observedAt: '2026-10-10T12:00:00.001Z' },
+    },
+    {
+      name: 'before admission',
+      binding: { observedAt: '2026-10-10T11:39:59.999Z' },
+    },
+    {
+      name: 'after run revision',
+      binding: { observedAt: '2026-10-10T11:50:00.001Z' },
+    },
+    {
+      name: 'runtime clock mismatch',
+      binding: {
+        runtimeGate: 'required' as const,
+        runtimeEvidence: {
+          principal: 'user:operator',
+          ref: 'https://example.test/runtime',
+          observedAt: finishedAt,
+        },
+      },
+    },
+    {
+      name: 'future runtime evidence',
+      binding: {
+        runtimeGate: 'required' as const,
+        runtimeEvidence: {
+          principal: 'user:operator',
+          ref: 'https://example.test/runtime',
+          observedAt: '2026-10-10T12:00:00.001Z',
+        },
+      },
+    },
+  ])('keeps $name delivery evidence unknown', ({ binding }) => {
+    expect(deliveryMeasurements(delivered(binding))).toEqual({
+      completed: '0',
+      unknown: '1',
+    });
+  });
+  it.each(['park', 'no-op', 'review', 'comment', 'merged-deliverable'])(
+    'does not credit a reported %s or PR-shaped ref without trusted delivery',
+    (summary) => {
+      const original = delivered();
+      expect(
+        deliveryMeasurements({
+          ...original,
+          delivery: undefined,
+          result: {
+            ok: true,
+            summary,
+            ref: 'https://github.com/private/repo/pull/99',
+          },
+        }),
+      ).toEqual({ completed: '0', unknown: '1' });
+    },
+  );
+  it.each(['park', 'no-op', 'review'])(
+    'keeps inconsistent %s reports with delivery metadata unknown',
+    (summary) => {
+      expect(
+        deliveryMeasurements({ ...delivered(), result: { ok: true, summary } }),
+      ).toEqual({ completed: '0', unknown: '1' });
+    },
+  );
+  it('does not credit failed results or a terminal event preceding admission', () => {
+    expect(
+      deliveryMeasurements({ ...delivered(), result: { ok: false } }),
+    ).toEqual({ completed: '0', unknown: '1' });
+    expect(
+      deliveryMeasurements({
+        ...delivered(),
+        events: [
+          { at: '2026-10-10T11:39:00.000Z', to: 'finished', by: 'report' },
+        ],
+      }),
+    ).toEqual({ completed: '0', unknown: '1' });
+  });
+  it('accepts an already protected delivery observed before execution settlement', () => {
+    expect(deliveryMeasurements(delivered({ observedAt: createdAt }))).toEqual({
+      completed: '1',
+      unknown: '0',
+    });
+  });
+  it('uses the finished-hour cohort rather than a recent delivery update for old settlements', () => {
+    const original: Run = {
+      ...delivered(),
+      createdAt: '2026-10-10T10:40:00.000Z',
+      events: [
+        {
+          at: '2026-10-10T10:59:59.999Z',
+          to: 'finished' as const,
+          by: 'report',
+        },
+      ],
+    };
+    expect(deliveryMeasurements(original)).toEqual({
+      completed: '0',
+      unknown: '0',
+    });
+  });
+  it('deduplicates delivery by run identity and uses the newest observed revision', () => {
+    const original = delivered();
+    const text = snapshot([original, original], { liveRuns: [original] });
+    expect(text).toContain(
+      'lcars_product_completed_pr_delivery_window{pipeline="claude"} 1\n',
+    );
+    const newer = {
+      ...original,
+      updatedAt: '2026-10-10T11:51:00.000Z',
+      delivery: { ...original.delivery, state: 'runtime-required' as const },
+    };
+    expect(snapshot([original, newer])).toContain(
+      'lcars_product_completed_pr_delivery_window{pipeline="claude"} 0\n',
+    );
+    expect(snapshot([newer, original])).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="useful_outcome"} 1\n',
+    );
+    expect(text).not.toMatch(
+      /private\/repo|verified-runtime|user:operator|head=/u,
+    );
+    expect(snapshot([original], { complete: false })).not.toContain(
+      'lcars_product_completed_pr_delivery_window',
+    );
+  });
   it('declares help and gauge types without reserved histogram names or labels', () => {
     for (const text of [snapshot([run()]), snapshot([], { complete: false })]) {
       const names = new Set(
