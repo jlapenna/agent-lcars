@@ -9,6 +9,19 @@ host watcher daemon (`apps/telemetry-watcher`, issue #2540) and the runner's
 live polling sidecar are retired and their code is deleted. See "Phase 3
 status" below for what was removed.
 
+## GitHub actor observation for spend attribution
+
+The Claude CLI hook observes `githubActor` through GitHub's authenticated `/user`
+endpoint using its existing `gh` credential, after event throttling. The read
+has a two-second deadline and a 4 KiB output bound. It is not derived from the
+transcript or git author configuration. Failed identity/branch reads leave
+record-based PR attribution unavailable, without blocking telemetry shipping;
+runner, Codex and OpenCode hooks do not perform this read. The spool whitelist preserves the
+actor and successful correlated `publicationCandidates` through the session
+writer. Candidates remain unqualified until the Console checks GitHub's stored
+creation/head/author facts. See [cost-ledger.md](cost-ledger.md) for the matching,
+offline and rollout contract.
+
 ## Revision 2026-10-12: hosts write directly
 
 Phase 0 shipped a console ingest route (`/api/telemetry/v1/`) authenticated

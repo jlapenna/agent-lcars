@@ -53,6 +53,27 @@ const observer = {
 };
 
 describe('sessionWriteForEvent', () => {
+  it('preserves observed actor in a lifecycle-only end event and clears it on a failed refresh', () => {
+    const existing = sessionWriteForEvent(
+      event({ summary: { ...summary, githubActor: 'jlapenna' } }),
+      undefined,
+      NOW,
+    )!.doc;
+    const ending = sessionWriteForEvent(
+      event({ summary: undefined, kind: 'end' }),
+      existing,
+      NOW,
+    );
+    expect(ending?.doc).toMatchObject({
+      githubActor: 'jlapenna',
+      liveness: 'ended',
+    });
+    expect(ending?.clearFields).not.toContain('githubActor');
+    const unavailable = sessionWriteForEvent(event(), existing, NOW);
+    expect(unavailable?.doc).not.toHaveProperty('githubActor');
+    expect(unavailable?.clearFields).toContain('githubActor');
+  });
+
   it('builds a live cli doc with hook provenance', () => {
     const write = sessionWriteForEvent(event(), undefined, NOW);
     expect(write?.doc).toMatchObject({
