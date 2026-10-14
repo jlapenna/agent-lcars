@@ -1,3 +1,5 @@
+import { PIPELINES } from '@agent-lcars/work';
+import { Text } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -5,25 +7,95 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../auth';
 import { getWatchedRepos } from '../../lib/github-client';
 import { getShuttlebayStatus } from '../../lib/shuttlebay-status';
+import { fleetTokenRate } from '../../lib/token-rate';
+import { getTokenRateSnapshot } from '../../lib/token-rate-data';
+import { repoKey } from '../../lib/watched-repo';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
+import {
+  ConsoleToolbar,
+  ToolbarApply,
+  ToolbarSearch,
+  ToolbarSelect,
+} from '../console-toolbar';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { RunnerAutoscalerStatus } from '../runner-autoscaler-status';
 import { withConsolePageShell } from '../with-console-page-shell';
+import {
+  parseShuttlebayFilters,
+  type ShuttlebayFilters,
+} from './shuttlebay-view-filters';
 
-async function ShuttlebayBody() {
-  const autoscaler = await getShuttlebayStatus();
+async function ShuttlebayBody({ filters, watchedRepos }: ShuttlebayViewProps) {
+  const [autoscaler, tokenRateSnapshot] = await Promise.all([
+    getShuttlebayStatus(),
+    getTokenRateSnapshot(),
+  ]);
 
-  return <RunnerAutoscalerStatus initial={autoscaler} />;
+  return (
+    <RunnerAutoscalerStatus
+      initial={autoscaler}
+      filters={filters}
+      tokenRate={fleetTokenRate(tokenRateSnapshot, {
+        repo: filters.repo,
+        agent: filters.agent,
+      })}
+      toolbar={
+        <ConsoleToolbar
+          action="/shuttlebay"
+          primary={
+            <Text c="dimmed" size="sm">
+              Updates live as runner capacity changes.
+            </Text>
+          }
+        >
+          <ToolbarSelect
+            name="repo"
+            label="Repository"
+            value={filters.repo ?? ''}
+            options={[
+              { value: '', label: `All repositories (${watchedRepos.length})` },
+              ...watchedRepos.map((repo) => ({
+                value: repoKey(repo),
+                label: repoKey(repo),
+              })),
+            ]}
+          />
+          <ToolbarSelect
+            name="agent"
+            label="Agent"
+            value={filters.agent ?? ''}
+            options={[
+              { value: '', label: 'All agents' },
+              ...PIPELINES.map((pipeline) => ({
+                value: pipeline,
+                label: pipeline,
+              })),
+            ]}
+          />
+          <ToolbarSearch
+            name="q"
+            label="Find"
+            placeholder="runner lane"
+            value={filters.q}
+          />
+          {/* Selects submit on change; Apply shows only until they hydrate,
+              then keeps its box. */}
+          <ToolbarApply label="Apply" />
+        </ConsoleToolbar>
+      }
+    />
+  );
 }
 
 interface ShuttlebayViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
+  filters: ShuttlebayFilters;
 }
 
-function ShuttlebayViewContent() {
+function ShuttlebayViewContent(props: ShuttlebayViewProps) {
   return (
     <Suspense fallback={<PageLoading rows={4} header={false} />}>
-      <ShuttlebayBody />
+      <ShuttlebayBody {...props} />
     </Suspense>
   );
 }
@@ -34,7 +106,7 @@ const ShuttlebayView = withConsolePageShell(
     className: 'shuttlebay-page-shell',
     current: 'shuttlebay',
     title: 'Shuttlebay',
-    subtitle: 'Live runner fleet and queue status',
+    subtitle: 'Runner fleet · live runners and queue status',
     utilities: (
       <>
         <div className="shuttlebay-utilities shuttlebay-utilities--desktop console-utilities--desktop">
@@ -51,18 +123,27 @@ const ShuttlebayView = withConsolePageShell(
   }),
 );
 
-async function ShuttlebayPageShell() {
+interface PageProps {
+  searchParams: Promise<{
+    repo?: string | string[];
+    agent?: string | string[];
+    q?: string | string[];
+  }>;
+}
+
+async function ShuttlebayPageShell({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
   const watchedRepos = getWatchedRepos();
+  const filters = parseShuttlebayFilters(await searchParams);
 
-  return <ShuttlebayView watchedRepos={watchedRepos} />;
+  return <ShuttlebayView watchedRepos={watchedRepos} filters={filters} />;
 }
 
 // Keep authentication and the uncached Firestore snapshot below the same
 // streaming boundaries as every other console destination. The header is
 // immediately recognizable while the runner projection resolves.
-export default function ShuttlebayPage() {
+export default function ShuttlebayPage({ searchParams }: PageProps) {
   return (
     <Suspense
       fallback={
@@ -74,7 +155,7 @@ export default function ShuttlebayPage() {
         />
       }
     >
-      <ShuttlebayPageShell />
+      <ShuttlebayPageShell searchParams={searchParams} />
     </Suspense>
   );
 }

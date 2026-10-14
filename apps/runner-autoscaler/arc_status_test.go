@@ -36,7 +36,7 @@ func TestARCLaneStatusMapsListenerCapacityAndRejectsUncertainMetrics(t *testing.
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, tc.body) }))
 			defer server.Close()
 			now := time.Now()
-			status, err := fetchARCLaneStatus(context.Background(), server.Client(), arcLaneConfig{Name: "test", RegistrationURL: "https://github.com/example/repo", MetricsURL: server.URL}, now)
+			status, err := fetchARCLaneStatus(context.Background(), server.Client(), arcLaneConfig{Name: "test", RegistrationURL: "https://github.com/example/repo", MetricsURL: server.URL}, now, nil)
 			if tc.bad {
 				if err == nil {
 					t.Fatalf("accepted uncertain scrape: %#v", status)
@@ -115,13 +115,13 @@ func TestARCLaneInventoryUsesExistingChangeAndHeartbeatWriteGate(t *testing.T) {
 func TestARCLaneStatusFailsHTTPAndBoundsUnavailableListener(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
 	defer server.Close()
-	_, err := fetchARCLaneStatus(context.Background(), server.Client(), arcLaneConfig{MetricsURL: server.URL}, time.Now())
+	_, err := fetchARCLaneStatus(context.Background(), server.Client(), arcLaneConfig{MetricsURL: server.URL}, time.Now(), nil)
 	if err == nil {
 		t.Fatal("accepted failed listener")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = fetchARCLaneStatus(ctx, server.Client(), arcLaneConfig{MetricsURL: server.URL}, time.Now())
+	_, err = fetchARCLaneStatus(ctx, server.Client(), arcLaneConfig{MetricsURL: server.URL}, time.Now(), nil)
 	if err == nil {
 		t.Fatal("ignored cancelled scrape")
 	}

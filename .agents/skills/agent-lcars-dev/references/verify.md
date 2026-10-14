@@ -2,7 +2,7 @@
 
 The full gate — this is what `.github/workflows/ci.yml`'s `Verify` job
 (a required check gating every merge) authoritatively runs on its own
-configured runner (`lcars-ci` for trusted work, GitHub-hosted for fork PRs):
+configured runner (`agent-lcars-ci` for trusted work, GitHub-hosted for fork PRs):
 
 ```bash
 pnpm check:dependencies    # lockfile / workspace-mandate integrity

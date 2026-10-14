@@ -374,6 +374,22 @@ the work that has stopped, and the work in flight.
   sample, failed read or stale/reset-crossing observation is unavailable,
   never an inferred zero. Eligibility does not prove worker placement or
   successful execution.
+- **FE-SB-5 [Implemented]** The Runner fleet panel on the Bridge and Shuttlebay
+  shows CI wait p50: the median time from an ARC job being assigned to a
+  runner until that runner starts it, over the last 30 minutes, with a
+  per-minute sparkline. The data comes from each listener's
+  `gha_job_startup_duration_seconds` histogram, windowed by the autoscaler. It
+  is unavailable until a lane reports a window, and partial when some lanes
+  do not. Its label names the minutes actually covered, which are fewer than 30
+  after an autoscaler start or reset. A quiet window reads "no job started", never 0s.
+- **FE-SB-6 [Implemented]** The same panel shows Tokens / min: the
+  cost-weighted token spend of sessions active in the last 30 minutes,
+  averaged over the last 5 complete minutes, with a per-minute sparkline. The
+  source is each session's `tokenMinutes`, recorded by hook telemetry. It
+  follows the page's repository and agent filters. It is unavailable when the
+  session store fails or no active session is measured, partial when some
+  are not, and a known zero when no session is active. Work API p95 has no
+  console data source and renders as unavailable.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 
@@ -439,8 +455,10 @@ GitHub issues, and manage recurring work.
   examined page), and cursor-based next-page navigation in the URL. Each page examines up to
   200 native tasks; an empty filtered page can still lead to older matches.
   Bridge stopped work pages over the authoritative all-anchor task feed with
-  the same explicit 200-task bound. Bridge, Inbox, and Agents have a repository
-  selector and clear action, with scope preserved across their navigation.
+  the same explicit 200-task bound. Inbox and Agents provide a repository
+  selector and clear action. Bridge accepts repository scope from navigation
+  and exposes a clear action when scoped, without a repository selector.
+  Scope is preserved across navigation between these pages.
   Schedules support revision-checked editing/deletion in the UI and API,
   with UTC evaluation and labeled local display. `PUT` remains an idempotent
   create; `PATCH` edits and `DELETE` stops future recurrence. See R8.

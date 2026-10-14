@@ -1,3 +1,4 @@
+import { PIPELINES } from '@agent-lcars/work';
 import { Anchor } from '@mantine/core';
 import { Suspense } from 'react';
 
@@ -37,28 +38,52 @@ import { parseBridgeSelection } from '../bridge-selection';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { repoScopedConsoleHrefs } from '../console-hrefs';
+import {
+  ConsoleToolbar,
+  ToolbarApply,
+  ToolbarSearch,
+  ToolbarSelect,
+  ToolbarWindow,
+} from '../console-toolbar';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { LiveDashboard } from '../live-dashboard';
 import { NavPageLoading, PageLoading } from '../page-loading';
-import { RepositorySelector } from '../repository-selector';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
+import {
+  AGENTS_WINDOWS,
+  type AgentsViewFilters,
+  agentsViewHref,
+  matchesAgentsRun,
+  matchesAgentsSession,
+  matchesClaimedAgent,
+  matchesFind,
+  parseAgentsViewFilters,
+} from './agents-view-filters';
 import { AgentsWorkspace } from './agents-workspace';
 import { ClaimedIdleSection } from './claimed-idle-section';
 import { FleetSnapshotBar } from './fleet-snapshot-bar';
 import { RecentOutcomesSection } from './recent-outcomes-section';
 
 interface PageProps {
-  searchParams: Promise<{ repo?: string; sel?: string }>;
+  searchParams: Promise<{
+    repo?: string;
+    sel?: string;
+    agent?: string | string[];
+    window?: string | string[];
+    q?: string | string[];
+  }>;
 }
 
 async function AgentsPageBody({
   repoFilter,
+  filters,
   selectedKey,
   watchedRepos,
 }: {
   repoFilter: WatchedRepo | undefined;
+  filters: AgentsViewFilters;
   selectedKey?: string;
   watchedRepos: WatchedRepo[];
 }) {
@@ -152,23 +177,44 @@ async function AgentsPageBody({
 
   // Applied last, after every cross-repo join above already ran against the
   // full, unfiltered data - see page.tsx's identical comment for why.
+  // The toolbar's agent, window and find narrow the same views after it.
+  const now = Date.now();
   const filteredItems = items.filter((item) => matchesFilter(item.repo));
   const filteredActiveSessions = filterSessionsForRepo(
     activeSessions,
     repoFilter,
-  );
+  ).filter((session) => matchesAgentsSession(session, filters));
   const filteredCliSessions = filterSessionsForRepo(cliSessions, repoFilter);
-  const filteredActivity = repoFilter
-    ? {
-        ...activity,
-        liveRuns: activity.liveRuns.filter((run) => matchesFilter(run.repo)),
-        recentRuns: activity.recentRuns.filter((run) =>
-          matchesFilter(run.repo),
-        ),
-      }
-    : activity;
-  const filteredClaimedIdle = claimedIdle.filter((item) =>
-    matchesFilter(item.repo),
+  const filteredActivity = {
+    ...activity,
+    liveRuns: activity.liveRuns.filter(
+      (run) =>
+        matchesFilter(run.repo) &&
+        matchesAgentsRun(run, filters, {
+          finished: false,
+          now,
+          shownTitle: itemsByRunId[run.id]?.title,
+        }),
+    ),
+    recentRuns: activity.recentRuns.filter(
+      (run) =>
+        matchesFilter(run.repo) &&
+        matchesAgentsRun(run, filters, { finished: true, now }),
+    ),
+  };
+  const filteredClaimedIdle = claimedIdle.filter(
+    (item) =>
+      matchesFilter(item.repo) &&
+      matchesClaimedAgent(
+        item,
+        authoritative.states.get(repoItemKey(item.repo, item.number))?.spec
+          .pipeline,
+        filters.agent,
+      ) &&
+      matchesFind(
+        [item.title, `${repoKey(item.repo)}#${item.number}`],
+        filters.q,
+      ),
   );
 
   // Logical tasks, authoritative Run occupancy, and physical runner capacity
@@ -223,11 +269,58 @@ async function AgentsPageBody({
   return (
     <AgentsWorkspace
       toolbar={
-        <RepositorySelector
-          repos={watchedRepos}
-          selected={repoFilter ? repoKey(repoFilter) : undefined}
-          action="/agents"
-        />
+        <ConsoleToolbar action="/agents" preserve={{ sel: selectedKey }}>
+          <ToolbarSelect
+            name="repo"
+            label="Repository"
+            value={repoFilter ? repoKey(repoFilter) : ''}
+            options={[
+              { value: '', label: `All repositories (${watchedRepos.length})` },
+              ...watchedRepos.map((repo) => ({
+                value: repoKey(repo),
+                label: repoKey(repo),
+              })),
+            ]}
+          />
+          <ToolbarSelect
+            name="agent"
+            label="Agent"
+            value={filters.agent ?? ''}
+            options={[
+              { value: '', label: 'All agents' },
+              ...PIPELINES.map((pipeline) => ({
+                value: pipeline,
+                label: pipeline,
+              })),
+            ]}
+          />
+          <ToolbarWindow
+            name="window"
+            label="Window"
+            value={filters.window ?? ''}
+            options={[
+              ...AGENTS_WINDOWS.map((window) => ({
+                value: window,
+                label: window,
+              })),
+              { value: '', label: 'all' },
+            ]}
+          />
+          <ToolbarSearch
+            name="q"
+            label="Find"
+            placeholder="issue, PR, run id"
+            value={filters.q}
+          />
+          {repoFilter ? (
+            <Anchor href={agentsViewHref(filters)} size="sm">
+              Clear repository
+            </Anchor>
+          ) : null}
+          {/* Selects and the window submit on change; Apply shows only
+              until they hydrate, then keeps its box. */}
+          <ToolbarApply label="Apply" />
+        </ConsoleToolbar>
       }
       warnings={
         warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
@@ -305,12 +398,14 @@ async function AgentsPageBody({
 interface AgentsViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
   repoFilter: ReturnType<typeof parseRepoFilterParam>;
+  filters: AgentsViewFilters;
   subtitle: string;
   selectedKey?: string;
 }
 
 function AgentsViewContent({
   repoFilter,
+  filters,
   watchedRepos,
   selectedKey,
 }: AgentsViewProps) {
@@ -320,6 +415,7 @@ function AgentsViewContent({
       <Suspense fallback={<PageLoading rows={5} header={false} />}>
         <AgentsPageBody
           repoFilter={repoFilter}
+          filters={filters}
           selectedKey={selectedKey}
           watchedRepos={watchedRepos}
         />
@@ -335,11 +431,11 @@ const AgentsView = withConsolePageShell(
     return {
       className: 'agents-page-shell',
       current: 'agents',
-      title: 'Agent Status',
+      title: 'Agents',
       repoFilter: repoFilterKey,
       subtitle: (
         <>
-          {subtitle}
+          Active runs, claimed work and recent outcomes · {subtitle}
           {repoFilter && (
             <>
               {' · '}
@@ -382,6 +478,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
   const params = await searchParams;
   const repoFilter = parseRepoFilterParam(params.repo);
   const selectedKey = parseBridgeSelection(params.sel);
+  const filters = parseAgentsViewFilters(params);
 
   const subtitle =
     watchedRepos.length <= 1
@@ -394,6 +491,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
     <AgentsView
       watchedRepos={watchedRepos}
       repoFilter={repoFilter}
+      filters={filters}
       subtitle={subtitle}
       selectedKey={selectedKey}
     />
@@ -411,7 +509,7 @@ export default function AgentsPage({ searchParams }: PageProps) {
       fallback={
         <NavPageLoading
           current="agents"
-          title="Agent Status"
+          title="Agents"
           className="agents-page-shell"
           rows={5}
         />

@@ -11,7 +11,7 @@ permissions:
 jobs:
   audit:
     name: Audit ${{ matrix.full_name }}
-    runs-on: ['lcars-ci']
+    runs-on: ['agent-lcars-ci']
     timeout-minutes: 15
     strategy:
       fail-fast: false

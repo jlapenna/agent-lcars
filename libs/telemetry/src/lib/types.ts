@@ -216,6 +216,14 @@ export interface SessionObserver {
   clientVersion?: string;
 }
 
+/** Tokens a session spent in one UTC minute: the growth of its
+ * cost-weighted total across the writes that minute. */
+export interface TokenMinute {
+  /** Start of the minute, ISO. */
+  minute: string;
+  tokens: number;
+}
+
 interface BaseSessionDoc {
   sessionId: string;
   /** Stored lifecycle assertion. Hooks write `live`/`idle`/`ended`;
@@ -235,6 +243,13 @@ interface BaseSessionDoc {
   turns: number;
   toolCallCounts: Record<string, number>;
   tokens: TokenUsage;
+  /** The last 30 minutes of token growth, oldest first. Only hook writes,
+   * which re-read the stored doc, maintain it; a session without it is not
+   * measured per minute. See `nextTokenMinutes`. */
+  tokenMinutes?: TokenMinute[];
+  /** The highest total `tokenMinutes` has credited up to, so a total that
+   * dips and recovers is not credited twice. */
+  tokenMinutesBase?: number;
   lastToolCall?: ToolCallDigest;
   /** Persisted client-reported model selection; see SessionSummary.model. */
   model?: string;

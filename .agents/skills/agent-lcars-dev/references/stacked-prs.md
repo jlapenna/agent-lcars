@@ -18,7 +18,7 @@ sweep, retro #521):
   required branches to be up to date, multiple auto-merge-armed PRs on a
   moving `main` restarted each other's required checks every time one merged.
   Under a busy `main` that starved the oldest PR and multiplied `Verify` runs
-  on the shared `lcars-ci` pool. The current non-strict rule removes that race
+  on the shared `agent-lcars-ci` pool. The current non-strict rule removes that race
   for independent PRs; this section remains the recovery recipe if strict
   updates return.
 
@@ -100,7 +100,7 @@ non-strict rule.
 
 Under the former strict-update rule, this serialized CI load to one PR's
 restart cycle at a time — measured during the 2026-08-04 sweep at roughly
-half the `Verify` runs against the shared `lcars-ci` pool. For a stack under
+half the `Verify` runs against the shared `agent-lcars-ci` pool. For a stack under
 today's rule, its purpose is ordering and clean squash-tax recovery rather
 than preventing independent PRs from going `BEHIND`.
 

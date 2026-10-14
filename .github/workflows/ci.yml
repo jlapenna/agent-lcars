@@ -43,7 +43,7 @@ jobs:
 
   # actionlint accepts `self-hosted` beside any label, but a runner scale set
   # (every label in .github/actionlint.yaml) matches only its own name, so
-  # `[self-hosted, lcars-ci]` queues forever (homelab hit exactly this on
+  # `[self-hosted, agent-lcars-ci]` queues forever (homelab hit exactly this on
   # 2026-10-04). This runs on a GitHub-hosted runner with no `needs`, so it
   # still reports when the label error is on a self-hosted job itself. The
   # dependency-free check comes from @jlapenna/repo-tools at the commit the
@@ -104,7 +104,7 @@ jobs:
     # toolchain (gcc/libc6-dev, #410) via EXTRA_APT_PACKAGES, so this no
     # longer needs the ubuntu-latest carve-out it had between #408 and #410.
     #
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-ci' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'agent-lcars-ci' }}
     # The supported cold runner path can reach Go/race verification at 30m
     # (#2507). Keep the complete gate bounded without changing its resources.
     timeout-minutes: 60
@@ -422,6 +422,13 @@ jobs:
       - name: Smoke test telemetry-watcher bundle
         run: ./tools/telemetry-watcher-standalone-smoke.sh
 
+      # The real Claude Code, Codex and OpenCode CLIs on this runner image
+      # drive this checkout's hook client through a localhost provider. Fork
+      # PRs run on ubuntu-latest, which has none of those CLIs.
+      - name: Hook telemetry through the real agent CLIs
+        if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+        run: ./tools/hook-telemetry-runtime-smoke.sh
+
       - name: Stop live CI log stream
         if: always()
         continue-on-error: true
@@ -607,19 +614,19 @@ jobs:
     # supersprinklesracing/sprinkles' own e2e pool): tools/e2e-runner/
     # Dockerfile derives FROM the published tools/e2e/Dockerfile sandbox
     # plus the JIT runner agent, and jlapenna/homelab's orchestrator.yml
-    # pins that image as the lcars-e2e pool's runner_image. That's what lets
+    # pins that image as the agent-lcars-e2e pool's runner_image. That's what lets
     # this job invoke the suite directly below -- no tools/e2e-docker.sh
     # wrapper or host Docker socket.
     #
-    # Fork PRs still run on ubuntu-latest via tools/e2e-local.sh -- lcars-e2e
+    # Fork PRs still run on ubuntu-latest via tools/e2e-local.sh -- agent-lcars-e2e
     # is a trusted self-hosted pool, off-limits to untrusted fork code the
     # same way the trusted Verify pool is for `verify` above (see
     # codeql.yml's `analyze` job for the same fork-PR rationale in more
-    # detail). Literal 'lcars-e2e', not a vars.* indirection: this job is
+    # detail). Literal 'agent-lcars-e2e', not a vars.* indirection: this job is
     # only correct on a runner whose image IS the pinned sandbox, so
     # nothing should be able to silently redirect it elsewhere (mirrors
     # sprinkles' own e2e.yml `runs-on: [e2e]`).
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-e2e' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'agent-lcars-e2e' }}
     timeout-minutes: 30
 
     steps:
@@ -642,7 +649,7 @@ jobs:
       # emulator. Fork PRs use GitHub-hosted runners, where Java 17 remains
       # the default, so retain setup-java only as that fallback. Kept
       # unconditional (not narrowed to the fork branch) because it already
-      # correctly no-ops on lcars-e2e -- the baked marker check below finds
+      # correctly no-ops on agent-lcars-e2e -- the baked marker check below finds
       # nothing to install there either way, and narrowing it would just be
       # two ways to express the same runtime condition.
       - name: Detect Java 21 runtime
@@ -708,7 +715,7 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       # One e2e entrypoint for every environment (fork ubuntu-latest,
-      # trusted lcars-e2e, dev machines): tools/e2e-local.sh. Its `env -i`
+      # trusted agent-lcars-e2e, dev machines): tools/e2e-local.sh. Its `env -i`
       # allowlist is load-bearing on the trusted path too -- a Codex P1/P2
       # pair on #931 flagged that the earlier bespoke direct invocation ran
       # the suite under the runner's full ambient environment (GITHUB_TOKEN

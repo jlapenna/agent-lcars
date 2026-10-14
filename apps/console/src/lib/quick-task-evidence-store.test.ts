@@ -107,3 +107,26 @@ describe('GcsQuickTaskEvidenceStore.create', () => {
     });
   });
 });
+
+describe('GcsQuickTaskEvidenceStore.readObject', () => {
+  it('reads storage creation time separately from the client replay binding', async () => {
+    const store = new GcsQuickTaskEvidenceStore({
+      file: () => ({
+        getMetadata: async () => [
+          {
+            generation: '7',
+            timeCreated: '2026-09-01T00:00:00.000Z',
+            metadata: {
+              ...binding,
+              createdAt: '2080-01-01T00:00:00.000Z',
+              repositoryId: '42',
+            },
+          },
+        ],
+      }),
+    } as never);
+    const object = await store.readObject(evidenceId);
+    expect(object?.uploadedAt).toBe('2026-09-01T00:00:00.000Z');
+    expect(object?.binding.createdAt).toBe('2080-01-01T00:00:00.000Z');
+  });
+});
