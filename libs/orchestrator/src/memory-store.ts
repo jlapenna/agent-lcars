@@ -45,6 +45,7 @@ import {
   providerCooldownForRun,
   providerIsCoolingDown,
 } from './provider-cooldown';
+import { retainsPhysicalClaim } from './provider-routing';
 import {
   projectQueueAdmissionStatus,
   QUEUE_ADMISSION_READ_LIMIT,
@@ -245,7 +246,8 @@ export class MemoryStore implements OrchestratorStore {
             retainedClaims: structuredClone(
               [...this.#runs.values()].filter(
                 (run) =>
-                  taskKey(run.task) === key && run.queue?.state === 'claimed',
+                  taskKey(run.task) === key &&
+                  retainsPhysicalClaim(run, this.#capacity),
               ),
             ),
           }
