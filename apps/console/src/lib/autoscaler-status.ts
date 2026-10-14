@@ -238,7 +238,7 @@ function parseHostInventory(value: unknown): FleetHostInventory | undefined {
     if (!host || typeof host !== 'object') return undefined;
     const record = host as Record<string, unknown>;
     if (
-      !isLaneName(record['name']) ||
+      !isNodeName(record['name']) ||
       typeof record['ready'] !== 'boolean' ||
       typeof record['unschedulable'] !== 'boolean' ||
       counts.some(
@@ -260,6 +260,18 @@ function parseHostInventory(value: unknown): FleetHostInventory | undefined {
     });
   }
   return { hosts: parsed, updatedAt: status['updatedAt'] };
+}
+
+/** Kubernetes node names are DNS subdomains (RFC 1123): dotted labels, up
+ * to 253 characters, so `worker-1.example.internal` is valid. */
+function isNodeName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    name.length <= 253 &&
+    /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/.test(
+      name,
+    )
+  );
 }
 
 function isFresh(updatedAt: string, now: number): boolean {

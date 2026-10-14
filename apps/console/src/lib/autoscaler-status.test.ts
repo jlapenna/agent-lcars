@@ -161,6 +161,13 @@ describe('getAutoscalerStatuses', () => {
     expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
     mockStore([doc({ inventory: { hosts: [{ ...host, cpuMillis: -1 }] } })]);
     expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+    const dotted = { ...host, name: 'worker-1.example.internal' };
+    mockStore([doc({ inventory: { hosts: [dotted] } })]);
+    expect((await getAutoscalerStatuses()).hostInventory?.hosts).toEqual([
+      dotted,
+    ]);
+    mockStore([doc({ inventory: { hosts: [{ ...host, name: 'Bad_Name' }] } })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
   });
 
   it('ignores retired scale-set records instead of publishing obsolete capacity', async () => {
