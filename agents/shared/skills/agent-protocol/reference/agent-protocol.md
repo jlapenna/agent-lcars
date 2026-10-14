@@ -355,8 +355,12 @@ ready push or PR open only to run local E2E.
 For every ready, non-parked pull request you open, **do not request human
 review**. Fleet repositories require zero approving reviews for agent-authored
 PRs; a review request is friction, not a handoff. Publish new PRs as drafts: this lets you check interpreted links before a
-ready-PR auto-merge backstop can arm them. After the check and required review
-pass, mark the draft ready, refresh the check and feedback, and arm below.
+ready-PR auto-merge backstop can arm them. After the check passes and either
+required review passes or the advertised native handoff below allows
+asynchronous GitHub review to remain pending, mark the draft ready, refresh the
+check and feedback, and arm below. That capability does not waive required local
+independent source review, repository review policy or already-known feedback
+before ready/arming.
 Before ready/arming, declare the exact fully completed issue scope and read
 GitHub's actual `closingIssuesReferences` at the reviewed/pushed head. Required
 runtime or deployment acceptance still open means that issue is excluded:
@@ -447,12 +451,16 @@ spend your own turn budget on the actual work instead.
 ### Ready delivery handoff
 
 Only when its trusted brief advertises `deliveryHandoffVersion: 1`, a native
-implementation can end its provider turn after publishing an exact
-attempt-marked, independently reviewed, ready PR with protected squash delivery
-armed. The authenticated finalizer's completion route verifies the exact head,
-independent exact-head GitHub review, resolved review threads and current required-check
-policy before accepting this handoff. It settles execution through normal
-credential cleanup and positive physical retirement. Without that advertised capability, continue the existing delivery path. The
+implementation can end its provider turn after publishing an OPEN, exact
+attempt-marked, ready PR with protected target policy and squash delivery armed.
+Pending asynchronous independent GitHub review and CI transfer to the durable
+monitor; do not retain the implementation executor solely waiting for them.
+The authenticated finalizer verifies the exact marker, head, ready state,
+protected target and squash arming before accepting this waiting handoff. It
+settles execution through normal credential cleanup and positive physical
+retirement. Already merged initial handoffs still require independent exact-head
+GitHub review, resolved threads and exact protected landing before acceptance.
+Without the advertised capability, continue the existing delivery path. The
 baked runner propagates only the serving Console’s version into the brief;
 repository content cannot enable it.
 
@@ -463,7 +471,10 @@ on the same currently authorized provider. Corrections retain existing claim,
 credential and physical-retirement admission barriers. A PR, auto-merge arm or
 executor exit never makes this handoff logically done.
 
-Only exact protected merge evidence can advance landing. The immutable intake
+Only independent exact-head GitHub review, resolved threads and exact protected
+merge evidence can advance final landing. Known same-head actionable feedback
+remains a bounded correction while delivery is waiting, including after merge;
+completed delivery is not reopened. The immutable intake
 `deliveryRuntime: none|required` declares the runtime policy; an omitted policy
 retains an unknown gate. A worker cannot waive it. Required or unknown runtime
 work stays owned until an authenticated operator records the exact merged-head
