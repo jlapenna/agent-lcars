@@ -1229,7 +1229,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     flex-basis: 100%;
   }
 
-  .console-toolbar__toggle {
+  .console-toolbar > .console-toolbar__filters > .console-toolbar__toggle {
     display: inline-flex;
   }
 
@@ -1238,13 +1238,20 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     width: auto;
   }
 
-  .console-toolbar__filters:not([data-open])
-    > :is(
-      .console-toolbar__select,
-      .console-toolbar__segmented,
-      .console-toolbar__note,
-      .console-toolbar__more
-    ) {
+  /* Only ConsoleToolbar's own form folds (the Inbox's repository form shares
+     the class), and only once hydrated: before then the toggle cannot open
+     anything, so every control stays in view for the native Apply. The
+     window stays out: it is one compact row and would otherwise be a hidden
+     filter. */
+  .console-toolbar
+    > .console-toolbar__filters[data-hydrated]:not([data-open])
+    > :is(.console-toolbar__select, .console-toolbar__more) {
+    display: none;
+  }
+
+  .console-toolbar
+    > .console-toolbar__filters:not([data-hydrated])
+    > .console-toolbar__toggle {
     display: none;
   }
 }
