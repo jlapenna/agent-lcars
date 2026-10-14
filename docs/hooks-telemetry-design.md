@@ -76,7 +76,11 @@ that reads `opencode export` output produces the summary. `session.deleted`
 fires after OpenCode has removed the session, so its `SessionEnd` is
 lifecycle-only: no snapshot and no summary, with `cwd` taken from the event.
 The client deletes the snapshot after reading it, which lets the final report
-survive `opencode run` exiting on its last idle. Reports for one session never
+survive `opencode run` exiting on its last idle. OpenCode never awaits plugin
+event handlers, so `opencode run` can exit while the idle report is still
+snapshotting; the plugin's `dispose` hook, which OpenCode does await at
+shutdown, waits up to 5 s for reports in flight. Without it a loaded host lost
+the stop in 3 of 7 runs. Reports for one session never
 overlap; events arriving mid-report coalesce to the most important one.
 Subagent sessions (`parentID` set) are never snapshotted. `lcars integration
 install opencode` copies the plugin into
@@ -534,7 +538,7 @@ everywhere else means the agent never waits on telemetry mid-turn.
           {
             "type": "command",
             "command": "sh $HOME/.codex/lcars-hook.sh",
-            "async": true
+            "timeout": 5
           }
         ]
       }
@@ -567,8 +571,13 @@ everywhere else means the agent never waits on telemetry mid-turn.
 
 Codex's `async: true` runs a command hook in the background (up to eight
 per session). The client still hands the network to the detached flusher
-(section 4.1 step 6), so `SessionStart`, `SessionEnd`, and `Interrupt`, which
-stay synchronous, cost only the local reduce.
+(section 4.1 step 6), so `SessionStart`, `Stop`, `SessionEnd`, and
+`Interrupt`, which stay synchronous, cost only the local reduce. `Stop` is
+synchronous for the same reason as Claude's: `codex exec` exits on its last
+turn, so an async `Stop` never recorded a stop, and while it still held the
+session lock the following `SessionEnd` could wait past the 3 s Codex
+enforces on `SessionEnd` hooks whatever their `timeout` (measured: a 2.5 s
+hook completes, a 3.5 s hook is killed).
 
 The `command` is a constant launcher stub, the shape herdr uses for
 `herdr-agent-state.sh`: `~/.codex/lcars-hook.sh` execs the `lcars` bundle
