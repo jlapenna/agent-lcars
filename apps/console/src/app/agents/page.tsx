@@ -318,8 +318,7 @@ async function AgentsPageBody({
               Clear repository
             </Anchor>
           ) : null}
-          {/* Selects and the window submit on change; Apply shows only
-              until they hydrate, then keeps its box. */}
+          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }

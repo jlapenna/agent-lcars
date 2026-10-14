@@ -658,6 +658,25 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 }
 
+/* Below 80em the header's sync block does not fit, so the same status rides
+   one line under the title (console-frame-readouts.tsx, compact): every width
+   says whether the page is live, as the mockup's header does. */
+.console-live-status--compact {
+  display: block;
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 0.6875rem;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 80em) {
+  .console-page-shell[data-frame='rail'] .console-live-status--compact {
+    display: none;
+  }
+}
+
 @media (min-width: 90em) {
   .console-page-shell[data-frame='rail'] .console-identity__text {
     display: flex;
@@ -1240,7 +1259,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   /* Only ConsoleToolbar's own form folds (the Inbox's repository form shares
      the class), and only once hydrated: before then the toggle cannot open
-     anything, so every control stays in view for the native Apply. The
+     anything, so every control stays in view until it can. The
      window stays out: it is one compact row and would otherwise be a hidden
      filter. */
   .console-toolbar

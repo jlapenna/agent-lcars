@@ -147,6 +147,18 @@ describe('console frame readouts', () => {
     }
   });
 
+  it('gives narrow headers the same status on one line', async () => {
+    respond(admin);
+    render(<ConsoleLiveStatus compact />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const status = screen.getByTestId('console-live-status-compact');
+    expect(status).toHaveTextContent('Snapshot');
+    expect(status).not.toHaveTextContent('refresh to update');
+    expect(status).toHaveClass('console-live-status--compact');
+  });
+
   it('marks a partial token total as a lower bound', async () => {
     respond({ ...admin, tokens24hPartial: true });
     await renderFrame();

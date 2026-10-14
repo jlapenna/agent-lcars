@@ -456,8 +456,7 @@ async function IndexBody({
             fetchedAt={dataAsOf}
             initialLabel={formatRelativeTime(dataAsOf)}
           />
-          {/* Selects and the window submit on change; Apply shows only
-              until they hydrate. */}
+          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }
