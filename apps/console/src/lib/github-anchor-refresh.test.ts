@@ -35,6 +35,44 @@ function deferred<T>() {
 }
 
 describe('refreshGithubAnchorProjection', () => {
+  it('persists GitHub creation and head facts through the projection schema/store boundary', async () => {
+    const store = new MemoryStore();
+    const graphql = vi.fn().mockResolvedValue({
+      repository: {
+        i42: {
+          createdAt: '2026-08-30T11:00:00.000Z',
+          headRefName: 'fix/42',
+          headRepository: { nameWithOwner: 'jlapenna/agent-lcars' },
+        },
+      },
+    });
+    await refreshGithubAnchorProjection(
+      {
+        store,
+        load: async () => {
+          const [enriched] = await enrichGithubAnchorProjections(
+            anchor.repo,
+            [projection()],
+            { graphql },
+          );
+          return enriched!;
+        },
+      },
+      anchor,
+    );
+    expect(await store.readGithubAnchorProjection(anchor)).toMatchObject({
+      createdAt: '2026-08-30T11:00:00.000Z',
+      headRefName: 'fix/42',
+      headRepository: 'jlapenna/agent-lcars',
+    });
+    expect(graphql).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'createdAt headRefName headRepository { nameWithOwner }',
+      ),
+      expect.anything(),
+    );
+  });
+
   it('enriches an issue refresh with its latest comment', async () => {
     const issue: GithubAnchorProjection = {
       ...projection(),

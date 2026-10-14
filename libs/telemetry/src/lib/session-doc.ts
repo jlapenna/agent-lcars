@@ -195,6 +195,7 @@ export function buildSessionDoc(
     ...(summary.cwd && { cwd: summary.cwd }),
     ...(summary.worktree && { worktree: summary.worktree }),
     ...(summary.branch && { branch: summary.branch }),
+    ...(summary.githubActor && { githubActor: summary.githubActor }),
     ...(summary.repo && { repo: summary.repo }),
     ...(summary.artifacts &&
       summary.artifacts.length > 0 && { artifacts: summary.artifacts }),
@@ -228,23 +229,31 @@ export function parseSessionDoc(value: unknown): SessionDoc {
     throw new Error('Persisted session document requires an explicit agent');
   }
   const deliverables = value['deliverables'];
-  if (
-    isStoredDocument(deliverables) &&
-    deliverables['qualifiedPRs'] !== undefined
-  ) {
-    const refs = deliverables['qualifiedPRs'];
-    if (
-      !Array.isArray(refs) ||
-      refs.some(
-        (ref) =>
-          !isStoredDocument(ref) ||
-          !isCanonicalSessionRepository(ref['repo']) ||
-          !Number.isSafeInteger(ref['number']) ||
-          Number(ref['number']) <= 0,
-      )
-    ) {
-      throw new Error('Persisted session has invalid qualified PR evidence');
+  for (const field of ['qualifiedPRs', 'publicationCandidates']) {
+    if (isStoredDocument(deliverables) && deliverables[field] !== undefined) {
+      const refs = deliverables[field];
+      if (
+        !Array.isArray(refs) ||
+        refs.some(
+          (ref) =>
+            !isStoredDocument(ref) ||
+            !isCanonicalSessionRepository(ref['repo']) ||
+            !Number.isSafeInteger(ref['number']) ||
+            Number(ref['number']) <= 0,
+        )
+      ) {
+        throw new Error('Persisted session has invalid qualified PR evidence');
+      }
     }
+  }
+  if (
+    value['githubActor'] !== undefined &&
+    (typeof value['githubActor'] !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u.test(
+        value['githubActor'],
+      ))
+  ) {
+    throw new Error('Persisted session has an invalid GitHub actor');
   }
   const repo = value['repo'];
   if (source === 'issue-agent' && !isCanonicalSessionRepository(repo)) {
@@ -353,6 +362,7 @@ export function buildSessionWrite(
     clearFields.push('resolvedModel');
   }
   if (doc.source === 'cli') {
+    if (!doc.githubActor) clearFields.push('githubActor');
     if (!doc.cliTranscriptArchive) clearFields.push('cliTranscriptArchive');
     if (!doc.transcriptGcsUri)
       clearFields.push('transcriptGcsUri', 'renderable');

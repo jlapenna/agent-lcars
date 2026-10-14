@@ -37,16 +37,43 @@ it. Counts across pipeline/model groups overlap when a PR has multiple attempts
 in different groups and must not be summed.
 
 Qualified publication evidence preserves the full GitHub repository/PR identity
-from a `gh pr create` command's correlated tool result. Arbitrary transcript
-mentions, URLs in user requests, unrelated tool output and legacy number-only
-associations cannot establish this denominator. Their unqualified reference
-count remains visible; costs still contribute to the numerator and the subtotal
-without qualified references. This evidence is a command/output heuristic, not
-proof that every reported PR was successfully created or authored by the session.
-Adapters that cannot supply correlated publication evidence remain unavailable
-for this denominator. Retained summaries must be re-ingested through normal
-telemetry delivery before they can gain qualified evidence; no production
-backfill is performed by this change.
+from the existing literal `gh pr create` command's correlated result. That
+literal-only rule is unchanged; compound shell text is never parsed to establish
+creation (#2730, rejected parser approach #2732).
+
+For compound commands, the reducers also retain `publicationCandidates`: URLs
+from a successful, single-use correlated creating-command result. These are
+lookup hints, never qualified publication evidence. Costs qualifies a candidate
+only when the stored GitHub projection agrees with all of:
+
+- the hook-observed authenticated GitHub actor (`githubActor`),
+- a creation timestamp inside the session's inclusive start/last-activity window,
+- the hook-observed exact head branch (`doc.branch`), and
+- the session's repository as the head repository (forks stay unsupported).
+
+A Claude session URL in GitHub's PR body additionally must match the session ID;
+a conflicting link fails closed. Without a body link, all four primary facts
+are still required. The hook resolves the actor through `gh api --hostname
+github.com user --jq .login` using its existing credential, with a two-second
+subprocess deadline and bounded output, after ordinary event throttling. It
+never reads actor identity from transcript content. Missing `gh`, offline/token
+failure, unsupported installation-token `/user` access, or failed live branch
+resolution leaves the actor unknown; a new failed observation clears any prior
+stored actor. Lifecycle-only end events preserve the last observed context.
+Runner sessions retain the existing literal-publication path; this additional
+actor observation is CLI-only.
+
+Arbitrary transcript mentions, unrelated output, failed or replayed results,
+and legacy number-only associations cannot establish this denominator. Their
+unqualified reference count remains visible; costs still contribute to the
+numerator and subtotal without qualified references. GitHub facts come through
+the existing exact projection refresh, never render-time GitHub enumeration.
+The hook spool parser preserves both qualified references and candidates.
+Retained summaries must be re-ingested through normal telemetry delivery to
+record the new actor/candidate fields, and old projections need normal refresh
+to record creation/head facts. No production backfill is performed. Deploying
+the Console and updated workstation CLI, then observing a real live session,
+remain runtime acceptance gates separate from source/regression coverage.
 
 Per-PR attribution splits each session's cost equally across its unique qualified publication
 references, including unmerged/unknown references. The separate no-qualified-PR subtotal

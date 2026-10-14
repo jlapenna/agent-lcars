@@ -81,6 +81,9 @@ export interface SessionDeliverables {
   /** Qualified URLs from a creating command's correlated tool result.
    * Legacy numbers and arbitrary mentions do not establish this evidence. */
   qualifiedPRs?: QualifiedSessionPR[];
+  /** Successful correlated create-result URLs; lookup hints only. Costs must
+   * verify GitHub author/time/head facts before financial attribution. */
+  publicationCandidates?: QualifiedSessionPR[];
   commitShas: string[];
 }
 
@@ -130,6 +133,8 @@ export interface SessionSummary {
   cwd?: string;
   worktree?: string;
   branch?: string;
+  /** Hook-observed GitHub /user identity, never extracted from transcript text. */
+  githubActor?: string;
   /** Which GitHub repo this session belongs to. `cli` summaries get this
    * from a per-tick `origin` remote resolution; `issue-agent` summaries
    * never set it here (they're tagged via `BuildSessionDocOptions.repo`
@@ -290,6 +295,8 @@ export interface CliSessionDoc extends BaseSessionDoc {
   transcriptGcsUri?: string;
   renderable?: boolean;
   source: 'cli';
+  /** Authenticated GitHub /user login observed by the host hook. */
+  githubActor?: string;
   /** A host-scoped CLI session is valid without a GitHub repository. When a
    * repository is present it must be canonical; readers never guess one. */
   repo?: SessionRepository;
@@ -402,6 +409,7 @@ export interface BuildSessionDocOptions {
  * doesn't cover.
  */
 export type ClearableSessionField =
+  | 'githubActor'
   | 'status'
   | 'statusUpdatedAt'
   | 'resolvedModel'

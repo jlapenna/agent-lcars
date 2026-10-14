@@ -1,0 +1,196 @@
+import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
+import {
+  buildSessionDoc,
+  claudeCodeAdapter,
+  type CliSessionDoc,
+} from '@agent-lcars/telemetry';
+import { describe, expect, it, vi } from 'vitest';
+
+import { aggregateSessionSpend } from './session-spend';
+import { loadSpendProjections } from './session-spend-projections';
+
+const repo = { owner: 'jlapenna', name: 'agent-lcars' };
+const key = 'jlapenna/agent-lcars#42';
+const start = '2026-10-14T10:00:00.000Z';
+const end = '2026-10-14T11:00:00.000Z';
+
+function session(
+  command = `cd /worktree && gh pr create --body "$(cat <<'EOF'\nbody\nEOF\n)"`,
+): CliSessionDoc {
+  const summary = claudeCodeAdapter.reduce(
+    [
+      {
+        type: 'assistant',
+        sessionId: 'session_test',
+        timestamp: start,
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'create',
+              name: 'Bash',
+              input: { command },
+            },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        sessionId: 'session_test',
+        timestamp: end,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'create',
+              content: 'https://github.com/jlapenna/agent-lcars/pull/42',
+            },
+          ],
+        },
+      },
+    ].map((row) => JSON.stringify(row)),
+  )[0];
+  if (!summary) throw new Error('missing adapter summary');
+  return buildSessionDoc(
+    {
+      ...summary,
+      repo,
+      branch: 'fix/42',
+      githubActor: 'jlapenna',
+      totalCostUsd: 6,
+    },
+    'ended',
+  ) as CliSessionDoc;
+}
+function record(
+  overrides: Partial<GithubAnchorProjection> = {},
+): GithubAnchorProjection {
+  return {
+    anchor: { repo: 'jlapenna/agent-lcars', issue: 42 },
+    kind: 'pr',
+    state: 'closed',
+    title: 'Delivered',
+    body: 'Claude-Session: https://claude.ai/code/session_test',
+    url: 'https://github.com/jlapenna/agent-lcars/pull/42',
+    author: 'jlapenna',
+    createdAt: '2026-10-14T10:30:00.000Z',
+    headRefName: 'fix/42',
+    headRepository: 'jlapenna/agent-lcars',
+    mergedAt: end,
+    labels: [],
+    assigneeLogins: [],
+    observedAt: end,
+    sourceUpdatedAt: end,
+    ...overrides,
+  };
+}
+function spend(doc = session(), projection = record()) {
+  return aggregateSessionSpend([doc], new Map([[key, projection]]));
+}
+
+describe('GitHub-record spend attribution (#2730)', () => {
+  it.each([
+    `cd /worktree && gh pr create --draft --body "$(cat <<'EOF'\nbody\nEOF\n)"`,
+    'cd /worktree; gh pr create --draft --body-file /tmp/body.md',
+  ])(
+    'qualifies an actual merged PR independently of shell syntax: %s',
+    async (command) => {
+      const doc = session(command);
+      expect(doc.deliverables.prNumbers).toEqual([42]);
+      expect(doc.deliverables.qualifiedPRs).toBeUndefined();
+      const read = vi.fn(async () => record());
+      const loaded = await loadSpendProjections([doc], read);
+      expect(read).toHaveBeenCalledWith({
+        repo: 'jlapenna/agent-lcars',
+        issue: 42,
+      });
+      const result = aggregateSessionSpend([doc], loaded.projections);
+      expect(result).toMatchObject({
+        mergedPRs: 1,
+        costPerMergedDeliverableUsd: 6,
+        totals: { unqualifiedPRReferences: 0 },
+        withoutPR: { sessions: 0 },
+      });
+    },
+  );
+  it.each([
+    { author: 'someone-else' },
+    { author: undefined },
+    { createdAt: undefined },
+    { createdAt: 'invalid' },
+    { createdAt: '2026-10-14T09:59:59.999Z' },
+    { createdAt: '2026-10-14T11:00:00.001Z' },
+    { headRefName: 'other' },
+    { headRefName: undefined },
+    { headRepository: 'fork/agent-lcars' },
+    { headRepository: undefined },
+    { kind: 'issue' as const },
+    { anchor: { repo: 'other/repo', issue: 42 } },
+    { anchor: { repo: 'jlapenna/agent-lcars', issue: 43 } },
+    { body: 'Claude-Session: https://claude.ai/code/session_other' },
+    {
+      body: 'https://claude.ai/code/session_test https://claude.ai/code/session_other',
+    },
+  ])('rejects unrelated or incomplete GitHub evidence: %j', (patch) => {
+    expect(spend(session(), record(patch))).toMatchObject({
+      mergedPRs: 0,
+      totals: { unqualifiedPRReferences: 1 },
+    });
+  });
+  it.each([
+    { githubActor: undefined },
+    { branch: undefined },
+    { repo: undefined },
+    { githubActor: 'other' },
+    { branch: 'main' },
+    { startedAt: '' },
+    { lastActivityAt: '' },
+    { startedAt: end, lastActivityAt: start },
+  ])(
+    'leaves legacy, offline and mismatched sessions unqualified: %j',
+    (patch) => {
+      expect(spend({ ...session(), ...patch })).toMatchObject({
+        mergedPRs: 0,
+        totals: { unqualifiedPRReferences: 1 },
+      });
+    },
+  );
+  it('uses inclusive creation bounds and case-insensitive GitHub identities', () => {
+    expect(
+      spend(
+        session(),
+        record({
+          author: 'JLaPenna',
+          headRepository: 'JLaPenna/Agent-LCARS',
+          createdAt: start,
+        }),
+      ).mergedPRs,
+    ).toBe(1);
+    expect(spend(session(), record({ createdAt: end })).mergedPRs).toBe(1);
+  });
+  it('requires no body link when author, time and exact head match', () => {
+    expect(spend(session(), record({ body: '' })).mergedPRs).toBe(1);
+  });
+  it('does not turn missing merge observations into a merge', () => {
+    expect(spend(session(), record({ mergedAt: undefined }))).toMatchObject({
+      mergedPRs: 0,
+      unknownPRs: 1,
+    });
+  });
+  it('does not guess an actor or read bare references for a legacy session', async () => {
+    const read = vi.fn(async () => record());
+    const doc = { ...session(), githubActor: undefined };
+    expect((await loadSpendProjections([doc], read)).projections.size).toBe(0);
+    expect(read).not.toHaveBeenCalled();
+  });
+  it('keeps duplicated hints to one deliverable and charges the session once', () => {
+    const doc = session();
+    doc.deliverables.prNumbers = [42, 42];
+    expect(spend(doc)).toMatchObject({
+      mergedPRs: 1,
+      deliverables: [{ sessions: 1, reportedCostUsd: 6 }],
+    });
+  });
+});
