@@ -271,9 +271,14 @@ export async function readyDeliveryBinding(
   )
     throw new Error('Deliverable is not ready and armed');
   await protectedChecks(deps, repo, pr.base.ref);
-  const review = await reviews(deps, repo, number, pr.head.sha);
-  if (!hasIndependentReview(review, pr.user.login))
-    throw new Error('Deliverable requires exact-head independent review');
+  // An open, armed artifact transfers waiting ownership; asynchronous review
+  // belongs to the durable monitor, rather than the implementation executor.
+  // Already merged artifacts still require review before accepting landing.
+  if (pr.merged) {
+    const review = await reviews(deps, repo, number, pr.head.sha);
+    if (!hasIndependentReview(review, pr.user.login))
+      throw new Error('Deliverable requires exact-head independent review');
+  }
   const payload = workPayloadSchema.parse(task.work);
   if (payload.spec.target.repo !== repo)
     throw new Error('Delivery target changed');

@@ -305,10 +305,13 @@ The authenticated brief advertises deliveryHandoffVersion:1; the baked runner
 propagates it into provider context. Workers without that capability retain
 the existing delivery path. Already merged legacy PR completions require the
 same exact protected-merge readback, while unmerged ready handoff uses the
-new contract. An authenticated native implementation completion with a PR artifact must
-establish exact attempt-marker identity, ready state, independent current-head
-review, resolved threads, applicable required checks and protected squash
-arming. Normal Run settlement, credential cleanup and positive physical
+new contract. An authenticated native implementation completion with an open PR
+artifact establishes exact attempt-marker identity, ready state, protected
+target policy and squash arming. Pending independent review transfers to the
+existing durable monitor; it does not retain the implementation executor or
+declare delivery complete. Already merged artifacts and final logical landing
+still require independent current-head review, resolved threads and exact
+protected-merge evidence. Normal Run settlement, credential cleanup and positive physical
 retirement release implementation resources. Task.delivery retains logical
 ownership; Run.delivery exposes waiting, runtime-required or complete separately
 from physical Run execution. The durable monitor-delivery outbox is consumed by
