@@ -1,6 +1,7 @@
 import { PIPELINES } from '@agent-lcars/work';
 
 import type { AgentPipeline } from '../../lib/agent-activity';
+import type { FleetRunner } from '../../lib/autoscaler-status';
 
 type RawParam = string | string[] | undefined;
 
@@ -69,4 +70,47 @@ export function executorMatches(filters: ShuttlebayFilters): boolean {
     !filters.q ||
     'direct agent executor queueexecutor'.includes(filters.q.toLowerCase())
   );
+}
+
+/** A runner row matches the repository it is working for, or, while an ARC
+ * runner waits for a job, the repositories its lane serves. The agent filter
+ * narrows direct runners, the only ones running agents. A direct runner
+ * whose run has not resolved yet, or an ARC runner whose lane is not
+ * reporting, stays: it may be the one asked for. */
+export function runnerMatches(
+  runner: Pick<
+    FleetRunner,
+    'name' | 'kind' | 'lane' | 'host' | 'jobRepository' | 'jobName' | 'work'
+  >,
+  lanes: readonly { lane: string; registrationUrl: string }[],
+  filters: ShuttlebayFilters,
+): boolean {
+  if (filters.repo) {
+    const repo = filters.repo.toLowerCase();
+    const working = runner.work?.repo ?? runner.jobRepository;
+    if (working !== undefined) {
+      if (working.toLowerCase() !== repo) return false;
+    } else if (runner.kind === 'arc') {
+      // A lane missing from a stale or incomplete inventory might be the
+      // one asked for, so its runners stay.
+      const lane = lanes.find((value) => value.lane === runner.lane);
+      if (lane && !laneServesRepo(lane.registrationUrl, filters.repo))
+        return false;
+    }
+  }
+  if (filters.agent) {
+    if (runner.kind === 'direct' && runner.work !== undefined) {
+      if (runner.work.pipeline !== filters.agent) return false;
+    }
+  }
+  if (!filters.q) return true;
+  const q = filters.q.toLowerCase();
+  return [
+    runner.name,
+    runner.lane,
+    runner.host,
+    runner.jobRepository,
+    runner.jobName,
+    runner.work?.label,
+  ].some((value) => value?.toLowerCase().includes(q));
 }

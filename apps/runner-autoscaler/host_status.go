@@ -45,6 +45,12 @@ type consoleHostStatus struct {
 
 type consoleHostInventory struct {
 	Hosts []consoleHost `firestore:"hosts"`
+	// Every runner pod; see consoleRunner. Nil when the fleet has more than
+	// maxConsoleRunners, and then not published.
+	Runners []consoleRunner `firestore:"runners"`
+	// False when ARC's EphemeralRunners could not be read: up ARC runners
+	// are then online, neither idle nor busy, and name no job.
+	RunnerJobsKnown bool `firestore:"runnerJobsKnown"`
 }
 
 type consoleHost struct {
@@ -67,18 +73,31 @@ type consoleHost struct {
 
 // contentKey keeps load out of the change test: requests move with every pod
 // start and stop, and the heartbeat already refreshes them once a minute.
-// A host joining, leaving, going NotReady or draining writes at once.
+// A host joining, leaving, going NotReady or draining writes at once, as
+// does a runner starting, stopping, being placed, or changing state or job.
 func (s consoleHostStatus) contentKey() any {
 	type structural struct {
 		name                 string
 		ready, unschedulable bool
 		cpu, memory          int64
 	}
-	key := []structural{}
+	type runner struct {
+		name, host, state, runID, job string
+		workflowRunID                 int64
+	}
+	key := struct {
+		hosts     []structural
+		runners   []runner
+		jobsKnown bool
+	}{hosts: []structural{}}
 	if s.Inventory != nil {
 		for _, host := range s.Inventory.Hosts {
-			key = append(key, structural{host.Name, host.Ready, host.Unschedulable, host.CPUMillis, host.MemoryBytes})
+			key.hosts = append(key.hosts, structural{host.Name, host.Ready, host.Unschedulable, host.CPUMillis, host.MemoryBytes})
 		}
+		for _, r := range s.Inventory.Runners {
+			key.runners = append(key.runners, runner{r.Name, r.Host, r.State, r.RunID, r.JobRepository + "/" + r.JobName, r.WorkflowRunID})
+		}
+		key.jobsKnown = s.Inventory.RunnerJobsKnown
 	}
 	return key
 }
@@ -181,12 +200,20 @@ func hostInventory(ctx context.Context, client kubernetes.Interface) (*consoleHo
 	for i := range inventory.Hosts {
 		hosts[inventory.Hosts[i].Name] = &inventory.Hosts[i]
 	}
-	for _, pod := range pods.Items {
-		host := hosts[pod.Spec.NodeName]
-		if host == nil || pod.Status.Phase == core.PodSucceeded || pod.Status.Phase == core.PodFailed {
+	inventory.Runners = []consoleRunner{}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase == core.PodSucceeded || pod.Status.Phase == core.PodFailed {
 			continue
 		}
-		requests := podresource.PodRequests(&pod, podresource.PodResourcesOptions{})
+		if runner, ok := runnerFromPod(pod, hosts); ok {
+			inventory.Runners = append(inventory.Runners, runner)
+		}
+		host := hosts[pod.Spec.NodeName]
+		if host == nil {
+			continue
+		}
+		requests := podresource.PodRequests(pod, podresource.PodResourcesOptions{})
 		host.RequestedCPUMillis += requests.Cpu().MilliValue()
 		host.RequestedMemoryBytes += requests.Memory().Value()
 		if pod.Labels[arcScaleSetLabel] != "" && pod.Labels[arcComponentKey] == arcRunnerValue {
@@ -195,6 +222,11 @@ func hostInventory(ctx context.Context, client kubernetes.Interface) (*consoleHo
 		if pod.Labels[queueJobLabel] == "true" {
 			host.QueueJobPods++
 		}
+	}
+	if len(inventory.Runners) > maxConsoleRunners {
+		inventory.Runners = nil
+	} else {
+		sortRunners(inventory.Runners)
 	}
 	return inventory, nil
 }
@@ -209,10 +241,11 @@ type hostStatusPublisher interface {
 // live sample: requests are still true, and the console labels them so.
 func runHostStatusPublisher(ctx context.Context, publisher hostStatusPublisher, client kubernetes.Interface, logger *slog.Logger) {
 	readUsage := metricsServerUsage(client)
-	// A standing usage failure (no RBAC, no metrics-server, an aggregator
-	// 503 while metrics-server is down) is logged when it starts or
-	// changes, not every tick.
-	lastUsageErr := ""
+	readJobs := ephemeralRunnerJobs(client)
+	// A standing usage or job failure (no RBAC, no metrics-server, an
+	// aggregator 503 while metrics-server is down, no ARC CRDs) is logged
+	// when it starts or changes, not every tick.
+	lastUsageErr, lastJobsErr := "", ""
 	publish := func() {
 		readCtx, cancel := context.WithTimeout(ctx, consoleStatusTimeout)
 		defer cancel()
@@ -232,6 +265,24 @@ func runHostStatusPublisher(ctx context.Context, publisher hostStatusPublisher, 
 					logger.Info("Host usage unavailable; publishing requests only", slog.Any("error", err))
 				} else {
 					logger.Warn("Host usage read failed; publishing requests only", slog.Any("error", err))
+				}
+			}
+		}
+		if readJobs != nil && inventory.Runners != nil {
+			// Its own budget: a slow node or pod list must not time this
+			// read out and flip every ARC runner to online and back.
+			jobsCtx, cancelJobs := context.WithTimeout(ctx, consoleStatusTimeout)
+			jobs, err := readJobs(jobsCtx)
+			cancelJobs()
+			if err == nil {
+				lastJobsErr = ""
+				applyRunnerJobs(inventory, jobs)
+			} else if msg := err.Error(); msg != lastJobsErr {
+				lastJobsErr = msg
+				if apierrors.IsForbidden(err) || apierrors.IsNotFound(err) {
+					logger.Info("ARC runner jobs unavailable; publishing runners without jobs", slog.Any("error", err))
+				} else {
+					logger.Warn("ARC runner job read failed; publishing runners without jobs", slog.Any("error", err))
 				}
 			}
 		}

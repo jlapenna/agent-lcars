@@ -10,6 +10,7 @@ import {
   subscribeAutoscalerStatuses,
 } from './autoscaler-status';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { resolveRunnerWork, withRunnerWork } from './runner-work';
 
 const READ_DEADLINE_MS = 5000;
 const ADMISSION_REFRESH_MS = 30_000;
@@ -45,7 +46,10 @@ function readTelemetry(): Promise<AutoscalerStatusResult> {
   return read;
 }
 
-async function withinDeadline<T>(read: Promise<T>): Promise<T> {
+async function withinDeadline<T>(
+  read: Promise<T>,
+  deadlineMs = READ_DEADLINE_MS,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -53,7 +57,7 @@ async function withinDeadline<T>(read: Promise<T>): Promise<T> {
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error('Shuttlebay evidence read timed out')),
-          READ_DEADLINE_MS,
+          Math.max(0, deadlineMs),
         );
       }),
     ]);
@@ -94,9 +98,26 @@ async function boundedTelemetry(): Promise<AutoscalerStatusResult> {
   }
 }
 
+/** Run resolution spends what is left of the telemetry read's deadline, so
+ * the page waits no longer than before. A slow or failed run read leaves
+ * direct runners naming their run ids; the stream resolves them later. */
+async function boundedTelemetryWithRunnerWork(): Promise<AutoscalerStatusResult> {
+  const started = Date.now();
+  const telemetry = await boundedTelemetry();
+  try {
+    await withinDeadline(
+      resolveRunnerWork(telemetry),
+      READ_DEADLINE_MS - (Date.now() - started),
+    );
+  } catch (error) {
+    logger.error('agent-lcars: runner work unavailable:', error);
+  }
+  return withRunnerWork(telemetry);
+}
+
 export async function getShuttlebayStatus(): Promise<AutoscalerStatusResult> {
   const [telemetry, provider] = await Promise.all([
-    boundedTelemetry(),
+    boundedTelemetryWithRunnerWork(),
     withProviderAdmission({ warnings: [] }),
   ]);
   return {
@@ -122,7 +143,7 @@ export async function subscribeShuttlebayStatus(
   const emit = () => {
     if (!closed)
       onResult({
-        ...latest,
+        ...withRunnerWork(latest),
         providerAdmission: admission,
         warnings: admissionUnavailable
           ? [...latest.warnings, ADMISSION_UNAVAILABLE]
@@ -147,6 +168,10 @@ export async function subscribeShuttlebayStatus(
     latest = result;
     emit();
     void refresh();
+    // A newly started direct run emits again once its work item resolves.
+    void resolveRunnerWork(result).then((changed) => {
+      if (changed && latest === result) emit();
+    });
   });
   void refresh();
   const timer = setInterval(() => {

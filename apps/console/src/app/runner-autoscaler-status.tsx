@@ -18,9 +18,11 @@ import { DataWarnings } from './console-header';
 import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
 import { RelativeTime } from './relative-time';
 import { RunnerFleetPanel } from './runner-fleet-panel';
+import { onlineRunnerCount, runnerFitMeta, RunnerRow } from './runner-rows';
 import {
   executorMatches,
   laneMatches,
+  runnerMatches,
   type ShuttlebayFilters,
 } from './shuttlebay/shuttlebay-view-filters';
 import { ShuttlebayWorkspace } from './shuttlebay/shuttlebay-workspace';
@@ -336,6 +338,11 @@ export function RunnerAutoscalerStatus({
   // Only a complete inventory can prove no lane matches: a missing, stale or
   // invalid lane might be the one asked for.
   const noMatch = filteredEmpty && !live.lanesIncomplete;
+  // Per-runner rows once the executor publishes them; lane totals before.
+  const runners = live.hostInventory?.runners;
+  const shownRunners = runners?.filter((runner) =>
+    runnerMatches(runner, live.lanes ?? [], filters),
+  );
 
   useEffect(() => {
     // EventSource reconnects by itself after the server ends a stream or the
@@ -398,49 +405,95 @@ export function RunnerAutoscalerStatus({
     >
       <div data-testid="runner-autoscaler-status" className="shuttlebay-cols">
         <div className="shuttlebay-stack">
-          <OpsPanel
-            title="Runners"
-            count={(result.lanes?.length ?? 0) + (result.queueExecutor ? 1 : 0)}
-            meta="pool totals · per-runner status unavailable"
-            data-testid="shuttlebay-runners"
-          >
-            <table className="ops-table">
-              <thead>
-                <tr>
-                  <th>Runner</th>
-                  <th>State</th>
-                  <th>Job</th>
-                  <th>Capacity</th>
-                  <th className="ops-num">For</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.lanes?.map((status) => (
-                  <ArcLaneRow key={status.lane} status={status} />
-                ))}
-                {(result.lanes?.length ?? 0) === 0 && (
+          {runners === undefined ? (
+            <OpsPanel
+              title="Runners"
+              count={
+                (result.lanes?.length ?? 0) + (result.queueExecutor ? 1 : 0)
+              }
+              meta="pool totals · per-runner status unavailable"
+              data-testid="shuttlebay-runners"
+            >
+              <table className="ops-table">
+                <thead>
                   <tr>
-                    <td colSpan={5} className="ops-dim">
-                      {noMatch
-                        ? 'No runner lane matches these filters.'
-                        : filteredEmpty
-                          ? 'No reporting lane matches these filters; some lanes are not reporting.'
-                          : 'GitHub runner status unavailable.'}
-                    </td>
+                    <th>Runner</th>
+                    <th>State</th>
+                    <th>Job</th>
+                    <th>Capacity</th>
+                    <th className="ops-num">For</th>
                   </tr>
-                )}
-                {result.queueExecutor ? (
-                  <QueueExecutorRow status={result.queueExecutor} />
-                ) : filtered && live.queueExecutor ? null : (
+                </thead>
+                <tbody>
+                  {result.lanes?.map((status) => (
+                    <ArcLaneRow key={status.lane} status={status} />
+                  ))}
+                  {(result.lanes?.length ?? 0) === 0 && (
+                    <tr>
+                      <td colSpan={5} className="ops-dim">
+                        {noMatch
+                          ? 'No runner lane matches these filters.'
+                          : filteredEmpty
+                            ? 'No reporting lane matches these filters; some lanes are not reporting.'
+                            : 'GitHub runner status unavailable.'}
+                      </td>
+                    </tr>
+                  )}
+                  {result.queueExecutor ? (
+                    <QueueExecutorRow status={result.queueExecutor} />
+                  ) : filtered && live.queueExecutor ? null : (
+                    <tr>
+                      <td colSpan={5} className="ops-dim">
+                        Direct executor status unavailable.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </OpsPanel>
+          ) : (
+            <OpsPanel
+              title="Runners"
+              count={`${onlineRunnerCount(shownRunners ?? [])}/${shownRunners?.length ?? 0} online`}
+              meta={
+                runnerFitMeta(runners, live.hostInventory?.hosts) ??
+                'host capacity unavailable'
+              }
+              data-testid="shuttlebay-runners"
+            >
+              <table className="ops-table">
+                <thead>
                   <tr>
-                    <td colSpan={5} className="ops-dim">
-                      Direct executor status unavailable.
-                    </td>
+                    <th>Runner</th>
+                    <th>State</th>
+                    <th>Job</th>
+                    <th className="ops-num">Request</th>
+                    <th className="ops-num">For</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </OpsPanel>
+                </thead>
+                <tbody>
+                  {shownRunners?.map((runner) => (
+                    <RunnerRow key={runner.name} runner={runner} />
+                  ))}
+                  {shownRunners?.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="ops-dim">
+                        {runners.length > 0
+                          ? 'No runner matches these filters.'
+                          : 'No runner pods are up.'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              {live.hostInventory?.runnerJobsKnown === false && (
+                <Text c="dimmed" size="xs" px="sm" pb="xs">
+                  ARC job assignments are unavailable, so up ARC runners show as
+                  online.
+                </Text>
+              )}
+            </OpsPanel>
+          )}
           <OpsPanel
             title="Provider admission"
             meta="cooldowns, queues and claims"
