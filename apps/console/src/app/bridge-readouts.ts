@@ -1,7 +1,9 @@
 import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
+import { runCountHistory } from '../lib/run-history';
 import { fleetCapacity } from '../lib/runner-status-contract';
 import type { SessionArchiveResult } from '../lib/session-archive';
+import { repoKey } from '../lib/watched-repo';
 import type { ConsoleReadout } from './console-readouts';
 import { formatCost, formatDuration } from './format';
 
@@ -18,6 +20,9 @@ export interface BridgeReadoutInput {
   /** Authoritative lifecycle counts in the same scope as `liveRuns`;
    * undefined when the read failed. */
   queue?: { queued: number; claimed: number; running: number };
+  /** Per-minute queue depth and running agents for the last 30 minutes, in
+   * the same scope; undefined when the run history is unavailable. */
+  history?: { queued: number[]; running: number[] };
   /** Known spend of sessions active since 00:00 UTC, the same figure as the
    * cost ledger's "Spend by repository"; undefined when the archive read
    * failed. */
@@ -43,12 +48,17 @@ const UNAVAILABLE = '—';
 export function fleetReadoutInput({
   activity,
   liveRuns,
+  repo,
   autoscaler,
   spendArchive,
+  now = Date.now(),
 }: {
-  activity: Pick<AgentActivity, 'fleet' | 'queue'>;
+  activity: Pick<AgentActivity, 'fleet' | 'queue' | 'runHistory'>;
   /** Live runs in the page's repository scope. */
   liveRuns: AgentActivity['liveRuns'];
+  /** That scope (`owner/name`), which the run history is narrowed to. */
+  repo?: string;
+  now?: number;
   autoscaler: Pick<AutoscalerStatusResult, 'lanes' | 'lanesIncomplete'>;
   spendArchive?: Pick<SessionArchiveResult, 'spend' | 'spendByRepository'>;
 }): BridgeReadoutInput {
@@ -75,6 +85,17 @@ export function fleetReadoutInput({
       ).length,
       running: liveRuns.filter((run) => run.status === 'running').length,
     },
+    history:
+      activity.queue && activity.runHistory
+        ? runCountHistory(
+            repo
+              ? activity.runHistory.filter(
+                  (timeline) => repoKey(timeline.repo) === repo,
+                )
+              : activity.runHistory,
+            now,
+          )
+        : undefined,
     spendToday:
       spendArchive?.spend && repoSpend
         ? {
@@ -109,6 +130,7 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
             ? String(online)
             : `${online} / ${capacity}`,
       detail: online === undefined ? 'runner status unavailable' : 'ARC lanes',
+      spark: { label: 'Runners online, last 30 minutes' },
     },
     {
       id: 'busy',
@@ -121,6 +143,7 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
         busy === undefined || online === undefined
           ? 'runner status unavailable'
           : `${online === 0 ? 0 : Math.round((busy / online) * 100)}% utilisation · ${Math.max(0, online - busy)} idle`,
+      spark: { label: 'Busy runners, last 30 minutes' },
     },
     {
       id: 'queue',
@@ -131,6 +154,10 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
       detail: input.queue
         ? `${input.queue.claimed} claimed${queuedRuns.length > 0 ? ` · oldest ${formatDuration(oldestQueued)}` : ''}`
         : 'unavailable',
+      spark: {
+        label: 'Queue depth, last 30 minutes',
+        values: input.history?.queued,
+      },
     },
     {
       id: 'running',
@@ -141,6 +168,10 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
             .map(([pipeline, count]) => `${pipeline} ${count}`)
             .join(' · ') || 'none running'
         : 'unavailable',
+      spark: {
+        label: 'Running agents, last 30 minutes',
+        values: input.history?.running,
+      },
     },
     {
       id: 'spend',
@@ -157,6 +188,7 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
           : input.spendToday?.partial
             ? 'partial: session archive limit reached'
             : `since 00:00 UTC · no daily budget${input.spendToday?.estimated ? ' · est.' : ''}`,
+      spark: { label: 'Spend per hour today' },
     },
   ];
 }

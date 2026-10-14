@@ -32,6 +32,6 @@ export async function loadFleetReadouts(
     ? activity.liveRuns.filter((run) => repoKey(run.repo) === repo)
     : activity.liveRuns;
   return bridgeReadouts(
-    fleetReadoutInput({ activity, liveRuns, autoscaler, spendArchive }),
+    fleetReadoutInput({ activity, liveRuns, repo, autoscaler, spendArchive }),
   );
 }

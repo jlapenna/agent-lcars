@@ -785,6 +785,21 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   white-space: nowrap;
 }
 
+/* The mockup's readout sparkline is taller than the telemetry strip's. */
+.lcars-readout .ops-spark {
+  height: 28px;
+  margin-top: 10px;
+}
+
+.lcars-readout__nospark {
+  display: block;
+  height: 28px;
+  margin-top: 10px;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  line-height: 28px;
+}
+
 /* ---- Console surface system ----
    THE rule this file is organized around: the console has exactly ONE
    ground. Header, page, workspace, panel and card all paint

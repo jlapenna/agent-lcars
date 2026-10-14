@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+import { Sparkline } from './ops-primitives';
+
 export interface ConsoleReadout {
   /** Stable key and test hook. */
   id: string;
@@ -7,6 +9,9 @@ export interface ConsoleReadout {
   value: ReactNode;
   /** One short line of context; omit rather than pad. */
   detail?: ReactNode;
+  /** The mockup's sparkline under the figure. Without `values` the slot
+   * shows the unavailable mark instead of a flat line that reads as zero. */
+  spark?: { label: string; values?: readonly (number | undefined)[] };
 }
 
 /**
@@ -36,6 +41,22 @@ export function ConsoleReadouts({
           {readout.detail ? (
             <span className="lcars-readout__detail">{readout.detail}</span>
           ) : null}
+          {readout.spark &&
+            (readout.spark.values ? (
+              <Sparkline
+                values={readout.spark.values}
+                label={readout.spark.label}
+              />
+            ) : (
+              <span
+                className="lcars-readout__nospark"
+                role="img"
+                aria-label={`${readout.spark.label}: unavailable`}
+                title={`${readout.spark.label}: unavailable`}
+              >
+                —
+              </span>
+            ))}
         </div>
       ))}
     </section>
