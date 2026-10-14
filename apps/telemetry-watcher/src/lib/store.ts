@@ -74,9 +74,9 @@ export function createFirestoreStore(
 }
 
 /**
- * Fallback store used when no writer credentials are configured (e.g. a
- * local `docker run` smoke test with no GCP access). Logs what it would
- * have written instead of failing the daemon outright — consistent with
+ * Fallback store used when no writer credentials are configured (e.g. the
+ * standalone bundle smoke test with no GCP access). Logs what it would
+ * have written instead of failing outright — consistent with
  * the "fails soft" posture required everywhere else in the watcher.
  */
 export function createLogOnlyStore(): SessionStore {

@@ -1,7 +1,7 @@
 import { logger } from '@agent-lcars/logging';
 import type { TaskListCursor } from '@agent-lcars/orchestrator';
 import type { WorkSummary } from '@agent-lcars/work/derive';
-import { Anchor, Box } from '@mantine/core';
+import { Anchor } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -14,6 +14,8 @@ import {
 
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
+import type { AgentRun } from '../lib/agent-activity';
+import { getAutoscalerStatuses } from '../lib/autoscaler-status';
 import { getCliSessions } from '../lib/cli-sessions';
 import {
   getCachedAgentActivity,
@@ -33,28 +35,49 @@ import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
 import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
+import {
+  getSessionArchive,
+  parseSessionArchiveQuery,
+} from '../lib/session-archive';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
+import { fleetTokenRate } from '../lib/token-rate';
+import { getTokenRateSnapshot } from '../lib/token-rate-data';
 import { type BoardCard, BridgeSections } from './action-items-board';
 import {
-  AgentActivityPanel,
+  FleetChip,
   isActiveCliSession,
   RECENT_OUTCOMES_LIMIT,
   type RunItemRef,
 } from './agent-activity-panel';
 import { BridgeDetail } from './bridge-detail';
+import { bridgeReadouts, fleetReadoutInput } from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
-import { parseBridgeSelection } from './bridge-selection';
+import {
+  bridgeSelectionHref,
+  parseBridgeSelection,
+  runKey,
+  sessionKey,
+} from './bridge-selection';
 import { DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
+import { ConsoleReadouts } from './console-readouts';
+import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
+import { decisionRows } from './decision-rows';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
 import { inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
+import {
+  ActiveDispatchesPanel,
+  CliSessionsPanel,
+  DecisionInboxPanel,
+  RecentCompletionsPanel,
+  RunnerFleetPanel,
+} from './ops-panels';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
-import { RepositorySelector } from './repository-selector';
 import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
@@ -160,6 +183,9 @@ async function IndexBody({
       error: stoppedError,
     },
     nativeInbox,
+    autoscaler,
+    spendArchive,
+    tokenRateSnapshot,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
@@ -170,6 +196,17 @@ async function IndexBody({
       const context = await workContext();
       return { store: context.runtime.store, principal: context.principal };
     }),
+    getAutoscalerStatuses(),
+    getSessionArchive(
+      parseSessionArchiveQuery({ days: '1', repo: repoFilterKey }),
+      {
+        includeSpend: true,
+      },
+    ).catch((error: unknown) => {
+      logger.error('agent-lcars: Bridge spend readout unavailable:', error);
+      return undefined;
+    }),
+    getTokenRateSnapshot(),
   ]);
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
@@ -258,83 +295,146 @@ async function IndexBody({
   // list visible (its empty state carries no back control to recover to).
   const hasSelection = detail.kind !== 'none';
 
-  return (
-    <>
-      <DataFreshness
-        fetchedAt={dataAsOf}
-        initialLabel={formatRelativeTime(dataAsOf)}
-      />
-      {warnings.length > 0 && (
-        <Box mb="xl">
-          <DataWarnings warnings={warnings} />
-        </Box>
-      )}
+  const decisionCards = [
+    ...queueView.yourQueue
+      .filter((item) => matchesFilter(item.repo))
+      .map((item) => toCard(item)),
+    ...nativeInbox.cards.filter((card) =>
+      matchesFilter(inboxCardMetadata(card).repo),
+    ),
+  ];
+  const decisionCount = decisionCards.length;
+  const readouts = bridgeReadouts(
+    fleetReadoutInput({
+      activity,
+      liveRuns: filteredActivity.liveRuns,
+      autoscaler,
+      spendArchive,
+    }),
+  );
+  const selectRun = (run: AgentRun) =>
+    bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor);
+  const outcomesHref = repoFilterKey
+    ? `/agents?${new URLSearchParams({ repo: repoFilterKey })}`
+    : '/agents';
 
+  return (
+    <ConsoleWorkspace
+      ariaLabel="Bridge"
+      className="bridge-frame"
+      warnings={<DataWarnings warnings={warnings} />}
+      toolbar={
+        <>
+          {repoFilterKey && (
+            <Anchor href="/" size="sm">
+              Clear repository
+            </Anchor>
+          )}
+          <DataFreshness
+            fetchedAt={dataAsOf}
+            initialLabel={formatRelativeTime(dataAsOf)}
+          />
+          <DeckInboxSummary
+            count={decisionCount}
+            nativeAvailable={nativeInbox.available}
+            inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
+          />
+        </>
+      }
+    >
+      <ConsoleReadouts label="Bridge readouts" readouts={readouts} />
       <section
         className="bridge-workspace"
         data-sel={hasSelection ? '' : undefined}
       >
-        <div className="bridge-workspace__list">
-          <DeckInboxSummary
-            count={
-              queueView.yourQueue.filter((item) => matchesFilter(item.repo))
-                .length +
-              nativeInbox.cards.filter((card) =>
-                matchesFilter(inboxCardMetadata(card).repo),
-              ).length
-            }
-            nativeAvailable={nativeInbox.available}
-            inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
-          />
-
-          <ParkedWorkPanel
-            items={parkedWorkItems}
-            hasMoreTasks={hasMoreParkedTasks}
-            error={stoppedError}
-            nextPageHref={
-              stoppedNextCursor
-                ? stoppedWorkHref(repoFilterKey, stoppedNextCursor)
-                : undefined
-            }
-            firstPageHref={
-              stoppedCursor || stoppedError
-                ? stoppedWorkHref(repoFilterKey)
-                : undefined
-            }
-            cancel={cancelItem}
-            redispatch={redispatchItem}
-            repoFilterKey={repoFilterKey}
-            stoppedCursor={stoppedCursor}
-          />
-
-          <AgentActivityPanel
-            activity={filteredActivity}
-            cliSessions={filteredCliSessions}
-            itemsByRunId={itemsByRunId}
-            sessionsByRunId={sessionsByRunId}
-            repoFilter={repoFilterKey}
-            stoppedCursor={stoppedCursor}
-          />
-
-          <BridgeSections
-            waitingOnDeploy={deployCards}
-            blocked={blockedCards}
-            repoFilterKey={repoFilterKey}
-            stoppedCursor={stoppedCursor}
-          />
+        <div className="bridge-workspace__list bridge-cols">
+          <div className="bridge-stack">
+            <ActiveDispatchesPanel
+              liveRuns={filteredActivity.liveRuns}
+              itemsByRunId={itemsByRunId}
+              sessionsByRunId={sessionsByRunId}
+              selectHrefFor={selectRun}
+            />
+            <RecentCompletionsPanel
+              runs={filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT)}
+              sessionsByRunId={sessionsByRunId}
+              selectHrefFor={selectRun}
+              footer={
+                <Anchor
+                  href={outcomesHref}
+                  size="sm"
+                  className="operations-more-link"
+                >
+                  View all outcomes →
+                </Anchor>
+              }
+            />
+            <ParkedWorkPanel
+              items={parkedWorkItems}
+              hasMoreTasks={hasMoreParkedTasks}
+              error={stoppedError}
+              nextPageHref={
+                stoppedNextCursor
+                  ? stoppedWorkHref(repoFilterKey, stoppedNextCursor)
+                  : undefined
+              }
+              firstPageHref={
+                stoppedCursor || stoppedError
+                  ? stoppedWorkHref(repoFilterKey)
+                  : undefined
+              }
+              cancel={cancelItem}
+              redispatch={redispatchItem}
+              repoFilterKey={repoFilterKey}
+              stoppedCursor={stoppedCursor}
+            />
+            <BridgeSections
+              waitingOnDeploy={deployCards}
+              blocked={blockedCards}
+              repoFilterKey={repoFilterKey}
+              stoppedCursor={stoppedCursor}
+            />
+          </div>
+          <div className="bridge-stack">
+            <DecisionInboxPanel
+              rows={decisionRows(decisionCards, repoFilterKey).slice(0, 5)}
+              total={decisionCount}
+            />
+            <RunnerFleetPanel
+              lanes={autoscaler.lanes}
+              lanesIncomplete={autoscaler.lanesIncomplete}
+              executor={autoscaler.queueExecutor}
+              chip={<FleetChip fleet={activity.fleet} />}
+              tokenRate={fleetTokenRate(tokenRateSnapshot, {
+                repo: repoFilterKey,
+              })}
+            />
+            <CliSessionsPanel
+              sessions={filteredCliSessions.filter(isActiveCliSession)}
+              selectHrefFor={(session) =>
+                bridgeSelectionHref(
+                  sessionKey(session),
+                  repoFilterKey,
+                  stoppedCursor,
+                )
+              }
+            />
+          </div>
         </div>
 
-        <div className="bridge-workspace__detail">
-          <BridgeDetail
-            detail={detail}
-            repoFilterKey={repoFilterKey}
-            stoppedCursor={stoppedCursor}
-            cancel={cancelItem}
-            redispatch={redispatchItem}
-          />
-        </div>
+        {hasSelection && (
+          <div className="bridge-workspace__detail">
+            <BridgeDetail
+              detail={detail}
+              repoFilterKey={repoFilterKey}
+              stoppedCursor={stoppedCursor}
+              cancel={cancelItem}
+              redispatch={redispatchItem}
+            />
+          </div>
+        )}
       </section>
-    </>
+    </ConsoleWorkspace>
   );
 }
 
@@ -357,7 +457,6 @@ interface IndexViewProps {
 }
 
 function IndexViewContent({
-  watchedRepos,
   repoFilter,
   repoFilterKey,
   selectedKey,
@@ -366,11 +465,6 @@ function IndexViewContent({
 }: IndexViewProps) {
   return (
     <>
-      <RepositorySelector
-        repos={watchedRepos}
-        selected={repoFilter ? repoKey(repoFilter) : undefined}
-        action="/"
-      />
       <LiveDashboard />
       <Suspense
         key={`${repoFilterKey ?? ''}:${stoppedCursor ?? ''}`}
@@ -397,7 +491,7 @@ const IndexView = withConsolePageShell(
     repoFilter: repoFilterKey,
     subtitle: (
       <>
-        {subtitle}
+        Fleet overview · {subtitle}
         {repoFilter && (
           <>
             {' · '}

@@ -9,7 +9,9 @@ import {
 import { z } from 'zod';
 
 import {
+  assertCapacityPlacementClaim,
   assertCapacityWorkerPermit,
+  type CapacityPlacementClaim,
   capacityRecordForStorage,
   capacityRecordSchema,
   CapacityRefusal,
@@ -66,6 +68,8 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  queuePriorityCursorSchema,
+  queuePriorityTurnAfter,
   type RequestBinding,
   type RequestTransactionState,
   type RunTransactionState,
@@ -89,7 +93,9 @@ export interface FirestoreStoreOptions {
   readonly projectId: string;
   readonly databaseId: string;
   /** Defaults to `orchestrator-`. Collections are `<prefix>tasks`,
-   *  `<prefix>runs`, `<prefix>outbox`, `<prefix>request-bindings`. */
+   *  `<prefix>runs`, `<prefix>outbox`, `<prefix>request-bindings`,
+   *  `<prefix>github-anchors`, `<prefix>provider-cooldowns`, and
+   *  `<prefix>priority-positions`. */
   readonly collectionPrefix?: string;
   /** Set to talk to a local Firestore emulator instead of the real service. */
   readonly emulatorHost?: string;
@@ -116,6 +122,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #requestBindings: CollectionReference;
   readonly #githubAnchors: CollectionReference;
   readonly #providerCooldowns: CollectionReference;
+  readonly #priorityPositions: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
     const prefix = options.collectionPrefix ?? 'orchestrator-';
@@ -140,6 +147,9 @@ export class FirestoreStore implements OrchestratorStore {
     this.#githubAnchors = this.#firestore.collection(`${prefix}github-anchors`);
     this.#providerCooldowns = this.#firestore.collection(
       `${prefix}provider-cooldowns`,
+    );
+    this.#priorityPositions = this.#firestore.collection(
+      `${prefix}priority-positions`,
     );
   }
 
@@ -226,10 +236,25 @@ export class FirestoreStore implements OrchestratorStore {
           tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
         ),
       );
+      const prioritySnapshots = await Promise.all(
+        pipelines.map((pipeline) =>
+          tx.get(this.#priorityPositions.doc(encodeURIComponent(pipeline))),
+        ),
+      );
+      const priorityPositions = new Map(
+        pipelines.map((pipeline, index) => [
+          pipeline,
+          prioritySnapshots[index]?.exists
+            ? queuePriorityCursorSchema.parse(prioritySnapshots[index].data())
+                .position
+            : 0,
+        ]),
+      );
       const result = input.decide({
         state,
         records,
         runs,
+        priorityPositions,
         coolingPipelines: new Set(
           pipelines.filter(
             (_, index) =>
@@ -253,6 +278,13 @@ export class FirestoreStore implements OrchestratorStore {
         );
       if (result.run !== undefined)
         tx.set(this.#runRef(result.run.runId), result.run);
+      if (result.priorityTurn !== undefined)
+        tx.set(
+          this.#priorityPositions.doc(
+            encodeURIComponent(result.priorityTurn.pipeline),
+          ),
+          { position: result.priorityTurn.position },
+        );
       return result.value;
     });
   }
@@ -319,6 +351,7 @@ export class FirestoreStore implements OrchestratorStore {
     requestId: string;
     requestSource: RequestSource;
     requestBinding?: RequestBinding;
+    readProviderRouting?: boolean;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     const taskRef = this.#taskRef(input.taskId);
@@ -384,7 +417,30 @@ export class FirestoreStore implements OrchestratorStore {
       const previousRun = runsSnapshot.docs
         .map((doc) => runSchema.parse(doc.data()))
         .find((run) => run.requestSource === input.requestSource);
+      const routing =
+        input.readProviderRouting && task !== undefined
+          ? await Promise.all([
+              tx.get(
+                this.#runRef(`${taskKey(input.taskId)}/r${task.task.runCount}`),
+              ),
+              tx.get(
+                this.#runsForTask(input.taskId)
+                  .where('queue.state', '==', 'claimed')
+                  .limit(1),
+              ),
+            ])
+          : undefined;
       const outcome = input.decide({
+        ...(routing === undefined
+          ? {}
+          : {
+              latestRun: routing[0].exists
+                ? runSchema.parse(routing[0].data())
+                : undefined,
+              retainedClaims: routing[1].docs.map((doc) =>
+                runSchema.parse(doc.data()),
+              ),
+            }),
         task,
         activeRun,
         requestId,
@@ -456,6 +512,7 @@ export class FirestoreStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
+    placementClaim?: CapacityPlacementClaim;
     workerPermit?: CapacityWorkerPermit;
     queueEligibilityPipelines?: readonly string[];
     shouldReadQueueEligibility?: (
@@ -484,6 +541,28 @@ export class FirestoreStore implements OrchestratorStore {
             ? capacityRecordSchema.parse(retired.data())
             : undefined,
           input.workerPermit,
+        );
+      }
+
+      if (input.placementClaim !== undefined) {
+        if (input.placementClaim.runId !== input.runId)
+          throw new CapacityRefusal('authority');
+        const [capacity, retired] = await Promise.all([
+          tx.get(this.#capacity.doc('active')),
+          tx.get(
+            this.#capacityRecords.doc(
+              encodeURIComponent(retiredKey(input.runId)),
+            ),
+          ),
+        ]);
+        assertCapacityPlacementClaim(
+          capacity.exists
+            ? capacityStateSchema.parse(capacity.data())
+            : emptyCapacityState(),
+          retired.exists
+            ? capacityRecordSchema.parse(retired.data())
+            : undefined,
+          input.placementClaim,
         );
       }
 
@@ -973,6 +1052,7 @@ export class FirestoreStore implements OrchestratorStore {
     claimedBy: string;
     claimedBySubject?: string;
     tokenHash: string;
+    placementAware?: boolean;
   }): Promise<Run | undefined> {
     return this.#firestore.runTransaction(async (tx) => {
       const capacity = await tx.get(this.#capacity.doc('active'));
@@ -1006,6 +1086,20 @@ export class FirestoreStore implements OrchestratorStore {
           !providerIsCoolingDown(cooldowns[index]?.data(), input.now),
       );
       if (granted.length === 0) return undefined;
+      const prioritySnapshots = await Promise.all(
+        granted.map((pipeline) =>
+          tx.get(this.#priorityPositions.doc(encodeURIComponent(pipeline))),
+        ),
+      );
+      const priorityPositions = new Map(
+        granted.map((pipeline, index) => [
+          pipeline,
+          prioritySnapshots[index]?.exists
+            ? queuePriorityCursorSchema.parse(prioritySnapshots[index].data())
+                .position
+            : 0,
+        ]),
+      );
       const [queuedSnapshots, ...liveSnapshots] = await Promise.all([
         Promise.all(
           granted.map((pipeline) =>
@@ -1040,6 +1134,7 @@ export class FirestoreStore implements OrchestratorStore {
         live,
         granted,
         input.now,
+        priorityPositions,
       );
       const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;
@@ -1050,6 +1145,14 @@ export class FirestoreStore implements OrchestratorStore {
           state: 'claimed',
           claimedAt: input.now,
           startDeadlineAt: runStartDeadlineAt(input.now),
+          ...(input.placementAware === true
+            ? {
+                startupPlacement: {
+                  state: 'waiting' as const,
+                  observedAt: input.now,
+                },
+              }
+            : {}),
           claimedBy: input.claimedBy,
           ...(input.claimedBySubject === undefined
             ? {}
@@ -1059,6 +1162,15 @@ export class FirestoreStore implements OrchestratorStore {
         updatedAt: input.now,
       };
       tx.set(first.doc.ref, claimed);
+      tx.set(
+        this.#priorityPositions.doc(encodeURIComponent(claimed.pipeline)),
+        {
+          position: queuePriorityTurnAfter(
+            priorityPositions.get(claimed.pipeline) ?? 0,
+            claimed.priority ?? 'normal',
+          ),
+        },
+      );
       return claimed;
     });
   }

@@ -1,4 +1,5 @@
-import { Text } from '@mantine/core';
+import { SESSION_AGENTS } from '@agent-lcars/telemetry';
+import { Button, Text } from '@mantine/core';
 import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -13,13 +14,23 @@ import {
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
 import { parseCostBudget } from '../../lib/session-spend';
+import { windowOptions } from '../archive-window-options';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
+import { ConsoleReadouts } from '../console-readouts';
+import {
+  ConsoleToolbar,
+  ToolbarApply,
+  ToolbarSelect,
+  ToolbarWindow,
+} from '../console-toolbar';
+import { loadFleetReadouts } from '../fleet-readouts';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { CostsWorkspace } from './costs-workspace';
 import { LedgerTables } from './ledger-tables';
 import { SpendBreakdowns } from './spend-breakdowns';
+import { SpendByRepository } from './spend-by-repository';
 
 // Request-scoped memoization, same reasoning as /sessions': `CostsCount` and
 // `CostsBody` each await from their own Suspense boundary, and this keeps
@@ -34,6 +45,7 @@ interface PageProps {
     source?: string;
     issue?: string;
     repo?: string;
+    agent?: string;
   }>;
 }
 
@@ -49,25 +61,105 @@ async function SessionCount({ query }: { query: SessionArchiveQuery }) {
   );
 }
 
-async function CostsBody({ query }: { query: SessionArchiveQuery }) {
-  const { ledger, warnings, spend } = await getArchive(query);
+function CostsToolbar({
+  query,
+  watchedRepos,
+}: {
+  query: SessionArchiveQuery;
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+}) {
+  return (
+    <ConsoleToolbar
+      action="/costs"
+      preserve={{
+        issue:
+          query.issueNumber === undefined
+            ? undefined
+            : String(query.issueNumber),
+      }}
+      primary={
+        <Button
+          component="a"
+          href={archiveHref(query, '/costs/export')}
+          download
+          size="sm"
+        >
+          Export ledger
+        </Button>
+      }
+    >
+      <ToolbarSelect
+        name="repo"
+        label="Repository"
+        value={query.repo ? repoKey(query.repo) : ''}
+        options={[
+          { value: '', label: `All repositories (${watchedRepos.length})` },
+          ...watchedRepos.map((repo) => ({
+            value: repoKey(repo),
+            label: repoKey(repo),
+          })),
+        ]}
+      />
+      <ToolbarSelect
+        name="agent"
+        label="Agent"
+        value={query.agent ?? ''}
+        options={[
+          { value: '', label: 'All agents' },
+          ...SESSION_AGENTS.map((agent) => ({ value: agent, label: agent })),
+        ]}
+      />
+      <ToolbarWindow
+        name="days"
+        label="Window"
+        value={String(query.days)}
+        options={windowOptions(query.days)}
+      />
+      <ToolbarSelect
+        name="source"
+        label="Source"
+        value={query.source ?? ''}
+        options={[
+          { value: '', label: 'All sources' },
+          { value: 'cli', label: 'CLI' },
+          { value: 'issue-agent', label: 'Dispatched agent' },
+        ]}
+      />
+      {/* Selects and the window submit on change; Apply shows only until
+          they hydrate (the mockup's toolbar has none). */}
+      <ToolbarApply label="Apply" />
+    </ConsoleToolbar>
+  );
+}
+
+async function CostsBody({
+  query,
+  watchedRepos,
+}: {
+  query: SessionArchiveQuery;
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+}) {
+  const [{ ledger, warnings, spend, spendByRepository }, readouts] =
+    await Promise.all([
+      getArchive(query),
+      loadFleetReadouts(query.repo ? repoKey(query.repo) : undefined),
+    ]);
   const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
+  const budget = parseCostBudget(
+    process.env['AGENT_LCARS_COST_BUDGET_USD'],
+    process.env['AGENT_LCARS_COST_WARNING_PERCENT'],
+  );
 
   return (
     <CostsWorkspace
       warnings={
         warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
       }
+      toolbar={<CostsToolbar query={query} watchedRepos={watchedRepos} />}
     >
-      {spend && (
-        <SpendBreakdowns
-          spend={spend}
-          budget={parseCostBudget(
-            process.env['AGENT_LCARS_COST_BUDGET_USD'],
-            process.env['AGENT_LCARS_COST_WARNING_PERCENT'],
-          )}
-        />
-      )}
+      <ConsoleReadouts label="Fleet readouts" readouts={readouts} />
+      {spendByRepository && <SpendByRepository spend={spendByRepository} />}
+      {spend && <SpendBreakdowns spend={spend} budget={budget} />}
       {hasLedgerData ? (
         <LedgerTables ledger={ledger} />
       ) : (
@@ -94,6 +186,7 @@ function archiveHref(query: SessionArchiveQuery, path: string): string {
     params.set('issue', String(query.issueNumber));
   }
   if (query.repo) params.set('repo', repoKey(query.repo));
+  if (query.agent) params.set('agent', query.agent);
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }
@@ -117,10 +210,10 @@ interface CostsViewProps {
   mobileNavigationHrefs: { sessions: string; costs: string };
 }
 
-function CostsViewContent({ query }: CostsViewProps) {
+function CostsViewContent({ query, watchedRepos }: CostsViewProps) {
   return (
     <Suspense fallback={<PageLoading rows={6} header={false} />}>
-      <CostsBody query={query} />
+      <CostsBody query={query} watchedRepos={watchedRepos} />
     </Suspense>
   );
 }
@@ -131,10 +224,10 @@ const CostsPageView = withConsolePageShell(
     className: 'costs-page-shell',
     current: 'costs',
     archiveQuery: query,
-    title: 'Cost Ledger',
+    title: 'Costs',
     subtitle: (
       <>
-        {describeArchiveWindow(query)} ·{' '}
+        Cost ledger · {describeArchiveWindow(query)} ·{' '}
         <Suspense fallback="…">
           <SessionCount query={query} />
         </Suspense>
@@ -185,7 +278,7 @@ export default function CostsPage({ searchParams }: PageProps) {
       fallback={
         <NavPageLoading
           current="costs"
-          title="Cost Ledger"
+          title="Costs"
           className="costs-page-shell"
           rows={6}
         />

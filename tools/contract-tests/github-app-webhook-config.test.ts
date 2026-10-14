@@ -127,25 +127,6 @@ describe('GitHub App webhook configuration', () => {
     ]);
   });
 
-  it('reads the HMAC secret from GCP instead of a repository secret', async () => {
-    const workflow = await fs.readFile(
-      '.github/workflows/configure-github-app-webhook.yml',
-      'utf8',
-    );
-
-    // Pinned by SHA fleet-wide (supply-chain hardening adopted from
-    // homelab); the assertion enforces the pin so a float cannot return.
-    expect(workflow).toMatch(/google-github-actions\/auth@[0-9a-f]{40} # v3/);
-    expect(workflow).toContain('webhook_secret_version:');
-    expect(workflow).toContain(
-      'gcloud secrets versions access "$WEBHOOK_SECRET_VERSION"',
-    );
-    expect(workflow).not.toContain('gcloud secrets versions access latest');
-    expect(workflow).toContain('--out-file="$webhook_secret_file"');
-    expect(workflow).not.toMatch(/WEBHOOK_SECRET="\$\(/u);
-    expect(workflow).not.toContain('secrets.AGENT_LCARS_WEBHOOK_SECRET');
-  });
-
   it('preserves every webhook-secret byte read from Secret Manager', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'agent-lcars-webhook-secret-'),

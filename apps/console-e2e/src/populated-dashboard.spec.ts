@@ -26,6 +26,54 @@ useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
 test.describe('populated dashboard', () => {
+  for (const width of [390, 1280]) {
+    test(`keeps Agents task titles onsite at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      for (const testId of ['live-run-issue-link', 'recent-run-issue-link']) {
+        await page.goto('/agents');
+        const workspace = page.getByRole('region', {
+          name: 'Agent operations',
+        });
+        const title = workspace.getByTestId(testId).first();
+        await expect(title).toBeVisible();
+        await expect(title).toHaveAttribute(
+          'href',
+          /^\/agents\?repo=.+&sel=run%3A.+$/,
+        );
+        await expect(title).not.toHaveAttribute('target', '_blank');
+        for (const link of await workspace
+          .locator('a[href^="https://github.com/"]')
+          .all()) {
+          await expect(link).toContainText('GitHub');
+        }
+        const href = await title.getAttribute('href');
+        await title.click();
+        await expect(page).toHaveURL(
+          (url) => `${url.pathname}${url.search}` === href,
+        );
+        {
+          const detail = page.getByTestId('bridge-detail');
+          await expect(detail).toBeVisible();
+          await expect(
+            detail.getByTestId(
+              testId === 'live-run-issue-link'
+                ? 'current-run-row'
+                : 'finished-run-row',
+            ),
+          ).toBeVisible();
+          const back = detail.getByRole('link', { name: '← All activity' });
+          const backHref = await back.getAttribute('href');
+          await expect(back).toHaveAttribute('href', /^\/agents\?repo=.+$/);
+          await back.click();
+          await expect(page).toHaveURL(
+            (url) => `${url.pathname}${url.search}` === backHref,
+          );
+          await expect(page.getByTestId('bridge-detail')).toHaveCount(0);
+        }
+      }
+    });
+  }
+
   for (const path of ['/', '/agents']) {
     test(`expires projected fleet capacity locally on ${path} while dashboard streaming is denied`, async ({
       page,
@@ -267,8 +315,10 @@ test.describe('populated dashboard', () => {
     await expect(recent.getByText('success').first()).toBeVisible();
     await expect(recent.getByText('failed').first()).toBeVisible();
     await expect(recent.getByText('timeout').first()).toBeVisible();
-    // Pipeline source tags stay on the deeper Agents evidence view.
-    await expect(recent.getByText('opencode', { exact: true })).toHaveCount(0);
+    // The completions table carries the agent column (design/fleet-console.html).
+    await expect(
+      recent.getByText('opencode', { exact: true }).first(),
+    ).toBeVisible();
   });
 
   test('the primary Open task action opens the selected run in the desktop Bridge pane', async ({
@@ -282,7 +332,10 @@ test.describe('populated dashboard', () => {
     const primaryAction = duplicateGroup
       .getByTestId('current-run-primary-action')
       .first();
-    await expect(primaryAction).toHaveText('Open task');
+    // The run's reference is its primary action (design/fleet-console.html).
+    await expect(primaryAction).toHaveText(
+      `sprinkles#${E2E_ITEM_NUMBERS.duplicateDispatch}`,
+    );
     await primaryAction.click();
 
     await expect(page).toHaveURL(/\bsel=run%3A/);
@@ -378,7 +431,7 @@ test.describe('populated dashboard', () => {
     await expect(header.getByText('Cost', { exact: true })).toBeVisible();
     await expect(
       header.getByRole('link', {
-        name: `#${E2E_ITEM_NUMBERS.silentError}`,
+        name: `GitHub #${E2E_ITEM_NUMBERS.silentError}`,
         exact: true,
       }),
     ).toBeVisible();
@@ -444,12 +497,15 @@ test.describe('responsive decision inbox', () => {
       header.getByRole('heading', { level: 1, name: 'Decision Inbox' }),
     ).toBeVisible();
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
-    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+    // The decision list is full width until a decision is selected
+    // (design/fleet-console.html).
+    await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
 
     await workspace
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
       .getByRole('link')
       .click();
+    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
 
     await expect(page).toHaveURL(
       new RegExp(`\\bitem=[^&]*${E2E_ITEM_NUMBERS.reviewRequested}`),
@@ -526,6 +582,11 @@ test.describe('responsive decision inbox', () => {
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
+    // The detail column opens beside the list once a decision is selected.
+    await workspace
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
     expect(
       await page.evaluate(
@@ -616,8 +677,9 @@ test.describe('responsive decision inbox', () => {
     ).toBeVisible();
     await expect(runningRow.locator('.ci-running-badge')).toHaveCount(0);
 
-    const search = workspace.getByRole('textbox', {
-      name: 'Search the Inbox',
+    // The FIND field (its label, input and refine controls) as one box.
+    const search = workspace.locator('.queue-search-input', {
+      has: page.getByRole('textbox', { name: 'Search the Inbox' }),
     });
     const searchBounds = await search.boundingBox();
     const workspaceBounds = await workspace.boundingBox();
@@ -824,11 +886,13 @@ test.describe('responsive agent operations', () => {
 
       const operations = workspace.locator('.agents-workspace__operations');
       await expect(operations).toHaveCSS('display', 'block');
+      // design/fleet-console.html #agents order: dispatches, then
+      // completions; claimed-but-idle work follows.
       const sections = [
         workspace.getByTestId('fleet-snapshot-bar'),
         workspace.getByTestId('active-agents-section'),
-        workspace.getByTestId('claimed-idle-section'),
         workspace.getByTestId('recent-outcomes'),
+        workspace.getByTestId('claimed-idle-section'),
       ];
       const sectionBounds = await Promise.all(
         sections.map(async (section) => section.boundingBox()),
@@ -887,24 +951,26 @@ test.describe('responsive agent operations', () => {
     });
   }
 
-  test('keeps populated agent columns balanced on tablet @agents-mobile', async ({
+  test('stacks populated agent panels full width on tablet @agents-mobile', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 820, height: 1180 });
     await page.goto('/agents');
 
+    // design/fleet-console.html stacks the panels: dispatches above
+    // completions and claimed work, each the workspace's full width.
     const workspace = page.getByRole('region', { name: 'Agent operations' });
     const operations = workspace.locator('.agents-workspace__operations');
-    await expect(operations).toHaveCSS('display', 'grid');
+    await expect(operations).toHaveCSS('display', 'block');
     const primary = await workspace
       .locator('.agents-workspace__primary')
       .boundingBox();
     const secondary = await workspace
       .locator('.agents-workspace__secondary')
       .boundingBox();
-    expect(primary?.width).toBeGreaterThan(400);
-    expect(secondary?.width).toBeGreaterThanOrEqual(320);
-    expect(primary?.x).toBeLessThan(secondary?.x ?? 0);
+    expect(primary?.width).toBeGreaterThan(600);
+    expect(secondary?.width).toBe(primary?.width);
+    expect(primary?.y ?? 0).toBeLessThan(secondary?.y ?? 0);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

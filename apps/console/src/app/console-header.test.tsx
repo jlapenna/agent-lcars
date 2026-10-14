@@ -159,14 +159,15 @@ describe('ConsoleHeader nav rail', () => {
       days: 90,
       source: 'cli',
       issueNumber: 42,
+      agent: 'codex',
     });
 
     expect(
       screen.getByRole('link', { name: 'Sessions' }).getAttribute('href'),
-    ).toBe('/sessions?days=90&source=cli&issue=42');
+    ).toBe('/sessions?days=90&source=cli&issue=42&agent=codex');
     expect(
       screen.getByRole('link', { name: 'Costs' }).getAttribute('href'),
-    ).toBe('/costs?days=90&source=cli&issue=42');
+    ).toBe('/costs?days=90&source=cli&issue=42&agent=codex');
     expect(
       screen.getByRole('link', { name: 'Bridge' }).getAttribute('href'),
     ).toBe('/');

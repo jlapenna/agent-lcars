@@ -25,17 +25,45 @@
         {
           "id": 150568943,
           "account": "jlapenna",
-          "repositorySelection": "selected",
+          "repositorySelection": "all",
           "repositories": [
+            "jlapenna/adk-go",
             "jlapenna/agent-lcars",
+            "jlapenna/bambu",
+            "jlapenna/bikebuds",
+            "jlapenna/claude-memory",
+            "jlapenna/ebayclaw",
+            "jlapenna/fendlife",
+            "jlapenna/fleet-runtime",
+            "jlapenna/foursquared",
+            "jlapenna/home-assistant",
+            "jlapenna/home-assistant-config",
             "jlapenna/homegit",
             "jlapenna/homelab",
+            "jlapenna/jclaw",
+            "jlapenna/jlapenna.github.io",
+            "jlapenna/labels",
+            "jlapenna/lossless-claw",
+            "jlapenna/mcporter",
             "jlapenna/messages-control",
             "jlapenna/nx-cache-server",
+            "jlapenna/open-design",
+            "jlapenna/openclaw",
+            "jlapenna/openclaw-workspace-backups",
             "jlapenna/repo-tools",
-            "jlapenna/sync-padd"
+            "jlapenna/restic-glance-extension",
+            "jlapenna/s1ngularity-repository",
+            "jlapenna/service-registry",
+            "jlapenna/spark-arena-blog",
+            "jlapenna/sparkrun",
+            "jlapenna/sparkrun-config",
+            "jlapenna/sparkstack",
+            "jlapenna/sparkstack-registry",
+            "jlapenna/sync-padd",
+            "jlapenna/wedding",
+            "jlapenna/x1c"
           ],
-          "_note": "jlapenna/messages-control was admitted to the Console and repository contracts by #2436; its explicit App membership is required without changing selected scope to all. jlapenna/homegit is not a fleet agent repo; it is installed so the App can read/write the dotfiles repo. jlapenna/repo-tools is likewise not a fleet agent repo; it is the public source of the repo-* worktree/PR tooling the fleet's skills invoke, installed so the App can maintain it. Both are listed here so their presence is documented rather than surprising."
+          "_note": "The maintainer confirmed All repositories access for this jlapenna installation during labels onboarding on 2026-10-12. The repository list was observed with this App's own temporary installation token, then the token was revoked. The complete observed list remains modelled so new repository access is reported as drift. Installation coverage does not establish an active runner or admit a repository to the Console."
         },
         {
           "id": 150568991,
@@ -83,16 +111,45 @@
         {
           "id": 154210710,
           "account": "jlapenna",
-          "repositorySelection": "selected",
+          "repositorySelection": "all",
           "repositories": [
+            "jlapenna/adk-go",
             "jlapenna/agent-lcars",
+            "jlapenna/bambu",
+            "jlapenna/bikebuds",
+            "jlapenna/claude-memory",
+            "jlapenna/ebayclaw",
+            "jlapenna/fendlife",
+            "jlapenna/fleet-runtime",
+            "jlapenna/foursquared",
+            "jlapenna/home-assistant",
+            "jlapenna/home-assistant-config",
             "jlapenna/homegit",
             "jlapenna/homelab",
+            "jlapenna/jclaw",
+            "jlapenna/jlapenna.github.io",
+            "jlapenna/labels",
+            "jlapenna/lossless-claw",
+            "jlapenna/mcporter",
             "jlapenna/messages-control",
             "jlapenna/nx-cache-server",
-            "jlapenna/sync-padd"
+            "jlapenna/open-design",
+            "jlapenna/openclaw",
+            "jlapenna/openclaw-workspace-backups",
+            "jlapenna/repo-tools",
+            "jlapenna/restic-glance-extension",
+            "jlapenna/s1ngularity-repository",
+            "jlapenna/service-registry",
+            "jlapenna/spark-arena-blog",
+            "jlapenna/sparkrun",
+            "jlapenna/sparkrun-config",
+            "jlapenna/sparkstack",
+            "jlapenna/sparkstack-registry",
+            "jlapenna/sync-padd",
+            "jlapenna/wedding",
+            "jlapenna/x1c"
           ],
-          "_note": "Narrowed from 'all' (23 repos) to five on 2026-08-17 (#1381). The selected contract also includes messages-control for the Homelab Actions exporter after #2436 onboarding. The existing homegit grant is retained; installation membership alone does not establish a current ARC registration or active runner."
+          "_note": "The maintainer confirmed All repositories access for this jlapenna installation during labels onboarding on 2026-10-12. The repository list was observed with this App's own temporary installation token, then the token was revoked. The complete observed list remains modelled so new repository access is reported as drift. Installation coverage does not establish an active runner or admit a repository to the Console."
         },
         {
           "id": 154210731,
@@ -116,7 +173,7 @@
         "metadata": "read"
       },
       "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. It also carries actions:read (App settings UI, 2026-09-20) for the github-actions-exporter deployed on homelab: since jlapenna/agent-lcars#2024 the exporter authenticates as this App with a copy of the same key and reads /repos/{owner}/{repo}/actions/runs, which needs Actions read. Prose: docs/fleet-credentials.md ('Autoscaler App key').",
-      "_scopeNote": "This App holds administration:write, so an installation's scope is authority over every repository it covers. The contract is asymmetric: jlapenna must be 'selected' (6, including messages-control), while supersprinklesracing remains modelled 'all' (7; design joined automatically when it was created on 2026-10-06). #1381 records the separate organization-side narrowing decision; this onboarding does not change that installation. These are contract values, not proof of live convergence: an unexpected 'all' selection must remain drift. The full repository lists are modelled deliberately because silently gaining admin-capable access to a new repository must be reported."
+      "_scopeNote": "This App holds administration:write over every repository its installations cover. The maintainer confirmed all-repository access for jlapenna during labels onboarding on 2026-10-12. The supersprinklesracing installation retains its existing all-repository baseline and separately owned narrowing decision (#1381). Complete repository lists remain modelled so new admin-capable access is reported. GitHub App coverage does not widen WIF admission or establish active runners."
     }
   ],
   "fleetCoverageExceptions": [],
@@ -226,6 +283,16 @@
         "roles/secretmanager.secretAccessor": [
           "serviceAccount:claude-token-reader@agent-lcars.iam.gserviceaccount.com"
         ]
+      }
+    }
+  ],
+  "serviceAccountIamPolicies": [
+    {
+      "project": "agent-lcars",
+      "serviceAccount": "work-reader@agent-lcars.iam.gserviceaccount.com",
+      "rationale": "The read-only Work API identity for interactive maintainer sessions (jlapenna/agent-lcars#2502). Its Console grant carries work.reader alone (the issue-owner query), and it holds no project role. Exactly one principal - the maintainer's Google account - may mint its tokens; another member would extend Console reads to that principal. Declared by google_service_account_iam_member.work_reader_token_creator in infra/terraform/main.tf.",
+      "bindings": {
+        "roles/iam.serviceAccountTokenCreator": ["user:jlapenna@gmail.com"]
       }
     }
   ]

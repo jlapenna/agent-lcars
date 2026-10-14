@@ -34,6 +34,52 @@ available through Git history.
    drain. Expiry alone is not deletion authority. Both perform bounded retry; an exhausted retry budget parks the
    task for manual action.
 
+## Authorized label provider handoff
+
+A sole `agent:*` replacement from the Console administrator allowlist uses
+`github-work-admission.ts` and the authoritative request transaction. Its signed
+source clock must advance past the latest label request. The transaction reads
+the active attempt, latest attempt and retained physical claims before deciding.
+It cancels only unclaimed queued work and mints one fresh requested-provider
+attempt; Work and predecessor provider facts remain unchanged. Claimed/running
+owners, unresolved credential operations and retained physical claims refuse.
+Parked and terminal tasks may start fresh only with those gates clear. Refused
+requests are visible in task history and require a new label application; they
+never become automatic deferred execution. Ordinary provider claim and capacity
+fences still apply to the successor.
+
+## Worker startup acknowledgement
+
+The direct-runner installs its best-effort EXIT failure reporter after reading
+its authenticated brief, then synchronously sends one ordinary heartbeat before
+checkout, credential restoration, telemetry startup or provider execution. It
+requires HTTP 200 and one JSON object containing the exact `runId` and a valid
+UTC `expiresAt`. Refusal, transport failure or an unknown acknowledgement stops
+setup without retrying into provider work. The Console returns this existing
+response only after authenticated renewal commits. Its original startup deadline
+and exact claim/credential authority remain authoritative; a successful brief
+read alone does not establish completion authority.
+
+After acknowledgement the existing periodic heartbeat loop maintains liveness
+through setup, credential contention and execution. Bootstrap liveness does not
+report OS process spawn: the separate provider-process supervisor owns that
+observation, and neither observation proves model activity or useful results.
+Provider execution/correction budgets retain their existing monotonic clocks.
+
+| Producer / reader                                                                          | Startup behavior                                                                                                |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Acknowledgement-gated worker / Console returning the existing committed heartbeat response | Setup proceeds only after accepted startup, including placement with less than one periodic interval remaining. |
+| Acknowledgement-gated worker / missing route, refused or malformed response                | Stops before checkout, credential restoration or provider work.                                                 |
+| Older worker without this gate / startup-fenced Console                                    | No retroactive protection; a periodic first heartbeat arriving after the startup deadline is still refused.     |
+
+This gate does not attest an image before claim. Runner identity alone does not
+prove compatibility; exact image/source adoption and a genuine delayed-start
+attempt with terminal credential persistence/completion remain separate runtime
+qualification gates. A refused EXIT callback cannot prove durable settlement.
+Existing authenticated executor exit, deadline recovery, credential cleanup and
+positive physical retirement own recovery; published artifacts do not authorize
+reviving an expired worker or releasing its claim.
+
 ## Explicit provider fallback
 
 Fallback is opt in: Work `spec.fallbackPipelines` names ordered alternatives;
@@ -50,6 +96,12 @@ are temporarily occupied or cooling down, the first authorized unattempted
 alternative remains a fresh queued intent; ordinary claim ceilings and cooldowns
 hold it until it can run. Missing opt-in, revoked authority or exhausted
 alternatives still settle without a successor.
+A `provider-capacity` report is the same availability class with no window to wait on: the direct
+runner derives it from the provider's own structured failure events when a round stops before any
+final message, so an empty last message cannot degrade it to a generic agent failure. It holds that
+provider for exactly one bounded probe and never parses a reset, and it keeps the provider's cause
+in the reported message. A cross-provider successor still requires the explicit policy and current
+grant above; without them the attempt stays failed and the only change is an honest cause.
 Claimed Codex terminal transitions reserve exact cleanup authority in the same
 transaction as the original result, successor and outbox. Completion handlers
 reload that reservation under the authenticated claim fingerprint before
@@ -204,13 +256,14 @@ previous observation to expire after three minutes. Node availability is
 never guessed from GitHub or an unavailable inventory. Rotating the sweep
 cursor prevents a slow report from starving later claims.
 
-The existing startup bound from #2188 remains fifteen minutes from claim to
-first heartbeat, including placement and bootstrap. Observation traffic cannot
-extend it. The five-minute maintenance cadence normally settles an expired
+Legacy claims retain the fifteen-minute bound from #2188, including placement
+and bootstrap. Display observation traffic cannot extend it. Negotiated
+placement-aware claims use the separately fenced startup operation below. The five-minute maintenance cadence normally settles an expired
 startup within twenty minutes; it records startup loss, not a model failure.
 A normal temporary capacity wait remains placement until that bound. Accepted
 worker heartbeats then use the renewable run lease. Kubernetes' unchanged
-7200-second active deadline is an independent Job backstop, not permission to
+7200-second execution limit is an independent backstop (a Job deadline for
+legacy claims, a Pod runtime deadline for negotiated claims), not permission to
 run after control-plane settlement. Exact-claim foreground retirement and Pod
 drain still precede admission of a successor. The one-Pending gate, provider
 serialization, requests, selectors, taints and `max_concurrent` are unchanged.
@@ -221,3 +274,27 @@ clock with a refresh time. Legacy claimed runs without observations show
 placement unavailable. Admission alone is no longer coarsened to active
 provider work. Runtime qualification requires the normally deployed executor
 and console; fixture/browser evidence does not claim live placement capacity.
+
+### Queue placement and startup clocks
+
+Executors negotiate `placementAware: true` on claim; the Console echoes it
+only when the durable claim carries startupPlacement state. Old callers retain their
+claim-time 15-minute first-heartbeat deadline. New callers fail closed if the
+claim response does not acknowledge the contract.
+
+A fresh executor-authenticated `/runs/{runId}/startup-placement` report for the exact
+claim fingerprint and bound Job UID renews the finite 15-minute observation
+window while its single owned live Pod remains unassigned and Pending. The
+controller reports only negotiated, unsuspended Jobs; absent/ambiguous Pods,
+terminal or deleting objects, and API failures do not renew the claim. Once
+assigned, placement starts the 15-minute bootstrap deadline once. Further
+placement reports cannot renew bootstrap or an accepted worker heartbeat.
+A stopped observer therefore still expires; placement never records worker
+heartbeat or provider startup.
+
+Negotiated Jobs retain the two-hour runtime limit on the Pod, whose kubelet
+clock starts after assignment, rather than on the Job's scheduling clock.
+Resources, bounded Pending admission, exact retirement authority and receipt
+fences remain unchanged. Live qualification requires compatible Console and
+controller delivery and a real admitted work item; source tests alone do not
+prove deployed behavior.

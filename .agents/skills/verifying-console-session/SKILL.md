@@ -105,7 +105,8 @@ OAuth login path itself.
 
 ## Capture
 
-From the repository root:
+Apply the [local browser phase preflight](#local-browser-phase-preflight)
+before capture as well. From the repository root:
 
 ```bash
 # Private state on this workstation (default)
@@ -141,7 +142,8 @@ revoked, `3` wrong role, and `4` expiring or unknown expiry. The request has a
 does not rotate or refresh a credential and never saves response cookies.
 `verify-session --minimum-valid-days 14` uses the same expiry classifier before
 page navigation. A readiness pass proves authentication and the rotation
-window; use the browser verifier below for rendered-page acceptance.
+window; it does not qualify host capacity or resource guards. Use the browser
+verifier below for rendered-page acceptance after the local phase preflight.
 
 For a daily operator-owned check, configure the following command in the
 existing private monitoring environment, with its saved-state read identity
@@ -163,8 +165,20 @@ with this exact scoped command (read-only workers must not run it):
   --secret-name AGENT_LCARS_ADMIN_STORAGE_STATE --auth-secret-name AUTH_SECRET
 ```
 
-After rotation, run `check-session` above, then prove the admin session and
-the intended page with the supported browser verifier:
+### Local browser phase preflight
+
+Before browser capture, reuse or browser-cache installation, read and apply
+[Bounded local verification](../agent-lcars-dev/references/verify.md#bounded-local-verification)
+at the launch decision. Keep capacity, supervisor, accounting and storage
+requirements in that authoritative owner; this skill supplies the saved-session
+sequence. Read-only credential readiness above remains a separate check.
+
+Keep failed guard receipts distinct from later functional evidence. Checking
+this route establishes the handoff, not future agent behavior or resource
+enforcement.
+
+After rotation, run `check-session` above, qualify the local phase, then prove
+the admin session and the intended page with the supported browser verifier:
 
 ```bash
 ./tools/nx run @agent-lcars/console:verify-session -- \

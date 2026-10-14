@@ -258,6 +258,7 @@ export async function requestReply(
     taskId: request.task,
     requestId,
     pipeline,
+    priority: latest?.priority ?? spec.priority ?? 'normal',
     providerFallback: authorizeProviderFallback(
       principal,
       pipeline,

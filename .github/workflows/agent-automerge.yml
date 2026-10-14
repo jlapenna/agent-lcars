@@ -75,9 +75,7 @@ jobs:
       fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       app-token-enabled: true
       app-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
-      # Self-hosted, general-purpose lcars-default pool. Glue work stays off
-      # the QueueExecutor direct-container route.
-      runs-on: '["lcars-default"]'
+      runs-on: '["agent-lcars-ci"]'
       # The required CI checks in the Protect main ruleset.
       required-checks: '["E2E","Verify","Runner image pnpm-store seed","repository-owned Terraform"]'
     secrets:

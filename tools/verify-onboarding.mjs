@@ -156,7 +156,11 @@ export async function auditRepository({
   const facts = [];
   const explicitMetadataToken = auditReadToken?.trim();
   const metadataToken = explicitMetadataToken || token;
-  async function optionalMetadataRead(action) {
+  const missingMetadataCredential = (capability) =>
+    new UnverifiedError(
+      `${capability}: metadata credential unavailable; set AUDIT_READ_TOKEN (ONBOARDING_AUDIT_READ_TOKEN in the scheduled workflow)`,
+    );
+  async function optionalMetadataRead(capability, action) {
     try {
       return await action();
     } catch (error) {
@@ -166,7 +170,7 @@ export async function auditRepository({
         error.status === 403 &&
         !error.rateLimited
       )
-        throw new UnverifiedError('Metadata read credential unavailable');
+        throw missingMetadataCredential(capability);
       throw error;
     }
   }
@@ -223,8 +227,8 @@ export async function auditRepository({
     return `${expected.length} declared labels match`;
   });
   await fact('variables', async () => {
-    if (!metadataToken)
-      throw new UnverifiedError('Metadata read credential unavailable');
+    const capability = 'Repository variables';
+    if (!metadataToken) throw missingMetadataCredential(capability);
     const profile = Object.entries(profiles).find(([, value]) =>
       value.repositories.includes(repo),
     )?.[0];
@@ -232,7 +236,7 @@ export async function auditRepository({
       throw new AuditError('Repository missing from variable manifest');
     const variables = Object.fromEntries(
       (
-        await optionalMetadataRead(() =>
+        await optionalMetadataRead(capability, () =>
           pages(
             api,
             `/repos/${repo}/actions/variables`,
@@ -246,13 +250,13 @@ export async function auditRepository({
     return `required ${profile} variables present`;
   });
   await fact('required-checks', async () => {
-    if (!metadataToken)
-      throw new UnverifiedError('Metadata read credential unavailable');
-    const metadata = await optionalMetadataRead(() =>
+    const capability = 'Rules and check metadata';
+    if (!metadataToken) throw missingMetadataCredential(capability);
+    const metadata = await optionalMetadataRead(capability, () =>
       api(`/repos/${repo}`, metadataToken),
     );
     const branch = encodeURIComponent(metadata.default_branch);
-    const rules = await optionalMetadataRead(() =>
+    const rules = await optionalMetadataRead(capability, () =>
       pages(api, `/repos/${repo}/rules/branches/${branch}`, metadataToken),
     );
     const required = rules
@@ -260,10 +264,10 @@ export async function auditRepository({
       .flatMap((rule) => rule.parameters.required_status_checks);
     if (!required.length)
       throw new AuditError('Default branch has no required checks');
-    const commit = await optionalMetadataRead(() =>
+    const commit = await optionalMetadataRead(capability, () =>
       api(`/repos/${repo}/commits/${branch}`, metadataToken),
     );
-    const checks = await optionalMetadataRead(() =>
+    const checks = await optionalMetadataRead(capability, () =>
       pages(
         api,
         `/repos/${repo}/commits/${commit.sha}/check-runs?filter=all`,
@@ -271,7 +275,7 @@ export async function auditRepository({
         'check_runs',
       ),
     );
-    const statuses = await optionalMetadataRead(() =>
+    const statuses = await optionalMetadataRead(capability, () =>
       pages(
         api,
         `/repos/${repo}/commits/${commit.sha}/statuses`,
@@ -297,7 +301,7 @@ export async function auditRepository({
           (rule) => !checks.some((check) => check.name === rule.context),
         )
       ) {
-        const runs = await optionalMetadataRead(() =>
+        const runs = await optionalMetadataRead(capability, () =>
           api(
             `/repos/${repo}/actions/runs?head_sha=${commit.sha}&per_page=100`,
             metadataToken,
@@ -473,7 +477,7 @@ export async function runAudit({
           ...fact,
           status: 'UNVERIFIED',
           detail:
-            'Registration App identity absent or differs from supplied App credential; audit with its declared identity',
+            'Registration App identity absent or differs from supplied App credential; supply its declared identity with RUNNER_APP_CLIENT_ID/RUNNER_APP_PRIVATE_KEY (or the LEGACY_RUNNER_APP_* pair)',
         });
         continue;
       }

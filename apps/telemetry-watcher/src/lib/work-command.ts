@@ -10,7 +10,13 @@ import {
 import { parseArgs, promisify } from 'node:util';
 
 import {
+  QUEUE_PRIORITIES,
+  type QueuePriority,
+} from '@agent-lcars/dispatch-contracts';
+import {
+  type AnchorOwner,
   fallbackPipelinesSchema,
+  githubDispatchAnchorSchema,
   type ItemsContract,
   itemsContract,
   itemStateSchema,
@@ -36,12 +42,14 @@ export interface WorkCommandDeps {
 }
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>]\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
+  '       work owner <owner/repo>#<n> [--json] (read-only: who Console says is working a GitHub issue or PR)\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
-  '       status exits 1 for failed work (with or without --watch); other states exit 0.';
+  '       status exits 1 for failed work (with or without --watch); other states exit 0.\n' +
+  '       owner exits 0 with any verdict (fleet-run, interactive-session, none); 1 when session telemetry was unavailable.';
 
 const execFileAsync = promisify(execFile);
 
@@ -100,7 +108,12 @@ const SETTLED = new Set(['done', 'parked', 'failed', 'canceled']);
 interface ItemSummary {
   id: string;
   state: string;
-  spec: { title: string; pipeline: string; target: { repo: string } };
+  spec: {
+    title: string;
+    pipeline: string;
+    priority?: QueuePriority;
+    target: { repo: string };
+  };
 }
 
 function line(item: ItemSummary): string {
@@ -140,6 +153,71 @@ function readReplyFile(file: string): string {
   }
 }
 
+/** `owner/repo#123` -> the Work API's GitHub anchor shape, or undefined. */
+function parseAnchorRef(
+  ref: string,
+): { repo: string; issue: number } | undefined {
+  const match = /^([^#\s]+)#(\d+)$/u.exec(ref);
+  if (!match) return undefined;
+  const parsed = githubDispatchAnchorSchema.safeParse({
+    repo: match[1],
+    issue: Number(match[2]),
+  });
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Human rendering of an anchor-owner answer: the verdict first, then the
+ *  evidence it rests on, one fact per line. */
+function ownerLines(owner: AnchorOwner): string[] {
+  const lines = [
+    `${owner.anchor.repo}#${owner.anchor.issue}  ${owner.verdict}${owner.complete ? '' : '  (incomplete)'}`,
+  ];
+  const { task } = owner;
+  if (task === undefined) {
+    lines.push('  task     none (Console has never dispatched this anchor)');
+  } else {
+    lines.push(
+      `  task     ${task.state}  ${task.pipeline}  runs ${task.runCount}  updated ${task.updatedAt}`,
+    );
+    const { run } = task;
+    if (run !== undefined) {
+      const live = run.runId === task.activeRunId ? 'live' : 'last';
+      const claimed =
+        run.queue?.claimedBy === undefined
+          ? ''
+          : `  claimed by ${run.queue.claimedBy}`;
+      const result =
+        run.result === undefined
+          ? ''
+          : `  result ${run.result.ok ? 'ok' : 'not ok'}${run.result.summary === undefined ? '' : ` (${run.result.summary})`}`;
+      lines.push(
+        `  ${live} run ${run.runId}  ${run.state}  ${run.pipeline}${claimed}${result}  updated ${run.updatedAt}`,
+      );
+    }
+    for (const session of task.runSessions) {
+      lines.push(
+        `  worker   ${session.sessionId}  last activity ${session.lastActivityAt}`,
+      );
+    }
+  }
+  for (const session of owner.cliSessions) {
+    const where = [
+      session.host,
+      session.branch === undefined ? undefined : `branch ${session.branch}`,
+      session.pr === undefined ? undefined : `PR #${session.pr.number}`,
+    ]
+      .filter((part) => part !== undefined)
+      .join('  ');
+    lines.push(
+      `  session  ${session.sessionId}  ${session.liveness}  ${session.agent}${where === '' ? '' : `  ${where}`}  last activity ${session.lastActivityAt}`,
+    );
+  }
+  if (owner.cliSessions.length === 0) {
+    lines.push('  session  none referencing this anchor');
+  }
+  return lines;
+}
+
 /** Every "bad invocation" exit shares this shape: print usage to stderr --
  *  where CLI errors belong, not stdout -- and report it back in the result
  *  too, for a caller that wants to act on it without re-parsing output. */
@@ -173,6 +251,23 @@ export async function executeWorkCommand(
             'Lifecycle snapshot truncated; health/latency series suppressed.',
           );
         return { ok: snapshot.complete };
+      }
+      case 'owner': {
+        const json = rest.includes('--json');
+        const positionals = rest.filter((arg) => arg !== '--json');
+        const anchor =
+          positionals.length === 1 && rest.length - positionals.length <= 1
+            ? parseAnchorRef(positionals[0] ?? '')
+            : undefined;
+        if (anchor === undefined) return usageFailure(deps);
+        const owner = await c.anchorOwner(anchor, {
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (json) deps.stdout(JSON.stringify(owner));
+        else for (const ownerLine of ownerLines(owner)) deps.stdout(ownerLine);
+        for (const warning of owner.warnings)
+          deps.stderr(`warning: ${warning}`);
+        return { ok: owner.complete };
       }
       case 'reply': {
         const parsed = parseArgs({
@@ -232,6 +327,13 @@ export async function executeWorkCommand(
         const repo = flag(rest, '--repo');
         const pipeline = flag(rest, '--pipeline');
         const title = flag(rest, '--title');
+        const priority = flag(rest, '--priority');
+        if (
+          rest.includes('--priority') &&
+          !(QUEUE_PRIORITIES as readonly string[]).includes(priority ?? '')
+        ) {
+          return usageFailure(deps);
+        }
         const description = readDescription(rest);
         const fallback = flag(rest, '--fallback-pipelines');
         if (rest.includes('--fallback-pipelines') && fallback === undefined)
@@ -252,6 +354,7 @@ export async function executeWorkCommand(
             title,
             description,
             pipeline: pipeline as 'claude' | 'codex' | 'opencode',
+            priority: (priority ?? 'normal') as QueuePriority,
             ...(fallbackPipelines === undefined ? {} : { fallbackPipelines }),
             target: { repo },
           },

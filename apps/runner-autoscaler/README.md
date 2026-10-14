@@ -63,6 +63,20 @@ snapshot expires after three minutes. Pending jobs mean
 runners retain ARC's own semantics. They are separate from Kubernetes Pending
 pods and from QueueExecutor's native Work capacity.
 
+A snapshot may also carry `jobStartup`: the listener's
+`gha_job_startup_duration_seconds` histogram, summed across label sets, as
+one cumulative-count vector per recorded minute over the last 30 minutes
+(`bounds` are the finite bucket bounds in seconds, and each interval's last
+count is the `+Inf` bucket), plus `startedAt`, when the oldest interval
+began. The console's Bridge and Shuttlebay sum lanes
+per minute for CI wait p50. Each autoscaler replica keeps the window in
+memory. It is absent until two snapshots are known. A listener restart, a
+vanished histogram, a bucket-layout change or a gap of more than two minutes
+in successful scrapes starts it again rather than publishing a delta across
+the reset. A malformed histogram drops only `jobStartup`; the lane's capacity
+snapshot is still written. A listener that has reported no job
+start since it began exposes no histogram, so it publishes no window.
+
 Each successful lane snapshot repeats `expectedLanes`: the sorted,
 comma-separated DNS-label names from the validated `arc_lanes` configuration.
 This bounded inventory uses the existing change/heartbeat write gate, with no
@@ -202,6 +216,21 @@ defaults cannot enable it. Run content cannot choose it. Changes require
 restarting the executor and affect newly created Jobs; existing attempts retain
 their launch configuration. See
 [worker policy rollout](../../docs/worker-policy-rollout.md) for gates and rollback.
+
+Every pipeline reports live telemetry through provider hooks
+([design](../../docs/hooks-telemetry-design.md), phase 3); there is no
+selector. Claude and Codex workers install `lcars` hook entries after their
+own config exists; for OpenCode the image's `lcars-telemetry.js` plugin
+activates once the writer credentials path is exported. The worker fences
+and drains the hook flusher before `runner finalize`, which writes the
+authoritative final session doc. A worker that dies first never finalizes;
+when the Work API settles that run `lost`, the executor marks the run's
+still-`live`/`idle` session docs `ended` (best effort, only with status
+publication enabled; `lost_run_sessions.go`). A missing credentials file or failed
+install prints a `::warning::` and the run continues without live
+telemetry; there is no polling sidecar fallback. The executor ignores the
+retired `LCARS_HOOK_TELEMETRY_PROVIDERS` variable if a deployment still sets
+it, and no longer forwards it to Jobs.
 
 The poller starts only after the Kubernetes preflight below passes, then sends
 a claim body containing only its runner identity. The server derives
@@ -350,10 +379,11 @@ autoscaler's process environment. The baked OpenCode config consumes the
 read-only key file directly, rather than exporting the key to the OpenCode
 process, so routine agent tool-shell environment inspection cannot recover it.
 
-Before telemetry starts, the direct runner synchronously initializes
+Before the provider starts, the direct runner synchronously initializes
 OpenCode's local store with a pure session listing, bounded to 30 seconds by
-default (`OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS`, valid range 1-120). This avoids
-a first-run migration race between OpenCode and its telemetry sidecar. If an
+default (`OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS`, valid range 1-120), unless the
+image's baked empty store matches. The resulting baseline lets a
+continuation pick the one new workspace session. If an
 OpenCode round exits zero after completed verifier lookups find no exact-marker
 deliverable, the runner may continue the one unambiguous workspace session
 once. That continuation shares the original `OPENCODE_TIMEOUT_SECONDS`
@@ -445,9 +475,11 @@ adoption, real owned-Pod drainage, and useful successor execution require
 separate live evidence.
 
 **`SIGUSR1` pauses the queue poller from claiming.** The signal toggles an
-in-process flag the poller checks before every claim call and before starting
-a recovery sweep: the first `SIGUSR1` pauses both, a second resumes them.
-An already running bounded sweep may finish. This is a separate, in-memory
+in-process flag checked before every claim call and before resuming an
+ordinary suspended Job: the first `SIGUSR1` pauses those actions, a second
+resumes them. Bounded maintenance sweeps continue observing placement and
+retiring settled claims for accepted workers. An already admitted startup
+resume or running bounded sweep may finish. This is a separate, in-memory
 switch from the `queue.state` machine above: it does not cancel running Jobs
 or settle or un-claim existing runs. Nothing else in this repo touches it. A claim minted moments
 before this instance is replaced would just be another launch failure to
@@ -500,7 +532,7 @@ run's credential. This behavior requires a runner image built from the fix;
 merging the source alone does not update existing images.
 
 Codex session files remain only in the runner's volatile filesystem until the
-telemetry sidecar has finalized and archived them; cleanup then removes the
+telemetry finalize pass has archived them; cleanup then removes the
 per-run directory. A retained Job's Pod therefore holds neither the
 subscription credential nor its session transcript.
 

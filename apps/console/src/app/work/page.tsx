@@ -1,11 +1,5 @@
-import {
-  Anchor,
-  Button,
-  Group,
-  NativeSelect,
-  Text,
-  TextInput,
-} from '@mantine/core';
+import { PIPELINES } from '@agent-lcars/work';
+import { Anchor, Group, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -14,13 +8,23 @@ import { getWatchedRepos } from '@/lib/github-client';
 import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../console-command-utilities';
+import {
+  ConsoleToolbar,
+  ToolbarSearch,
+  ToolbarSelect,
+  ToolbarWindow,
+} from '../console-toolbar';
 import { NavPageLoading, PageLoading } from '../page-loading';
+import { QuickTaskButton } from '../quick-task-button';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { listItems } from './actions';
 import { WorkList } from './work-list';
 import {
+  matchesWorkView,
   parseWorkListQuery,
+  parseWorkViewFilters,
   WORK_PAGE_LIMIT,
+  WORK_WINDOWS,
   workListHref,
   type WorkListParams,
 } from './work-list-query';
@@ -45,6 +49,7 @@ async function WorkBody({ query }: { query: WorkListParams }) {
       </Text>
     );
   }
+  const filters = parseWorkViewFilters(query);
   const [err, data] = await listItems(input);
   if (err) {
     return (
@@ -60,13 +65,19 @@ async function WorkBody({ query }: { query: WorkListParams }) {
   return (
     <>
       <div className="console-workspace__section work-workspace__list">
-        {data.items.length === 0 ? (
-          <Text c="dimmed" size="sm">
-            No matching work items on this page.
-          </Text>
-        ) : (
-          <WorkList items={data.items} />
-        )}
+        {(() => {
+          const now = Date.now();
+          const items = data.items.filter((item) =>
+            matchesWorkView(item, filters, now),
+          );
+          return items.length === 0 ? (
+            <Text c="dimmed" size="sm">
+              No matching work items on this page.
+            </Text>
+          ) : (
+            <WorkList items={items} />
+          );
+        })()}
         <Text size="xs" c="dimmed">
           Each page examines up to {WORK_PAGE_LIMIT} native tasks. Filters apply
           within each page; an empty page may have older matches.
@@ -96,18 +107,73 @@ function WorkViewContent({
   return (
     <WorkWorkspace
       toolbar={
-        <>
-          <Anchor href="/work/schedules" size="sm">
-            Schedules →
-          </Anchor>
-          {canCreateWork && (
-            <form action="/work" className="work-list-filters">
-              <Group align="end" wrap="wrap" gap="xs">
-                <NativeSelect
-                  label="State"
+        canCreateWork ? (
+          <ConsoleToolbar
+            action="/work"
+            primary={
+              <QuickTaskButton watchedRepos={watchedRepos} size="sm" primary />
+            }
+          >
+            <ToolbarSelect
+              name="repo"
+              label="Repository"
+              value={query.repo}
+              options={[
+                {
+                  value: '',
+                  label: `All repositories (${watchedRepos.length})`,
+                },
+                ...watchedRepos.map((repo) => ({
+                  value: `${repo.owner}/${repo.name}`,
+                  label: `${repo.owner}/${repo.name}`,
+                })),
+              ]}
+            />
+            <ToolbarSelect
+              name="agent"
+              label="Agent"
+              value={query.agent}
+              options={[
+                { value: '', label: 'All agents' },
+                ...PIPELINES.map((pipeline) => ({
+                  value: pipeline,
+                  label: `agent:${pipeline}`,
+                })),
+              ]}
+            />
+            <ToolbarWindow
+              name="window"
+              label="Window"
+              value={query.window ?? ''}
+              options={[
+                ...WORK_WINDOWS.map((window) => ({
+                  value: window,
+                  label: window,
+                })),
+                { value: '', label: 'all' },
+              ]}
+            />
+            <ToolbarSearch
+              name="q"
+              label="Find"
+              placeholder="title, repo, work id"
+              value={query.q}
+            />
+            {/* Filters the mockup's toolbar does not draw, kept one click
+                  away so the band stays one row. */}
+            <details className="console-toolbar__more">
+              <summary className="console-toolbar__field">
+                More filters
+                {query.state || query.principal
+                  ? ` · ${[query.state, query.principal].filter(Boolean).length}`
+                  : ''}
+              </summary>
+              <div className="console-toolbar__more-panel">
+                <ToolbarSelect
                   name="state"
-                  defaultValue={query.state ?? ''}
-                  data={[
+                  label="State"
+                  value={query.state}
+                  options={[
                     '',
                     'running',
                     'done',
@@ -116,37 +182,45 @@ function WorkViewContent({
                     'canceled',
                   ].map((value) => ({ value, label: value || 'All states' }))}
                 />
-                <NativeSelect
-                  label="Repository"
-                  name="repo"
-                  defaultValue={query.repo ?? ''}
-                  data={[
-                    { value: '', label: 'All repositories' },
-                    ...watchedRepos.map((repo) => ({
-                      value: `${repo.owner}/${repo.name}`,
-                      label: `${repo.owner}/${repo.name}`,
-                    })),
-                  ]}
-                  style={{ flex: '1 1 180px', minWidth: 0 }}
-                />
-                <TextInput
-                  label="Principal"
+                <input
+                  className="console-toolbar__field work-principal-filter"
                   name="principal"
+                  aria-label="Principal"
                   defaultValue={query.principal ?? ''}
                   maxLength={128}
                   placeholder="All principals"
-                  style={{ flex: '1 1 180px', minWidth: 0 }}
                 />
-                <Button type="submit" size="sm">
-                  Apply filters
-                </Button>
                 <Anchor href="/work" size="sm">
                   Clear filters
                 </Anchor>
-              </Group>
-            </form>
-          )}
-        </>
+              </div>
+            </details>
+            {/* The form's default button, so Enter in either text field
+                  submits (two text fields block implicit submission without
+                  one). Hidden: the mockup's toolbar shows no Apply step. */}
+            <button
+              type="submit"
+              className="console-toolbar__implicit-submit"
+              tabIndex={-1}
+              aria-hidden="true"
+            >
+              Apply
+            </button>
+            {/* The header subtitle carries this link only on wide screens. */}
+            <Anchor
+              href="/work/schedules"
+              size="sm"
+              className="work-schedules-link--compact"
+            >
+              Schedules →
+            </Anchor>
+          </ConsoleToolbar>
+        ) : (
+          // Without the Work grant there are no filters; Schedules stays.
+          <Anchor href="/work/schedules" size="sm">
+            Schedules →
+          </Anchor>
+        )
       }
     >
       <Suspense
@@ -167,11 +241,18 @@ interface WorkViewProps {
 
 const WorkView = withConsolePageShell(
   WorkViewContent,
-  ({ watchedRepos, canCreateWork }: WorkViewProps) => ({
+  ({ watchedRepos }: WorkViewProps) => ({
     className: 'work-page-shell',
     current: 'work',
     title: 'Work',
-    subtitle: 'Native work items',
+    subtitle: (
+      <>
+        Admitted queue, capacity holds and{' '}
+        <a href="/work/schedules" className="console-subtitle-link">
+          schedules
+        </a>
+      </>
+    ),
     // Work was the one destination with no utility cluster at all, so create
     // and refresh were unreachable from it and the mobile overflow menu
     // - the only way to reach the other destinations on a phone - was too
@@ -181,14 +262,14 @@ const WorkView = withConsolePageShell(
         <div className="work-utilities work-utilities--desktop console-utilities--desktop">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
-            includeQuickTask={canCreateWork}
+            includeQuickTask={false}
           />
         </div>
         <div className="work-utilities work-utilities--mobile console-utilities--mobile">
           <ConsoleCommandUtilities
             watchedRepos={watchedRepos}
             includeNavigation
-            includeQuickTask={canCreateWork}
+            includeQuickTask={false}
           />
         </div>
       </>

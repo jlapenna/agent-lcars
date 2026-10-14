@@ -38,7 +38,13 @@ deployment configuration rather than the request Host header:
 The public `GET` and `HEAD` route accepts only the opaque UUID and reads only
 `objects/v1/<uuid>.webp`; it never lists storage. Valid reads return fixed
 `image/webp`, inline disposition, `nosniff`, and `no-cache, max-age=0`
-headers. Malformed, missing, revoked, and unreadable IDs all receive the same
+headers. Public access expires 30 days after GCS's immutable `timeCreated`
+timestamp, including at the exact expiry boundary. The client capture timestamp
+in the existing replay binding cannot renew access. Both methods read server
+creation metadata before any bytes; missing, malformed, non-UTC or future
+timestamps fail closed. Expiry does not delete objects, alter the
+create/replay binding, or change terminal revocation. Malformed, missing,
+expired, revoked, and unreadable IDs all receive the same
 `404` response and no repository, visibility, request, hash, generation, or
 storage metadata. `GET` and `HEAD` share this status/header contract; `HEAD`
 returns no response body.

@@ -58,6 +58,7 @@ function fixture() {
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
     sessionDocsForRuns: async () => [],
+    cliSessions: async () => ({ sessions: [], warnings: [] }),
     scheduleStore: new MemoryScheduleStore(),
     grants: () => grants,
     now: () => new Date(NOW),
@@ -89,39 +90,72 @@ async function post(context: WorkContext, path: string, body: unknown) {
 }
 
 describe('provider fallback at the authenticated Work boundary', () => {
-  it('allows a request-level opt-in without changing the immutable spec and allows explicit disable', async () => {
-    const f = fixture();
-    await post(f.context, '/items', { id: ID, spec });
-    const initial = (await f.store.readActiveRun({ workId: ID }))!;
-    await f.orchestrator.report(initial.runId, {
-      ok: false,
-      summary: 'verification-failed',
-    });
-    expect(
-      (
-        await post(f.context, `/items/${ID}/redispatch`, {
-          fallbackPipelines: ['codex'],
-        })
-      ).status,
-    ).toBe(200);
-    const opted = (await f.store.readActiveRun({ workId: ID }))!;
-    expect(opted.providerFallback?.allowedPipelines).toEqual(['codex']);
-    expect((await f.store.readTask({ workId: ID }))!.task.work['spec']).toEqual(
-      spec,
-    );
-    await f.orchestrator.report(opted.runId, {
-      ok: false,
-      summary: 'verification-failed',
-    });
-    await post(f.context, `/items/${ID}/redispatch`, { fallbackPipelines: [] });
-    const disabled = (await f.store.readActiveRun({ workId: ID }))!;
-    expect(disabled.providerFallback).toBeUndefined();
-    await f.orchestrator.report(disabled.runId, {
-      ok: false,
-      summary: 'provider-limit',
-    });
-    expect(await f.store.listRuns({ workId: ID })).toHaveLength(3);
-  });
+  it.each([
+    [undefined, 'normal'],
+    ['urgent', 'urgent'],
+    ['background', 'background'],
+  ] as const)(
+    'keeps durable Work immutable when fallback changes and request priority is %s',
+    async (priority, expectedPriority) => {
+      const f = fixture();
+      expect(
+        (
+          await post(f.context, '/items', {
+            id: ID,
+            spec: { ...spec, ...(priority === undefined ? {} : { priority }) },
+          })
+        ).status,
+      ).toBe(201);
+      const durableWork = structuredClone(
+        (await f.store.readTask({ workId: ID }))!.task.work,
+      );
+      expect(durableWork).toEqual({
+        origin: { principal: 'user:operator', channel: 'console' },
+        spec: { ...spec, priority: expectedPriority },
+      });
+      const initial = (await f.store.readActiveRun({ workId: ID }))!;
+      expect(initial.priority).toBe(expectedPriority);
+      await f.orchestrator.report(initial.runId, {
+        ok: false,
+        summary: 'verification-failed',
+      });
+      expect(
+        (
+          await post(f.context, `/items/${ID}/redispatch`, {
+            fallbackPipelines: ['codex'],
+          })
+        ).status,
+      ).toBe(200);
+      const opted = (await f.store.readActiveRun({ workId: ID }))!;
+      expect(opted.providerFallback?.allowedPipelines).toEqual(['codex']);
+      expect(opted.priority).toBe(expectedPriority);
+      expect((await f.store.readTask({ workId: ID }))!.task.work).toEqual(
+        durableWork,
+      );
+      await f.orchestrator.report(opted.runId, {
+        ok: false,
+        summary: 'verification-failed',
+      });
+      expect(
+        (
+          await post(f.context, `/items/${ID}/redispatch`, {
+            fallbackPipelines: [],
+          })
+        ).status,
+      ).toBe(200);
+      const disabled = (await f.store.readActiveRun({ workId: ID }))!;
+      expect(disabled.providerFallback).toBeUndefined();
+      expect(disabled.priority).toBe(expectedPriority);
+      expect((await f.store.readTask({ workId: ID }))!.task.work).toEqual(
+        durableWork,
+      );
+      await f.orchestrator.report(disabled.runId, {
+        ok: false,
+        summary: 'provider-limit',
+      });
+      expect(await f.store.listRuns({ workId: ID })).toHaveLength(3);
+    },
+  );
   it('retains a human reply on a fresh alternate attempt', async () => {
     const f = fixture();
     await post(f.context, '/items', { id: ID, spec });

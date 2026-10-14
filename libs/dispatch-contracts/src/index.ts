@@ -29,6 +29,8 @@ export {
   PLACEMENT_STALENESS_MS,
   runPlacementSchema,
 } from './placement';
+export { QUEUE_PRIORITIES, type QueuePriority } from './priority';
+export { providerRoutingSchema } from './provider-routing';
 export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,

@@ -765,7 +765,7 @@ func TestQueueExecutorPollerRecoversEachTickWithoutOverlapOrBlockingClaims(t *te
 	}
 }
 
-func TestQueueExecutorPollerSkipsRecoveryWhileDraining(t *testing.T) {
+func TestQueueExecutorPollerMaintainsWorkersWhileDraining(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	recovery := make(chan struct{}, 1)
@@ -774,13 +774,19 @@ func TestQueueExecutorPollerSkipsRecoveryWhileDraining(t *testing.T) {
 		defer close(done)
 		runQueueExecutorPoller(ctx, queueExecutorConfig{
 			draining: func() bool { return true },
-			recover:  func(context.Context) error { recovery <- struct{}{}; return nil },
+			recover: func(context.Context) error {
+				select {
+				case recovery <- struct{}{}:
+				default:
+				}
+				return nil
+			},
 		}, 5*time.Millisecond, discardLogger())
 	}()
 	select {
 	case <-recovery:
-		t.Fatal("draining executor resumed work")
-	case <-time.After(30 * time.Millisecond):
+	case <-time.After(time.Second):
+		t.Fatal("draining executor suppressed claimed-worker maintenance")
 	}
 	cancel()
 	select {

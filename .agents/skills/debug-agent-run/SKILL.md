@@ -32,7 +32,15 @@ by a competing run, or wedged. It does not look identical in these two places.
 
 ## 1. Find the live or retained direct run
 
-Run the existing read-only helper first:
+The helper below is **operator-only**: it requires an already trusted SSH
+bastion and authorized runtime reads. Its presence in a checkout does not
+grant a dispatched runner that capability. A worker without that context
+first reads retained evidence on its anchor; if evidence is insufficient,
+use the [bounded evidence handoff](references/evidence-handoff.md) through
+the existing result/decision/reply path. Do not request unrestricted SSH,
+change host trust, or repeat an access-failing probe.
+
+From an authorized operator context, run the existing read-only helper first:
 
 ```bash
 .agents/skills/debug-agent-run/scripts/run-evidence.sh 1900
@@ -42,7 +50,7 @@ Run the existing read-only helper first:
 
 It connects to the operator SSH bastion and reads the running controller's
 mounted `/config/orchestrator.yml` and inspects Jobs in its `kubernetes`
-section's declared namespace. The helper prints exact run identity and bounded state,
+section's declared namespace. The helper prints exact run identity, original Job UID and bounded state,
 without container environments, Secret contents, credentials, or raw logs.
 The bastion needs Python 3, PyYAML, and `kubectl`.
 
@@ -166,7 +174,7 @@ which has the measured history and the bounds.
 
 ## 5. Order of operations
 
-1. `.agents/skills/debug-agent-run/scripts/run-evidence.sh` — exact run and backend state; inspect worktrees with the appropriate operator access.
+1. Establish the evidence context: workers consume retained operator receipts or request the [bounded handoff](references/evidence-handoff.md); authorized operators use `run-evidence.sh` for exact run and backend state. Inspect worktrees only with the appropriate operator access.
 2. If `commits=0, dirty=0`: it has not started. Check the LLM rate before
    assuming it is stuck.
 3. If `dirty>0`: work exists and is at risk. That is the urgent case.

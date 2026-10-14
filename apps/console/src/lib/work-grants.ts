@@ -5,6 +5,11 @@ import { z } from 'zod';
 
 const workScopeSchema = z.enum([
   'work.operator',
+  /** Read-only: the GitHub anchor-owner query (`anchorOwner`) and nothing
+   *  else. Not `list`/`get` -- item reads are `work.operator`/`work.reaper`
+   *  -- and nothing that mutates. Interactive sessions use it through the
+   *  `svc:work-reader` grant (#2502). */
+  'work.reader',
   'work.executor',
   'work.cron',
   'work.capacity.recover',

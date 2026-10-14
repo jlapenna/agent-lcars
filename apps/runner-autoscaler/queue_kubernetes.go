@@ -31,6 +31,7 @@ import (
 
 const queueJobLabel = "agent-lcars.queue-job"
 const queueRunAnnotation = "agent-lcars.run-id"
+const queuePlacementAnnotation = "agent-lcars.placement-aware"
 const queueClaimAnnotation = "agent-lcars.claim-fingerprint"
 
 // queueRunnerAnnotation records the runner name the run was claimed under,
@@ -136,7 +137,11 @@ func queueKubernetesRESTConfig(c *queueKubernetesConfig) (*rest.Config, error) {
 // This selector comes only from the trusted executor deployment, never a run
 // brief. An empty value explicitly keeps even image-provided defaults disabled.
 func directRunnerWorkerPolicyProviders() (string, error) {
-	raw := strings.TrimSpace(os.Getenv("LCARS_WORKER_POLICY_PROVIDERS"))
+	return directRunnerProviderSelection("LCARS_WORKER_POLICY_PROVIDERS")
+}
+
+func directRunnerProviderSelection(name string) (string, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return "", nil
 	}
@@ -147,7 +152,7 @@ func directRunnerWorkerPolicyProviders() (string, error) {
 		switch provider {
 		case "claude", "codex", "opencode":
 		default:
-			return "", fmt.Errorf("LCARS_WORKER_POLICY_PROVIDERS must contain only claude, codex, or opencode")
+			return "", fmt.Errorf("%s must contain only claude, codex, or opencode", name)
 		}
 		if !seen[provider] {
 			seen[provider] = true
@@ -179,6 +184,10 @@ type kubernetesQueue struct {
 	// brief route, which fences settled runs and expired leases.
 	verifyRun    func(context.Context, string, string) error
 	claimSettled func(context.Context, string, string, string) (bool, error)
+	// draining suppresses ordinary suspended-Job resume while maintenance and
+	// placement observations continue for already accepted workers.
+	draining               func() bool
+	reportStartupPlacement func(context.Context, placementObservation) error
 	// exits receives every terminated queue Job this executor's inventory
 	// reads observe (nil disables reporting). See runExitReporter.
 	exits *runExitReporter
@@ -261,6 +270,33 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Pod evidence is only needed once a terminal Job shows up, and then read
+	// at most once per pass.
+	var podsByJob map[string][]core.Pod
+	disruptionPods := func() map[string][]core.Pod {
+		if podsByJob != nil {
+			return podsByJob
+		}
+		// The Pod template carries the queue label, so one namespaced list
+		// covers every queue attempt. readyNodes already lists Pods, so this
+		// needs no new API permission.
+		pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
+		podsByJob = map[string][]core.Pod{}
+		if err != nil {
+			// Without Pod evidence an exit is still reported, as the ordinary
+			// loss, so this never fails the count that gates claiming.
+			q.logger.Warn("Reading queue worker Pods for disruption evidence failed; reporting exits without it", slog.String("error", err.Error()))
+			return podsByJob
+		}
+		for _, pod := range pods.Items {
+			for _, ref := range pod.OwnerReferences {
+				if ref.Kind == "Job" && ref.Controller != nil && *ref.Controller {
+					podsByJob[string(ref.UID)] = append(podsByJob[string(ref.UID)], pod)
+				}
+			}
+		}
+		return podsByJob
+	}
 	n := 0
 	for _, j := range jobs.Items {
 		if q.capacity != nil && j.Annotations[queueBarrierAnnotation] != "" {
@@ -280,10 +316,93 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 		// until its lease expires. Only a Job whose name is derived from its
 		// own run annotation identifies a run.
 		if runID := j.Annotations[queueRunAnnotation]; runID != "" && j.Name == queueJobName(runID) {
-			q.exits.observeTerminated(runID, j.Annotations[queueRunnerAnnotation], j.Annotations[queueClaimAnnotation])
+			q.exits.observeTerminatedWithDisruption(
+				runID,
+				j.Annotations[queueRunnerAnnotation],
+				j.Annotations[queueClaimAnnotation],
+				schedulerPreemption(j, disruptionPods()[string(j.UID)]),
+			)
 		}
 	}
 	return n, nil
+}
+
+// directRunnerContainer is the queue worker's only container, and
+// schedulerPreemptionReason is the DisruptionTarget reason the scheduler sets
+// when it preempts a Pod to make room for other work.
+const (
+	directRunnerContainer     = "direct-runner"
+	schedulerPreemptionReason = "PreemptionByScheduler"
+)
+
+// schedulerPreemption attests that this terminal Job's own Pod was preempted by
+// the scheduler before its worker container started, or returns nil when the
+// Pod evidence does not prove exactly that. It is deliberately narrow: a
+// DisruptionTarget for any other reason (eviction, node shutdown, a TTL or
+// active-deadline deletion), a container that ran at all, or a Pod owned by a
+// different Job all answer nil, leaving the ordinary terminal loss.
+func schedulerPreemption(j batch.Job, pods []core.Pod) *exitDisruption {
+	for _, pod := range pods {
+		if !podOwnedByJob(&pod, &j) {
+			continue
+		}
+		cond := podDisruptionCondition(&pod)
+		if cond == nil || cond.Reason != schedulerPreemptionReason {
+			continue
+		}
+		if !containerNeverStarted(&pod, directRunnerContainer) {
+			continue
+		}
+		at := cond.LastTransitionTime
+		if at.IsZero() {
+			at = cond.LastProbeTime
+		}
+		if at.IsZero() {
+			continue
+		}
+		return &exitDisruption{
+			JobUID:     string(j.UID),
+			PodUID:     string(pod.UID),
+			ObservedAt: at.UTC().Format(time.RFC3339),
+			Kind:       schedulerPreemptionKind,
+		}
+	}
+	return nil
+}
+
+// podOwnedByJob is true only for a Pod this exact Job object owns, by UID: Job
+// names are reused across recovery attempts of one run, UIDs are not.
+func podOwnedByJob(pod *core.Pod, j *batch.Job) bool {
+	for _, ref := range pod.OwnerReferences {
+		if ref.Kind == "Job" && ref.Controller != nil && *ref.Controller && string(ref.UID) == string(j.UID) {
+			return true
+		}
+	}
+	return false
+}
+
+func podDisruptionCondition(pod *core.Pod) *core.PodCondition {
+	for i, c := range pod.Status.Conditions {
+		if c.Type == core.DisruptionTarget && c.Status == core.ConditionTrue {
+			return &pod.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+// containerNeverStarted reports whether the kubelet never ran the container. A
+// running or terminated container means a provider process may have started, so
+// the attempt is potentially-executed work and must not be redispatched. No
+// status for the container at all is the ordinary preemption shape: the Pod was
+// removed before its containers were reported.
+func containerNeverStarted(pod *core.Pod, name string) bool {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != name {
+			continue
+		}
+		return cs.State.Terminated == nil && cs.State.Running == nil
+	}
+	return true
 }
 func (q *kubernetesQueue) tolerations() []core.Toleration {
 	out := []core.Toleration{}
@@ -530,6 +649,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
 	}
 	annotations := map[string]string{queueRunAnnotation: l.runID}
+	if l.placementAware {
+		annotations[queuePlacementAnnotation] = "true"
+	}
 	if l.runToken != "" {
 		annotations[queueClaimAnnotation] = queueClaimFingerprint(l.runToken)
 	}
@@ -573,6 +695,12 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 				},
 			},
 		},
+	}
+	if l.placementAware {
+		// Pod runtime starts on the assigned kubelet; Job runtime also counts
+		// unassigned Pending time. Keep the same execution limit after placement.
+		job.Spec.ActiveDeadlineSeconds = nil
+		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
 	}
 	if l.receipt != nil {
 		q.configureReceiptJob(job, l)
@@ -728,10 +856,16 @@ func (q *kubernetesQueue) recover(ctx context.Context) error {
 		if retired {
 			continue
 		}
+		if err := q.observeJobStartupPlacement(ctx, &j, nil); err != nil {
+			errs = append(errs, err)
+		}
 		if time.Since(j.CreationTimestamp.Time) > 2*time.Hour {
 			continue
 		}
 		if queueJobTerminal(j) || j.Spec.Suspend == nil || !*j.Spec.Suspend {
+			continue
+		}
+		if q.draining != nil && q.draining() {
 			continue
 		}
 		if err := q.resume(ctx, &j); err != nil {

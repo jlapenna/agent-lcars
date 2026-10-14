@@ -2,7 +2,7 @@
 
 import { PIPELINES } from '@agent-lcars/work';
 import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
 import type {
   ArcLaneStatus,
@@ -13,7 +13,16 @@ import {
   RUNNER_STATUS_EVENT,
   RUNNER_STATUS_STALENESS_MS,
 } from '../lib/runner-status-contract';
+import { expireTokenRate, type TokenRate } from '../lib/token-rate';
 import { DataWarnings } from './console-header';
+import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
+import { RelativeTime } from './relative-time';
+import { RunnerFleetPanel } from './runner-fleet-panel';
+import {
+  executorMatches,
+  laneMatches,
+  type ShuttlebayFilters,
+} from './shuttlebay/shuttlebay-view-filters';
 import { ShuttlebayWorkspace } from './shuttlebay/shuttlebay-workspace';
 
 export const RUNNER_STATUS_STREAM_URL = '/api/runner-status/stream';
@@ -90,108 +99,118 @@ export function expireAutoscalerStatuses(
   };
 }
 
-function ProviderAdmissionRows({ result }: { result: AutoscalerStatusResult }) {
+function ProviderAdmissionRows({
+  result,
+  agent,
+}: {
+  result: AutoscalerStatusResult;
+  /** The toolbar's agent filter: one provider's row. */
+  agent?: string;
+}) {
   const admission = result.providerAdmission;
   const executor = result.queueExecutor;
   return (
     <>
-      {PIPELINES.map((pipeline) => {
-        const provider = admission?.providers.find(
-          (value) => value.pipeline === pipeline,
-        );
-        const cooldown = provider?.cooldown;
-        const cooling =
-          cooldown !== undefined && Date.parse(cooldown.expiresAt) > Date.now();
-        const window = executor?.claims;
-        const executorAccepting =
-          executor !== undefined &&
-          executor.ready &&
-          !executor.draining &&
-          executor.activeRuns !== undefined &&
-          executor.activeRuns < executor.maxConcurrent;
-        const paused =
-          executor !== undefined &&
-          (!executor.ready ||
-            executor.draining ||
-            (executor.activeRuns !== undefined &&
-              executor.activeRuns >= executor.maxConcurrent));
-        const eligible =
-          provider === undefined
-            ? undefined
-            : paused
-              ? 0
-              : executorAccepting
-                ? provider.eligible
-                : undefined;
-        return (
-          <div
-            key={pipeline}
-            className="console-workspace__section shuttlebay-scale-set"
-            data-testid={`provider-admission-${pipeline}`}
-          >
-            <Stack gap={4}>
-              <Group gap="xs" wrap="wrap">
-                <Text size="sm" fw={700}>
-                  {pipeline}
-                </Text>
-                {provider === undefined ? (
-                  <Badge color="gray" size="xs">
-                    admission unavailable
-                  </Badge>
-                ) : cooling ? (
-                  <Badge color="yellow" size="xs">
-                    cooling down
-                  </Badge>
-                ) : (
-                  <Badge color="green" size="xs">
-                    no active cooldown
-                  </Badge>
-                )}
-                {paused && (
-                  <Badge color="yellow" size="xs">
-                    {executor.draining
-                      ? 'executor draining'
-                      : !executor.ready
-                        ? 'executor not ready'
-                        : 'executor at capacity'}
-                  </Badge>
-                )}
-              </Group>
-              <Text size="xs">
-                {eligible === undefined
-                  ? 'Eligible queue unavailable'
-                  : `${eligible} eligible queued`}{' '}
-                ·{' '}
-                {provider === undefined
-                  ? 'queue unavailable'
-                  : `${provider.queued} queued · ${provider.deferred} deferred · ${provider.liveClaims} live claims`}
-              </Text>
-              {cooling && (
+      {PIPELINES.filter((pipeline) => !agent || pipeline === agent).map(
+        (pipeline) => {
+          const provider = admission?.providers.find(
+            (value) => value.pipeline === pipeline,
+          );
+          const cooldown = provider?.cooldown;
+          const cooling =
+            cooldown !== undefined &&
+            Date.parse(cooldown.expiresAt) > Date.now();
+          const window = executor?.claims;
+          const executorAccepting =
+            executor !== undefined &&
+            executor.ready &&
+            !executor.draining &&
+            executor.activeRuns !== undefined &&
+            executor.activeRuns < executor.maxConcurrent;
+          const paused =
+            executor !== undefined &&
+            (!executor.ready ||
+              executor.draining ||
+              (executor.activeRuns !== undefined &&
+                executor.activeRuns >= executor.maxConcurrent));
+          const eligible =
+            provider === undefined
+              ? undefined
+              : paused
+                ? 0
+                : executorAccepting
+                  ? provider.eligible
+                  : undefined;
+          return (
+            <div
+              key={pipeline}
+              className="console-workspace__section shuttlebay-scale-set"
+              data-testid={`provider-admission-${pipeline}`}
+            >
+              <Stack gap={4}>
+                <Group gap="xs" wrap="wrap">
+                  <Text size="sm" fw={700}>
+                    {pipeline}
+                  </Text>
+                  {provider === undefined ? (
+                    <Badge color="gray" size="xs">
+                      admission unavailable
+                    </Badge>
+                  ) : cooling ? (
+                    <Badge color="yellow" size="xs">
+                      cooling down
+                    </Badge>
+                  ) : (
+                    <Badge color="green" size="xs">
+                      no active cooldown
+                    </Badge>
+                  )}
+                  {paused && (
+                    <Badge color="yellow" size="xs">
+                      {executor.draining
+                        ? 'executor draining'
+                        : !executor.ready
+                          ? 'executor not ready'
+                          : 'executor at capacity'}
+                    </Badge>
+                  )}
+                </Group>
                 <Text size="xs">
-                  Provider limit: cooling down until {cooldown.expiresAt}.
-                  Retry/reset deadline from run {cooldown.runId}; reported{' '}
-                  {cooldown.observedAt}.
+                  {eligible === undefined
+                    ? 'Eligible queue unavailable'
+                    : `${eligible} eligible queued`}{' '}
+                  ·{' '}
+                  {provider === undefined
+                    ? 'queue unavailable'
+                    : `${provider.queued} queued · ${provider.deferred} deferred · ${provider.liveClaims} live claims`}
                 </Text>
-              )}
-              {provider !== undefined && (
+                {cooling && (
+                  <Text size="xs">
+                    Provider limit: cooling down until {cooldown.expiresAt}.
+                    Retry/reset deadline from run {cooldown.runId}; reported{' '}
+                    {cooldown.observedAt}.
+                  </Text>
+                )}
+                {provider !== undefined && (
+                  <Text size="xs" c="dimmed">
+                    Durable provider queue: {provider.eligible} eligible before
+                    executor capacity checks. Orchestrator snapshot{' '}
+                    {admission?.observedAt}.
+                    {provider.maxLiveClaims === undefined
+                      ? ''
+                      : ` Provider live-claim limit: ${provider.maxLiveClaims}.`}
+                  </Text>
+                )}
                 <Text size="xs" c="dimmed">
-                  Durable provider queue: {provider.eligible} eligible before
-                  executor capacity checks. Orchestrator snapshot{' '}
-                  {admission?.observedAt}.
-                  {provider.maxLiveClaims === undefined
-                    ? ''
-                    : ` Provider live-claim limit: ${provider.maxLiveClaims}.`}
+                  {window === undefined
+                    ? 'Recent claims unavailable.'
+                    : `${window[pipeline]} claims from ${window.windowStart} to ${window.windowEnd}. Executor successful-claim counter; sampled interval, up to 15 minutes.`}
                 </Text>
-              )}
-              <Text size="xs" c="dimmed">
-                {window === undefined
-                  ? 'Recent claims unavailable.'
-                  : `${window[pipeline]} claims from ${window.windowStart} to ${window.windowEnd}. Executor successful-claim counter; sampled interval, up to 15 minutes.`}
-              </Text>
-            </Stack>
-          </div>
-        );
-      })}
+              </Stack>
+            </div>
+          );
+        },
+      )}
       <Text size="xs" c="dimmed">
         Eligible work can still wait for host placement, credentials, or
         external checks. Claims precede worker launch.
@@ -200,63 +219,72 @@ function ProviderAdmissionRows({ result }: { result: AutoscalerStatusResult }) {
   );
 }
 
+function laneState(status: ArcLaneStatus) {
+  if (status.pendingJobs > 0)
+    return { tone: 'warn' as const, label: 'Pending' };
+  if (status.runningJobs > 0) return { tone: 'busy' as const, label: 'Busy' };
+  return { tone: 'idle' as const, label: 'Idle' };
+}
+
 function ArcLaneRow({ status }: { status: ArcLaneStatus }) {
+  const state = laneState(status);
   return (
-    <div
-      className="console-workspace__section shuttlebay-scale-set"
-      data-testid={`arc-lane-${status.lane}`}
-    >
-      <Group gap="xs" wrap="wrap">
+    <tr data-testid={`arc-lane-${status.lane}`}>
+      <td>
         <Anchor
           href={status.registrationUrl}
           target="_blank"
           rel="noreferrer"
-          size="sm"
-          fw={700}
+          className="ops-host"
         >
-          {status.lane}
+          {status.lane} on GitHub ↗
         </Anchor>
-        {status.pendingJobs > 0 && (
-          <Badge color="yellow" size="xs">
-            {status.pendingJobs} pending
-          </Badge>
-        )}
-        <Text size="xs" c="dimmed">
-          {status.runningJobs} running · {status.idleRunners} idle ·{' '}
-          {status.registeredRunners} registered · {status.desiredRunners}{' '}
-          desired · {status.maxRunners} max
-        </Text>
-      </Group>
-    </div>
+        <span className="ops-host-spec">ARC runner lane</span>
+      </td>
+      <td>
+        <StateMark tone={state.tone}>{state.label}</StateMark>
+      </td>
+      <td className="ops-mono-dim">
+        {status.pendingJobs > 0 ? `${status.pendingJobs} pending` : UNAVAILABLE}
+      </td>
+      <td className="ops-mono-dim">
+        {status.runningJobs} running · {status.idleRunners} idle ·{' '}
+        {status.registeredRunners} registered · {status.desiredRunners} desired
+        · {status.maxRunners ?? 'no'} max
+      </td>
+      <td className="ops-num ops-dim">
+        <RelativeTime iso={status.updatedAt} variant="compact" />
+      </td>
+    </tr>
   );
 }
 
 function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
   return (
-    <div
-      className="console-workspace__section shuttlebay-scale-set"
-      data-testid="queue-executor-status"
-    >
-      <Group gap="xs" wrap="wrap">
-        <Text size="sm" fw={700}>
-          Direct agent executor
-        </Text>
-        <Badge color={status.ready ? 'green' : 'red'} size="xs">
+    <tr data-testid="queue-executor-status">
+      <td>
+        <span className="ops-host">Direct agent executor</span>
+        <span className="ops-host-spec">QueueExecutor</span>
+      </td>
+      <td>
+        <StateMark
+          tone={!status.ready ? 'fail' : status.draining ? 'warn' : 'ok'}
+        >
           {status.ready ? 'ready' : 'not ready'}
-        </Badge>
-        {status.draining && (
-          <Badge color="yellow" size="xs">
-            draining
-          </Badge>
-        )}
-        <Text size="xs" c="dimmed">
-          {status.activeRuns === undefined
-            ? 'active unknown'
-            : `${status.activeRuns} active`}{' '}
-          · {status.maxConcurrent} max
-        </Text>
-      </Group>
-    </div>
+          {status.draining ? ' · draining' : ''}
+        </StateMark>
+      </td>
+      <td className="ops-mono-dim">{UNAVAILABLE}</td>
+      <td className="ops-mono-dim">
+        {status.activeRuns === undefined
+          ? 'active unknown'
+          : `${status.activeRuns} active`}{' '}
+        · {status.maxConcurrent} max
+      </td>
+      <td className="ops-num ops-dim">
+        <RelativeTime iso={status.updatedAt} variant="compact" />
+      </td>
+    </tr>
   );
 }
 
@@ -266,15 +294,40 @@ function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
  * their cache. */
 export function RunnerAutoscalerStatus({
   initial,
+  filters = {},
+  toolbar,
+  tokenRate,
 }: {
   initial: AutoscalerStatusResult;
+  /** Read once with the page, already narrowed to the filters. */
+  tokenRate?: TokenRate | { unavailable: string };
+  /** The toolbar's repository, agent and find filters. */
+  filters?: ShuttlebayFilters;
+  /** The workspace toolbar band (the page's filter form). */
+  toolbar?: ReactNode;
 }) {
   const [storedResult, setResult] = useState(() =>
     expireAutoscalerStatuses(initial),
   );
+  // The token rate arrives once with the page; this tick ages it out.
+  const [clock, setClock] = useState(() => Date.now());
   // Arrival and render are both clock boundaries. A reset/stale timestamp
   // crossed during RSC transport or a sibling render cannot look healthy.
-  const result = expireAutoscalerStatuses(storedResult);
+  const live = expireAutoscalerStatuses(storedResult);
+  // Narrowed for display only; staleness and warnings stay whole-fleet.
+  const result: AutoscalerStatusResult = {
+    ...live,
+    lanes: live.lanes?.filter((lane) => laneMatches(lane, filters)),
+    queueExecutor: executorMatches(filters) ? live.queueExecutor : undefined,
+  };
+  const filtered = Boolean(filters.repo || filters.q);
+  const filteredEmpty =
+    filtered &&
+    (result.lanes?.length ?? 0) === 0 &&
+    (live.lanes?.length ?? 0) > 0;
+  // Only a complete inventory can prove no lane matches: a missing, stale or
+  // invalid lane might be the one asked for.
+  const noMatch = filteredEmpty && !live.lanesIncomplete;
 
   useEffect(() => {
     // EventSource reconnects by itself after the server ends a stream or the
@@ -311,6 +364,7 @@ export function RunnerAutoscalerStatus({
     open();
     const timer = window.setInterval(() => {
       setResult((previous) => expireAutoscalerStatuses(previous));
+      setClock(Date.now());
     }, EXPIRY_CHECK_INTERVAL_MS);
     return () => {
       source?.close();
@@ -327,29 +381,75 @@ export function RunnerAutoscalerStatus({
         ) : undefined
       }
       toolbar={
-        <Text c="dimmed" size="sm">
-          Updates live as runner capacity changes.
-        </Text>
+        toolbar ?? (
+          <Text c="dimmed" size="sm">
+            Updates live as runner capacity changes.
+          </Text>
+        )
       }
     >
-      <div data-testid="runner-autoscaler-status">
-        <ProviderAdmissionRows result={result} />
-        {(result.lanes?.length ?? 0) === 0 && (
-          <Text size="sm" c="dimmed">
-            GitHub runner status unavailable.
-          </Text>
-        )}
-        {result.lanes?.map((status) => (
-          <ArcLaneRow key={status.lane} status={status} />
-        ))}
-        {result.queueExecutor && (
-          <QueueExecutorRow status={result.queueExecutor} />
-        )}
-        {!result.queueExecutor && (
-          <Text size="sm" c="dimmed">
-            Direct executor status unavailable.
-          </Text>
-        )}
+      <div data-testid="runner-autoscaler-status" className="shuttlebay-cols">
+        <div className="shuttlebay-stack">
+          <OpsPanel
+            title="Runners"
+            count={(result.lanes?.length ?? 0) + (result.queueExecutor ? 1 : 0)}
+            meta="pool totals · per-runner status unavailable"
+            data-testid="shuttlebay-runners"
+          >
+            <table className="ops-table">
+              <thead>
+                <tr>
+                  <th>Runner</th>
+                  <th>State</th>
+                  <th>Job</th>
+                  <th>Capacity</th>
+                  <th className="ops-num">For</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.lanes?.map((status) => (
+                  <ArcLaneRow key={status.lane} status={status} />
+                ))}
+                {(result.lanes?.length ?? 0) === 0 && (
+                  <tr>
+                    <td colSpan={5} className="ops-dim">
+                      {noMatch
+                        ? 'No runner lane matches these filters.'
+                        : filteredEmpty
+                          ? 'No reporting lane matches these filters; some lanes are not reporting.'
+                          : 'GitHub runner status unavailable.'}
+                    </td>
+                  </tr>
+                )}
+                {result.queueExecutor ? (
+                  <QueueExecutorRow status={result.queueExecutor} />
+                ) : filtered && live.queueExecutor ? null : (
+                  <tr>
+                    <td colSpan={5} className="ops-dim">
+                      Direct executor status unavailable.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </OpsPanel>
+          <OpsPanel
+            title="Provider admission"
+            meta="cooldowns, queues and claims"
+            data-testid="shuttlebay-admission"
+          >
+            <ProviderAdmissionRows result={live} agent={filters.agent} />
+          </OpsPanel>
+        </div>
+        <div className="shuttlebay-stack">
+          <RunnerFleetPanel
+            lanes={result.lanes}
+            lanesIncomplete={result.lanesIncomplete}
+            executor={result.queueExecutor}
+            filteredOut={noMatch}
+            tokenRate={expireTokenRate(tokenRate, clock, STALENESS_MS)}
+          />
+        </div>
       </div>
     </ShuttlebayWorkspace>
   );

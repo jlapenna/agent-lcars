@@ -3,10 +3,12 @@
 Browser-renderable design prototypes for the LCARS console. Open the HTML files
 directly (they load bundled fonts from `assets/fonts/` with no build step).
 
-**These are explorations, not the contract.** The canonical visual system is
-[`../console-design-system.md`](../console-design-system.md) and the token
-source of truth is `apps/console/src/theme.ts`. Where a prototype and the
-design system disagree, the design system wins.
+`fleet-console.html` is the layout target for the console: its elbow rail,
+header, workspace frame, panels and tables are what the routes are built to.
+Its numbers are sample data. Where it shows a readout the console has no
+honest source for, the console omits the readout rather than inventing one.
+The written rules are [`../docs/console-design-system.md`](../docs/console-design-system.md)
+and the token source of truth is `apps/console/src/app/theme.ts`.
 
 | Artifact                                             | Purpose                                              |
 | ---------------------------------------------------- | ---------------------------------------------------- |

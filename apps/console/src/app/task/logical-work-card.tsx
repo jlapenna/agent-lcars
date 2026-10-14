@@ -87,9 +87,11 @@ export function LogicalWorkCard({
           <Stack gap={4}>
             <Title order={2} size="h4">
               <Anchor
-                href={work.url}
-                target="_blank"
-                rel="noreferrer"
+                href={
+                  'workId' in work.task
+                    ? `/work/${work.task.workId}`
+                    : `/task/${work.task.repository.owner}/${work.task.repository.name}/${work.task.issueNumber}`
+                }
                 c="inherit"
               >
                 {'workId' in work.task
@@ -128,6 +130,16 @@ export function LogicalWorkCard({
                     ? 'authoritative lifecycle state unavailable'
                     : 'no authoritative run history'}
               </Text>
+            )}
+            {'issueNumber' in work.task && (
+              <Anchor
+                href={work.url}
+                target="_blank"
+                rel="noreferrer"
+                size="xs"
+              >
+                View on GitHub ↗
+              </Anchor>
             )}
             {item && <ItemOverflowMenu item={item} />}
           </Group>

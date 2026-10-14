@@ -442,6 +442,7 @@ export const runsRouter = os.router({
               producerId,
               claimRequestId,
               runner: input.runner,
+              placementAware: input.placementAware,
               tokenHash: hashRunToken(token),
               nonce: randomBytes(16).toString('hex'),
               now: context.now().toISOString(),
@@ -491,6 +492,9 @@ export const runsRouter = os.router({
           pipeline: claimed.run.pipeline,
           token,
           expiresAt: claimed.run.leaseExpiresAt,
+          ...(claimed.run.queue?.startupPlacement === undefined
+            ? {}
+            : { placementAware: true as const }),
           jobName: claimed.receipt.jobName,
         };
       if (claimed.kind === 'recover-owned-secret')
@@ -532,6 +536,7 @@ export const runsRouter = os.router({
             pipelines: context.principal.pipelines,
             now: context.now().toISOString(),
             claimedBy: input.runner,
+            placementAware: input.placementAware,
             claimedBySubject: claimantSubject(context.principal),
             tokenHash: hashRunToken(token),
           }),
@@ -592,6 +597,9 @@ export const runsRouter = os.router({
         pipeline: claimed.pipeline,
         token,
         expiresAt: claimed.leaseExpiresAt,
+        ...(claimed.queue?.startupPlacement === undefined
+          ? {}
+          : { placementAware: true as const }),
       };
     }
     return undefined;
@@ -753,6 +761,42 @@ export const runsRouter = os.router({
     return { runId: input.runId };
   }),
 
+  startupPlacement: executor.startupPlacement.handler(
+    async ({ input, context, errors }) => {
+      const run = await context.store.readRun(input.runId);
+      if (run === undefined) throw errors.NOT_FOUND();
+      if (!context.principal.pipelines.includes(run.pipeline))
+        throw errors.FORBIDDEN();
+      const result = await capacityCall(
+        () =>
+          context.orchestrator.observeStartupPlacement(
+            input.runId,
+            {
+              subject: claimantSubject(context.principal),
+              runner: input.runner,
+              claimFingerprint: input.claimFingerprint,
+            },
+            {
+              jobUid: input.jobUid,
+              observedAt: input.observedAt,
+              placed: input.placed,
+              poolId: context.principal.capacityPool,
+            },
+          ),
+        'placement',
+      );
+      if (isRefusal(result)) {
+        if (result.reason === 'not-claimant') throw errors.FORBIDDEN();
+        throw errors.CONFLICT();
+      }
+      return {
+        runId: input.runId,
+        jobUid: input.jobUid,
+        expiresAt: runRecoveryDeadline(result.run ?? run) ?? run.leaseExpiresAt,
+      };
+    },
+  ),
+
   claimStatus: executor.claimStatus.handler(
     async ({ input, context, errors }) => {
       const run = await context.store.readRun(input.runId);
@@ -793,13 +837,17 @@ export const runsRouter = os.router({
     if (!context.principal.pipelines.includes(run.pipeline)) {
       throw errors.FORBIDDEN({ message: EXIT_PIPELINE_NOT_GRANTED });
     }
-    const settled = await context.orchestrator.executorExited(run.runId, {
-      subject: claimantSubject(context.principal),
-      runner: input.runner,
-      ...(input.claimFingerprint === undefined
-        ? {}
-        : { claimFingerprint: input.claimFingerprint }),
-    });
+    const settled = await context.orchestrator.executorExited(
+      run.runId,
+      {
+        subject: claimantSubject(context.principal),
+        runner: input.runner,
+        ...(input.claimFingerprint === undefined
+          ? {}
+          : { claimFingerprint: input.claimFingerprint }),
+      },
+      input.disruption,
+    );
     if (
       isRefusal(settled) &&
       settled.reason === 'credential-operation-pending'

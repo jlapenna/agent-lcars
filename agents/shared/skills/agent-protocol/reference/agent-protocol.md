@@ -335,12 +335,50 @@ ready push or PR open only to run local E2E.
 
 For every ready, non-parked pull request you open, **do not request human
 review**. Fleet repositories require zero approving reviews for agent-authored
-PRs; a review request is friction, not a handoff. Immediately arm squash
-auto-merge yourself after the PR exists:
+PRs; a review request is friction, not a handoff. Publish new PRs as drafts: this lets you check interpreted links before a
+ready-PR auto-merge backstop can arm them. After the check and required review
+pass, mark the draft ready, refresh the check and feedback, and arm below.
+Before ready/arming, declare the exact fully completed issue scope and read
+GitHub's actual `closingIssuesReferences` at the reviewed/pushed head. Required
+runtime or deployment acceptance still open means that issue is excluded:
+use `Tracks #N`, never a negated closing-keyword phrase. GitHub interpreted
+“intentionally does not close #2209” as a closing link on PR #2447.
+Run the shared read-only checker (relative to this protocol's directory) and
+every dependent lifecycle mutation as ONE fail-fast sequence: chain each step
+with `&&` exactly as shipped, because a rejected read, incomplete read or
+changed head must make the dependent step structurally unrunnable. Never
+retype the guard and a mutation as separate statements or join them with `;`
+— on #2324 publication a semicolon-joined sequence without `errexit` ran
+`gh pr ready` after the checker had already exited 1 (issue #2534); the PR
+was explicitly returned to draft by the operator before delivery; the
+manual correction did not make that command sequence fail-fast:
 
 ```bash
-gh pr merge <N> --repo <owner/repo> --auto --squash
-gh pr view <N> --repo <owner/repo> --json state,autoMergeRequest \
+node "$(dirname "$AGENT_PROTOCOL_PATH")/../scripts/check-pr-closing-references.mjs" \
+  <owner/repo> <PR> <exact-reviewed-pushed-head> none \
+  && gh pr ready <PR> --repo <owner/repo>
+# Replace none with owner/repo#N[,owner/repo#N] only for fully accepted closure.
+```
+
+Require successful exact agreement with the declared scope, retaining its JSON
+readback in the handoff. Lookup failure, incomplete pagination, a changed head
+or unexpected/missing reference blocks ready/arming. Correct the metadata and
+re-read; prose edits alone do not prove removal. Disarm an already-armed PR
+with unintended closure while correcting it. Refresh this check after head,
+body, closing-metadata or acceptance changes and immediately before re-arming.
+The readback does not lock concurrent body edits; re-read observed changes.
+For partial work, verify the tracking issue stays open after source landing
+until remaining acceptance is proven. Follow repository requirements for
+protected delivery separately.
+
+Immediately arm squash auto-merge yourself after the PR exists and this gate passes — re-running the same gate in the same fail-fast chain, so a rejected or changed read cannot reach the arming mutation:
+
+```bash
+node "$(dirname "$AGENT_PROTOCOL_PATH")/../scripts/check-pr-closing-references.mjs" \
+  <owner/repo> <PR> <exact-reviewed-pushed-head> <declared-scope> \
+  && gh pr merge <N> --repo <owner/repo> --auto --squash \
+    --match-head-commit <exact-reviewed-pushed-head> \
+  && gh pr view <N> --repo <owner/repo> --json state,autoMergeRequest \
   --jq 'if .state == "MERGED" or .autoMergeRequest != null then . else error("auto-merge is not armed") end'
 ```
 

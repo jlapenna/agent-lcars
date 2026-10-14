@@ -94,7 +94,7 @@ def probe_kubernetes(config, deployment):
         state = next((c['type'] for c in job.get('status', {}).get('conditions', [])
                       if c.get('status') == 'True' and c.get('type') in ('Complete', 'Failed')), None)
         state = state or ('suspended' if job.get('spec', {}).get('suspend') else 'active')
-        print(f'[kubernetes] job={name} run={run_id} state={state}', flush=True)
+        print(f'[kubernetes] job={name} uid={uid} run={run_id} state={state}', flush=True)
         owned = [pod for pod in pods if any(owner.get('uid') == uid and owner.get('kind') == 'Job'
                  for owner in pod['metadata'].get('ownerReferences', []))]
         if not owned:

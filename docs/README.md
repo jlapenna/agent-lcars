@@ -38,18 +38,19 @@ Use this index to retrieve the smallest current contract for a task.
 Repeatable local procedures live in [`playbooks/`](playbooks/README.md), starting
 with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 
-| Need                             | Canonical document                                                           |
-| -------------------------------- | ---------------------------------------------------------------------------- |
-| Repository onboarding            | [`onboarding-repo.md`](onboarding-repo.md)                                   |
-| Console and telemetry onboarding | [`onboarding-console-and-telemetry.md`](onboarding-console-and-telemetry.md) |
-| Console visual system            | [`console-design-system.md`](console-design-system.md)                       |
-| Console design prototypes        | [`../design/README.md`](../design/README.md)                                 |
-| Inbox phone interaction budget   | [`inbox-phone-budget.md`](inbox-phone-budget.md)                             |
-| Fleet testing policy             | [`testing-policy.md`](testing-policy.md)                                     |
-| E2E reliability and triage       | [`e2e-reliability.md`](e2e-reliability.md)                                   |
-| Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)           |
-| Worker qualification and rollout | [`worker-policy-rollout.md`](worker-policy-rollout.md)                       |
-| OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                     |
+| Need                             | Canonical document                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Repository onboarding            | [`onboarding-repo.md`](onboarding-repo.md)                                                      |
+| Console and telemetry onboarding | [`onboarding-console-and-telemetry.md`](onboarding-console-and-telemetry.md)                    |
+| Console visual system            | [`console-design-system.md`](console-design-system.md)                                          |
+| Console design prototypes        | [`../design/README.md`](../design/README.md)                                                    |
+| Inbox phone interaction budget   | [`inbox-phone-budget.md`](inbox-phone-budget.md)                                                |
+| Fleet testing policy             | [`testing-policy.md`](testing-policy.md)                                                        |
+| E2E reliability and triage       | [`e2e-reliability.md`](e2e-reliability.md)                                                      |
+| Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)                              |
+| Worker qualification and rollout | [`worker-policy-rollout.md`](worker-policy-rollout.md)                                          |
+| OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                                        |
+| Hooks-based session telemetry    | [`hooks-telemetry-design.md`](hooks-telemetry-design.md) (phase 3 shipped; host daemon deleted) |
 
 ## Product specification
 

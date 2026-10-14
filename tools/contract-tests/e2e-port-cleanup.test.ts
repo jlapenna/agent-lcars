@@ -76,18 +76,31 @@ it.each(discoveryCases)(
       // Execute the real shell cleanup with bounded discovery shims. Never
       // claim or signal actual ports or JVMs belonging to another session.
       for (const command of ['lsof', 'fuser', 'pkill', 'rm']) {
+        // Discovery shims need shell builtins only. Starting a fresh Node
+        // runtime for every port made the test's five-second command budget
+        // measure cold interpreter startup rather than cleanup ownership.
         const body =
-          command === 'lsof'
-            ? `if (process.env.DISCOVERY === 'lsof' && process.argv.includes('tcp:' + process.env.OWNED_PORT)) console.log(process.env.OWNED_PID);`
-            : command === 'fuser'
-              ? `if (process.env.DISCOVERY === 'fuser' && process.argv.includes(process.env.OWNED_PORT)) console.log(process.env.OWNED_PID);`
-              : command === 'pkill'
-                ? `if (process.argv.includes('cloud-firestore-emulator')) process.kill(Number(process.env.UNRELATED_PID), 'SIGTERM');`
-                : '// Do not remove the real shared hub locator in a test.';
+          command === 'lsof' || command === 'fuser'
+            ? `if [ "$DISCOVERY" = '${command}' ]; then
+  for argument in "$@"; do
+    if [ "$argument" = "${command === 'lsof' ? 'tcp:' : ''}$OWNED_PORT" ]; then
+      printf '%s\\n' "$OWNED_PID"
+    fi
+  done
+fi`
+            : command === 'pkill'
+              ? `for argument in "$@"; do
+  if [ "$argument" = 'cloud-firestore-emulator' ]; then
+    kill -TERM "$UNRELATED_PID"
+  fi
+done`
+              : '# Do not remove the real shared hub locator in a test.\n:';
         await writeFile(
           path.join(directory, command),
-          `#!${process.execPath}\n${body}\n`,
-          { mode: 0o700 },
+          `#!/bin/bash\n${body}\n`,
+          {
+            mode: 0o700,
+          },
         );
       }
       await run('/bin/bash', [script], {

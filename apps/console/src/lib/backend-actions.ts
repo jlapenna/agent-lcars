@@ -128,6 +128,7 @@ export async function clearNeedsHumanLabel(
  */
 export interface PostCommentResult {
   url: string;
+  retryCommentId?: number;
   dispatched: boolean;
   dispatchWarning?: AssignPipelineWarning;
 }
@@ -166,6 +167,65 @@ export async function postComment(
     issue_number: issueNumber,
     body,
   });
+  const result = await dispatchPostedReply(
+    repo,
+    issueNumber,
+    body,
+    actorLogin,
+    assignedPipeline,
+  );
+  return {
+    url: data.html_url,
+    ...result,
+    ...(result.dispatchWarning === 'dispatch-failed'
+      ? { retryCommentId: data.id }
+      : {}),
+  };
+}
+
+/** Retry admission of an existing reply, without creating another comment. */
+export async function retryPostedComment(
+  repo: WatchedRepo,
+  issueNumber: number,
+  commentId: number,
+  actorLogin: string,
+  pipeline: Pipeline,
+): Promise<Omit<PostCommentResult, 'url'>> {
+  requireAgentIntegration(repo, pipeline);
+  if (!actorLogin.trim())
+    throw new ActionError('Comment actor is required', 400);
+  if (!Number.isSafeInteger(commentId) || commentId <= 0) {
+    throw new ActionError('A valid posted comment ID is required', 400);
+  }
+  const { data: comment } = await getGithubClient().rest.issues.getComment({
+    owner: repo.owner,
+    repo: repo.name,
+    comment_id: commentId,
+  });
+  if (
+    comment.issue_url !==
+    `https://api.github.com/repos/${repo.owner}/${repo.name}/issues/${issueNumber}`
+  ) {
+    throw new ActionError('The posted reply belongs to another task', 400);
+  }
+  if (!comment.body?.trim())
+    throw new ActionError('The posted reply is empty', 400);
+  return dispatchPostedReply(
+    repo,
+    issueNumber,
+    comment.body,
+    actorLogin,
+    pipeline,
+  );
+}
+
+async function dispatchPostedReply(
+  repo: WatchedRepo,
+  issueNumber: number,
+  body: string,
+  actorLogin: string,
+  assignedPipeline?: Pipeline,
+): Promise<Omit<PostCommentResult, 'url'>> {
   // The inbox projection's exactly-one canonical agent label is the explicit
   // console intent to hand this comment to an agent. A Task alone is not that
   // signal: Work can remain after somebody removes an assignment label, and
@@ -175,6 +235,7 @@ export async function postComment(
   let handedBackToAgent = false;
   let dispatchWarning: AssignPipelineWarning | undefined;
   try {
+    const octokit = getGithubClient();
     if (assignedPipeline !== undefined) {
       // A card's labels are only a render-time projection. Re-read the current
       // GitHub labels at the dispatch boundary so a removed, changed, or
@@ -230,30 +291,28 @@ export async function postComment(
         dispatchWarning = assignment.warning;
         await clearNeedsHumanLabel(repo, issueNumber);
         return {
-          url: data.html_url,
           dispatched: handedBackToAgent,
           ...(dispatchWarning === undefined ? {} : { dispatchWarning }),
         };
       }
       if (currentAssignment !== assignedPipeline) {
-        return { url: data.html_url, dispatched: false };
+        return { dispatched: false };
       }
       // A label can be visible before its webhook admission reaches the
       // control plane. Preserve the comment in that transient state; the
       // webhook remains responsible for first Work admission.
       if (existingTask !== undefined) {
         const work = workPayloadSchema.parse(existingTask.task.work);
-        // Assignment labels are an explicit present-tense handoff, whereas
-        // Work's pipeline is immutable. A rejected label-change webhook can
-        // therefore leave a new label beside older Work. Do not revive that
-        // older Work on a reply: all three sources must agree before a run can
-        // begin or the human handoff can be cleared.
-        if (work.spec.pipeline !== assignedPipeline) {
-          return { url: data.html_url, dispatched: false };
-        }
+        // Only an accepted label handoff changes future admission. An older
+        // or fallback run's provider is historical execution, not routing intent.
+        const effective =
+          existingTask.task.providerRouting?.acceptedGeneration?.pipeline ??
+          work.spec.pipeline;
+        if (effective !== assignedPipeline) return { dispatched: false };
         const outcome = await admitGithubWork(runtime, {
           anchor: taskId,
           requestId: `console-reply:${randomUUID()}`,
+          expectedEffectivePipeline: assignedPipeline,
           params: {
             mode: 'reply',
             reply: body,
@@ -278,14 +337,13 @@ export async function postComment(
     if (handedBackToAgent) {
       await clearNeedsHumanLabel(repo, issueNumber);
     }
-    return { url: data.html_url, dispatched: handedBackToAgent };
+    return { dispatched: handedBackToAgent };
   } catch {
     // GitHub already accepted the comment. Every later read, admission, and
     // cleanup failure is therefore a partial success: tell the client to
     // clear its input and never invite a duplicate comment. Preserve whether
     // Work admission completed before the failure.
     return {
-      url: data.html_url,
       dispatched: handedBackToAgent,
       dispatchWarning:
         dispatchWarning ??
@@ -666,6 +724,7 @@ export async function retriggerIssue(
   const outcome = await admitGithubWork(runtime, {
     anchor: taskId,
     requestId: `console-retry:${randomUUID()}`,
+    followEffectivePipeline: true,
     params: { mode: 'implement' },
     work: existingWork,
   });

@@ -11,7 +11,8 @@ import {
   selectedReplyPipeline,
   supportedAgentPipelines,
 } from '../../lib/watched-repo';
-import { replyToItem } from '../actions';
+import { type ReplyResult, replyToItem } from '../actions';
+import { RetryReplyDispatch } from '../retry-reply-dispatch';
 
 /** Uses GitHub's existing authenticated reply/admission path. Never adapts
  * a GitHub task key into a native Work mutation. */
@@ -20,6 +21,8 @@ export function GithubDetailReply({ item }: { item: ActionItem }) {
   const [text, setText] = useState('');
   const [chosen, setChosen] = useState<Pipeline>();
   const [feedback, setFeedback] = useState<{ ok: boolean; message: string }>();
+  const [retry, setRetry] =
+    useState<Extract<ReplyResult, { ok: true }>['retry']>();
   const [pending, startTransition] = useTransition();
   const assigned = selectedReplyPipeline(item.repo, item.labels, item.kind);
   const targets =
@@ -69,6 +72,7 @@ export function GithubDetailReply({ item }: { item: ActionItem }) {
               message: result.ok ? result.note : result.message,
             });
             if (result.ok) {
+              setRetry(result.retry);
               setText('');
               router.refresh();
             }
@@ -77,6 +81,15 @@ export function GithubDetailReply({ item }: { item: ActionItem }) {
       >
         Reply
       </Button>
+      {retry && (
+        <RetryReplyDispatch
+          key={retry.commentId}
+          repo={item.repo}
+          number={item.number}
+          retry={retry}
+          onDispatched={() => setFeedback(undefined)}
+        />
+      )}
       {feedback && (
         <Text role={feedback.ok ? 'status' : 'alert'} size="sm">
           {feedback.message}

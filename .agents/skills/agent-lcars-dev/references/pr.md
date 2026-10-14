@@ -21,8 +21,50 @@
    reviewer:
 
    ```bash
-   gh pr create --reviewer jlapenna
+   gh pr create --draft --reviewer jlapenna
    ```
+
+   **Reconcile GitHub's actual closing scope before ready/arming**, in both
+   interactive and dispatched publication. Declare exactly which issues this
+   revision fully completes after reviewing their required acceptance and latest
+   comments; an unfinished runtime/deployment gate excludes that issue. Use
+   `Tracks #N` for source-only or diagnostic work. Avoid negated closing phrases:
+   PR #2447's “intentionally does not close #2209” still selected #2209 in
+   GitHub's interpreted `closingIssuesReferences`.
+
+   Publish new PRs as drafts, so the returned references can be checked before
+   a ready-PR auto-merge backstop can arm delivery. Once the check and required
+   review pass, mark the draft ready and arm through the existing path below.
+   After publishing the body, run the shared read-only check against the exact
+   reviewed/pushed head, immediately before marking ready or arming, and chain
+   every dependent mutation to it with `&&` so a rejection makes the mutation
+   structurally unrunnable. Never retype the guard and a mutation as separate
+   statements or join them with `;`: on #2324 publication a semicolon-joined
+   sequence without `errexit` ran `gh pr ready` after the check had already
+   exited 1; the operator explicitly returned the PR to draft before
+   delivery (issue #2534). That manual correction was not a GitHub scope gate.
+
+   ```bash
+   node agents/shared/skills/agent-protocol/scripts/check-pr-closing-references.mjs \
+     jlapenna/agent-lcars "$pr_number" "$reviewed_head" none \
+     && gh pr ready "$pr_number" -R jlapenna/agent-lcars
+   # For fully accepted intentional closure, replace none with e.g.
+   # jlapenna/agent-lcars#1234 (comma-separated for multiple completed issues).
+   ```
+
+   The check paginates actual returned references and requires exact agreement
+   with the declared completion scope. A mismatch, unreadable/incomplete response,
+   or changed head blocks ready/arming. Correct the body or other closing metadata
+   and re-read; changing English prose alone is not proof that GitHub removed the
+   link. Preserve legitimate closing references only after full scoped acceptance.
+   If an already-armed PR has an unintended reference, disarm it while correcting
+   the metadata; refresh feedback and this check before re-arming. Re-run after
+   any head/body/closing-metadata or acceptance change. Retain the JSON readback
+   in the handoff. This is closure-scope evidence, separate from review, required
+   checks and protected merge evidence. For partial work, verify the tracking issue
+   remains open after source landing; close it only when remaining acceptance is
+   proven. The readback cannot lock concurrent body edits: re-read any observed
+   metadata change before proceeding.
 
    Headless dispatched workers instead follow the shared
    [agent protocol](../../agent-protocol/SKILL.md): they do not request human
@@ -60,7 +102,9 @@
    gh pr view "$pr_number" -R jlapenna/agent-lcars \
      --json id,state,isDraft,headRefOid,autoMergeRequest
    pr_node="$(gh pr view "$pr_number" -R jlapenna/agent-lcars --json id --jq .id)"
-   gh api graphql \
+   node agents/shared/skills/agent-protocol/scripts/check-pr-closing-references.mjs \
+     jlapenna/agent-lcars "$pr_number" "$reviewed_head" <declared-scope> \
+     && gh api graphql \
      -f query='mutation($id: ID!, $head: GitObjectID!) {
        enablePullRequestAutoMerge(input: {
          pullRequestId: $id, expectedHeadOid: $head, mergeMethod: SQUASH
@@ -68,13 +112,16 @@
          pullRequest { id state headRefOid autoMergeRequest { enabledAt mergeMethod } }
        }
      }' \
-     -f id="$pr_node" -f head="$reviewed_head"
-   gh pr view "$pr_number" -R jlapenna/agent-lcars \
+     -f id="$pr_node" -f head="$reviewed_head" \
+     && gh pr view "$pr_number" -R jlapenna/agent-lcars \
      --json state,isDraft,headRefOid,autoMergeRequest
    ```
 
    Require an open, ready PR at `reviewed_head` before the mutation and a
-   non-null SQUASH `autoMergeRequest` at that same head afterward. This arms
+   non-null SQUASH `autoMergeRequest` at that same head afterward. Execute the
+   closing-scope guard and the arming mutation only as the `&&`-chained
+   sequence above — a rejected, incomplete or changed-scope read must stop the
+   chain, not merely precede it. This arms
    delivery; it does not declare checks passed. If queueing fails, re-read the
    exact PR/head and diagnose the error. Do not fall back to a direct/admin
    merge, relax checks or treat an unarmed PR as delivered. If the PR merged
@@ -84,7 +131,34 @@
    For API errors, lost responses or Git publication stalls, follow
    [delivery-recovery.md](delivery-recovery.md) before retrying. It owns bounded
    sanitized diagnostics and exact-ref/state recovery; this workflow still
-   owns the reviewed-head, queue-only and protection requirements.
+   owns the reviewed-head, queue-only and protection requirements. A
+   deterministic state refusal is not one of those transport failures — see
+   below before treating it as a retryable queueing error.
+
+   **Preserve a valid queue across unchanged-head infrastructure retries.**
+   When an already-armed PR at its independently reviewed `reviewed_head` fails
+   only because the runner infrastructure behind a required check was preempted,
+   cancelled or otherwise never evaluated — and source, closing scope,
+   review/approval state and intended delivery are all unchanged — leave the
+   existing `autoMergeRequest` in place. Retry that failed check at the same
+   revision and let the required checks stay the merge gate; GitHub delivers the
+   queued squash when that exact head goes green. Withdrawing a valid queue
+   request to "start clean" is the sequencing mistake: it strands an
+   already-green PR, and re-arming the unchanged head then refuses with
+   `UNPROCESSABLE` (`Pull request ... is in clean status`) while the PR still
+   reads OPEN/ready with all required checks green. Record that refusal as a
+   state change, not transport loss: it repeats
+   identically, so re-issuing it is a blind retry. Recover by qualifying the
+   actual source composition at a fresh revision — merge current `main` into the
+   branch so checks and queueing evaluate a head that can be queued — and by
+   re-arming that new reviewed head through the sequence above. Never answer it
+   with a direct/admin merge, relaxed or fabricated checks/statuses, a policy
+   edit, or a new wrapper, credential or helper introduced merely to arm.
+   Disarm only when the source, closing scope, review/approval state or
+   intended delivery actually changes; recorded case
+   [#2558](https://github.com/jlapenna/agent-lcars/issues/2558) on PR #2551
+   after the infrastructure preemption in
+   [Homelab #2369](https://github.com/jlapenna/homelab/issues/2369).
 
    Draft CI can short-circuit without exercising full verification. After a
    draft becomes ready, an old green summary is not full-gate evidence: use

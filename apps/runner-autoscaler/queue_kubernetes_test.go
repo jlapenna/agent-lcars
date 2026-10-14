@@ -419,6 +419,35 @@ func TestKubernetesWorkerPolicySelection(t *testing.T) {
 	}
 }
 
+// Hook telemetry is unconditional for every pipeline
+// (docs/hooks-telemetry-design.md, phase 3), so the retired
+// LCARS_HOOK_TELEMETRY_PROVIDERS selector is ignored: a deployment that still
+// sets it, even to a value the old validator rejected, must neither fail
+// startup nor reach a worker Job.
+func TestKubernetesIgnoresRetiredHookTelemetrySelector(t *testing.T) {
+	t.Setenv("LCARS_HOOK_TELEMETRY_PROVIDERS", "unqualified-provider")
+	t.Setenv("LCARS_CONSOLE_URL", "https://console.example")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google.json")
+	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
+	if err := validateQueueExecutorEnvironment(testKubernetesResolved(t)); err != nil {
+		t.Fatalf("retired selector rejected: %v", err)
+	}
+	q, c := kubeQueueFixture()
+	launch := directRunnerLaunch{runID: "work:hooks/r1", pipeline: "claude", runToken: "fixture-token"}
+	if err := q.launch(context.Background(), launch); err != nil {
+		t.Fatal(err)
+	}
+	job, err := c.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), queueJobName(launch.runID), meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "LCARS_HOOK_TELEMETRY_PROVIDERS" {
+			t.Fatal("retired hook telemetry selector forwarded to a worker Job")
+		}
+	}
+}
+
 // Exercise the emitted environment through the actual bootstrap. A setup
 // receipt without control-smoke proof must block only selected providers.
 func assertWorkerPolicyBootstrap(t *testing.T, job *batch.Job, provider, selection string) {
@@ -450,5 +479,81 @@ func assertWorkerPolicyBootstrap(t *testing.T, job *batch.Job, provider, selecti
 		if (invocationErr == nil) != selected {
 			t.Fatal("bootstrap setup invocation did not match emitted Job selection")
 		}
+	}
+}
+
+func disruptedPod(name, jobUID string, owned bool, reason string, containerState *core.ContainerState) *core.Pod {
+	ownedRef := &meta.OwnerReference{Kind: "Job", Name: "queue-run", UID: types.UID(jobUID)}
+	if !owned {
+		ownedRef = &meta.OwnerReference{Kind: "Job", Name: "queue-run", UID: types.UID("another-job")}
+	}
+	yes := true
+	ownedRef.Controller = &yes
+	pod := &core.Pod{
+		ObjectMeta: meta.ObjectMeta{Name: name, UID: types.UID(name), Namespace: "lcars-work", OwnerReferences: []meta.OwnerReference{*ownedRef}},
+		Status: core.PodStatus{Conditions: []core.PodCondition{{
+			Type:               core.DisruptionTarget,
+			Status:             core.ConditionTrue,
+			Reason:             reason,
+			LastTransitionTime: meta.NewTime(time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)),
+		}}},
+	}
+	if containerState != nil {
+		pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: directRunnerContainer, State: *containerState}}
+	}
+	return pod
+}
+
+func queueJob(uid string) batch.Job {
+	return batch.Job{ObjectMeta: meta.ObjectMeta{Name: "queue-run", Namespace: "lcars-work", UID: types.UID(uid)}}
+}
+
+// The attestation is what lets the console recover the run, so it has to be
+// narrow: only a Pod this exact Job owns, removed by the scheduler for that
+// reason, whose worker container never ran.
+func TestSchedulerPreemptionAttestsOnlyPreStartSchedulerPreemption(t *testing.T) {
+	absent := core.ContainerState{}
+	for _, tc := range []struct {
+		name string
+		pods []core.Pod
+		want bool
+	}{
+		{"preempted before start", []core.Pod{*disruptedPod("pod", "job-uid", true, schedulerPreemptionReason, nil)}, true},
+		{"pod still pending with no status", []core.Pod{*disruptedPod("pod", "job-uid", true, schedulerPreemptionReason, &absent)}, true},
+		{"different reason", []core.Pod{*disruptedPod("pod", "job-uid", true, "PodDeleteCandidate", nil)}, false},
+		{"pod owned by another job", []core.Pod{*disruptedPod("pod", "other-uid", false, schedulerPreemptionReason, nil)}, false},
+		{"container ran", []core.Pod{*disruptedPod("pod", "job-uid", true, schedulerPreemptionReason, &core.ContainerState{Running: &core.ContainerStateRunning{StartedAt: meta.Now()}})}, false},
+		{"container terminated", []core.Pod{*disruptedPod("pod", "job-uid", true, schedulerPreemptionReason, &core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 137}})}, false},
+		{"no disruption condition", []core.Pod{{ObjectMeta: meta.ObjectMeta{Name: "pod", OwnerReferences: []meta.OwnerReference{{Kind: "Job", UID: types.UID("job-uid"), Controller: func() *bool { y := true; return &y }()}}}}}, false},
+		{"no pods", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := schedulerPreemption(queueJob("job-uid"), tc.pods)
+			if tc.want && got == nil {
+				t.Fatalf("schedulerPreemption() = nil, want an attestation")
+			}
+			if !tc.want && got != nil {
+				t.Fatalf("schedulerPreemption() = %+v, want no attestation", got)
+			}
+			if got != nil && (got.JobUID != "job-uid" || got.PodUID != "pod" ||
+				got.Kind != schedulerPreemptionKind || got.ObservedAt != "2026-08-15T12:00:00Z") {
+				t.Fatalf("attestation = %+v, want this job, this pod, and an RFC3339 UTC receipt", got)
+			}
+		})
+	}
+}
+
+func TestSchedulerPreemptionAttestsThePodOfItsOwnJobAmongMany(t *testing.T) {
+	other := disruptedPod("pod-of-another-job", "another-job", false, schedulerPreemptionReason, nil)
+	own := disruptedPod("pod-of-this-job", "job-uid", true, schedulerPreemptionReason, nil)
+	got := schedulerPreemption(queueJob("job-uid"), []core.Pod{*other, *own})
+	if got == nil {
+		t.Fatalf("schedulerPreemption() = nil, want the owned Pod attested")
+	}
+	if got.JobUID != "job-uid" {
+		t.Fatalf("attested job uid = %q, want job-uid", got.JobUID)
+	}
+	if got.PodUID != "pod-of-this-job" {
+		t.Fatalf("attested pod uid = %q, want the Pod this Job owns", got.PodUID)
 	}
 }

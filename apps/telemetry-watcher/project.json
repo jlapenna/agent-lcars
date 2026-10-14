@@ -39,24 +39,6 @@
         }
       }
     },
-    "serve": {
-      "continuous": true,
-      "executor": "@nx/js:node",
-      "defaultConfiguration": "development",
-      "dependsOn": ["build"],
-      "options": {
-        "buildTarget": "@agent-lcars/telemetry-watcher:build",
-        "runBuildTargetDependencies": false
-      },
-      "configurations": {
-        "development": {
-          "buildTarget": "@agent-lcars/telemetry-watcher:build:development"
-        },
-        "production": {
-          "buildTarget": "@agent-lcars/telemetry-watcher:build:production"
-        }
-      }
-    },
     "bundle": {
       "executor": "@nx/esbuild:esbuild",
       "outputs": ["{options.outputPath}"],
@@ -107,17 +89,37 @@
         }
       }
     },
-    "docker-build": {
-      "executor": "nx:run-commands",
-      "dependsOn": ["build"],
-      "options": {
-        "command": "docker build -f apps/telemetry-watcher/Dockerfile -t agent-lcars-telemetry-watcher:local .",
-        "cwd": "{workspaceRoot}"
-      }
-    },
     "test": {
       "options": {
         "passWithNoTests": true
+      }
+    },
+    "hook-flush-cli": {
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "platform": "node",
+        "outputPath": "dist/apps/telemetry-watcher-hook-flush",
+        "outputFileName": "lcars-hook-flush.cjs",
+        "format": ["cjs"],
+        "bundle": true,
+        "thirdParty": true,
+        "target": "node24",
+        "main": "apps/telemetry-watcher/src/hook-flush-cli.ts",
+        "tsConfig": "apps/telemetry-watcher/tsconfig.build.json",
+        "skipTypeCheck": true,
+        "esbuildOptions": {
+          "sourcemap": false
+        }
+      },
+      "configurations": {
+        "development": {},
+        "production": {
+          "esbuildOptions": {
+            "sourcemap": false
+          }
+        }
       }
     }
   }

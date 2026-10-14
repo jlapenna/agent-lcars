@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { decidedRun, isRefusal } from './decide';
+import {
+  decidedRun,
+  isRefusal,
+  MAX_AUTO_RETRIES,
+  MAX_SCHEDULER_DISRUPTION_RECOVERIES,
+} from './decide';
 import { MemoryStore } from './memory-store';
 import type { TaskId } from './model';
 import { Orchestrator } from './orchestrator';
@@ -351,6 +356,27 @@ describe('leases and loss', () => {
 });
 
 describe('auto-retry on loss', () => {
+  it.each(['urgent', 'background'] as const)(
+    'preserves %s priority on automatic retry',
+    async (priority) => {
+      const { clock, store, orchestrator } = fixture();
+      const outcome = await orchestrator.request({
+        taskId: TASK,
+        requestId: 'priority',
+        pipeline: 'claude',
+        priority,
+        work: TASK_WORK,
+      });
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      clock.advanceMinutes(121);
+      const swept = await orchestrator.sweepExpired();
+      expect(swept.retried).toHaveLength(1);
+      expect(await store.readRun(swept.retried[0]!.newRunId)).toMatchObject({
+        priority,
+        runId: 'octo/example#7/r2',
+      });
+    },
+  );
   it('starts a fresh run for the same task, copying pipeline and params verbatim, and increments consecutiveLost', async () => {
     const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator, 'req-1', {
@@ -585,6 +611,7 @@ describe('executor-reported exit', () => {
   async function claimed(
     f = fixture(),
     claimedBySubject: string | null = CLAIMANT.subject,
+    placementAware = false,
   ) {
     const { run } = await started(f.orchestrator);
     await f.store.enqueueRun({ runId: run.runId, now: T0 });
@@ -594,6 +621,7 @@ describe('executor-reported exit', () => {
       now: T0,
       claimedBy: CLAIMANT.runner,
       ...(claimedBySubject === null ? {} : { claimedBySubject }),
+      ...(placementAware ? { placementAware: true } : {}),
       tokenHash: 'a'.repeat(64),
     });
     expect(claim?.runId).toBe(run.runId);
@@ -731,6 +759,228 @@ describe('executor-reported exit', () => {
     ).toMatchObject({
       refused: true,
       reason: 'unknown-run',
+    });
+  });
+
+  describe('scheduler-disruption recovery', () => {
+    const PREEMPTED = {
+      kind: 'scheduler-preemption' as const,
+      jobUid: 'job-uid-1',
+      podUid: 'pod-uid-1',
+      observedAt: T0,
+    };
+
+    /** Claims the run the task is currently holding, the way `claimed` does
+     * for the first one, so a test can walk several recovery generations. */
+    async function reclaim(
+      f: {
+        store: MemoryStore;
+        orchestrator: Orchestrator;
+      },
+      runId: string,
+    ) {
+      await f.store.enqueueRun({ runId, now: T0 });
+      await f.orchestrator.confirmDispatch(runId);
+      expect(
+        (
+          await f.store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: T0,
+            claimedBy: CLAIMANT.runner,
+            claimedBySubject: CLAIMANT.subject,
+            tokenHash: 'a'.repeat(64),
+          })
+        )?.runId,
+      ).toBe(runId);
+    }
+
+    it('recovers a pre-provider-startup preemption without spending the execution budget', async () => {
+      const { clock, store, orchestrator, run } = await claimed();
+      clock.advanceMinutes(3);
+
+      const outcome = await orchestrator.executorExited(
+        run.runId,
+        CLAIMANT,
+        PREEMPTED,
+      );
+
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      expect(decidedRun(outcome).events.at(-1)).toMatchObject({
+        to: 'lost',
+        by: 'executor',
+        note: 'scheduler preemption before provider start (job job-uid-1, pod pod-uid-1)',
+      });
+      expect(outcome.additionalRuns?.[0]).toMatchObject({
+        requestId: `retry:${run.runId}`,
+        state: 'pending',
+      });
+      // The whole point of #2520: an infra disruption is not an execution
+      // failure, so `consecutiveLost` is untouched and the task keeps its
+      // full retry budget for real attempts.
+      expect(await store.readTask(TASK)).toMatchObject({
+        task: { consecutiveLost: 0, schedulerDisruptions: 1 },
+      });
+    });
+
+    it('stops recovering at the bound and charges the ordinary budget', async () => {
+      const f = await claimed();
+      let runId = f.run.runId;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        f.clock.advanceMinutes(3);
+        const outcome = await f.orchestrator.executorExited(
+          runId,
+          CLAIMANT,
+          PREEMPTED,
+        );
+        if (isRefusal(outcome)) throw new Error(outcome.reason);
+        const next = outcome.additionalRuns?.[0]?.runId;
+        expect(next).toBeDefined();
+        // Inside the bound an attested preemption never touches
+        // `consecutiveLost`; past it the loss is ordinary again -- counted,
+        // and retried only while the execution budget still has room, so the
+        // task ends visibly instead of redispatching forever.
+        const withinBound = attempt <= MAX_SCHEDULER_DISRUPTION_RECOVERIES;
+        expect((await f.store.readTask(TASK))?.task).toMatchObject({
+          consecutiveLost: withinBound ? 0 : 1,
+          schedulerDisruptions: Math.min(
+            attempt,
+            MAX_SCHEDULER_DISRUPTION_RECOVERIES,
+          ),
+        });
+        runId = next as string;
+        await reclaim(f, runId);
+      }
+    });
+
+    it('refuses recovery once a provider process was observed starting', async () => {
+      const { clock, store, orchestrator, run } = await claimed();
+      expect(
+        await orchestrator.renew(run.runId, 'a'.repeat(64), true),
+      ).toMatchObject({ run: { queue: { providerProcessStartedAt: T0 } } });
+      clock.advanceMinutes(3);
+
+      const outcome = await orchestrator.executorExited(
+        run.runId,
+        CLAIMANT,
+        PREEMPTED,
+      );
+
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      expect(decidedRun(outcome).events.at(-1)?.note).toBeUndefined();
+      expect(await store.readTask(TASK)).toMatchObject({
+        task: { consecutiveLost: 1 },
+      });
+    });
+
+    it('refuses recovery when the attested Job is not the recorded placement', async () => {
+      const { clock, store, orchestrator, run } = await claimed(
+        fixture(),
+        CLAIMANT.subject,
+        true,
+      );
+      expect(
+        await orchestrator.observeStartupPlacement(run.runId, CLAIMANT, {
+          jobUid: 'job-uid-1',
+          observedAt: '2026-08-15T12:00:01.000Z',
+          placed: true,
+        }),
+      ).not.toMatchObject({ refused: true });
+      clock.advanceMinutes(3);
+
+      const outcome = await orchestrator.executorExited(run.runId, CLAIMANT, {
+        ...PREEMPTED,
+        jobUid: 'job-uid-2',
+      });
+
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      expect(await store.readTask(TASK)).toMatchObject({
+        task: { consecutiveLost: 1 },
+      });
+    });
+
+    it('refuses recovery for a receipt outside this attempt own window', async () => {
+      const { clock, store, orchestrator, run } = await claimed();
+      clock.advanceMinutes(3);
+
+      const stale = await orchestrator.executorExited(run.runId, CLAIMANT, {
+        ...PREEMPTED,
+        observedAt: '2026-08-15T11:00:00.000Z', // before the claim
+      });
+      if (isRefusal(stale)) throw new Error(stale.reason);
+      expect(await store.readTask(TASK)).toMatchObject({
+        task: { consecutiveLost: 1 },
+      });
+
+      const fresh = await claimed();
+      fresh.clock.advanceMinutes(3);
+      const future = await fresh.orchestrator.executorExited(
+        fresh.run.runId,
+        CLAIMANT,
+        { ...PREEMPTED, observedAt: '2026-08-15T13:00:00.000Z' },
+      );
+      if (isRefusal(future)) throw new Error(future.reason);
+      expect(await fresh.store.readTask(TASK)).toMatchObject({
+        task: { consecutiveLost: 1 },
+      });
+    });
+
+    it('leaves an unattested exit exactly as it was', async () => {
+      const { clock, store, orchestrator, run } = await claimed();
+      clock.advanceMinutes(3);
+
+      expect(
+        await orchestrator.executorExited(run.runId, CLAIMANT),
+      ).not.toMatchObject({ refused: true });
+      expect(await store.readTask(TASK)).toMatchObject({
+        task: { consecutiveLost: 1 },
+      });
+    });
+
+    it('keeps recovering after the execution budget is spent, because it is a separate budget', async () => {
+      const f = await claimed();
+      // Spend the execution budget on ordinary losses, walking each minted
+      // successor the way the fleet would.
+      let runId = f.run.runId;
+      for (let i = 0; i < MAX_AUTO_RETRIES + 1; i += 1) {
+        f.clock.advanceMinutes(3);
+        const lost = await f.orchestrator.executorExited(runId, CLAIMANT);
+        if (isRefusal(lost)) throw new Error(lost.reason);
+        const next = lost.additionalRuns?.[0]?.runId;
+        if (next === undefined) break;
+        runId = next;
+        await reclaim(f, runId);
+      }
+      expect((await f.store.readTask(TASK))?.task).toMatchObject({
+        consecutiveLost: MAX_AUTO_RETRIES + 1,
+      });
+
+      // An operator re-request starts a run despite the spent streak, and its
+      // pre-startup preemption still recovers -- which is the whole point of
+      // #2520: provider preemption must not end useful work as `lost`.
+      const request = await f.orchestrator.request({
+        taskId: TASK,
+        requestId: 'operator-retry',
+        pipeline: 'claude',
+        work: TASK_WORK,
+      });
+      if (isRefusal(request)) throw new Error(request.reason);
+      const fresh = decidedRun(request).runId;
+      await reclaim(f, fresh);
+      f.clock.advanceMinutes(3);
+      const outcome = await f.orchestrator.executorExited(
+        fresh,
+        CLAIMANT,
+        PREEMPTED,
+      );
+      if (isRefusal(outcome)) throw new Error(outcome.reason);
+      expect(outcome.additionalRuns?.[0]).toBeDefined();
+      expect(await f.store.readTask(TASK)).toMatchObject({
+        task: {
+          consecutiveLost: MAX_AUTO_RETRIES + 1,
+          schedulerDisruptions: 1,
+          activeRunId: outcome.additionalRuns?.[0]?.runId,
+        },
+      });
     });
   });
 });
@@ -1184,6 +1434,49 @@ describe('startup deadline sweep race', () => {
     });
     expect(await store.readTask(TASK)).toMatchObject({
       task: { activeRunId: run.runId, consecutiveLost: 0 },
+    });
+  });
+  it('does not settle a Pending claim from an expiry snapshot taken before a timely placement observation', async () => {
+    const { store, orchestrator, clock } = fixture();
+    const { run } = await started(orchestrator);
+    await store.enqueueRun({ runId: run.runId, now: T0 });
+    await orchestrator.confirmDispatch(run.runId);
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: T0,
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.com',
+      tokenHash: 'a'.repeat(64),
+      placementAware: true,
+    });
+    clock.advanceMinutes(15);
+    const listExpired = store.listExpiredRuns.bind(store);
+    vi.spyOn(store, 'listExpiredRuns').mockImplementationOnce(async (now) => {
+      const snapshot = await listExpired(now);
+      expect(snapshot.map((run) => run.runId)).toContain(run.runId);
+      clock.set('2026-08-15T12:14:59.000Z');
+      expect(
+        isRefusal(
+          await orchestrator.observeStartupPlacement(
+            run.runId,
+            {
+              runner: 'executor',
+              subject: 'executor@example.com',
+              claimFingerprint: 'a'.repeat(64),
+            },
+            { jobUid: 'original-job', observedAt: clock.now(), placed: false },
+          ),
+        ),
+      ).toBe(false);
+      clock.set(now);
+      return snapshot;
+    });
+    expect(await orchestrator.sweepExpired()).toEqual({
+      lost: [],
+      retried: [],
+    });
+    expect(await store.readTask(TASK)).toMatchObject({
+      task: { activeRunId: run.runId, consecutiveLost: 0, runCount: 1 },
     });
   });
 });

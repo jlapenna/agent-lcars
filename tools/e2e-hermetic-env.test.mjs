@@ -7,10 +7,40 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import {
+  LAUNCH_TIMEOUT_MS,
+  browserFailureReason,
+  checkBrowser,
+} from './e2e/check-browser.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const e2eLocal = path.join(root, 'tools/e2e-local.sh');
 const validator = path.join(root, 'tools/e2e/validate-env.mjs');
-function runThroughE2eBoundary(probe, env = {}, excludedEnvironmentKeys = []) {
+// Boundary fixtures replace only the browser prerequisite process. The real
+// validator, hermetic wrapper and Nx launcher still run; no workspace install
+// or real browser is required for CI's pre-install boundary tests.
+function stubBrowserCheck(fakeBin, exitCode = 0) {
+  const node = path.join(fakeBin, 'node');
+  fs.writeFileSync(
+    node,
+    [
+      '#!/bin/sh',
+      'case "$1" in',
+      `  */tools/e2e/check-browser.mjs) exit ${exitCode} ;;`,
+      'esac',
+      `exec ${JSON.stringify(process.execPath)} "$@"`,
+      '',
+    ].join('\n'),
+  );
+  fs.chmodSync(node, 0o755);
+}
+
+function runThroughE2eBoundary(
+  probe,
+  env = {},
+  excludedEnvironmentKeys = [],
+  browserExit = 0,
+) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-probe-'));
   const fakeBin = path.join(tempDir, 'bin');
   const probeFile = path.join(tempDir, 'probe.mjs');
@@ -20,6 +50,8 @@ function runThroughE2eBoundary(probe, env = {}, excludedEnvironmentKeys = []) {
     delete inheritedEnvironment[key];
   }
   fs.mkdirSync(fakeBin, { recursive: true });
+  stubBrowserCheck(fakeBin);
+  stubBrowserCheck(fakeBin, browserExit);
   fs.writeFileSync(probeFile, probe);
   fs.writeFileSync(
     pnpm,
@@ -193,6 +225,7 @@ test('a simulated Windows uname selects the Windows Corepack cache path', () => 
   const fakeBin = path.join(tempDir, 'bin');
   const corepackCache = path.join(callerHome, 'AppData/Local/node/corepack');
   fs.mkdirSync(fakeBin, { recursive: true });
+  stubBrowserCheck(fakeBin);
   const uname = path.join(fakeBin, 'uname');
   fs.writeFileSync(uname, '#!/bin/sh\nprintf "MINGW64_NT-10.0\\n"\n');
   fs.chmodSync(uname, 0o755);
@@ -227,6 +260,7 @@ test('a simulated Darwin uname selects the macOS browser cache path', () => {
   const browserCache = path.join(callerHome, 'Library/Caches/ms-playwright');
   fs.mkdirSync(browserCache, { recursive: true });
   fs.mkdirSync(fakeBin, { recursive: true });
+  stubBrowserCheck(fakeBin);
   const uname = path.join(fakeBin, 'uname');
   fs.writeFileSync(uname, '#!/bin/sh\nprintf "Darwin\\n"\n');
   fs.chmodSync(uname, 0o755);
@@ -269,6 +303,7 @@ test('ambient mode cannot select a non-hermetic live implementation', () => {
   const fakeBin = path.join(tempDir, 'bin');
   const argsFile = path.join(tempDir, 'pnpm-args');
   fs.mkdirSync(fakeBin, { recursive: true });
+  stubBrowserCheck(fakeBin);
   const pnpm = path.join(fakeBin, 'pnpm');
   fs.writeFileSync(
     pnpm,
@@ -304,6 +339,7 @@ test('a concurrent e2e-local run fails fast against the held host lock', async (
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-lock-'));
   const fakeBin = path.join(tempDir, 'bin');
   fs.mkdirSync(fakeBin, { recursive: true });
+  stubBrowserCheck(fakeBin);
   const pnpm = path.join(fakeBin, 'pnpm');
   // Simulates a long-running e2e-implementation run so the lock stays held
   // long enough for a concurrent contender to observe it (agent-lcars#535:
@@ -369,6 +405,7 @@ test('SIGTERM forwards to the E2E child before its temporary HOME is removed', a
   const signalFile = path.join(tempDir, 'signal');
   const lockFile = path.join(tempDir, 'e2e-local.lock');
   fs.mkdirSync(fakeBin, { recursive: true });
+  stubBrowserCheck(fakeBin);
   fs.writeFileSync(
     pnpm,
     [
@@ -434,6 +471,7 @@ test('a platform without flock on PATH fails clearly instead of an opaque error'
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-noflock-'));
   const fakeBin = path.join(tempDir, 'bin');
   fs.mkdirSync(fakeBin, { recursive: true });
+  stubBrowserCheck(fakeBin);
   for (const bin of ['bash', 'dirname']) {
     const real = spawnSync('/bin/sh', ['-c', `command -v ${bin}`], {
       encoding: 'utf8',
@@ -604,4 +642,60 @@ test('Next auto-loaded dotenv files are validated before build', () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('unavailable browser stops before Nx can build or start emulators', () => {
+  const result = runThroughE2eBoundary(
+    "process.stdout.write('Nx must not start');",
+    {},
+    [],
+    1,
+  );
+  assert.equal(result.status, 1, result.stderr);
+  assert.doesNotMatch(result.stdout, /Nx must not start/u);
+});
+
+test('browser check launches the selected executable and closes it', async () => {
+  let closed = false;
+  const chromium = {
+    async launch(options) {
+      assert.equal(options.executablePath, '/prepared/chromium');
+      assert.equal(options.timeout, LAUNCH_TIMEOUT_MS);
+      return {
+        version: () => '156.0.8078.4',
+        async close() {
+          closed = true;
+        },
+      };
+    },
+  };
+  assert.equal(
+    await checkBrowser(chromium, '/prepared/chromium'),
+    '156.0.8078.4',
+  );
+  assert.equal(closed, true);
+});
+
+test('browser prerequisite diagnostics retain dependency names without launch logs', () => {
+  const raw = new Error(
+    'sentinel-secret\n/chrome: error while loading shared libraries: libatk-1.0.so.0: cannot open shared object file: No such file',
+  );
+  assert.equal(
+    browserFailureReason(raw),
+    'missing shared library libatk-1.0.so.0',
+  );
+  assert.equal(
+    browserFailureReason(
+      new Error("Executable doesn't exist at /sentinel-secret"),
+    ),
+    'matching Chromium executable is unavailable',
+  );
+  assert.equal(
+    browserFailureReason(new Error('Timeout 5000ms exceeded: sentinel-secret')),
+    'Chromium launch timed out',
+  );
+  assert.equal(
+    browserFailureReason(new Error('sentinel-secret')),
+    'Chromium could not launch or close',
+  );
 });

@@ -11,6 +11,15 @@ export interface NativeDecisionCard {
 
 export type InboxCard = BoardCard | NativeDecisionCard;
 
+/** The agent a decision belongs to: a native item's pipeline, or the
+ * GitHub anchor's `agent:*` label. */
+export function inboxCardAgent(card: InboxCard): string | undefined {
+  if ('work' in card) return card.work.spec.pipeline;
+  return card.item.labels
+    .find((label) => label.startsWith('agent:'))
+    ?.slice('agent:'.length);
+}
+
 export function inboxCardKey(card: InboxCard): string {
   return 'work' in card
     ? card.work.id

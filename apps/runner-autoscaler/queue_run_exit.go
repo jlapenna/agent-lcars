@@ -38,6 +38,9 @@ type runExitReporter struct {
 	acquireToken func(context.Context) (string, error)
 	logger       *slog.Logger
 	now          func() time.Time
+	// sessions ends a lost run's phantom `live`/`idle` session docs. Nil
+	// (status publication disabled) is a no-op.
+	sessions *lostRunSessionEnder
 
 	mu       sync.Mutex
 	reported map[string]time.Time
@@ -71,6 +74,30 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 // Jobs created before the name was recorded. It never blocks the caller (a
 // claim admission or a status read) on the Work API.
 func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string) {
+	r.observeTerminatedWithDisruption(runID, claimedBy, fingerprint, nil)
+}
+
+// exitDisruption is the executor's exact attestation that this attempt's own
+// worker Pod was removed by scheduler preemption before its container started,
+// named by the Kubernetes UIDs of the Job and Pod it observed. It is untrusted
+// by default: the Work API honors it only when the run's own recorded state
+// agrees, and an absent or disagreeing attestation leaves the ordinary
+// terminal loss. Only this exact kind exists -- eviction, node loss, an OOM, or
+// a bare "the pod is gone" never produce one.
+type exitDisruption struct {
+	JobUID     string `json:"jobUid"`
+	PodUID     string `json:"podUid"`
+	ObservedAt string `json:"observedAt"`
+	Kind       string `json:"kind"`
+}
+
+// schedulerPreemptionKind is the one disruption the Work API can recover from.
+const schedulerPreemptionKind = "scheduler-preemption"
+
+// observeTerminatedWithDisruption reports a terminated claim, optionally
+// attesting that the scheduler preempted it before its worker container
+// started. A nil attestation is the ordinary report.
+func (r *runExitReporter) observeTerminatedWithDisruption(runID, claimedBy, fingerprint string, disruption *exitDisruption) {
 	if r == nil || runID == "" {
 		return
 	}
@@ -97,7 +124,7 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string
 		if runner == "" {
 			runner = r.runnerName
 		}
-		state, err := r.post(runID, runner, fingerprint)
+		state, err := r.postContext(context.Background(), runID, runner, fingerprint, disruption)
 		r.mu.Lock()
 		delete(r.inflight, key)
 		if err == nil {
@@ -109,6 +136,7 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string
 			r.logger.Warn("Run exit report failed; retrying on the next observation", slog.String("runId", runID), slog.String("error", err.Error()))
 		case state == "lost":
 			r.logger.Warn("Run worker exited without reporting; the Work API settled it lost", slog.String("runId", runID))
+			r.endLostRunSessions(runID)
 		case state == stateNotClaimant:
 			r.logger.Warn("Run exit report refused: this executor did not claim the run; not retried", slog.String("runId", runID), slog.String("runner", runner))
 		default:
@@ -123,23 +151,21 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string
 // the backstop. A replacement same-run claim has its own delivery key.
 const stateNotClaimant = "not-claimant"
 
-// post reports one exit as runner. The route's own 404 (the run no longer
-// exists) and its claimant-mismatch 403 are final for this original claim,
-// so both count as delivered; a pipeline-grant 403 is retried. A different
-// same-run claim has a separate delivery key.
-func (r *runExitReporter) post(runID, runner, fingerprint string) (string, error) {
-	return r.postContext(context.Background(), runID, runner, fingerprint)
-}
-
-func (r *runExitReporter) postContext(ctx context.Context, runID, runner, fingerprint string) (string, error) {
+// postContext reports one exit as runner. The route's own 404 (the run no
+// longer exists) and its claimant-mismatch 403 are final for this original
+// claim, so both count as delivered; a pipeline-grant 403 is retried. A
+// different same-run claim has a separate delivery key. A nil disruption is
+// the ordinary report.
+func (r *runExitReporter) postContext(ctx context.Context, runID, runner, fingerprint string, disruption *exitDisruption) (string, error) {
 	token, err := r.acquireToken(ctx)
 	if err != nil {
 		return "", fmt.Errorf("minting exit report id token: %w", err)
 	}
-	payload := map[string]string{"runner": runner}
-	if fingerprint != "" {
-		payload["claimFingerprint"] = fingerprint
-	}
+	payload := struct {
+		Runner           string          `json:"runner"`
+		ClaimFingerprint string          `json:"claimFingerprint,omitempty"`
+		Disruption       *exitDisruption `json:"disruption,omitempty"`
+	}{Runner: runner, ClaimFingerprint: fingerprint, Disruption: disruption}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
@@ -206,14 +232,36 @@ func (r *runExitReporter) settleTerminated(ctx context.Context, runID, runner, f
 	if r == nil || runID == "" || runner == "" || fingerprint == "" {
 		return fmt.Errorf("receipt exit authority unavailable")
 	}
-	state, err := r.postContext(ctx, runID, runner, fingerprint)
+	// Retirement has no disruption attestation: it needs the ordinary logical
+	// settlement of this receipt, whatever removed the worker.
+	state, err := r.postContext(ctx, runID, runner, fingerprint, nil)
 	if err != nil {
 		return err
 	}
 	switch state {
-	case "finished", "canceled", "lost":
+	case "lost":
+		r.endLostRunSessions(runID)
+		return nil
+	case "finished", "canceled":
 		return nil
 	default:
 		return fmt.Errorf("receipt logical settlement unproven")
 	}
+}
+
+// endLostRunSessions marks runID's session docs ended in the background. A
+// worker that died without reporting never ran `runner finalize`, so its
+// sessions would otherwise stay stored `live` forever. It never blocks or
+// fails the exit report.
+func (r *runExitReporter) endLostRunSessions(runID string) {
+	if r.sessions == nil {
+		return
+	}
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), lostRunSessionsTimeout)
+		defer cancel()
+		r.sessions.endRunSessions(ctx, runID)
+	}()
 }

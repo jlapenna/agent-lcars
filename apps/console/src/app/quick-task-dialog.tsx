@@ -1,5 +1,9 @@
 'use client';
 
+import {
+  QUEUE_PRIORITIES,
+  type QueuePriority,
+} from '@agent-lcars/dispatch-contracts';
 import { ulid } from '@agent-lcars/work';
 import {
   Box,
@@ -7,6 +11,7 @@ import {
   Checkbox,
   Group,
   Modal,
+  NativeSelect,
   Paper,
   Select,
   Stack,
@@ -74,6 +79,7 @@ interface QuickTaskSubmission {
   evidenceId?: string;
   repository: { owner: string; name: string };
   pipeline: AgentPipeline;
+  priority: QueuePriority;
   fallbackPipelines?: AgentPipeline[];
   description: string;
   source: QuickTaskSourceContext;
@@ -129,6 +135,7 @@ export function QuickTaskDialog({
     return String(index >= 0 ? index : 0);
   });
   const [pipeline, setPipeline] = useState<AgentPipeline>('claude');
+  const [priority, setPriority] = useState<QueuePriority>('normal');
   const [fallbackPipelines, setFallbackPipelines] = useState<AgentPipeline[]>(
     [],
   );
@@ -268,6 +275,7 @@ export function QuickTaskDialog({
               spec: {
                 title: deriveQuickTaskTitle(request.description),
                 pipeline: request.pipeline,
+                priority: request.priority,
                 ...(request.fallbackPipelines === undefined
                   ? {}
                   : { fallbackPipelines: request.fallbackPipelines }),
@@ -365,6 +373,7 @@ export function QuickTaskDialog({
         name: selectedRepo.name,
       },
       pipeline: effectivePipeline,
+      priority,
       ...(fallbackPipelines.length === 0
         ? {}
         : {
@@ -379,6 +388,7 @@ export function QuickTaskDialog({
       ...(screenshot ? { file: screenshot } : {}),
     };
     setDescription('');
+    setPriority('normal');
     setFallbackPipelines([]);
     setScreenshot(null);
     setSource(emptySourceContext());
@@ -443,6 +453,15 @@ export function QuickTaskDialog({
             }}
             allowDeselect={false}
             disabled={pipelineOptions.length === 0}
+          />
+          <NativeSelect
+            label="Priority"
+            description="Service order within the selected provider"
+            data={QUEUE_PRIORITIES.map((value) => ({ value, label: value }))}
+            value={priority}
+            onChange={(event) =>
+              setPriority(event.currentTarget.value as QueuePriority)
+            }
           />
           <Checkbox.Group
             label="Allowed fallback order"

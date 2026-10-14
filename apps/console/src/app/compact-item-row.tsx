@@ -30,9 +30,7 @@ export function CompactItemRow({
         <ItemKindBadge kind={item.kind} />
         <RepoBadge repo={item.repo} />
         <Anchor
-          href={item.url}
-          target="_blank"
-          rel="noreferrer"
+          href={`/task/${item.repo.owner}/${item.repo.name}/${item.number}`}
           size="sm"
           c="inherit"
           truncate
@@ -47,6 +45,16 @@ export function CompactItemRow({
           {item.author && ` · by ${item.author}`}
           {item.labels.length > 0 && ` · ${item.labels.join(', ')}`}
         </Text>
+        <Anchor
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          size="xs"
+          miw={44}
+          style={{ flexShrink: 0 }}
+        >
+          GitHub ↗
+        </Anchor>
         {action}
       </Group>
     </Stack>

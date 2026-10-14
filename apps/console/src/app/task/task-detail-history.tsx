@@ -38,7 +38,7 @@ function RunRef({ value }: { value: string | undefined }) {
   if (href) {
     return (
       <Anchor href={href} target="_blank" rel="noreferrer" size="xs">
-        ref
+        {new URL(href).hostname === 'github.com' ? 'GitHub ref ↗' : 'ref'}
       </Anchor>
     );
   }
@@ -83,7 +83,7 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
               </TableTd>
               <TableTd>
                 <Stack gap={0}>
-                  <Text size="xs">Queue executor</Text>
+                  <Text size="xs">Queue executor · {run.pipeline}</Text>
                   {run.queue?.state === 'claimed' && run.queue.claimedBy && (
                     <Text size="xs" c="dimmed">
                       claimed by {run.queue.claimedBy}
@@ -183,6 +183,10 @@ export function TaskDetailHistory({
   canViewSessions?: boolean;
 }) {
   const native = 'workId' in anchor;
+  const effectivePipeline =
+    item.providerRouting?.acceptedGeneration?.pipeline ??
+    item.providerRouting?.effectivePipeline ??
+    item.spec.pipeline;
   const deliverables = item.runs.filter(
     (run) => resultRefs(run.result).length > 0,
   );
@@ -197,7 +201,7 @@ export function TaskDetailHistory({
           {item.state}
         </Badge>
         <Text size="sm" c="dimmed">
-          {item.spec.target.repo} · {item.spec.pipeline}
+          {item.spec.target.repo} · effective provider {effectivePipeline}
         </Text>
         <Text size="xs" c="dimmed">
           {native ? 'Native work' : `GitHub · ${anchor.repo}#${anchor.issue}`} ·{' '}
@@ -210,6 +214,28 @@ export function TaskDetailHistory({
           >{`authoritative state rev ${revision}`}</Text>
         )}
       </Group>
+      {item.providerRouting !== undefined && (
+        <Text size="sm" role="status">
+          Requested provider {item.providerRouting.requestedPipeline} ·
+          effective provider {effectivePipeline} · handoff{' '}
+          {item.providerRouting.status}
+          {item.providerRouting.reason
+            ? ` (${item.providerRouting.reason})`
+            : ''}
+          {' · requested by '}
+          {item.providerRouting.actor}
+          {' at '}
+          <time dateTime={item.providerRouting.requestedAt}>
+            {item.providerRouting.requestedAt}
+          </time>
+          {item.providerRouting.status === 'refused' &&
+            (item.providerRouting.reason === 'run-newer-than-label'
+              ? ' · Reapply the intended label to confirm this change for the current work.'
+              : item.providerRouting.reason === 'unauthorized-provider-switch'
+                ? ' · An administrator must request this provider change.'
+                : ' · Reapply the intended label after ownership settles and physical retirement completes.')}
+        </Text>
+      )}
       <Stack gap="xs">
         <Title order={2} size="h4">
           Conversation

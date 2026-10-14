@@ -184,13 +184,18 @@ async function expectResolvedMergeRefusal(
       // app and effect journal still execute exactly one authorized action.
       await page.route('**/inbox?**', delayResponse);
     }
-    const completed = page.waitForEvent('requestfinished', {
-      predicate: (request) => request === intendedRequest,
-      timeout: actionTimeout,
-    });
+    // ServerAction streams can end with requestfailed/ERR_ABORTED after the
+    // response has already resolved the UI. Require the intended response,
+    // then the pending/refusal assertions below, rather than transport EOF.
+    const completed = page.waitForResponse(
+      (response) => response.request() === intendedRequest,
+      { timeout: actionTimeout },
+    );
     record('confirmation-start');
-    await Promise.all([completed, click()]);
-    record('action-complete');
+    const [response] = await Promise.all([completed, click()]);
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toContain('text/x-component');
+    record('action-response-accepted');
     if (controlledDelayMs) expect(delayApplied).toBe(true);
     await Promise.all([
       expect(
@@ -681,7 +686,7 @@ test.describe('Inbox authorized action journeys', () => {
     await page.goto(`/?repo=${REPO_QUERY}`);
     await page
       .getByTestId(`live-run-group-${E2E_ITEM_NUMBERS.duplicateDispatch}`)
-      .getByRole('link', { name: 'Open task', exact: true })
+      .getByTestId('current-run-primary-action')
       .first()
       .click();
     await expect(page).toHaveURL(

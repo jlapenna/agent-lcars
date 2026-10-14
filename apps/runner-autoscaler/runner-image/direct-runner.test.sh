@@ -25,7 +25,10 @@ grep -Fq '/usr/local/lib/agent-lcars/runtime' "$dockerfile" || {
 # once direct-runner.sh execs them for real.
 tmp="$(mktemp -d)"
 export tmp
-export AGENT_LCARS_JOB_DAEMON_STATE_ROOT="$tmp/job-daemon-state"
+# Hook telemetry is unconditional; scenarios that do not exercise it get an
+# unreadable writer credential so the hook install fails soft (warn, no live
+# telemetry) independent of whatever the host has under /run/secrets.
+export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/no-hook-telemetry-writer.json"
 cleanup() {
   local result=$?
   trap - EXIT
@@ -35,15 +38,12 @@ cleanup() {
       tail -c 8192 "$FIXTURE_TIMING_LOG" >&2
     fi
     echo 'direct-runner fixture failure diagnostics (last 4KiB per log):' >&2
-    for log in "${scenario_log:-}" "${NODE_ARGS_LOG:-}" "$tmp/sidecar.log"; do
+    for log in "${scenario_log:-}" "${NODE_ARGS_LOG:-}"; do
       if [ -f "$log" ]; then
         printf '\n%s\n' "$log" >&2
         tail -c 4096 "$log" >&2
       fi
     done
-  fi
-  if [ -n "${baked:-}" ] && [ -x "$baked/job-daemon-real.sh" ]; then
-    "$baked/job-daemon-real.sh" stop telemetry >/dev/null 2>&1 || true
   fi
   rm -rf "$tmp"
   exit "$result"
@@ -149,42 +149,21 @@ export WORKER_COMPLETION_HELPER="$baked/runtime/worker-completion.sh"
 export WORKER_ACTIVATION_HELPER="$baked/runtime/worker-activation.sh"
 sed -i 's|^WORKER_IDENTITY_FILE=.*|WORKER_IDENTITY_FILE="${FIXTURE_WORKER_IDENTITY_FILE:-/run/agent-lcars-identity/token}"|' "$WORKER_ACTIVATION_HELPER"
 export WORKER_POLICY_BOOTSTRAP_HELPER="$baked/runtime/worker-policy-bootstrap.sh"
+export HOOK_TELEMETRY_HELPER="$baked/runtime/hook-telemetry-bootstrap.sh"
+# An image rebuilt from an older context pairs an old direct-runner.sh, which
+# still asks hook_telemetry_selected, with this helper from main. It must say
+# yes, or that runner starts the retired (no-op) sidecar and loses live
+# telemetry.
+( . "$HOOK_TELEMETRY_HELPER"; PIPELINE=codex hook_telemetry_selected ) ||
+  { echo "FAIL: hook_telemetry_selected compatibility shim missing" >&2; exit 1; }
 export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
 export WORKER_POLICY_NODE="$real_node"
 # sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
 # delegates to the fake `node` below. Keep it separate from the source tree:
 # the real runner image contains the compiled bundle, while this shell harness
 # deliberately verifies the lifecycle arguments without starting Firestore.
-sed 's|^LOG_FILE=/tmp/runner-telemetry/sidecar.log$|LOG_FILE="$tmp/sidecar.log"|' \
-  "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" > "$baked/sidecar-lifecycle.sh"
-grep -Fq 'LOG_FILE="$tmp/sidecar.log"' "$baked/sidecar-lifecycle.sh" || {
-  echo 'fixture failed to isolate the sidecar log' >&2
-  exit 1
-}
-cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon-real.sh"
-# job-daemon backgrounds the sidecar and returns, and finalize stops it at
-# once; a fast scenario could kill the fake sidecar before it logged its
-# argv. Wait for the actual fake child to record its argv before returning.
-# This readiness barrier belongs only to the fixture; production stays async.
-cat > "$baked/job-daemon.sh" <<'FAKE'
-#!/usr/bin/env bash
-set -euo pipefail
-daemon="$(dirname "$0")/job-daemon-real.sh"
-if [ "${1:-}" != start ]; then
-  exec "$daemon" "$@"
-fi
-mkdir -p "$AGENT_LCARS_JOB_DAEMON_STATE_ROOT"
-FAKE_SIDECAR_READY_FILE="$(mktemp "$AGENT_LCARS_JOB_DAEMON_STATE_ROOT/ready.XXXXXX")"
-export FAKE_SIDECAR_READY_FILE
-"$daemon" "$@"
-if ! /usr/bin/timeout --signal=TERM --kill-after=1s 5s /bin/bash -c \
-  'until [ -s "$1" ]; do sleep 0.01; done' _ "$FAKE_SIDECAR_READY_FILE"; then
-  echo 'fixture sidecar did not record its actual arguments within 5s' >&2
-  exit 1
-fi
-rm -f "$FAKE_SIDECAR_READY_FILE"
-FAKE
-chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh" "$baked/job-daemon-real.sh"
+cp "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" "$baked/sidecar-lifecycle.sh"
+chmod +x "$baked/sidecar-lifecycle.sh"
 BAKED_SIDECAR_LIFECYCLE="$baked/sidecar-lifecycle.sh"
 printf '%s\n' '// fake baked telemetry sidecar' > "$baked/sidecar.cjs"
 
@@ -261,6 +240,8 @@ if $config_stdin; then
       ;;
   esac
 fi
+
+printf '%s\n' "${url##*/}" >> "$API_SEQUENCE_LOG"
 
 case "$url" in
   */activate)
@@ -349,10 +330,16 @@ JSON
     ;;
   */heartbeat)
     echo heartbeat >> "$HEARTBEAT_LOG"
-    if [ "${FAKE_HEARTBEAT_FAIL:-}" = 1 ]; then
-      exit 22
+    if grep -q '^write-out = ' <<<"$config_body"; then
+      [ "${FAKE_STARTUP_TRANSPORT_FAIL:-}" != 1 ] || exit 7
+      # The existing {runId, expiresAt} response is the compatibility surface;
+      # a legacy Console with that acknowledged route remains supported.
+      startup_body='{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
+      printf '%s\n%s' "${FAKE_STARTUP_BODY-$startup_body}" "${FAKE_STARTUP_STATUS:-200}"
+    else
+      [ "${FAKE_HEARTBEAT_FAIL:-}" != 1 ] || exit 22
+      echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
     fi
-    echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
     ;;
   */complete)
     {
@@ -603,6 +590,18 @@ fi
 if [ "${FAKE_CODEX_FALSE_POSITIVE:-}" = "1" ]; then
   echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"refresh token was already used"}}'
 fi
+# The exact retained shape from the failed attempt in issue #2537: completed
+# work items, then a structured provider stop, with no final message written.
+if [ "${FAKE_CODEX_CAPACITY:-}" = "1" ]; then
+  echo '{"type":"item.completed","item":{"id":"item_31","type":"agent_message","text":"kept the focused edit scoped"}}'
+  echo '{"type":"error","message":"Selected model is at capacity. Please try a different model."}'
+  echo '{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}'
+  exit 1
+fi
+if [ "${FAKE_CODEX_CAPACITY_IN_TOOL_OUTPUT:-}" = "1" ]; then
+  echo '{"type":"item.completed","item":{"id":"item_31","type":"command_output","output":"Selected model is at capacity. Please try a different model."}}'
+  exit 1
+fi
 echo '{"type":"turn.completed"}'
 exit "${FAKE_WORKER_EXIT:-0}"
 FAKE
@@ -635,6 +634,7 @@ echo "$@" >> "$OPENCODE_ARGS_LOG"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
+printf '%s\n' "${LCARS_TELEMETRY_CREDENTIALS_FILE:-}|${LCARS_REPO:-}" > "$OPENCODE_ENV_LOG.hook"
 echo run >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
 run_count=1
 if [ -f "${OPENCODE_RUN_COUNT_FILE:-/nonexistent}" ]; then
@@ -713,13 +713,11 @@ FAKE
 cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$NODE_ARGS_LOG"
+# The live polling sidecar is retired (docs/hooks-telemetry-design.md,
+# phase 3). Any `runner sidecar` call leaves a suite-wide marker that the
+# final assertion below rejects.
 if [ "${2:-}" = runner ] && [ "${3:-}" = sidecar ]; then
-  echo sidecar >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
-  if [ ! -f "$tmp/opencode-initialized" ]; then
-    touch "$tmp/opencode-startup-race"
-  fi
-  [ -z "${FAKE_SIDECAR_READY_FILE:-}" ] || \
-    printf '%s\n' ready > "$FAKE_SIDECAR_READY_FILE"
+  touch "$tmp/live-sidecar-started"
 fi
 # Stands in for the real sidecar's `runner finalize` subcommand (issue
 # #1784): when direct-runner.sh's sidecar-lifecycle.sh threads
@@ -799,7 +797,7 @@ FAKE
 
 run_scenario() {
   name="$1"
-  rm -f "$tmp/opencode-initialized" "$tmp/opencode-startup-race"
+  rm -f "$tmp/opencode-initialized"
   export FAKE_PIPELINE="${2:-claude}"
   export FIXTURE_SCENARIO="$name"
   # A QueueExecutor container is not a GitHub Actions worker.  CI itself
@@ -864,6 +862,7 @@ run_scenario() {
   export GIT_PUSH_TOKEN_LOG="$dir/git-push-token.log"
   export GH_INVOCATION_TOKEN_LOG="$dir/gh-invocation-token.log"
   export HEARTBEAT_LOG="$dir/heartbeats.log"
+  export API_SEQUENCE_LOG="$dir/api-sequence.log"
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
   export OPENCODE_ENV_LOG="$dir/opencode-env.log"
   export OPENCODE_LAST_MESSAGE_PRECHECK_LOG="$dir/opencode-last-message-precheck.log"
@@ -1019,6 +1018,47 @@ workloads = [row for row in rows if row["event"] == "workload-exit"]
 assert len(workloads) == 2 and all(row["exitStatus"] == 0 and row["durationMonotonicNs"] >= 0 for row in workloads), workloads
 PY
 }
+
+# A placement-delayed worker must acknowledge startup before any expensive
+# boundary. These are producer fixtures: the Console deadline tests below the
+# HTTP boundary own actual acceptance/expiry, not this fake HTTP server.
+for provider in claude codex opencode; do
+  run_scenario "$provider-startup-accepted" "$provider"
+  [ "$rc" -eq 0 ] || fail "$provider startup: expected accepted legacy acknowledgement"
+  [ "$(head -n2 "$API_SEQUENCE_LOG" | tr '\n' ' ')" = 'brief heartbeat ' ] ||
+    fail "$provider startup: checkout or credentials preceded acknowledgement"
+  jq -e 'select(.event == "workload-start")' "$FIXTURE_TIMING_LOG" >/dev/null ||
+    fail "$provider startup: accepted worker never executed"
+  [ -s "$COMPLETE_LOG" ] || fail "$provider startup: accepted worker never reported completion"
+
+  for failure in expired unsupported unavailable transport malformed missing-status wrong-run missing-expiry invalid-expiry extra-document; do
+    case "$failure" in
+      expired) export FAKE_STARTUP_STATUS=401 ;;
+      unsupported) export FAKE_STARTUP_STATUS=404 ;;
+      unavailable) export FAKE_STARTUP_STATUS=503 ;;
+      transport) export FAKE_STARTUP_TRANSPORT_FAIL=1 ;;
+      malformed) export FAKE_STARTUP_BODY='private-body-must-not-be-logged' ;;
+      missing-status) export FAKE_STARTUP_STATUS=000 ;;
+      wrong-run) export FAKE_STARTUP_BODY='{"runId":"foreign-run","expiresAt":"2026-08-27T01:00:00Z"}' ;;
+      missing-expiry) export FAKE_STARTUP_BODY='{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}' ;;
+      invalid-expiry) export FAKE_STARTUP_BODY='{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"unknown"}' ;;
+      extra-document) export FAKE_STARTUP_BODY='{} {"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00Z"}' ;;
+    esac
+    run_scenario "$provider-startup-$failure" "$provider"
+    unset FAKE_STARTUP_STATUS FAKE_STARTUP_TRANSPORT_FAIL FAKE_STARTUP_BODY
+    [ "$rc" -ne 0 ] || fail "$provider startup: continued after $failure"
+    [ ! -s "$CHECKOUT_TOKEN_REQUEST_LOG" ] || fail "$provider startup: checkout after $failure"
+    [ ! -s "$GIT_CLONE_ARGV_LOG" ] || fail "$provider startup: clone after $failure"
+    [ ! -s "$CODEX_AUTH_REQUEST_LOG" ] || fail "$provider startup: credentials restored after $failure"
+    [ ! -s "$CLAUDE_ARGS_LOG" ] && [ ! -s "$CODEX_ARGS_LOG" ] && [ ! -s "$OPENCODE_ARGS_LOG" ] ||
+      fail "$provider startup: provider executed after $failure"
+    [ "$(wc -l < "$HEARTBEAT_LOG")" -eq 1 ] || fail "$provider startup: retried an unknown acknowledgement"
+    jq -e '.outcome == "runner-failed" and (.message | contains("startup heartbeat was not acknowledged"))' \
+      < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "$provider startup: missing failure callback"
+    ! grep -q 'private-body-must-not-be-logged' "$scenario_log" || fail 'startup response body leaked'
+  done
+  echo "scenario $provider-startup-handshake: OK"
+done
 
 # Invalid workload input used to report provider success and permit a second
 # round. Exercise the actual fake executables through the production runner,
@@ -1266,7 +1306,7 @@ fi
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "codex happy path: claude was invoked"
 [ -s "$CODEX_SESSIONS_DIR_LOG" ] || fail "codex happy path: fake Codex did not receive its session root"
 codex_sessions_dir="$(cat "$CODEX_SESSIONS_DIR_LOG")"
-[ -f "$NODE_ARGS_LOG" ] || fail "codex happy path: sidecar never invoked node"
+[ -f "$NODE_ARGS_LOG" ] || fail "codex happy path: telemetry never invoked node"
 grep -q -- 'runner resume' "$NODE_ARGS_LOG" ||
   fail "codex happy path: runner resume was not invoked despite a resume brief ($(cat "$NODE_ARGS_LOG"))"
 grep -q -- '--agent codex' "$NODE_ARGS_LOG" ||
@@ -1279,7 +1319,7 @@ grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE
   fail "codex happy path: runner resume was not passed the transcript uri ($(cat "$NODE_ARGS_LOG"))"
 # Fixture argv paths contain no whitespace. Check exact values per lifecycle
 # phase so a descendant path or duplicate phase cannot satisfy the receipt.
-for phase in sidecar finalize; do
+for phase in finalize; do
   sidecar_session_valid="$(awk -v expected="$codex_sessions_dir" -v phase="$phase" '
     $2 == "runner" && $3 == phase {
       calls++
@@ -1306,6 +1346,72 @@ if find "$LCARS_CODEX_VOLATILE_DIR" -mindepth 1 -print -quit | grep -q .; then
 fi
 
 echo "scenario codex-happy: OK"
+
+# Hook telemetry (docs/hooks-telemetry-design.md, phase 3): every pipeline
+# installs its provider hooks after its own config exists, with no selector,
+# never starts a polling sidecar, drains the flusher before finalize, and
+# still finalizes. The credentials file is named for the hook client only, never
+# exported as the agent's ambient Google credentials.
+export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/hook-telemetry-writer.json"
+printf '%s\n' '{"type":"fixture"}' > "$HOOK_TELEMETRY_CREDENTIALS_FILE"
+export HOOK_TELEMETRY_CLI=/fake/lcars-session-title.cjs
+export HOOK_TELEMETRY_FLUSHER=/fake/lcars-hook-flush.cjs
+for hook_pipeline in claude codex opencode; do
+  run_scenario "hook-telemetry-$hook_pipeline" "$hook_pipeline"
+  [ "$rc" -eq 0 ] || fail "hook telemetry $hook_pipeline: expected exit 0, got $rc"
+  grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+    fail "hook telemetry $hook_pipeline: run did not complete with its deliverable"
+  if [ "$hook_pipeline" = opencode ]; then
+    # The plugin ships in the image's OpenCode config; activation is the
+    # exported writer-credentials path, never an installer run.
+    if grep -q 'integration install' "$NODE_ARGS_LOG"; then
+      fail "hook telemetry opencode: ran the settings installer for a plugin runtime"
+    fi
+    grep -qx "$HOOK_TELEMETRY_CREDENTIALS_FILE|[^|][^|]*/[^|][^|]*" "$OPENCODE_ENV_LOG.hook" ||
+      fail "hook telemetry opencode: opencode did not see the hook client context ($(cat "$OPENCODE_ENV_LOG.hook"))"
+  else
+    grep -qx "/fake/lcars-session-title.cjs integration install $hook_pipeline" "$NODE_ARGS_LOG" ||
+      fail "hook telemetry $hook_pipeline: hook entries were not installed ($(cat "$NODE_ARGS_LOG"))"
+  fi
+  if grep -q -- 'runner sidecar' "$NODE_ARGS_LOG"; then
+    fail "hook telemetry $hook_pipeline: the polling sidecar still started"
+  fi
+  drain_line="$(grep -nx '/fake/lcars-hook-flush.cjs' "$NODE_ARGS_LOG" | head -1 | cut -d: -f1)"
+  finalize_line="$(grep -n -- 'runner finalize' "$NODE_ARGS_LOG" | head -1 | cut -d: -f1)"
+  [ -n "$drain_line" ] && [ -n "$finalize_line" ] && [ "$drain_line" -lt "$finalize_line" ] ||
+    fail "hook telemetry $hook_pipeline: the flusher did not drain before finalize ($(cat "$NODE_ARGS_LOG"))"
+  [ -e "$HOME/.local/state/agent-lcars/hook-fence" ] ||
+    fail "hook telemetry $hook_pipeline: the drain did not fence late hook events before finalize"
+  if [ "$hook_pipeline" = codex ]; then
+    grep -q -- '--dangerously-bypass-hook-trust' "$CODEX_ARGS_LOG" ||
+      fail "hook telemetry codex: codex exec did not enable the installed hooks ($(cat "$CODEX_ARGS_LOG"))"
+  fi
+  echo "scenario hook-telemetry-$hook_pipeline: OK"
+done
+
+# A missing credentials file costs only live telemetry: the run warns, starts
+# no polling sidecar, installs no hooks, still finalizes, and completes.
+export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/missing-hook-telemetry-writer.json"
+run_scenario hook-telemetry-unavailable claude
+[ "$rc" -eq 0 ] || fail "hook telemetry unavailable: expected exit 0, got $rc"
+grep -q '^::warning::hook telemetry install failed; this run has no live telemetry' "$scenario_log" ||
+  fail "hook telemetry unavailable: no warning annotation ($(cat "$scenario_log"))"
+if grep -q -- 'runner sidecar' "$NODE_ARGS_LOG"; then
+  fail "hook telemetry unavailable: a polling sidecar started"
+fi
+if grep -q 'integration install' "$NODE_ARGS_LOG"; then
+  fail "hook telemetry unavailable: installed hooks without a readable credentials file"
+fi
+if grep -qx '/fake/lcars-hook-flush.cjs' "$NODE_ARGS_LOG"; then
+  fail "hook telemetry unavailable: drained a hook spool that was never enabled"
+fi
+grep -q -- 'runner finalize' "$NODE_ARGS_LOG" ||
+  fail "hook telemetry unavailable: finalize did not run ($(cat "$NODE_ARGS_LOG"))"
+grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+  fail "hook telemetry unavailable: run did not complete with its deliverable"
+echo "scenario hook-telemetry-unavailable: OK"
+export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/no-hook-telemetry-writer.json"
+unset HOOK_TELEMETRY_CLI HOOK_TELEMETRY_FLUSHER
 
 # --- Scenario 1a-i: no resume in the brief keeps the fresh codex path -------
 # Regression pin: a brief with no `resume` field must leave Codex's dispatch
@@ -1429,7 +1535,7 @@ grep -q -- 'run --model homelab/default --session sess_1 --auto' "$OPENCODE_ARGS
 [ ! -f "$CODEX_ARGS_LOG" ] || fail "opencode happy path: codex was invoked"
 grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
   fail "opencode happy path: completion was not a pull request ($(cat "$COMPLETE_LOG"))"
-[ -f "$NODE_ARGS_LOG" ] || fail "opencode happy path: sidecar never invoked node"
+[ -f "$NODE_ARGS_LOG" ] || fail "opencode happy path: telemetry never invoked node"
 grep -q -- 'runner resume' "$NODE_ARGS_LOG" ||
   fail "opencode happy path: runner resume was not invoked despite a resume brief ($(cat "$NODE_ARGS_LOG"))"
 grep -q -- '--agent opencode' "$NODE_ARGS_LOG" ||
@@ -1445,18 +1551,18 @@ echo "scenario opencode-happy: OK"
 
 first_opencode_step="$(head -n1 "$OPENCODE_SEQUENCE_LOG")"
 [ "$first_opencode_step" = bootstrap ] ||
-  fail "opencode bootstrap: sidecar/provider touched the store before synchronous initialization ($(cat "$OPENCODE_SEQUENCE_LOG"))"
+  fail "opencode bootstrap: provider touched the store before synchronous initialization ($(cat "$OPENCODE_SEQUENCE_LOG"))"
 [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
   fail "opencode verified deliverable: provider was continued despite exact verifier success"
 
 echo "scenario opencode-bootstrap-order: OK"
 
-# A baked empty schema avoids the migration CLI before sidecar startup. Drift
-# and resumes must still initialize synchronously before either store reader.
+# A baked empty schema avoids the migration CLI before the provider run.
+# Drift and resumes must still initialize synchronously before the provider.
 export FAKE_OPENCODE_BAKED_STORE=1 FAKE_BRIEF_NO_RESUME=1
 run_scenario opencode-baked-empty opencode
 [ "$rc" -eq 0 ] || fail "baked OpenCode store: run failed"
-[ "$(head -n1 "$OPENCODE_SEQUENCE_LOG")" = sidecar ] ||
+[ "$(head -n1 "$OPENCODE_SEQUENCE_LOG")" = run ] ||
   fail "baked OpenCode store: initialization CLI was not skipped"
 for drift in version marker nonempty resume; do
   case "$drift" in
@@ -1613,8 +1719,8 @@ grep -q '"outcome":"no-op"' "$COMPLETE_LOG" ||
 
 echo "scenario opencode-github-no-op-no-continuation: OK"
 
-# A failed bounded initialization reports immediately and never starts the
-# telemetry sidecar or an inference-bearing provider round.
+# A failed bounded initialization reports immediately and never starts an
+# inference-bearing provider round.
 export FAKE_OPENCODE_BOOTSTRAP_FAIL=1
 run_scenario opencode-bootstrap-failed opencode
 unset FAKE_OPENCODE_BOOTSTRAP_FAIL
@@ -1622,9 +1728,6 @@ unset FAKE_OPENCODE_BOOTSTRAP_FAIL
 [ -f "$COMPLETE_LOG" ] || fail "opencode bootstrap failed: missing completion report"
 [ ! -f "$OPENCODE_RUN_COUNT_FILE" ] ||
   fail "opencode bootstrap failed: provider run started after initialization failure"
-if grep -q -- 'runner sidecar' "$NODE_ARGS_LOG" 2>/dev/null; then
-  fail "opencode bootstrap failed: telemetry sidecar started before initialization completed"
-fi
 
 echo "scenario opencode-bootstrap-failed: OK"
 
@@ -1751,16 +1854,12 @@ grep -q '"outcome":"agent-timeout"' "$COMPLETE_LOG" ||
 
 echo "scenario opencode-timeout: OK"
 
-[ ! -e "$tmp/opencode-startup-race" ] || fail "telemetry opened OpenCode before database initialization"
 
 export FAKE_OPENCODE_INIT_EXIT=1
 run_scenario opencode-init-failure opencode
 unset FAKE_OPENCODE_INIT_EXIT
 [ "$rc" -ne 0 ] || fail "OpenCode initialization failure was ignored"
 [ ! -s "$OPENCODE_ARGS_LOG" ] || fail "agent ran after database initialization failure"
-if grep -q 'runner sidecar' "$NODE_ARGS_LOG" 2>/dev/null; then
-  fail "telemetry started after database initialization failure"
-fi
 grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" || fail "initialization failure misclassified"
 
 # A GitHub reply keeps its anchor, mode, reply/runbook/context, and exact
@@ -2087,7 +2186,12 @@ run_scenario codex-auth-busy-then-success codex
 [ "$rc" = 0 ] || fail "codex-auth-busy-then-success: exit $rc ($(cat "$scenario_log"))"
 [ "$(cat "$CODEX_AUTH_REQUEST_LOG")" = 2 ] || fail 'busy credential was not retried once'
 [ -s "$CODEX_ARGS_LOG" ] || fail 'Codex never started after credential release'
-[ -s "$HEARTBEAT_LOG" ] || fail 'run heartbeat stopped while waiting for credentials'
+python3 - "$API_SEQUENCE_LOG" <<'PYWAIT'
+import sys
+calls = open(sys.argv[1]).read().splitlines()
+restores = [i for i, call in enumerate(calls) if call == "codex-auth"]
+assert len(restores) >= 2 and "heartbeat" in calls[restores[0] + 1:restores[1]], calls
+PYWAIT
 ! grep -q 'private-body-must-not-be-logged' "$scenario_log" || fail 'broker error body leaked'
 echo 'scenario codex-auth-busy-then-success: OK'
 
@@ -2145,6 +2249,23 @@ run_scenario provider-quota
 unset FAKE_GH_NO_MATCH FAKE_CLAUDE_STDOUT
 [ "$rc" -ne 0 ] || fail "quota: expected failure"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "quota: wrong failure classification"
+
+# #2537: a provider that stops on structured stream events leaves no final
+# message, so an empty LAST_MESSAGE_FILE must not degrade the report to a
+# generic agent failure, and it must stay distinct from the weekly quota.
+export FAKE_GH_NO_MATCH=1 FAKE_CODEX_CAPACITY=1
+run_scenario codex-model-capacity codex
+unset FAKE_GH_NO_MATCH FAKE_CODEX_CAPACITY
+[ "$rc" -ne 0 ] || fail "model capacity: a provider stop reported success"
+jq -e '.outcome == "provider-capacity"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "model capacity: wrong failure classification"
+jq -e '.message | contains("Selected model is at capacity")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "model capacity: provider cause not retained"
+
+# The same phrase in tool output is transcript text, not a provider stop.
+export FAKE_GH_NO_MATCH=1 FAKE_CODEX_CAPACITY_IN_TOOL_OUTPUT=1
+run_scenario codex-capacity-in-tool-output codex
+unset FAKE_GH_NO_MATCH FAKE_CODEX_CAPACITY_IN_TOOL_OUTPUT
+[ "$rc" -ne 0 ] || fail "capacity in tool output: a provider stop reported success"
+jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "capacity in tool output: transcript text forged a provider stop"
 
 # All default provider invocations receive the same two-hour allowance.
 for provider in claude codex opencode; do
@@ -2286,6 +2407,8 @@ for receipt_provider in claude codex opencode; do
   echo "scenario receipt-activation-$receipt_provider: OK"
 done
 unset FAKE_RECEIPT_MODE FAKE_GH_NO_MATCH
+[ ! -e "$tmp/live-sidecar-started" ] ||
+  fail "a scenario started the retired live polling sidecar (runner sidecar)"
 bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
 
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/provider-process.test.mjs"

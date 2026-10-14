@@ -28,7 +28,7 @@ concurrency:
 jobs:
   refresh:
     name: Sync fleet lockfiles into the runner pnpm seed
-    runs-on: ['lcars-default']
+    runs-on: ['agent-lcars-ci']
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7

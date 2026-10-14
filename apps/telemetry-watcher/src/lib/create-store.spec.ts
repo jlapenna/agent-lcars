@@ -4,7 +4,7 @@ import { createStoreFromConfig, StoreConfig } from './create-store';
 import * as store from './store';
 
 describe('createStoreFromConfig', () => {
-  // StoreConfig (not the full WatcherConfig) is deliberately all this test
+  // StoreConfig (not the full RunnerConfig) is deliberately all this test
   // needs - createStoreFromConfig only ever reads the three firestore-*
   // fields, so an empty base object with no firestore config set is a
   // legitimate "falls back to log-only" starting point.

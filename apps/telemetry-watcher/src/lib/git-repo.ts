@@ -1,6 +1,8 @@
 import { optional } from '@agent-lcars/env';
 import { execFile } from 'child_process';
 
+import { canonicalRepoSpelling } from './hook/repo-allowlist';
+
 function runGit(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -56,8 +58,7 @@ function parseGitHubRemote(
  * mapping to the current `{owner, name}`. Every deploying fleet has its own
  * repo-rename history (or none at all), so there is no built-in alias here —
  * an unset or empty value means no aliases apply. Throws with a specific
- * reason on malformed input rather than silently ignoring it, matching
- * `config.ts`'s `AGENT_TELEMETRY_WATCH_ROOTS` convention.
+ * reason on malformed input rather than silently ignoring it.
  */
 function parseRepoAliasesJson(
   raw: string,
@@ -99,15 +100,30 @@ function parseRepoAliasesJson(
 }
 
 /**
- * Loads the configured rename aliases fresh on every call (like
- * `config.ts`'s env-driven fields) rather than caching at module scope, so
- * tests can set `AGENT_TELEMETRY_REPO_ALIASES` per case and a long-lived
- * daemon process picks up an env change on next resolution without a
- * restart-triggering code path of its own.
+ * Loads the configured rename aliases fresh on every call rather than
+ * caching at module scope, so tests can set `AGENT_TELEMETRY_REPO_ALIASES`
+ * per case.
  */
 function loadRepoAliases(): Record<string, { owner: string; name: string }> {
   const raw = optional('AGENT_TELEMETRY_REPO_ALIASES');
   return raw ? parseRepoAliasesJson(raw) : {};
+}
+
+/**
+ * Looks up a rename alias for `owner/name`, case-insensitively like GitHub,
+ * so a stale remote that also differs in capitals still finds its alias.
+ */
+function findRepoAlias(
+  repoAliases: Record<string, { owner: string; name: string }>,
+  repo: { owner: string; name: string },
+): { owner: string; name: string } | undefined {
+  const key = `${repo.owner}/${repo.name}`;
+  if (repoAliases[key]) return repoAliases[key];
+  const lowerKey = key.toLowerCase();
+  for (const [aliasKey, target] of Object.entries(repoAliases)) {
+    if (aliasKey.toLowerCase() === lowerKey) return target;
+  }
+  return undefined;
 }
 
 /**
@@ -118,6 +134,15 @@ function loadRepoAliases(): Record<string, { owner: string; name: string }> {
  * so a resolution hiccup degrades to an unrepoed doc rather than crashing a
  * tick. Async for the same reason as `resolveGitBranch`.
  *
+ * The result is the spelling a session is stored under, so it is
+ * canonicalized here, at write time (#2583): a configured rename alias wins
+ * and is returned verbatim; otherwise, when `watchedRepos` (the hook
+ * client's `owner/name` allowlist patterns) matches, the remote's capitals
+ * are replaced by the allowlist's canonical spelling (see
+ * `canonicalRepoSpelling`); an unwatched repository keeps the remote's own
+ * spelling. Only the hook client passes `watchedRepos`: the runner's finalize pass resolves a checkout
+ * cloned from its canonical `GITHUB_REPOSITORY`.
+ *
  * A malformed `AGENT_TELEMETRY_REPO_ALIASES` is deliberately NOT part of
  * that fail-soft behavior: it is parsed before the fail-soft `try`, so a
  * bad config throws loudly on every call instead of being silently
@@ -125,12 +150,17 @@ function loadRepoAliases(): Record<string, { owner: string; name: string }> {
  */
 export async function resolveGitRepo(
   cwd: string,
+  watchedRepos: readonly string[] = [],
 ): Promise<{ owner: string; name: string } | undefined> {
   const repoAliases = loadRepoAliases();
   try {
     const stdout = await runGit(cwd, ['remote', 'get-url', 'origin']);
     const repo = parseGitHubRemote(stdout.trim());
-    return repo && (repoAliases[`${repo.owner}/${repo.name}`] ?? repo);
+    if (!repo) return undefined;
+    return (
+      findRepoAlias(repoAliases, repo) ??
+      canonicalRepoSpelling(repo, watchedRepos)
+    );
   } catch {
     return undefined;
   }

@@ -25,7 +25,6 @@ import {
   duplicateLivePipelineGroups,
   findStalledQueuedRun,
   groupLiveRunsByIssue,
-  issueUrlForRun,
   MAX_TURNS_BUDGET,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
@@ -77,7 +76,7 @@ export const STATUS_COLORS: Record<RunStatusClassification, string> = {
   'silent-error': 'orange',
 };
 
-function budgetColor(fraction: number): string {
+export function budgetColor(fraction: number): string {
   if (fraction >= 0.8) return 'red';
   if (fraction >= 0.5) return 'yellow';
   return 'blue';
@@ -116,7 +115,7 @@ export function isActiveCliSession(session: CliSession): boolean {
  * rows - which render the same components at the `detail` variant - are
  * untouched.
  */
-function RowTitle({
+export function RowTitle({
   text,
   mobileHref,
   selectHref,
@@ -149,7 +148,11 @@ function RowTitle({
   );
 }
 
-function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
+export function taskHrefForRun(
+  run: AgentRun,
+  item?: RunItemRef,
+): string | undefined {
+  if (run.workId) return workHrefForRun(run);
   const issueNumber = item?.number ?? run.issueNumber;
   if (issueNumber === undefined) return workHrefForRun(run);
   return `/task/${run.repo.owner}/${run.repo.name}/${issueNumber}`;
@@ -160,8 +163,20 @@ function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
  * page, the same way `taskHrefForRun`/`issueUrlForRun` link issue-anchored
  * activity.
  */
-function workHrefForRun(run: AgentRun): string | undefined {
+export function workHrefForRun(run: AgentRun): string | undefined {
   return run.workId ? `/work/${run.workId}` : undefined;
+}
+
+/** New title links need a known projection; existing explicit task actions
+ * retain their task-history navigation contract. */
+export function titleHrefForRun(run: AgentRun, item?: RunItemRef): string {
+  if (run.workId || item) return taskHrefForRun(run, item)!;
+  return internalRunHref(run);
+}
+
+/** Inspect the existing run record without requiring a GitHub projection. */
+export function internalRunHref(run: AgentRun): string {
+  return `/agents?${new URLSearchParams({ repo: repoKey(run.repo), sel: runKey(run) })}`;
 }
 
 function operationsRunTitle(run: AgentRun): string {
@@ -301,7 +316,7 @@ export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
   );
 }
 
-function ScreenshotStableDuration({ seconds }: { seconds: number }) {
+export function ScreenshotStableDuration({ seconds }: { seconds: number }) {
   return (
     <span data-screenshot="hide" data-screenshot-width="duration">
       {formatDuration(seconds)}
@@ -348,7 +363,7 @@ export function LiveRunRow({
 
   if (variant === 'operations') {
     const taskHref = taskHrefForRun(run, item);
-    const actionHref = taskHref ?? run.url;
+    const actionHref = taskHref ?? internalRunHref(run);
     return (
       <div className="operations-row" data-testid="current-run-row">
         <Stack gap={5} style={{ minWidth: 0 }}>
@@ -356,7 +371,7 @@ export function LiveRunRow({
             text={
               item ? `#${item.number} ${item.title}` : operationsRunTitle(run)
             }
-            mobileHref={actionHref}
+            mobileHref={titleHrefForRun(run, item)}
             selectHref={selectHref}
           />
           <Group gap="xs" wrap="wrap">
@@ -402,14 +417,11 @@ export function LiveRunRow({
           <BridgePaneLink
             mobileHref={actionHref}
             paneHref={selectHref ?? actionHref}
-            target={taskHref ? undefined : '_blank'}
-            rel={taskHref ? undefined : 'noreferrer'}
             size="sm"
             className="operations-primary-action"
             data-testid="current-run-primary-action"
           >
             {taskHref ? 'Open task' : 'Inspect run'}
-            {!taskHref && ' ↗'}
           </BridgePaneLink>
         </Group>
       </div>
@@ -419,11 +431,7 @@ export function LiveRunRow({
   return (
     <Stack gap={4} data-testid="current-run-row">
       <Anchor
-        href={
-          item?.url ?? issueUrlForRun(run) ?? workHrefForRun(run) ?? run.url
-        }
-        target="_blank"
-        rel="noreferrer"
+        href={titleHrefForRun(run, item)}
         size="sm"
         fw={600}
         c="inherit"
@@ -477,7 +485,9 @@ export function LiveRunRow({
             size="xs"
             c="dimmed"
           >
-            View run ↗
+            {run.url.startsWith('https://github.com/')
+              ? 'View run on GitHub ↗'
+              : 'View run'}
           </Anchor>
           {session && (
             <Anchor
@@ -530,7 +540,7 @@ export function LiveRunRow({
  * cross-pipeline race, not an anomaly - see #306's LogicalWork model, which
  * treats these two cases distinctly for exactly this reason).
  */
-function duplicatePipelineSummary(runs: AgentRun[]): string | undefined {
+export function duplicatePipelineSummary(runs: AgentRun[]): string | undefined {
   const duplicated = duplicateLivePipelineGroups(runs);
   if (duplicated.size === 0) return undefined;
   return Array.from(duplicated.entries())
@@ -655,11 +665,10 @@ export function FinishedRunRow({
   selectHref?: string;
 }) {
   const classification = classifyAgentRun(run, session);
-  const issueUrl = issueUrlForRun(run);
 
   if (variant === 'operations') {
     const taskHref = taskHrefForRun(run);
-    const actionHref = taskHref ?? issueUrl ?? run.url;
+    const actionHref = taskHref ?? internalRunHref(run);
     const successful = classification.status === 'succeeded';
     return (
       <div
@@ -670,7 +679,7 @@ export function FinishedRunRow({
         <Stack gap={5} style={{ minWidth: 0 }}>
           <RowTitle
             text={operationsRunTitle(run)}
-            mobileHref={actionHref}
+            mobileHref={titleHrefForRun(run)}
             selectHref={selectHref}
           />
           <Group gap="xs" wrap="wrap">
@@ -694,14 +703,11 @@ export function FinishedRunRow({
         <BridgePaneLink
           mobileHref={actionHref}
           paneHref={selectHref ?? actionHref}
-          target={taskHref ? undefined : '_blank'}
-          rel={taskHref ? undefined : 'noreferrer'}
           size="sm"
           className="operations-primary-action"
           data-testid="outcome-primary-action"
         >
           {successful ? 'View result' : 'Investigate'}
-          {!taskHref && ' ↗'}
         </BridgePaneLink>
       </div>
     );
@@ -710,9 +716,7 @@ export function FinishedRunRow({
   return (
     <Stack gap={2} data-testid="finished-run-row">
       <Anchor
-        href={issueUrl ?? workHrefForRun(run) ?? run.url}
-        target="_blank"
-        rel="noreferrer"
+        href={titleHrefForRun(run)}
         size="sm"
         fw={600}
         c="inherit"
@@ -753,7 +757,9 @@ export function FinishedRunRow({
             size="xs"
             c="dimmed"
           >
-            View run ↗
+            {run.url.startsWith('https://github.com/')
+              ? 'View run on GitHub ↗'
+              : 'View run'}
           </Anchor>
           {session && (
             <Anchor
@@ -897,7 +903,7 @@ export function CliSessionRow({
             size="xs"
             style={{ marginLeft: 'auto', flexShrink: 0 }}
           >
-            PR #{session.pr.number} ↗
+            GitHub PR #{session.pr.number} ↗
           </Anchor>
         )}
       </Group>

@@ -128,14 +128,21 @@ describe('read-only onboarding audit', () => {
       {
         fact: 'variables',
         status: 'UNVERIFIED',
-        detail: 'Metadata read credential unavailable',
+        detail: expect.stringContaining('Repository variables'),
       },
       {
         fact: 'required-checks',
         status: 'UNVERIFIED',
-        detail: 'Metadata read credential unavailable',
+        detail: expect.stringContaining('Rules and check metadata'),
       },
     ]);
+    expect(
+      result
+        .filter(({ fact }) => ['variables', 'required-checks'].includes(fact))
+        .every(({ detail }) =>
+          (detail as string).includes('ONBOARDING_AUDIT_READ_TOKEN'),
+        ),
+    ).toBe(true);
     expect(auditHasFailure(result)).toBe(false);
     expect(auditHasFailure([...result, { status: 'FAIL' }])).toBe(true);
   });

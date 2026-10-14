@@ -79,6 +79,52 @@ Agent LCARS currently requires `E2E`, `Verify`, and `Runner image pnpm-store
 seed`. Branch-policy changes are owned by the Homelab Terraform workflow and
 need their own reviewed plan and apply.
 
+## Browser prerequisites for local diagnostics
+
+The generic direct-worker/JIT image deliberately does **not** support local
+browser execution out of the box. Its owning
+[Dockerfile](../apps/runner-autoscaler/runner-image/Dockerfile) excludes the
+browser stack under #920; the worker remains non-root with no privilege
+escalation. A repository Playwright dependency does not supply Chromium or its
+OS libraries. Installing just a browser cannot repair missing libraries such
+as `libatk-1.0.so.0`. Do not use sudo, host installs, temporary library
+extraction, runtime package downloads, or weaker container privileges to make
+an optional journey run in that worker.
+
+The supported prepared environment is the published pinned
+[E2E sandbox](../tools/e2e/Dockerfile), with matching Chromium and its system
+libraries. The dedicated `agent-lcars-e2e` runner derives from that sandbox; CI
+checks its installed browser by launching it and handles version drift in its
+own setup lane. On a separately prepared Docker host, use
+`E2E_GREP='@smoke' ./tools/e2e-docker.sh @agent-lcars/console-e2e` to consume
+the published sandbox. This needs a working Docker engine and the existing
+registry access; the direct worker has neither a local engine nor a host
+socket. It is not a Docker-in-Docker workaround. Follow that wrapper's
+checkout/dependency warning before using it.
+
+On a host whose owner has already provisioned matching browsers and libraries,
+use `E2E_GREP='@smoke' ./tools/e2e-local.sh`. Set `PLAYWRIGHT_BROWSERS_PATH`
+to its prepared cache if it is outside the normal Playwright cache. The
+existing `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` override selects an explicitly
+prepared executable; an unavailable override fails rather than silently
+choosing another browser. Both controls cross the hermetic boundary without
+forwarding library-loader overrides or ambient credentials.
+
+Before a build, port cleanup, or emulator startup, `e2e-local.sh` now launches
+and closes Chromium under the suite's exact hermetic environment. Discovery
+is bounded to ten seconds (launch to five). It prints the installed Playwright
+version, expected Chromium version/revision from that dependency's browser
+manifest, and the actual launched version when available. A failure prints a
+fixed category or bounded missing-library name, never a raw launch log or
+environment dump. It performs no prerequisite installation. A failure means
+zero browser assertions ran, not a product failure; push ready source and let
+the required CI E2E lane run. Local diagnostics remain optional.
+
+Changing the generic worker image to support browsers would be a separate
+reviewed image contract, with independent live-contract review, publication,
+and adoption evidence. A source merge alone cannot establish active-image
+adoption or authorize a fleet rollout.
+
 ## Triage a failure
 
 1. Find the first failing stage. A checkout or setup failure is a harness

@@ -374,11 +374,23 @@ func TestReceiptHealthRejectsUnknownPhysicalInventory(t *testing.T) {
 }
 
 func TestReceiptStopReplyLossCannotStrandIncarnation(t *testing.T) {
+	testReceiptStopReplyRecovery(t, true)
+}
+
+func TestReceiptStopReplyRecoveryEmptyQueue(t *testing.T) {
+	testReceiptStopReplyRecovery(t, false)
+}
+
+func testReceiptStopReplyRecovery(t *testing.T, admit bool) {
+	t.Helper()
 	for _, kind := range []string{"healthy", "lost-reply", "lost-reply-receipt-already-released"} {
 		t.Run(kind, func(t *testing.T) {
 			q, r, _ := receiptFixture(t)
 			q.claimSettled = func(context.Context, string, string, string) (bool, error) { return true, nil }
 			old := q.capacity.producerID
+			oldRequest := ""
+			nextFence := capacityFence{PoolID: "pool", Slot: 0, Revision: 2, RunID: "work:after-stop/r1", Nonce: "next-receipt-nonce-123456"}
+			next := capacityClaimReply{Kind: "claim", RunID: nextFence.RunID, JobName: queueJobName(nextFence.RunID), Receipt: &nextFence, Pipeline: "codex", Token: "next-run-token"}
 			q.capacity.registered = true
 			r.Producers = []capacityProducer{{ProducerID: old, Subject: "subject", PendingWrites: []string{}}}
 			j, _ := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
@@ -393,9 +405,15 @@ func TestReceiptStopReplyLossCannotStrandIncarnation(t *testing.T) {
 			stopped := false
 			released := false
 			stopCalls, registerCalls, claimCalls := 0, 0, 0
+			registeredProducer := ""
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				mu.Lock()
 				defer mu.Unlock()
+				if req.Header.Get("Authorization") != "Bearer fixture-token" {
+					t.Error("unauthenticated recovery request")
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
 				if req.Method == http.MethodGet {
 					receipts := []capacityReceipt{}
@@ -410,6 +428,10 @@ func TestReceiptStopReplyLossCannotStrandIncarnation(t *testing.T) {
 				switch x["action"] {
 				case "register":
 					registerCalls++
+					registeredProducer, _ = x["producerId"].(string)
+					if !stopped || registeredProducer == "" {
+						t.Error("registered before durable closure")
+					}
 					if x["producerId"] == old {
 						t.Error("reregistered stopped identity")
 					}
@@ -434,19 +456,44 @@ func TestReceiptStopReplyLossCannotStrandIncarnation(t *testing.T) {
 					released = true
 				}
 				if req.URL.Path == "/api/work/v1/runs/claim" {
+					if !stopped {
+						if oldRequest != "" || x["producerId"] != old {
+							t.Error("unexpected pre-recovery claim")
+						}
+						oldRequest, _ = x["claimRequestId"].(string)
+						fmt.Fprint(w, `{"kind":"wait","reason":"queue"}`)
+						return
+					}
 					claimCalls++
 					if stopped && x["producerId"] == old {
 						w.WriteHeader(409)
 						fmt.Fprint(w, `{"error":"closed producer"}`)
 						return
 					}
-					fmt.Fprint(w, `{"kind":"wait","reason":"queue"}`)
+					requestID, _ := x["claimRequestId"].(string)
+					if !released || registerCalls != 1 || x["producerId"] != registeredProducer || requestID == "" || requestID == oldRequest || x["runner"] != "runner" || x["capacityVersion"] != float64(1) {
+						t.Error("claim lacked fresh registered producer/request identity")
+					}
+					if admit {
+						json.NewEncoder(w).Encode(next)
+					} else {
+						fmt.Fprint(w, `{"kind":"wait","reason":"queue"}`)
+					}
 					return
 				}
 				fmt.Fprint(w, `{"ok":true}`)
 			}))
 			defer s.Close()
 			q.capacity.consoleURL = s.URL
+			// Settle a real request under the old incarnation so the post-recovery
+			// request must differ from an observed identity, not a dummy sentinel.
+			initialReply, err := q.capacity.claim(context.Background(), "runner")
+			mu.Lock()
+			observedOldRequest := oldRequest
+			mu.Unlock()
+			if err != nil || initialReply.Kind != "wait" || observedOldRequest == "" {
+				t.Fatal("pre-recovery request did not settle", err)
+			}
 			firstErr := q.reconcileReceipts(context.Background())
 			if (firstErr == nil) != (kind == "healthy") {
 				t.Fatalf("stop schedule not exercised: kind=%s error=%v", kind, firstErr)
@@ -473,8 +520,49 @@ func TestReceiptStopReplyLossCannotStrandIncarnation(t *testing.T) {
 			if !observedReleased {
 				t.Fatal("fixture receipt not physically released")
 			}
-			if _, err := q.capacity.claim(context.Background(), "runner"); err != nil {
+			reply, err := q.capacity.claim(context.Background(), "runner")
+			if err != nil {
 				t.Fatalf("durably stopped incarnation stranded subsequent claim after successful reconciliation: producer=%s unchanged=%v error=%v", q.capacity.producerID, q.capacity.producerID == old, err)
+			}
+
+			if admit {
+				if reply.Kind != "claim" {
+					t.Fatalf("post-recovery admission: kind=%q, want claim", reply.Kind)
+				}
+				if reply.RunID != next.RunID || reply.RunID == r.RunID || reply.JobName != next.JobName || reply.Receipt == nil || *reply.Receipt != nextFence || reply.Token != next.Token || reply.Pipeline != next.Pipeline {
+					t.Fatal("admitted claim lost the distinct Run, exact receipt fence or credential/pipeline")
+				}
+				if err := q.launchReceipt(context.Background(), directRunnerLaunch{runID: reply.RunID, runToken: reply.Token, pipeline: reply.Pipeline, runner: "runner", consoleURL: s.URL, receipt: reply.Receipt}); err != nil {
+					t.Fatal("admitted worker launch", err)
+				}
+				job, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), reply.JobName, meta.GetOptions{})
+				if err != nil || job.Spec.Suspend == nil || *job.Spec.Suspend {
+					t.Fatal("admitted worker Job was not activated", err)
+				}
+				secret, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(context.Background(), reply.JobName, meta.GetOptions{})
+				if err != nil || string(secret.Data["run-token"]) != reply.Token {
+					t.Fatal("admitted worker credential was not delivered", err)
+				}
+			} else if reply.Kind != "wait" || reply.Reason != "queue" || reply.Receipt != nil || reply.Token != "" {
+				t.Fatal("empty queue did not remain a non-admission wait")
+			}
+			jobCreates, secretCreates := 0, 0
+			for _, action := range q.client.(*fake.Clientset).Actions() {
+				if action.GetVerb() == "create" {
+					switch action.GetResource().Resource {
+					case "jobs":
+						jobCreates++
+					case "secrets":
+						secretCreates++
+					}
+				}
+			}
+			wantCreates := 0
+			if admit {
+				wantCreates = 1
+			}
+			if jobCreates != wantCreates || secretCreates != wantCreates || q.capacity.requestID != "" {
+				t.Fatalf("duplicate launch or unresolved claim: jobs=%d secrets=%d request=%q", jobCreates, secretCreates, q.capacity.requestID)
 			}
 
 			mu.Lock()

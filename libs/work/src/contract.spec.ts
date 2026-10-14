@@ -28,6 +28,7 @@ describe('WORK_ID_PATTERN', () => {
 describe('itemsContract', () => {
   it('declares item and maintenance procedures', () => {
     expect(Object.keys(itemsContract).sort()).toEqual([
+      'anchorOwner',
       'cancel',
       'create',
       'get',
@@ -39,6 +40,64 @@ describe('itemsContract', () => {
       'update',
     ]);
   });
+});
+
+describe('itemsContract.maintenanceTick output', () => {
+  const shape = itemsContract.maintenanceTick['~orpc'].outputSchemas?.at(-1) as
+    z.ZodTypeAny | undefined;
+  const body = {
+    lost: [],
+    retried: [],
+    rerouted: [],
+    dispatched: [],
+    reported: [],
+    outboxProcessed: 0,
+    outboxContinuationNeeded: false,
+  };
+
+  it('uses the actual pinned SDK output schema for strict optional recovery results', () => {
+    if (shape === undefined)
+      throw new Error('Expected maintenance outputSchemas entry');
+    expect(shape.parse(body)).toEqual(body);
+    for (const credentialRecovery of [
+      { recovered: [], unresolved: [] },
+      { recovered: ['completed'], unresolved: ['still-in-flight'] },
+    ]) {
+      expect(shape.parse({ ...body, credentialRecovery })).toEqual({
+        ...body,
+        credentialRecovery,
+      });
+    }
+  });
+
+  it.each([
+    { name: 'unknown top-level output', extra: { unexpected: true } },
+    {
+      name: 'missing recovery array',
+      extra: { credentialRecovery: { recovered: [] } },
+    },
+    {
+      name: 'nonarray recovery',
+      extra: { credentialRecovery: { recovered: 'invalid', unresolved: [] } },
+    },
+    {
+      name: 'nonstrings in recovery',
+      extra: { credentialRecovery: { recovered: [], unresolved: [7] } },
+    },
+    {
+      name: 'unknown nested recovery output',
+      extra: {
+        credentialRecovery: { recovered: [], unresolved: [], unexpected: true },
+      },
+    },
+  ])(
+    'rejects $name without weakening strict response validation',
+    ({ extra }) => {
+      if (shape === undefined)
+        throw new Error('Expected maintenance outputSchemas entry');
+      expect(shape.safeParse({ ...body, ...extra }).success).toBe(false);
+    },
+  );
 });
 
 describe('dispatchesContract.github', () => {
@@ -60,7 +119,10 @@ describe('dispatchesContract.github', () => {
       mode: 'implement',
       requestId: 'workflow-run:123:dispatch:1633',
     };
-    expect(shape?.parse(input)).toEqual(input);
+    expect(shape?.parse(input)).toEqual({
+      ...input,
+      spec: { ...input.spec, priority: 'normal' },
+    });
     expect(() => {
       const { requestId: _requestId, ...withoutIdempotency } = input;
       shape?.parse(withoutIdempotency);
@@ -153,6 +215,7 @@ describe('runsContract', () => {
       [
         'claim',
         'claimStatus',
+        'startupPlacement',
         'capacity',
         'capacityMetrics',
         'capacityInventory',
@@ -173,6 +236,13 @@ describe('runsContract', () => {
     const [rawShape] = runsContract.claim['~orpc'].inputSchemas ?? [];
     const shape = rawShape as z.ZodTypeAny | undefined;
 
+    expect(
+      shape?.parse({ runner: 'autoscaler-1', placementAware: true }),
+    ).toEqual({ runner: 'autoscaler-1', placementAware: true });
+    expect(
+      shape?.safeParse({ runner: 'autoscaler-1', placementAware: false })
+        .success,
+    ).toBe(false);
     expect(shape?.parse({ runner: 'autoscaler-1' })).toEqual({
       runner: 'autoscaler-1',
     });
@@ -389,6 +459,7 @@ describe('generateWorkOpenApi', () => {
     expect(doc.openapi).toMatch(/^3\./);
     expect(Object.keys(doc.paths).sort()).toEqual(
       [
+        '/anchors/github/owner',
         '/dispatches/github',
         '/dispatches/github/redispatch',
         '/items',
@@ -409,6 +480,7 @@ describe('generateWorkOpenApi', () => {
         '/runs/activate',
         '/runs/{runId}/brief',
         '/runs/{runId}/claim-status',
+        '/runs/{runId}/startup-placement',
         '/runs/{runId}/heartbeat',
         '/runs/{runId}/placement',
         '/runs/{runId}/exit',
@@ -438,7 +510,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(9);
+    expect(operations).toHaveLength(10);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -524,6 +596,7 @@ describe('generateWorkOpenApi', () => {
       'POST /items/{id}/reply': ['200', '403', '404', '409'],
       'POST /maintenance/tick': ['200'],
       'GET /metrics/lifecycle': ['200'],
+      'GET /anchors/github/owner': ['200', '403'],
       'POST /dispatches/github': ['200', '400', '403', '409'],
       'POST /dispatches/github/redispatch': ['200', '403', '404', '409'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
@@ -541,6 +614,13 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/activate': ['200', '401', '409'],
       'GET /runs/{runId}/brief': ['200', '401', '409'],
       'POST /runs/{runId}/heartbeat': ['200', '401', '409'],
+      'POST /runs/{runId}/startup-placement': [
+        '200',
+        '401',
+        '403',
+        '404',
+        '409',
+      ],
       'GET /runs/{runId}/claim-status': ['200', '401', '403', '404'],
       'POST /runs/{runId}/placement': ['200', '401', '403', '404'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],

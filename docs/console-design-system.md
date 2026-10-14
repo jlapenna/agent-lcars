@@ -135,9 +135,20 @@ Inside the frame, a panel gets a **spine**: a flat, square-ended bar of the
 route accent down its leading edge, at `--lcars-spine-width`. Blocks inside the
 frame are bars; the curve belongs to the structure that encloses them.
 
-For the same reason `Card` and `Paper` default to `radius: 0`. A rounded card
-inside a square workspace frame carrying a square spine is three corner
-treatments on one block.
+From 64em the elbow is the full frame in
+[`design/fleet-console.html`](../design/fleet-console.html): a 152px rail down
+the leading edge (`.lcars-rail-head` and `.lcars-rail-body`, rendered by
+`ConsoleAppShell`) whose head turns through a concentric knee into the header's
+arm. It is still one elbow; it encloses the workspace from the side as well as
+from above. The rail's blocks carry the fleet readouts (fleet online, queue
+depth, tokens and merges over the last day, the date) and the header carries
+the live status and identity; all come from `/api/console/shell-readouts`,
+and a figure that could not be read shows as `—`, never as zero.
+
+For the same reason the theme sets `defaultRadius: 0`. Buttons, inputs, tags,
+nav modules, cards and panels are all square. A rounded card inside a square
+workspace frame carrying a square spine is three corner treatments on one
+block.
 
 ### 6. One frame
 
@@ -169,8 +180,12 @@ desktop its leading edge aligns with the title and navigation, using the same
 frame inset token. Phones use 16px side insets to preserve reading width. Do
 not cancel these with negative margins or route-specific header offsets.
 
-At 768px and above the header has two rows: title and global actions first,
-then the destination rail. The frame reserves clearance below the elbow arm
+At 1024px and above the header and the content share the column beside the
+elbow rail. The header stacks the arm, the title row (title, subtitle, global
+actions), the signal bar, and the destination rail of square modules, each
+labelled with its rail position. Between 768px and 1024px the header keeps the
+compact elbow and has two rows: title and global actions first, then the
+destination rail. The frame reserves clearance below the elbow arm
 and grows with the rail if navigation wraps. Never restore a fixed desktop
 height or place navigation beside the title: long session titles and refresh
 metadata must not squeeze each other out of the frame.

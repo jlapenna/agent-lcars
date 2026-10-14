@@ -54,7 +54,7 @@ grep -Fq "Commit and push at the first working slice" "$orders" ||
 # LCARS_SESSION_ID contract used by the annotation CLI.
 session_plugin="$repo_root/agents/opencode/lcars-session.js"
 test -f "$session_plugin" || fail "agents/opencode/lcars-session.js is missing"
-jq -e '.plugin == ["./lcars-session.js", "./context-lifecycle.js"]' "$config" >/dev/null ||
+jq -e '.plugin == ["./lcars-session.js", "./context-lifecycle.js", "./lcars-telemetry.js"]' "$config" >/dev/null ||
   fail "opencode.json must load the native LCARS session environment plugin"
 plugin_url="data:text/javascript;base64,$(base64 -w0 "$session_plugin")"
 node --input-type=module - "$plugin_url" <<'NODE'
@@ -127,6 +127,138 @@ grep -Fq '/repo/agents/opencode/lcars-session.js' "$runner_dockerfile" ||
   fail "runner image no longer installs the OpenCode LCARS session plugin"
 grep -Fq '/home/runner/.config/opencode/lcars-session.js' "$runner_dockerfile" ||
   fail "runner image does not preserve opencode.json's relative session plugin path"
+grep -Fq '/home/runner/.config/opencode/lcars-telemetry.js' "$runner_dockerfile" ||
+  fail "runner image does not install the OpenCode hook telemetry plugin beside opencode.json"
+# The telemetry plugin must stay inert on a dispatched runner that did not
+# select hook telemetry (no LCARS_TELEMETRY_CREDENTIALS_FILE).
+telemetry_plugin="$repo_root/agents/opencode/lcars-telemetry.js"
+LCARS_RUN_ID=run-fixture LCARS_TELEMETRY_CREDENTIALS_FILE= node --input-type=module - \
+  "data:text/javascript;base64,$(base64 -w0 "$telemetry_plugin")" <<'NODE' ||
+import assert from 'node:assert/strict';
+const module = await import(process.argv[2]);
+assert.deepEqual(await module.default({ client: {}, directory: '/' }), {});
+NODE
+  fail "lcars-telemetry.js must be inert on a runner without hook telemetry"
+# Event mapping, throttling, subagent skip, report coalescing, and snapshot
+# hygiene, against a stub SDK client and a fake `lcars` that records each
+# payload and then deletes the snapshot the way `lcars hook opencode` does.
+plugin_tmp="$(mktemp -d)"
+mkdir -p "$plugin_tmp/home/.local/bin" "$plugin_tmp/tmp" "$plugin_tmp/capture" \
+  "$plugin_tmp/tmp/lcars-opencode-stale01" "$plugin_tmp/tmp/lcars-opencode-fresh01"
+touch -d '1 hour ago' "$plugin_tmp/tmp/lcars-opencode-stale01"
+cat > "$plugin_tmp/home/.local/bin/lcars" <<'FAKE'
+#!/bin/sh
+n="$(date +%s%N)"
+cat > "$CAPTURE_DIR/$n.payload"
+snapshot="$(jq -r '.transcript_path // empty' "$CAPTURE_DIR/$n.payload")"
+# Lifecycle-only reports (SessionEnd) carry no snapshot. Only ever remove a
+# plugin snapshot directory under this test's TMPDIR.
+case "$snapshot" in
+  "$TMPDIR"/lcars-opencode-*/export.json)
+    cp "$snapshot" "$CAPTURE_DIR/$n.snapshot"
+    rm -rf "$(dirname "$snapshot")"
+    ;;
+esac
+FAKE
+chmod +x "$plugin_tmp/home/.local/bin/lcars"
+HOME="$plugin_tmp/home" TMPDIR="$plugin_tmp/tmp" CAPTURE_DIR="$plugin_tmp/capture" \
+  LCARS_RUN_ID= node --input-type=module - \
+  "data:text/javascript;base64,$(base64 -w0 "$telemetry_plugin")" <<'NODE' ||
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const capture = process.env.CAPTURE_DIR;
+const sessions = {
+  ses_main: { id: 'ses_main', directory: '/work/main' },
+  ses_child: { id: 'ses_child', directory: '/work/main', parentID: 'ses_main' },
+};
+let messageCalls = 0;
+let releaseGet;
+let holdGet = false;
+const client = {
+  session: {
+    get: async ({ path }) => {
+      const session = sessions[path.id];
+      if (holdGet) await new Promise((resolve) => { releaseGet = resolve; });
+      return { data: session };
+    },
+    messages: async ({ path }) => {
+      messageCalls += 1;
+      return { data: [{ info: { id: 'msg_1', role: 'user', sessionID: path.id }, parts: [] }] };
+    },
+  },
+};
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const payloads = () =>
+  readdirSync(capture)
+    .filter((name) => name.endsWith('.payload'))
+    .sort()
+    .map((name) => JSON.parse(readFileSync(join(capture, name), 'utf8')));
+async function until(count) {
+  for (let i = 0; i < 200 && payloads().length < count; i++) await sleep(25);
+  assert.equal(payloads().length, count);
+}
+
+const module = await import(process.argv[2]);
+const { event } = await module.default({ client, directory: '/fallback' });
+const send = (type, properties) => event({ event: { type, properties } });
+
+await send('session.created', { info: sessions.ses_child });
+await send('session.idle', { sessionID: 'ses_child' });
+await send('session.created', { info: sessions.ses_main });
+await until(1);
+await send('message.updated', { info: { id: 'msg_1', role: 'user', sessionID: 'ses_main' } });
+await until(2);
+await send('message.updated', { info: { id: 'msg_1', role: 'user', sessionID: 'ses_main' } });
+await send('message.part.updated', { part: { type: 'tool', sessionID: 'ses_main', state: { status: 'completed' } } });
+await until(3);
+await send('message.part.updated', { part: { type: 'tool', sessionID: 'ses_main', state: { status: 'completed' } } });
+await send('session.idle', { sessionID: 'ses_main' });
+await until(4);
+// Events arriving while a report is in flight collapse to the most
+// important one, run after the current report.
+// A deleted session is gone from the server: its end report is built from
+// the event alone, never by re-reading the session.
+holdGet = true;
+await send('session.idle', { sessionID: 'ses_main' });
+await sleep(50);
+holdGet = false;
+const deleted = sessions.ses_main;
+delete sessions.ses_main;
+await send('session.deleted', { info: deleted });
+await send('session.idle', { sessionID: 'ses_main' });
+releaseGet();
+await until(6);
+await sleep(200);
+
+assert.deepEqual(
+  payloads().map((p) => p.hook_event_name),
+  ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'Stop', 'SessionEnd'],
+);
+for (const payload of payloads()) {
+  assert.equal(payload.session_id, 'ses_main');
+  assert.equal(payload.cwd, '/work/main');
+  if (payload.hook_event_name === 'SessionEnd') {
+    assert.equal(payload.transcript_path, undefined);
+  } else {
+    assert.match(payload.transcript_path, /lcars-opencode-[A-Za-z0-9]{6}\/export\.json$/);
+  }
+}
+const snapshot = JSON.parse(
+  readFileSync(join(capture, readdirSync(capture).find((n) => n.endsWith('.snapshot'))), 'utf8'),
+);
+assert.equal(snapshot.info.id, 'ses_main');
+assert.equal(snapshot.messages.length, 1);
+// The subagent's history was never fetched.
+assert.equal(messageCalls, 5);
+assert.deepEqual(
+  readdirSync(process.env.TMPDIR).filter((n) => n.startsWith('lcars-opencode-')),
+  ['lcars-opencode-fresh01'],
+);
+NODE
+  fail "lcars-telemetry.js event handling regressed"
+rm -rf "$plugin_tmp"
 grep -Fq 'https://github.com/jlapenna/repo-tools.git' "$runner_dockerfile" ||
   fail "runner image no longer clones repo-tools for OpenCode"
 grep -Fq 'git init /opt/repo-tools' "$runner_dockerfile" ||
