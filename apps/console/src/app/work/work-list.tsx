@@ -194,6 +194,35 @@ function WorkTable({
   );
 }
 
+/** A Work panel's head (design/fleet-console.html `.panel-head`). */
+function WorkPanelHead({
+  title,
+  count,
+  meta,
+  className,
+  wrap = 'nowrap',
+}: {
+  title: string;
+  count: number;
+  meta: string;
+  className?: string;
+  /** Phones let the meta wrap under the title. */
+  wrap?: 'wrap' | 'nowrap';
+}) {
+  return (
+    <Group
+      gap={10}
+      align="baseline"
+      wrap={wrap}
+      className={['work-panel__head', className].filter(Boolean).join(' ')}
+    >
+      <Title order={2}>{title}</Title>
+      <span className="work-panel__count">{count}</span>
+      <span className="work-panel__meta">{meta}</span>
+    </Group>
+  );
+}
+
 function WorkPanel({
   title,
   items,
@@ -211,16 +240,7 @@ function WorkPanel({
       className="lcars-panel work-panel"
       data-testid={admitted ? 'work-admitted-queue' : 'work-recent'}
     >
-      <Group
-        gap={10}
-        align="baseline"
-        wrap="nowrap"
-        className="work-panel__head"
-      >
-        <Title order={2}>{title}</Title>
-        <span className="work-panel__count">{items.length}</span>
-        <span className="work-panel__meta">{meta}</span>
-      </Group>
+      <WorkPanelHead title={title} count={items.length} meta={meta} />
       {items.length === 0 ? (
         <Text c="dimmed" size="sm" py="sm">
           {admitted ? 'Nothing admitted is waiting or running.' : 'None.'}
@@ -279,25 +299,49 @@ export function WorkList({ items }: { items: ItemView[] }) {
       undefined,
     );
 
+  const queueMeta = [
+    'FIFO within priority',
+    providerCeilingMeta(),
+    oldest && `oldest ${relativeAge(oldest)}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const recentMeta = 'stopped first · then most recently updated';
+
   return (
     <>
+      {/* Phones keep the panels' heads (title, count, meta) over card rows. */}
       <Stack gap={0} hiddenFrom="sm" data-testid="work-cards">
-        {queue.length > 0 && (
-          <Text className="lcars-eyebrow work-cards__group">
-            Admitted queue · {queue.length}
+        <WorkPanelHead
+          title="Admitted queue"
+          count={queue.length}
+          meta={queueMeta}
+          className="work-cards__group"
+          wrap="wrap"
+        />
+        {queue.length === 0 ? (
+          <Text c="dimmed" size="sm" className="work-cards__empty">
+            Nothing admitted is waiting or running.
           </Text>
+        ) : (
+          queue.map((item) => <WorkCard key={item.id} item={item} admitted />)
         )}
-        {queue.map((item) => (
-          <WorkCard key={item.id} item={item} admitted />
-        ))}
-        {recent.length > 0 && (
-          <Text className="lcars-eyebrow work-cards__group">
-            Recent work · {recent.length}
+        <WorkPanelHead
+          title="Recent work"
+          count={recent.length}
+          meta={recentMeta}
+          className="work-cards__group"
+          wrap="wrap"
+        />
+        {recent.length === 0 ? (
+          <Text c="dimmed" size="sm" className="work-cards__empty">
+            None.
           </Text>
+        ) : (
+          recent.map((item) => (
+            <WorkCard key={item.id} item={item} admitted={false} />
+          ))
         )}
-        {recent.map((item) => (
-          <WorkCard key={item.id} item={item} admitted={false} />
-        ))}
       </Stack>
 
       <Stack gap={28} visibleFrom="sm" className="work-panels">
@@ -305,19 +349,13 @@ export function WorkList({ items }: { items: ItemView[] }) {
           title="Admitted queue"
           items={queue}
           admitted
-          meta={[
-            'FIFO within priority',
-            providerCeilingMeta(),
-            oldest && `oldest ${relativeAge(oldest)}`,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
+          meta={queueMeta}
         />
         <WorkPanel
           title="Recent work"
           items={recent}
           admitted={false}
-          meta="stopped first · then most recently updated"
+          meta={recentMeta}
         />
       </Stack>
     </>
