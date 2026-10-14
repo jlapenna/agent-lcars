@@ -97,11 +97,18 @@ async function notificationRequests(page: Page) {
   );
 }
 
-/** Hold only RSC requests until Playwright closes this test's owned context.
+/** Hold Inbox RSC GETs and refresh server actions until the context closes.
  * Plain authenticated notification GETs still use the normal server route. */
 async function holdRscRefreshes(page: Page) {
   await page.route('**/*', (route) => {
-    if (route.request().headers()['rsc'] === '1') return;
+    const request = route.request();
+    const headers = request.headers();
+    if (
+      new URL(request.url()).pathname === '/inbox' &&
+      ((request.method() === 'GET' && headers['rsc'] === '1') ||
+        (request.method() === 'POST' && headers['next-action']))
+    )
+      return;
     return route.fallback();
   });
 }
