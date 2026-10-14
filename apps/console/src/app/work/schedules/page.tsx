@@ -47,7 +47,7 @@ async function SchedulesBody() {
         />
       </OpsPanel>
       <OpsPanel
-        title="Schedules"
+        title="All schedules"
         count={data.schedules.length}
         meta={`${data.schedules.filter((schedule) => schedule.enabled).length} enabled`}
       >

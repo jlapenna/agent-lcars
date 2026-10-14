@@ -11,7 +11,6 @@ import type { QuickTaskSourceIdentity } from '../../../lib/quick-task-evidence';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
-import { DataWarnings } from '../../console-header';
 import { repoScopedConsoleHrefs } from '../../console-hrefs';
 import { DetailWorkspace } from '../../detail-workspace';
 import { OpsPanel } from '../../ops-primitives';
@@ -155,12 +154,13 @@ function SessionDetailViewContent({
   return (
     <DetailWorkspace
       ariaLabel="Session"
-      warnings={
-        detail.status === 'error' ? (
-          <DataWarnings warnings={[detail.warning]} />
-        ) : undefined
-      }
+      warnings={detail.status === 'error' ? false : undefined}
     >
+      {detail.status === 'error' && (
+        <Text size="sm" c="orange" data-testid="session-detail-error">
+          {detail.warning}
+        </Text>
+      )}
       {detail.status === 'ok' && (
         <Stack gap={28}>
           <OpsPanel title="Session">
