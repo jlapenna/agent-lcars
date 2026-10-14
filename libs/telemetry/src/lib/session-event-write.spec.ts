@@ -128,6 +128,19 @@ describe('sessionWriteForEvent', () => {
   });
 });
 
+describe('sessionWriteForEvent token minutes', () => {
+  it('records the tokens this event added to the stored doc', () => {
+    const stored = sessionWriteForEvent(event(), undefined, NOW)?.doc;
+    expect(stored?.tokenMinutes).toEqual([]);
+    const grown = event({
+      summary: { ...summary, tokens: { ...summary.tokens, outputTokens: 120 } },
+    });
+    expect(
+      sessionWriteForEvent(grown, stored as SessionDoc, NOW)?.doc.tokenMinutes,
+    ).toEqual([{ minute: '2026-10-12T12:00:00.000Z', tokens: 100 }]);
+  });
+});
+
 describe('sessionWriteForEvent archive preservation', () => {
   it('keeps the daemon-recorded transcript archive on a hook write', () => {
     const stored = {
