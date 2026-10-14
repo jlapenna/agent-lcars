@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { auth } from '@/auth';
+import { archiveWindowLabel } from '@/lib/archive-window';
 import { ledgerCsv } from '@/lib/ledger-csv';
 import {
   getSessionArchive,
@@ -24,7 +25,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   return new NextResponse(ledgerCsv(ledger), {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="lcars-cost-ledger-${query.days}d.csv"`,
+      'Content-Disposition': `attachment; filename="lcars-cost-ledger-${archiveWindowLabel(query.days)}.csv"`,
       'Cache-Control': 'no-store',
       ...(warnings.length > 0 && {
         'X-Ledger-Warnings': String(warnings.length),

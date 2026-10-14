@@ -11,3 +11,8 @@ export const ONE_HOUR_DAYS = 1 / 24;
 export function archiveDaysParam(days: number): string {
   return days === ONE_HOUR_DAYS ? '1h' : String(days);
 }
+
+/** The window as a short label, `1h` or `14d`: a download's filename. */
+export function archiveWindowLabel(days: number): string {
+  return days === ONE_HOUR_DAYS ? '1h' : `${days}d`;
+}
