@@ -67,6 +67,15 @@ stranded claim would break retries.
 Revocation is terminal: write `revocations/v1/<uuid>` with a create-only
 precondition before generation-matched byte deletion. Tombstones have no TTL;
 the public read route checks them first so stale retries cannot restore access.
+
+The bucket lifecycle deletes screenshot objects under `objects/v1/` once their
+GCS creation age reaches 30 days, matching the public route's existing access
+window. Deletion is asynchronous and may lag expiry; the route's timestamp
+check enforces public expiry independently. The prefix condition excludes
+`revocations/v1/`, preserving terminal revocation even after screenshot cleanup.
+This source policy requires the separately authorized infrastructure apply;
+merging it alone does not prove the bucket has adopted the rule.
+
 The audit tool is read-only and reports `unknown`, never deletion eligibility,
 for partial, unreadable, removed, or unresolved repositories. It uses numeric
 repository ID and the Quick Task marker, and it never prints full private

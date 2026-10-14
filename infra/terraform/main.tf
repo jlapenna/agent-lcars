@@ -146,6 +146,14 @@ resource "google_storage_bucket" "quick_task_evidence" {
   public_access_prevention    = "enforced"
   versioning { enabled = false }
   soft_delete_policy { retention_duration_seconds = 0 }
+  # Expire screenshot bytes, never the terminal revocation tombstones.
+  lifecycle_rule {
+    condition {
+      age            = 30
+      matches_prefix = ["objects/v1/"]
+    }
+    action { type = "Delete" }
+  }
   depends_on = [google_project_service.services]
 }
 

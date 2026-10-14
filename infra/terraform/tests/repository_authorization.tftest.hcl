@@ -209,6 +209,15 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
+    condition = length(google_storage_bucket.quick_task_evidence.lifecycle_rule) == 1 && alltrue([
+      for rule in google_storage_bucket.quick_task_evidence.lifecycle_rule :
+      one(rule.action).type == "Delete" && one(rule.condition).age == 30 &&
+      toset(one(rule.condition).matches_prefix) == toset(["objects/v1/"])
+    ])
+    error_message = "Evidence screenshots must be deleted at age 30 days, scoped to objects/v1/ so terminal revocation tombstones never expire."
+  }
+
+  assert {
     condition     = google_project_iam_custom_role.quick_task_evidence_runtime.role_id == "quickTaskEvidenceRuntime" && toset(google_project_iam_custom_role.quick_task_evidence_runtime.permissions) == toset(["storage.objects.create", "storage.objects.get", "storage.objects.delete"])
     error_message = "The evidence runtime role must grant only create, get, and delete."
   }
