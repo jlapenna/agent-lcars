@@ -114,7 +114,13 @@ export function ToolbarWindow({
   name: string;
   label: string;
   value: string;
-  options: readonly { value: string; label: string }[];
+  /** A disabled option is drawn but cannot be chosen; `title` says why. */
+  options: readonly {
+    value: string;
+    label: string;
+    disabled?: boolean;
+    title?: string;
+  }[];
 }) {
   const ref = useMarkFormHydrated<HTMLDivElement>();
   return (
@@ -125,11 +131,12 @@ export function ToolbarWindow({
       aria-label={label}
     >
       {options.map((option) => (
-        <label key={option.value}>
+        <label key={option.value} title={option.title}>
           <input
             type="radio"
             name={name}
             value={option.value}
+            disabled={option.disabled}
             defaultChecked={option.value === value}
             onChange={(event) => submitClosestForm(event.currentTarget)}
           />

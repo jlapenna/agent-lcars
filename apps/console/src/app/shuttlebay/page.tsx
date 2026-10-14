@@ -16,6 +16,7 @@ import {
   ToolbarApply,
   ToolbarSearch,
   ToolbarSelect,
+  ToolbarWindow,
 } from '../console-toolbar';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { RunnerAutoscalerStatus } from '../runner-autoscaler-status';
@@ -72,6 +73,12 @@ async function ShuttlebayBody({ filters, watchedRepos }: ShuttlebayViewProps) {
               })),
             ]}
           />
+          <ToolbarWindow
+            name="window"
+            label="Window"
+            value="30m"
+            options={SHUTTLEBAY_WINDOWS}
+          />
           <ToolbarSearch
             name="q"
             label="Find"
@@ -86,6 +93,22 @@ async function ShuttlebayBody({ filters, watchedRepos }: ShuttlebayViewProps) {
     />
   );
 }
+
+/**
+ * The mockup's window control. Every Shuttlebay readout is live or covers
+ * the last 30 minutes (the autoscaler and session windows keep no more), so
+ * that is the one choosable window; the longer ones are drawn and say why
+ * they cannot be chosen rather than silently showing 30 minutes as 24 hours.
+ */
+const SHUTTLEBAY_WINDOWS = [
+  { value: '30m', label: '30m' },
+  ...['1h', '24h', '7d'].map((value) => ({
+    value,
+    label: value,
+    disabled: true,
+    title: 'Runner telemetry keeps the last 30 minutes',
+  })),
+];
 
 interface ShuttlebayViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;

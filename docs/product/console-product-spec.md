@@ -405,6 +405,11 @@ the work that has stopped, and the work in flight.
   "used or requested". A NotReady host says so, and a cordoned one reads
   "draining". Without a fresh inventory the rows
   fall back to ARC lanes with host load unavailable.
+- **FE-SB-9 [Implemented]** Shuttlebay's toolbar carries the mockup's window
+  control. Its readouts are live or cover the last 30 minutes, the most the
+  autoscaler and session windows keep, so 30m is the one choosable window.
+  1h, 24h and 7d are drawn disabled, titled "Runner telemetry keeps the last
+  30 minutes".
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 

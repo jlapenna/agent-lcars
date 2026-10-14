@@ -10,7 +10,8 @@ function first(value: RawParam): string | undefined {
 }
 
 /** The Shuttlebay toolbar's filters (design/fleet-console.html). Runner
- * status is live, so the mockup's window has nothing to narrow here. */
+ * status is live or covers 30 minutes, so the window control offers only
+ * 30m (see page.tsx) and narrows nothing here. */
 export interface ShuttlebayFilters {
   /** `owner/name`. */
   repo?: string;

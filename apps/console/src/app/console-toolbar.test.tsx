@@ -89,4 +89,32 @@ describe('ConsoleToolbar', () => {
       screen.getByRole('button', { name: 'Apply' }).closest('form'),
     ).toHaveAttribute('data-hydrated');
   });
+
+  it('draws a disabled window option that cannot be chosen and says why', () => {
+    render(
+      <ConsoleToolbar action="/shuttlebay">
+        <ToolbarWindow
+          name="window"
+          label="Window"
+          value="30m"
+          options={[
+            { value: '30m', label: '30m' },
+            {
+              value: '24h',
+              label: '24h',
+              disabled: true,
+              title: 'Runner telemetry keeps the last 30 minutes',
+            },
+          ]}
+        />
+      </ConsoleToolbar>,
+    );
+    const day = screen.getByRole('radio', { name: '24h' });
+    expect(day).toBeDisabled();
+    expect(day.closest('label')).toHaveAttribute(
+      'title',
+      'Runner telemetry keeps the last 30 minutes',
+    );
+    expect(screen.getByRole('radio', { name: '30m' })).toBeChecked();
+  });
 });

@@ -1136,6 +1136,12 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-surface-raised);
 }
 
+.console-toolbar__segmented label:has(input:disabled) {
+  color: color-mix(in srgb, var(--lcars-ink-dim) 55%, var(--lcars-surface));
+  background: transparent;
+  cursor: not-allowed;
+}
+
 .console-toolbar__segmented label:has(input:checked) {
   color: var(--lcars-ink-on-muted);
   background: color-mix(in srgb, var(--lcars-accent) 52%, var(--lcars-surface));
