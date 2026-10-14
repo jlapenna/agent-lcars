@@ -4869,6 +4869,16 @@ td.costs-repo-spend__num {
     flex: 1 1 auto;
   }
 
+  /* The same phone fold as every workspace toolbar (console-toolbar.tsx). */
+  .inbox-toolbar[data-hydrated] > .console-toolbar__toggle {
+    display: inline-flex;
+  }
+
+  .inbox-toolbar[data-hydrated]:not([data-filters-open])
+    > :is(.console-repository-selector, .inbox-agent-select) {
+    display: none;
+  }
+
   .inbox-respond-oldest {
     min-height: 44px;
   }

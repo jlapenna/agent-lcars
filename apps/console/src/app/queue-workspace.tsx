@@ -392,6 +392,14 @@ export function QueueWorkspace({
     if (loadingItemKey === selectedItemKey) setLoadingItemKey(undefined);
   }, [loadingItemKey, selectedItemKey]);
 
+  // Phones fold the repository and agent selects behind one toggle, as every
+  // workspace toolbar does (console-toolbar.tsx), once hydrated so the toggle
+  // can open them. It counts the folded filters that narrow the queue.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [toolbarHydrated, setToolbarHydrated] = useState(false);
+  useEffect(() => setToolbarHydrated(true), []);
+  const foldedActive = (searchParams.get('repo') ? 1 : 0) + (agent ? 1 : 0);
+
   const showDetail =
     explicitDetail || Boolean(retainedDraft) || Boolean(replyConfirmation);
   const mobileView = explicitDetail ? 'detail' : 'list';
@@ -402,7 +410,19 @@ export function QueueWorkspace({
       data-mobile-view={mobileView}
       aria-label="Decision Inbox"
     >
-      <div className="console-workspace__toolbar inbox-toolbar">
+      <div
+        className="console-workspace__toolbar inbox-toolbar"
+        data-hydrated={toolbarHydrated ? '' : undefined}
+        data-filters-open={filtersOpen ? '' : undefined}
+      >
+        <button
+          type="button"
+          className="console-toolbar__field console-toolbar__toggle"
+          aria-expanded={filtersOpen}
+          onClick={() => setFiltersOpen((open) => !open)}
+        >
+          {foldedActive > 0 ? `Filters · ${foldedActive}` : 'Filters'}
+        </button>
         {toolbarStart}
         {agentOptions.length > 0 && (
           <select
