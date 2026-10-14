@@ -196,6 +196,60 @@ describe('RunnerFleetPanel', () => {
     expect(screen.getByText('Load · requested')).toBeTruthy();
   });
 
+  it('meters live usage where metrics-server sampled the host', () => {
+    const host = {
+      name: 'spark',
+      ready: true,
+      unschedulable: false,
+      cpuMillis: 20_000,
+      memoryBytes: 128 * 1024 ** 3,
+      requestedCpuMillis: 17_000,
+      requestedMemoryBytes: 32 * 1024 ** 3,
+      runnerPods: 0,
+      queueJobPods: 0,
+    };
+    const sampled = {
+      ...host,
+      usedCpuMillis: 5_000,
+      usedMemoryBytes: 96 * 1024 ** 3,
+    };
+    const { rerender } = render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          hostInventory={{
+            hosts: [sampled, { ...host, name: 'worf', ready: false }],
+            updatedAt: '2026-10-13T15:00:00.000Z',
+          }}
+        />
+      </MantineProvider>,
+    );
+    const spark = screen.getByTestId('fleet-host-spark');
+    expect(spark.textContent).toContain('25%');
+    expect(spark.textContent).toContain('75%');
+    expect(
+      spark.querySelector('[aria-label="CPU used on spark"]'),
+    ).toBeTruthy();
+    // A NotReady host draws no meters, so it does not turn the column mixed.
+    expect(screen.getByText('Load · used')).toBeTruthy();
+
+    rerender(
+      <MantineProvider>
+        <RunnerFleetPanel
+          hostInventory={{
+            hosts: [sampled, { ...host, name: 'worf' }],
+            updatedAt: '2026-10-13T15:00:00.000Z',
+          }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByText('Load · used or requested')).toBeTruthy();
+    expect(
+      screen
+        .getByTestId('fleet-host-worf')
+        .querySelector('[aria-label="CPU requested on worf"]'),
+    ).toBeTruthy();
+  });
+
   it('never claims runner status is unavailable beside known hosts', () => {
     render(
       <MantineProvider>

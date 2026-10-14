@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
 	"time"
 
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	podresource "k8s.io/component-helpers/resource"
@@ -27,9 +30,10 @@ const (
 
 // consoleHostStatus is the cluster's host inventory: one row per node, with
 // its allocatable CPU and memory, what the pods on it request (the
-// scheduler's own accounting, not live usage) and how many runner pods it
-// carries. The queue executor's existing RBAC lists nodes and pods; live
-// usage would need metrics.k8s.io, which it is not granted.
+// scheduler's own accounting), its live usage when metrics-server reports
+// it, and how many runner pods it carries. Listing nodes and pods is the
+// queue executor's existing RBAC; live usage additionally needs list on
+// metrics.k8s.io nodes, and without it the hosts publish requests alone.
 type consoleHostStatus struct {
 	SchemaVersion int    `firestore:"schemaVersion"`
 	Kind          string `firestore:"kind"`
@@ -52,6 +56,10 @@ type consoleHost struct {
 	// Summed pod requests of pods that still occupy the node.
 	RequestedCPUMillis   int64 `firestore:"requestedCpuMillis"`
 	RequestedMemoryBytes int64 `firestore:"requestedMemoryBytes"`
+	// metrics-server's last sample for the node; absent when it reported
+	// none or the executor may not read it.
+	UsedCPUMillis   *int64 `firestore:"usedCpuMillis,omitempty"`
+	UsedMemoryBytes *int64 `firestore:"usedMemoryBytes,omitempty"`
 	// ARC runner pods and queue executor Job pods occupying the node.
 	RunnerPods   int `firestore:"runnerPods"`
 	QueueJobPods int `firestore:"queueJobPods"`
@@ -73,6 +81,68 @@ func (s consoleHostStatus) contentKey() any {
 		}
 	}
 	return key
+}
+
+type nodeUsage struct{ cpuMillis, memoryBytes int64 }
+
+// nodeUsageReader returns metrics-server's latest sample per node name.
+type nodeUsageReader func(context.Context) (map[string]nodeUsage, error)
+
+const nodeMetricsPath = "/apis/metrics.k8s.io/v1beta1/nodes"
+
+// metricsServerUsage reads node usage through the clientset's discovery
+// REST client, so no metrics clientset dependency is needed for one list.
+func metricsServerUsage(client kubernetes.Interface) nodeUsageReader {
+	rest := client.Discovery().RESTClient()
+	if rest == nil {
+		return nil
+	}
+	return func(ctx context.Context) (map[string]nodeUsage, error) {
+		raw, err := rest.Get().AbsPath(nodeMetricsPath).Do(ctx).Raw()
+		if err != nil {
+			return nil, err
+		}
+		return parseNodeMetrics(raw)
+	}
+}
+
+func parseNodeMetrics(raw []byte) (map[string]nodeUsage, error) {
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Usage map[string]string `json:"usage"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, fmt.Errorf("decoding node metrics: %w", err)
+	}
+	usage := make(map[string]nodeUsage, len(list.Items))
+	for _, item := range list.Items {
+		cpu, err := resource.ParseQuantity(item.Usage["cpu"])
+		if err != nil {
+			return nil, fmt.Errorf("node %s cpu usage: %w", item.Metadata.Name, err)
+		}
+		memory, err := resource.ParseQuantity(item.Usage["memory"])
+		if err != nil {
+			return nil, fmt.Errorf("node %s memory usage: %w", item.Metadata.Name, err)
+		}
+		usage[item.Metadata.Name] = nodeUsage{cpuMillis: cpu.MilliValue(), memoryBytes: memory.Value()}
+	}
+	return usage, nil
+}
+
+// applyNodeUsage attaches each host's live sample. A node metrics-server has
+// not sampled yet keeps requests alone rather than reading as idle.
+func applyNodeUsage(inventory *consoleHostInventory, usage map[string]nodeUsage) {
+	for i := range inventory.Hosts {
+		host := &inventory.Hosts[i]
+		if sample, ok := usage[host.Name]; ok {
+			cpu, memory := sample.cpuMillis, sample.memoryBytes
+			host.UsedCPUMillis, host.UsedMemoryBytes = &cpu, &memory
+		}
+	}
 }
 
 // hostInventory reads every node and pod once and accounts requests like
@@ -134,9 +204,15 @@ type hostStatusPublisher interface {
 }
 
 // runHostStatusPublisher samples the inventory on the console status tick. A
-// failed read publishes nothing, so the last good document expires instead
-// of showing a plausible fleet.
+// failed inventory read publishes nothing, so the last good document expires
+// instead of showing a plausible fleet. A failed usage read only drops the
+// live sample: requests are still true, and the console labels them so.
 func runHostStatusPublisher(ctx context.Context, publisher hostStatusPublisher, client kubernetes.Interface, logger *slog.Logger) {
+	readUsage := metricsServerUsage(client)
+	// A standing usage failure (no RBAC, no metrics-server, an aggregator
+	// 503 while metrics-server is down) is logged when it starts or
+	// changes, not every tick.
+	lastUsageErr := ""
 	publish := func() {
 		readCtx, cancel := context.WithTimeout(ctx, consoleStatusTimeout)
 		defer cancel()
@@ -144,6 +220,20 @@ func runHostStatusPublisher(ctx context.Context, publisher hostStatusPublisher, 
 		if err != nil {
 			logger.Warn("Host inventory unavailable", slog.Any("error", err))
 			return
+		}
+		if readUsage != nil {
+			usage, err := readUsage(readCtx)
+			if err == nil {
+				lastUsageErr = ""
+				applyNodeUsage(inventory, usage)
+			} else if msg := err.Error(); msg != lastUsageErr {
+				lastUsageErr = msg
+				if apierrors.IsForbidden(err) || apierrors.IsNotFound(err) {
+					logger.Info("Host usage unavailable; publishing requests only", slog.Any("error", err))
+				} else {
+					logger.Warn("Host usage read failed; publishing requests only", slog.Any("error", err))
+				}
+			}
 		}
 		now := time.Now()
 		publisher.PublishHosts(ctx, consoleHostStatus{

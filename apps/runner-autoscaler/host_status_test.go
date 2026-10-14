@@ -105,3 +105,52 @@ func TestHostStatusPublisherPublishesTheInventory(t *testing.T) {
 		t.Fatal("publisher did not publish")
 	}
 }
+
+func TestParseNodeMetricsReadsMetricsServerQuantities(t *testing.T) {
+	raw := []byte(`{"kind":"NodeMetricsList","items":[
+		{"metadata":{"name":"spark"},"usage":{"cpu":"2534960183n","memory":"8388608Ki"}},
+		{"metadata":{"name":"picard"},"usage":{"cpu":"250m","memory":"1Gi"}}]}`)
+	usage, err := parseNodeMetrics(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]nodeUsage{
+		"spark":  {cpuMillis: 2535, memoryBytes: 8 << 30},
+		"picard": {cpuMillis: 250, memoryBytes: 1 << 30},
+	}
+	if !reflect.DeepEqual(usage, want) {
+		t.Fatalf("usage = %+v, want %+v", usage, want)
+	}
+}
+
+func TestParseNodeMetricsRejectsMalformedUsage(t *testing.T) {
+	for name, raw := range map[string]string{
+		"not json":       `{`,
+		"missing cpu":    `{"items":[{"metadata":{"name":"spark"},"usage":{"memory":"1Gi"}}]}`,
+		"garbled memory": `{"items":[{"metadata":{"name":"spark"},"usage":{"cpu":"1","memory":"lots"}}]}`,
+	} {
+		if _, err := parseNodeMetrics([]byte(raw)); err == nil {
+			t.Errorf("%s: parsed without error", name)
+		}
+	}
+}
+
+func TestApplyNodeUsageLeavesUnsampledHostsWithRequestsOnly(t *testing.T) {
+	inventory := &consoleHostInventory{Hosts: []consoleHost{{Name: "picard"}, {Name: "spark"}}}
+	applyNodeUsage(inventory, map[string]nodeUsage{"spark": {cpuMillis: 1500, memoryBytes: 4 << 30}, "gone": {cpuMillis: 1}})
+	if inventory.Hosts[0].UsedCPUMillis != nil || inventory.Hosts[0].UsedMemoryBytes != nil {
+		t.Fatalf("picard has no sample but got usage %+v", inventory.Hosts[0])
+	}
+	spark := inventory.Hosts[1]
+	if spark.UsedCPUMillis == nil || *spark.UsedCPUMillis != 1500 || spark.UsedMemoryBytes == nil || *spark.UsedMemoryBytes != 4<<30 {
+		t.Fatalf("spark usage = %+v", spark)
+	}
+}
+
+func TestMetricsServerUsageNeedsARESTClient(t *testing.T) {
+	// The fake clientset has no discovery REST client; the publisher then
+	// publishes requests alone instead of panicking.
+	if metricsServerUsage(fake.NewClientset()) != nil {
+		t.Fatal("expected no usage reader without a REST client")
+	}
+}
