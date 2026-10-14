@@ -1,6 +1,6 @@
 import {
+  findCreatedPR,
   findDeliverables,
-  findQualifiedPRs,
   isDeliverableCommand,
   isPRPublicationCommand,
 } from './deliverables';
@@ -119,12 +119,15 @@ function applyMessage(
         if (toolUseId) state.pendingBashCommands.delete(toolUseId);
         if (command && isDeliverableCommand(command)) {
           const found = findDeliverables(record['content']);
-          if (record['is_error'] !== true && isPRPublicationCommand(command))
-            for (const pr of findQualifiedPRs(record['content']))
-              state.qualifiedPRs.set(
-                `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
-                pr,
-              );
+          const created =
+            record['is_error'] !== true && isPRPublicationCommand(command)
+              ? findCreatedPR(record['content'])
+              : undefined;
+          if (created)
+            state.qualifiedPRs.set(
+              `${created.repo.owner}/${created.repo.name}#${created.number}`,
+              created,
+            );
           for (const prNumber of found.prNumbers) {
             state.prNumbers.add(prNumber);
           }

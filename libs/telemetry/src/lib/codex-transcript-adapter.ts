@@ -5,8 +5,8 @@ import {
   codeModeResult,
 } from './codex-publication';
 import {
+  findCreatedPR,
   findDeliverables,
-  findQualifiedPRs,
   isPRPublicationCommand,
 } from './deliverables';
 import type { TranscriptAdapter } from './transcript-adapter-types';
@@ -391,12 +391,11 @@ export const codexAdapter: TranscriptAdapter = {
             payloadType === 'custom_tool_call_output')
         ) {
           creatingCalls.delete(callId);
-          for (const pr of findQualifiedPRs(
-            publicationOutput(payload['output']),
-          ))
+          const created = findCreatedPR(publicationOutput(payload['output']));
+          if (created)
             qualifiedPRs.set(
-              `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
-              pr,
+              `${created.repo.owner}/${created.repo.name}#${created.number}`,
+              created,
             );
         }
       }

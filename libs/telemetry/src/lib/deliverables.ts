@@ -89,14 +89,24 @@ export function findQualifiedPRs(line: unknown): QualifiedSessionPR[] {
 }
 
 /**
- * True when the command's own result is a `gh pr create` result. A chain of
- * `&&` / `;` / newline segments qualifies only when every segment before the
- * create is silent setup (see `isSilentSetup`) and the create is the last
- * segment: its exit status is then the command's, and nothing after it can
- * print another URL. Pipes, `||`, background jobs and redirections stay
- * unqualified because they can turn a failed create into a success, e.g.
- * `| tail -1` over gh's "already exists: <url>" names someone else's PR.
+ * True when the command's own result is a `gh pr create` result. Fails closed:
+ * an `&&` chain qualifies only when every segment before the create is silent
+ * setup (see `isSilentSetup`) and the create is the last segment, so the
+ * create runs only if the setup succeeded, its exit status is the command's,
+ * and nothing before or after it prints a URL. `;`, newlines between
+ * commands, pipes, `||`, background jobs, redirections, subshells and other
+ * substitutions stay unqualified: they decouple the result from the create,
+ * e.g. `| tail -1` over gh's failing "already exists: <url>" names someone
+ * else's PR.
  */
+/** The one PR a successful `gh pr create` printed. gh prints exactly one PR
+ * URL; output naming several (debug traces, echoed bodies, wrappers) cannot
+ * say which one this command created, so it qualifies none. */
+export function findCreatedPR(line: unknown): QualifiedSessionPR | undefined {
+  const refs = findQualifiedPRs(line);
+  return refs.length === 1 ? refs[0] : undefined;
+}
+
 export function isPRPublicationCommand(command: string): boolean {
   const segments = literalShellSegments(command);
   if (segments === undefined || segments.length === 0) return false;
@@ -107,39 +117,56 @@ export function isPRPublicationCommand(command: string): boolean {
   );
 }
 
-/** Setup that prints no PR URL: directory changes, assignments, exports and
- * the fail-fast `set` options. `set -x`/`-v` would echo the create's own
- * arguments (a body naming other PRs) and are excluded. */
+/** Environment that changes which program runs, what it prints or where it
+ * reads configuration. Assigning any of these disqualifies the command. */
+const UNSAFE_ENVIRONMENT = new Set([
+  'PATH',
+  'CDPATH',
+  'BASH_ENV',
+  'ENV',
+  'SHELLOPTS',
+  'PS4',
+  'IFS',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'NODE_OPTIONS',
+  'GH_DEBUG',
+  'DEBUG',
+  'GH_PAGER',
+  'PAGER',
+  'GH_CONFIG_DIR',
+]);
+
+function isSafeAssignment(word: string): boolean {
+  const name = /^([A-Za-z_][A-Za-z0-9_]*)=/u.exec(word)?.[1];
+  return name !== undefined && !UNSAFE_ENVIRONMENT.has(name);
+}
+
+/** Setup that prints nothing: `cd <dir>` and safe assignments or exports.
+ * `cd -` and options print a directory; `pushd` prints the stack. */
 function isSilentSetup(words: readonly string[]): boolean {
-  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/u;
-  if (words.every((word) => assignment.test(word))) return true;
+  if (words.every(isSafeAssignment)) return true;
   const [name, ...args] = words;
-  if (name === 'cd' || name === 'pushd') return args.length <= 1;
-  if (name === 'export')
-    return args.every(
-      (word) => assignment.test(word) || /^[A-Za-z_][A-Za-z0-9_]*$/u.test(word),
-    );
-  if (name === 'set')
-    return args.every(
-      (word) =>
-        /^[-+][euo]+$/u.test(word) ||
-        ['pipefail', 'errexit', 'nounset'].includes(word),
-    );
+  if (name === 'cd')
+    return args.length === 1 && !(args[0] ?? '-').startsWith('-');
+  if (name === 'export') return args.length > 0 && args.every(isSafeAssignment);
   return false;
 }
 
 function isPRCreateWords(words: string[]): boolean {
-  while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[0] ?? '')) words.shift();
+  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/u;
+  while (assignment.test(words[0] ?? '')) {
+    if (!isSafeAssignment(words.shift() ?? '')) return false;
+  }
   if (words[0] === 'env') {
     words.shift();
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[0] ?? '')) words.shift();
+    while (assignment.test(words[0] ?? '')) {
+      if (!isSafeAssignment(words.shift() ?? '')) return false;
+    }
   }
   if (words[0] === 'command') words.shift();
-  if (
-    !/^(?:[^\s]*\/)?gh$/u.test(words[0] ?? '') ||
-    words[1] !== 'pr' ||
-    words[2] !== 'create'
-  )
+  // A path-qualified gh may be any program printing any URL.
+  if (words[0] !== 'gh' || words[1] !== 'pr' || words[2] !== 'create')
     return false;
 
   // Values such as --title '--dry-run' are data, not CLI options.
@@ -220,7 +247,7 @@ function heredocSubstitution(
   const tag = head[2] ?? head[3] ?? head[4] ?? '';
   const indent = head[1] === '-' ? '\t*' : '';
   const bodyStart = start + head[0].length;
-  const tail = new RegExp(`^${indent}${tag}[ \t]*\n[ \t]*\\)`, 'u');
+  const tail = new RegExp(`^${indent}${tag}\n[ \t]*\\)`, 'u');
   for (
     let lineStart = bodyStart;
     lineStart <= command.length;
@@ -294,10 +321,12 @@ function literalShellSegments(command: string): string[][] | undefined {
       if (index === command.length) break;
     }
     const current = command[index];
-    if (current === '\n' || current === ';') {
-      // A separator with nothing before it (`;;`, a leading `;`) is not a
-      // simple chain.
-      if (!endSegment(current === ';')) return undefined;
+    if (current === '\n') {
+      // Only blank space: leading, after `&&`, or trailing. A newline that
+      // ends a command starts another one, like `;`.
+      endWord();
+      if (words.length > 0 && command.slice(index).trim() !== '')
+        return undefined;
       continue;
     }
     if (/\s/u.test(current)) {
@@ -311,7 +340,7 @@ function literalShellSegments(command: string): string[][] | undefined {
       index++;
       continue;
     }
-    if ('|<>$`(){}'.includes(current)) return undefined;
+    if (';|<>$`(){}'.includes(current)) return undefined;
     started = true;
     if (current === "'" || current === '"') quote = current;
     else word += current;

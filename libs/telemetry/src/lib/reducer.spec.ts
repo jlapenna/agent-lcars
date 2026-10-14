@@ -550,3 +550,48 @@ describe('failed Claude publication evidence', () => {
     expect(summary.deliverables.prNumbers).toEqual([42]);
   });
 });
+
+describe('Claude created PR binding', () => {
+  it('qualifies nothing when a create result names several PRs', () => {
+    const sessionId = 'several-urls';
+    const transcript = [
+      {
+        type: 'assistant',
+        uuid: 'a',
+        sessionId,
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              name: 'Bash',
+              id: 'call',
+              input: { command: 'gh pr create --fill' },
+            },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        uuid: 'u',
+        sessionId,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call',
+              content:
+                'https://github.com/octo/example/pull/41\nhttps://github.com/octo/example/pull/42',
+            },
+          ],
+        },
+      },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join('\n');
+    expect(
+      reduceTranscript(transcript)[0].deliverables.qualifiedPRs,
+    ).toBeUndefined();
+  });
+});

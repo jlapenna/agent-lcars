@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  findCreatedPR,
   findDeliverables,
   findQualifiedPRs,
   isPRPublicationCommand,
@@ -71,46 +72,97 @@ describe('chained PR creation (#2730)', () => {
 
   it.each([
     'cd /home/u/p/repo-wt && gh pr create --draft --title t --body b',
-    'cd /home/u/p/repo-wt; gh pr create --fill',
-    'set -euo pipefail\ncd repo && gh pr create --fill',
+    'GH_PROMPT_DISABLED=1 && gh pr create --fill',
     'export GH_PROMPT_DISABLED=1 && GIT_DIR=x gh pr create --fill',
     'cd repo &&\n  gh pr create --fill',
-    `cd repo && ${heredoc('## Problem\nmentions https://github.com/a/b/pull/12 and $HOME, `x`, \\n')}`,
+    'cd repo && gh pr create --fill\n',
+    `cd repo && ${heredoc('## Problem\nmentions https://github.com/a/b/pull/12 and $HOME, `x`, && ; | \\n')}`,
     heredoc('plain body', 'EOF'),
     `cd repo && gh pr create --body "$(cat <<-'EOF'\n\tindented\n\tEOF\n)" --fill`,
-  ])('qualifies a create that ends a silent setup chain: %s', (command) =>
-    expect(isPRPublicationCommand(command)).toBe(true),
+  ])(
+    'qualifies a create that ends an && chain of silent setup: %s',
+    (command) => expect(isPRPublicationCommand(command)).toBe(true),
   );
 
   it.each([
+    // Only && binds the create to its setup; ; and newlines start a new command.
+    'cd repo; gh pr create --fill',
+    'cd repo\ngh pr create --fill',
+    'set -euo pipefail\ncd repo && gh pr create --fill',
+    'gh pr create --fill\necho https://github.com/a/b/pull/1',
+    'gh pr create --fill;',
     // The create is not last: a later segment can print another PR's URL.
     'gh pr create --fill && gh pr view 42',
-    'cd repo && gh pr create --fill; echo done',
     // Failure masking and output rewriting.
     'gh pr create --fill | tail -1',
     'gh pr create --fill 2>&1 | tail -1',
     'gh pr create --fill || true',
     'gh pr create --fill > /tmp/out',
     'gh pr create --fill &',
-    // Setup that prints, or echoes the create's arguments.
+    'gh pr create --fill &> /tmp/out',
+    // Setup that prints: commands, the directory stack, cd's echoed path.
     'gh pr list && gh pr create --fill',
     'echo https://github.com/a/b/pull/1 && gh pr create --fill',
     'set -x && gh pr create --body "see https://github.com/a/b/pull/1"',
+    'set -e && gh pr create --fill',
+    'pushd https://github.com/a/b/pull/1 && gh pr create --fill',
+    'cd - && gh pr create --fill',
+    'cd -P repo && gh pr create --fill',
+    'cd && gh pr create --fill',
     'cd a b && gh pr create --fill',
+    'CDPATH=/srv && cd https: && gh pr create --fill',
+    'export CDPATH=/srv && cd repo && gh pr create --fill',
+    'export && gh pr create --fill',
+    // Environment that swaps the program or dumps API traffic.
+    'PATH=/tmp/evil gh pr create --fill',
+    'env PATH=/tmp/evil gh pr create --fill',
+    'export PATH=/tmp/evil && gh pr create --fill',
+    'GH_DEBUG=api gh pr create --fill',
+    'BASH_ENV=/tmp/x && gh pr create --fill',
+    // A path-qualified gh can be any program.
+    './gh pr create --fill',
+    '/tmp/evil/gh pr create --fill',
     // Malformed chains.
     'cd repo && && gh pr create --fill',
-    '; gh pr create --fill',
+    '&& gh pr create --fill',
     'cd repo && gh pr create --fill &&',
-    // Substitutions other than a literal heredoc body.
+    // Substitutions other than a literal heredoc body, and heredocs bash
+    // would read differently.
     'cd repo && gh pr create --body "$(gh pr view 1)"',
     'gh pr create --body "$(cat <<EOF\nruns $(gh pr view 1)\nEOF\n)"',
+    'gh pr create --body "$(cat <<EOF\n\\$(id)\nEOF\n)"',
     'gh pr create --body "$(cat <<\'EOF\'\nnever closed\n)"',
+    'gh pr create --body "$(cat <<\'EOF\'\nEOF \n)"',
+    'gh pr create --body "$(cat <<\'EOF\' >&2\nx\nEOF\n)"',
+    'gh pr create --body "$(cat <<E"O"F\nx\nEOF\n)"',
     'gh pr create --body $(cat body.md)',
     'gh pr create --body "`cat body.md`"',
+    "gh pr create --body $'line\\n'",
+    '(gh pr create --fill)',
+    '{ gh pr create --fill; }',
     // Non-creating create still rejected inside a chain.
     'cd repo && gh pr create --dry-run',
     `cd repo && gh pr create --body "$(cat <<'EOF'\nx\nEOF\n)" --help`,
   ])('leaves unqualified: %s', (command) =>
     expect(isPRPublicationCommand(command)).toBe(false),
   );
+});
+
+describe('created PR binding', () => {
+  it('takes the one PR a create printed', () => {
+    expect(
+      findCreatedPR(
+        'Warning: 1 uncommitted change\nhttps://github.com/a/b/pull/7\n',
+      ),
+    ).toEqual({ repo: { owner: 'a', name: 'b' }, number: 7 });
+  });
+
+  it('qualifies nothing when the output names several PRs', () => {
+    expect(
+      findCreatedPR(
+        'https://github.com/a/b/pull/7\nhttps://github.com/a/b/pull/8',
+      ),
+    ).toBeUndefined();
+    expect(findCreatedPR('no url')).toBeUndefined();
+  });
 });
