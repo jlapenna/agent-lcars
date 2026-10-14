@@ -47,7 +47,7 @@ const command=path.basename(process.argv[1]);
 const agent=command==='claude'?'claude-code':command;
 const dir=path.join(process.env.HOME,'.local/state/agent-lcars/spool');
 fs.mkdirSync(dir,{recursive:true});
-const kinds=command==='claude'?['start','stop','end']:command==='codex'?['start','end']:['start','prompt',...${missingStop ? '[]' : "['stop']"}];
+const kinds=command==='claude'?['start','stop','end']:command==='codex'?['start','stop','end']:['start','prompt',...${missingStop ? '[]' : "['stop']"}];
 for(const kind of kinds)fs.appendFileSync(path.join(dir,'events.ndjson'),JSON.stringify({
 version:1,agent,kind,sessionId:'owned-session',summary:{sessionId:'owned-session'},
 runner:{runId:'hook-test-run',issueNumber:7,repo:{owner:'hook-test',name:'repo'}}})+'\\n');
