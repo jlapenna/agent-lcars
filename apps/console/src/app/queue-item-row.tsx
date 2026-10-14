@@ -75,7 +75,7 @@ export function QueueItemRow({
               {item.number}
             </span>
             {agent && <span>{agent}</span>}
-            <DecisionWaiting since={item.updatedAt} />
+            <DecisionWaiting since={item.decisionSince ?? item.updatedAt} />
             {item.author && <span>by {item.author}</span>}
             {item.ciRunning && (
               <Tooltip label="CI running" openDelay={300}>

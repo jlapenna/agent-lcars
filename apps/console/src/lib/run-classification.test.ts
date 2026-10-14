@@ -103,8 +103,11 @@ describe('deriveSilentErrorDiagnoses', () => {
 
     const diagnoses = deriveSilentErrorDiagnoses([run], sessionsByRunId);
 
-    expect(diagnoses.get('supersprinklesracing/sprinkles#42')).toContain(
-      'failure signature',
+    expect(
+      diagnoses.get('supersprinklesracing/sprinkles#42')?.diagnosis,
+    ).toContain('failure signature');
+    expect(diagnoses.get('supersprinklesracing/sprinkles#42')?.at).toBe(
+      run.updatedAt,
     );
   });
 

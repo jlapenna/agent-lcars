@@ -63,6 +63,7 @@ export function inboxCardMetadata(card: InboxCard) {
     return {
       repo: { owner, name },
       updatedAt: card.work.updatedAt,
+      waitingSince: card.work.updatedAt,
       actionTypes: ['needs-human'] as const,
       rank: 0,
       search: `${card.work.id} ${card.work.spec.title} ${card.work.spec.target.repo} ${nativeDecisionQuestion(card.work)}`,
@@ -71,6 +72,8 @@ export function inboxCardMetadata(card: InboxCard) {
   return {
     repo: card.item.repo,
     updatedAt: card.item.updatedAt,
+    /** When the decision entered the queue; see ActionItem.decisionSince. */
+    waitingSince: card.item.decisionSince ?? card.item.updatedAt,
     actionTypes: card.item.actionTypes,
     rank: queueReasonFor(card.item)?.rank ?? Number.MAX_SAFE_INTEGER,
     search: `${card.item.title} #${card.item.number} ${card.item.author ?? ''} ${card.item.labels.join(' ')}`,

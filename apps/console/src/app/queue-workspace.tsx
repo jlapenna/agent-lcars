@@ -569,7 +569,7 @@ export function QueueWorkspace({
             <span className="ops-panel__meta">
               <DecisionSlaMeta
                 waitingSince={visibleCards.map(
-                  (card) => inboxCardMetadata(card).updatedAt,
+                  (card) => inboxCardMetadata(card).waitingSince,
                 )}
               />
               <span className="queue-kbd-hint">

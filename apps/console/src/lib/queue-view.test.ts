@@ -124,4 +124,27 @@ describe('buildQueueView', () => {
 
     expect(view.items[0]?.actionTypes).toEqual(['ready-for-agent']);
   });
+
+  it('times a decision the run queued from when the run ended', () => {
+    const view = buildQueueView(
+      [item(1, []), item(2, ['review-requested'])],
+      {
+        ...activity(),
+        recentRuns: [
+          terminalRun(1, 'failure', '2026-07-31T05:00:00.000Z'),
+          terminalRun(2, 'failure', '2026-07-31T05:00:00.000Z'),
+        ],
+      },
+      new Map(),
+    );
+
+    // Untouched on GitHub since midnight, queued by a 05:00 failure.
+    expect(view.yourQueue[0]?.decisionSince).toBe('2026-07-31T05:00:00.000Z');
+    // Its own review request already queued it; the anchor time stands.
+    expect(view.yourQueue[1]?.actionTypes).toEqual([
+      'review-requested',
+      'run-failed',
+    ]);
+    expect(view.yourQueue[1]?.decisionSince).toBeUndefined();
+  });
 });
