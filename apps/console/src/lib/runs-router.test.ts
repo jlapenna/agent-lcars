@@ -4361,6 +4361,222 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
       },
     );
 
+    it.each([
+      { native: false, boundary: 'jwt' },
+      { native: true, boundary: 'jwt' },
+      { native: false, boundary: 'permit' },
+      { native: true, boundary: 'permit' },
+    ] as const)(
+      'introspection refuses cancellation during $boundary verification (native=$native)',
+      async ({ native, boundary }) => {
+        const f = await brokerFixture(false, false, true, native);
+        const original = f.store.transactCapacity.bind(f.store);
+        let verifications = 0;
+        let interleaved = false;
+        let runAfterCancellation: Run | undefined;
+        let taskAfterCancellation: Awaited<ReturnType<typeof f.store.readTask>>;
+        let capacityAfterCancellation:
+          Awaited<ReturnType<typeof f.protocol.read>> | undefined;
+        const credentialBefore = await f.codexAuth.read();
+        const cancel = async () => {
+          const canceled = await f.orchestrator.cancel(f.runId);
+          if (isRefusal(canceled)) throw new Error('cancellation refused');
+          interleaved = true;
+          runAfterCancellation = await f.store.readRun(f.runId);
+          if (runAfterCancellation === undefined)
+            throw new Error('missing canceled run');
+          taskAfterCancellation = await f.store.readTask(
+            runAfterCancellation.task,
+          );
+          capacityAfterCancellation = await f.protocol.read(NOW);
+        };
+        const ctx: RunsContext = {
+          ...f.ctx,
+          verifyWorkerIdentity: async () => {
+            if (boundary === 'jwt' && ++verifications === (native ? 2 : 1))
+              await cancel();
+            return { podUid: 'broker-pod', namespace: 'broker-ns' };
+          },
+        };
+        f.store.transactCapacity = async (input) => {
+          if (
+            boundary === 'permit' &&
+            input.runId === undefined &&
+            input.recordKeys.length === 1 &&
+            ++verifications === (native ? 2 : 1)
+          )
+            await cancel();
+          return original(input);
+        };
+        try {
+          const response = await call(
+            ctx,
+            'GET',
+            runPath(f.runId, '/introspect'),
+          );
+          expect(response.status).toBe(401);
+          expect(interleaved).toBe(true);
+          expect(await f.store.readRun(f.runId)).toEqual(runAfterCancellation);
+          expect(await f.store.readTask(runAfterCancellation!.task)).toEqual(
+            taskAfterCancellation,
+          );
+          expect(await f.protocol.read(NOW)).toEqual(capacityAfterCancellation);
+          expect(await f.codexAuth.read()).toEqual(credentialBefore);
+        } finally {
+          f.store.transactCapacity = original;
+        }
+      },
+    );
+
+    it.each([false, true])(
+      'introspection refuses a replaced legacy claim during capacity read (native=%s)',
+      async (native) => {
+        const f = await brokerFixture(false, false, false, native);
+        const original = f.store.transactCapacity.bind(f.store);
+        let reads = 0;
+        let interleaved = false;
+        let replacement: Run | undefined;
+        let taskAfterReplacement: Awaited<ReturnType<typeof f.store.readTask>>;
+        const freshToken = mintRunToken();
+        const freshFingerprint = hashRunToken(freshToken);
+        const capacityBefore = await f.protocol.read(NOW);
+        const credentialBefore = await f.codexAuth.read();
+        f.store.transactCapacity = async (input) => {
+          if (
+            input.runId === undefined &&
+            input.recordKeys.length === 0 &&
+            ++reads === (native ? 2 : 1)
+          ) {
+            const released = await f.store.releaseQueuedRunClaim({
+              runId: f.runId,
+              claimedBy: 'same-runner',
+              tokenHash: f.fingerprint,
+              now: NOW,
+            });
+            if (!released) throw new Error('legacy claim release refused');
+            replacement = await f.store.claimQueuedRun({
+              pipelines: ['codex'],
+              claimedBy: 'replacement-worker',
+              claimedBySubject: f.ctx.principal.subject.toLowerCase(),
+              tokenHash: freshFingerprint,
+              now: NOW,
+            });
+            if (replacement?.runId !== f.runId)
+              throw new Error('legacy reclaim refused');
+            taskAfterReplacement = await f.store.readTask(replacement.task);
+            interleaved = true;
+          }
+          return original(input);
+        };
+        try {
+          const response = await call(
+            f.ctx,
+            'GET',
+            runPath(f.runId, '/introspect'),
+          );
+          expect(response.status).toBe(401);
+          expect(interleaved).toBe(true);
+          expect(replacement?.queue?.tokenHash).toBe(freshFingerprint);
+          expect(await f.store.readRun(f.runId)).toEqual(replacement);
+          expect(await f.store.readTask(replacement!.task)).toEqual(
+            taskAfterReplacement,
+          );
+          expect(await f.protocol.read(NOW)).toEqual(capacityBefore);
+          expect(await f.codexAuth.read()).toEqual(credentialBefore);
+        } finally {
+          f.store.transactCapacity = original;
+        }
+      },
+    );
+
+    it.each([false, true])(
+      'introspection refuses worker retirement after permit validation (native=%s)',
+      async (native) => {
+        const f = await brokerFixture(false, false, true, native);
+        const original = f.store.transactCapacity.bind(f.store);
+        let verifications = 0;
+        let interleaved = false;
+        const runBefore = await f.store.readRun(f.runId);
+        if (runBefore === undefined) throw new Error('missing receipt run');
+        const taskBefore = await f.store.readTask(runBefore.task);
+        const credentialBefore = await f.codexAuth.read();
+        let capacityAfterRetirement:
+          Awaited<ReturnType<typeof f.protocol.read>> | undefined;
+        f.store.transactCapacity = async (input) => {
+          const result = await original(input);
+          if (
+            input.runId === undefined &&
+            input.recordKeys.length === 1 &&
+            ++verifications === (native ? 2 : 1)
+          ) {
+            await retireBroker(f);
+            capacityAfterRetirement = await f.protocol.read(NOW);
+            interleaved = true;
+          }
+          return result;
+        };
+        try {
+          const response = await call(
+            f.ctx,
+            'GET',
+            runPath(f.runId, '/introspect'),
+          );
+          expect(response.status).toBe(409);
+          expect(interleaved).toBe(true);
+          expect(await f.store.readRun(f.runId)).toEqual(runBefore);
+          expect(await f.store.readTask(runBefore.task)).toEqual(taskBefore);
+          expect(await f.protocol.read(NOW)).toEqual(capacityAfterRetirement);
+          expect(await f.codexAuth.read()).toEqual(credentialBefore);
+        } finally {
+          f.store.transactCapacity = original;
+        }
+      },
+    );
+
+    it('introspection stamps the joint authority decision rather than transaction return', async () => {
+      const f = await brokerFixture(false, false, true);
+      const original = f.store.transactCapacity.bind(f.store);
+      f.store.transactCapacity = async (input) => {
+        const result = await original(input);
+        if (input.runId === f.runId) f.setNow('2026-08-26T10:00:01.000Z');
+        return result;
+      };
+      try {
+        const response = await call(
+          f.ctx,
+          'GET',
+          runPath(f.runId, '/introspect'),
+        );
+        expect(response.status).toBe(200);
+        expect(response.json).toMatchObject({ verifiedAt: NOW });
+      } finally {
+        f.store.transactCapacity = original;
+      }
+    });
+
+    it('introspection refuses expiry after the joint authority decision returns', async () => {
+      const f = await brokerFixture(false, false, true);
+      const run = await f.store.readRun(f.runId);
+      if (run === undefined) throw new Error('missing receipt run');
+      const original = f.store.transactCapacity.bind(f.store);
+      f.store.transactCapacity = async (input) => {
+        const result = await original(input);
+        if (input.runId === f.runId)
+          f.setNow(runRecoveryDeadline(run) ?? run.leaseExpiresAt);
+        return result;
+      };
+      try {
+        const response = await call(
+          f.ctx,
+          'GET',
+          runPath(f.runId, '/introspect'),
+        );
+        expect(response.status).toBe(401);
+      } finally {
+        f.store.transactCapacity = original;
+      }
+    });
+
     it('introspection returns only verified active receipt metadata without writes', async () => {
       const f = await brokerFixture(true, false, true);
       const before = await f.store.readRun(f.runId);
