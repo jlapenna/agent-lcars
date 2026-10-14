@@ -6,9 +6,13 @@ import { auth } from '../auth';
 import { DASHBOARD_CACHE_LIFE, getCachedAgentActivity } from './dashboard-data';
 import { consoleUrl } from './deployment';
 import { loadInboxNotificationSnapshot } from './inbox-notifications-data';
+import { countMergedPullsSince } from './merged-pulls';
 import { getSessionArchive } from './session-archive';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** GitHub reads may run 15s; the readouts route gives up at 8s. A slow merge
+ * count must cost only its own figure, not every readout. */
+const MERGES_DEADLINE_MS = 5_000;
 
 /**
  * The figures the console frame shows on every page: the rail readouts, the
@@ -31,63 +35,71 @@ export interface ShellReadouts {
    * archive hit its session cap: a lower bound. */
   tokens24hPartial?: boolean;
   merged24h?: number;
-  /** Capped sessions or unknown merge evidence: a lower bound. */
+  /** An unreadable repository or a full page of merges: a lower bound. */
   merged24hPartial?: boolean;
   observedAt: string;
 }
 
-interface RecentSpend {
+interface RecentTokens {
   tokens24h?: number;
   tokens24hPartial?: boolean;
+}
+
+interface RecentMerges {
   merged24h?: number;
   merged24hPartial?: boolean;
 }
 
 const STORE_FAILED = 'Session archive unavailable';
 
-/** Throws when either archive read failed, so a failure is never cached as
- * a zero; the caller then reports both figures unavailable. */
-async function readRecentSpend(): Promise<RecentSpend> {
-  const now = Date.now();
-  // Merges are attributed through session deliverables, so read 30 days of
-  // sessions and count the PRs whose recorded merge falls in the last day. A
-  // PR whose sessions all ended earlier is not attributed; a capped archive
-  // marks the count as a lower bound.
-  const [day, week] = await Promise.all([
-    getSessionArchive({ days: 1 }, { includeSpend: true }),
-    getSessionArchive({ days: 30 }, { includeSpend: true }),
-  ]);
-  const failed = (warnings: string[]) =>
-    warnings.some((warning) => warning.startsWith(STORE_FAILED));
+/** Throws when the archive read failed, so a failure is never cached as a
+ * zero; the caller then reports the figure unavailable. */
+async function readRecentTokens(): Promise<RecentTokens> {
+  const day = await getSessionArchive({ days: 1 }, { includeSpend: true });
   if (
     !day.spend ||
-    !week.spend ||
-    failed(day.warnings) ||
-    failed(week.warnings)
+    day.warnings.some((warning) => warning.startsWith(STORE_FAILED))
   )
     throw new Error('Session archive unavailable');
   return {
     tokens24h: day.spend.totals.tokens,
     // The archive hit its session cap: more sessions exist than were summed.
     tokens24hPartial: day.spend.coverageLimited,
-    merged24h: week.spend.deliverables.filter(
-      (deliverable) =>
-        deliverable.mergedAt !== undefined &&
-        now - Date.parse(deliverable.mergedAt) <= DAY_MS,
-    ).length,
-    // Capped sessions or missing merge evidence can hide merges.
-    merged24hPartial:
-      week.spend.coverageLimited ||
-      week.spend.deliverables.some(
-        (deliverable) => deliverable.status === 'unknown',
-      ),
   };
 }
 
-async function readCachedRecentSpend(): Promise<RecentSpend> {
+/** Counted from GitHub across the watched repositories, so merges no
+ * recorded session referenced still count. Throws when nothing could be
+ * read, so a failure is never cached as zero merges. */
+async function readRecentMerges(): Promise<RecentMerges> {
+  const { count, partial } = await countMergedPullsSince(Date.now() - DAY_MS);
+  return { merged24h: count, merged24hPartial: partial };
+}
+
+async function readCachedRecentTokens(): Promise<RecentTokens> {
   'use cache';
   cacheLife(DASHBOARD_CACHE_LIFE);
-  return readRecentSpend();
+  return readRecentTokens();
+}
+
+async function readCachedRecentMerges(): Promise<RecentMerges> {
+  'use cache';
+  cacheLife(DASHBOARD_CACHE_LIFE);
+  return readRecentMerges();
+}
+
+async function withinDeadline<T>(read: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Read timed out')), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function initialsOf(login: string): string {
@@ -122,12 +134,16 @@ export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
   };
   if (!session.user.isAdmin) return base;
 
-  const [activity, snapshot, spend] = await Promise.all([
+  const [activity, snapshot, tokens, merges] = await Promise.all([
     getCachedAgentActivity().catch(() => undefined),
     loadInboxNotificationSnapshot().catch(() => undefined),
-    (isE2eTesting() ? readRecentSpend() : readCachedRecentSpend()).catch(
-      () => ({}) as RecentSpend,
+    (isE2eTesting() ? readRecentTokens() : readCachedRecentTokens()).catch(
+      () => ({}) as RecentTokens,
     ),
+    withinDeadline(
+      isE2eTesting() ? readRecentMerges() : readCachedRecentMerges(),
+      MERGES_DEADLINE_MS,
+    ).catch(() => ({}) as RecentMerges),
   ]);
   const queue = activity?.data.queue;
   const fleet = activity?.data.fleet;
@@ -145,6 +161,7 @@ export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
     // A degraded snapshot may hold a stale or partial list; the frame shows
     // the count as unavailable rather than a number it cannot vouch for.
     ...(snapshot?.available ? { decisions: snapshot.decisions.length } : {}),
-    ...spend,
+    ...tokens,
+    ...merges,
   };
 }
