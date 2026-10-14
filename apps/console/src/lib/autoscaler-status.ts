@@ -40,8 +40,9 @@ export interface QueueClaimWindow {
   windowEnd: string;
 }
 
-/** One cluster node, as the queue executor's host inventory reports it. Load
- * is what the pods on the node request, not live usage. */
+/** One cluster node, as the queue executor's host inventory reports it:
+ * what the pods on it request, and metrics-server's live usage when the
+ * executor may read it. */
 export interface FleetHost {
   name: string;
   ready: boolean;
@@ -50,6 +51,9 @@ export interface FleetHost {
   memoryBytes: number;
   requestedCpuMillis: number;
   requestedMemoryBytes: number;
+  /** Both present or both absent: a host is sampled whole or not at all. */
+  usedCpuMillis?: number;
+  usedMemoryBytes?: number;
   runnerPods: number;
   queueJobPods: number;
 }
@@ -247,6 +251,16 @@ function parseHostInventory(value: unknown): FleetHostInventory | undefined {
       )
     )
       return undefined;
+    const used = ['usedCpuMillis', 'usedMemoryBytes'] as const;
+    const sampled = used.filter((key) => record[key] != null);
+    if (
+      sampled.length === 1 ||
+      sampled.some(
+        (key) =>
+          !Number.isSafeInteger(record[key]) || (record[key] as number) < 0,
+      )
+    )
+      return undefined;
     parsed.push({
       name: record['name'],
       ready: record['ready'],
@@ -255,6 +269,12 @@ function parseHostInventory(value: unknown): FleetHostInventory | undefined {
       memoryBytes: record['memoryBytes'] as number,
       requestedCpuMillis: record['requestedCpuMillis'] as number,
       requestedMemoryBytes: record['requestedMemoryBytes'] as number,
+      ...(sampled.length === 2
+        ? {
+            usedCpuMillis: record['usedCpuMillis'] as number,
+            usedMemoryBytes: record['usedMemoryBytes'] as number,
+          }
+        : {}),
       runnerPods: record['runnerPods'] as number,
       queueJobPods: record['queueJobPods'] as number,
     });

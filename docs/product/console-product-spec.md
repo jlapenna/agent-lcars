@@ -398,10 +398,12 @@ the work that has stopped, and the work in flight.
   quiet one, and names the minutes covered.
 - **FE-SB-8 [Implemented]** The Runner fleet panel draws one row per cluster
   host, as the mockup does: allocatable vCPU and GiB, runner and queue-job
-  pods as slots, and CPU and memory meters for what the host's pods request
-  (the scheduler's accounting, labeled "requested"; live usage needs
-  `metrics.k8s.io`, which the executor is not granted). A NotReady host says
-  so, and a cordoned one reads "draining". Without a fresh inventory the rows
+  pods as slots, and CPU and memory meters. The meters show metrics-server's
+  live usage (labeled "used") where the executor may list `metrics.k8s.io`
+  nodes and the host has a sample. Otherwise they show what the host's pods
+  request (the scheduler's accounting, labeled "requested"); a mix reads
+  "used or requested". A NotReady host says so, and a cordoned one reads
+  "draining". Without a fresh inventory the rows
   fall back to ARC lanes with host load unavailable.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)

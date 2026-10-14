@@ -170,6 +170,41 @@ describe('getAutoscalerStatuses', () => {
     expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
   });
 
+  it('carries live usage only when a host reports both CPU and memory', async () => {
+    const updatedAt = new Date().toISOString();
+    const host = {
+      name: 'spark',
+      ready: true,
+      unschedulable: false,
+      cpuMillis: 20_000,
+      memoryBytes: 128 * 1024 ** 3,
+      requestedCpuMillis: 6_100,
+      requestedMemoryBytes: 12 * 1024 ** 3,
+      runnerPods: 1,
+      queueJobPods: 1,
+    };
+    const doc = (hostOverrides: Record<string, unknown>) => ({
+      schemaVersion: 1,
+      kind: 'hosts',
+      inventory: { hosts: [{ ...host, ...hostOverrides }] },
+      updatedAt,
+      expireAt: Timestamp.now(),
+    });
+    const sampled = { usedCpuMillis: 2_535, usedMemoryBytes: 8 * 1024 ** 3 };
+    mockStore([doc(sampled)]);
+    expect((await getAutoscalerStatuses()).hostInventory?.hosts).toEqual([
+      { ...host, ...sampled },
+    ]);
+    mockStore([doc({ usedCpuMillis: null, usedMemoryBytes: null })]);
+    expect((await getAutoscalerStatuses()).hostInventory?.hosts).toEqual([
+      host,
+    ]);
+    mockStore([doc({ usedCpuMillis: 2_535 })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+    mockStore([doc({ ...sampled, usedMemoryBytes: -1 })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+  });
+
   it('ignores retired scale-set records instead of publishing obsolete capacity', async () => {
     mockStore([
       {

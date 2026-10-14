@@ -118,7 +118,7 @@ export function RunnerFleetPanel({
           <tr>
             <th>Host</th>
             <th>Slots</th>
-            <th>{hosts ? 'Load · requested' : 'Load'}</th>
+            <th>{hosts ? `Load · ${hostLoadBasis(hosts)}` : 'Load'}</th>
           </tr>
         </thead>
         <tbody>
@@ -294,10 +294,34 @@ function loadTone(fraction: number): 'warn' | 'fail' | undefined {
   return fraction >= 1 ? 'fail' : fraction >= 0.8 ? 'warn' : undefined;
 }
 
+function isSampled(
+  host: FleetHost,
+): host is FleetHost & { usedCpuMillis: number; usedMemoryBytes: number } {
+  return host.usedCpuMillis !== undefined && host.usedMemoryBytes !== undefined;
+}
+
+/**
+ * What the Load meters measure: metrics-server's live usage where the
+ * executor reports it, otherwise what the node's pods request. A NotReady
+ * host draws no meters, so it does not decide the column's label.
+ */
+function hostLoadBasis(hosts: readonly FleetHost[]): string {
+  const drawn = hosts.filter((host) => host.ready);
+  const sampled = drawn.filter(isSampled).length;
+  return sampled === 0
+    ? 'requested'
+    : sampled === drawn.length
+      ? 'used'
+      : 'used or requested';
+}
+
 function HostRow({ host }: { host: FleetHost }) {
-  const cpu = host.cpuMillis > 0 ? host.requestedCpuMillis / host.cpuMillis : 0;
-  const memory =
-    host.memoryBytes > 0 ? host.requestedMemoryBytes / host.memoryBytes : 0;
+  const sampled = isSampled(host);
+  const basis = sampled ? 'used' : 'requested';
+  const cpuLoad = sampled ? host.usedCpuMillis : host.requestedCpuMillis;
+  const memoryLoad = sampled ? host.usedMemoryBytes : host.requestedMemoryBytes;
+  const cpu = host.cpuMillis > 0 ? cpuLoad / host.cpuMillis : 0;
+  const memory = host.memoryBytes > 0 ? memoryLoad / host.memoryBytes : 0;
   const pods = host.runnerPods + host.queueJobPods;
   return (
     <tr data-testid={`fleet-host-${host.name}`}>
@@ -332,7 +356,7 @@ function HostRow({ host }: { host: FleetHost }) {
                 <Meter
                   fraction={fraction}
                   tone={loadTone(fraction)}
-                  label={`${label} requested on ${host.name}`}
+                  label={`${label} ${basis} on ${host.name}`}
                 />
                 <span>{Math.round(fraction * 100)}%</span>
               </div>
