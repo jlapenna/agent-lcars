@@ -32,6 +32,7 @@ it.each([
     const bin = join(root, 'bin');
     const writerIdentity = join(root, 'writer-identity.json');
     const writerDone = join(root, 'writer-done');
+    const transportEvidence = join(root, 'transport-evidence.json');
     const foreign = join(root, 'unrelated-home');
     mkdirSync(foreign);
     const unrelated = pendingWriter
@@ -55,6 +56,9 @@ it.each([
 if(process.argv.slice(2).join(' ')==='integration install claude') {
 const dir=path.join(process.env.HOME,'.claude');fs.mkdirSync(dir,{recursive:true});
 fs.writeFileSync(path.join(dir,'settings.json'),JSON.stringify({hooks:{SessionEnd:[]}}));
+}
+if(process.argv.slice(2).join(' ')==='hook opencode') {
+process.stdout.write(JSON.stringify({writerConfigured:Boolean(process.env.LCARS_TELEMETRY_CREDENTIALS_FILE)}));
 }`,
     );
     const fixture = join(bin, 'fixture.cjs');
@@ -75,6 +79,10 @@ const settings=JSON.parse(fs.readFileSync(path.join(process.env.HOME,'.claude/se
 for(const entry of settings.hooks.SessionEnd)for(const hook of entry.hooks)fs.writeFileSync(hook.command.slice(6),'');
 }
 if(command==='opencode'){
+const inspection=require('node:child_process').spawnSync('lcars',['hook','opencode'],{env:process.env,encoding:'utf8'});
+fs.writeFileSync(${JSON.stringify(transportEvidence)},JSON.stringify({
+pluginEnabled:Boolean(process.env.LCARS_TELEMETRY_CREDENTIALS_FILE),
+clientExit:inspection.status,writerConfigured:JSON.parse(inspection.stdout).writerConfigured}));
 if(${pendingWriter}){
 const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
 const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
@@ -194,6 +202,14 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
       const identity = existsSync(writerIdentity)
         ? JSON.parse(readFileSync(writerIdentity, 'utf8'))
         : undefined;
+      const transport = existsSync(transportEvidence)
+        ? JSON.parse(readFileSync(transportEvidence, 'utf8'))
+        : undefined;
+      expect(transport).toEqual({
+        pluginEnabled: true,
+        clientExit: 0,
+        writerConfigured: false,
+      });
       let writerLive = false;
       if (identity) {
         try {

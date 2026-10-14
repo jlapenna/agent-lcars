@@ -9,8 +9,9 @@
 # A localhost provider answers every model request with "ok"; nothing leaves
 # the container. No writer is configured for Claude Code and Codex, so the
 # flusher leaves their events in the spool. OpenCode's plugin only reports
-# once LCARS_TELEMETRY_CREDENTIALS_FILE is set; the placeholder file it names
-# is not a credential, so its flushes fail and the events stay spooled too.
+# once LCARS_TELEMETRY_CREDENTIALS_FILE is set. Its parent gets a placeholder
+# path to activate the plugin; the test-owned lcars stub clears that transport
+# credential so the real hook client stays spool-only, with no Firestore writes.
 set -euo pipefail
 
 lib_dir="${HOOK_TEST_LIB_DIR:-/usr/local/lib/agent-lcars}"
@@ -128,7 +129,7 @@ trap cleanup EXIT
 
 # The hook stubs run `lcars` from PATH; point it at this image's bundle.
 mkdir -p "$tmp/bin" "$tmp/work"
-printf '#!/bin/sh\nexec node %q "$@"\n' "$lib_dir/lcars-session-title.cjs" > "$tmp/bin/lcars"
+printf '#!/bin/sh\nunset LCARS_TELEMETRY_CREDENTIALS_FILE\nexec node %q "$@"\n' "$lib_dir/lcars-session-title.cjs" > "$tmp/bin/lcars"
 chmod +x "$tmp/bin/lcars"
 
 cat > "$tmp/provider.mjs" <<'JS'
