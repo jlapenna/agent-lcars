@@ -14,7 +14,15 @@ cd "$repo_root"
 
 # `lcars hook` starts the flusher from beside its own bundle, as in the image.
 lib_dir="$(mktemp -d)"
-trap 'rm -rf "$lib_dir"' EXIT
+smoke_complete=false
+cleanup() {
+  if [ "$smoke_complete" = true ]; then
+    rm -rf "$lib_dir"
+  else
+    echo "hook smoke cleanup: retaining private bundles after refused smoke" >&2
+  fi
+}
+trap cleanup EXIT
 cp dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs \
   dist/apps/telemetry-watcher-hook-flush/lcars-hook-flush.cjs "$lib_dir/"
 
@@ -27,3 +35,4 @@ cp agents/opencode/lcars-telemetry.js "$opencode_config/"
 
 HOOK_TEST_LIB_DIR="$lib_dir" HOOK_TEST_OPENCODE_CONFIG_DIR="$opencode_config" \
   bash apps/runner-autoscaler/runner-image/hook-telemetry.test.sh
+smoke_complete=true

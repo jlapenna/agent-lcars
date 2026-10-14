@@ -41,9 +41,86 @@ fail() {
 tmp="$(mktemp -d)"
 server_pid=""
 cleanup() {
+  drained=true
+  # CLI exit and spooled events do not mean its detached hook clients exited.
+  # Drain only this test's unique TMPDIR before deleting files they still use.
+  if ! python3 - "$tmp" <<'PY_DRAIN'
+import errno, os, pathlib, select, sys, time
+
+scratch = os.fsencode(sys.argv[1])
+deadline = time.monotonic() + 30
+owned = {}
+empty_scans = 0
+
+def start_ticks(process):
+    return (process / 'stat').read_text().rsplit(') ', 1)[1].split()[19]
+
+try:
+    while True:
+        for process in pathlib.Path('/proc').iterdir():
+            if not process.name.isdigit():
+                continue
+            try:
+                if process.stat().st_uid != os.getuid():
+                    continue
+                before = start_ticks(process)
+                environment = (process / 'environ').read_bytes().split(b'\0')
+                if b'TMPDIR=' + scratch not in environment:
+                    # A fork/exec transition can briefly expose an empty env.
+                    # Its inherited private cwd still binds the startup owner.
+                    if any(environment):
+                        continue
+                    cwd = os.fsencode(os.readlink(process / 'cwd'))
+                    if cwd != scratch and not cwd.startswith(scratch + b'/'):
+                        continue
+                key = (int(process.name), before)
+                if key not in owned:
+                    descriptor = os.pidfd_open(key[0])
+                    if start_ticks(process) != before:
+                        os.close(descriptor)
+                        raise RuntimeError('owned process identity changed')
+                    owned[key] = descriptor
+            except OSError as error:
+                if error.errno in (errno.EACCES, errno.EPERM):
+                    # An unrelated protected process is not this test's owner.
+                    # A process inside our scratch that cannot be checked is.
+                    try:
+                        cwd = os.fsencode(os.readlink(process / 'cwd'))
+                    except OSError:
+                        continue
+                    if cwd == scratch or cwd.startswith(scratch + b'/'):
+                        raise RuntimeError('owned process cannot be verified')
+                    continue
+                if error.errno not in (errno.ENOENT, errno.ESRCH):
+                    raise
+        for key, descriptor in list(owned.items()):
+            if select.select([descriptor], [], [], 0)[0]:
+                os.close(owned.pop(key))
+        if not owned:
+            empty_scans += 1
+            if empty_scans >= 2:
+                break
+        else:
+            empty_scans = 0
+        if time.monotonic() >= deadline:
+            raise RuntimeError('owned hook processes did not drain')
+        time.sleep(0.05)
+except Exception:
+    print('hook smoke cleanup: process drainage refused; retaining private scratch', file=sys.stderr)
+    sys.exit(1)
+finally:
+    for descriptor in owned.values():
+        os.close(descriptor)
+PY_DRAIN
+  then
+    drained=false
+  fi
   if [ -n "$server_pid" ]; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
+  fi
+  if [ "$drained" != true ]; then
+    return 1
   fi
   rm -rf "$tmp"
 }
