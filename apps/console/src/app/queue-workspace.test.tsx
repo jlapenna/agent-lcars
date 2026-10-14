@@ -213,7 +213,9 @@ describe('QueueWorkspace native Reply refresh', () => {
         ).toHaveTextContent('fresh session'),
       );
       view.rerender(workspace(another ? [makeCard()] : []));
-      expect(screen.queryByTestId('native-decision-detail')).toBeNull();
+      await waitFor(() =>
+        expect(screen.queryByTestId('native-decision-detail')).toBeNull(),
+      );
       expect(screen.getByTestId('native-reply-confirmation')).toHaveTextContent(
         'Choose storage',
       );
