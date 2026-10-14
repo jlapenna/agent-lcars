@@ -40,8 +40,29 @@ export interface QueueClaimWindow {
   windowEnd: string;
 }
 
+/** One cluster node, as the queue executor's host inventory reports it. Load
+ * is what the pods on the node request, not live usage. */
+export interface FleetHost {
+  name: string;
+  ready: boolean;
+  unschedulable: boolean;
+  cpuMillis: number;
+  memoryBytes: number;
+  requestedCpuMillis: number;
+  requestedMemoryBytes: number;
+  runnerPods: number;
+  queueJobPods: number;
+}
+
+export interface FleetHostInventory {
+  hosts: FleetHost[];
+  updatedAt: string;
+}
+
 export interface AutoscalerStatusResult {
   lanes?: ArcLaneStatus[];
+  /** Absent while no fresh, valid host inventory exists. */
+  hostInventory?: FleetHostInventory;
   /** A configured lane is missing/stale/invalid, or its inventory is unknown. */
   lanesIncomplete?: boolean;
   queueExecutor?: QueueExecutorStatus;
@@ -191,6 +212,68 @@ function parseClaimWindow(
   };
 }
 
+function parseHostInventory(value: unknown): FleetHostInventory | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const status = value as Record<string, unknown>;
+  const inventory = status['inventory'] as Record<string, unknown> | undefined;
+  const hosts = inventory?.['hosts'];
+  if (
+    status['schemaVersion'] !== 1 ||
+    status['kind'] !== 'hosts' ||
+    typeof status['updatedAt'] !== 'string' ||
+    !Array.isArray(hosts) ||
+    hosts.length > 64
+  )
+    return undefined;
+  const counts = [
+    'cpuMillis',
+    'memoryBytes',
+    'requestedCpuMillis',
+    'requestedMemoryBytes',
+    'runnerPods',
+    'queueJobPods',
+  ] as const;
+  const parsed: FleetHost[] = [];
+  for (const host of hosts) {
+    if (!host || typeof host !== 'object') return undefined;
+    const record = host as Record<string, unknown>;
+    if (
+      !isNodeName(record['name']) ||
+      typeof record['ready'] !== 'boolean' ||
+      typeof record['unschedulable'] !== 'boolean' ||
+      counts.some(
+        (key) =>
+          !Number.isSafeInteger(record[key]) || (record[key] as number) < 0,
+      )
+    )
+      return undefined;
+    parsed.push({
+      name: record['name'],
+      ready: record['ready'],
+      unschedulable: record['unschedulable'],
+      cpuMillis: record['cpuMillis'] as number,
+      memoryBytes: record['memoryBytes'] as number,
+      requestedCpuMillis: record['requestedCpuMillis'] as number,
+      requestedMemoryBytes: record['requestedMemoryBytes'] as number,
+      runnerPods: record['runnerPods'] as number,
+      queueJobPods: record['queueJobPods'] as number,
+    });
+  }
+  return { hosts: parsed, updatedAt: status['updatedAt'] };
+}
+
+/** Kubernetes node names are DNS subdomains (RFC 1123): dotted labels, up
+ * to 253 characters, so `worker-1.example.internal` is valid. */
+function isNodeName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    name.length <= 253 &&
+    /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/.test(
+      name,
+    )
+  );
+}
+
 function isFresh(updatedAt: string, now: number): boolean {
   const parsed = Date.parse(updatedAt);
   return Number.isFinite(parsed) && now - parsed <= RUNNER_STATUS_STALENESS_MS;
@@ -218,6 +301,12 @@ export function projectAutoscalerStatuses(
     .find(
       (status): status is QueueExecutorStatus =>
         status !== undefined && isFresh(status.updatedAt, now),
+    );
+  const hostInventory = records
+    .map(parseHostInventory)
+    .find(
+      (inventory): inventory is FleetHostInventory =>
+        inventory !== undefined && isFresh(inventory.updatedAt, now),
     );
   const laneRecords = records
     .map(parseArcLane)
@@ -270,6 +359,7 @@ export function projectAutoscalerStatuses(
       ? { lanesIncomplete: true }
       : {}),
     ...(queueExecutor === undefined ? {} : { queueExecutor }),
+    ...(hostInventory === undefined ? {} : { hostInventory }),
     warnings: [
       ...(stale ? ['ARC lane status is stale.'] : []),
       ...(invalid ? ['ARC lane status is invalid.'] : []),

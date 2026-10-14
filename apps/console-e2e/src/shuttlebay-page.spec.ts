@@ -111,6 +111,10 @@ test.describe('Shuttlebay live stream', () => {
           .getByText('No runner lane matches these filters.'),
       ).toBeVisible();
     }
+    // The seeded host inventory is not drawn beside a no-match row.
+    await expect(
+      page.getByTestId('runner-fleet-panel').getByTestId(/^fleet-host-/),
+    ).toHaveCount(0);
     const admission = page.getByTestId('shuttlebay-admission');
     await expect(admission.getByText('codex', { exact: true })).toBeVisible();
     await expect(admission.getByText('claude', { exact: true })).toHaveCount(0);

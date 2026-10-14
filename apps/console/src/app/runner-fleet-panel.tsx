@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 
 import type {
   ArcLaneStatus,
+  FleetHost,
+  FleetHostInventory,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
 import { CI_WAIT_MINUTES, fleetCiWait } from '../lib/ci-wait';
@@ -19,6 +21,7 @@ import {
 import { formatDuration } from './format';
 import {
   formatTokens,
+  Meter,
   OpsPanel,
   Sparkline,
   StateMark,
@@ -68,6 +71,7 @@ export function RunnerFleetPanel({
   filteredOut = false,
   tokenRate,
   workApiLatency,
+  hostInventory,
 }: {
   lanes?: ArcLaneStatus[];
   lanesIncomplete?: boolean;
@@ -83,7 +87,11 @@ export function RunnerFleetPanel({
    * `executor` because a page filter can hide the executor's row without
    * changing how the Work API is responding. */
   workApiLatency?: HistogramWindow;
+  /** One row per cluster node, as the mockup draws the fleet. Without it the
+   * rows fall back to ARC lanes, whose host load is unknown. */
+  hostInventory?: FleetHostInventory;
 }) {
+  const hosts = hostInventory?.hosts.length ? hostInventory.hosts : undefined;
   // No lane records is unknown capacity, not zero capacity - unless a filter
   // emptied a known fleet.
   const known =
@@ -110,11 +118,14 @@ export function RunnerFleetPanel({
           <tr>
             <th>Host</th>
             <th>Slots</th>
-            <th>Load</th>
+            <th>{hosts ? 'Load · requested' : 'Load'}</th>
           </tr>
         </thead>
         <tbody>
-          {(lanes ?? []).map((lane) => (
+          {hosts?.map((host) => (
+            <HostRow key={host.name} host={host} />
+          ))}
+          {(hosts ? [] : (lanes ?? [])).map((lane) => (
             <tr key={lane.lane} data-testid={`fleet-lane-${lane.lane}`}>
               <td>
                 <span className="ops-host">{lane.lane}</span>
@@ -174,15 +185,17 @@ export function RunnerFleetPanel({
               </td>
             </tr>
           )}
-          {(lanes === undefined || lanes.length === 0) && !executor && (
-            <tr>
-              <td colSpan={3} className="ops-dim">
-                {filteredOut
-                  ? 'No runner lane matches these filters.'
-                  : 'Runner status unavailable'}
-              </td>
-            </tr>
-          )}
+          {!hosts &&
+            (lanes === undefined || lanes.length === 0) &&
+            !executor && (
+              <tr>
+                <td colSpan={3} className="ops-dim">
+                  {filteredOut
+                    ? 'No runner lane matches these filters.'
+                    : 'Runner status unavailable'}
+                </td>
+              </tr>
+            )}
         </tbody>
       </table>
       <div className="ops-telemetry" data-testid="fleet-telemetry">
@@ -259,6 +272,75 @@ function TokenRateTelemetry({
         label={`Tokens per minute, last ${TOKEN_RATE_MINUTES} minutes`}
       />
     </div>
+  );
+}
+
+const GIB = 1024 ** 3;
+
+/** Runner and queue Job pods on a host. Whether a warm runner pod has a job
+ * is not visible to the executor, so these are pods, never "busy". */
+function PodSlots({ runners, jobs }: { runners: number; jobs: number }) {
+  const label = `${runners} runner ${runners === 1 ? 'pod' : 'pods'}, ${jobs} queue job ${jobs === 1 ? 'pod' : 'pods'}`;
+  return (
+    <div className="ops-slots" role="img" aria-label={label} title={label}>
+      {Array.from({ length: Math.min(runners + jobs, SLOT_LIMIT) }, (_, i) => (
+        <i key={i} data-state="pod" />
+      ))}
+    </div>
+  );
+}
+
+function loadTone(fraction: number): 'warn' | 'fail' | undefined {
+  return fraction >= 1 ? 'fail' : fraction >= 0.8 ? 'warn' : undefined;
+}
+
+function HostRow({ host }: { host: FleetHost }) {
+  const cpu = host.cpuMillis > 0 ? host.requestedCpuMillis / host.cpuMillis : 0;
+  const memory =
+    host.memoryBytes > 0 ? host.requestedMemoryBytes / host.memoryBytes : 0;
+  const pods = host.runnerPods + host.queueJobPods;
+  return (
+    <tr data-testid={`fleet-host-${host.name}`}>
+      <td>
+        <span className="ops-host">{host.name}</span>
+        <span className="ops-host-spec">
+          {Math.round(host.cpuMillis / 1000)} vCPU ·{' '}
+          {Math.round(host.memoryBytes / GIB)} GiB
+          {host.unschedulable && ' · draining'}
+        </span>
+      </td>
+      <td>
+        {pods === 0 ? (
+          <span className="ops-dim">no runners</span>
+        ) : (
+          <PodSlots runners={host.runnerPods} jobs={host.queueJobPods} />
+        )}
+      </td>
+      <td>
+        {!host.ready ? (
+          <StateMark tone="fail">NotReady</StateMark>
+        ) : (
+          <div className="ops-bars">
+            {(
+              [
+                ['CPU', cpu],
+                ['MEM', memory],
+              ] as const
+            ).map(([label, fraction]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <Meter
+                  fraction={fraction}
+                  tone={loadTone(fraction)}
+                  label={`${label} requested on ${host.name}`}
+                />
+                <span>{Math.round(fraction * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </td>
+    </tr>
   );
 }
 

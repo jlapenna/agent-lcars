@@ -57,6 +57,7 @@ type consoleStatusDocument interface {
 var (
 	_ map[consoleQueueExecutorStatus]struct{}
 	_ map[consoleARCLaneStatus]struct{}
+	_ map[consoleHostStatus]struct{}
 )
 
 func (s consoleQueueExecutorStatus) contentKey() any {
@@ -206,6 +207,10 @@ func (p *firestoreConsoleStatusPublisher) PublishQueueExecutor(_ context.Context
 
 func (p *firestoreConsoleStatusPublisher) PublishARCLane(_ context.Context, status consoleARCLaneStatus) {
 	p.publish("arc-"+status.Lane, status)
+}
+
+func (p *firestoreConsoleStatusPublisher) PublishHosts(_ context.Context, status consoleHostStatus) {
+	p.publish("hosts", status)
 }
 
 func (p *firestoreConsoleStatusPublisher) Enabled() bool { return true }

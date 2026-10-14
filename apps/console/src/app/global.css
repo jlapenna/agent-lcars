@@ -4367,6 +4367,31 @@ td.costs-repo-spend__num {
   font-size: 0.6875rem;
 }
 
+/* The mockup's per-host CPU and memory bars: label, meter, percent. */
+.ops-bars {
+  display: grid;
+  gap: 5px;
+  min-width: 110px;
+}
+
+.ops-bars > div {
+  display: grid;
+  grid-template-columns: 30px 1fr 34px;
+  gap: 6px;
+  align-items: center;
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.6875rem;
+}
+
+.ops-bars > div > span:last-child {
+  text-align: right;
+}
+
+.ops-bars .ops-meter {
+  min-width: 0;
+}
+
 .ops-slots {
   display: flex;
   flex-wrap: wrap;
@@ -4383,6 +4408,14 @@ td.costs-repo-spend__num {
 
 .ops-slots > i[data-state='busy'] {
   background: var(--lcars-ink-dim);
+}
+
+.ops-slots > i[data-state='pod'] {
+  background: color-mix(
+    in srgb,
+    var(--lcars-ink-dim) 60%,
+    var(--lcars-surface)
+  );
 }
 
 .ops-slots > i[data-state='pending'] {

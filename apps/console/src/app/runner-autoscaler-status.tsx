@@ -53,6 +53,12 @@ export function expireAutoscalerStatuses(
     now - Date.parse(queueExecutor.updatedAt) <= STALENESS_MS
       ? queueExecutor
       : undefined;
+  const hostInventory =
+    result.hostInventory &&
+    Number.isFinite(Date.parse(result.hostInventory.updatedAt)) &&
+    now - Date.parse(result.hostInventory.updatedAt) <= STALENESS_MS
+      ? result.hostInventory
+      : undefined;
   const admission = result.providerAdmission;
   const freshAdmission =
     admission !== undefined &&
@@ -70,6 +76,7 @@ export function expireAutoscalerStatuses(
   if (
     lanes?.length === result.lanes?.length &&
     freshQueueExecutor === queueExecutor &&
+    hostInventory === result.hostInventory &&
     freshAdmission === admission
   ) {
     return result;
@@ -81,6 +88,7 @@ export function expireAutoscalerStatuses(
       ? { lanesIncomplete: true }
       : {}),
     queueExecutor: freshQueueExecutor,
+    hostInventory,
     providerAdmission: freshAdmission,
     warnings: Array.from(
       new Set([
@@ -449,6 +457,7 @@ export function RunnerAutoscalerStatus({
             filteredOut={noMatch}
             tokenRate={expireTokenRate(tokenRate, clock, STALENESS_MS)}
             workApiLatency={live.queueExecutor?.workApiLatency}
+            hostInventory={noMatch ? undefined : live.hostInventory}
           />
         </div>
       </div>

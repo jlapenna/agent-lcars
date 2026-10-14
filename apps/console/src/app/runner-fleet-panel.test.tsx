@@ -145,4 +145,83 @@ describe('RunnerFleetPanel', () => {
     expect(workApi.textContent).toContain('20 calls · 30m');
     expect(workApi.querySelectorAll('rect')).toHaveLength(1);
   });
+
+  it('draws one row per host with requested CPU and memory', () => {
+    const host = {
+      name: 'spark',
+      ready: true,
+      unschedulable: false,
+      cpuMillis: 20_000,
+      memoryBytes: 128 * 1024 ** 3,
+      requestedCpuMillis: 17_000,
+      requestedMemoryBytes: 32 * 1024 ** 3,
+      runnerPods: 2,
+      queueJobPods: 1,
+    };
+    render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          lanes={[lane]}
+          hostInventory={{
+            hosts: [
+              host,
+              {
+                ...host,
+                name: 'worf',
+                ready: false,
+                runnerPods: 0,
+                queueJobPods: 0,
+              },
+            ],
+            updatedAt: '2026-10-13T15:00:00.000Z',
+          }}
+        />
+      </MantineProvider>,
+    );
+    const spark = screen.getByTestId('fleet-host-spark');
+    expect(spark.textContent).toContain('20 vCPU · 128 GiB');
+    expect(spark.textContent).toContain('85%');
+    expect(spark.textContent).toContain('25%');
+    expect(
+      spark.querySelectorAll('.ops-slots i[data-state="pod"]'),
+    ).toHaveLength(3);
+    expect(
+      spark.querySelector('[aria-label="2 runner pods, 1 queue job pod"]'),
+    ).toBeTruthy();
+    expect(spark.querySelector('[data-tone="warn"]')).toBeTruthy();
+    expect(screen.getByTestId('fleet-host-worf').textContent).toContain(
+      'NotReady',
+    );
+    expect(screen.queryByTestId('fleet-lane-lcars-ci')).toBeNull();
+    expect(screen.getByText('Load · requested')).toBeTruthy();
+  });
+
+  it('never claims runner status is unavailable beside known hosts', () => {
+    render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          hostInventory={{
+            hosts: [
+              {
+                name: 'spark',
+                ready: true,
+                unschedulable: true,
+                cpuMillis: 8_000,
+                memoryBytes: 16 * 1024 ** 3,
+                requestedCpuMillis: 0,
+                requestedMemoryBytes: 0,
+                runnerPods: 0,
+                queueJobPods: 0,
+              },
+            ],
+            updatedAt: '2026-10-13T15:00:00.000Z',
+          }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('fleet-host-spark').textContent).toContain(
+      'draining',
+    );
+    expect(screen.queryByText('Runner status unavailable')).toBeNull();
+  });
 });
