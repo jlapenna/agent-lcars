@@ -1205,11 +1205,54 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
-/* Compact desktops (to 1440px): the toolbar band keeps the mockup's single
-   row. Native selects size to their widest option, so they are capped, and
+/* The filters give way to the primary action rather than pushing it onto a
+   row of its own: a basis of zero lets the filters wrap within what is left. */
+.console-toolbar__filters {
+  flex-basis: 0;
+}
+
+/* The phone-only toggle for the folded filters (console-toolbar.tsx). */
+.console-toolbar__toggle {
+  display: none;
+  cursor: pointer;
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.console-toolbar__toggle[aria-expanded='true'] {
+  background: var(--lcars-surface-raised);
+}
+
+@media (max-width: 47.99em) {
+  .console-toolbar__filters {
+    flex-basis: 100%;
+  }
+
+  .console-toolbar__toggle {
+    display: inline-flex;
+  }
+
+  .console-toolbar__search {
+    flex: 1 1 0;
+    width: auto;
+  }
+
+  .console-toolbar__filters:not([data-open])
+    > :is(
+      .console-toolbar__select,
+      .console-toolbar__segmented,
+      .console-toolbar__note,
+      .console-toolbar__more
+    ) {
+    display: none;
+  }
+}
+
+/* Desktops: the toolbar band keeps the mockup's single row. Native selects size to their widest option, so they are capped, and
    segments and the find field tighten. (The Inbox's own search is narrowed
    beside its base rule below.) */
-@media (min-width: 48em) and (max-width: 89.99em) {
+@media (min-width: 48em) {
   .console-toolbar__select {
     max-width: 12rem;
   }

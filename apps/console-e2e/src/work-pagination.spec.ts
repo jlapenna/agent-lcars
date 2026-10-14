@@ -330,8 +330,22 @@ async function selectBridgeRepositoryLink(page: Page) {
   await page.goto(`/?${new URLSearchParams({ repo: E2E_FIXTURE_REPOSITORY })}`);
 }
 
+/** Phones fold a workspace toolbar's selects behind its Filters toggle. */
+async function openToolbarFilters(page: Page) {
+  const toggle = page
+    .getByRole('search', { name: 'Filters' })
+    .getByRole('button', { name: /^Filters/ });
+  if (
+    (await toggle.isVisible()) &&
+    (await toggle.getAttribute('aria-expanded')) === 'false'
+  ) {
+    await toggle.click();
+  }
+}
+
 async function selectRepositoryForm(page: Page) {
   await revealInboxRepositoryFilter(page);
+  await openToolbarFilters(page);
   await page
     .getByRole('combobox', { name: 'Repository', exact: true })
     .selectOption(E2E_FIXTURE_REPOSITORY);

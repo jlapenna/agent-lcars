@@ -120,6 +120,30 @@ describe('ConsoleToolbar', () => {
     expect(submit).toHaveBeenCalledOnce();
   });
 
+  it('folds the filters behind a toggle that counts active selects', () => {
+    render(
+      <ConsoleToolbar action="/agents">
+        <ToolbarSelect
+          name="agent"
+          label="Agent"
+          value="codex"
+          options={[
+            { value: '', label: 'All agents' },
+            { value: 'codex', label: 'codex' },
+          ]}
+        />
+        <ToolbarSearch name="q" label="Find" placeholder="issue" />
+      </ConsoleToolbar>,
+    );
+    const form = screen.getByRole('search', { name: 'Filters' });
+    const toggle = screen.getByRole('button', { name: 'Filters · 1' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(form).not.toHaveAttribute('data-open');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(form).toHaveAttribute('data-open');
+  });
+
   it('shows a native Apply until the controls hydrate', () => {
     render(
       <form>
