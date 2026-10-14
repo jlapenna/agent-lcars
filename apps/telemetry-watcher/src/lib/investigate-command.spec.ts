@@ -209,6 +209,8 @@ describe('lcars investigate', () => {
     expect(f.calls).toHaveLength(1);
   });
   it.each([
+    { input: ['--question', 'Which unit?'] },
+    { input: ['--request-id', 'invalid key', '--question', 'Which unit?'] },
     { input: [...args, '--origin', 'https://other.invalid'] },
     { input: [...args, '--issue-url', 'https://other.invalid'] },
     { input: ['--request-id', 'id', '--question', 'é'.repeat(2049)] },
@@ -232,6 +234,7 @@ describe('lcars investigate', () => {
       });
       expect(f.calls).toEqual([]);
       expect(f.out).toEqual([]);
+      expect(f.err).toEqual(['investigate failed: invalid-input']);
     },
   );
   it('bounds caller file reads and uses their content as text, never authority', async () => {
@@ -266,8 +269,70 @@ describe('lcars investigate', () => {
       });
       expect(f.out).toEqual([]);
       expect(f.err.join()).not.toContain('owned-bearer');
+      expect(f.err).toEqual(['investigate failed: invalid-response']);
     },
   );
+  it.each(['introspection', 'success', 'error'] as const)(
+    'maps malformed %s JSON to invalid-response without printing its content',
+    async (stage) => {
+      const f = fixture();
+      const malformed = () =>
+        new Response('{private-malformed-json', {
+          status: stage === 'error' ? 503 : 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      if (stage === 'introspection') f.state.introspection = malformed;
+      else f.state.gateway = malformed;
+      expect(await executeInvestigateCommand(args, f.deps)).toEqual({
+        ok: false,
+      });
+      expect(f.out).toEqual([]);
+      expect(f.err).toEqual(['investigate failed: invalid-response']);
+      expect(f.calls).toHaveLength(stage === 'introspection' ? 1 : 2);
+    },
+  );
+  it('maps an invalid introspection schema to invalid-response before gateway access', async () => {
+    const f = fixture();
+    f.state.introspection = () =>
+      json({ ...auth, private: 'server-private-value' });
+    expect(await executeInvestigateCommand(args, f.deps)).toEqual({
+      ok: false,
+    });
+    expect(f.err).toEqual(['investigate failed: invalid-response']);
+    expect(f.calls).toHaveLength(1);
+    expect(f.out).toEqual([]);
+  });
+  it('maps malformed response UTF-8 to invalid-response', async () => {
+    const f = fixture();
+    f.state.gateway = () =>
+      new Response(new Uint8Array([0xc3, 0x28]), {
+        headers: { 'content-type': 'application/json' },
+      });
+    expect(await executeInvestigateCommand(args, f.deps)).toEqual({
+      ok: false,
+    });
+    expect(f.err).toEqual(['investigate failed: invalid-response']);
+    expect(f.calls).toHaveLength(2);
+    expect(f.out).toEqual([]);
+  });
+  it('maps an invalid typed error body to invalid-response', async () => {
+    const f = fixture();
+    f.state.gateway = () =>
+      json(
+        {
+          version: 1,
+          requestId: 'owned-request',
+          error: { code: 'unknown-private-error' },
+        },
+        503,
+      );
+    expect(await executeInvestigateCommand(args, f.deps)).toEqual({
+      ok: false,
+    });
+    expect(f.err).toEqual(['investigate failed: invalid-response']);
+    expect(f.calls).toHaveLength(2);
+    expect(f.out).toEqual([]);
+  });
   it('returns only a safe typed error and never retries an in-progress request', async () => {
     const f = fixture();
     f.state.gateway = () =>

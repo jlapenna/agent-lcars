@@ -43,9 +43,13 @@ async function boundedFile(
       count += part.bytesRead;
     }
     if (count > maximumBytes) throw new Error('invalid-input');
-    return new TextDecoder('utf-8', { fatal: true }).decode(
-      buffer.subarray(0, count),
-    );
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(
+        buffer.subarray(0, count),
+      );
+    } catch {
+      throw new Error('invalid-input');
+    }
   } finally {
     await file.close();
   }
@@ -93,7 +97,13 @@ async function body(
     }
     signal.throwIfAborted();
     const bytes = Buffer.concat(chunks, size);
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    try {
+      return JSON.parse(
+        new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+      );
+    } catch {
+      throw new Error('invalid-response');
+    }
   } finally {
     signal.removeEventListener('abort', abort);
     void reader.cancel().catch(() => undefined);
@@ -135,18 +145,24 @@ export async function executeInvestigateCommand(
     timer = setTimeout(() => controller.abort(), remaining);
   };
   try {
-    const { values } = parseArgs({
-      args: argv,
-      allowPositionals: false,
-      strict: true,
-      options: {
-        'request-id': { type: 'string' },
-        question: { type: 'string' },
-        'question-file': { type: 'string' },
-        context: { type: 'string' },
-        'context-file': { type: 'string' },
-      },
-    });
+    const { values } = (() => {
+      try {
+        return parseArgs({
+          args: argv,
+          allowPositionals: false,
+          strict: true,
+          options: {
+            'request-id': { type: 'string' },
+            question: { type: 'string' },
+            'question-file': { type: 'string' },
+            context: { type: 'string' },
+            'context-file': { type: 'string' },
+          },
+        });
+      } catch {
+        throw new Error('invalid-input');
+      }
+    })();
     if (
       (values.question === undefined) ===
         (values['question-file'] === undefined) ||
@@ -161,7 +177,7 @@ export async function executeInvestigateCommand(
       (values['context-file'] === undefined
         ? ''
         : await deps.readFile(values['context-file'], 16384));
-    const input = investigationRequestSchema.parse({
+    const parsedInput = investigationRequestSchema.safeParse({
       version: 1,
       runId: deps.env['LCARS_RUN_ID'],
       requestId: values['request-id'],
@@ -169,6 +185,8 @@ export async function executeInvestigateCommand(
       context,
       issueUrl: null,
     });
+    if (!parsedInput.success) throw new Error('invalid-input');
+    const input = parsedInput.data;
     const token = deps.env['LCARS_RUN_TOKEN'];
     if (
       !token ||
@@ -234,9 +252,11 @@ export async function executeInvestigateCommand(
               : 'authorization-unavailable',
         );
       }
-      const authenticated = runIntrospectionSchema.parse(
+      const parsedAuthority = runIntrospectionSchema.safeParse(
         await body(response, 4096, controller.signal),
       );
+      if (!parsedAuthority.success) throw new Error('invalid-response');
+      const authenticated = parsedAuthority.data;
       if (authenticated.runId !== input.runId)
         throw new Error('invalid-response');
       const expectedIssue =
@@ -262,9 +282,9 @@ export async function executeInvestigateCommand(
       deadline = Math.min(deadline, started + validityMs);
       arm();
       input.issueUrl = authenticated.issueUrl;
-      const requestBody = JSON.stringify(
-        investigationRequestSchema.parse(input),
-      );
+      const resolvedInput = investigationRequestSchema.safeParse(input);
+      if (!resolvedInput.success) throw new Error('invalid-input');
+      const requestBody = JSON.stringify(resolvedInput.data);
       if (Buffer.byteLength(requestBody) > INVESTIGATION_REQUEST_MAX_BYTES)
         throw new Error('invalid-input');
       const answer = await deps.fetchImpl(GATEWAY_URL, {
@@ -276,9 +296,11 @@ export async function executeInvestigateCommand(
         signal: controller.signal,
       });
       if (answer.status !== 200) {
-        const error = investigationErrorSchema.parse(
+        const parsedError = investigationErrorSchema.safeParse(
           await body(answer, INVESTIGATION_ERROR_MAX_BYTES, controller.signal),
         );
+        if (!parsedError.success) throw new Error('invalid-response');
+        const error = parsedError.data;
         if (
           (error.requestId !== null && error.requestId !== input.requestId) ||
           !errorsByStatus[answer.status]?.includes(error.error.code) ||
@@ -289,9 +311,11 @@ export async function executeInvestigateCommand(
           throw new Error('invalid-response');
         throw new Error(error.error.code);
       }
-      const result = investigationResultSchema.parse(
+      const parsedResult = investigationResultSchema.safeParse(
         await body(answer, INVESTIGATION_RESPONSE_MAX_BYTES, controller.signal),
       );
+      if (!parsedResult.success) throw new Error('invalid-response');
+      const result = parsedResult.data;
       if (result.runId !== input.runId || result.requestId !== input.requestId)
         throw new Error('invalid-response');
       const output = JSON.stringify(result);
