@@ -7,7 +7,7 @@ import {
   getAgentTelemetryReaderFirestore,
 } from '@agent-lcars/telemetry/server';
 
-import { type JobStartupWindow, parseJobStartupWindow } from './ci-wait';
+import { type HistogramWindow, parseHistogramWindow } from './histogram-window';
 import {
   ARC_UNBOUNDED_MAX_RUNNERS,
   RUNNER_STATUS_STALENESS_MS,
@@ -28,6 +28,8 @@ export interface QueueExecutorStatus {
   maxConcurrent: number;
   updatedAt: string;
   claims?: QueueClaimWindow;
+  /** The executor's own Work API response times, when known. */
+  workApiLatency?: HistogramWindow;
 }
 
 export interface QueueClaimWindow {
@@ -64,7 +66,7 @@ export interface ArcLaneStatus {
   /** Absent when the scale set configures no maximum. */
   maxRunners?: number;
   /** The listener's last 30 minutes of job-startup latency, when known. */
-  jobStartup?: JobStartupWindow;
+  jobStartup?: HistogramWindow;
   updatedAt: string;
 }
 
@@ -94,7 +96,7 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     )
   )
     return undefined;
-  const jobStartup = parseJobStartupWindow(status['jobStartup']);
+  const jobStartup = parseHistogramWindow(status['jobStartup']);
   return {
     schemaVersion: 3,
     kind: 'arc-lane',
@@ -134,6 +136,7 @@ function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
   ) {
     return undefined;
   }
+  const workApiLatency = parseHistogramWindow(status['workApiLatency']);
   return {
     schemaVersion: 2,
     kind: 'queue-executor',
@@ -148,6 +151,7 @@ function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
     ...(parseClaimWindow(status['claims'], status['updatedAt']) === undefined
       ? {}
       : { claims: parseClaimWindow(status['claims'], status['updatedAt']) }),
+    ...(workApiLatency === undefined ? {} : { workApiLatency }),
   };
 }
 

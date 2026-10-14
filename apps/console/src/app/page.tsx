@@ -408,6 +408,7 @@ async function IndexBody({
               tokenRate={fleetTokenRate(tokenRateSnapshot, {
                 repo: repoFilterKey,
               })}
+              workApiLatency={autoscaler.queueExecutor?.workApiLatency}
             />
             <CliSessionsPanel
               sessions={filteredCliSessions.filter(isActiveCliSession)}

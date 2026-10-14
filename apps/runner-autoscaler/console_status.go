@@ -129,6 +129,9 @@ type consoleQueueExecutorStatus struct {
 	UpdatedAt     string              `firestore:"updatedAt"`
 	ExpireAt      time.Time           `firestore:"expireAt"`
 	Claims        *consoleClaimWindow `firestore:"claims,omitempty"`
+	// This process's Work API response times over the last 30 minutes; see
+	// workAPITimingTransport. Absent until two snapshots are known.
+	WorkAPILatency *consoleHistogramWindow `firestore:"workApiLatency,omitempty"`
 }
 
 // A bounded difference of the existing successful-claim counters. The exact

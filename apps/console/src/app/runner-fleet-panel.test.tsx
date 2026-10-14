@@ -67,11 +67,9 @@ describe('RunnerFleetPanel', () => {
     expect(ciWait.textContent).toContain('35s');
     expect(ciWait.textContent).toContain('3 jobs · 12m');
     expect(ciWait.querySelectorAll('rect')).toHaveLength(1);
-    expect(
-      screen
-        .getByTestId('fleet-telemetry')
-        .textContent?.match(/no metrics source/g),
-    ).toHaveLength(1);
+    expect(screen.getByTestId('fleet-work-api').textContent).toContain(
+      'no executor latency data',
+    );
   });
 
   it('shows CI wait as unavailable when no lane reports job starts', () => {
@@ -116,5 +114,35 @@ describe('RunnerFleetPanel', () => {
     expect(screen.getByTestId('fleet-token-rate').textContent).toContain(
       'no per-minute data',
     );
+  });
+
+  it('shows the executor Work API p95 with its call count', () => {
+    const endedAt = '2026-10-13T15:00:00.000Z';
+    render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          lanes={[lane]}
+          workApiLatency={{
+            bounds: [0.1, 0.3, 1],
+            startedAt: '2026-10-13T14:30:00.000Z',
+            endedAt,
+            minutes: [
+              {
+                endedAt,
+                jobs: [
+                  [0, 18],
+                  [1, 2],
+                ],
+              },
+            ],
+          }}
+        />
+      </MantineProvider>,
+    );
+    const workApi = screen.getByTestId('fleet-work-api');
+    // 20 calls: rank 19 lies in (0.1, 0.3], which holds calls 19 and 20.
+    expect(workApi.textContent).toContain('200 ms');
+    expect(workApi.textContent).toContain('20 calls · 30m');
+    expect(workApi.querySelectorAll('rect')).toHaveLength(1);
   });
 });

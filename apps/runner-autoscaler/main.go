@@ -48,6 +48,7 @@ var cmd = &cobra.Command{
 		}
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+		timeWorkAPICalls()
 		return runOrchestrator(ctx, resolved)
 	},
 }
