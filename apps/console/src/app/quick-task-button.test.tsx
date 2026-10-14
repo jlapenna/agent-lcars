@@ -4,11 +4,16 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { QuickTaskButton } from './quick-task-button';
-import { createItem, createItemWithEvidence } from './work/actions';
+import {
+  createItem,
+  createItemWithEvidence,
+  createTrackingIssue,
+} from './work/actions';
 
 vi.mock('./work/actions', () => ({
   createItem: vi.fn(),
   createItemWithEvidence: vi.fn(),
+  createTrackingIssue: vi.fn(),
 }));
 vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn(), update: vi.fn() },
@@ -41,6 +46,36 @@ describe('New work creation', () => {
     window.localStorage.clear();
     window.history.replaceState(null, '', '/agents');
     (createItem as Mock).mockResolvedValue([undefined, { id: 'created' }]);
+  });
+
+  it('files no GitHub issue unless the checkbox is ticked', async () => {
+    renderButton();
+    await submit();
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
+    expect(createTrackingIssue).not.toHaveBeenCalled();
+  });
+
+  it('files a tracking issue after the work item when ticked', async () => {
+    (createTrackingIssue as Mock).mockResolvedValue([
+      undefined,
+      { number: 7, url: 'https://github.com/o/r/issues/7' },
+    ]);
+    renderButton();
+    fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    fireEvent.change(await screen.findByLabelText('Description'), {
+      target: { value: 'Fix the flaky test' },
+    });
+    fireEvent.click(screen.getByLabelText(/File a GitHub issue/u));
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() => expect(createTrackingIssue).toHaveBeenCalledTimes(1));
+    expect(createTrackingIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workId: expect.any(String),
+        repository: REPO,
+        title: 'Fix the flaky test',
+      }),
+    );
   });
 
   it('creates one repository-explicit native work item', async () => {
