@@ -63,7 +63,7 @@ The shared `agent-protocol` skill owns takeover, exact attempt markers,
 delivery, and parking for both GitHub and native Work anchors. Follow its
 anchor-specific instructions; do not assume `gh` stamps markers for you.
 Before stopping, verify that the required deliverable carries your exact
-attempt marker. If a human decision is actually required, record the shared
-protocol's explicit park outcome rather than leaving an unanswered question
-only in the transcript. Provider limits and runner failures are execution
+attempt marker. If access or a maintainer-reserved action is actually required, record
+the shared protocol's explicit park outcome rather than leaving an
+unanswered question only in the transcript. Decide judgement calls yourself. Provider limits and runner failures are execution
 failures, not evidence that a human must decide the task.

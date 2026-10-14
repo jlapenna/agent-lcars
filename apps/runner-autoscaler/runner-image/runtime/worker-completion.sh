@@ -52,4 +52,4 @@ CURLCFG
 
 # Consumed by all three provider branches in the sourcing direct runner.
 # shellcheck disable=SC2034
-WORKER_COMPLETION_PROMPT='Continue the same authorized task in this existing session. The completed deliverable lookup found no exact attempt-bound artifact. Finish the remaining work and publish the requested marker-stamped deliverable. Use PARK only for a genuine human decision, approval, or access blocker, never for a provider, setup, timeout, or lookup failure. Preserve useful work. This is the only correction round and uses the original remaining time budget.'
+WORKER_COMPLETION_PROMPT='Continue the same authorized task in this existing session. The completed deliverable lookup found no exact attempt-bound artifact. Finish the remaining work and publish the requested marker-stamped deliverable. Use PARK only for missing access or credentials or a maintainer-reserved action (shared protocol section 4), never for a judgement call you can make yourself or for a provider, setup, timeout, or lookup failure. Preserve useful work. This is the only correction round and uses the original remaining time budget.'

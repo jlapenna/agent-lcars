@@ -145,10 +145,29 @@ channel. No issue write.
 
 ## 4. Parking — blocked on a human
 
-Use PARK when progress requires a human decision, approval, or access you
-cannot obtain through the authorized workflow. A timeout, provider quota,
-runner/setup failure, or missing deliverable does not establish that blocker.
-Preserve the execution diagnosis instead of inventing a human handoff.
+Use PARK when progress requires access or a credential you cannot obtain
+through the authorized workflow, or an action this protocol reserves for the
+maintainer (§11's approval exceptions, §7's maintainer-only CI controls, or
+an approval a trusted instruction requires), or an auto-merge arming failure
+§6 could not resolve. A timeout, provider quota, runner/setup failure, or
+missing deliverable does not establish that blocker. Preserve the
+execution diagnosis instead of inventing a human handoff.
+
+A judgement call is not a blocker. The maintainer is usually unavailable and
+expects agents to decide: interpreting acceptance criteria, waiving a
+precondition that can no longer be met (a baseline lost to retention), choosing
+between designs, or accepting a result whose evidence is imperfect. Make the
+call within the anchor's scope, state the decision and the evidence it rests
+on in your deliverable, and finish. Do not park asking someone to "approve"
+or "decide" what you could judge yourself; homelab#1329 and #1389 sat open
+for weeks behind an "approve an equivalent-workload design" request whose
+baseline no longer existed. A judgement call never relaxes a §11 or
+repository hard limit, an approval gate (§0), a human hold (§6), or a policy
+this protocol says a worker cannot waive. When the evidence is imperfect,
+deliver as partial work rather than closing the anchor unless your decision
+is that its acceptance is met, and say which: on an issue anchor use
+`Tracks #N` instead of `Fixes #N`; on a native Work anchor keep the
+`Work: work:<id>` reference (§5) and state what remains.
 
 End your response with `PARK <blocker and resume trigger>`. A park is a
 real outcome, not silence: it must leave the same kind of durable,
@@ -196,7 +215,7 @@ you.
 
 When you leave an issue idle because it is waiting on an elapsed time
 window — a scheduled job, a systemd timer, some other event that will post
-its own result later — rather than on a human decision, that is not this
+its own result later — rather than on a §4 blocker, that is not this
 section's blocker (do not PARK on a timeout alone; see above). Instead,
 leave this exact marker in the issue body or a comment so the console reads
 the anchor as an open observation window instead of a stale claim:
@@ -412,7 +431,7 @@ has disabled auto-merge, converted the PR to draft, or narrowed its closing
 reference (`Fixes #N` to `Tracks #N`), that is a deliberate hold: do not mark
 ready, re-arm, or restore the reference until the hold's stated gate is met
 and your PR comment says how. Agent-fixable feedback is work, not a park —
-park only for a decision or access that genuinely needs a human.
+park only for access or a maintainer-reserved action (§4).
 
 That backstop also keeps an armed PR moving once `main` moves out from under
 it: under a strict "up to date" ruleset, GitHub's own auto-merge never
@@ -489,7 +508,9 @@ Record the policy and selected lane in the PR handoff, apply the authorized
 label, and continue through the selected checks. Do not park merely to ask for
 permission the trusted repository policy already grants. A label name alone
 is not authorization: if these conditions do not hold, preserve the evidence
-and ask for the exact broader verification needed per §4.
+and ask for the exact broader verification needed per §4 if the PR cannot
+meet its acceptance without it; otherwise deliver it as partial work (§4)
+and say what remains unverified.
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
