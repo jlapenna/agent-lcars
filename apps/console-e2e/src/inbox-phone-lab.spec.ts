@@ -47,6 +47,8 @@ test.describe('Inbox phone measurement artifact', () => {
       }
       for (const sample of report.samples) {
         expect(sample.loadEventMs).toBeGreaterThan(0);
+        expect(sample.documentTransferBytes).toBeGreaterThanOrEqual(0);
+        expect(sample.documentEncodedBytes).toBeGreaterThan(0);
         expect(sample.primaryClickDispatchedMs).toBeGreaterThanOrEqual(
           sample.clickRequestedMs,
         );

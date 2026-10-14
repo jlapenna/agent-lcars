@@ -2,9 +2,16 @@
 
 import { Anchor, Box, Group, Loader, Text } from '@mantine/core';
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 
-import { ConsoleMarkdown } from './console-markdown';
+// A closed artifact preview must not make every importing route download
+// the Markdown parser. Keep its existing renderer behind the user's preview.
+const ArtifactMarkdown = dynamic(
+  // eslint-disable-next-line no-restricted-syntax -- #2201 browser-only on-demand preview chunk, matching QuickTaskDialog; no server dynamic dependency or new renderer.
+  () => import('./console-markdown').then((module) => module.ConsoleMarkdown),
+  { ssr: false, loading: () => <Loader size="xs" /> },
+);
 
 export type ArtifactKind = 'markdown' | 'image' | 'pdf' | 'other';
 
@@ -74,7 +81,7 @@ function MarkdownPreview({ url }: { url: string }) {
         fontSize: 'var(--mantine-font-size-xs)',
       }}
     >
-      <ConsoleMarkdown>{state.content}</ConsoleMarkdown>
+      <ArtifactMarkdown>{state.content}</ArtifactMarkdown>
     </Box>
   );
 }

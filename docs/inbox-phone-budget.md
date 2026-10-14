@@ -126,3 +126,15 @@ Compare exact revisions on the same runner/profile before claiming improvement.
 Download and preserve the raw artifact before retention expires when using it
 as acceptance evidence. The test has a 16-minute bound around the probe's
 15-minute deadline; the existing serial CI job retains its 30-minute bound.
+
+## Server-known decision context
+
+Inbox and Bridge decision bodies are parsed by the canonical `ConsoleMarkdown`
+renderer on the server, then passed as rendered context into the interactive
+card. This preserves escaped HTML, safe Markdown links, GFM, and the existing
+disclosures without shipping their parser in the initial Inbox client graph.
+The loaded item and primary action still come from the same fresh server read;
+confirmation and cancellation stay in the existing client handler. Compare
+the navigation document (HTML plus streamed RSC) and resource transferred bytes,
+server response timing, and the unchanged milestone, not parser source size
+alone, before attributing a timing improvement.

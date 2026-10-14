@@ -9,6 +9,7 @@ import {
 import type { BridgeDetail as BridgeDetailDescriptor } from './bridge-rows';
 import { bridgeSelectionHref, type BridgeView } from './bridge-selection';
 import { ParkedWorkDetail } from './parked-work-detail';
+import { renderCardMarkdown } from './render-card-markdown';
 import type { WorkAction } from './work/work-actions';
 
 /**
@@ -85,8 +86,7 @@ export function BridgeDetail({
       </div>
       {detail.kind === 'item' ? (
         <ActionItemCard
-          item={detail.card.item}
-          primaryAction={detail.card.primaryAction}
+          {...renderCardMarkdown(detail.card)}
           multiRepo={detail.multiRepo}
           muted={false}
           variant="workspace"
