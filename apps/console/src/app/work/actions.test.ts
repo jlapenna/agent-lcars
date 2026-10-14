@@ -50,7 +50,7 @@ vi.mock('@/lib/work-mint', () => ({
   forbiddenReason: mocks.forbiddenReason,
 }));
 
-import { createItemWithEvidence } from './actions';
+import { createItem, createItemWithEvidence } from './actions';
 
 const intent = {
   workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -167,5 +167,23 @@ describe('createItemWithEvidence', () => {
     await createItemWithEvidence(form());
     expect(mocks.prepare).toHaveBeenCalled();
     expect(mocks.rollback).not.toHaveBeenCalled();
+  });
+
+  it('turns an unexpected create throw into a coded error instead of rejecting', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mocks.create.mockRejectedValue(new Error('firestore unavailable'));
+    const [error, data] = await createItem({
+      id: intent.workId,
+      spec: {
+        title: 't',
+        description: 'd',
+        pipeline: 'codex',
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+    });
+    expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(data).toBeUndefined();
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
   });
 });

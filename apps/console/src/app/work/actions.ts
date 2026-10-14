@@ -66,13 +66,39 @@ const listItemsFn = functionable(workRouter.list);
  * expression's result, which the rule refuses to export directly.
  */
 export async function createItem(input: Parameters<typeof createItemFn>[0]) {
-  return createItemFn(input);
+  return settleCreate(() => createItemFn(input));
+}
+
+/**
+ * An unexpected throw from a Server Action reaches the browser as React's
+ * minified "error #441" (the real message is omitted in production), which
+ * the create dialog then showed verbatim. Log the failure server-side, where
+ * it is still legible, and hand the caller an ordinary coded error instead.
+ */
+async function settleCreate<T>(run: () => Promise<T>) {
+  try {
+    return await run();
+  } catch (error) {
+    console.error('work item creation failed', error);
+    return [
+      {
+        code: 'INTERNAL_SERVER_ERROR',
+        message:
+          'Work item creation failed on the server. Retry, and check the console logs if it persists.',
+      },
+      undefined,
+    ] as const;
+  }
 }
 
 /** Native Work creation with an optional screenshot. The evidence keeps its
  * historical authenticated read URL and immutable binding, while the task is
  * minted exclusively through the canonical Work procedure. */
 export async function createItemWithEvidence(form: FormData) {
+  return settleCreate(() => createItemWithEvidenceUnsafe(form));
+}
+
+async function createItemWithEvidenceUnsafe(form: FormData) {
   const raw = form.get('intent');
   const file = form.get('evidence');
   if (typeof raw !== 'string' || !(file instanceof File)) {
