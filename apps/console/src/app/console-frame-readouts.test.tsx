@@ -130,6 +130,23 @@ describe('console frame readouts', () => {
     }
   });
 
+  it('shows a cached snapshot data age instead of its load time', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-13T10:00:00Z'));
+      respond(admin);
+      render(<ConsoleLiveStatus dataAt="2026-10-12T08:00:00Z" />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const status = screen.getByTestId('console-live-status');
+      expect(status).toHaveTextContent('Snapshot · data 1d ago');
+      expect(status).not.toHaveTextContent('loaded');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('marks a partial token total as a lower bound', async () => {
     respond({ ...admin, tokens24hPartial: true });
     await renderFrame();

@@ -49,6 +49,7 @@ export function LogicalWorkCard({
   spec,
   item,
   history,
+  framed = true,
 }: {
   work: LogicalWork;
   runs: OrchestratorRun[];
@@ -61,138 +62,145 @@ export function LogicalWorkCard({
    * (agents' claimed-idle section). */
   item?: ActionItem;
   history?: ItemView;
+  /** A card among others carries its own spine. On the task page the card is
+   * the page: its sections are the panels, inside the page's frame. */
+  framed?: boolean;
 }) {
-  return (
+  const body = (
+    <Stack gap="sm">
+      {spec !== undefined && (
+        <div data-testid="work-spec-snapshot" className="work-spec-snapshot">
+          <Text size="xs" c="dimmed">
+            Dispatch brief snapshot
+          </Text>
+          <Text size="sm" fw={600}>
+            {spec.title}
+          </Text>
+          <Text size="sm" c="dimmed" lineClamp={3}>
+            {spec.description}
+          </Text>
+        </div>
+      )}
+      <Group justify="space-between" align="flex-start" wrap="wrap">
+        <Stack gap={4}>
+          <Title order={2} size="h4">
+            <Anchor
+              href={
+                'workId' in work.task
+                  ? `/work/${work.task.workId}`
+                  : `/task/${work.task.repository.owner}/${work.task.repository.name}/${work.task.issueNumber}`
+              }
+              c="inherit"
+            >
+              {'workId' in work.task
+                ? work.title
+                : `#${work.task.issueNumber} ${work.title}`}
+            </Anchor>
+          </Title>
+          <Group gap="xs" wrap="wrap">
+            {(!history ||
+              work.state === 'anomaly' ||
+              work.state === 'unavailable') && (
+              <Badge
+                variant="filled"
+                color={STATE_COLORS[work.state]}
+                size="sm"
+                data-testid="logical-work-state"
+              >
+                {STATE_LABELS[work.state]}
+              </Badge>
+            )}
+            <Badge variant="outline" color="gray" size="sm">
+              {anchorState}
+            </Badge>
+            {work.selectedPipeline && (
+              <PipelineBadge pipeline={work.selectedPipeline} />
+            )}
+            <RepoBadge repo={work.task.repository} />
+          </Group>
+        </Stack>
+        <Group gap="xs" wrap="nowrap" align="flex-start">
+          {!history && (
+            <Text size="xs" c="dimmed">
+              {work.provenance.kind === 'authoritative'
+                ? `authoritative state rev ${work.provenance.revision ?? 'unknown'}`
+                : work.provenance.kind === 'unavailable'
+                  ? 'authoritative lifecycle state unavailable'
+                  : 'no authoritative run history'}
+            </Text>
+          )}
+          {'issueNumber' in work.task && (
+            <Anchor href={work.url} target="_blank" rel="noreferrer" size="xs">
+              View on GitHub ↗
+            </Anchor>
+          )}
+          {item && <ItemOverflowMenu item={item} />}
+        </Group>
+      </Group>
+
+      {work.anomalies.length > 0 && (
+        <Stack gap={6} data-testid="logical-work-anomalies">
+          {work.anomalies.map((anomaly, index) => (
+            <Alert key={index} color="red" variant="light">
+              {anomaly.detail}
+            </Alert>
+          ))}
+        </Stack>
+      )}
+
+      {history ? (
+        <TaskDetailHistory
+          anchor={
+            'issueNumber' in work.task
+              ? {
+                  repo: `${work.task.repository.owner}/${work.task.repository.name}`,
+                  issue: work.task.issueNumber,
+                }
+              : { workId: work.task.workId }
+          }
+          item={history}
+          actions={
+            item && anchorState === 'open' ? (
+              <GithubDetailReply
+                key={`${item.repo.owner}/${item.repo.name}#${item.number}`}
+                item={item}
+              />
+            ) : undefined
+          }
+          revision={
+            work.provenance.kind === 'authoritative'
+              ? work.provenance.revision
+              : undefined
+          }
+          audit={
+            runs.length > 0 ? (
+              <RunsSection
+                runs={runs}
+                anchorPrefix="audit-run"
+                title="Run timeline"
+              />
+            ) : undefined
+          }
+        />
+      ) : runs.length > 0 ? (
+        <RunsSection runs={runs} />
+      ) : (
+        <Text size="sm" c="dimmed" data-testid="no-authoritative-runs">
+          No authoritative runs recorded for this task.
+        </Text>
+      )}
+    </Stack>
+  );
+  return framed ? (
     <Card
       withBorder
       padding="md"
       className="lcars-panel"
       data-testid="logical-work-card"
     >
-      <Stack gap="sm">
-        {spec !== undefined && (
-          <div data-testid="work-spec-snapshot" className="work-spec-snapshot">
-            <Text size="xs" c="dimmed">
-              Dispatch brief snapshot
-            </Text>
-            <Text size="sm" fw={600}>
-              {spec.title}
-            </Text>
-            <Text size="sm" c="dimmed" lineClamp={3}>
-              {spec.description}
-            </Text>
-          </div>
-        )}
-        <Group justify="space-between" align="flex-start" wrap="wrap">
-          <Stack gap={4}>
-            <Title order={2} size="h4">
-              <Anchor
-                href={
-                  'workId' in work.task
-                    ? `/work/${work.task.workId}`
-                    : `/task/${work.task.repository.owner}/${work.task.repository.name}/${work.task.issueNumber}`
-                }
-                c="inherit"
-              >
-                {'workId' in work.task
-                  ? work.title
-                  : `#${work.task.issueNumber} ${work.title}`}
-              </Anchor>
-            </Title>
-            <Group gap="xs" wrap="wrap">
-              {(!history ||
-                work.state === 'anomaly' ||
-                work.state === 'unavailable') && (
-                <Badge
-                  variant="filled"
-                  color={STATE_COLORS[work.state]}
-                  size="sm"
-                  data-testid="logical-work-state"
-                >
-                  {STATE_LABELS[work.state]}
-                </Badge>
-              )}
-              <Badge variant="outline" color="gray" size="sm">
-                {anchorState}
-              </Badge>
-              {work.selectedPipeline && (
-                <PipelineBadge pipeline={work.selectedPipeline} />
-              )}
-              <RepoBadge repo={work.task.repository} />
-            </Group>
-          </Stack>
-          <Group gap="xs" wrap="nowrap" align="flex-start">
-            {!history && (
-              <Text size="xs" c="dimmed">
-                {work.provenance.kind === 'authoritative'
-                  ? `authoritative state rev ${work.provenance.revision ?? 'unknown'}`
-                  : work.provenance.kind === 'unavailable'
-                    ? 'authoritative lifecycle state unavailable'
-                    : 'no authoritative run history'}
-              </Text>
-            )}
-            {'issueNumber' in work.task && (
-              <Anchor
-                href={work.url}
-                target="_blank"
-                rel="noreferrer"
-                size="xs"
-              >
-                View on GitHub ↗
-              </Anchor>
-            )}
-            {item && <ItemOverflowMenu item={item} />}
-          </Group>
-        </Group>
-
-        {work.anomalies.length > 0 && (
-          <Stack gap={6} data-testid="logical-work-anomalies">
-            {work.anomalies.map((anomaly, index) => (
-              <Alert key={index} color="red" variant="light">
-                {anomaly.detail}
-              </Alert>
-            ))}
-          </Stack>
-        )}
-
-        {history ? (
-          <TaskDetailHistory
-            anchor={
-              'issueNumber' in work.task
-                ? {
-                    repo: `${work.task.repository.owner}/${work.task.repository.name}`,
-                    issue: work.task.issueNumber,
-                  }
-                : { workId: work.task.workId }
-            }
-            item={history}
-            actions={
-              item && anchorState === 'open' ? (
-                <GithubDetailReply
-                  key={`${item.repo.owner}/${item.repo.name}#${item.number}`}
-                  item={item}
-                />
-              ) : undefined
-            }
-            revision={
-              work.provenance.kind === 'authoritative'
-                ? work.provenance.revision
-                : undefined
-            }
-            audit={
-              runs.length > 0 ? (
-                <RunsSection runs={runs} anchorPrefix="audit-run" />
-              ) : undefined
-            }
-          />
-        ) : runs.length > 0 ? (
-          <RunsSection runs={runs} />
-        ) : (
-          <Text size="sm" c="dimmed" data-testid="no-authoritative-runs">
-            No authoritative runs recorded for this task.
-          </Text>
-        )}
-      </Stack>
+      {body}
     </Card>
+  ) : (
+    <div data-testid="logical-work-card">{body}</div>
   );
 }

@@ -9,8 +9,8 @@ import { getWatchedRepos } from '../../../../../lib/github-client';
 import type { QuickTaskSourceIdentity } from '../../../../../lib/quick-task-evidence';
 import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleCommandUtilities } from '../../../../console-command-utilities';
-import { ConsoleFooter } from '../../../../console-footer';
 import { repoScopedConsoleHrefs } from '../../../../console-hrefs';
+import { DetailWorkspace } from '../../../../detail-workspace';
 import { NavPageLoading } from '../../../../page-loading';
 import { withConsolePageShell } from '../../../../with-console-page-shell';
 import { LogicalWorkCard } from '../../../logical-work-card';
@@ -44,13 +44,15 @@ function taskSourceIdentities(
 
 function TaskDetailViewContent({ detail }: TaskDetailViewProps) {
   return (
-    <>
+    <DetailWorkspace
+      ariaLabel="Task"
+      warnings={detail.status === 'error' ? false : undefined}
+    >
       {detail.status === 'error' && (
-        <Text size="sm" c="orange" mb="md" data-testid="task-detail-error">
+        <Text size="sm" c="orange" data-testid="task-detail-error">
           {detail.warning}
         </Text>
       )}
-
       {detail.status === 'ok' && (
         <LogicalWorkCard
           work={detail.work}
@@ -59,9 +61,10 @@ function TaskDetailViewContent({ detail }: TaskDetailViewProps) {
           spec={detail.spec}
           history={detail.history}
           item={detail.item}
+          framed={false}
         />
       )}
-    </>
+    </DetailWorkspace>
   );
 }
 
@@ -69,6 +72,7 @@ const TaskDetailView = withConsolePageShell(
   TaskDetailViewContent,
   ({ detail, generatedAt, owner, repo, title, subtitle }) => ({
     current: 'deck',
+    dataAt: generatedAt,
     title,
     subtitle,
     utilities: (
@@ -85,7 +89,6 @@ const TaskDetailView = withConsolePageShell(
             }
             sourceIdentities={taskSourceIdentities(detail)}
             refreshesAuthoritativeQueue
-            generatedAt={generatedAt}
           />
         </div>
         <div className="task-utilities task-utilities--mobile console-utilities--mobile">
@@ -104,7 +107,6 @@ const TaskDetailView = withConsolePageShell(
         </div>
       </>
     ),
-    footer: <ConsoleFooter />,
   }),
 );
 

@@ -6,8 +6,8 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 
-// A text control (not an icon) so it reads well parked at the bottom of the
-// page, away from the header's primary actions - see console-footer.tsx.
+// A text control (not an icon) so it reads as a menu entry under the console
+// menu's Preferences, away from the header's primary actions.
 export function ThemeToggle() {
   const { setColorScheme } = useMantineColorScheme();
   const computedColorScheme = useComputedColorScheme('light', {

@@ -14,8 +14,8 @@ import { signOut } from '../auth';
  * server-only deps) out of any client bundle.
  *
  * Styled as text, matching ThemeToggle - both are low-frequency controls
- * parked in the footer rather than competing with a page's real actions
- * (see console-footer.tsx).
+ * kept in the console menu rather than competing with a page's real actions
+ * (see queue-utility-menu.tsx).
  */
 export function SignOutButton() {
   return (
