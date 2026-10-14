@@ -337,9 +337,12 @@ async function selectBridgeRepositoryLink(page: Page) {
 
 /** Phones fold a workspace toolbar's selects behind its Filters toggle. */
 async function openToolbarFilters(page: Page) {
+  // The Inbox draws its own repository form, which never folds.
+  if (new URL(page.url()).pathname === '/inbox') return;
+  // Wait for the toolbar to stream in and hydrate: the fold, and the toggle
+  // that opens it, start then. Checking for the form before it arrives would
+  // skip the toggle and leave the select folded.
   const form = page.getByRole('search', { name: 'Filters' });
-  if ((await form.count()) === 0) return; // the Inbox has its own form
-  // The fold, and the toggle that opens it, start once the form hydrates.
   await expect(form).toHaveAttribute('data-hydrated', '');
   const toggle = form.getByRole('button', { name: /^Filters/ });
   if (
