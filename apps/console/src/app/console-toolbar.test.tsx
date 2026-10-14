@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -144,7 +145,12 @@ describe('ConsoleToolbar', () => {
     expect(form).toHaveAttribute('data-open');
   });
 
-  it('shows a native Apply until the controls hydrate', () => {
+  it('offers Apply only to browsers without JavaScript', () => {
+    // Server markup carries it inside <noscript>; a scripted page never lays
+    // it out, so hydrating moves nothing.
+    expect(renderToStaticMarkup(<ToolbarApply />)).toBe(
+      '<noscript><button type="submit" class="console-toolbar__apply">Apply</button></noscript>',
+    );
     render(
       <form>
         <ToolbarSelect
@@ -155,10 +161,7 @@ describe('ConsoleToolbar', () => {
         <ToolbarApply />
       </form>,
     );
-    // After the select's effect runs, CSS hides Apply inside this form.
-    expect(
-      screen.getByRole('button', { name: 'Apply' }).closest('form'),
-    ).toHaveAttribute('data-hydrated');
+    expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
   });
 
   it('draws a disabled window option that cannot be chosen and says why', () => {
