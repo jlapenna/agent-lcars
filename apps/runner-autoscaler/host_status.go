@@ -74,7 +74,7 @@ type consoleHost struct {
 // contentKey keeps load out of the change test: requests move with every pod
 // start and stop, and the heartbeat already refreshes them once a minute.
 // A host joining, leaving, going NotReady or draining writes at once, as
-// does a runner starting, stopping, or changing state or job.
+// does a runner starting, stopping, being placed, or changing state or job.
 func (s consoleHostStatus) contentKey() any {
 	type structural struct {
 		name                 string
@@ -82,8 +82,8 @@ func (s consoleHostStatus) contentKey() any {
 		cpu, memory          int64
 	}
 	type runner struct {
-		name, state, runID, job string
-		workflowRunID           int64
+		name, host, state, runID, job string
+		workflowRunID                 int64
 	}
 	key := struct {
 		hosts     []structural
@@ -95,7 +95,7 @@ func (s consoleHostStatus) contentKey() any {
 			key.hosts = append(key.hosts, structural{host.Name, host.Ready, host.Unschedulable, host.CPUMillis, host.MemoryBytes})
 		}
 		for _, r := range s.Inventory.Runners {
-			key.runners = append(key.runners, runner{r.Name, r.State, r.RunID, r.JobRepository + "/" + r.JobName, r.WorkflowRunID})
+			key.runners = append(key.runners, runner{r.Name, r.Host, r.State, r.RunID, r.JobRepository + "/" + r.JobName, r.WorkflowRunID})
 		}
 		key.jobsKnown = s.Inventory.RunnerJobsKnown
 	}

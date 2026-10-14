@@ -137,18 +137,22 @@ func TestApplyRunnerJobsSettlesUpARCRunners(t *testing.T) {
 
 func TestHostStatusWritesRunnerChangesAtOnce(t *testing.T) {
 	now := time.Now()
-	status := func(state string) consoleHostStatus {
+	status := func(host, state string) consoleHostStatus {
 		return consoleHostStatus{SchemaVersion: 1, Kind: "hosts", Inventory: &consoleHostInventory{
 			Hosts:   []consoleHost{{Name: "spark", Ready: true}},
-			Runners: []consoleRunner{{Name: "arc-1", Kind: runnerKindARC, State: state}},
+			Runners: []consoleRunner{{Name: "arc-1", Kind: runnerKindARC, Host: host, State: state}},
 		}}
 	}
 	gate := newStatusWriteGate(consoleStatusHeartbeat)
-	gate.recordWritten("hosts", status(runnerIdle), now)
-	if gate.shouldWrite("hosts", status(runnerIdle), now.Add(consoleStatusInterval)) {
+	gate.recordWritten("hosts", status("spark", runnerIdle), now)
+	if gate.shouldWrite("hosts", status("spark", runnerIdle), now.Add(consoleStatusInterval)) {
 		t.Fatal("an unchanged runner wrote before the heartbeat")
 	}
-	if !gate.shouldWrite("hosts", status(runnerBusy), now.Add(consoleStatusInterval)) {
+	if !gate.shouldWrite("hosts", status("spark", runnerBusy), now.Add(consoleStatusInterval)) {
 		t.Fatal("a runner taking a job waited for the heartbeat")
+	}
+	gate.recordWritten("hosts", status("", runnerStarting), now)
+	if !gate.shouldWrite("hosts", status("spark", runnerStarting), now.Add(consoleStatusInterval)) {
+		t.Fatal("a runner being placed waited for the heartbeat")
 	}
 }
