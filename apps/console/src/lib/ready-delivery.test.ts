@@ -293,6 +293,38 @@ describe('authenticated ready delivery evidence', () => {
     },
   );
 
+  it('keeps waiting ownership when an armed pending-review PR merges during verification', async () => {
+    const review = {
+      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+    };
+    const open = fixture({ review });
+    const merged = fixture({
+      pr: {
+        state: 'closed',
+        merged: true,
+        merge_commit_sha: MERGE,
+        auto_merge: null,
+      },
+      review,
+    });
+    let prReads = 0;
+    const fetchImpl = (async (url: string | URL | Request) =>
+      String(url).endsWith('/pulls/12') && prReads++ > 0
+        ? merged.fetchImpl(url)
+        : open.fetchImpl(url)) as typeof fetch;
+    expect(
+      await readyDeliveryBinding(
+        { ...open, fetchImpl },
+        { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
+      ),
+    ).toEqual(BINDING);
+    expect(prReads).toBe(2);
+    expect(await observeGithubDelivery(merged, BINDING)).toEqual({
+      kind: 'waiting',
+      head: HEAD,
+    });
+  });
+
   it('keeps a pending-review handoff waiting after merge until independent review qualifies landing', async () => {
     const review = {
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },

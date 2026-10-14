@@ -286,7 +286,10 @@ export async function readyDeliveryBinding(
   if (
     final.head.sha !== pr.head.sha ||
     final.base.ref !== pr.base.ref ||
-    final.merged !== pr.merged ||
+    // An armed open artifact may auto-merge during verification. That
+    // same-head transition keeps the waiting binding: the monitor then
+    // requires independent review before accepting the landing.
+    (pr.merged && !final.merged) ||
     (!final.merged && final.state !== 'open') ||
     final.draft ||
     (!final.merged && final.auto_merge?.merge_method !== 'squash') ||
