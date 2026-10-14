@@ -1333,9 +1333,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 }
 
-/* The pre-hydration Apply (console-toolbar.tsx): a plain submit while the
-   controls cannot yet submit on change. Once they can it is hidden but keeps
-   its box, so hydrating reflows nothing a pointer may already be aimed at. */
+/* The no-JavaScript Apply (console-toolbar.tsx). */
 .console-toolbar__apply {
   height: 36px;
   padding: 0 12px;
@@ -1346,10 +1344,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
-}
-
-form[data-hydrated] .console-toolbar__apply {
-  visibility: hidden;
 }
 
 /* A form's default button kept only for Enter-to-submit; never shown. */

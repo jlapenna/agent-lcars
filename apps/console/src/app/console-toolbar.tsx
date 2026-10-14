@@ -93,13 +93,17 @@ function useMarkFormHydrated<T extends HTMLElement>() {
   return ref;
 }
 
-/** A native submit for the moments before hydration (or if it fails), when
- * the controls cannot submit on change; hidden once they can. */
+/** A native submit for browsers without JavaScript, where the controls cannot
+ * submit on change. In `<noscript>` so it never takes a box otherwise: a box
+ * that hydration then hid either kept an empty row or, removed, shifted
+ * everything below the band. */
 export function ToolbarApply({ label = 'Apply' }: { label?: string }) {
   return (
-    <button type="submit" className="console-toolbar__apply">
-      {label}
-    </button>
+    <noscript>
+      <button type="submit" className="console-toolbar__apply">
+        {label}
+      </button>
+    </noscript>
   );
 }
 

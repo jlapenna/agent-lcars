@@ -1,5 +1,4 @@
 import { PIPELINES } from '@agent-lcars/work';
-import { Text } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -41,14 +40,9 @@ async function ShuttlebayBody({ filters, watchedRepos }: ShuttlebayViewProps) {
         agent: filters.agent,
       })}
       toolbar={
-        <ConsoleToolbar
-          action="/shuttlebay"
-          primary={
-            <Text c="dimmed" size="sm">
-              Updates live as runner capacity changes.
-            </Text>
-          }
-        >
+        // No primary: the mockup gives Shuttlebay none, and the header's
+        // live status already says the page updates itself.
+        <ConsoleToolbar action="/shuttlebay">
           <ToolbarSelect
             name="repo"
             label="Repository"
