@@ -498,17 +498,27 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       (oldestRecent !== undefined &&
         Date.parse(oldestRecent.updatedAt) < historyStart));
   // A run that ended inside the window was last written inside it.
+  // The two reads are not one snapshot: a run that ended between them is
+  // live in the recent read and absent from the live one, so it is kept
+  // from the recent read rather than dropped from both.
+  const liveRunIds = new Set(authoritativeLiveRuns.map((run) => run.runId));
   const historyRuns = historyReached
     ? [
         ...authoritativeLiveRuns,
         ...recentWindow.filter(
           (run) =>
-            run.state !== 'pending' &&
-            run.state !== 'running' &&
+            !liveRunIds.has(run.runId) &&
             Date.parse(run.updatedAt) >= historyStart,
         ),
       ]
     : [];
+  // Only the live list and outcome feed report invalid task metadata; a
+  // history-only run with an unreadable task just withholds the history.
+  const feedTaskKeys = new Set(
+    [...authoritativeLiveRuns, ...terminalRecentRuns].map((run) =>
+      taskKey(run.task),
+    ),
+  );
   const runsByTask = new Map<string, OrchestratorRun[]>();
   for (const run of [
     ...authoritativeLiveRuns,
@@ -528,7 +538,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       try {
         const task = await store.readTask(run.task);
         if (task === undefined) {
-          invalidMetadata.value = true;
+          if (feedTaskKeys.has(key)) invalidMetadata.value = true;
         } else {
           taskByKey.set(key, task.task);
         }
@@ -537,7 +547,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
           'agent-lcars: failed to read authoritative run task:',
           error,
         );
-        invalidMetadata.value = true;
+        if (feedTaskKeys.has(key)) invalidMetadata.value = true;
       }
     }),
   );

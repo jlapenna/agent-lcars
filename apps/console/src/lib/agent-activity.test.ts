@@ -438,4 +438,47 @@ describe('getAgentActivity run history', () => {
 
     expect((await getAgentActivity()).runHistory).toBeUndefined();
   });
+
+  it('keeps a run that ended between the live and recent reads', async () => {
+    // The recent read still saw it running; the live read no longer did.
+    const between = run({ updatedAt: minutesAgo(2) });
+    store.listRecentRuns.mockResolvedValue([between]);
+    store.readTask.mockResolvedValue({ task: githubTask(), revision: 1 });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.runHistory?.map((timeline) => timeline.state)).toEqual([
+      'running',
+    ]);
+  });
+
+  it('withholds only the history when a history-only task is unreadable', async () => {
+    const recent = Array.from({ length: 24 }, (_, i) =>
+      run({
+        runId: `octo/example#${i + 1}/r1`,
+        task: { repo: 'octo/example', issue: i + 1 },
+        state: 'finished',
+        result: { ok: true },
+        updatedAt: minutesAgo(1),
+      }),
+    );
+    const historyOnly = run({
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      task: nativeTask().task,
+      state: 'finished',
+      result: { ok: true },
+      updatedAt: minutesAgo(4),
+    });
+    store.listRecentRuns.mockResolvedValue([...recent, historyOnly]);
+    store.readTask.mockImplementation(async (task: Task['task']) =>
+      'workId' in task
+        ? undefined
+        : { task: githubTask(task.issue), revision: 1 },
+    );
+
+    const activity = await getAgentActivity();
+
+    expect(activity.runHistory).toBeUndefined();
+    expect(activity.warnings).toEqual([]);
+  });
 });
