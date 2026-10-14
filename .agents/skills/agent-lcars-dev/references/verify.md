@@ -109,6 +109,16 @@ storage together on that host before assessing full declared limits/envelopes
 for credible overlap with the local phase and reserves. Save changed raw node
 and workload rows before issuing the capacity verdict. Kubernetes allocatable
 and Pod inventory alone do not prove complete host safety.
+Classify Pods by their actual controller owner reference, never by name
+substrings. ARC workers require the verified namespace/UID
+Pod → EphemeralRunner → EphemeralRunnerSet → AutoscalingRunnerSet chain and
+matching resource/template bindings. ReplicaSet/Deployment controller Pods and
+listeners remain service workloads with their full requests/limits accounted.
+Classify native Work Pods separately through their canonical Job owner/UID and
+Run identity. For workloads being classified as ARC or native Work workers,
+missing, ambiguous, mismatched or unavailable owner evidence means hold.
+Always retain full service/native ceilings and eligible Pending, replacement
+and retained-work accounting, including standalone/static service Pods.
 Reconcile declared reserve coverage and count nested
 unit/container/Pod/cgroup workloads once. If placement, ownership, required
 accounting visibility, reserve coverage or overlap fit is unknown, hold the phase. Verify
