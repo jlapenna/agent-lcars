@@ -17,6 +17,7 @@ export function ActiveAgentsSection({
   activeSessions,
   items: _items,
   sessionsByRunId = {},
+  activityFetchedAt,
 }: {
   liveRuns: AgentRun[];
   itemsByRunId: Record<string, RunItemRef>;
@@ -25,6 +26,8 @@ export function ActiveAgentsSection({
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
    * `indexSessionsByRunId` in run-classification.ts. */
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
+  /** When the runs were read, for the panel's `updated` age. */
+  activityFetchedAt?: string;
 }) {
   return (
     <div className="agents-active" data-testid="active-agents-section">
@@ -36,6 +39,7 @@ export function ActiveAgentsSection({
         // The fleet snapshot bar above already carries the alert.
         showQueueHealth={false}
         testId="active-dispatches"
+        updatedAt={activityFetchedAt}
       />
       {activeSessions.length > 0 && (
         <CliSessionsPanel sessions={activeSessions} />

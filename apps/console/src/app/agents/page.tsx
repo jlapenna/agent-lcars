@@ -359,6 +359,7 @@ async function AgentsPageBody({
             activeSessions={filteredActiveSessions}
             items={filteredItems}
             sessionsByRunId={sessionsByRunId}
+            activityFetchedAt={activityFetchedAt}
           />
         </>
       }

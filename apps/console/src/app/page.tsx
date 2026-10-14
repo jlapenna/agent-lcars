@@ -352,6 +352,7 @@ async function IndexBody({
           <div className="bridge-stack">
             <ActiveDispatchesPanel
               liveRuns={filteredActivity.liveRuns}
+              updatedAt={activityFetchedAt}
               itemsByRunId={itemsByRunId}
               sessionsByRunId={sessionsByRunId}
               selectHrefFor={selectRun}
