@@ -108,6 +108,7 @@ export function QueueWorkspace({
   watchedRepos,
   mobileDataFreshness,
   mobileScopeLabel,
+  repoScoped = false,
   replyToWorkItem,
   toolbarStart,
   toolbarEnd,
@@ -120,6 +121,9 @@ export function QueueWorkspace({
   watchedRepos: WatchedRepo[];
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
+  /** A watched repository scopes the queue: the page's validated `?repo=`,
+   * not the raw parameter, which may name no watched repository. */
+  repoScoped?: boolean;
   replyToWorkItem?: ReplyAction;
   /** Server-rendered toolbar controls: the repository selector first, the
    * data freshness last (design/fleet-console.html toolbar band). */
@@ -398,7 +402,7 @@ export function QueueWorkspace({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [toolbarHydrated, setToolbarHydrated] = useState(false);
   useEffect(() => setToolbarHydrated(true), []);
-  const foldedActive = (searchParams.get('repo') ? 1 : 0) + (agent ? 1 : 0);
+  const foldedActive = (repoScoped ? 1 : 0) + (agent ? 1 : 0);
 
   const showDetail =
     explicitDetail || Boolean(retainedDraft) || Boolean(replyConfirmation);
