@@ -161,6 +161,10 @@ export function ToolbarWindow({
   );
 }
 
+/** Applies when its value is committed - Enter, leaving the field, or the
+ * clear button - so FIND behaves like the selects and window beside it
+ * rather than waiting for a separate Apply. Not per keystroke: each
+ * application is a navigation. */
 export function ToolbarSearch({
   name,
   label,
@@ -172,10 +176,32 @@ export function ToolbarSearch({
   placeholder: string;
   value?: string;
 }) {
+  const ref = useMarkFormHydrated<HTMLInputElement>();
+  useEffect(() => {
+    const input = ref.current;
+    const form = input?.form;
+    if (!input || !form) return;
+    let applied = input.value;
+    const onSubmit = () => {
+      applied = input.value;
+    };
+    const commit = () => {
+      if (input.value !== applied) form.requestSubmit();
+    };
+    form.addEventListener('submit', onSubmit);
+    input.addEventListener('change', commit);
+    input.addEventListener('search', commit);
+    return () => {
+      form.removeEventListener('submit', onSubmit);
+      input.removeEventListener('change', commit);
+      input.removeEventListener('search', commit);
+    };
+  }, [ref]);
   return (
     <label className="console-toolbar__field console-toolbar__search">
       <span className="lcars-eyebrow">Find</span>
       <input
+        ref={ref}
         type="search"
         name={name}
         aria-label={label}
