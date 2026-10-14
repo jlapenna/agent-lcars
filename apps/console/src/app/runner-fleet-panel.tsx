@@ -6,8 +6,19 @@ import type {
 } from '../lib/autoscaler-status';
 import { CI_WAIT_MINUTES, fleetCiWait } from '../lib/ci-wait';
 import { fleetCapacity } from '../lib/runner-status-contract';
+import {
+  TOKEN_RATE_AVERAGE_MINUTES,
+  TOKEN_RATE_MINUTES,
+  type TokenRate,
+} from '../lib/token-rate';
 import { formatDuration } from './format';
-import { OpsPanel, Sparkline, StateMark, UNAVAILABLE } from './ops-primitives';
+import {
+  formatTokens,
+  OpsPanel,
+  Sparkline,
+  StateMark,
+  UNAVAILABLE,
+} from './ops-primitives';
 
 /** Squares drawn per lane; a larger lane is still described in full by its
  * label. */
@@ -50,6 +61,7 @@ export function RunnerFleetPanel({
   executor,
   chip,
   filteredOut = false,
+  tokenRate,
 }: {
   lanes?: ArcLaneStatus[];
   lanesIncomplete?: boolean;
@@ -58,6 +70,9 @@ export function RunnerFleetPanel({
   chip?: ReactNode;
   /** A page filter, not missing data, left no lane to show. */
   filteredOut?: boolean;
+  /** Tokens / min, or why it is unknown: the session store failed, or no
+   * active session records per-minute tokens. */
+  tokenRate?: TokenRate | { unavailable: string };
 }) {
   // No lane records is unknown capacity, not zero capacity - unless a filter
   // emptied a known fleet.
@@ -161,7 +176,7 @@ export function RunnerFleetPanel({
         </tbody>
       </table>
       <div className="ops-telemetry" data-testid="fleet-telemetry">
-        <UnavailableTelemetry label="Tokens / min" />
+        <TokenRateTelemetry tokenRate={tokenRate} />
         <div data-testid="fleet-ci-wait">
           <div className="lcars-eyebrow">CI wait p50</div>
           {ciWait === undefined ? (
@@ -199,6 +214,42 @@ export function RunnerFleetPanel({
  * as no wait at all. */
 function formatWait(seconds: number): string {
   return seconds < 1 ? '<1s' : formatDuration(seconds);
+}
+
+function TokenRateTelemetry({
+  tokenRate,
+}: {
+  tokenRate?: TokenRate | { unavailable: string };
+}) {
+  if (!tokenRate || 'unavailable' in tokenRate) {
+    return (
+      <div data-testid="fleet-token-rate">
+        <div className="lcars-eyebrow">Tokens / min</div>
+        <div className="ops-telemetry__value">{UNAVAILABLE}</div>
+        <div className="ops-unavailable">
+          {tokenRate?.unavailable ?? 'no session data'}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div data-testid="fleet-token-rate">
+      <div className="lcars-eyebrow">Tokens / min</div>
+      <div className="ops-telemetry__value">
+        {formatTokens(tokenRate.perMinute)}
+      </div>
+      <div className="ops-telemetry__detail">
+        {tokenRate.sessions === 0
+          ? 'no active session'
+          : `${TOKEN_RATE_AVERAGE_MINUTES}m avg · ${tokenRate.sessions} ${tokenRate.sessions === 1 ? 'session' : 'sessions'}`}
+        {tokenRate.partial && ' · partial'}
+      </div>
+      <Sparkline
+        values={tokenRate.series}
+        label={`Tokens per minute, last ${TOKEN_RATE_MINUTES} minutes`}
+      />
+    </div>
+  );
 }
 
 function UnavailableTelemetry({ label }: { label: string }) {
