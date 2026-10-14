@@ -41,6 +41,8 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   ).toBeVisible();
   // Toolbar selects submit on change and carry the typed principal with them;
   // principal sits behind More filters so the band stays one row.
+  // Phones fold the selects and More filters behind the Filters toggle.
+  await openToolbarFilters(page);
   const moreFilters = page.locator('summary', { hasText: /^More filters/ });
   await moreFilters.click();
   await page
@@ -76,6 +78,7 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   );
   await page.reload();
   await expect(links).toHaveCount(6);
+  await openToolbarFilters(page);
   await moreFilters.click();
   await page.getByLabel('State', { exact: true }).selectOption('parked');
   await expect(page).not.toHaveURL(/cursor=/);
@@ -332,9 +335,11 @@ async function selectBridgeRepositoryLink(page: Page) {
 
 /** Phones fold a workspace toolbar's selects behind its Filters toggle. */
 async function openToolbarFilters(page: Page) {
-  const toggle = page
-    .getByRole('search', { name: 'Filters' })
-    .getByRole('button', { name: /^Filters/ });
+  const form = page.getByRole('search', { name: 'Filters' });
+  if ((await form.count()) === 0) return; // the Inbox has its own form
+  // The fold, and the toggle that opens it, start once the form hydrates.
+  await expect(form).toHaveAttribute('data-hydrated', '');
+  const toggle = form.getByRole('button', { name: /^Filters/ });
   if (
     (await toggle.isVisible()) &&
     (await toggle.getAttribute('aria-expanded')) === 'false'
