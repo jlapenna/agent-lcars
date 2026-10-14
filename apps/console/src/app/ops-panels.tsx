@@ -32,6 +32,7 @@ import {
   workHrefForRun,
 } from './agent-activity-panel';
 import { BridgePaneLink } from './bridge-pane-link';
+import { DecisionSlaMeta, DecisionWaiting } from './decision-waiting';
 import { ExecutionStatus } from './execution-status';
 import { formatCost, formatDuration } from './format';
 import { MobileHistoryDisclosure } from './mobile-history-disclosure';
@@ -571,31 +572,30 @@ export interface DecisionRow {
   respondHref: string;
 }
 
+/**
+ * The Bridge's decision panel: every waiting decision counts toward the
+ * header's `N over SLA · oldest X`, and the first `limit` rows are listed.
+ */
 export function DecisionInboxPanel({
-  rows,
-  total,
+  rows: allRows,
+  limit = 5,
   respondLabel = 'Open',
   testId = 'decision-inbox-panel',
 }: {
   rows: DecisionRow[];
-  total: number;
+  limit?: number;
   respondLabel?: string;
   testId?: string;
 }) {
-  const oldest = rows.reduce<string | undefined>(
-    (min, row) => (!min || row.waitingSince < min ? row.waitingSince : min),
-    undefined,
-  );
+  const rows = allRows.slice(0, limit);
   return (
     <OpsPanel
       title="Decision inbox"
-      count={total}
+      count={allRows.length}
       meta={
-        oldest ? (
-          <>
-            oldest <RelativeTime iso={oldest} variant="compact" />
-          </>
-        ) : undefined
+        <DecisionSlaMeta
+          waitingSince={allRows.map((row) => row.waitingSince)}
+        />
       }
       signalled
       data-testid={testId}
@@ -614,10 +614,7 @@ export function DecisionInboxPanel({
                     {row.ref}
                   </Anchor>
                   {row.agent && <span>{row.agent}</span>}
-                  <span>
-                    waiting{' '}
-                    <RelativeTime iso={row.waitingSince} variant="compact" />
-                  </span>
+                  <DecisionWaiting since={row.waitingSince} />
                 </div>
               </div>
               <Anchor

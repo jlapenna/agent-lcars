@@ -6,10 +6,10 @@ import type { MouseEvent } from 'react';
 
 import { repoDisplayName } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
+import { DecisionWaiting } from './decision-waiting';
 import { inboxCardAgent } from './inbox-card';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { queueDisclosureLabels, queueReasonFor } from './queue-reason';
-import { RelativeTime } from './relative-time';
 
 export function QueueItemRow({
   card,
@@ -75,9 +75,7 @@ export function QueueItemRow({
               {item.number}
             </span>
             {agent && <span>{agent}</span>}
-            <span>
-              waiting <RelativeTime iso={item.updatedAt} variant="compact" />
-            </span>
+            <DecisionWaiting since={item.updatedAt} />
             {item.author && <span>by {item.author}</span>}
             {item.ciRunning && (
               <Tooltip label="CI running" openDelay={300}>

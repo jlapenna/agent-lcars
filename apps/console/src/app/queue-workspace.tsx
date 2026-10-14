@@ -24,6 +24,7 @@ import {
 } from '../lib/decision-snooze-contract';
 import type { WatchedRepo } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
+import { DecisionSlaMeta } from './decision-waiting';
 import { formatAbsoluteLocal } from './format';
 import {
   type InboxCard,
@@ -37,7 +38,6 @@ import { NativeDecisionDetail, NativeDecisionRow } from './native-decision';
 import { PersistedDetails } from './persisted-details';
 import { QueueItemRow } from './queue-item-row';
 import { INBOX_FILTER_REASONS } from './queue-reason';
-import { RelativeTime } from './relative-time';
 import { useDecisionSnoozes } from './use-decision-snoozes';
 import type { ReplyAction } from './work/work-actions';
 
@@ -567,15 +567,11 @@ export function QueueWorkspace({
             <h2 className="ops-panel__title">Decision inbox</h2>
             <span className="ops-panel__count">{visibleCards.length}</span>
             <span className="ops-panel__meta">
-              {oldestCard && (
-                <>
-                  oldest{' '}
-                  <RelativeTime
-                    iso={inboxCardMetadata(oldestCard).updatedAt}
-                    variant="compact"
-                  />
-                </>
-              )}
+              <DecisionSlaMeta
+                waitingSince={visibleCards.map(
+                  (card) => inboxCardMetadata(card).updatedAt,
+                )}
+              />
               <span className="queue-kbd-hint">
                 {' '}
                 · j/k to move · / to search
