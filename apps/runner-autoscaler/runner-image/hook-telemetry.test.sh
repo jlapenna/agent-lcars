@@ -106,8 +106,19 @@ try:
         if time.monotonic() >= deadline:
             raise RuntimeError('owned hook processes did not drain')
         time.sleep(0.05)
-except Exception:
-    print('hook smoke cleanup: process drainage refused; retaining private scratch', file=sys.stderr)
+except Exception as error:
+    # Only built-in categories and known numeric errnos are safe diagnostics.
+    categories = {
+        OSError: 'OSError', PermissionError: 'PermissionError',
+        FileNotFoundError: 'FileNotFoundError', ProcessLookupError: 'ProcessLookupError',
+        TimeoutError: 'TimeoutError', RuntimeError: 'RuntimeError',
+        IndexError: 'IndexError', ValueError: 'ValueError',
+        NotImplementedError: 'NotImplementedError',
+    }
+    category = categories.get(type(error), 'unknown')
+    code = error.errno if isinstance(error, OSError) else None
+    code = code if type(code) is int and code in errno.errorcode else 'none'
+    print(f'hook smoke cleanup: process drainage refused; retaining private scratch; exception={category} errno={code}', file=sys.stderr)
     sys.exit(1)
 finally:
     for descriptor in owned.values():
