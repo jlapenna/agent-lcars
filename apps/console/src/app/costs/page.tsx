@@ -7,6 +7,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../auth';
 import { getWatchedRepos, repoKey } from '../../lib/github-client';
 import {
+  archiveDaysParam,
   DEFAULT_ARCHIVE_DAYS,
   describeArchiveWindow,
   getSessionArchive,
@@ -21,11 +22,13 @@ import { ConsoleReadouts } from '../console-readouts';
 import {
   ConsoleToolbar,
   ToolbarApply,
+  ToolbarSearch,
   ToolbarSelect,
   ToolbarWindow,
 } from '../console-toolbar';
 import { loadFleetReadouts } from '../fleet-readouts';
 import { NavPageLoading, PageLoading } from '../page-loading';
+import { parseViewFilters } from '../sessions/session-view-filters';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { CostsWorkspace } from './costs-workspace';
 import { LedgerTables } from './ledger-tables';
@@ -46,6 +49,7 @@ interface PageProps {
     issue?: string;
     repo?: string;
     agent?: string;
+    q?: string;
   }>;
 }
 
@@ -112,8 +116,14 @@ function CostsToolbar({
       <ToolbarWindow
         name="days"
         label="Window"
-        value={String(query.days)}
+        value={archiveDaysParam(query.days)}
         options={windowOptions(query.days)}
+      />
+      <ToolbarSearch
+        name="q"
+        label="Find"
+        placeholder="issue, PR, session id"
+        value={query.q}
       />
       <ToolbarSelect
         name="source"
@@ -179,7 +189,7 @@ async function CostsBody({
 function archiveHref(query: SessionArchiveQuery, path: string): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
-    params.set('days', String(query.days));
+    params.set('days', archiveDaysParam(query.days));
   }
   if (query.source) params.set('source', query.source);
   if (query.issueNumber !== undefined) {
@@ -187,6 +197,7 @@ function archiveHref(query: SessionArchiveQuery, path: string): string {
   }
   if (query.repo) params.set('repo', repoKey(query.repo));
   if (query.agent) params.set('agent', query.agent);
+  if (query.q) params.set('q', query.q);
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }
@@ -254,7 +265,10 @@ async function CostsPageShell({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
 
-  const query = parseSessionArchiveQuery(await searchParams);
+  const params = await searchParams;
+  // FIND narrows the sessions the ledger sums, as it narrows /sessions' rows.
+  const { q } = parseViewFilters(params);
+  const query = { ...parseSessionArchiveQuery(params), ...(q && { q }) };
   const watchedRepos = getWatchedRepos();
   const mobileNavigationHrefs = {
     sessions: archiveHref(query, '/sessions'),

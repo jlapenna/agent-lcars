@@ -1928,6 +1928,10 @@ td.work-table__num {
   padding: 14px 16px 6px;
 }
 
+.work-cards__empty {
+  padding: 4px 16px 12px;
+}
+
 .work-mobile-row__meta {
   font-family: var(--font-mono), monospace;
 }

@@ -18,7 +18,7 @@ import {
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 
-import { DEFAULT_ARCHIVE_DAYS } from './archive-window';
+import { DEFAULT_ARCHIVE_DAYS, ONE_HOUR_DAYS } from './archive-window';
 import {
   getWatchedRepos,
   parseRepoFilterParam,
@@ -26,6 +26,7 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { matchesSessionFind } from './session-find';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
 import { aggregateSessionSpend, type SessionSpend } from './session-spend';
 import {
@@ -34,7 +35,11 @@ import {
 } from './session-spend-by-repo';
 import { loadSpendProjections } from './session-spend-projections';
 
-export { DEFAULT_ARCHIVE_DAYS } from './archive-window';
+export {
+  archiveDaysParam,
+  DEFAULT_ARCHIVE_DAYS,
+  ONE_HOUR_DAYS,
+} from './archive-window';
 
 export const MAX_ARCHIVE_DAYS = 90;
 
@@ -45,12 +50,16 @@ export const MAX_ARCHIVE_DAYS = 90;
 const ARCHIVE_LIST_LIMIT = 200;
 
 export interface SessionArchiveQuery {
+  /** Whole days, or ONE_HOUR_DAYS (archive-window.ts). */
   days: number;
   source?: SessionSource;
   issueNumber?: number;
   repo?: WatchedRepo;
   /** Narrows to one agent after the fetch, like `repo`. */
   agent?: SessionAgent;
+  /** FIND (matchesSessionFind), after the fetch. /costs sets it so its ledger
+   * sums only the matching sessions; /sessions narrows its rows itself. */
+  q?: string;
 }
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -72,11 +81,14 @@ function firstValue(value: string | string[] | undefined): string | undefined {
 export function parseSessionArchiveQuery(
   searchParams: RawSearchParams,
 ): SessionArchiveQuery {
-  const daysRaw = Number(firstValue(searchParams['days']));
+  const daysParam = firstValue(searchParams['days']);
+  const daysRaw = Number(daysParam);
   const days =
-    Number.isFinite(daysRaw) && daysRaw > 0
-      ? Math.min(Math.round(daysRaw), MAX_ARCHIVE_DAYS)
-      : DEFAULT_ARCHIVE_DAYS;
+    daysParam === '1h'
+      ? ONE_HOUR_DAYS
+      : Number.isFinite(daysRaw) && daysRaw > 0
+        ? Math.min(Math.max(1, Math.round(daysRaw)), MAX_ARCHIVE_DAYS)
+        : DEFAULT_ARCHIVE_DAYS;
 
   const sourceRaw = firstValue(searchParams['source']);
   const source: SessionSource | undefined =
@@ -100,7 +112,9 @@ export function parseSessionArchiveQuery(
  * would just be two ways of describing one window. */
 export function describeArchiveWindow(query: SessionArchiveQuery): string {
   return [
-    `last ${query.days} day${query.days === 1 ? '' : 's'}`,
+    query.days === ONE_HOUR_DAYS
+      ? 'last 1 hour'
+      : `last ${query.days} day${query.days === 1 ? '' : 's'}`,
     ...describeArchiveFilters(query),
   ].join(', ');
 }
@@ -113,6 +127,7 @@ export function describeArchiveFilters(query: SessionArchiveQuery): string[] {
     parts.push(`issue #${query.issueNumber}`);
   if (query.repo) parts.push(`repo=${repoKey(query.repo)}`);
   if (query.agent) parts.push(`agent=${query.agent}`);
+  if (query.q) parts.push(`find "${query.q}"`);
   return parts;
 }
 
@@ -314,6 +329,12 @@ export async function getSessionArchive(
   if (query.agent) {
     const agentFilter = query.agent;
     docs = docs.filter((doc) => doc.agent === agentFilter);
+  }
+
+  if (query.q) {
+    const q = query.q;
+    const at = new Date().toISOString();
+    docs = docs.filter((doc) => matchesSessionFind(toSessionRow(doc, at), q));
   }
 
   const warnings = coverageLimited

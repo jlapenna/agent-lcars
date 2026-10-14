@@ -56,9 +56,12 @@ export function SpendByRepository({ spend }: { spend: RepositorySpend }) {
       >
         <Title order={2}>Spend by repository</Title>
         <span className="costs-repo-spend__count">
-          {money(spend.todayUsd)} today
+          {spend.todayUnavailable ? '—' : money(spend.todayUsd)} today
         </span>
         <span className="costs-repo-spend__meta">
+          {spend.todayUnavailable
+            ? 'today unavailable · window under 1 day · '
+            : ''}
           {unavailable
             ? '7-day total unavailable · window under 7 days'
             : `7-day total ${money(spend.sevenDayUsd)}`}{' '}
@@ -90,7 +93,9 @@ export function SpendByRepository({ spend }: { spend: RepositorySpend }) {
                     <RepoName repo={row.repo} />
                   </TableTd>
                   <TableTd className="costs-repo-spend__num">
-                    {money(row.todayUsd, row.estimated)}
+                    {spend.todayUnavailable
+                      ? '—'
+                      : money(row.todayUsd, row.estimated)}
                   </TableTd>
                   <TableTd className="costs-repo-spend__week">
                     {unavailable ? (

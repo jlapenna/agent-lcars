@@ -129,4 +129,12 @@ describe('aggregateSpendByRepository', () => {
       aggregateSpendByRepository([doc()], now, 1).sevenDayUnavailable,
     ).toBe(true);
   });
+  it('withholds the UTC-day figures for a window under one day', () => {
+    expect(
+      aggregateSpendByRepository([doc()], now, 1 / 24).todayUnavailable,
+    ).toBe(true);
+    expect(aggregateSpendByRepository([doc()], now, 1).todayUnavailable).toBe(
+      false,
+    );
+  });
 });

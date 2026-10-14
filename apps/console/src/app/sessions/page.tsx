@@ -16,6 +16,7 @@ import {
   repoKey,
 } from '../../lib/github-client';
 import {
+  archiveDaysParam,
   DEFAULT_ARCHIVE_DAYS,
   describeArchiveFilters,
   describeArchiveWindow,
@@ -72,7 +73,7 @@ function displayHref(
 ): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
-    params.set('days', String(query.days));
+    params.set('days', archiveDaysParam(query.days));
   }
   if (query.source) params.set('source', query.source);
   if (query.issueNumber !== undefined) {
@@ -176,7 +177,7 @@ async function SessionsBody({
           <ToolbarWindow
             name="days"
             label="Window"
-            value={String(query.days)}
+            value={archiveDaysParam(query.days)}
             options={windowOptions(query.days)}
           />
           <ToolbarSearch
@@ -220,7 +221,10 @@ async function SessionsBody({
         >
           {/* The mockup's "Sessions · today": the toolbar's window label. */}
           <Title order={2}>
-            Sessions · {query.days === 1 ? '24h' : `${query.days}d`}
+            Sessions ·{' '}
+            {windowOptions(query.days).find(
+              (option) => option.value === archiveDaysParam(query.days),
+            )?.label ?? `${query.days}d`}
           </Title>
           <span className="sessions-panel__count">{rows.length}</span>
           <span className="sessions-panel__meta">

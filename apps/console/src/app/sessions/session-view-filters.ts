@@ -1,4 +1,5 @@
 import type { SessionRow } from '../../lib/session-archive';
+import { matchesSessionFind } from '../../lib/session-find';
 
 /** Within-window view filter (not an archive query param): find. The agent
  * filter is the archive query's own `agent` (session-archive.ts). */
@@ -33,21 +34,5 @@ export function matchesSessionView(
   row: SessionRow,
   filters: SessionsViewFilters,
 ): boolean {
-  if (filters.q) {
-    const needle = filters.q.toLowerCase();
-    const haystack = [
-      row.sessionId,
-      row.title,
-      row.runId,
-      row.host,
-      row.issueNumber === undefined ? undefined : `#${row.issueNumber}`,
-      row.repo ? `${row.repo.owner}/${row.repo.name}` : undefined,
-      ...row.prUrls.map((pr) => `#${pr.number}`),
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
-    if (!haystack.includes(needle)) return false;
-  }
-  return true;
+  return matchesSessionFind(row, filters.q);
 }

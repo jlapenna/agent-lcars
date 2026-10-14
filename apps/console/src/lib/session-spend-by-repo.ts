@@ -33,6 +33,9 @@ export interface RepositorySpend {
    * entry per hour from 00:00 through the current hour; it sums to
    * `todayUsd`. */
   todayByHourUsd: number[];
+  /** The archive window is shorter than a day (the one-hour window), so the
+   * UTC-day figures would undercount and are withheld. */
+  todayUnavailable: boolean;
   sevenDayUsd: number;
   /** The archive window is shorter than seven days, so the seven-day
    * figures would undercount and are withheld. */
@@ -60,6 +63,7 @@ export function aggregateSpendByRepository(
   const todayStart = startOfUtcDay(nowMs);
   const weekStart = nowMs - 7 * DAY_MS;
   const sevenDayUnavailable = windowDays < 7;
+  const todayUnavailable = windowDays < 1;
   const byRepo = new Map<string, RepositorySpendRow>();
   let todayUsd = 0;
   let todayEstimated = false;
@@ -118,6 +122,7 @@ export function aggregateSpendByRepository(
     todayUsd,
     todayEstimated,
     todayByHourUsd,
+    todayUnavailable,
     sevenDayUsd,
     sevenDayUnavailable,
   };

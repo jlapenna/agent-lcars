@@ -7,6 +7,8 @@ import {
   parseSessionArchiveQuery,
 } from '@/lib/session-archive';
 
+import { parseViewFilters } from '../../sessions/session-view-filters';
+
 /** "Export ledger": the cost ledger for the same window and filters as
  * /costs, as a CSV download. Admin-only like the page. */
 export async function GET(request: Request): Promise<NextResponse> {
@@ -15,7 +17,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const params = Object.fromEntries(new URL(request.url).searchParams);
-  const query = parseSessionArchiveQuery(params);
+  // The same FIND as the page, so the export is the ledger the page shows.
+  const { q } = parseViewFilters(params);
+  const query = { ...parseSessionArchiveQuery(params), ...(q && { q }) };
   const { ledger, warnings } = await getSessionArchive(query);
   return new NextResponse(ledgerCsv(ledger), {
     headers: {

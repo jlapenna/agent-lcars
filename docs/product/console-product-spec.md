@@ -461,7 +461,8 @@ GitHub issues, and manage recurring work.
   first), both with columns Pri, Item (repository · principal and title),
   Agent, State (with the latest run's execution phase), and Waiting or
   Updated, over up to 200 examined rows. State is one of `running`, `parked`,
-  `done`, `failed`, or `canceled`. It is derived and never stored.
+  `done`, `failed`, or `canceled`. It is derived and never stored. Phones
+  keep both panel heads (title, count, meta) over card rows.
 - **FE-WK-2 [Shipped] Create work** ("New work", the Work toolbar's primary
   action and the header command elsewhere; see FE-AUTH-4 for when it is
   shown):
@@ -544,14 +545,15 @@ CLI sessions and dispatched runs.
 
 - **FE-SE-1 [Shipped]** Filters, in the workspace toolbar
   (`ConsoleToolbar`, as in `design/fleet-console.html#sessions`):
-  - `repo` (Repository select) and `days` (Window: 24h, 7d, 14d default, 30d,
-    90d; maximum 90).
+  - `repo` (Repository select) and `days` (Window: 1h (`days=1h`), 24h, 7d,
+    14d default, 30d, 90d; maximum 90).
   - `source`: `cli` or `issue-agent`; `issue` is carried through.
   - `agent` and `q` (Find: session, issue, PR, run, host or repository text)
     narrow the loaded window on the page; they are not archive query params.
   - `view`: `by-issue` (the default, grouped, with older groups behind a
     disclosure on phones) or `flat`.
-- **FE-SE-2 [Shipped]** One "Sessions N" panel. Its table shows Session
+- **FE-SE-2 [Shipped]** One "Sessions · <window> N" panel, its meta the
+  layout, active filters and retention ("retained 365 days · CLI 30"). Its table shows Session
   (source, run/host/session id, title, status line), Issue, Agent, Outcome
   (liveness mark and deliverable PRs), Duration, cost-weighted Tokens, and
   Started. Requested model/route, resolved backend, turns and cost are the
@@ -583,12 +585,15 @@ CLI sessions and dispatched runs.
   filters are shared with Sessions. When a provider reports no `costUSD`, cost
   is estimated from `MODEL_RATES`.
 - **FE-CO-3 [Shipped]** The page follows `design/fleet-console.html#costs`.
-  The toolbar carries Repository, Agent (an archive filter), Window (`days`)
-  and Source, with **Export ledger** (the by-issue and by-week ledger as CSV,
-  `/costs/export`, same filters) as the primary action. A readout row leads
+  The toolbar carries Repository, Agent (an archive filter), Window (`days`,
+  1h to 90d), Find (`q`: the same match as Sessions' Find, narrowing the
+  sessions every ledger figure sums) and Source, with **Export ledger** (the
+  by-issue and by-week ledger as CSV, `/costs/export`, same filters) as the
+  primary action. A readout row leads
   with spend today (UTC day), and "Spend by repository" lists each
   repository's today and seven-day known spend, sessions and spend per
-  session; seven-day figures are withheld when the window is under 7 days.
+  session; seven-day figures are withheld when the window is under 7 days,
+  and today's when it is under a day.
 - **FE-CO-2 [Partial]** Costs shows spend by pipeline, requested model, and
   resolved model; cost per merged deliverable with a per-deliverable list; and
   budget warning states when `AGENT_LCARS_COST_BUDGET_USD` is configured
