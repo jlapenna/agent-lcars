@@ -98,6 +98,215 @@ describe('lcars integration', () => {
     expect(hooks['SessionEnd'][0].hooks[0]).toMatchObject({ timeout: 5 });
   });
 
+  it('detects a prior Codex installation after execution policy changes and refreshes it without disturbing foreign settings', () => {
+    const home = tempHome();
+    const env = {};
+    installIntegration('codex', home, env);
+    const settingsPath = path.join(home, '.codex/hooks.json');
+    const settings = readJson(settingsPath);
+    type Groups = Record<
+      string,
+      Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>
+    >;
+    const hooks = settings['hooks'] as Groups;
+    const foreign = {
+      type: 'command',
+      command: 'foreign-stop',
+      async: true,
+      timeout: 77,
+    };
+    hooks['Stop'][0].hooks[0]['async'] = true;
+    delete hooks['Stop'][0].hooks[0]['timeout'];
+    hooks['Stop'][0].matcher = '*';
+    hooks['Stop'][0].hooks.push(foreign);
+    hooks['Stop'].unshift({
+      hooks: [{ type: 'command', command: 'before-stop' }],
+    });
+    hooks['Notification'] = [
+      { hooks: [{ type: 'command', command: 'foreign-notification' }] },
+    ];
+    settings['model'] = 'preserved-model';
+    fs.writeFileSync(settingsPath, JSON.stringify(settings), { mode: 0o640 });
+    fs.chmodSync(settingsPath, 0o640);
+    const stub = fs.readFileSync(
+      path.join(home, '.codex/lcars-hook.sh'),
+      'utf8',
+    );
+    // The persisted legacy Stop must be refreshed to the canonical synchronous
+    // definition without changing unrelated settings, hooks or the stub.
+    expect(integrationStatus('codex', home, env)).toMatchObject({
+      stubCurrent: true,
+      stubVersion: INTEGRATION_VERSION,
+      entriesPresent: 7,
+      installed: false,
+    });
+    const stdout = vi.fn();
+    expect(
+      executeIntegrationCommand(['status', 'codex'], {
+        homeDirectory: home,
+        env,
+        stdout,
+      }),
+    ).toBe(1);
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringContaining('codex: not installed'),
+    );
+    expect(installIntegration('codex', home, env).installed).toBe(true);
+    expect(
+      executeIntegrationCommand(['status', 'codex'], {
+        homeDirectory: home,
+        env,
+        stdout,
+      }),
+    ).toBe(0);
+    const refreshed = readJson(settingsPath);
+    const refreshedHooks = refreshed['hooks'] as Groups;
+    expect(refreshed['model']).toBe('preserved-model');
+    expect(refreshedHooks['Notification']).toEqual(hooks['Notification']);
+    expect(refreshedHooks['Stop'][0]).toEqual(hooks['Stop'][0]);
+    expect(refreshedHooks['Stop'][1].matcher).toBe('*');
+    expect(refreshedHooks['Stop'][1].hooks).toEqual([
+      { type: 'command', command: stubCommand('codex'), timeout: 5 },
+      foreign,
+    ]);
+    expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o640);
+    expect(
+      fs.readFileSync(path.join(home, '.codex/lcars-hook.sh'), 'utf8'),
+    ).toBe(stub);
+  });
+
+  it.each(['claude', 'codex'] as const)(
+    'refreshes stale managed hooks in every %s group and preserves foreign ordering',
+    (runtime) => {
+      const home = tempHome();
+      const env = {};
+      expect(installIntegration(runtime, home, env).installed).toBe(true);
+      const settingsPath = path.join(
+        home,
+        runtime === 'claude' ? '.claude/settings.json' : '.codex/hooks.json',
+      );
+      const settings = readJson(settingsPath);
+      type Group = { matcher?: string; hooks: Array<Record<string, unknown>> };
+      const hooks = settings['hooks'] as Record<string, Group[]>;
+      const current = hooks['Stop'][0].hooks[0];
+      const before = {
+        matcher: 'before-*',
+        hooks: [{ type: 'command', command: 'before-stop' }],
+      };
+      const firstForeign = {
+        type: 'command',
+        command: 'first-foreign',
+        async: true,
+        timeout: 77,
+      };
+      const between = { hooks: [{ type: 'command', command: 'between-stop' }] };
+      const laterBefore = { type: 'command', command: 'later-before' };
+      const laterAfter = {
+        type: 'command',
+        command: 'later-after',
+        timeout: 19,
+      };
+      const after = {
+        matcher: 'after-*',
+        hooks: [{ type: 'command', command: 'after-stop' }],
+      };
+      hooks['Stop'] = [
+        before,
+        { matcher: 'first-*', hooks: [current, firstForeign] },
+        between,
+        {
+          matcher: 'later-*',
+          hooks: [
+            laterBefore,
+            { ...current, async: true, timeout: 99 },
+            { ...current, timeout: 0 },
+            laterAfter,
+          ],
+        },
+        after,
+      ];
+      settings['model'] = 'preserved-model';
+      fs.writeFileSync(settingsPath, JSON.stringify(settings));
+      fs.chmodSync(settingsPath, 0o640);
+      expect(integrationStatus(runtime, home, env).installed).toBe(false);
+      expect(installIntegration(runtime, home, env).installed).toBe(true);
+      const refreshed = readJson(settingsPath);
+      expect(refreshed['model']).toBe('preserved-model');
+      expect((refreshed['hooks'] as Record<string, Group[]>)['Stop']).toEqual([
+        before,
+        { matcher: 'first-*', hooks: [current, firstForeign] },
+        between,
+        { matcher: 'later-*', hooks: [laterBefore, current, laterAfter] },
+        after,
+      ]);
+      expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o640);
+      const once = fs.readFileSync(settingsPath, 'utf8');
+      expect(installIntegration(runtime, home, env).installed).toBe(true);
+      expect(fs.readFileSync(settingsPath, 'utf8')).toBe(once);
+      const stdout = vi.fn();
+      expect(
+        executeIntegrationCommand(['status', runtime], {
+          homeDirectory: home,
+          env,
+          stdout,
+        }),
+      ).toBe(0);
+    },
+  );
+
+  it.each([
+    ['async', false],
+    ['async', 'true'],
+    ['timeout', 5],
+    ['timeout', null],
+    ['type', 'prompt'],
+    ['command', stubCommand('claude')],
+    ['command', stubCommand('codex', '$HOME/.codex/previous/lcars-hook.sh')],
+  ] as const)(
+    'rejects stale managed Codex %s=%s options and refreshes through the existing installer',
+    (field, value) => {
+      const home = tempHome();
+      const env = {};
+      expect(installIntegration('codex', home, env).installed).toBe(true);
+      const settingsPath = path.join(home, '.codex/hooks.json');
+      const settings = readJson(settingsPath);
+      const hooks = settings['hooks'] as Record<
+        string,
+        Array<{ hooks: Array<Record<string, unknown>> }>
+      >;
+      hooks['PostToolUse'][0].hooks[0][field] = value;
+      fs.writeFileSync(settingsPath, JSON.stringify(settings));
+      expect(integrationStatus('codex', home, env)).toMatchObject({
+        stubCurrent: true,
+        entriesPresent: 7,
+        installed: false,
+      });
+      expect(installIntegration('codex', home, env).installed).toBe(true);
+      expect(integrationStatus('codex', home, env).installed).toBe(true);
+    },
+  );
+
+  it('accepts explicit false on a synchronous managed entry and ignores foreign hook options', () => {
+    const home = tempHome();
+    const env = {};
+    installIntegration('codex', home, env);
+    const settingsPath = path.join(home, '.codex/hooks.json');
+    const settings = readJson(settingsPath);
+    const hooks = settings['hooks'] as Record<
+      string,
+      Array<{ hooks: Array<Record<string, unknown>> }>
+    >;
+    hooks['SessionStart'][0].hooks[0]['async'] = false;
+    hooks['SessionStart'][0].hooks.push({
+      type: 'command',
+      command: 'foreign',
+      async: false,
+      timeout: 999,
+    });
+    fs.writeFileSync(settingsPath, JSON.stringify(settings));
+    expect(integrationStatus('codex', home, env).installed).toBe(true);
+  });
+
   it('keeps an existing settings mode regardless of the process umask', () => {
     const home = tempHome();
     const settingsPath = path.join(home, '.claude/settings.json');
