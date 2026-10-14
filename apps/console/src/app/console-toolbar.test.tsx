@@ -73,6 +73,53 @@ describe('ConsoleToolbar', () => {
     ).toHaveClass('console-toolbar__primary');
   });
 
+  it('applies the filters when focus leaves them for the page, not for another control', () => {
+    const submit = vi
+      .spyOn(HTMLFormElement.prototype, 'requestSubmit')
+      .mockImplementation(() => undefined);
+    render(
+      <>
+        <ConsoleToolbar action="/work">
+          <ToolbarSearch name="q" label="Find" placeholder="title" />
+          <input aria-label="Principal" name="principal" />
+        </ConsoleToolbar>
+        <button type="button">New work</button>
+      </>,
+    );
+    const find = screen.getByRole('searchbox', { name: 'Find' });
+    const principal = screen.getByRole('textbox', { name: 'Principal' });
+
+    fireEvent.change(find, { target: { value: 'healthz' } });
+    // On to another filter: nothing yet.
+    fireEvent.focusOut(find, { relatedTarget: principal });
+    // Out to another action: it runs; no reload races it.
+    fireEvent.change(principal, { target: { value: 'user:jlapenna' } });
+    fireEvent.focusOut(principal, {
+      relatedTarget: screen.getByRole('button', { name: 'New work' }),
+    });
+    expect(submit).not.toHaveBeenCalled();
+    // Out to the page from a sibling filter: both edits apply.
+    fireEvent.focusOut(principal, { relatedTarget: null });
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it('applies a cleared FIND and ignores an unchanged one', () => {
+    const submit = vi
+      .spyOn(HTMLFormElement.prototype, 'requestSubmit')
+      .mockImplementation(() => undefined);
+    render(
+      <ConsoleToolbar action="/agents">
+        <ToolbarSearch name="q" label="Find" placeholder="issue" value="x" />
+      </ConsoleToolbar>,
+    );
+    const find = screen.getByRole('searchbox', { name: 'Find' });
+    fireEvent.focusOut(find, { relatedTarget: null });
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.change(find, { target: { value: '' } });
+    fireEvent(find, new Event('search'));
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
   it('shows a native Apply until the controls hydrate', () => {
     render(
       <form>
