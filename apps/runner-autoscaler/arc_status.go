@@ -45,8 +45,11 @@ type consoleARCLaneStatus struct {
 	// Absent until the lane has a known startup interval; see
 	// histogramWindow.observe. A pointer keeps the document comparable.
 	JobStartup *consoleHistogramWindow `firestore:"jobStartup,omitempty"`
-	UpdatedAt  string                  `firestore:"updatedAt"`
-	ExpireAt   time.Time               `firestore:"expireAt"`
+	// Runner counts a minute apart over the last 30 minutes; see
+	// runnerWindow.observe. A pointer keeps the document comparable.
+	RunnerHistory *consoleRunnerWindow `firestore:"runnerHistory,omitempty"`
+	UpdatedAt     string               `firestore:"updatedAt"`
+	ExpireAt      time.Time            `firestore:"expireAt"`
 }
 
 func validateARCLanes(lanes []arcLaneConfig) error {
@@ -174,8 +177,10 @@ func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPubli
 	expectedLanes := configuredARCLaneNames(lanes)
 	// Created up front: each lane's goroutine then only reads this map.
 	startup := make(map[string]*histogramWindow, len(lanes))
+	runners := make(map[string]*runnerWindow, len(lanes))
 	for _, lane := range lanes {
 		startup[lane.Name] = &histogramWindow{}
+		runners[lane.Name] = &runnerWindow{}
 	}
 	publish := func() {
 		var wg sync.WaitGroup
@@ -184,11 +189,13 @@ func runARCLaneStatusPublisher(ctx context.Context, publisher consoleStatusPubli
 			wg.Go(func() {
 				fetchCtx, cancel := context.WithTimeout(ctx, consoleStatusTimeout)
 				defer cancel()
-				status, err := fetchARCLaneStatus(fetchCtx, client, lane, time.Now(), startup[lane.Name])
+				now := time.Now()
+				status, err := fetchARCLaneStatus(fetchCtx, client, lane, now, startup[lane.Name])
 				if err != nil {
 					logger.Warn("ARC lane status unavailable", slog.String("lane", lane.Name), slog.Any("error", err))
 					return
 				}
+				status.RunnerHistory = runners[lane.Name].observe(now, status.RegisteredRunners, status.RunningJobs)
 				status.ExpectedLanes = expectedLanes
 				publisher.PublishARCLane(ctx, status)
 			})

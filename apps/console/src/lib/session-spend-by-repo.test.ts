@@ -63,6 +63,23 @@ describe('aggregateSpendByRepository', () => {
     expect(spend.sevenDayUnavailable).toBe(false);
   });
 
+  it("splits today's spend by the hour each session was last active", () => {
+    const at = (iso: string) => new Date(iso).getTime();
+    const spend = aggregateSpendByRepository(
+      [
+        doc({ totalCostUsd: 2, lastActivityAt: '2026-10-13T00:10:00Z' }),
+        doc({ totalCostUsd: 3, lastActivityAt: '2026-10-13T02:59:00Z' }),
+        doc({ totalCostUsd: 1, lastActivityAt: '2026-10-13T02:00:00Z' }),
+        // Yesterday: in the seven-day total, not in today's hours.
+        doc({ totalCostUsd: 9, lastActivityAt: '2026-10-12T23:59:00Z' }),
+      ],
+      at('2026-10-13T03:30:00Z'),
+      14,
+    );
+    expect(spend.todayByHourUsd).toEqual([2, 0, 4, 0]);
+    expect(spend.todayByHourUsd.reduce((a, b) => a + b)).toBe(spend.todayUsd);
+  });
+
   it("marks today estimated only for estimates among today's sessions", () => {
     const yesterdayEstimated = doc({
       totalCostUsd: undefined,

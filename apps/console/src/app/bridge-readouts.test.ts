@@ -78,6 +78,25 @@ describe('bridgeReadouts', () => {
     }
     expect(byId(healthy)['queue']?.spark?.values).toBeUndefined();
   });
+
+  it('draws runner and hourly spend sparklines when their sources report', () => {
+    const r = byId({
+      ...healthy,
+      runnerHistory: { online: [12, undefined, 11], busy: [6, undefined, 7] },
+      spendToday: {
+        costUsd: 3,
+        byHourUsd: [1, 0, 2],
+        estimated: false,
+        partial: true,
+      },
+    });
+    expect(r['online']?.spark?.values).toEqual([12, undefined, 11]);
+    expect(r['busy']?.spark?.values).toEqual([6, undefined, 7]);
+    expect(r['spend']?.spark).toEqual({
+      label: 'Spend per hour today, by last activity (lower bound)',
+      values: [1, 0, 2],
+    });
+  });
 });
 
 describe('fleetReadoutInput', () => {
@@ -103,6 +122,55 @@ describe('fleetReadoutInput', () => {
     });
     expect(input.history?.queued.at(-1)).toBe(1);
     expect(input.history?.queued[0]).toBe(0);
+  });
+
+  it('takes fleet runner history from the lanes, and none while one is missing', () => {
+    const lane = (
+      runnerHistory?: { at: string; registered: number; running: number }[],
+    ) =>
+      ({
+        schemaVersion: 3,
+        kind: 'arc-lane',
+        lane: 'l',
+        registrationUrl: 'https://github.com/o',
+        assignedJobs: 0,
+        runningJobs: 0,
+        pendingJobs: 0,
+        idleRunners: 0,
+        registeredRunners: 0,
+        desiredRunners: 0,
+        minRunners: 0,
+        updatedAt: new Date(now).toISOString(),
+        ...(runnerHistory ? { runnerHistory } : {}),
+      }) as const;
+    const sample = [
+      { at: new Date(now - 5_000).toISOString(), registered: 3, running: 2 },
+    ];
+    const withHistory = fleetReadoutInput({
+      activity: { fleet: { online: 7, busy: 5 } },
+      liveRuns: [],
+      autoscaler: { lanes: [lane(sample), lane(sample)] },
+      now,
+    });
+    // The lanes sampled 6/4 a minute ago; the newest bar is the figure.
+    expect(withHistory.runnerHistory?.online.slice(-2)).toEqual([undefined, 7]);
+    expect(withHistory.runnerHistory?.busy.at(-1)).toBe(5);
+    expect(
+      fleetReadoutInput({
+        activity: {},
+        liveRuns: [],
+        autoscaler: { lanes: [lane(sample), lane()] },
+        now,
+      }).runnerHistory,
+    ).toBeUndefined();
+    expect(
+      fleetReadoutInput({
+        activity: {},
+        liveRuns: [],
+        autoscaler: { lanes: [lane(sample)], lanesIncomplete: true },
+        now,
+      }).runnerHistory,
+    ).toBeUndefined();
   });
 
   it('has no history when the live read failed', () => {
