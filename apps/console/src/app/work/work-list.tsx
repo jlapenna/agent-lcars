@@ -326,18 +326,22 @@ export function WorkList({ items }: { items: ItemView[] }) {
         ) : (
           queue.map((item) => <WorkCard key={item.id} item={item} admitted />)
         )}
-        {recent.length > 0 && (
-          <WorkPanelHead
-            title="Recent work"
-            count={recent.length}
-            meta={recentMeta}
-            className="work-cards__group"
-            wrap="wrap"
-          />
+        <WorkPanelHead
+          title="Recent work"
+          count={recent.length}
+          meta={recentMeta}
+          className="work-cards__group"
+          wrap="wrap"
+        />
+        {recent.length === 0 ? (
+          <Text c="dimmed" size="sm" className="work-cards__empty">
+            None.
+          </Text>
+        ) : (
+          recent.map((item) => (
+            <WorkCard key={item.id} item={item} admitted={false} />
+          ))
         )}
-        {recent.map((item) => (
-          <WorkCard key={item.id} item={item} admitted={false} />
-        ))}
       </Stack>
 
       <Stack gap={28} visibleFrom="sm" className="work-panels">

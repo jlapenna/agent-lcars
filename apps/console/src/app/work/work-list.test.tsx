@@ -91,6 +91,15 @@ describe('WorkList', () => {
     expect(screen.getAllByText('parked')[0]).toBeInTheDocument();
   });
 
+  it('keeps the phone Recent work head when nothing has stopped', () => {
+    renderList([
+      { ...item, id: '01J5Z3K9QX8F0N2B4V6C8D1E3H', state: 'running' },
+    ]);
+    const cards = screen.getByTestId('work-cards');
+    expect(within(cards).getByText('Recent work')).toBeInTheDocument();
+    expect(within(cards).getByText('None.')).toBeInTheDocument();
+  });
+
   it('orders the admitted queue by priority, FIFO within a priority', () => {
     const at = (minute: number) =>
       `2026-08-26T10:${String(minute).padStart(2, '0')}:00.000Z`;

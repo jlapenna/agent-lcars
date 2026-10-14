@@ -40,6 +40,7 @@ function navHref(
     params.set('issue', String(archiveQuery.issueNumber));
   }
   if (archiveQuery.agent) params.set('agent', archiveQuery.agent);
+  if (archiveQuery.q) params.set('q', archiveQuery.q);
   const queryString = params.toString();
   return queryString ? `${item.href}?${queryString}` : item.href;
 }
