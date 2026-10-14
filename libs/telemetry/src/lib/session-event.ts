@@ -1,11 +1,11 @@
 import {
   isCanonicalSessionRepository,
   isSessionAgent,
+  type QualifiedSessionPR,
   type SessionAgent,
   type SessionDeliverables,
   type SessionLiveness,
   type SessionRepository,
-  type QualifiedSessionPR,
   type SessionResult,
   type SessionSummary,
   type TokenUsage,

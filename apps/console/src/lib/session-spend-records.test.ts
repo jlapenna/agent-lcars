@@ -16,6 +16,7 @@ const end = '2026-10-14T11:00:00.000Z';
 
 function session(
   command = `cd /worktree && gh pr create --body "$(cat <<'EOF'\nbody\nEOF\n)"`,
+  options: { failed?: boolean; consumed?: boolean } = {},
 ): CliSessionDoc {
   const summary = claudeCodeAdapter.reduce(
     [
@@ -35,6 +36,25 @@ function session(
           ],
         },
       },
+      ...(options.consumed
+        ? [
+            {
+              type: 'user',
+              sessionId: 'session_test',
+              timestamp: end,
+              message: {
+                role: 'user',
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: 'create',
+                    content: 'No PR created',
+                  },
+                ],
+              },
+            },
+          ]
+        : []),
       {
         type: 'user',
         sessionId: 'session_test',
@@ -45,6 +65,7 @@ function session(
             {
               type: 'tool_result',
               tool_use_id: 'create',
+              ...(options.failed && { is_error: true }),
               content: 'https://github.com/jlapenna/agent-lcars/pull/42',
             },
           ],
@@ -115,6 +136,28 @@ describe('GitHub-record spend attribution (#2730)', () => {
       });
     },
   );
+  it.each([
+    ['failed', { failed: true }],
+    ['replayed after consumed result', { consumed: true }],
+  ])(
+    'does not promote %s output even with matching server facts',
+    (_name, options) => {
+      const doc = session(undefined, options);
+      expect(doc.deliverables.publicationCandidates).toBeUndefined();
+      expect(spend(doc).mergedPRs).toBe(0);
+    },
+  );
+  it('does not promote non-creating lookup output with matching server facts', () => {
+    const doc = session('gh pr view 42');
+    expect(doc.deliverables.publicationCandidates).toBeUndefined();
+    expect(spend(doc).mergedPRs).toBe(0);
+  });
+  it('does not promote legacy number-only references even with matching server facts', () => {
+    const doc = session();
+    delete doc.deliverables.publicationCandidates;
+    expect(spend(doc).mergedPRs).toBe(0);
+  });
+
   it.each([
     { author: 'someone-else' },
     { author: undefined },
