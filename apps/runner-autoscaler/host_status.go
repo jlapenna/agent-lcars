@@ -209,7 +209,10 @@ type hostStatusPublisher interface {
 // live sample: requests are still true, and the console labels them so.
 func runHostStatusPublisher(ctx context.Context, publisher hostStatusPublisher, client kubernetes.Interface, logger *slog.Logger) {
 	readUsage := metricsServerUsage(client)
-	usageDenied := false
+	// A standing usage failure (no RBAC, no metrics-server, an aggregator
+	// 503 while metrics-server is down) is logged when it starts or
+	// changes, not every tick.
+	lastUsageErr := ""
 	publish := func() {
 		readCtx, cancel := context.WithTimeout(ctx, consoleStatusTimeout)
 		defer cancel()
@@ -220,19 +223,16 @@ func runHostStatusPublisher(ctx context.Context, publisher hostStatusPublisher, 
 		}
 		if readUsage != nil {
 			usage, err := readUsage(readCtx)
-			switch {
-			case err == nil:
-				usageDenied = false
+			if err == nil {
+				lastUsageErr = ""
 				applyNodeUsage(inventory, usage)
-			case apierrors.IsForbidden(err) || apierrors.IsNotFound(err):
-				// Missing RBAC or no metrics-server is a standing state: say
-				// so once, not every tick.
-				if !usageDenied {
+			} else if msg := err.Error(); msg != lastUsageErr {
+				lastUsageErr = msg
+				if apierrors.IsForbidden(err) || apierrors.IsNotFound(err) {
 					logger.Info("Host usage unavailable; publishing requests only", slog.Any("error", err))
+				} else {
+					logger.Warn("Host usage read failed; publishing requests only", slog.Any("error", err))
 				}
-				usageDenied = true
-			default:
-				logger.Warn("Host usage read failed", slog.Any("error", err))
 			}
 		}
 		now := time.Now()
