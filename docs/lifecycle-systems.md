@@ -39,15 +39,10 @@ available through Git history.
 A sole `agent:*` replacement from the Console administrator allowlist uses
 `github-work-admission.ts` and the authoritative request transaction. Its signed
 source clock must advance past the latest label request. The transaction reads
-the active attempt, latest attempt, bounded claimed-run inventory and active
-capacity receipts before deciding.
+the active attempt, latest attempt and retained physical claims before deciding.
 It cancels only unclaimed queued work and mints one fresh requested-provider
 attempt; Work and predecessor provider facts remain unchanged. Claimed/running
-owners, unresolved credential operations and unreleased capacity receipts refuse.
-Finished legacy claims do not permanently block new label intent: the successor
-is queued, while the legacy executor still reserves physical capacity, counts
-nonterminal Jobs and fences foreground deletion and orphaned owned Pods. Logical
-settlement does not assert physical retirement or rewrite the old claim.
+owners, unresolved credential operations and retained physical claims refuse.
 Parked and terminal tasks may start fresh only with those gates clear. Refused
 requests are visible in task history and require a new label application; they
 never become automatic deferred execution. Ordinary provider claim and capacity

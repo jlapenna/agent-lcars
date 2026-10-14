@@ -45,6 +45,7 @@ import {
   providerCooldownForRun,
   providerIsCoolingDown,
 } from './provider-cooldown';
+import { retainsPhysicalClaim } from './provider-routing';
 import {
   projectQueueAdmissionStatus,
   QUEUE_ADMISSION_READ_LIMIT,
@@ -230,12 +231,12 @@ export class MemoryStore implements OrchestratorStore {
       previousRunId === undefined
         ? undefined
         : structuredClone(this.#runs.get(previousRunId));
-    const retainedClaims = input.readProviderRouting
+    const claimedCandidates = input.readProviderRouting
       ? [...this.#runs.values()].filter(
           (run) => taskKey(run.task) === key && run.queue?.state === 'claimed',
         )
       : undefined;
-    if ((retainedClaims?.length ?? 0) > PROVIDER_ROUTING_CLAIM_READ_LIMIT)
+    if ((claimedCandidates?.length ?? 0) > PROVIDER_ROUTING_CLAIM_READ_LIMIT)
       throw new Error('Provider routing claim inventory exceeds read bound');
     const outcome = input.decide({
       task,
@@ -250,10 +251,16 @@ export class MemoryStore implements OrchestratorStore {
                 : structuredClone(
                     this.#runs.get(`${key}/r${task.task.runCount}`),
                   ),
-            retainedClaims: structuredClone(retainedClaims),
             capacityReceiptRunIds: this.#capacity.receipts
               .filter((receipt) => receipt.taskKey === key)
               .map((receipt) => receipt.runId),
+            retainedClaims: structuredClone(
+              (claimedCandidates ?? []).filter(
+                (run) =>
+                  taskKey(run.task) === key &&
+                  retainsPhysicalClaim(run, this.#capacity),
+              ),
+            ),
           }
         : {}),
     });

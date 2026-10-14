@@ -55,6 +55,7 @@ import {
   providerCooldownForRun,
   providerIsCoolingDown,
 } from './provider-cooldown';
+import { retainsPhysicalClaim } from './provider-routing';
 import {
   parseProviderCooldown,
   projectQueueAdmissionStatus,
@@ -368,8 +369,7 @@ export class FirestoreStore implements OrchestratorStore {
       // transaction with the accepted write. Firestore reruns the callback
       // if any concurrent request or settlement changes one of those reads,
       // closing the terminal-settlement replay window as well as the live-run
-      // race. Label routing also reads bounded claims and active receipts;
-      // historical legacy claims cannot hide a later retained owner.
+      // race without scanning the task's unbounded run history.
       const [taskSnapshot, bindingSnapshot] = await Promise.all([
         tx.get(taskRef),
         bindingRef === undefined
@@ -438,6 +438,9 @@ export class FirestoreStore implements OrchestratorStore {
         routing[1].size > PROVIDER_ROUTING_CLAIM_READ_LIMIT
       )
         throw new Error('Provider routing claim inventory exceeds read bound');
+      const routingCapacity = routing?.[2].exists
+        ? capacityStateSchema.parse(routing[2].data())
+        : emptyCapacityState();
       const outcome = input.decide({
         ...(routing === undefined
           ? {}
@@ -445,15 +448,15 @@ export class FirestoreStore implements OrchestratorStore {
               latestRun: routing[0].exists
                 ? runSchema.parse(routing[0].data())
                 : undefined,
-              retainedClaims: routing[1].docs.map((doc) =>
-                runSchema.parse(doc.data()),
-              ),
-              capacityReceiptRunIds: (routing[2].exists
-                ? capacityStateSchema.parse(routing[2].data())
-                : emptyCapacityState()
-              ).receipts
+              // Read every claimed candidate: an older legacy remnant must
+              // not hide a later capacity or credential owner behind limit(1).
+              // Capacity shares this transaction with admission and release.
+              capacityReceiptRunIds: routingCapacity.receipts
                 .filter((receipt) => receipt.taskKey === taskKey(input.taskId))
                 .map((receipt) => receipt.runId),
+              retainedClaims: routing[1].docs
+                .map((doc) => runSchema.parse(doc.data()))
+                .filter((run) => retainsPhysicalClaim(run, routingCapacity)),
             }),
         task,
         activeRun,

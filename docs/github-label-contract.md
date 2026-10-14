@@ -106,11 +106,13 @@ Historical or fallback executions do not change that routing intent.
 
 Only an unclaimed queued attempt can be atomically canceled and replaced. Its
 provider and history remain intact; the successor uses the requested provider.
-Live claimed attempts, pending credential operations and unreleased capacity
-receipts refuse handoff. Finished legacy claims may admit a queued successor;
-they remain claimed in history. The executor's reservation and foreground
-Job/owned-Pod barriers still govern physical admission, so accepting label intent
-does not certify that the predecessor's worker has retired.
+Claimed/running attempts refuse handoff until settlement. Terminal claimed
+attempts retain the fence while an unreleased capacity receipt or unresolved
+credential authority/operation exists; those require credential cleanup and
+physical retirement. A settled legacy attempt with neither form of evidence
+may start a successor despite its historical `queue.state == 'claimed'`.
+All active receipts for the Task retain the fence, including a receipt whose Run
+is not claimed. Claimed-Run inventory is bounded and overflow refuses admission.
 Parked/terminal tasks with no retained owner may start a fresh provider attempt.
 A delayed label cannot replace a newer reply, retry or other non-label generation;
 it records `run-newer-than-label` and requires a new label application.

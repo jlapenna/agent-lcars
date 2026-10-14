@@ -1,3 +1,4 @@
+import type { CapacityState } from './capacity-model';
 import {
   cancelRun,
   decidedRun,
@@ -9,6 +10,21 @@ import {
   type RequestRunInput,
 } from './decide';
 import { isLive, isWorkAnchor, providerRoutingSchema, type Run } from './model';
+
+/** A legacy terminal claim has no retirement writer. Preserve the fence only
+ * for a live owner or durable capacity/credential debt, not its queue history. */
+export function retainsPhysicalClaim(
+  run: Run,
+  capacity: CapacityState,
+): boolean {
+  return (
+    run.queue?.state === 'claimed' &&
+    (isLive(run.state) ||
+      run.credentialOperation !== undefined ||
+      run.credentialRestoredClaimFingerprint !== undefined ||
+      capacity.receipts.some((receipt) => receipt.runId === run.runId))
+  );
+}
 
 /** Label handoff is an explicit request, never an automatic successor of a
  * refusal. The store reads task, queue claim and retained physical owners in
@@ -97,16 +113,7 @@ export function decideLabelProviderRequest(
       input.capacityReceiptRunIds === undefined)
   )
     return reject('physical-ownership-unavailable');
-  // Legacy settlement leaves queue.state claimed permanently. Accepting intent
-  // does not retire that Job: the executor still reserves physical capacity,
-  // counting nonterminal Jobs and fencing foreground deletion/orphaned Pods.
-  // Capacity-backed claims and unresolved credentials retain their durable fence.
-  if (
-    input.capacityReceiptRunIds?.length ||
-    input.retainedClaims?.some(
-      (run) => isLive(run.state) || run.credentialOperation !== undefined,
-    )
-  )
+  if (input.capacityReceiptRunIds?.length || input.retainedClaims?.length)
     return reject(
       isLive(activeRun?.state ?? 'finished')
         ? 'run-already-claimed'
