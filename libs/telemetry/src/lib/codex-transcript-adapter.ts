@@ -7,7 +7,6 @@ import {
 import {
   findDeliverables,
   findQualifiedPRs,
-  isDeliverableCommand,
   isPRPublicationCommand,
 } from './deliverables';
 import type { TranscriptAdapter } from './transcript-adapter-types';
@@ -148,14 +147,8 @@ export const codexAdapter: TranscriptAdapter = {
     const prNumbers = new Set<number>();
     const qualifiedPRs = new Map<string, QualifiedSessionPR>();
     const creatingCalls = new Set<string>();
-    const candidateCalls = new Set<string>();
-    const publicationCandidates = new Map<string, QualifiedSessionPR>();
     const seenCalls = new Set<string>();
-    type Publication = {
-      identityReads?: number;
-      sessionId?: number;
-      candidate?: boolean;
-    };
+    type Publication = { identityReads?: number; sessionId?: number };
     const codeCalls = new Map<string, Publication>();
     const pendingExecs = new Map<number, Publication>();
     const seenExecs = new Set<number>();
@@ -270,7 +263,6 @@ export const codexAdapter: TranscriptAdapter = {
           // Call identities are single use, including non-creating calls.
           if (seenCalls.has(callId)) {
             creatingCalls.delete(callId);
-            candidateCalls.delete(callId);
             codeCalls.delete(callId);
             invalidatePendingExecs();
             continue;
@@ -283,9 +275,6 @@ export const codexAdapter: TranscriptAdapter = {
           if (invocation?.tool === 'exec_command') {
             codeCalls.set(callId, {
               identityReads: codeModePublication(invocation.args['cmd']),
-              candidate:
-                typeof invocation.args['cmd'] === 'string' &&
-                isDeliverableCommand(invocation.args['cmd']),
             });
           } else if (invocation?.tool === 'write_stdin') {
             const session = invocation.args['session_id'];
@@ -342,11 +331,9 @@ export const codexAdapter: TranscriptAdapter = {
                 'functions.exec',
               ].includes(toolName) &&
               command &&
-              isDeliverableCommand(command)
-            ) {
-              candidateCalls.add(callId);
-              if (isPRPublicationCommand(command)) creatingCalls.add(callId);
-            }
+              isPRPublicationCommand(command)
+            )
+              creatingCalls.add(callId);
           }
         } else if (
           callId &&
@@ -379,12 +366,6 @@ export const codexAdapter: TranscriptAdapter = {
           if (result.exitCode !== undefined) {
             if (owned.sessionId !== undefined)
               pendingExecs.delete(owned.sessionId);
-            if (result.exitCode === 0 && owned.candidate)
-              for (const pr of findQualifiedPRs(result.output))
-                publicationCandidates.set(
-                  `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
-                  pr,
-                );
             if (result.exitCode === 0 && owned.identityReads !== undefined) {
               const pr = codeModePublishedPR(
                 result.output,
@@ -405,25 +386,18 @@ export const codexAdapter: TranscriptAdapter = {
           }
         } else if (
           callId &&
-          candidateCalls.has(callId) &&
+          creatingCalls.has(callId) &&
           (payloadType === 'function_call_output' ||
             payloadType === 'custom_tool_call_output')
         ) {
-          candidateCalls.delete(callId);
-          const literal = creatingCalls.delete(callId);
+          creatingCalls.delete(callId);
           for (const pr of findQualifiedPRs(
             publicationOutput(payload['output']),
-          )) {
-            publicationCandidates.set(
+          ))
+            qualifiedPRs.set(
               `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
               pr,
             );
-            if (literal)
-              qualifiedPRs.set(
-                `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
-                pr,
-              );
-          }
         }
       }
     }
@@ -448,9 +422,6 @@ export const codexAdapter: TranscriptAdapter = {
           prNumbers: Array.from(prNumbers),
           ...(qualifiedPRs.size > 0 && {
             qualifiedPRs: [...qualifiedPRs.values()],
-          }),
-          ...(publicationCandidates.size > 0 && {
-            publicationCandidates: [...publicationCandidates.values()],
           }),
           commitShas: Array.from(commitShas),
         },

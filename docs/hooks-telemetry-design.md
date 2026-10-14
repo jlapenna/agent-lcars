@@ -11,12 +11,12 @@ status" below for what was removed.
 
 ## GitHub actor observation for spend attribution
 
-The CLI hook observes `githubActor` through GitHub's authenticated `/user`
+The Claude CLI hook observes `githubActor` through GitHub's authenticated `/user`
 endpoint using its existing `gh` credential, after event throttling. The read
 has a two-second deadline and a 4 KiB output bound. It is not derived from the
 transcript or git author configuration. Failed identity/branch reads leave
 record-based PR attribution unavailable, without blocking telemetry shipping;
-runner hooks do not perform this read. The spool whitelist preserves the
+runner, Codex and OpenCode hooks do not perform this read. The spool whitelist preserves the
 actor and successful correlated `publicationCandidates` through the session
 writer. Candidates remain unqualified until the Console checks GitHub's stored
 creation/head/author facts. See [cost-ledger.md](cost-ledger.md) for the matching,

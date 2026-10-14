@@ -55,7 +55,13 @@ export const spendPRKey = (repo: { owner: string; name: string }, n: number) =>
 /** Successful correlated URLs are lookup hints only. They never establish creation. */
 export function sessionPRCandidates(doc: SessionDoc): QualifiedSessionPR[] {
   const refs = [...(doc.deliverables.qualifiedPRs ?? [])];
-  if (doc.source === 'cli' && doc.githubActor && doc.branch && doc.repo) {
+  if (
+    doc.source === 'cli' &&
+    doc.agent === 'claude-code' &&
+    doc.githubActor &&
+    doc.branch &&
+    doc.repo
+  ) {
     refs.push(...(doc.deliverables.publicationCandidates ?? []));
   }
   return refs.filter(

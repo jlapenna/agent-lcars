@@ -582,7 +582,10 @@ async function handleRuntimeHook(
       // The reducer is deliberately unable to supply this identity. A missing
       // token, failed API read or unsupported installation token stays unknown.
       const githubActor =
-        !config.runner && payload.cwd && withGit.branch
+        !config.runner &&
+        profile.agent === 'claude-code' &&
+        payload.cwd &&
+        withGit.branch
           ? await deps.resolveGithubActor?.().catch(() => undefined)
           : undefined;
       delete withGit.githubActor;

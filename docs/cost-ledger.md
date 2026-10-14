@@ -41,7 +41,7 @@ from the existing literal `gh pr create` command's correlated result. That
 literal-only rule is unchanged; compound shell text is never parsed to establish
 creation (#2730, rejected parser approach #2732).
 
-For compound commands, the reducers also retain `publicationCandidates`: URLs
+For compound commands, the Claude reducer also retains `publicationCandidates`: URLs
 from a successful, single-use correlated creating-command result. These are
 lookup hints, never qualified publication evidence. Costs qualifies a candidate
 only when the stored GitHub projection agrees with all of:
@@ -65,7 +65,7 @@ failure, unsupported installation-token `/user` access, or failed live branch
 resolution leaves the actor unknown; a new failed observation clears any prior
 stored actor. Lifecycle-only end events preserve the last observed context.
 Runner sessions retain the existing literal-publication path; this additional
-actor observation is CLI-only.
+actor observation is Claude CLI-only.
 
 Arbitrary transcript mentions, unrelated output, failed or replayed results,
 and legacy number-only associations cannot establish this denominator. Their
