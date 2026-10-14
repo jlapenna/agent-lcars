@@ -1,6 +1,7 @@
 import { parseRunGeneration } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
+  deliveryBindingSchema,
   isWorkAnchor,
   type LeasedOutboxEntry,
   MAX_AUTO_RETRIES,
@@ -22,6 +23,11 @@ import {
   outcomeWebhookFor,
   type OutcomeWebhookPayload,
 } from './outcome-webhook';
+import {
+  deliveryCorrectionAuthorized,
+  observeGithubDelivery,
+  readGithubIntakePermission,
+} from './ready-delivery';
 import { dispatchSessionExpiry, isClosedItemState } from './session-expiry';
 
 /**
@@ -197,6 +203,9 @@ export async function drainOutbox(
     try {
       if (entry.kind === 'dispatch-run') {
         await handleDispatchRun(deps, entry, result);
+      } else if (entry.kind === 'monitor-delivery') {
+        await handleMonitorDelivery(deps, entry, result);
+        failedThisDrain.add(entry.entryId);
       } else {
         await handleReportOutcome(deps, entry, result);
       }
@@ -212,6 +221,56 @@ export async function drainOutbox(
   }
 
   return result;
+}
+
+/** A durable lightweight wait, not a failed worker or a second capacity ledger.
+ * Uncertain external evidence keeps this entry retryable without the generic
+ * outcome-delivery retirement budget. Every mutation rechecks Task+Run fencing. */
+async function handleMonitorDelivery(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+  result: DrainOutboxResult,
+): Promise<void> {
+  const run = await deps.store.readRun(entry.runId);
+  const task =
+    run === undefined ? undefined : (await deps.store.readTask(run.task))?.task;
+  if (
+    run === undefined ||
+    task?.closedAt !== undefined ||
+    task?.delivery?.runId !== run.runId ||
+    task.delivery.state !== 'waiting'
+  ) {
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+  try {
+    const observed = await observeGithubDelivery(deps, task.delivery);
+    const permission =
+      observed.kind === 'correction' && !deliveryCorrectionAuthorized(task, run)
+        ? await readGithubIntakePermission(deps, task, run)
+        : undefined;
+    const decision = await deps.orchestrator.observeDelivery(
+      run.runId,
+      observed,
+      (currentTask, currentRun) =>
+        deliveryCorrectionAuthorized(currentTask, currentRun, permission),
+    );
+    if (
+      ('refused' in decision && decision.reason === 'task-closed') ||
+      (!('refused' in decision) && decision.task.delivery?.state !== 'waiting')
+    ) {
+      await settleClaim(deps, entry, 'done');
+      return;
+    }
+  } catch {
+    result.failed.push({
+      entryId: entry.entryId,
+      error: 'Delivery evidence unavailable; ownership retained',
+    });
+  }
+  await settleClaim(deps, entry, 'pending', {
+    nextAttemptAt: new Date(Date.parse(now(deps)) + 5 * 60_000).toISOString(),
+  });
 }
 
 /**
@@ -605,6 +664,25 @@ async function deliverNativeOutcome(
     return;
   }
 
+  const finalDelivery = entry.entryId === `delivery-outcome/${run.runId}`;
+  const completedBinding = finalDelivery
+    ? deliveryBindingSchema.safeParse(run.delivery)
+    : undefined;
+  if (
+    finalDelivery &&
+    (task.closedAt !== undefined ||
+      completedBinding === undefined ||
+      !completedBinding.success ||
+      completedBinding.data.runId !== run.runId ||
+      completedBinding.data.state !== 'complete' ||
+      completedBinding.data.mergeCommit === undefined ||
+      run.state !== 'finished' ||
+      run.result?.ok !== true)
+  ) {
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+
   // A settle that closes the item (done, failed, or canceled -- not a park,
   // and not a lost run that will be retried) is when its telemetry sessions
   // start to expire. Best effort and deliberately not retried through this
@@ -613,7 +691,11 @@ async function deliverNativeOutcome(
   // the item so the workflow can be re-run for it. Idempotent if a webhook
   // retry dispatches it again.
   const itemState = deriveItemState(task, await deps.store.listRuns(run.task));
-  if (isClosedItemState(itemState)) {
+  const boundCompleteExecution =
+    !finalDelivery &&
+    run.delivery?.runId === run.runId &&
+    run.delivery.state === 'complete';
+  if (isClosedItemState(itemState) && !boundCompleteExecution) {
     try {
       await dispatchSessionExpiry(deps, run.task.workId);
     } catch (error) {
@@ -650,15 +732,22 @@ async function deliverNativeOutcome(
   }
 
   const payload: OutcomeWebhookPayload = {
+    ...(finalDelivery
+      ? { eventId: entry.entryId, deliveryStage: 'complete' as const }
+      : {}),
     itemId: run.task.workId,
     runId: run.runId,
     state: run.state,
     ok: run.result?.ok ?? false,
     parked:
       run.state === 'finished' && run.result?.summary === PARK_OUTCOME_SUMMARY,
-    ...(run.result?.message === undefined
-      ? {}
-      : { message: run.result.message }),
+    ...(finalDelivery
+      ? {
+          message: `Delivery complete: protected merge ${run.delivery?.mergeCommit}.${run.delivery?.runtimeEvidence === undefined ? '' : ` Runtime receipt: ${run.delivery.runtimeEvidence.ref}.`}`,
+        }
+      : run.result?.message === undefined
+        ? {}
+        : { message: run.result.message }),
     ...(run.result?.ref === undefined ? {} : { ref: run.result.ref }),
     thread: origin.thread,
     consoleUrl: `${consoleUrl()}/work/${run.task.workId}`,
@@ -961,7 +1050,11 @@ export function outcomeCommentBody(
   switch (run.state) {
     case 'finished': {
       const lines = run.result?.ok
-        ? [`✅ Run ${run.runId} finished.`]
+        ? [
+            run.delivery === undefined
+              ? `✅ Run ${run.runId} finished.`
+              : `⏳ Run ${run.runId} released implementation execution; delivery ownership remains ${run.delivery.state}.`,
+          ]
         : [`❌ Run ${run.runId} failed.`];
       if (run.result?.ok && run.result.ref !== undefined) {
         lines.push(run.result.ref, ...(run.result.relatedRefs ?? []));

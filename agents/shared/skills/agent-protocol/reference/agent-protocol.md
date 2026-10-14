@@ -425,6 +425,33 @@ per run (#1748). Do not manually rebase an armed, green, unparked PR to chase
 a moving `main` — that sweep will pick it up;
 spend your own turn budget on the actual work instead.
 
+### Ready delivery handoff
+
+Only when its trusted brief advertises `deliveryHandoffVersion: 1`, a native
+implementation can end its provider turn after publishing an exact
+attempt-marked, independently reviewed, ready PR with protected squash delivery
+armed. The authenticated finalizer's completion route verifies the exact head,
+independent exact-head GitHub review, resolved review threads and current required-check
+policy before accepting this handoff. It settles execution through normal
+credential cleanup and positive physical retirement. Without that advertised capability, continue the existing delivery path. The
+baked runner propagates only the serving Console’s version into the brief;
+repository content cannot enable it.
+
+The durable Task keeps delivery ownership while its own required CI is queued
+or running. Maintenance monitors that exact PR without a provider process; real
+required-check failures or review feedback request one freshly fenced correction
+on the same currently authorized provider. Corrections retain existing claim,
+credential and physical-retirement admission barriers. A PR, auto-merge arm or
+executor exit never makes this handoff logically done.
+
+Only exact protected merge evidence can advance landing. The immutable intake
+`deliveryRuntime: none|required` declares the runtime policy; an omitted policy
+retains an unknown gate. A worker cannot waive it. Required or unknown runtime
+work stays owned until an authenticated operator records the exact merged-head
+runtime receipt through `/api/work/v1/delivery/{runId}/evidence`. Use the existing
+Work create `--delivery-runtime none` only when the authorized intake explicitly
+establishes that no runtime verification is needed (for example documentation).
+
 ## 7. Budget discipline
 
 State the supplied runtime budget up front and pace your work against it.

@@ -31,6 +31,7 @@ describe('itemsContract', () => {
       'anchorOwner',
       'cancel',
       'create',
+      'deliveryEvidence',
       'get',
       'lifecycleMetrics',
       'list',
@@ -460,6 +461,7 @@ describe('generateWorkOpenApi', () => {
     expect(Object.keys(doc.paths).sort()).toEqual(
       [
         '/anchors/github/owner',
+        '/delivery/{runId}/evidence',
         '/dispatches/github',
         '/dispatches/github/redispatch',
         '/items',
@@ -496,6 +498,9 @@ describe('generateWorkOpenApi', () => {
     ]);
     expect(doc.components.securitySchemes).toHaveProperty('bearerAuth');
     expect(doc.components.securitySchemes).toHaveProperty('runToken');
+    expect(doc.paths['/delivery/{runId}/evidence']?.post).toMatchObject({
+      security: [{ bearerAuth: [] }],
+    });
   });
 
   it('retains every required runId path parameter beside worker headers', async () => {
@@ -510,7 +515,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(10);
+    expect(operations).toHaveLength(11);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -594,6 +599,7 @@ describe('generateWorkOpenApi', () => {
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
       'POST /items/{id}/reply': ['200', '403', '404', '409'],
+      'POST /delivery/{runId}/evidence': ['200', '403', '409'],
       'POST /maintenance/tick': ['200'],
       'GET /metrics/lifecycle': ['200'],
       'GET /anchors/github/owner': ['200', '403'],

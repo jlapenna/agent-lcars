@@ -42,7 +42,7 @@ export interface WorkCommandDeps {
 }
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>]\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--delivery-runtime <none|required>]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
@@ -108,6 +108,7 @@ const SETTLED = new Set(['done', 'parked', 'failed', 'canceled']);
 interface ItemSummary {
   id: string;
   state: string;
+  runs?: { delivery?: { state: string } }[];
   spec: {
     title: string;
     pipeline: string;
@@ -117,7 +118,14 @@ interface ItemSummary {
 }
 
 function line(item: ItemSummary): string {
-  return `${item.id}  ${item.state.padEnd(8)}  ${item.spec.pipeline.padEnd(8)}  ${item.spec.target.repo}  ${item.spec.title}`;
+  const delivery = item.runs?.at(-1)?.delivery;
+  const state =
+    item.state === 'running' &&
+    delivery !== undefined &&
+    delivery.state !== 'complete'
+      ? `delivery:${delivery.state}`
+      : item.state;
+  return `${item.id}  ${state.padEnd(8)}  ${item.spec.pipeline.padEnd(8)}  ${item.spec.target.repo}  ${item.spec.title}`;
 }
 
 function readDescription(rest: string[]): string | undefined {
@@ -191,7 +199,7 @@ function ownerLines(owner: AnchorOwner): string[] {
           ? ''
           : `  result ${run.result.ok ? 'ok' : 'not ok'}${run.result.summary === undefined ? '' : ` (${run.result.summary})`}`;
       lines.push(
-        `  ${live} run ${run.runId}  ${run.state}  ${run.pipeline}${claimed}${result}  updated ${run.updatedAt}`,
+        `  ${live} run ${run.runId}  ${run.state}  ${run.pipeline}${claimed}${result}${run.delivery === undefined ? '' : `  delivery ${run.delivery.state}`}  updated ${run.updatedAt}`,
       );
     }
     for (const session of task.runSessions) {
@@ -334,6 +342,12 @@ export async function executeWorkCommand(
         ) {
           return usageFailure(deps);
         }
+        const deliveryRuntime = flag(rest, '--delivery-runtime');
+        if (
+          rest.includes('--delivery-runtime') &&
+          !['none', 'required'].includes(deliveryRuntime ?? '')
+        )
+          return usageFailure(deps);
         const description = readDescription(rest);
         const fallback = flag(rest, '--fallback-pipelines');
         if (rest.includes('--fallback-pipelines') && fallback === undefined)
@@ -356,6 +370,9 @@ export async function executeWorkCommand(
             pipeline: pipeline as 'claude' | 'codex' | 'opencode',
             priority: (priority ?? 'normal') as QueuePriority,
             ...(fallbackPipelines === undefined ? {} : { fallbackPipelines }),
+            ...(deliveryRuntime === undefined
+              ? {}
+              : { deliveryRuntime: deliveryRuntime as 'none' | 'required' }),
             target: { repo },
           },
         });

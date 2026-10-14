@@ -2,6 +2,7 @@ export * from './capacity';
 export * from './capacity-model';
 export * from './credential-operation';
 export * from './decide';
+export * from './delivery';
 export {
   FirestoreScheduleStore,
   type FirestoreScheduleStoreOptions,

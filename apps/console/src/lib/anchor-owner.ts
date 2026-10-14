@@ -88,7 +88,9 @@ export async function readAnchorOwner(
     sessionReferencesItemNumber(session, item),
   );
   const verdict: AnchorOwner['verdict'] =
-    task?.activeRunId !== undefined
+    task?.activeRunId !== undefined ||
+    (versioned?.task.delivery !== undefined &&
+      versioned.task.delivery.state !== 'complete')
       ? 'fleet-run'
       : matching.some(isActive)
         ? 'interactive-session'

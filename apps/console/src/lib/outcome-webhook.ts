@@ -22,6 +22,10 @@ export interface OutcomeWebhookTarget {
 /** Deliberately small, and nothing the console does not already render
  *  (spec: "no transcript content leaves the bucket"). */
 export interface OutcomeWebhookPayload {
+  /** Present on the distinct logical-delivery event; adapters deduplicate it
+   * independently of the original execution settlement's Run identity. */
+  eventId?: string;
+  deliveryStage?: 'complete';
   itemId: string;
   runId: string;
   state: 'finished' | 'canceled' | 'lost';
@@ -131,6 +135,8 @@ export async function deliverOutcomeWebhook(
   const client = await runtimeAuth().getIdTokenClient(target.audience);
   const headers = await client.getRequestHeaders(target.url);
   headers.set('Content-Type', 'application/json');
+  if (payload.eventId !== undefined)
+    headers.set('Idempotency-Key', payload.eventId);
 
   const response = await fetch(target.url, {
     method: 'POST',

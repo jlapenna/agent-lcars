@@ -17,6 +17,7 @@ import {
   createDispatchTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
   lazyDispatchTokenProvider,
+  ORCHESTRATOR_GITHUB_PERMISSIONS,
 } from '@/lib/github-app-tokens';
 import {
   createOrchestratorRuntime,
@@ -134,7 +135,10 @@ async function handle(request: Request): Promise<Response> {
       // credentials for those requests too -- see
       // `lazyDispatchTokenProvider`'s own comment.
       tokens: lazyDispatchTokenProvider(() =>
-        createDispatchTokenProvider(process.env),
+        createDispatchTokenProvider(
+          process.env,
+          ORCHESTRATOR_GITHUB_PERMISSIONS,
+        ),
       ),
       checkoutTokens: lazyDispatchTokenProvider(() =>
         createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS),

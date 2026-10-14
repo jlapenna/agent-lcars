@@ -12,11 +12,12 @@ import {
   type ItemsContract,
   itemsContract,
   WORK_DESCRIPTION_MAX,
+  workPayloadSchema,
 } from '@agent-lcars/work';
 import { createORPCClient } from '@orpc/client';
 import type { RouterContractClient } from '@orpc/contract';
 import { OpenAPILink } from '@orpc/openapi/fetch';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CliSession } from './cli-sessions';
 import { controlPlaneRepository } from './deployment';
@@ -2278,5 +2279,529 @@ describe('GET /anchors/github/owner', () => {
       complete: false,
       warnings: ['CLI sessions unavailable (agent-telemetry store failed).'],
     });
+  });
+});
+
+describe('runtime evidence authorization after accepted provider handoff', () => {
+  const HEAD = 'a'.repeat(40);
+  const MERGE = 'b'.repeat(40);
+  const CLAIM = 'c'.repeat(64);
+  const NOW = '2026-08-26T10:00:00.000Z';
+  const currentOperator = { ...operator, pipelines: ['codex'] };
+  const evidence = {
+    head: HEAD,
+    mergeCommit: MERGE,
+    ref: 'https://evidence.test/runtime',
+  };
+  afterEach(() => vi.unstubAllEnvs());
+  function currentGrant(pipelines = ['codex'], scopes = ['work.operator']) {
+    vi.stubEnv(
+      'AGENT_LCARS_WORK_GRANTS',
+      JSON.stringify([
+        {
+          principal: operator.principal,
+          subjects: [operator.subject],
+          pipelines,
+          scopes,
+        },
+      ]),
+    );
+  }
+  async function handedOff() {
+    const ctx = context({ principal: currentOperator });
+    const anchor = { repo: spec.target.repo, issue: 42 };
+    const first = decidedRun(
+      await ctx.runtime.orchestrator.request({
+        taskId: anchor,
+        requestId: 'original-claude',
+        pipeline: 'claude',
+        work: workPayloadSchema.parse({
+          origin: { principal: 'github:maintainer', channel: 'github' },
+          spec,
+        }),
+        labelProviderRequest: {
+          requestedAt: NOW,
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
+        params: { mode: 'implement' },
+      }),
+    );
+    await ctx.runtime.store.enqueueRun({ runId: first.runId, now: NOW });
+    await ctx.runtime.orchestrator.confirmDispatch(first.runId);
+    const current = decidedRun(
+      await ctx.runtime.orchestrator.request({
+        taskId: anchor,
+        requestId: 'accepted-codex',
+        pipeline: 'codex',
+        labelProviderRequest: {
+          requestedAt: '2026-08-26T10:00:01.000Z',
+          actor: 'maintainer',
+          allowProviderChange: true,
+        },
+        params: { mode: 'implement' },
+      }),
+    );
+    await ctx.runtime.store.enqueueRun({ runId: current.runId, now: NOW });
+    await ctx.runtime.orchestrator.confirmDispatch(current.runId);
+    await ctx.runtime.store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner',
+      tokenHash: CLAIM,
+    });
+    const binding = {
+      runId: current.runId,
+      repo: spec.target.repo,
+      number: 99,
+      baseRef: 'main',
+      head: HEAD,
+      state: 'waiting' as const,
+      runtimeGate: 'required' as const,
+      observedAt: NOW,
+    };
+    expect(
+      isRefusal(
+        await ctx.runtime.orchestrator.report(
+          current.runId,
+          {
+            ok: true,
+            summary: 'pull-request',
+            ref: `https://github.com/${spec.target.repo}/pull/99`,
+          },
+          CLAIM,
+          undefined,
+          undefined,
+          binding,
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isRefusal(
+        await ctx.runtime.orchestrator.observeDelivery(
+          current.runId,
+          { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+          () => true,
+        ),
+      ),
+    ).toBe(false);
+    const task = (await ctx.runtime.store.readTask(anchor))!.task;
+    expect(workPayloadSchema.parse(task.work).spec.pipeline).toBe('claude');
+    expect(task.providerRouting?.acceptedGeneration?.pipeline).toBe('codex');
+    return { ctx, anchor, runId: current.runId, initial: first.runId, task };
+  }
+  function path(runId: string) {
+    return `/delivery/${encodeURIComponent(runId)}/evidence`;
+  }
+  it('accepts exact runtime receipt with only current Codex access, preserving immutable Claude Work', async () => {
+    currentGrant();
+    const f = await handedOff();
+    const drain = vi.fn(f.ctx.runtime.drain);
+    f.ctx.runtime.drain = drain;
+    expect(await call(f.ctx, 'POST', path(f.runId), evidence)).toMatchObject({
+      status: 200,
+      json: { runId: f.runId, state: 'complete' },
+    });
+    expect(drain).toHaveBeenCalledOnce();
+    const task = (await f.ctx.runtime.store.readTask(f.anchor))!.task;
+    expect(task.work).toEqual(f.task.work);
+    expect(task.delivery).toMatchObject({
+      state: 'complete',
+      runtimeEvidence: { principal: operator.principal },
+    });
+  });
+  it('drains the native final event and session expiry before returning accepted runtime evidence', async () => {
+    currentGrant();
+    vi.stubEnv(
+      'AGENT_LCARS_OUTCOME_WEBHOOKS',
+      JSON.stringify({
+        slack: { url: 'https://bot.example/outcome', audience: 'bot' },
+      }),
+    );
+    const ctx = context({ principal: currentOperator });
+    const run = decidedRun(
+      await ctx.runtime.orchestrator.request({
+        taskId: { workId: ID },
+        requestId: 'native-runtime',
+        pipeline: 'codex',
+        work: workPayloadSchema.parse({
+          origin: {
+            principal: operator.principal,
+            channel: 'slack',
+            thread: 'runtime-proof',
+          },
+          spec: { ...spec, pipeline: 'codex' },
+        }),
+        params: { mode: 'implement' },
+      }),
+    );
+    await ctx.runtime.store.enqueueRun({ runId: run.runId, now: NOW });
+    await ctx.runtime.orchestrator.confirmDispatch(run.runId);
+    await ctx.runtime.store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner',
+      tokenHash: CLAIM,
+    });
+    const original = {
+      ok: true,
+      summary: 'pull-request',
+      ref: `https://github.com/${spec.target.repo}/pull/99`,
+    };
+    expect(
+      isRefusal(
+        await ctx.runtime.orchestrator.report(
+          run.runId,
+          original,
+          CLAIM,
+          undefined,
+          undefined,
+          {
+            runId: run.runId,
+            repo: spec.target.repo,
+            number: 99,
+            baseRef: 'main',
+            head: HEAD,
+            state: 'waiting',
+            runtimeGate: 'required',
+            observedAt: NOW,
+          },
+        ),
+      ),
+    ).toBe(false);
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(null, { status: 204 }),
+    );
+    const deliver = vi.fn(
+      async (_target: unknown, _payload: unknown) => undefined,
+    );
+    const drain = vi.fn(() =>
+      drainOutbox({
+        store: ctx.runtime.store,
+        orchestrator: ctx.runtime.orchestrator,
+        tokens: { tokenFor: async () => 'test-token' },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        deliverOutcomeWebhook: deliver,
+        now: () => NOW,
+      }),
+    );
+    ctx.runtime.drain = drain;
+    await drain();
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(deliver.mock.calls[0]?.[1]).not.toHaveProperty('eventId');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    drain.mockClear();
+    expect(
+      isRefusal(
+        await ctx.runtime.orchestrator.observeDelivery(
+          run.runId,
+          { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+          () => true,
+        ),
+      ),
+    ).toBe(false);
+    const response = await call(ctx, 'POST', path(run.runId), evidence);
+    expect(response).toMatchObject({
+      status: 200,
+      json: { runId: run.runId, state: 'complete' },
+    });
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(deliver.mock.calls[1]?.[1]).toMatchObject({
+      eventId: `delivery-outcome/${run.runId}`,
+      deliveryStage: 'complete',
+      runId: run.runId,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain(
+      '/work-session-expiry.yml/dispatches',
+    );
+    expect(drain).toHaveBeenCalledOnce();
+    expect((await ctx.runtime.store.readRun(run.runId))?.result).toEqual(
+      original,
+    );
+    expect((await call(ctx, 'POST', path(run.runId), evidence)).status).toBe(
+      409,
+    );
+    expect(drain).toHaveBeenCalledOnce();
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    'wrong-provider',
+    'revoked',
+    'grant-provider-removed',
+    'source-repository',
+    'stale-run',
+    'stale-head',
+    'wrong-merge',
+  ] as const)(
+    'refuses %s and retains the exact runtime gate',
+    async (cause) => {
+      currentGrant();
+      const f = await handedOff();
+      const drain = vi.fn(f.ctx.runtime.drain);
+      f.ctx.runtime.drain = drain;
+      const ctx =
+        cause === 'wrong-provider'
+          ? { ...f.ctx, principal: operator }
+          : cause === 'source-repository'
+            ? {
+                ...f.ctx,
+                principal: {
+                  ...currentOperator,
+                  sourceRepository: 'octo/foreign',
+                },
+              }
+            : f.ctx;
+      if (cause === 'revoked') currentGrant(['codex'], ['work.reader']);
+      if (cause === 'grant-provider-removed') currentGrant(['claude']);
+      const receipt =
+        cause === 'stale-head'
+          ? { ...evidence, head: 'd'.repeat(40) }
+          : cause === 'wrong-merge'
+            ? { ...evidence, mergeCommit: 'e'.repeat(40) }
+            : evidence;
+      const response = await call(
+        ctx,
+        'POST',
+        path(cause === 'stale-run' ? f.initial : f.runId),
+        receipt,
+      );
+      expect(response.status).toBe(
+        cause === 'wrong-provider' ||
+          cause === 'source-repository' ||
+          cause === 'stale-run'
+          ? 403
+          : 409,
+      );
+      expect(drain).not.toHaveBeenCalled();
+      expect(
+        (await f.ctx.runtime.store.readTask(f.anchor))!.task.delivery,
+      ).toEqual(f.task.delivery);
+      expect((await f.ctx.runtime.store.readTask(f.anchor))!.task.work).toEqual(
+        f.task.work,
+      );
+    },
+  );
+});
+
+describe('exhausted delivery correction recovery', () => {
+  async function lostCorrection(consecutiveLost = 3) {
+    const ctx = context();
+    expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    const anchor = { workId: ID };
+    const original = (await ctx.runtime.store.readRun(`work:${ID}/r1`))!;
+    const delivery = {
+      runId: original.runId,
+      repo: spec.target.repo,
+      number: 12,
+      baseRef: 'main',
+      head: 'a'.repeat(40),
+      state: 'waiting' as const,
+      runtimeGate: 'none' as const,
+      observedAt: original.createdAt,
+      correctionRunId: `work:${ID}/r2`,
+    };
+    const result = {
+      ok: true,
+      summary: 'pull-request',
+      ref: `https://github.com/${spec.target.repo}/pull/12`,
+    };
+    const snapshot = (await ctx.runtime.store.readTask(anchor))!;
+    const { activeRunId: _activeRunId, ...withoutActiveRun } = snapshot.task;
+    await ctx.runtime.store.apply({
+      expectedRevision: snapshot.revision,
+      decision: {
+        task: { ...withoutActiveRun, runCount: 2, consecutiveLost, delivery },
+        run: { ...original, state: 'finished', result, delivery },
+        additionalRuns: [
+          {
+            ...original,
+            runId: delivery.correctionRunId,
+            requestId: 'delivery-correction',
+            requestSource: 'delivery-correction',
+            state: 'lost',
+            createdAt: original.createdAt,
+            params: { mode: 'implement', deliveryPredecessor: original.runId },
+          },
+        ],
+        outbox: [],
+      },
+    });
+    return { ctx, anchor, original, delivery, result };
+  }
+  it('reports exhausted loss as failed and permits authenticated reply recovery without dropping delivery ownership', async () => {
+    const f = await lostCorrection();
+    expect(await call(f.ctx, 'GET', `/items/${ID}`)).toMatchObject({
+      status: 200,
+      json: { state: 'failed' },
+    });
+    expect(
+      await call(f.ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'Recover the lost correction.',
+        requestId: 'lost-correction-recovery',
+      }),
+    ).toMatchObject({ status: 200, json: { admittedRunId: `work:${ID}/r3` } });
+    const task = (await f.ctx.runtime.store.readTask(f.anchor))!.task;
+    expect(task.delivery).toEqual(f.delivery);
+    expect(task.activeRunId).toBe(`work:${ID}/r3`);
+    expect(
+      (await f.ctx.runtime.store.readRun(f.original.runId))!.result,
+    ).toEqual(f.result);
+    expect(await call(f.ctx, 'GET', `/items/${ID}`)).toMatchObject({
+      status: 200,
+      json: { state: 'running' },
+    });
+  });
+  it('retains the ordinary same-Task redispatch barrier and refuses recovery after the pipeline grant is revoked', async () => {
+    const f = await lostCorrection();
+    expect((await call(f.ctx, 'POST', `/items/${ID}/redispatch`)).status).toBe(
+      409,
+    );
+    const revoked = { ...f.ctx, principal: { ...operator, pipelines: [] } };
+    expect(
+      (
+        await call(revoked, 'POST', `/items/${ID}/reply`, {
+          text: 'Recover.',
+          requestId: 'revoked-recovery',
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await f.ctx.runtime.store.readTask(f.anchor))!.task.delivery,
+    ).toEqual(f.delivery);
+    expect(await f.ctx.runtime.store.readRun(`work:${ID}/r3`)).toBeUndefined();
+  });
+  it('retains running while the automatic lost retry budget remains', async () => {
+    const f = await lostCorrection(1);
+    expect(await call(f.ctx, 'GET', `/items/${ID}`)).toMatchObject({
+      status: 200,
+      json: { state: 'running' },
+    });
+    expect(
+      (
+        await call(f.ctx, 'POST', `/items/${ID}/reply`, {
+          text: 'Race the pending automatic retry.',
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (await f.ctx.runtime.store.readTask(f.anchor))!.task.delivery,
+    ).toEqual(f.delivery);
+    expect(await f.ctx.runtime.store.readRun(`work:${ID}/r3`)).toBeUndefined();
+  });
+});
+
+describe('native cancel retires incomplete delivery recovery', () => {
+  async function recovery(kind: 'correction' | 'reply') {
+    const ctx = context();
+    expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    const anchor = { workId: ID };
+    const original = (await ctx.runtime.store.readRun(`work:${ID}/r1`))!;
+    const dispatch = await ctx.runtime.orchestrator.confirmDispatch(
+      original.runId,
+    );
+    if (isRefusal(dispatch)) throw Error(dispatch.reason);
+    const result = {
+      ok: true,
+      summary: 'pull-request',
+      ref: `https://github.com/${spec.target.repo}/pull/12`,
+    };
+    const binding = {
+      runId: original.runId,
+      repo: spec.target.repo,
+      number: 12,
+      baseRef: 'main',
+      head: 'a'.repeat(40),
+      state: 'waiting' as const,
+      runtimeGate: 'none' as const,
+      observedAt: original.createdAt,
+    };
+    const report = await ctx.runtime.orchestrator.report(
+      original.runId,
+      result,
+      undefined,
+      undefined,
+      undefined,
+      binding,
+    );
+    if (isRefusal(report)) throw Error(report.reason);
+    const correction = await ctx.runtime.orchestrator.observeDelivery(
+      original.runId,
+      { kind: 'correction', head: binding.head, reason: 'review change' },
+      () => true,
+    );
+    if (isRefusal(correction)) throw Error(correction.reason);
+    let runId = correction.additionalRuns![0]!.runId;
+    if (kind === 'reply') {
+      const parked = await ctx.runtime.orchestrator.report(runId, {
+        ok: true,
+        summary: 'park',
+      });
+      if (isRefusal(parked)) throw Error(parked.reason);
+      const reply = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'Recover.',
+        requestId: 'cancel-recovery-reply',
+      });
+      if (reply.status !== 200) throw Error(`Reply refused: ${reply.status}`);
+      runId = reply.json.admittedRunId;
+    }
+    return { ctx, anchor, original, result, runId };
+  }
+  it.each(['correction', 'reply'] as const)(
+    'API native cancel retires active %s delivery ownership',
+    async (kind) => {
+      const f = await recovery(kind);
+      const before = (await f.ctx.runtime.store.readTask(f.anchor))!.task
+        .delivery;
+      expect(await call(f.ctx, 'POST', `/items/${ID}/cancel`)).toMatchObject({
+        status: 200,
+        json: { state: 'canceled' },
+      });
+      const after = (await f.ctx.runtime.store.readTask(f.anchor))!.task;
+      expect(after.closedAt).toBe(f.original.createdAt);
+      expect(after.activeRunId).toBeUndefined();
+      expect(after.delivery).toEqual(before);
+      expect((await f.ctx.runtime.store.readRun(f.runId))!.state).toBe(
+        'canceled',
+      );
+      expect(
+        await f.ctx.runtime.orchestrator.observeDelivery(
+          f.original.runId,
+          {
+            kind: 'protected-merge',
+            head: before!.head,
+            mergeCommit: 'b'.repeat(40),
+          },
+          () => true,
+        ),
+      ).toMatchObject({ refused: true, reason: 'task-closed' });
+      expect(
+        (await f.ctx.runtime.store.readRun(f.original.runId))!.result,
+      ).toEqual(f.result);
+      expect((await call(f.ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(
+        409,
+      );
+    },
+  );
+  it('refuses native cancellation without current operator scope and retains recovery', async () => {
+    const f = await recovery('correction');
+    expect(
+      (
+        await call(
+          { ...f.ctx, principal: readerOnly },
+          'POST',
+          `/items/${ID}/cancel`,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (await f.ctx.runtime.store.readTask(f.anchor))!.task.activeRunId,
+    ).toBe(f.runId);
+    expect(
+      (await f.ctx.runtime.store.readTask(f.anchor))!.task.closedAt,
+    ).toBeUndefined();
   });
 });

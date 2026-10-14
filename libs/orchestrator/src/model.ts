@@ -180,7 +180,8 @@ export const RUN_ID_MAX_LENGTH =
 
 /** Orchestrator-generated dependent IDs must admit the longest run ID too. */
 const DEPENDENT_REQUEST_ID_MAX_LENGTH = 'fallback:'.length + RUN_ID_MAX_LENGTH;
-const OUTBOX_ENTRY_ID_MAX_LENGTH = 'dispatch/'.length + RUN_ID_MAX_LENGTH;
+const OUTBOX_ENTRY_ID_MAX_LENGTH =
+  'delivery-outcome/'.length + RUN_ID_MAX_LENGTH;
 
 /**
  * A run's lifecycle. `lost` is the orchestrator's own verdict, reached when
@@ -207,6 +208,7 @@ export const requestSourceSchema = z.enum([
   'caller',
   'auto-retry',
   'provider-fallback',
+  'delivery-correction',
 ]);
 export type RequestSource = z.infer<typeof requestSourceSchema>;
 
@@ -396,6 +398,33 @@ export interface ProviderFallbackRequest {
   readonly sourceRepository?: string;
 }
 
+/** Logical delivery ownership survives normal execution settlement. Only trusted
+ * exact-head GitHub reads may advance this binding; it is not capacity state. */
+export const deliveryBindingSchema = z.strictObject({
+  runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
+  repo: githubAnchorSchema.shape.repo,
+  number: githubAnchorSchema.shape.issue,
+  baseRef: z.string().min(1).max(255),
+  head: z.string().regex(/^[a-f0-9]{40}$/u),
+  state: z.enum(['waiting', 'runtime-required', 'complete']),
+  /** Absence of a trusted intake policy retains the runtime gate. */
+  correctionRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
+  runtimeGate: z.enum(['none', 'required', 'unknown']),
+  observedAt: isoUtc,
+  mergeCommit: z
+    .string()
+    .regex(/^[a-f0-9]{40}$/u)
+    .optional(),
+  runtimeEvidence: z
+    .strictObject({
+      principal: z.string().min(1).max(128),
+      ref: z.string().url().max(2048),
+      observedAt: isoUtc,
+    })
+    .optional(),
+});
+export type DeliveryBinding = z.infer<typeof deliveryBindingSchema>;
+
 export const runSchema = z.strictObject({
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   task: taskIdSchema,
@@ -420,6 +449,7 @@ export const runSchema = z.strictObject({
   providerFallback: providerFallbackSchema.optional(),
   /** Queue claim state -- see `runQueueSchema`. */
   queue: runQueueSchema.optional(),
+  delivery: deliveryBindingSchema.optional(),
   credentialOperation: credentialOperationSchema.optional(),
   /** Successful restore receipt; authority remains the current queue hash. */
   credentialRestoredClaimFingerprint: credentialFingerprintSchema.optional(),
@@ -472,6 +502,7 @@ export type WorkPayload = z.infer<typeof workPayloadSchema>;
 
 export const taskSchema = z.strictObject({
   task: taskIdSchema,
+  delivery: deliveryBindingSchema.optional(),
   /** The mutex. Set iff a run is live. */
   activeRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
   /** Monotonic count of runs ever started, for run-id minting. */
@@ -515,7 +546,7 @@ export type TaskDocument = z.infer<typeof taskDocumentSchema>;
  */
 const outboxEntryBaseSchema = z.strictObject({
   entryId: z.string().min(1).max(OUTBOX_ENTRY_ID_MAX_LENGTH),
-  kind: z.enum(['dispatch-run', 'report-outcome']),
+  kind: z.enum(['dispatch-run', 'report-outcome', 'monitor-delivery']),
   task: taskIdSchema,
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   /** Incremented by every `claimPendingOutbox` claim, including expired-

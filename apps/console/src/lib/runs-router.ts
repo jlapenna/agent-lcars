@@ -11,6 +11,7 @@ import {
   assertCapacityWorkerPermit,
   CapacityProtocol,
   type CapacityWorkerPermit,
+  type DeliveryBinding,
   isLive,
   isRefusal,
   isWorkAnchor,
@@ -47,6 +48,7 @@ import type {
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
+import { readyDeliveryBinding } from './ready-delivery';
 import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import { getWatchedRepos } from './watched-repos-config';
@@ -82,6 +84,7 @@ export interface RunsContext {
    *  file already constructs for `work-router.ts` (see
    *  `app/api/work/v1/[[...rest]]/route.ts`). */
   drain: () => Promise<DrainOutboxResult>;
+  loadReadyDeliveryBinding?: typeof readyDeliveryBinding;
   /** Exact lifecycle read before exposing a claimed GitHub implementation
    * run to a worker. Undefined is allowed for isolated callers/tests. */
   loadGithubAnchorLifecycle?: (
@@ -651,6 +654,7 @@ export const runsRouter = os.router({
       });
     }
     const shared = {
+      deliveryHandoffVersion: 1 as const,
       pipeline: run.pipeline,
       ...params,
       attemptId: formatAttemptId({ generation, intentId: run.runId }),
@@ -897,10 +901,7 @@ export const runsRouter = os.router({
     const run = await requireRunToken(context, input.runId);
     // Same task fetch checkoutToken already needs below: a native run's
     // anchorTarget cannot resolve spec.target.repo from the run alone.
-    const task =
-      'workId' in run.task
-        ? (await context.store.readTask(run.task))?.task
-        : undefined;
+    const task = (await context.store.readTask(run.task))?.task;
     const target = anchorTarget(run, task);
     // The shared outcome mapper validates exact references against this
     // stored run's anchor and mode, not caller-supplied identity metadata.
@@ -911,6 +912,52 @@ export const runsRouter = os.router({
       input.message,
       { issue: target.issue, mode: run.params?.mode },
     );
+    if (
+      (run.params?.deliveryPredecessor !== undefined ||
+        (task?.delivery !== undefined &&
+          task.delivery.state !== 'complete' &&
+          task.delivery.runId !== run.runId)) &&
+      result.ok &&
+      result.summary !== 'park' &&
+      (!['pull-request', 'merged-deliverable'].includes(result.summary ?? '') ||
+        !/\/pull\/\d+$/u.test(result.ref ?? ''))
+    )
+      throw new ORPCError('CONFLICT', {
+        message:
+          'A delivery correction must publish its freshly marked PR or explicitly park',
+      });
+    let delivery: DeliveryBinding | undefined;
+    if (
+      result.ok &&
+      result.ref?.match(/\/pull\/\d+$/u) &&
+      result.summary !== 'park' &&
+      run.params?.mode !== 'review'
+    ) {
+      const reference = result.ref?.match(/\/pull\/(\d+)$/u);
+      if (task === undefined || reference === undefined || reference === null)
+        throw new ORPCError('CONFLICT', {
+          message: 'Ready delivery evidence missing',
+        });
+      try {
+        delivery = await (
+          context.loadReadyDeliveryBinding ?? readyDeliveryBinding
+        )(
+          { tokens: context.tokens },
+          {
+            run,
+            task,
+            repo: target.repo,
+            number: Number(reference[1]),
+            now: context.now().toISOString(),
+          },
+        );
+      } catch {
+        throw new ORPCError('CONFLICT', {
+          message:
+            'Ready delivery handoff refused; exact review and protected delivery evidence required',
+        });
+      }
+    }
     const settled = await capacityCall(() =>
       context.orchestrator.report(
         run.runId,
@@ -918,6 +965,7 @@ export const runsRouter = os.router({
         run.queue?.tokenHash ?? '',
         undefined,
         context.workerPermit,
+        delivery,
       ),
     );
     if (

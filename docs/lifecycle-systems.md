@@ -298,3 +298,53 @@ Resources, bounded Pending admission, exact retirement authority and receipt
 fences remain unchanged. Live qualification requires compatible Console and
 controller delivery and a real admitted work item; source tests alone do not
 prove deployed behavior.
+
+## Ready deliverable ownership
+
+The authenticated brief advertises deliveryHandoffVersion:1; the baked runner
+propagates it into provider context. Workers without that capability retain
+the existing delivery path. Already merged legacy PR completions require the
+same exact protected-merge readback, while unmerged ready handoff uses the
+new contract. An authenticated native implementation completion with a PR artifact must
+establish exact attempt-marker identity, ready state, independent current-head
+review, resolved threads, applicable required checks and protected squash
+arming. Normal Run settlement, credential cleanup and positive physical
+retirement release implementation resources. Task.delivery retains logical
+ownership; Run.delivery exposes waiting, runtime-required or complete separately
+from physical Run execution. The durable monitor-delivery outbox is consumed by
+the existing maintenance/drain clock, not another worker or capacity ledger.
+
+Current exact-head GitHub reads advance the binding under the existing Task+Run
+transaction. Revision changes rebind both records conditionally; stale polls
+cannot overwrite a newer revision or generation. A genuine required-check
+failure or unresolved review requests one deterministic same-provider successor
+only while the original intake principal still holds the applicable operator,
+repository and provider authority. Accepted label intent, rather than the immutable
+initial provider or incidental execution, determines correction authority.
+Temporary provider fallback still requires its existing current source grant
+and repository policy. Credential debt and physically retained
+claims remain owned by the existing queue/capacity barriers.
+
+Protected landing requires a passing rules suite at the actual merge commit,
+including passing required-check evaluations; a merged flag or an arm alone is
+insufficient. Trusted immutable Work intake may name deliveryRuntime:none or
+required (CLI create --delivery-runtime). Missing policy remains unknown.
+Required/unknown runtime work stays running after landing until the operator-only
+POST /api/work/v1/delivery/{runId}/evidence records the exact head, merge commit
+and runtime receipt. This route is a source capability, not authorization to
+perform a live mutation or deploy. Existing work is not silently assigned a
+no-runtime policy.
+
+Native logical completion emits a distinct `delivery-outcome/<runId>` event
+through the existing outcome outbox and session-expiry owner. The original
+execution result and settled report event remain unchanged. Native webhooks
+receive this event ID as their idempotency key, so delivery retries cannot
+replay the earlier execution outcome.
+
+Delivery polling requests the declared App's administration/checks read grants
+through its dedicated token purpose. Required GitHub Actions failures must
+belong to the current workflow run and attempt's exact check IDs; canceled
+draft CI and superseded attempts cannot authorize a successor. Private legacy
+commit-status contexts remain unknown without an undeclared grant. Independent
+current review feedback remains actionable. An unmerged draft, closed, or
+unarmed PR retains delivery ownership and does not request correction.

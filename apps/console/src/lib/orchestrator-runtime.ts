@@ -16,6 +16,7 @@ import { loadGithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   createDispatchTokenProvider,
   type DispatchTokenProvider,
+  ORCHESTRATOR_GITHUB_PERMISSIONS,
 } from '@/lib/github-app-tokens';
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
@@ -78,7 +79,12 @@ export function orchestratorGithubRuntimeDeps(
         tokens: { tokenFor: async () => 'e2e-fixture-token' },
         githubApiBaseUrl: fixtureBaseUrl,
       }
-    : { tokens: createDispatchTokenProvider(env) };
+    : {
+        tokens: createDispatchTokenProvider(
+          env,
+          ORCHESTRATOR_GITHUB_PERMISSIONS,
+        ),
+      };
 }
 
 export function createOrchestratorRuntime(): OrchestratorRouteDeps {
