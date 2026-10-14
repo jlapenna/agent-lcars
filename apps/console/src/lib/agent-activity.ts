@@ -13,6 +13,11 @@ import {
 import { repoItemKey, type WatchedRepo } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import {
+  RUN_HISTORY_MINUTES,
+  type RunTimeline,
+  runTimeline,
+} from './run-history';
+import {
   fleetCapacity,
   RUNNER_STATUS_STALENESS_MS,
 } from './runner-status-contract';
@@ -37,6 +42,10 @@ export const RECENT_RUN_LIMIT = 8;
 /** Small bounded overfetch allows the global feed to contain live runs while
  * the console still renders up to RECENT_RUN_LIMIT terminal outcomes. */
 const RECENT_RUN_FETCH_LIMIT = RECENT_RUN_LIMIT * 3;
+/** One updatedAt-ordered read serves both: its first RECENT_RUN_FETCH_LIMIT
+ * runs are the outcome feed, and all of it reaches back RUN_HISTORY_MINUTES
+ * for the readouts' sparklines unless the fleet ran more than this since. */
+const RUN_HISTORY_FETCH_LIMIT = 100;
 
 export type AgentRunStatus = 'queued' | 'running' | 'completed';
 export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
@@ -109,6 +118,11 @@ export interface AgentActivity {
   /** Lifecycle counts from authoritative Run records, never scale-set
    * telemetry. `claimed` remains pending until its executor starts it. */
   queue?: QueueRunSummary;
+  /** Every run live at any point in the last RUN_HISTORY_MINUTES, for the
+   * Queue depth and Agents running sparklines. Absent when a read failed,
+   * a run's repository is unknown, or the bounded read did not reach back
+   * that far: a partial history would draw a quieter past than the real one. */
+  runHistory?: RunTimeline[];
   /** Human-readable notes when a section above degraded instead of crashing. */
   warnings: string[];
 }
@@ -397,13 +411,44 @@ export function agentRunFromOrchestrator(
   };
 }
 
+/** Each history run's timeline under the same repository its projection
+ * reports; one unknown repository withholds the whole history. */
+function historyTimelines(
+  runs: readonly OrchestratorRun[],
+  taskByKey: ReadonlyMap<string, Task>,
+): RunTimeline[] | undefined {
+  const timelines: RunTimeline[] = [];
+  const seen = new Set<string>();
+  for (const run of runs) {
+    if (seen.has(run.runId)) continue;
+    seen.add(run.runId);
+    let repo: WatchedRepo | undefined;
+    if (isWorkAnchor(run.task)) {
+      const spec = workSpecSchema.safeParse(
+        (
+          taskByKey.get(taskKey(run.task))?.work as
+            Record<string, unknown> | undefined
+        )?.['spec'],
+      );
+      repo = spec.success
+        ? repositoryFromTarget(spec.data.target.repo)
+        : undefined;
+    } else {
+      repo = repositoryFromTarget(run.task.repo);
+    }
+    if (!repo) return undefined;
+    timelines.push(runTimeline(run, repo));
+  }
+  return timelines;
+}
+
 export async function getAgentActivity(): Promise<AgentActivity> {
   const { store } = createOrchestratorRuntime();
 
   const warnings: string[] = [];
   const [liveRead, recentRead, autoscalerRead] = await Promise.allSettled([
     store.listLiveRuns(),
-    store.listRecentRuns(RECENT_RUN_FETCH_LIMIT),
+    store.listRecentRuns(RUN_HISTORY_FETCH_LIMIT),
     getAutoscalerStatuses(),
   ]);
   const autoscaler =
@@ -439,11 +484,37 @@ export async function getAgentActivity(): Promise<AgentActivity> {
 
   const authoritativeLiveRuns =
     liveRead.status === 'fulfilled' ? liveRead.value : [];
-  const terminalRecentRuns = (
-    recentRead.status === 'fulfilled' ? recentRead.value : []
-  ).filter((run) => run.state !== 'pending' && run.state !== 'running');
+  const recentWindow =
+    recentRead.status === 'fulfilled' ? recentRead.value : [];
+  const terminalRecentRuns = recentWindow
+    .slice(0, RECENT_RUN_FETCH_LIMIT)
+    .filter((run) => run.state !== 'pending' && run.state !== 'running');
+  const historyStart = Date.now() - RUN_HISTORY_MINUTES * 60_000;
+  const oldestRecent = recentWindow.at(-1);
+  const historyReached =
+    liveRead.status === 'fulfilled' &&
+    recentRead.status === 'fulfilled' &&
+    (recentWindow.length < RUN_HISTORY_FETCH_LIMIT ||
+      (oldestRecent !== undefined &&
+        Date.parse(oldestRecent.updatedAt) < historyStart));
+  // A run that ended inside the window was last written inside it.
+  const historyRuns = historyReached
+    ? [
+        ...authoritativeLiveRuns,
+        ...recentWindow.filter(
+          (run) =>
+            run.state !== 'pending' &&
+            run.state !== 'running' &&
+            Date.parse(run.updatedAt) >= historyStart,
+        ),
+      ]
+    : [];
   const runsByTask = new Map<string, OrchestratorRun[]>();
-  for (const run of [...authoritativeLiveRuns, ...terminalRecentRuns]) {
+  for (const run of [
+    ...authoritativeLiveRuns,
+    ...terminalRecentRuns,
+    ...historyRuns.filter((run) => isWorkAnchor(run.task)),
+  ]) {
     const key = taskKey(run.task);
     const runs = runsByTask.get(key);
     if (runs) runs.push(run);
@@ -474,6 +545,9 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     runs
       .map((run) => project(run, taskByKey.get(taskKey(run.task))))
       .filter((run): run is AgentRun => run !== undefined);
+  const runHistory = historyReached
+    ? historyTimelines(historyRuns, taskByKey)
+    : undefined;
   const liveRuns = projectRuns(authoritativeLiveRuns);
   const recentRuns = projectRuns(terminalRecentRuns).slice(0, RECENT_RUN_LIMIT);
   if (invalidMetadata.value) {
@@ -492,6 +566,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     ...(liveRead.status === 'fulfilled'
       ? { queue: queueFromLiveRuns(authoritativeLiveRuns) }
       : {}),
+    ...(runHistory === undefined ? {} : { runHistory }),
     warnings: Array.from(new Set(warnings)),
   };
 }

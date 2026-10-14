@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { type BridgeReadoutInput, bridgeReadouts } from './bridge-readouts';
+import type { RunTimeline } from '../lib/run-history';
+import {
+  type BridgeReadoutInput,
+  bridgeReadouts,
+  fleetReadoutInput,
+} from './bridge-readouts';
 
 const healthy: BridgeReadoutInput = {
   fleet: { online: 11, busy: 7, capacity: 12 },
@@ -56,5 +61,57 @@ describe('bridgeReadouts', () => {
     for (const id of ['online', 'busy', 'queue', 'running', 'spend']) {
       expect(r[id]?.value).toBe('—');
     }
+  });
+
+  it('draws queue and running sparklines from the history, others unavailable', () => {
+    const r = byId({
+      ...healthy,
+      history: { queued: [0, 2, 3], running: [1, 3, 3] },
+    });
+    expect(r['queue']?.spark).toEqual({
+      label: 'Queue depth, last 30 minutes',
+      values: [0, 2, 3],
+    });
+    expect(r['running']?.spark?.values).toEqual([1, 3, 3]);
+    for (const id of ['online', 'busy', 'spend']) {
+      expect(r[id]?.spark?.values).toBeUndefined();
+    }
+    expect(byId(healthy)['queue']?.spark?.values).toBeUndefined();
+  });
+});
+
+describe('fleetReadoutInput', () => {
+  const now = Date.parse('2026-10-14T12:00:00Z');
+  const timeline = (owner: string): RunTimeline => ({
+    repo: { owner, name: 'repo' },
+    createdAt: new Date(now - 5 * 60_000).toISOString(),
+    transitions: [],
+    state: 'pending',
+    updatedAt: new Date(now - 5 * 60_000).toISOString(),
+  });
+
+  it('narrows the run history to the page scope', () => {
+    const input = fleetReadoutInput({
+      activity: {
+        queue: { queued: 2, claimed: 0, running: 0 },
+        runHistory: [timeline('a'), timeline('b')],
+      },
+      liveRuns: [],
+      repo: 'a/repo',
+      autoscaler: {},
+      now,
+    });
+    expect(input.history?.queued.at(-1)).toBe(1);
+    expect(input.history?.queued[0]).toBe(0);
+  });
+
+  it('has no history when the live read failed', () => {
+    const input = fleetReadoutInput({
+      activity: { runHistory: [timeline('a')] },
+      liveRuns: [],
+      autoscaler: {},
+      now,
+    });
+    expect(input.history).toBeUndefined();
   });
 });

@@ -308,6 +308,7 @@ async function IndexBody({
     fleetReadoutInput({
       activity,
       liveRuns: filteredActivity.liveRuns,
+      repo: repoFilterKey,
       autoscaler,
       spendArchive,
     }),

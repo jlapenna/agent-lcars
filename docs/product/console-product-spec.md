@@ -251,6 +251,13 @@ the work that has stopped, and the work in flight.
   kept out of the decision queue.
 - **FE-BR-5 [Shipped]** Selecting a row opens `BridgeDetail` in the right pane
   on desktop, and navigates to it on mobile.
+- **FE-BR-6 [Partial]** The readout row (runners online, busy, queue depth,
+  agents running, spend today) carries the mockup's sparklines. Queue depth
+  and agents running are sampled once a minute for 30 minutes from the run
+  records' state transitions, in the page's repository scope. A bounded read
+  that does not reach back 30 minutes, or a run whose repository is unknown,
+  shows the unavailable mark instead of a partial past. Runners online, busy
+  and spend per hour have no history source yet and show the same mark.
 
 ### 6.2 Decision Inbox (`/inbox`)
 

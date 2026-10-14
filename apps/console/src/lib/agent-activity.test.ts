@@ -1,5 +1,5 @@
 import type { Run, Task } from '@agent-lcars/orchestrator';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   agentRunFromOrchestrator,
@@ -170,7 +170,7 @@ describe('getAgentActivity', () => {
     });
     expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 1 });
     expect(store.listLiveRuns).toHaveBeenCalledTimes(1);
-    expect(store.listRecentRuns).toHaveBeenCalledWith(24);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(100);
     expect(store.readTask).toHaveBeenCalledTimes(2);
   });
 
@@ -206,7 +206,7 @@ describe('getAgentActivity', () => {
     expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
       finished.runId,
     ]);
-    expect(store.listRecentRuns).toHaveBeenCalledWith(24);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(100);
     expect(store.readTask).toHaveBeenCalledTimes(1);
     expect(store).not.toHaveProperty('listTasks');
     expect(store).not.toHaveProperty('listRuns');
@@ -350,5 +350,92 @@ describe('duplicateLiveGroups', () => {
       pipeline: (item) => item.kind,
     });
     expect(groups.size).toBe(0);
+  });
+});
+
+describe('getAgentActivity run history', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const minutesAgo = (minutes: number) =>
+    new Date(NOW - minutes * 60_000).toISOString();
+
+  it('keeps every run live in the last 30 minutes under its repository', async () => {
+    const native = nativeTask();
+    const live = run({ updatedAt: minutesAgo(1) });
+    const endedInside = run({
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      task: native.task,
+      state: 'finished',
+      result: { ok: true },
+      updatedAt: minutesAgo(10),
+    });
+    const endedBefore = run({
+      runId: 'octo/example#7/r1',
+      task: { repo: 'octo/example', issue: 7 },
+      state: 'finished',
+      result: { ok: true },
+      updatedAt: minutesAgo(45),
+    });
+    store.listLiveRuns.mockResolvedValue([live]);
+    store.listRecentRuns.mockResolvedValue([endedInside, endedBefore]);
+    store.readTask.mockImplementation(async (task: Task['task']) =>
+      'workId' in task
+        ? { task: native, revision: 1 }
+        : { task: githubTask(task.issue), revision: 1 },
+    );
+
+    const activity = await getAgentActivity();
+
+    expect(
+      activity.runHistory?.map((timeline) => [
+        timeline.repo,
+        timeline.state,
+        timeline.updatedAt,
+      ]),
+    ).toEqual([
+      [{ owner: 'octo', name: 'example' }, 'running', minutesAgo(1)],
+      [{ owner: 'octo', name: 'example' }, 'finished', minutesAgo(10)],
+    ]);
+  });
+
+  it('withholds the history when the bounded read stops short of 30 minutes', async () => {
+    store.listRecentRuns.mockResolvedValue(
+      Array.from({ length: 100 }, (_, i) =>
+        run({
+          runId: `octo/example#${i + 1}/r1`,
+          task: { repo: 'octo/example', issue: i + 1 },
+          state: 'finished',
+          result: { ok: true },
+          updatedAt: minutesAgo(5),
+        }),
+      ),
+    );
+    store.readTask.mockImplementation(async (task: Task['task']) => ({
+      task: githubTask('issue' in task ? task.issue : 1),
+      revision: 1,
+    }));
+
+    expect((await getAgentActivity()).runHistory).toBeUndefined();
+  });
+
+  it('withholds the history when a run in it has no readable repository', async () => {
+    store.listRecentRuns.mockResolvedValue([
+      run({
+        runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+        task: nativeTask().task,
+        state: 'finished',
+        result: { ok: true },
+        updatedAt: minutesAgo(3),
+      }),
+    ]);
+    store.readTask.mockResolvedValue(undefined);
+
+    expect((await getAgentActivity()).runHistory).toBeUndefined();
   });
 });
