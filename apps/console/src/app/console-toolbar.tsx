@@ -161,10 +161,12 @@ export function ToolbarWindow({
   );
 }
 
-/** Applies when its value is committed - Enter, leaving the field, or the
- * clear button - so FIND behaves like the selects and window beside it
+/** Applies when its value is committed - Enter, the clear button, or focus
+ * leaving the form - so FIND behaves like the selects and window beside it
  * rather than waiting for a separate Apply. Not per keystroke: each
- * application is a navigation. */
+ * application is a navigation. Moving to another control in the same form
+ * (Work's principal field behind More filters) does not apply yet; that
+ * control's own submission, or Enter, carries both values. */
 export function ToolbarSearch({
   name,
   label,
@@ -188,12 +190,17 @@ export function ToolbarSearch({
     const commit = () => {
       if (input.value !== applied) form.requestSubmit();
     };
+    const onFocusOut = (event: FocusEvent) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && form.contains(next)) return;
+      commit();
+    };
     form.addEventListener('submit', onSubmit);
-    input.addEventListener('change', commit);
+    input.addEventListener('focusout', onFocusOut);
     input.addEventListener('search', commit);
     return () => {
       form.removeEventListener('submit', onSubmit);
-      input.removeEventListener('change', commit);
+      input.removeEventListener('focusout', onFocusOut);
       input.removeEventListener('search', commit);
     };
   }, [ref]);

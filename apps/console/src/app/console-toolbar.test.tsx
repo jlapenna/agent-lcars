@@ -73,6 +73,50 @@ describe('ConsoleToolbar', () => {
     ).toHaveClass('console-toolbar__primary');
   });
 
+  it('applies FIND when focus leaves the form, not when it moves within it', () => {
+    const submit = vi
+      .spyOn(HTMLFormElement.prototype, 'requestSubmit')
+      .mockImplementation(() => undefined);
+    render(
+      <>
+        <ConsoleToolbar action="/work">
+          <ToolbarSearch name="q" label="Find" placeholder="title" />
+          <input aria-label="Principal" name="principal" />
+        </ConsoleToolbar>
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+    const find = screen.getByRole('searchbox', { name: 'Find' });
+    const principal = screen.getByRole('textbox', { name: 'Principal' });
+
+    fireEvent.change(find, { target: { value: 'healthz' } });
+    // On to another filter in the same form: nothing yet.
+    fireEvent.focusOut(find, { relatedTarget: principal });
+    expect(submit).not.toHaveBeenCalled();
+    // Out of the form: the committed value applies.
+    fireEvent.focusOut(find, {
+      relatedTarget: screen.getByRole('button', { name: 'Elsewhere' }),
+    });
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it('applies a cleared FIND and ignores an unchanged one', () => {
+    const submit = vi
+      .spyOn(HTMLFormElement.prototype, 'requestSubmit')
+      .mockImplementation(() => undefined);
+    render(
+      <ConsoleToolbar action="/agents">
+        <ToolbarSearch name="q" label="Find" placeholder="issue" value="x" />
+      </ConsoleToolbar>,
+    );
+    const find = screen.getByRole('searchbox', { name: 'Find' });
+    fireEvent.focusOut(find);
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.change(find, { target: { value: '' } });
+    fireEvent(find, new Event('search'));
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
   it('shows a native Apply until the controls hydrate', () => {
     render(
       <form>
