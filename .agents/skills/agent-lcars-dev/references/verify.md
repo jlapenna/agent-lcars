@@ -118,6 +118,25 @@ supported size; wait or split/resize actual work while retaining required
 reserves and truthful requests. Never understate demand, rely on overcommit,
 change host controls or stop another owner's workload to make the phase fit.
 
+Classify reclaimable memory separately from immutable resident demand. A
+`memory.current - inactive_file` working set still includes kernel caches:
+record `slab_reclaimable` and `slab_unreclaimable` for each independently owned
+cgroup. These counters identify cache that might be reclaimed, not guaranteed
+available memory. Do not subtract the full counter to manufacture admission
+headroom, or exclude total kernel memory, anonymous memory, shared memory or
+active file memory. Keep the full declared host/service reserve and count its
+covered workloads once. Admission must pass both full-envelope/reserve accounting
+and a fresh host `MemAvailable` bound for additional unallocated phase/native/peer
+memory demand and remaining reserve headroom. Do not add reclaimable-slab counters
+to `MemAvailable`: its estimate already discounts slab still in use. Refuse if
+that additional demand or available headroom cannot be qualified; do not lower
+reserves, purge caches or understate a phase. Re-read counters and availability
+with the complete native/peer overlap immediately before launching.
+The [kernel memory interface](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files)
+defines the counters; the [host availability estimate](https://docs.kernel.org/filesystems/proc.html#meminfo)
+accounts for in-use slab. [#2763](https://github.com/jlapenna/agent-lcars/issues/2763)
+records a refused phase caused by treating reclaimable slab as an extra reserve.
+
 ### Requalify colocated worker turnover
 
 Ordinary replacement of a colocated ARC Pod or process requires fresh
