@@ -166,6 +166,11 @@ describe('lcars hook claude', () => {
       ).action,
     ).toBe('skipped-subagent');
     expect(
+      fs.readFileSync(path.join(home, STATE_DIR, 'hook.log'), 'utf8'),
+    ).toContain(
+      'skipped-subagent parent=session- child=sub-1 event=PostToolUse',
+    );
+    expect(
       (await executeHookCommand(['claude'], deps(home, payload('PreCompact'))))
         .action,
     ).toBe('ignored');
