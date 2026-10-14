@@ -178,8 +178,8 @@ async function reviews(
               nodes: z.array(
                 z.object({
                   state: z.string(),
-                  author: z.object({ login: z.string() }),
-                  commit: z.object({ oid: sha }),
+                  author: z.object({ login: z.string() }).nullable(),
+                  commit: z.object({ oid: sha }).nullable(),
                 }),
               ),
             }),
@@ -198,8 +198,16 @@ async function reviews(
   )
     throw new Error('Delivery revision or review evidence changed');
   const pr = data.data.repository.pullRequest;
+  const usableReviews = pr.reviews.nodes.filter(
+    (
+      review,
+    ): review is typeof review & {
+      author: { login: string };
+      commit: { oid: string };
+    } => review.author !== null && review.commit !== null,
+  );
   const latest = new Map(
-    pr.reviews.nodes
+    usableReviews
       .filter(
         (review) =>
           review.commit.oid === head &&
@@ -208,7 +216,7 @@ async function reviews(
       .map((review) => [review.author.login, review]),
   );
   return {
-    approvals: pr.reviews.nodes.filter(
+    approvals: usableReviews.filter(
       (review) =>
         review.commit.oid === head &&
         ['APPROVED', 'COMMENTED'].includes(review.state) &&

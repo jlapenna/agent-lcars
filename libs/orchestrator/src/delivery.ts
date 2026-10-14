@@ -111,7 +111,11 @@ export function advanceDelivery(input: {
     params: {
       ...run.params,
       mode: 'implement',
-      context: `Correct delivery https://github.com/${binding.repo}/pull/${binding.number} at ${binding.head}. ${observation.reason}`,
+      context:
+        `Correct delivery https://github.com/${binding.repo}/pull/${binding.number} at ${binding.head}. ${observation.reason}`.slice(
+          0,
+          16_384,
+        ),
       deliveryPredecessor: run.runId,
     },
   });

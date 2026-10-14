@@ -6,6 +6,7 @@ import {
   MemoryStore,
   Orchestrator,
   reserveCredentialOperation,
+  runSchema,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
@@ -499,4 +500,44 @@ describe('native item cancellation intent preserves run-only semantics', () => {
     ).toMatchObject({ refused: true, reason: 'task-busy' });
     expect((await f.store.readTask(native))!.task.closedAt).toBeUndefined();
   });
+});
+
+it('bounds generated correction context while preserving delivery identity and dispatchability', async () => {
+  const f = await handedOff();
+  const original = await f.store.readRun(f.runId);
+  const decision = await f.orchestrator.observeDelivery(
+    f.runId,
+    {
+      kind: 'correction',
+      head: HEAD,
+      reason:
+        'Required checks failed: ' + 'long-required-check-name,'.repeat(2000),
+    },
+    () => true,
+  );
+  if (isRefusal(decision)) throw new Error(decision.reason);
+  const correction = decision.additionalRuns![0]!;
+  const parsed = runSchema.parse(await f.store.readRun(correction.runId));
+  expect(parsed.params?.context).toHaveLength(16_384);
+  expect(parsed.params?.context).toMatch(
+    /^Correct delivery https:\/\/github\.com\/octo\/example\/pull\/12 at /,
+  );
+  expect(parsed.params?.context).toContain(HEAD);
+  expect(parsed.params?.deliveryPredecessor).toBe(f.runId);
+  expect((await f.store.readTask(TASK))?.task.delivery?.correctionRunId).toBe(
+    correction.runId,
+  );
+  expect((await f.store.readRun(f.runId))?.result).toEqual(original?.result);
+  await f.store.enqueueRun({ runId: correction.runId, now: NOW });
+  await f.orchestrator.confirmDispatch(correction.runId);
+  const claimed = await f.store.claimQueuedRun({
+    pipelines: ['claude'],
+    now: NOW,
+    claimedBy: 'correction-runner',
+    tokenHash: CLAIM,
+  });
+  expect(claimed?.runId).toBe(correction.runId);
+  expect(
+    runSchema.parse(await f.store.readRun(correction.runId)).queue?.state,
+  ).toBe('claimed');
 });

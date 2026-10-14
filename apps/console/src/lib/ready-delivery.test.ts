@@ -2066,3 +2066,102 @@ describe('same-head review feedback before unavailable check evidence', () => {
     },
   );
 });
+
+describe('nullable historical review identities', () => {
+  const valid = {
+    state: 'APPROVED',
+    author: { login: 'reviewer' },
+    commit: { oid: HEAD },
+  };
+  const history = [
+    { state: 'APPROVED', author: null, commit: { oid: HEAD } },
+    { state: 'CHANGES_REQUESTED', author: { login: 'gone' }, commit: null },
+    { state: 'DISMISSED', author: null, commit: null },
+  ];
+  const review = (nodes: object[]) => ({
+    reviews: { pageInfo: { hasPreviousPage: false }, nodes },
+  });
+  it('accepts a valid exact-head independent handoff despite nullable historical identities', async () => {
+    expect(
+      await readyDeliveryBinding(
+        fixture({ review: review([...history, valid]) }),
+        { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
+      ),
+    ).toMatchObject({ head: HEAD, state: 'waiting' });
+  });
+  it('qualifies protected landing with valid exact-head review beside nullable history', async () => {
+    expect(
+      await observeGithubDelivery(
+        fixture({
+          pr: { merged: true, merge_commit_sha: MERGE },
+          review: review([valid, ...history]),
+        }),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'protected-merge', head: HEAD, mergeCommit: MERGE });
+  });
+  it('never treats nullable-only identities as independent approval', async () => {
+    await expect(
+      readyDeliveryBinding(fixture({ review: review(history) }), {
+        run: RUN,
+        task: TASK,
+        repo: 'octo/example',
+        number: 12,
+        now: NOW,
+      }),
+    ).rejects.toThrow();
+    expect(
+      await observeGithubDelivery(
+        fixture({
+          pr: { merged: true, merge_commit_sha: MERGE },
+          review: review(history),
+        }),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'waiting', head: HEAD });
+  });
+  it.each(['DISMISSED', 'CHANGES_REQUESTED'])(
+    'retains valid reviewer %s authority beside nullable history',
+    async (state) => {
+      const nodes = [valid, ...history, { ...valid, state }];
+      await expect(
+        readyDeliveryBinding(fixture({ review: review(nodes) }), {
+          run: RUN,
+          task: TASK,
+          repo: 'octo/example',
+          number: 12,
+          now: NOW,
+        }),
+      ).rejects.toThrow();
+      expect(
+        await observeGithubDelivery(
+          fixture({
+            pr: { merged: true, merge_commit_sha: MERGE },
+            review: review(nodes),
+          }),
+          BINDING,
+        ),
+      ).toEqual({ kind: 'waiting', head: HEAD });
+    },
+  );
+  it('keeps unresolved threads actionable beside nullable history', async () => {
+    expect(
+      await observeGithubDelivery(
+        fixture({
+          review: {
+            ...review([...history, valid]),
+            reviewThreads: {
+              pageInfo: { hasNextPage: false },
+              nodes: [{ isResolved: false }],
+            },
+          },
+        }),
+        BINDING,
+      ),
+    ).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Review feedback requires correction',
+    });
+  });
+});
