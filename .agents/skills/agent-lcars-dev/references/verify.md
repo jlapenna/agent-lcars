@@ -280,17 +280,30 @@ Nx cache receipt/helper, other native-cache guards and normal hooks; do not
 change shared directory permissions, reset caches or disable a plugin to make
 the loader succeed.
 
-From the normally installed worktree and qualified child environment, load SWC
-and verify its materialized native entry is beneath the canonical requested
-override. In that same Node process, inspect the loaded native image path
-(on Linux, `/proc/self/maps`) and correlate it with that entry; a preexisting
-cache file or version output alone is not placement proof. An absolute override
-can fall back to the default user cache. Fallback, an out-of-root image or an
-unobservable loaded path fails readiness: choose another qualified location and
-observe it before proceeding, rather than silently accounting only for the
-private cache. Retain only the selected native path, not a full process report
-or environment. This readiness does not replace the normal affected
-lint/typechecks, Console build/standalone smoke when selected, or publication.
+Before loading SWC, qualify and budget potential native-output locations for
+its selected mode: cache/default/fallback roots, and the installed carrier's
+parent plus process-temporary roots when replacement is eligible. Preserve the
+SDK's ancestor trust, integrity, writable/executable filesystem and cleanup checks.
+Persistent modes on writable btrfs may stage beside and atomically replace the
+carrier, then load a verified temporary image from the default user cache or its
+fallback, independently of the custom override. See
+[SWC's replacement contract](https://github.com/swc-project/swc/blob/main/crates/swc_native_addon/README.md#transparent-filesystem-compression).
+
+From the normally installed worktree and qualified child environment, observe
+the actual native image in that same Node process (on Linux, `/proc/self/maps`)
+and correlate it with the trusted carrier and SDK's verified materialization.
+For cache materialization, verify the actual selected root; an absolute override
+can fall back. Unix unlinks temporary images after loading, so a mapped
+`(deleted)` path can be expected. A preexisting file or version output alone does
+not prove placement. Account for all carrier, staging, cache and temporary
+outputs across their filesystems, rather than silently charging only the override.
+
+An out-of-override image alone is not failure. Unknown/unobservable materialization,
+unqualified locations or fallback, integrity/security errors, or insufficient
+required accounting fail readiness. Retain only selected mode/path evidence,
+not a full process report or environment. Choose qualified locations without
+changing host controls or bypassing SDK checks. Readiness does not replace normal
+affected lint/typechecks, selected Console build/smoke or publication.
 
 Recorded [#2662](https://github.com/jlapenna/agent-lcars/issues/2662): SWC
 `1.16.18` rejected the verifier's XDG/TMP locations beneath a mode `0775`
