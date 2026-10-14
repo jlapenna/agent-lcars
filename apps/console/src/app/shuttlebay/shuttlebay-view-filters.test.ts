@@ -5,6 +5,7 @@ import {
   laneMatches,
   laneServesRepo,
   parseShuttlebayFilters,
+  runnerMatches,
 } from './shuttlebay-view-filters';
 
 describe('parseShuttlebayFilters', () => {
@@ -61,5 +62,60 @@ describe('laneMatches / executorMatches', () => {
     expect(executorMatches({ repo: 'jlapenna/homelab' })).toBe(true);
     expect(executorMatches({ q: 'executor' })).toBe(true);
     expect(executorMatches({ q: 'lcars-ci' })).toBe(false);
+  });
+});
+
+describe('runnerMatches', () => {
+  const lanes = [
+    {
+      lane: 'lcars-ci',
+      registrationUrl: 'https://github.com/jlapenna/agent-lcars',
+    },
+  ];
+  const idle = { name: 'lcars-ci-x1', kind: 'arc' as const, lane: 'lcars-ci' };
+  const busy = {
+    ...idle,
+    name: 'lcars-ci-x2',
+    jobRepository: 'jlapenna/homelab',
+    jobName: 'lint',
+  };
+  const direct = {
+    name: 'lcars-run-1',
+    kind: 'direct' as const,
+    lane: 'direct',
+    work: {
+      label: 'sprinkles#6041',
+      href: '/task/jlapenna/sprinkles/6041',
+      repo: 'jlapenna/sprinkles',
+      pipeline: 'codex',
+    },
+  };
+  const unresolved = {
+    name: 'lcars-run-2',
+    kind: 'direct' as const,
+    lane: 'direct',
+  };
+
+  it('matches the repository a runner works for, else its lane', () => {
+    const repo = { repo: 'jlapenna/agent-lcars' };
+    expect(runnerMatches(idle, lanes, repo)).toBe(true);
+    expect(runnerMatches(busy, lanes, repo)).toBe(false);
+    expect(runnerMatches(busy, lanes, { repo: 'jlapenna/homelab' })).toBe(true);
+    expect(runnerMatches(direct, lanes, repo)).toBe(false);
+    expect(runnerMatches(unresolved, lanes, repo)).toBe(true);
+    expect(runnerMatches({ ...idle, lane: 'gone' }, lanes, repo)).toBe(false);
+  });
+
+  it('narrows only direct runners by agent', () => {
+    expect(runnerMatches(direct, lanes, { agent: 'claude' })).toBe(false);
+    expect(runnerMatches(direct, lanes, { agent: 'codex' })).toBe(true);
+    expect(runnerMatches(idle, lanes, { agent: 'claude' })).toBe(true);
+    expect(runnerMatches(unresolved, lanes, { agent: 'claude' })).toBe(true);
+  });
+
+  it('finds a runner by name, lane, or job', () => {
+    expect(runnerMatches(busy, lanes, { q: 'LINT' })).toBe(true);
+    expect(runnerMatches(direct, lanes, { q: '6041' })).toBe(true);
+    expect(runnerMatches(idle, lanes, { q: 'nomatch' })).toBe(false);
   });
 });

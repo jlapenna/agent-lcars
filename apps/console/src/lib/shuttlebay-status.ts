@@ -10,6 +10,7 @@ import {
   subscribeAutoscalerStatuses,
 } from './autoscaler-status';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { resolveRunnerWork, withRunnerWork } from './runner-work';
 
 const READ_DEADLINE_MS = 5000;
 const ADMISSION_REFRESH_MS = 30_000;
@@ -94,9 +95,21 @@ async function boundedTelemetry(): Promise<AutoscalerStatusResult> {
   }
 }
 
+/** A slow or failed run read leaves direct runners naming their run ids. */
+async function boundedRunnerWork(
+  result: AutoscalerStatusResult,
+): Promise<AutoscalerStatusResult> {
+  try {
+    await withinDeadline(resolveRunnerWork(result));
+  } catch (error) {
+    logger.error('agent-lcars: runner work unavailable:', error);
+  }
+  return withRunnerWork(result);
+}
+
 export async function getShuttlebayStatus(): Promise<AutoscalerStatusResult> {
   const [telemetry, provider] = await Promise.all([
-    boundedTelemetry(),
+    boundedTelemetry().then(boundedRunnerWork),
     withProviderAdmission({ warnings: [] }),
   ]);
   return {
@@ -122,7 +135,7 @@ export async function subscribeShuttlebayStatus(
   const emit = () => {
     if (!closed)
       onResult({
-        ...latest,
+        ...withRunnerWork(latest),
         providerAdmission: admission,
         warnings: admissionUnavailable
           ? [...latest.warnings, ADMISSION_UNAVAILABLE]
@@ -147,6 +160,10 @@ export async function subscribeShuttlebayStatus(
     latest = result;
     emit();
     void refresh();
+    // A newly started direct run emits again once its work item resolves.
+    void resolveRunnerWork(result).then((changed) => {
+      if (changed && latest === result) emit();
+    });
   });
   void refresh();
   const timer = setInterval(() => {

@@ -424,6 +424,19 @@ the work that has stopped, and the work in flight.
   1h, 24h and 7d are drawn disabled, with a visible note beside the control,
   "Runner telemetry keeps the last 30 minutes", that also describes them to
   assistive technology.
+- **FE-SB-10 [Implemented]** The Runners panel draws one row per runner pod,
+  as the mockup does: ARC ephemeral runners and queue executor Job pods, with
+  state, job, request (`6c/18G`) and age, headed `N/M online`. The executor
+  publishes the rows on its host inventory from the pods it already lists. An
+  ARC runner is busy or idle, with its GitHub Actions job linked, where the
+  executor may list `actions.github.com` EphemeralRunners; otherwise it reads
+  "online", and the panel says job assignments are unavailable. A direct
+  runner names the work item its run belongs to. A NotReady host's runners
+  are offline and a cordoned host's or terminating pod's are draining. The
+  meta checks, rather than asserts, that every request fits one ready host's
+  allocatable (already net of reserves), and counts the requests that do not.
+  An executor that predates the rows, or a fleet past 128 runners, keeps the
+  per-lane totals.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 
