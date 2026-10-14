@@ -26,6 +26,7 @@ export function DecisionInbox({
   selectedItemKey,
   mobileDataFreshness,
   mobileScopeLabel,
+  repoScoped,
   replyToWorkItem,
   toolbarStart,
   toolbarEnd,
@@ -35,6 +36,7 @@ export function DecisionInbox({
   selectedItemKey?: string;
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
+  repoScoped?: boolean;
   replyToWorkItem?: ReplyAction;
   toolbarStart?: ReactNode;
   toolbarEnd?: ReactNode;
@@ -55,6 +57,7 @@ export function DecisionInbox({
       watchedRepos={watchedRepos}
       mobileDataFreshness={mobileDataFreshness}
       mobileScopeLabel={mobileScopeLabel}
+      repoScoped={repoScoped}
       replyToWorkItem={replyToWorkItem}
       toolbarStart={toolbarStart}
       toolbarEnd={toolbarEnd}
