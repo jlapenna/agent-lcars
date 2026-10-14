@@ -259,6 +259,60 @@ covers those cases through a real transient user unit where a manager is
 reachable, and through a child environment with no inherited PATH everywhere
 else.
 
+### Qualify native-binding cache ancestors
+
+For a phase that loads SWC, an owned cache leaf alone does not qualify its
+placement. Inspect the nested native-loader error: `ERR_SWC_NATIVE_CACHE` can
+reject a group-writable ancestor even when the installed native package and
+binary are present. Check the selected directory's ownership, permissions and
+ancestor trust before claiming a missing dependency or reinstalling.
+
+If the selected cache fails that trust check, use the supported
+`SWC_NATIVE_BINDING_CACHE` override with a phase-specific, user-owned mode `0700`
+directory directly beneath a verified trusted sticky directory (such as
+root-owned mode `01777` `/tmp`), with the remaining ancestors trusted. Pass its absolute path through the
+supervisor's explicit child environment, as with PATH above. The selected cache filesystem must be writable and executable; Linux `noexec`
+is rejected. Choose another ancestor-trusted executable location if needed. See
+[SWC's native-addon cache contract](https://github.com/swc-project/swc/blob/main/docs/native-addon-carriers.md#first-load-and-cache).
+Include this cache
+in the phase's storage sizing/accounting. Preserve the existing `HOME`, worktree,
+Nx cache receipt/helper, other native-cache guards and normal hooks; do not
+change shared directory permissions, reset caches or disable a plugin to make
+the loader succeed.
+
+Before loading SWC, qualify and budget potential native-output locations for
+its selected mode: cache/default/fallback roots, and the installed carrier's
+parent plus process-temporary roots when replacement is eligible. Preserve the
+SDK's ancestor trust, integrity, writable/executable filesystem and cleanup checks.
+Persistent modes on writable btrfs may stage beside and atomically replace the
+carrier, then load a verified temporary image from the default user cache or its
+fallback, independently of the custom override. See
+[SWC's replacement contract](https://github.com/swc-project/swc/blob/main/crates/swc_native_addon/README.md#transparent-filesystem-compression).
+
+From the normally installed worktree and qualified child environment, observe
+the actual native image in that same Node process (on Linux, `/proc/self/maps`)
+and correlate it with the trusted carrier and SDK's verified materialization.
+For cache materialization, verify the actual selected root; an absolute override
+can fall back. Unix unlinks temporary images after loading, so a mapped
+`(deleted)` path can be expected. A preexisting file or version output alone does
+not prove placement. Account for all carrier, staging, cache and temporary
+outputs across their filesystems, rather than silently charging only the override.
+
+An out-of-override image alone is not failure. Unknown/unobservable materialization,
+unqualified locations or fallback, integrity/security errors, or insufficient
+required accounting fail readiness. Retain only selected mode/path evidence,
+not a full process report or environment. Choose qualified locations without
+changing host controls or bypassing SDK checks. Readiness does not replace normal
+affected lint/typechecks, selected Console build/smoke or publication.
+
+Recorded [#2662](https://github.com/jlapenna/agent-lcars/issues/2662): SWC
+`1.16.18` rejected the verifier's XDG/TMP locations beneath a mode `0775`
+ancestor. A private `0700` cache beneath trusted sticky `/tmp` loaded the same
+installed module and completed the unchanged-source normal push, including the
+one-worker production Console build, seven traced external packages and HTTP
+401 smoke. Preserve the original failed hook receipt separately; neither a
+missing payload nor a need to reinstall was established.
+
 ### Qualify the workload shape a CPU bound covers
 
 A CPU bound qualified for one workload shape does not qualify a different one.
