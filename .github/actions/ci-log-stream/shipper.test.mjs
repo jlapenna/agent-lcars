@@ -388,6 +388,7 @@ test('bounds slow successful shutdown pushes by the shutdown deadline', async (c
         pushes.push({
           startedAt: now - initialTime,
           body: JSON.parse(options.body),
+          signal: options.signal,
         });
         now += 60;
         return new Response(null, { status: 204 });
@@ -408,6 +409,24 @@ test('bounds slow successful shutdown pushes by the shutdown deadline', async (c
   );
   assert.ok(pushes.every((push) => push.startedAt < 80));
   assert.deepEqual(timeoutBudgets, [80, 20]);
+  // Exercise the exact signals supplied to fetch, not merely their creation.
+  for (const { signal } of pushes) {
+    assert.ok(signal instanceof AbortSignal);
+    await new Promise((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(witnessTimeout);
+        resolve();
+      };
+      // A referenced witness keeps Node alive for AbortSignal.timeout's unref timer.
+      const witnessTimeout = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        reject(new Error('The supplied fetch signal did not abort'));
+      }, 1000);
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    });
+    assert.equal(signal.reason?.name, 'TimeoutError');
+  }
   assert.deepEqual(
     pushes.flatMap((push) =>
       push.body.streams[0].values.map((value) => value[1]),
