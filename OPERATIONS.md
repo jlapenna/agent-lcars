@@ -64,6 +64,25 @@ mint workflow; never print session cookies or `AUTH_SECRET` into logs. Do not
 use the saved-session verification tool's `--click` option for mutations;
 use the authorized application API operation.
 
+## Worker investigation client
+
+`lcars investigate --request-id <key> --question-file <path> [--context-file <path>]`
+uses the existing runner bundle, `LCARS_RUN_ID` and `LCARS_RUN_TOKEN`.
+Receipt-mode runs additionally require their existing projected Pod JWT file
+and activated generation. Operator credentials are not used.
+
+The client reads canonical identity from the fixed Console introspection route,
+then sends the agreed v1 payload to
+`https://investigate.lan.jlapenna.net/v1/investigations`. This endpoint is a
+client contract; gateway implementation and adoption remain Homelab-owned.
+The strict wire schemas live in [the Work contract](libs/work/src/investigation-contract.ts):
+32 KiB requests, 64 KiB findings and 2 KiB errors, including streamed bodies.
+The client bounds transport to 65 seconds or the smaller observed authorization
+validity, refuses redirects, and never retries. Reuse a request key only for the
+same question/context; gateway quota, idempotency, final authorization, probe
+catalog/evidence linkage and retained audit remain required server behavior.
+An unavailable gateway fails safely and proves no investigator execution.
+
 ## Operator evidence for stopped work
 
 When a worker cannot observe a required runtime or remote-source fact, use the
