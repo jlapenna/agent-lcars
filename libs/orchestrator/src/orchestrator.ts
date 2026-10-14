@@ -164,6 +164,7 @@ export class Orchestrator {
         requestId,
         latestRun,
         retainedClaims,
+        capacityReceiptRunIds,
       }) => {
         // This belongs inside transactRequest, not in a route-level pre-read:
         // two first admissions may otherwise both observe an absent Task, and
@@ -229,6 +230,7 @@ export class Orchestrator {
             activeRun,
             latestRun,
             retainedClaims,
+            capacityReceiptRunIds,
             label: input.labelProviderRequest,
           });
         }

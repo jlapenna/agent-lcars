@@ -525,7 +525,7 @@ export function runOrchestratorStoreContract(
         expect(await store.listRuns(TASK)).toHaveLength(1);
       });
 
-      it('serializes a label handoff against claim and retains refusal after terminal settlement', async () => {
+      it('serializes a label handoff against claim and accepts later legacy settlement intent', async () => {
         const { store, orchestrator, clock } = await fixture();
         const { run } = await started(orchestrator);
         await store.enqueueRun({ runId: run.runId, now: T0 });
@@ -574,13 +574,16 @@ export function runOrchestratorStoreContract(
           ).toMatchObject({
             task: {
               providerRouting: {
-                status: 'refused',
-                reason: 'physical-retirement-required',
+                status: 'accepted',
               },
             },
-            outbox: [],
+            run: { pipeline: 'opencode', state: 'pending' },
           });
-          expect(await store.listRuns(TASK)).toHaveLength(1);
+          expect(await store.listRuns(TASK)).toHaveLength(2);
+          expect(await store.readRun(run.runId)).toMatchObject({
+            state: 'finished',
+            queue: { state: 'claimed', tokenHash: 'a'.repeat(64) },
+          });
         } else {
           expect(claim).toBeUndefined();
           expect(handoff.run.pipeline).toBe('opencode');
@@ -590,6 +593,193 @@ export function runOrchestratorStoreContract(
           expect(await store.listRuns(TASK)).toHaveLength(2);
         }
       });
+
+      it.each([
+        'legacy',
+        'receipt',
+        'receipt-unclaimed',
+        'unrelated-receipt',
+        'credentials',
+      ] as const)(
+        'routes a label after finished legacy claims while preserving %s ownership',
+        async (retention) => {
+          const { store, orchestrator, clock } = await fixture();
+          const first = await started(orchestrator);
+          await store.enqueueRun({ runId: first.run.runId, now: clock.now() });
+          await orchestrator.confirmDispatch(first.run.runId);
+          await store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: clock.now(),
+            claimedBy: 'executor',
+            tokenHash: 'a'.repeat(64),
+          });
+          await orchestrator.report(first.run.runId, {
+            ok: true,
+            summary: 'park',
+          });
+          clock.advanceMinutes(1);
+          const second = await started(orchestrator, 'second-attempt');
+          await store.enqueueRun({ runId: second.run.runId, now: clock.now() });
+          await orchestrator.confirmDispatch(second.run.runId);
+          if (retention !== 'receipt-unclaimed') {
+            await store.claimQueuedRun({
+              pipelines: ['claude'],
+              now: clock.now(),
+              claimedBy: 'executor',
+              tokenHash: 'b'.repeat(64),
+            });
+          }
+          await orchestrator.report(second.run.runId, {
+            ok: true,
+            summary: 'park',
+          });
+          let receiptTask = TASK;
+          let receiptRunId = second.run.runId;
+          if (retention === 'unrelated-receipt') {
+            receiptTask = { repo: 'octo/example', issue: 8 };
+            const other = await orchestrator.request({
+              taskId: receiptTask,
+              requestId: 'unrelated-task',
+              pipeline: 'claude',
+              work: TASK_WORK,
+            });
+            if (isRefusal(other)) throw new Error(other.reason);
+            receiptRunId = decidedRun(other).runId;
+          }
+          if (
+            retention === 'receipt' ||
+            retention === 'receipt-unclaimed' ||
+            retention === 'unrelated-receipt'
+          ) {
+            await store.transactCapacity({
+              now: clock.now(),
+              recordKeys: [],
+              decide: ({ state }) => ({
+                value: undefined,
+                state: {
+                  ...state,
+                  receipts: [
+                    {
+                      poolId: 'pool-a',
+                      slot: 0,
+                      revision: 1,
+                      runId: receiptRunId,
+                      taskKey: taskKey(receiptTask),
+                      nonce: 'retained-nonce-123456',
+                      domainId: 'claude-global',
+                      pipeline: 'claude',
+                      subject: 'executor',
+                      runner: 'executor',
+                      producerId: 'producer-a',
+                      claimedAt: clock.now(),
+                      state: 'retiring',
+                      unplaced: false,
+                      tokenHash: 'b'.repeat(64),
+                      jobName: 'owned-job',
+                      retiredWorkers: [],
+                      producers: [
+                        {
+                          producerId: 'producer-a',
+                          subject: 'executor',
+                          stopped: true,
+                          fenced: true,
+                          pendingWrites: [],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              }),
+            });
+          }
+          if (retention === 'credentials') {
+            await store.transactRun({
+              runId: second.run.runId,
+              decide: ({ task, run }) => {
+                if (task === undefined || run === undefined)
+                  throw new Error('missing');
+                return {
+                  task: task.task,
+                  run: {
+                    ...run,
+                    credentialOperation: {
+                      id: 'cleanup-operation',
+                      kind: 'cleanup',
+                      claimFingerprint: 'b'.repeat(64),
+                      startedAt: clock.now(),
+                      mutationSequence: 0,
+                      recoverAfter: clock.now(),
+                    },
+                  },
+                  outbox: [],
+                };
+              },
+            });
+            // The operation is neither the first claimed row nor latestRun.
+            // Both shortcuts would miss this unresolved original authority.
+            clock.advanceMinutes(1);
+            const third = await started(orchestrator, 'third-attempt');
+            await store.enqueueRun({
+              runId: third.run.runId,
+              now: clock.now(),
+            });
+            await orchestrator.confirmDispatch(third.run.runId);
+            await store.claimQueuedRun({
+              pipelines: ['claude'],
+              now: clock.now(),
+              claimedBy: 'executor',
+              tokenHash: 'c'.repeat(64),
+            });
+            await orchestrator.report(third.run.runId, {
+              ok: true,
+              summary: 'park',
+            });
+          }
+          const before = await store.listRuns(TASK);
+          const capacityBefore = await store.transactCapacity({
+            now: clock.now(),
+            recordKeys: [],
+            decide: ({ state }) => ({ value: state }),
+          });
+          clock.advanceMinutes(1);
+          const result = await orchestrator.request({
+            taskId: TASK,
+            requestId: 'fresh-label',
+            pipeline: 'opencode',
+            pipelineForStoredTask: () => 'claude',
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
+          });
+          if (isRefusal(result)) throw new Error(result.reason);
+          const accepts =
+            retention === 'legacy' || retention === 'unrelated-receipt';
+          expect(result.task.providerRouting?.status).toBe(
+            accepts ? 'accepted' : 'refused',
+          );
+          expect(result.run?.pipeline).toBe(accepts ? 'opencode' : undefined);
+          expect(result.task.providerRouting?.reason).toBe(
+            accepts ? undefined : 'physical-retirement-required',
+          );
+          expect((await store.listRuns(TASK)).slice(0, before.length)).toEqual(
+            before,
+          );
+          expect(await store.readRun(first.run.runId)).toMatchObject({
+            state: 'finished',
+            queue: { state: 'claimed', tokenHash: 'a'.repeat(64) },
+          });
+          expect(result.outbox.length).toBe(accepts ? 1 : 0);
+          expect(
+            await store.transactCapacity({
+              now: clock.now(),
+              recordKeys: [],
+              decide: ({ state }) => ({ value: state }),
+            }),
+          ).toEqual(capacityBefore);
+        },
+      );
 
       it('serializes provider replacement against an executor claim', async () => {
         const { store, orchestrator } = await fixture();

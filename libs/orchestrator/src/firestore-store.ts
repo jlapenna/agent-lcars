@@ -68,6 +68,7 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  PROVIDER_ROUTING_CLAIM_READ_LIMIT,
   queuePriorityCursorSchema,
   queuePriorityTurnAfter,
   type RequestBinding,
@@ -367,7 +368,8 @@ export class FirestoreStore implements OrchestratorStore {
       // transaction with the accepted write. Firestore reruns the callback
       // if any concurrent request or settlement changes one of those reads,
       // closing the terminal-settlement replay window as well as the live-run
-      // race without scanning the task's unbounded run history.
+      // race. Label routing also reads bounded claims and active receipts;
+      // historical legacy claims cannot hide a later retained owner.
       const [taskSnapshot, bindingSnapshot] = await Promise.all([
         tx.get(taskRef),
         bindingRef === undefined
@@ -426,10 +428,16 @@ export class FirestoreStore implements OrchestratorStore {
               tx.get(
                 this.#runsForTask(input.taskId)
                   .where('queue.state', '==', 'claimed')
-                  .limit(1),
+                  .limit(PROVIDER_ROUTING_CLAIM_READ_LIMIT + 1),
               ),
+              tx.get(this.#capacity.doc('active')),
             ])
           : undefined;
+      if (
+        routing !== undefined &&
+        routing[1].size > PROVIDER_ROUTING_CLAIM_READ_LIMIT
+      )
+        throw new Error('Provider routing claim inventory exceeds read bound');
       const outcome = input.decide({
         ...(routing === undefined
           ? {}
@@ -440,6 +448,12 @@ export class FirestoreStore implements OrchestratorStore {
               retainedClaims: routing[1].docs.map((doc) =>
                 runSchema.parse(doc.data()),
               ),
+              capacityReceiptRunIds: (routing[2].exists
+                ? capacityStateSchema.parse(routing[2].data())
+                : emptyCapacityState()
+              ).receipts
+                .filter((receipt) => receipt.taskKey === taskKey(input.taskId))
+                .map((receipt) => receipt.runId),
             }),
         task,
         activeRun,

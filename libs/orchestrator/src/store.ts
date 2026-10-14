@@ -550,6 +550,8 @@ export interface RequestTransactionState {
   /** Read only for source-ordered label handoffs, inside the claim transaction. */
   readonly latestRun?: Run;
   readonly retainedClaims?: readonly Run[];
+  /** Active receipts read atomically with label intent, including old attempts. */
+  readonly capacityReceiptRunIds?: readonly string[];
   readonly task: VersionedTask | undefined;
   readonly activeRun: Run | undefined;
   /** The request identity resolved by the store's optional binding. */
@@ -557,6 +559,9 @@ export interface RequestTransactionState {
   /** A previous run for this task with the resolved request id. */
   readonly previousRun: Run | undefined;
 }
+
+/** Fail closed rather than silently omit an owner from label routing. */
+export const PROVIDER_ROUTING_CLAIM_READ_LIMIT = 1000;
 
 /** Thrown by `apply` when the compare-and-set loses. Callers retry by
  *  re-reading and re-deciding; they never force the write. */

@@ -55,6 +55,7 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  PROVIDER_ROUTING_CLAIM_READ_LIMIT,
   queuePriorityTurnAfter,
   type RequestBinding,
   type RequestTransactionState,
@@ -229,6 +230,13 @@ export class MemoryStore implements OrchestratorStore {
       previousRunId === undefined
         ? undefined
         : structuredClone(this.#runs.get(previousRunId));
+    const retainedClaims = input.readProviderRouting
+      ? [...this.#runs.values()].filter(
+          (run) => taskKey(run.task) === key && run.queue?.state === 'claimed',
+        )
+      : undefined;
+    if ((retainedClaims?.length ?? 0) > PROVIDER_ROUTING_CLAIM_READ_LIMIT)
+      throw new Error('Provider routing claim inventory exceeds read bound');
     const outcome = input.decide({
       task,
       activeRun,
@@ -242,12 +250,10 @@ export class MemoryStore implements OrchestratorStore {
                 : structuredClone(
                     this.#runs.get(`${key}/r${task.task.runCount}`),
                   ),
-            retainedClaims: structuredClone(
-              [...this.#runs.values()].filter(
-                (run) =>
-                  taskKey(run.task) === key && run.queue?.state === 'claimed',
-              ),
-            ),
+            retainedClaims: structuredClone(retainedClaims),
+            capacityReceiptRunIds: this.#capacity.receipts
+              .filter((receipt) => receipt.taskKey === key)
+              .map((receipt) => receipt.runId),
           }
         : {}),
     });

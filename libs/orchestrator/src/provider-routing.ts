@@ -19,6 +19,7 @@ export function decideLabelProviderRequest(
     label: { requestedAt: string; actor: string; allowProviderChange: boolean };
     latestRun?: Run;
     retainedClaims?: readonly Run[];
+    capacityReceiptRunIds?: readonly string[];
   },
 ): Decision | Refusal {
   if (isWorkAnchor(input.taskId)) return refused('not-native');
@@ -90,9 +91,22 @@ export function decideLabelProviderRequest(
     return reject('physical-ownership-unavailable');
   if (task?.closedAt !== undefined) return reject('task-closed');
   // Missing transactional physical-owner evidence is not absence of ownership.
-  if (task !== undefined && input.retainedClaims === undefined)
+  if (
+    task !== undefined &&
+    (input.retainedClaims === undefined ||
+      input.capacityReceiptRunIds === undefined)
+  )
     return reject('physical-ownership-unavailable');
-  if (input.retainedClaims?.length)
+  // Legacy settlement leaves queue.state claimed permanently. Accepting intent
+  // does not retire that Job: the executor still reserves physical capacity,
+  // counting nonterminal Jobs and fencing foreground deletion/orphaned Pods.
+  // Capacity-backed claims and unresolved credentials retain their durable fence.
+  if (
+    input.capacityReceiptRunIds?.length ||
+    input.retainedClaims?.some(
+      (run) => isLive(run.state) || run.credentialOperation !== undefined,
+    )
+  )
     return reject(
       isLive(activeRun?.state ?? 'finished')
         ? 'run-already-claimed'
