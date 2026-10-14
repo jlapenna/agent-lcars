@@ -1,4 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
+import { hydrateRoot } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DecisionSlaMeta, DecisionWaiting } from './decision-waiting';
@@ -58,6 +60,33 @@ describe('decision SLA readouts', () => {
     expect(screen.getByTestId('decision-sla-meta')).toHaveTextContent(
       /^oldest 14m ago$/,
     );
+  });
+
+  it('hydrates cleanly when a decision crosses the SLA after the server rendered', async () => {
+    const tree = (
+      <>
+        <DecisionWaiting since="2026-10-14T10:01:00Z" />
+        <DecisionSlaMeta waitingSince={['2026-10-14T10:01:00Z']} />
+      </>
+    );
+    const container = document.createElement('div');
+    container.innerHTML = renderToString(tree);
+    expect(container).not.toHaveTextContent('over SLA');
+
+    vi.setSystemTime(new Date('2026-10-14T12:05:00Z'));
+    const onRecoverableError = vi.fn();
+    const root = await act(async () =>
+      hydrateRoot(container, tree, { onRecoverableError }),
+    );
+    expect(onRecoverableError).not.toHaveBeenCalled();
+    // The ages are RelativeTime's; this asserts only the SLA flags.
+    expect(container.querySelector('[data-over-sla]')).toHaveClass(
+      'ops-inbox__late',
+    );
+    expect(
+      container.querySelector('[data-testid="decision-sla-meta"]'),
+    ).toHaveTextContent(/^1 over SLA · oldest /);
+    act(() => root.unmount());
   });
 
   it('renders nothing when no decision waits', () => {
