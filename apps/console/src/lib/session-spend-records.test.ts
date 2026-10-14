@@ -229,6 +229,8 @@ describe('GitHub-record spend attribution (#2730)', () => {
     '```text\nClaude-Session: https://claude.ai/code/session_test',
     '<!--\nClaude-Session: https://claude.ai/code/session_test\n-->',
     '<!--\nClaude-Session: https://claude.ai/code/session_test',
+    'Claude-<!-- example -->Session: https://claude.ai/code/session_test',
+    '<!-- example -->Claude-Session: https://claude.ai/code/session_test',
   ])('does not accept an attribution example or HTML comment: %s', (body) => {
     expect(spend(session(), record({ body })).mergedPRs).toBe(0);
   });

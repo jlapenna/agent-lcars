@@ -116,7 +116,9 @@ export function sessionPRReferences(
     let fence: { character: string; length: number } | undefined;
     // Comments and fenced examples are not attribution metadata. Unclosed
     // comments/fences consume the rest of the body, conservatively.
-    const body = record.body.replace(/<!--[\s\S]*?(?:-->|$)/gu, '');
+    const body = record.body.replace(/<!--[\s\S]*?(?:-->|$)/gu, (comment) =>
+      comment.replace(/[^\n]/gu, ' '),
+    );
     for (const line of body.split('\n')) {
       const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
       if (delimiter) {
