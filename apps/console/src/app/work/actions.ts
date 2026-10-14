@@ -196,3 +196,56 @@ export async function getItem(input: Parameters<typeof getItemFn>[0]) {
 export async function listItems(input: Parameters<typeof listItemsFn>[0]) {
   return listItemsFn(input);
 }
+
+const trackingIssueInputSchema = z.strictObject({
+  workId: workIdSchema,
+  repository: z.strictObject({
+    owner: z.string().min(1),
+    name: z.string().min(1),
+  }),
+  title: z.string().min(1),
+  body: z.string().min(1),
+});
+
+/** Files a plain GitHub issue that tracks an already-created Work item. It
+ * carries no `agent:*` label, so it never dispatches a second run; the Work
+ * item stays the single execution anchor and the issue links back to it. */
+export async function createTrackingIssue(
+  input: z.input<typeof trackingIssueInputSchema>,
+) {
+  const parsed = trackingIssueInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return [
+      { code: 'BAD_REQUEST', message: 'Tracking issue request is invalid' },
+      undefined,
+    ] as const;
+  }
+  const { principal } = await context();
+  if (!isWorkOperatorPrincipal(principal)) {
+    return [
+      { code: 'UNAUTHORIZED', message: 'work.operator scope required' },
+      undefined,
+    ] as const;
+  }
+  const session = await auth();
+  const token = session ? githubAccessTokenFor(session) : undefined;
+  if (!token) {
+    return [
+      {
+        code: 'UNAUTHORIZED',
+        message: 'Filing a GitHub issue requires an authenticated session',
+      },
+      undefined,
+    ] as const;
+  }
+  const { workId, repository, title, body } = parsed.data;
+  const watched = resolveWatchedRepo(repository);
+  const origin = process.env['AUTH_URL'] ?? '';
+  const { data } = await createGithubUserClient(token).rest.issues.create({
+    owner: watched.owner,
+    repo: watched.name,
+    title,
+    body: `${body}\n\n---\nTracks Agent LCARS work item [work:${workId}](${origin}/work/${workId}).`,
+  });
+  return [undefined, { number: data.number, url: data.html_url }] as const;
+}

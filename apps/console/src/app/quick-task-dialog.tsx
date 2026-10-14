@@ -49,7 +49,11 @@ import {
 import { QuickTaskScreenshotField } from './quick-task-screenshot-field';
 import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
-import { createItem, createItemWithEvidence } from './work/actions';
+import {
+  createItem,
+  createItemWithEvidence,
+  createTrackingIssue,
+} from './work/actions';
 
 const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
   { value: 'claude', label: 'claude' },
@@ -84,6 +88,7 @@ interface QuickTaskSubmission {
   description: string;
   source: QuickTaskSourceContext;
   file?: File;
+  fileGithubIssue?: boolean;
 }
 
 export interface QuickTaskActivation {
@@ -139,6 +144,7 @@ export function QuickTaskDialog({
   const [fallbackPipelines, setFallbackPipelines] = useState<AgentPipeline[]>(
     [],
   );
+  const [fileGithubIssue, setFileGithubIssue] = useState(false);
   const submitInFlightRef = useRef(false);
 
   // The modal is closed during hydration, so applying browser-local defaults
@@ -258,6 +264,42 @@ export function QuickTaskDialog({
     });
   }
 
+  /** Runs once the Work item exists. A failure here must not fail (or
+   * re-run) the submission: the item is already minted and a Retry would file
+   * a duplicate issue, so it is reported inline instead. */
+  async function fileTrackingIssue(request: QuickTaskSubmission) {
+    try {
+      const [error, issue] = await createTrackingIssue({
+        workId: request.workId,
+        repository: request.repository,
+        title: deriveQuickTaskTitle(request.description),
+        body: composeQuickTaskIssueBody(
+          {
+            description: request.description,
+            screenshot: '',
+            source: request.source,
+          },
+          request.repository,
+        ),
+      });
+      if (error || !issue) {
+        throw new Error(error?.message ?? 'No issue was returned');
+      }
+      return (
+        <Text component="a" href={issue.url} c="inherit" size="sm">
+          GitHub issue #{issue.number} filed
+        </Text>
+      );
+    } catch (error) {
+      return (
+        <Text size="sm" c="red">
+          GitHub issue not filed:{' '}
+          {error instanceof Error ? error.message : 'unexpected failure'}
+        </Text>
+      );
+    }
+  }
+
   async function settleSubmission(request: QuickTaskSubmission): Promise<void> {
     try {
       const [error] = request.file
@@ -294,6 +336,9 @@ export function QuickTaskDialog({
             });
           })();
       if (error) throw new Error(error.message);
+      const issueNote = request.fileGithubIssue
+        ? await fileTrackingIssue(request)
+        : undefined;
       notifications.update({
         id: submissionNotificationId(request),
         message: (
@@ -301,6 +346,7 @@ export function QuickTaskDialog({
             <Text component="a" href={`/work/${request.workId}`} c="inherit">
               Work item created as work:{request.workId}
             </Text>
+            {issueNote}
           </Stack>
         ),
         color: 'green',
@@ -386,11 +432,13 @@ export function QuickTaskDialog({
       description,
       source,
       ...(screenshot ? { file: screenshot } : {}),
+      ...(fileGithubIssue ? { fileGithubIssue: true } : {}),
     };
     setDescription('');
     setPriority('normal');
     setFallbackPipelines([]);
     setScreenshot(null);
+    setFileGithubIssue(false);
     setSource(emptySourceContext());
     close();
     notifications.show(pendingNotification(request));
@@ -532,6 +580,11 @@ export function QuickTaskDialog({
               Create work item
             </Button>
           </Group>
+          <Checkbox
+            label="File a GitHub issue to track this work"
+            checked={fileGithubIssue}
+            onChange={(e) => setFileGithubIssue(e.currentTarget.checked)}
+          />
 
           {description.trim() && (
             <Paper withBorder p="sm" data-testid="quick-task-preview">
