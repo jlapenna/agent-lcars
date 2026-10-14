@@ -305,15 +305,17 @@ export function ActiveDispatchesPanel({
       title="Active dispatches"
       count={liveRuns.length}
       meta={
-        <>
-          {pipelines}
-          {updatedAt !== undefined && (
-            <>
-              {pipelines && ' · '}updated{' '}
-              <RelativeTime iso={updatedAt} variant="compact" />
-            </>
-          )}
-        </>
+        pipelines || updatedAt !== undefined ? (
+          <>
+            {pipelines}
+            {updatedAt !== undefined && (
+              <>
+                {pipelines && ' · '}updated{' '}
+                <RelativeTime iso={updatedAt} variant="compact" />
+              </>
+            )}
+          </>
+        ) : undefined
       }
       data-testid={testId}
     >

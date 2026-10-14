@@ -3,7 +3,12 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { admittedAt, admittedQueue, WorkList } from './work-list';
+import {
+  admittedAt,
+  admittedQueue,
+  providerCeilingMeta,
+  WorkList,
+} from './work-list';
 
 const item: ItemView = {
   id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -164,5 +169,15 @@ describe('WorkList', () => {
     renderList([]);
     expect(screen.getByText(/No work items yet/)).toBeInTheDocument();
     expect(screen.queryByTestId('work-cards')).toBeNull();
+  });
+});
+
+describe('providerCeilingMeta', () => {
+  it('names providers that share a ceiling together', () => {
+    expect(providerCeilingMeta()).toBe('codex & opencode ceiling 1');
+    expect(
+      providerCeilingMeta({ opencode: 1, codex: 2, claude: undefined }),
+    ).toBe('codex ceiling 2 · opencode ceiling 1');
+    expect(providerCeilingMeta({})).toBeUndefined();
   });
 });

@@ -1,3 +1,4 @@
+import { QUEUE_PIPELINE_MAX_LIVE_CLAIMS } from '@agent-lcars/orchestrator';
 import type { ItemState, ItemView } from '@agent-lcars/work/derive';
 import { latestRun } from '@agent-lcars/work/derive';
 import {
@@ -304,11 +305,13 @@ export function WorkList({ items }: { items: ItemView[] }) {
           title="Admitted queue"
           items={queue}
           admitted
-          meta={
-            oldest
-              ? `FIFO within priority · oldest ${relativeAge(oldest)}`
-              : 'FIFO within priority'
-          }
+          meta={[
+            'FIFO within priority',
+            providerCeilingMeta(),
+            oldest && `oldest ${relativeAge(oldest)}`,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         />
         <WorkPanel
           title="Recent work"
@@ -322,6 +325,24 @@ export function WorkList({ items }: { items: ItemView[] }) {
 }
 
 /** Server-rendered age for a panel caption; rows use RelativeTime. */
+/** The mockup's `codex & opencode ceiling 1`: the server-owned live-claim
+ * ceilings, providers sharing a ceiling named together. */
+export function providerCeilingMeta(
+  ceilings: Readonly<
+    Record<string, number | undefined>
+  > = QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
+): string | undefined {
+  const byCeiling = new Map<number, string[]>();
+  for (const [pipeline, ceiling] of Object.entries(ceilings).sort()) {
+    if (ceiling === undefined) continue;
+    byCeiling.set(ceiling, [...(byCeiling.get(ceiling) ?? []), pipeline]);
+  }
+  const parts = [...byCeiling].map(
+    ([ceiling, pipelines]) => `${pipelines.join(' & ')} ceiling ${ceiling}`,
+  );
+  return parts.length === 0 ? undefined : parts.join(' · ');
+}
+
 function relativeAge(iso: string): string {
   const minutes = Math.max(
     0,
