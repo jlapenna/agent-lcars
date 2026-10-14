@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useRef } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 /**
  * The workspace toolbar band's controls (design/fleet-console.html): a
@@ -25,15 +25,45 @@ export function ConsoleToolbar({
   /** The route's one primary action, docked to the trailing edge. */
   primary?: ReactNode;
 }) {
+  // Phones keep FIND, the window and the primary action in view and fold the
+  // selects and More filters behind one toggle, so the band does not fill the
+  // first screen. The toggle names how many folded filters narrow the view,
+  // so a filtered page never looks unfiltered.
+  const formRef = useRef<HTMLFormElement>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    // What the fold hides: the selects and More filters' fields.
+    setActive(
+      [
+        ...form.querySelectorAll<HTMLSelectElement>(':scope > select'),
+        ...form.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+          '.console-toolbar__more :is(select, input:not([type=hidden]))',
+        ),
+      ].filter((field) => field.value).length,
+    );
+  }, []);
   return (
     <div className="console-toolbar">
       <form
+        ref={formRef}
         method="get"
         action={action}
         className="console-toolbar__filters"
         role="search"
         aria-label="Filters"
+        data-open={open ? '' : undefined}
       >
+        <button
+          type="button"
+          className="console-toolbar__field console-toolbar__toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {active > 0 ? `Filters · ${active}` : 'Filters'}
+        </button>
         {Object.entries(preserve).map(([name, value]) =>
           value === undefined ? null : (
             <input key={name} type="hidden" name={name} value={value} />
