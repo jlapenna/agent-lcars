@@ -1249,6 +1249,108 @@ describe('complete applicable protected-check policy', () => {
   });
 });
 
+describe('current required blocking check conclusions', () => {
+  it.each([
+    'failure',
+    'timed_out',
+    'action_required',
+    'cancelled',
+    'startup_failure',
+    'stale',
+  ])(
+    'requests correction for a current Actions job ending %s',
+    async (conclusion) => {
+      const deps = fixture({
+        checks: {
+          total_count: 1,
+          check_runs: [
+            {
+              id: 1,
+              check_suite: { id: 1 },
+              name: 'Verify',
+              head_sha: HEAD,
+              status: 'completed',
+              conclusion,
+            },
+          ],
+        },
+      });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'correction',
+        head: HEAD,
+        reason: 'Required checks failed: Verify',
+      });
+    },
+  );
+
+  it.each(['success', 'skipped', 'neutral', null, 'unknown'])(
+    'retains waiting for nonblocking or unknown Actions conclusion %s',
+    async (conclusion) => {
+      const deps = fixture({
+        checks: {
+          total_count: 1,
+          check_runs: [
+            {
+              id: 1,
+              check_suite: { id: 1 },
+              name: 'Verify',
+              head_sha: HEAD,
+              status: 'completed',
+              conclusion,
+            },
+          ],
+        },
+      });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'waiting',
+        head: HEAD,
+      });
+    },
+  );
+
+  it('retains waiting when the latest parent workflow was intentionally cancelled', async () => {
+    const deps = fixture({
+      checks: {
+        total_count: 1,
+        check_runs: [
+          {
+            id: 1,
+            check_suite: { id: 1 },
+            name: 'Verify',
+            head_sha: HEAD,
+            status: 'completed',
+            conclusion: 'cancelled',
+          },
+        ],
+      },
+      workflows: {
+        total_count: 1,
+        workflow_runs: [
+          {
+            id: 100,
+            workflow_id: 10,
+            run_number: 2,
+            run_attempt: 1,
+            head_sha: HEAD,
+            check_suite_id: 1,
+            event: 'pull_request',
+            conclusion: 'cancelled',
+          },
+        ],
+      },
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'waiting',
+      head: HEAD,
+    });
+    expect(
+      vi
+        .mocked(deps.fetchImpl)
+        .mock.calls.some(([input]) => String(input).includes('/attempts/')),
+    ).toBe(false);
+  });
+});
+
 describe('required non-Actions check provenance', () => {
   const APP = { id: 77, slug: 'coverage-app' };
   const CHECK = {
@@ -1272,6 +1374,7 @@ describe('required non-Actions check provenance', () => {
       suite?: unknown;
       latest?: unknown;
       integration?: number | null;
+      check?: typeof CHECK;
     } = {},
   ) {
     const base = fixture({
@@ -1290,7 +1393,7 @@ describe('required non-Actions check provenance', () => {
           },
         },
       ],
-      checks: { total_count: 1, check_runs: [CHECK] },
+      checks: { total_count: 1, check_runs: [over.check ?? CHECK] },
       workflows: { total_count: 0, workflow_runs: [] },
     });
     const fetchImpl = vi.fn(
@@ -1304,7 +1407,10 @@ describe('required non-Actions check provenance', () => {
           path.includes('/check-runs?') &&
           new URL(path).searchParams.has('app_id')
         ) {
-          const latest = over.latest ?? { total_count: 1, check_runs: [CHECK] };
+          const latest = over.latest ?? {
+            total_count: 1,
+            check_runs: [over.check ?? CHECK],
+          };
           return latest instanceof Response ? latest : Response.json(latest);
         }
         return base.fetchImpl(input, init);
@@ -1330,6 +1436,52 @@ describe('required non-Actions check provenance', () => {
         .mock.calls.some(([input]) => String(input).includes('/actions/runs')),
     ).toBe(false);
   });
+  it.each([
+    'failure',
+    'timed_out',
+    'action_required',
+    'cancelled',
+    'startup_failure',
+    'stale',
+  ])(
+    'requests correction for a current required external App ending %s',
+    async (conclusion) => {
+      const deps = external({
+        check: { ...CHECK, conclusion },
+        suite: { ...SUITE, conclusion },
+      });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'correction',
+        head: HEAD,
+        reason: 'Required checks failed: Coverage',
+      });
+    },
+  );
+
+  it.each(['success', 'skipped', 'neutral', null, 'unknown'])(
+    'retains waiting for nonblocking or unknown external App conclusion %s',
+    async (conclusion) => {
+      const deps = external({
+        latest: { total_count: 1, check_runs: [{ ...CHECK, conclusion }] },
+      });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'waiting',
+        head: HEAD,
+      });
+    },
+  );
+
+  it.each(['success', 'skipped', 'neutral', null, 'unknown'])(
+    'retains waiting when the external suite has nonblocking or unknown conclusion %s',
+    async (conclusion) => {
+      const deps = external({ suite: { ...SUITE, conclusion } });
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'waiting',
+        head: HEAD,
+      });
+    },
+  );
+
   it('qualifies an unpinned required context through its exact non-Actions App and suite', async () => {
     expect(
       await observeGithubDelivery(external({ integration: null }), BINDING),

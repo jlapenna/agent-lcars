@@ -40,6 +40,18 @@ const checkRunSchema = z.object({
   status: z.string(),
   conclusion: z.string().nullable(),
 });
+/** Only documented terminal failures authorize correction; unknown stays waiting. */
+function isBlockingCheckConclusion(conclusion: string | null): boolean {
+  return [
+    'failure',
+    'timed_out',
+    'action_required',
+    'cancelled',
+    'startup_failure',
+    'stale',
+  ].includes(conclusion ?? '');
+}
+
 const prSchema = z.object({
   number: z.number().int().positive(),
   body: z.string().nullable(),
@@ -522,9 +534,7 @@ export async function observeGithubDelivery(
           (!rule.integration_id || rule.integration_id === check.app?.id),
       ) &&
       check.status === 'completed' &&
-      ['failure', 'timed_out', 'action_required'].includes(
-        check.conclusion ?? '',
-      ),
+      isBlockingCheckConclusion(check.conclusion),
   );
   const currentCheckIds = await currentActionCheckIds(
     deps,
@@ -633,9 +643,7 @@ async function currentNonActionCheckIds(
         suite.app.id !== app.id ||
         suite.app.slug !== app.slug ||
         suite.status !== 'completed' ||
-        !['failure', 'timed_out', 'action_required'].includes(
-          suite.conclusion ?? '',
-        )
+        !isBlockingCheckConclusion(suite.conclusion)
       )
         continue;
       const latest = z
@@ -660,9 +668,7 @@ async function currentNonActionCheckIds(
         current.app?.id === app.id &&
         current.app?.slug === app.slug &&
         current.status === 'completed' &&
-        ['failure', 'timed_out', 'action_required'].includes(
-          current.conclusion ?? '',
-        )
+        isBlockingCheckConclusion(current.conclusion)
       )
         qualified.add(check.id);
     } catch {
@@ -810,9 +816,7 @@ async function currentActionCheckIds(
           job.head_sha !== binding.head ||
           !job.check_run_url.startsWith(prefix) ||
           job.status !== 'completed' ||
-          !['failure', 'timed_out', 'action_required'].includes(
-            job.conclusion ?? '',
-          )
+          !isBlockingCheckConclusion(job.conclusion)
         )
           continue;
         const suffix = job.check_run_url.slice(prefix.length);
