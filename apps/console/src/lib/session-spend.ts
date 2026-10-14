@@ -103,17 +103,18 @@ export function sessionPRReferences(
       created > end
     )
       return false;
-    // If GitHub's body supplies a Claude session link, it must agree exactly.
-    // This supplements the required author, window and head-repository facts.
+    // Shared credentials and overlapping windows cannot identify the creating
+    // session on their own. Require a positive exact session binding in GitHub's
+    // own PR body, never a transcript assertion or an incidental quoted URL.
     const links = [
       ...record.body.matchAll(
-        /https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)(?=[\s)>'"`]|$)/gu,
+        /^Claude-Session:[ \t]*https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)[ \t]*\r?$/gmu,
       ),
     ];
     return (
-      links.length === 0 ||
-      (doc.agent === 'claude-code' &&
-        links.every((link) => link[1] === doc.sessionId))
+      doc.agent === 'claude-code' &&
+      links.length > 0 &&
+      links.every((link) => link[1] === doc.sessionId)
     );
   });
 }

@@ -213,8 +213,29 @@ describe('GitHub-record spend attribution (#2730)', () => {
     ).toBe(1);
     expect(spend(session(), record({ createdAt: end })).mergedPRs).toBe(1);
   });
-  it('requires no body link when author, time and exact head match', () => {
-    expect(spend(session(), record({ body: '' })).mergedPRs).toBe(1);
+  it.each([
+    '',
+    'Discussion: https://claude.ai/code/session_test',
+    '> Claude-Session: https://claude.ai/code/session_test',
+    'Claude-Session: https://claude.ai/code/session_test-extra',
+    'Claude-Session: https://claude.ai/code/session_test/path',
+  ])('requires an exact GitHub session attribution line: %s', (body) => {
+    expect(spend(session(), record({ body })).mergedPRs).toBe(0);
+  });
+  it('cannot attribute inert create text from another same-actor same-branch session', () => {
+    const doc = session(
+      "printf '%s\\n' 'gh pr create' 'https://github.com/jlapenna/agent-lcars/pull/42'",
+    );
+    expect(doc.deliverables.publicationCandidates).toHaveLength(1);
+    expect(spend(doc, record({ body: '' })).mergedPRs).toBe(0);
+    expect(
+      spend(
+        doc,
+        record({
+          body: 'Claude-Session: https://claude.ai/code/session_other',
+        }),
+      ).mergedPRs,
+    ).toBe(0);
   });
   it('does not turn missing merge observations into a merge', () => {
     expect(spend(session(), record({ mergedAt: undefined }))).toMatchObject({
