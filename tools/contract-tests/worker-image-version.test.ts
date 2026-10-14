@@ -1,5 +1,11 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -93,6 +99,7 @@ esac
       );
       try {
         let failed = false;
+        let failure: unknown;
         let value;
         const started = performance.now();
         try {
@@ -123,8 +130,9 @@ esac
                     commandTimeout: 1000,
                   },
                 );
-        } catch {
+        } catch (error) {
           failed = true;
+          failure = error;
         }
         const expectedFailure =
           !['success', 'slow-cleanup-inspections'].includes(mode) &&
@@ -132,7 +140,26 @@ esac
             kind === 'version' &&
             ['copy-failure', 'missing-native-diagnostics'].includes(mode)
           );
-        expect(failed).toBe(expectedFailure);
+        expect(
+          failed,
+          JSON.stringify({
+            error: failure === undefined ? undefined : String(failure),
+            cause:
+              failure instanceof Error && failure.cause !== undefined
+                ? String(failure.cause)
+                : undefined,
+            errors:
+              failure instanceof AggregateError
+                ? failure.errors.map(String)
+                : undefined,
+            calls: existsSync(callsPath)
+              ? readFileSync(callsPath, 'utf8')
+              : undefined,
+            state: existsSync(statePath)
+              ? readFileSync(statePath, 'utf8')
+              : undefined,
+          }),
+        ).toBe(expectedFailure);
         expect(value).toEqual(
           expectedFailure
             ? undefined
