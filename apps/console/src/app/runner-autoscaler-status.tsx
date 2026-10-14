@@ -457,7 +457,7 @@ export function RunnerAutoscalerStatus({
             filteredOut={noMatch}
             tokenRate={expireTokenRate(tokenRate, clock, STALENESS_MS)}
             workApiLatency={live.queueExecutor?.workApiLatency}
-            hostInventory={live.hostInventory}
+            hostInventory={noMatch ? undefined : live.hostInventory}
           />
         </div>
       </div>

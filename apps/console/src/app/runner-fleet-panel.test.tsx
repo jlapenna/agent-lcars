@@ -182,12 +182,46 @@ describe('RunnerFleetPanel', () => {
     expect(spark.textContent).toContain('20 vCPU · 128 GiB');
     expect(spark.textContent).toContain('85%');
     expect(spark.textContent).toContain('25%');
-    expect(spark.querySelectorAll('.ops-slots i')).toHaveLength(3);
+    expect(
+      spark.querySelectorAll('.ops-slots i[data-state="pod"]'),
+    ).toHaveLength(3);
+    expect(
+      spark.querySelector('[aria-label="2 runner pods, 1 queue job pod"]'),
+    ).toBeTruthy();
     expect(spark.querySelector('[data-tone="warn"]')).toBeTruthy();
     expect(screen.getByTestId('fleet-host-worf').textContent).toContain(
       'NotReady',
     );
     expect(screen.queryByTestId('fleet-lane-lcars-ci')).toBeNull();
     expect(screen.getByText('Load · requested')).toBeTruthy();
+  });
+
+  it('never claims runner status is unavailable beside known hosts', () => {
+    render(
+      <MantineProvider>
+        <RunnerFleetPanel
+          hostInventory={{
+            hosts: [
+              {
+                name: 'spark',
+                ready: true,
+                unschedulable: true,
+                cpuMillis: 8_000,
+                memoryBytes: 16 * 1024 ** 3,
+                requestedCpuMillis: 0,
+                requestedMemoryBytes: 0,
+                runnerPods: 0,
+                queueJobPods: 0,
+              },
+            ],
+            updatedAt: '2026-10-13T15:00:00.000Z',
+          }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('fleet-host-spark').textContent).toContain(
+      'draining',
+    );
+    expect(screen.queryByText('Runner status unavailable')).toBeNull();
   });
 });

@@ -185,15 +185,17 @@ export function RunnerFleetPanel({
               </td>
             </tr>
           )}
-          {(lanes === undefined || lanes.length === 0) && !executor && (
-            <tr>
-              <td colSpan={3} className="ops-dim">
-                {filteredOut
-                  ? 'No runner lane matches these filters.'
-                  : 'Runner status unavailable'}
-              </td>
-            </tr>
-          )}
+          {!hosts &&
+            (lanes === undefined || lanes.length === 0) &&
+            !executor && (
+              <tr>
+                <td colSpan={3} className="ops-dim">
+                  {filteredOut
+                    ? 'No runner lane matches these filters.'
+                    : 'Runner status unavailable'}
+                </td>
+              </tr>
+            )}
         </tbody>
       </table>
       <div className="ops-telemetry" data-testid="fleet-telemetry">
@@ -275,6 +277,19 @@ function TokenRateTelemetry({
 
 const GIB = 1024 ** 3;
 
+/** Runner and queue Job pods on a host. Whether a warm runner pod has a job
+ * is not visible to the executor, so these are pods, never "busy". */
+function PodSlots({ runners, jobs }: { runners: number; jobs: number }) {
+  const label = `${runners} runner ${runners === 1 ? 'pod' : 'pods'}, ${jobs} queue job ${jobs === 1 ? 'pod' : 'pods'}`;
+  return (
+    <div className="ops-slots" role="img" aria-label={label} title={label}>
+      {Array.from({ length: Math.min(runners + jobs, SLOT_LIMIT) }, (_, i) => (
+        <i key={i} data-state="pod" />
+      ))}
+    </div>
+  );
+}
+
 function loadTone(fraction: number): 'warn' | 'fail' | undefined {
   return fraction >= 1 ? 'fail' : fraction >= 0.8 ? 'warn' : undefined;
 }
@@ -298,7 +313,7 @@ function HostRow({ host }: { host: FleetHost }) {
         {pods === 0 ? (
           <span className="ops-dim">no runners</span>
         ) : (
-          <Slots busy={pods} idle={0} pending={0} />
+          <PodSlots runners={host.runnerPods} jobs={host.queueJobPods} />
         )}
       </td>
       <td>

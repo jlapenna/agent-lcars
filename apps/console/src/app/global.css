@@ -4410,6 +4410,14 @@ td.costs-repo-spend__num {
   background: var(--lcars-ink-dim);
 }
 
+.ops-slots > i[data-state='pod'] {
+  background: color-mix(
+    in srgb,
+    var(--lcars-ink-dim) 60%,
+    var(--lcars-surface)
+  );
+}
+
 .ops-slots > i[data-state='pending'] {
   background: var(--lcars-warning);
 }
